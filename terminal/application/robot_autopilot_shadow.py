@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -66,6 +67,11 @@ SHADOW_MODE = "SHADOW"
 PAPER_AUTO_MODE = "PAPER_AUTO"
 _TERMINAL_STATUSES = {"EXPIRED", "INVALIDATED"}
 _ACTIVE_STATUSES = ("APPROVED", "OPEN")
+# P0: one arrival reevaluates at most this many due WAITs, oldest first, and stops
+# at a candidate boundary once the batch has used its owner-thread time budget.
+A6_DUE_WAIT_BATCH_LIMIT = 8
+A6_DUE_WAIT_BATCH_BUDGET_S = 2.0
+_monotonic = time.monotonic
 
 @dataclass(frozen=True, slots=True)
 class ShadowObservation:
@@ -166,13 +172,16 @@ def _scanner_candidate(store: SQLiteStore, ref: str, store_dir) -> _Candidate:
 
 def _box_plan_candidate(
     store: SQLiteStore, ref: str, account: TradingAccountId,
+    robot_candidates: tuple[RobotCandidateRecord, ...] | None = None,
 ) -> _Candidate:
     source = store.get_robot_candidate(ref)
     if source is None:
         raise LookupError(f"Box plan source not found: {ref}")
     identity = source.signal_snapshot.get("identity") or {}
+    if robot_candidates is None:
+        robot_candidates = store.load_robot_candidates(account)
     linked = [
-        item for item in store.load_robot_candidates(account)
+        item for item in robot_candidates
         if item.status != "BOX_PLAN_ONLY"
         and item.signal_snapshot.get("source_box_candidate_id") == source.candidate_id
     ]
@@ -209,11 +218,13 @@ def _symbol_owned(store: SQLiteStore, account: TradingAccountId, candidate: _Can
 def _resolve_candidate(
     store: SQLiteStore, account: TradingAccountId, *, source: str,
     candidate_ref: str, candidate_store_dir: Path | str | None,
+    batch: _BatchSnapshot | None = None,
 ) -> _Candidate:
     if source == SOURCE_SCANNER:
         return _scanner_candidate(store, candidate_ref, candidate_store_dir)
     if source == SOURCE_BOX_PLAN:
-        return _box_plan_candidate(store, candidate_ref, account)
+        return _box_plan_candidate(store, candidate_ref, account,
+                                   None if batch is None else batch.robot_candidates())
     raise ValueError(f"unknown Autopilot source: {source!r}")
 
 
@@ -290,14 +301,83 @@ def _physical_capital_only(portfolio: dict) -> dict:
     return adjusted
 
 
+class _BatchSnapshot:
+    """One consistent SHADOW read set for one A6 batch, inside ONE decision transaction.
+
+    BEGIN IMMEDIATE excludes every other writer and SHADOW appends only audit rows,
+    so candidates and PAPER rows cannot change under the batch. The audit list and
+    the virtual SHADOW reservations are advanced in memory after each append, exactly
+    as a fresh ``collect_portfolio_facts`` would see them. Never kept across batches.
+    """
+
+    def __init__(self, store: SQLiteStore, account: TradingAccountId):
+        self._store, self._account = store, account
+        self.decisions = list(store.load_robot_auto_decisions(account))
+        self._candidates: tuple[RobotCandidateRecord, ...] | None = None
+        self._portfolio: dict | None = None
+
+    def robot_candidates(self) -> tuple[RobotCandidateRecord, ...]:
+        if self._candidates is None:
+            self._candidates = self._store.load_robot_candidates(self._account)
+        return self._candidates
+
+    def portfolio(self) -> dict:
+        if self._portfolio is None:
+            self._portfolio = collect_portfolio_facts(
+                self._store, self._account, robot_candidates=self.robot_candidates(),
+                auto_decisions=tuple(self.decisions),
+            )
+        return self._portfolio
+
+    def appended(self, decision: RobotAutoDecisionRecord, created: bool) -> None:
+        if not created:
+            return
+        self.decisions.append(decision)
+        if (self._portfolio is not None and decision.mode == SHADOW_MODE
+                and decision.outcome == OUTCOME_ALLOW):
+            self._portfolio = self._with_shadow_reservation(self._portfolio, decision)
+
+    def _with_shadow_reservation(self, portfolio: dict, decision: RobotAutoDecisionRecord) -> dict:
+        """Mirror the collector's SHADOW ALLOW rule for one new unlinked selection."""
+        if portfolio.get("available") is not True:
+            return portfolio
+        ref = decision.candidate_ref
+        identity, symbol = "shadow:" + ref, decision.symbol.value
+        reservations = list(portfolio.get("reservations") or ())
+        previous = next((row for row in reservations if row["identity"] == identity), None)
+        if previous is not None and previous["symbol"] == symbol:
+            return portfolio  # the collector keeps one reservation per identity
+        if previous is not None or any(
+                c.status != "BOX_PLAN_ONLY"
+                and (c.candidate_id == ref or c.signal_snapshot.get("source_box_candidate_id") == ref)
+                for c in self.robot_candidates()):
+            # Linked real idea or identity conflict: the collector's full rules decide.
+            return collect_portfolio_facts(
+                self._store, self._account, robot_candidates=self.robot_candidates(),
+                auto_decisions=tuple(self.decisions),
+            )
+        reservations.append({"identity": identity, "symbol": symbol, "ro": 1})
+        occupied_ro = sum(row["ro"] for row in reservations)
+        updated = dict(portfolio)
+        updated.update(
+            occupied_ro=occupied_ro,
+            occupied_usdt=occupied_ro * portfolio["ro_usdt"],
+            owned_symbols=sorted({*portfolio.get("owned_symbols", ()), symbol}),
+            reservations=sorted(reservations, key=lambda row: row["identity"]),
+        )
+        return updated
+
+
 def _fresh_facts(
     store: SQLiteStore, account: TradingAccountId, *, mode: str, candidate: _Candidate,
     decisions: tuple[RobotAutoDecisionRecord, ...],
     protection_healthy: Callable[[], bool] | None,
     candidate_fresh: FreshnessProver | None = None,
     prior_shadow_allow: RobotAutoDecisionRecord | None = None,
+    batch: _BatchSnapshot | None = None,
 ) -> RobotAutoAdmissionFacts:
-    portfolio = collect_portfolio_facts(store, account)
+    portfolio = (collect_portfolio_facts(store, account) if batch is None
+                 else dict(batch.portfolio()))  # the batch copy is never mutated here
     # S3 conversion first: it keeps its fail-closed "exactly one matching reservation" proof.
     portfolio = _without_own_shadow_reservation(portfolio, candidate, prior_shadow_allow)
     if mode == PAPER_AUTO_MODE:
@@ -347,6 +427,7 @@ def _observe_shadow_candidate_locked(
     protection_healthy: Callable[[], bool] | None = None,
     candidate_store_dir: Path | str | None = None,
     clock_ms: Callable[[], int] | None = None,
+    batch: _BatchSnapshot | None = None,
 ) -> ShadowObservation | None:
     """Evaluate one arrived candidate in SHADOW; return None when Autopilot is not SHADOW.
 
@@ -358,13 +439,15 @@ def _observe_shadow_candidate_locked(
     state = store.get_robot_autopilot_state(account)
     if state is None or state.mode != SHADOW_MODE:
         return None
+    if batch is None:
+        batch = _BatchSnapshot(store, account)
     candidate = _resolve_candidate(
         store, account, source=source, candidate_ref=candidate_ref,
-        candidate_store_dir=candidate_store_dir,
+        candidate_store_dir=candidate_store_dir, batch=batch,
     )
 
     now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
-    decisions = store.load_robot_auto_decisions(account)
+    decisions = tuple(batch.decisions)
     existing = _latest_decision(decisions, candidate.ref, candidate.source_identity, state.mode)
     if existing is not None and not _wait_reevaluation_due(
             existing, now, state, store.get_robot_runtime_state(account)):
@@ -375,7 +458,7 @@ def _observe_shadow_candidate_locked(
 
     facts = _fresh_facts(
         store, account, mode=state.mode, candidate=candidate, decisions=decisions,
-        protection_healthy=protection_healthy,
+        protection_healthy=protection_healthy, batch=batch,
     )
     result = evaluate_auto_admission(facts)
 
@@ -392,6 +475,7 @@ def _observe_shadow_candidate_locked(
         result=result,
         evaluated_at_ms=now,
     )
+    batch.appended(decision, created)
     return ShadowObservation(facts, result, decision, created)
 
 
@@ -621,49 +705,80 @@ def observe_shadow_candidate(
     if state is None or state.mode != SHADOW_MODE:
         return None
     now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
-
-    def observe(ref: str, ref_source: str) -> ShadowObservation | None:
-        with store.autopilot_decision_transaction():
-            return _observe_shadow_candidate_locked(
-                store, account, source=ref_source, candidate_ref=ref,
-                protection_healthy=protection_healthy,
-                candidate_store_dir=candidate_store_dir, clock_ms=lambda: now,
-            )
-
-    # A6: this arrival is the only trigger. Earlier still-fresh WAITs that are due
-    # go first, in arrival order (First Eligible); each in its own short transaction.
     arrival = (str(candidate_ref), source)
-    observation, observed = None, False
-    for due in _due_wait_refs(store, account, state, now):
-        if due == arrival:
-            observation, observed = observe(*due), True
-            continue
-        try:
-            observe(*due)
-        except Exception as error:  # an old WAIT must never block the arrival
-            print(
-                "[AUTOPILOT SHADOW WAIT REEVALUATION ERROR] "
-                f"candidate_ref={due[0]} error_class={type(error).__name__}"
-            )
-    return observation if observed else observe(*arrival)
+
+    def observe(ref: str, ref_source: str, batch: _BatchSnapshot | None) -> ShadowObservation | None:
+        return _observe_shadow_candidate_locked(
+            store, account, source=ref_source, candidate_ref=ref,
+            protection_healthy=protection_healthy,
+            candidate_store_dir=candidate_store_dir, clock_ms=lambda: now, batch=batch,
+        )
+
+    # A6: this arrival is the only trigger. Earlier still-fresh WAITs that are due go
+    # first, oldest evaluation first (First Eligible), at most one bounded batch per
+    # arrival from one consistent read set; the rest stay due for the next arrival.
+    # Protection/owner work waits at most one batch, never the whole WAIT backlog.
+    arrival_error: Exception | None = None
+    began = in_arrival = False
+    try:
+        with store.autopilot_decision_transaction():
+            began = True
+            state = store.get_robot_autopilot_state(account)
+            if state is None or state.mode != SHADOW_MODE:
+                return None
+            started = _monotonic()
+            batch = _BatchSnapshot(store, account)
+            due = [ref for ref in _due_wait_refs(
+                batch.decisions, state, store.get_robot_runtime_state(account), now)
+                if ref != arrival]
+            for index, ref in enumerate(due[:A6_DUE_WAIT_BATCH_LIMIT]):
+                if index and _monotonic() - started >= A6_DUE_WAIT_BATCH_BUDGET_S:
+                    break  # candidate boundary: every written audit row is complete
+                try:
+                    observe(*ref, batch)
+                except sqlite3.Error:
+                    raise
+                except Exception as error:  # an old WAIT must never block the arrival
+                    print(
+                        "[AUTOPILOT SHADOW WAIT REEVALUATION ERROR] "
+                        f"candidate_ref={ref[0]} error_class={type(error).__name__}"
+                    )
+            in_arrival = True
+            try:
+                return observe(*arrival, batch)
+            except sqlite3.Error:
+                raise
+            except Exception as error:  # keep the completed batch, then report
+                arrival_error = error
+    except sqlite3.Error as error:
+        if in_arrival or not began:
+            raise  # busy BEGIN IMMEDIATE: one timeout, nothing written, WAITs stay due
+        # The whole batch rolled back; nothing is lost, those WAITs stay due.
+        print(
+            "[AUTOPILOT SHADOW WAIT BATCH ERROR] "
+            f"candidate_ref={arrival[0]} error_class={type(error).__name__}"
+        )
+        with store.autopilot_decision_transaction():
+            return observe(*arrival, None)
+    raise arrival_error
 
 
 def _due_wait_refs(
-    store: SQLiteStore, account: TradingAccountId, state: Any, now_ms: int,
+    decisions: tuple[RobotAutoDecisionRecord, ...] | list[RobotAutoDecisionRecord],
+    state: Any, runtime: Any, now_ms: int,
 ) -> list[tuple[str, str]]:
-    """WAIT ideas due for reevaluation, oldest arrival first; read-only."""
-    decisions = store.load_robot_auto_decisions(account)
-    runtime = store.get_robot_runtime_state(account)
+    """Due WAIT ideas, oldest last evaluation first (ties: arrival order); pure."""
     latest: dict[tuple[str, str], RobotAutoDecisionRecord] = {}
     for item in decisions:
         if item.mode == state.mode and item.policy_version == POLICY_VERSION:
             latest[(item.candidate_ref, item.source_identity)] = item
-    return [
-        (last.candidate_ref,
-         SOURCE_BOX_PLAN if last.pattern == "IKIGAI_BOX" else SOURCE_SCANNER)
-        for last in latest.values()
-        if _wait_reevaluation_due(last, now_ms, state, runtime)
-    ]
+    due = sorted((last for last in latest.values()
+                  if _wait_reevaluation_due(last, now_ms, state, runtime)),
+                 key=lambda last: last.evaluated_at_ms)
+    refs = [(last.candidate_ref,
+             SOURCE_BOX_PLAN if last.pattern == "IKIGAI_BOX" else SOURCE_SCANNER)
+            for last in due]
+    return list(dict.fromkeys(refs))
 
 
 def shadow_mode_or_off(mode: str) -> str:
