@@ -275,6 +275,32 @@ def _without_own_shadow_reservation(
     return adjusted
 
 
+def _physical_capital_only(portfolio: dict) -> dict:
+    """PAPER_AUTO risk facts: virtual SHADOW reservations are not obligations.
+
+    A SHADOW ALLOW is an immutable audit record of a rehearsal. Its virtual RO
+    keeps constraining SHADOW itself, but it must never hold the aggregate cap
+    or own a symbol for physical PAPER_AUTO. Only Robot/manual obligations
+    remain. Nothing is deleted or rewritten: the audit and the collector still
+    report the virtual reservations; this view merely does not count them.
+    """
+    if portfolio.get("available") is not True:
+        return portfolio
+    reservations = list(portfolio.get("reservations") or ())
+    physical = [row for row in reservations if not str(row.get("identity", "")).startswith("shadow:")]
+    isolated_ro = sum(row["ro"] for row in reservations) - sum(row["ro"] for row in physical)
+    occupied_ro = sum(row["ro"] for row in physical)
+    adjusted = dict(portfolio)
+    adjusted.update(
+        reservations=physical,
+        occupied_ro=occupied_ro,
+        occupied_usdt=occupied_ro * adjusted["ro_usdt"],
+        owned_symbols=sorted({row["symbol"] for row in physical}),
+        isolated_shadow_ro=isolated_ro,
+    )
+    return adjusted
+
+
 class _BatchSnapshot:
     """One consistent SHADOW read set for one A6 batch, inside ONE decision transaction.
 
@@ -352,7 +378,10 @@ def _fresh_facts(
 ) -> RobotAutoAdmissionFacts:
     portfolio = (collect_portfolio_facts(store, account) if batch is None
                  else dict(batch.portfolio()))  # the batch copy is never mutated here
+    # S3 conversion first: it keeps its fail-closed "exactly one matching reservation" proof.
     portfolio = _without_own_shadow_reservation(portfolio, candidate, prior_shadow_allow)
+    if mode == PAPER_AUTO_MODE:
+        portfolio = _physical_capital_only(portfolio)
     portfolio["audit_sequence"] = len(decisions) + 1
     runtime = store.get_robot_runtime_state(account)
     try:
