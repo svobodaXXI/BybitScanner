@@ -236,6 +236,8 @@ class GuiSmokeTests(unittest.TestCase):
             try:
                 self.assertEqual(root.title(), "⚔SwordCounter⚔")
                 self.assertTrue(bool(root.attributes("-topmost")))
+                self.assertTrue(app_module.ICON_PATH.is_file())
+                self.assertEqual(app_module.ICON_PATH.read_bytes()[:4], bytes((0, 0, 1, 0)))   # a real .ico
                 self.assertEqual(root.resizable(), (False, False))
                 self.assertEqual(gui.header_label.cget("text"), "1 РО = 5 USDT")
                 gui.apply_result(result(used=4, free=16))

@@ -13,6 +13,7 @@ and saved in the ⚙ settings window, section «Подключение Bybit» (
 from __future__ import annotations
 
 import queue
+import sys
 import threading
 import time
 import tkinter as tk
@@ -36,6 +37,20 @@ WINDOW_TITLE = f"{SWORDS_ICON}SwordCounter{SWORDS_ICON}"
 GEAR_ICON = "⚙"
 FONT = "Segoe UI"
 SECRET_MASK = "•"
+ICON_PATH = Path(__file__).with_name("swords.ico")
+APP_USER_MODEL_ID = "SwordCounter.App"   # own taskbar group: not the generic Python icon
+
+
+def set_taskbar_identity() -> None:
+    """Windows: give the process its own AppUserModelID so the taskbar shows the swords icon."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception:
+        pass   # cosmetic only
 
 
 class Refresher:
@@ -136,6 +151,10 @@ class SwordCounterApp:
     def _build(self) -> None:
         root = self.root
         root.title(WINDOW_TITLE)
+        try:   # default= also covers the settings dialog; title bar and taskbar use this icon
+            root.iconbitmap(default=str(ICON_PATH))
+        except tk.TclError:
+            pass   # missing icon file: keep the default, never block the counter
         root.attributes("-topmost", True)
         root.resizable(False, False)   # minimize and close stay; no maximize
         root.protocol("WM_DELETE_WINDOW", self.close)
@@ -328,6 +347,7 @@ class SwordCounterApp:
 
 
 def run() -> None:
+    set_taskbar_identity()
     root = tk.Tk()
     SwordCounterApp(root)
     root.mainloop()
