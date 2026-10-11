@@ -32,6 +32,7 @@ from tools.SwordCounter.view_model import GREY, WORKER_FAILED, build_display, he
 REFRESH_INTERVAL_S = 10
 POLL_MS = 500
 SWORDS_ICON = "⚔"   # crossed swords
+WINDOW_TITLE = f"{SWORDS_ICON}SwordCounter{SWORDS_ICON}"
 GEAR_ICON = "⚙"
 FONT = "Segoe UI"
 SECRET_MASK = "•"
@@ -134,7 +135,7 @@ class SwordCounterApp:
     # ---- layout ---------------------------------------------------------
     def _build(self) -> None:
         root = self.root
-        root.title("SwordCounter")
+        root.title(WINDOW_TITLE)
         root.attributes("-topmost", True)
         root.resizable(False, False)   # minimize and close stay; no maximize
         root.protocol("WM_DELETE_WINDOW", self.close)

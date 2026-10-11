@@ -1,4 +1,4 @@
-"""SwordCounter S2: working-volume ("swords") count from Bybit positionValue. Offline, no keys."""
+"""SwordCounter S2: working-volume ("swords") count from Bybit size x avgPrice (entry notional). Offline, no keys."""
 
 import re
 import unittest
@@ -15,10 +15,11 @@ from tools.SwordCounter.swords import (
 )
 
 
-def pos(symbol="BTCUSDT", value="5", coin="USDT", idx=0, side="Buy", im="0.1"):
+def pos(symbol="BTCUSDT", value="5", coin="USDT", idx=0, side="Buy", im="0.1", size="1", pv="999"):
+    """``value`` is the entry price; with the default size 1 it is the entry notional."""
     return OpenPosition(
-        symbol=symbol, side=side, position_idx=idx, settle_coin=coin, size=Decimal("1"),
-        avg_price=Decimal("100"), position_value=None if value is None else Decimal(value), position_status="Normal",
+        symbol=symbol, side=side, position_idx=idx, settle_coin=coin, size=Decimal(size),
+        avg_price=None if value is None else Decimal(value), position_value=Decimal(pv), position_status="Normal",
         mark_price=Decimal("100"), position_im=Decimal(im),
         position_mm=Decimal("1"), leverage=Decimal("10"), unrealised_pnl=Decimal("0"),
         updated_time_ms=1,
@@ -94,6 +95,25 @@ class CountTests(unittest.TestCase):
         r = count_swords(positions, DEFAULT)
         self.assertEqual((r.status, r.occupied_margin_usdt, r.used_swords, r.free_swords, r.over_limit),
                          (STATUS_OK, Decimal("19"), 4, 16, False))
+
+    def test_real_positions_use_size_times_entry_price_not_mark_value_or_margin(self):
+        # Live case of 2026-10-11 (MetaBroker 5 + 4 + 5 + 5): positionValue (by mark price) summed
+        # to 17.70 and positionIM to 1.9; the entry notional size x avgPrice is 18.3847.
+        positions = [pos("SENTUSDT", "0.022818", size="210", pv="4.68531", im="0.09628896"),
+                     pos("VELVETUSDT", "0.0728", size="50", pv="3.469", im="0.6962024", side="Sell"),
+                     pos("XNYUSDT", "0.006218", size="800", pv="4.6624", im="0.93466873"),
+                     pos("LYNUSDT", "0.01753", size="284", pv="4.88764", im="0.19813425")]
+        r = count_swords(positions, DEFAULT)
+        self.assertEqual((r.status, r.occupied_margin_usdt, r.used_swords, r.free_swords),
+                         (STATUS_OK, Decimal("18.3847"), 4, 16))
+
+    def test_mark_value_does_not_decide_a_boundary(self):
+        # Entry notional 20.1 costs 5 swords even when the mark value has dropped to 19.8.
+        r = count_swords([pos(value="20.1", pv="19.8")], DEFAULT)
+        self.assertEqual((r.used_swords, r.free_swords), (5, 15))
+
+    def test_non_positive_entry_price_is_not_trusted(self):
+        self.assertEqual(count_swords([pos(value="0")], DEFAULT).status, STATUS_UNAVAILABLE)
 
     def test_leverage_and_margin_do_not_change_the_volume(self):
         low = count_swords([pos(value="19", im="19")], DEFAULT)

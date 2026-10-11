@@ -234,7 +234,7 @@ class GuiSmokeTests(unittest.TestCase):
                                              counter_factory=lambda get: (lambda: result(used=4, free=16)),
                                              interval_s=60, start_worker=False)
             try:
-                self.assertEqual(root.title(), "SwordCounter")
+                self.assertEqual(root.title(), "⚔SwordCounter⚔")
                 self.assertTrue(bool(root.attributes("-topmost")))
                 self.assertEqual(root.resizable(), (False, False))
                 self.assertEqual(gui.header_label.cget("text"), "1 РО = 5 USDT")
