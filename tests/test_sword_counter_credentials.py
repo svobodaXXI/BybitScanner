@@ -317,12 +317,29 @@ class WizardTests(unittest.TestCase):
         self.assertEqual((code, store.saves), (1, []))
         self.assertNotIn(SECRET, text)
 
-    def test_malformed_input_is_rejected_before_any_network_call(self):
-        for key, secret in (("short", SECRET), (KEY, "tiny"), (KEY + " x", SECRET), ("", ""), (KEY, SECRET + "\n!")):
+    def test_only_empty_input_is_rejected_before_any_network_call(self):
+        for key, secret in (("", SECRET), (KEY, ""), ("", ""), ("   ", SECRET), (KEY, "\n")):
             with self.subTest(key=len(key), secret=len(secret)):
                 code, store, text, _asked, calls = self.run_wizard(secrets=(key, secret))
                 self.assertEqual((code, store.saves, calls), (1, [], []))
-                self.assertNotIn(secret or "\0", text)
+                self.assertNotIn(secret.strip() or "<none>", text)
+
+    def test_no_local_format_restriction_bybit_decides(self):
+        # Regression: the wizard used to refuse these locally as "not like a Bybit key" before
+        # ever asking Bybit. Now every non-empty pair must reach the Bybit check.
+        for key, secret in (("short", "tiny"), ("A" * 100, "b" * 200), ("key_with-dash.1", "sec/ret+=="),
+                            ("key with space", "secret with space")):
+            with self.subTest(key=len(key), secret=len(secret)):
+                code, store, text, _asked, calls = self.run_wizard(secrets=(key, secret))
+                self.assertEqual(code, 0, text)
+                self.assertEqual([(c.api_key, c.api_secret) for c in calls], [(key, secret)])
+                self.assertEqual([(c.api_key, c.api_secret) for c in store.saves], [(key, secret)])
+                self.assertNotIn(secret, text)
+
+    def test_a_pair_bybit_refuses_is_not_saved(self):
+        code, store, text, _asked, calls = self.run_wizard(secrets=("short", "tiny"), verify_ok=False)
+        self.assertEqual((code, store.saves, len(calls)), (1, [], 1))
+        self.assertNotIn("tiny", text)
 
     def test_input_is_trimmed_but_otherwise_unchanged(self):
         code, store, _text, _a, _c = self.run_wizard(secrets=(f"  {KEY}\n", f"{SECRET}  "))

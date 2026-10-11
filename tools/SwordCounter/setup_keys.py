@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import re
 import sys
 from dataclasses import dataclass
 from typing import Callable
@@ -27,9 +26,6 @@ from tools.SwordCounter.bybit_positions import (
 from tools.SwordCounter.credential_store import (
     DEFAULT_TARGET, CredentialStore, WindowsCredentialStore, resolve_credentials,
 )
-
-_KEY = re.compile(r"^[A-Za-z0-9]{8,64}$")
-_SECRET = re.compile(r"^[A-Za-z0-9]{16,128}$")
 
 INTRO = """\
 SwordCounter: настройка отдельного API-ключа Bybit (только чтение)
@@ -68,10 +64,11 @@ def verify_key(credentials: Credentials, *,
 
 
 def _validate(key: str, secret: str) -> str | None:
-    if not _KEY.match(key):
-        return "Формат API-ключа не похож на ключ Bybit (латиница и цифры, без пробелов)."
-    if not _SECRET.match(secret):
-        return "Формат секрета не похож на секрет Bybit (латиница и цифры, без пробелов)."
+    """Local check is only 'not empty': the real verdict on the format comes from Bybit (query-api)."""
+    if not key:
+        return "API-ключ пуст."
+    if not secret:
+        return "API-секрет пуст."
     return None
 
 
