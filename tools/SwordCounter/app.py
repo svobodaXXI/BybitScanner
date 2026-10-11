@@ -33,7 +33,7 @@ from tools.SwordCounter.view_model import GREY, WORKER_FAILED, build_display, he
 REFRESH_INTERVAL_S = 10
 POLL_MS = 500
 SWORDS_ICON = "⚔"   # crossed swords
-WINDOW_TITLE = f"{SWORDS_ICON}SwordCounter{SWORDS_ICON}"
+WINDOW_TITLE = "SwordCounter"   # the crossed-swords icon sits left of it (swords.ico)
 GEAR_ICON = "⚙"
 FONT = "Segoe UI"
 SECRET_MASK = "•"

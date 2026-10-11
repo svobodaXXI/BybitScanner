@@ -234,7 +234,7 @@ class GuiSmokeTests(unittest.TestCase):
                                              counter_factory=lambda get: (lambda: result(used=4, free=16)),
                                              interval_s=60, start_worker=False)
             try:
-                self.assertEqual(root.title(), "⚔SwordCounter⚔")
+                self.assertEqual(root.title(), "SwordCounter")
                 self.assertTrue(bool(root.attributes("-topmost")))
                 self.assertTrue(app_module.ICON_PATH.is_file())
                 self.assertEqual(app_module.ICON_PATH.read_bytes()[:4], bytes((0, 0, 1, 0)))   # a real .ico
