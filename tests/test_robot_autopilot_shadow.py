@@ -14,7 +14,8 @@ import pattern_robot_integration as integration
 from robot_candidate_store import create_signal_snapshot, load_candidate
 from terminal.application.robot_autopilot import (
     OUTCOME_ALLOW, OUTCOME_REJECT, OUTCOME_WAIT, POLICY_VERSION, REASON_ELIGIBLE,
-    REASON_CANDIDATE_INVALID, REASON_CANDIDATE_NOT_EXECUTABLE, REASON_PORTFOLIO_POLICY_UNSET,
+    REASON_CANDIDATE_INVALID, REASON_CANDIDATE_NOT_EXECUTABLE, REASON_CANDIDATE_STALE,
+    REASON_PORTFOLIO_POLICY_UNSET,
     REASON_PORTFOLIO_AGGREGATE_CAP,
     REASON_PROTECTION_HEALTH_UNKNOWN, REASON_PROTECTION_UNHEALTHY, REASON_ROBOT_NOT_READY,
     REASON_SYMBOL_OWNED,
@@ -22,8 +23,12 @@ from terminal.application.robot_autopilot import (
 from terminal.application.robot_autopilot_shadow import (
     SOURCE_BOX_PLAN, SOURCE_SCANNER, observe_shadow_candidate,
 )
+from terminal.application.robot_admission import candidate_snapshot_sha256
 from terminal.application.robot_portfolio import collect_portfolio_facts
 from terminal.domain.models import Symbol, TradingAccountId
+from terminal.persistence.source_terminal_events import (
+    SourceTerminalEvent, append_source_terminal_event, source_terminal_events_path,
+)
 from terminal.persistence.sqlite_store import SQLiteStore
 from tests.test_continuity_recovery_candidate_snapshot import _runtime
 from tests.test_terminal_paper_runtime import _CONFIRMED_BOX_FORMATION, _set_admission
@@ -127,6 +132,20 @@ class ShadowObserverTests(unittest.TestCase):
         _wedge(db.candidates)
         result = db.observe("wedge-1", health=lambda: True).result
         self.assertEqual((result.outcome, result.reason_code), (OUTCOME_ALLOW, REASON_ELIGIBLE))
+
+    def test_proven_source_terminal_snapshot_is_never_admitted(self):
+        db = self._db()
+        envelope = _wedge(db.candidates)
+        _wedge(db.candidates, "w-live", symbol="AAAUSDT")
+        append_source_terminal_event(source_terminal_events_path(db.store.path), SourceTerminalEvent(
+            trading_account_id="paper", candidate_ref="wedge-1",
+            snapshot_sha256=candidate_snapshot_sha256(envelope["signal_snapshot"]), source="SCANNER",
+            terminal_status="EXPIRED", rule="WEDGE_EXPIRED_AT_APEX_NO_RETEST", rule_version="2",
+            evidence_json="{}", observed_at_ms=1))
+        expired = db.observe("wedge-1", health=lambda: True).result
+        self.assertEqual((expired.outcome, expired.reason_code), (OUTCOME_REJECT, REASON_CANDIDATE_STALE))
+        live = db.observe("w-live", health=lambda: True).result
+        self.assertEqual((live.outcome, live.reason_code), (OUTCOME_ALLOW, REASON_ELIGIBLE))
 
     def test_unhealthy_or_failing_protection_source_never_counts_as_healthy(self):
         db = self._db()

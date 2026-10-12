@@ -7,6 +7,7 @@ Temporary PAPER DB, candidate store and sidecar only; the candle loader is a stu
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import pandas as pd
 
@@ -55,6 +56,7 @@ def _frame(closes, *, skip=(), forming=True):
 
 
 QUIET = [100.0] * 10  # indices 11..20: never above the upper boundary
+BREAKOUT_NO_RETEST = [100.0] * 4 + [126.0] * 6  # breakout at 15, lows never back to upper
 
 
 class EvaluateApexExpiryTests(unittest.TestCase):
@@ -70,6 +72,13 @@ class EvaluateApexExpiryTests(unittest.TestCase):
         closes = list(QUIET)
         closes[4] = 126.0  # index 15: close 126 > upper 115
         self.assertIsNone(evaluate_wedge_apex_expiry(_snapshot(), _frame(closes)))
+
+    def test_unretested_breakout_expires_at_apex(self):
+        # index 15 closes above upper 115 and every later low stays above the boundary.
+        evidence = evaluate_wedge_apex_expiry(_snapshot(), _frame(BREAKOUT_NO_RETEST))
+        self.assertIsNotNone(evidence)
+        self.assertEqual((evidence["breakout_index"], evidence["apex_candle_index"]), (15, 20))
+        self.assertIsNone(evaluate_wedge_apex_expiry(_snapshot(), _frame(QUIET))["breakout_index"])
 
     def test_missing_candle_is_not_expiry(self):
         self.assertIsNone(evaluate_wedge_apex_expiry(_snapshot(), _frame(QUIET, skip={5})))
@@ -231,15 +240,38 @@ class ProducerRunTests(unittest.TestCase):
         self.assertEqual(self.run_once(_frame(QUIET)), {"w1": "IDENTITY_MISMATCH"})
         self.assertFalse(self.sidecar.exists())
 
-    def test_physical_obligation_keeps_reservation_after_event(self):
+    def test_physical_obligation_blocks_the_event_and_keeps_reservation(self):
         self.allow("w1")
         self.store.create_paper_limit(client_action_id="o", request_fingerprint="o", order_id=OrderId("o"),
             order_link_id="o", trading_account_id=ACCOUNT, symbol=Symbol("WEDGEUSDT"), side=OrderSide.BUY,
             price=Decimal(1), quantity=Decimal(125), created_at_ms=1)
-        self.assertEqual(self.run_once(_frame(QUIET)), {"w1": "APPENDED"})
+        self.assertEqual(self.run_once(_frame(QUIET)), {"w1": "OBLIGATION_PENDING"})
+        self.assertFalse(self.sidecar.exists())
         facts = self.facts()
         self.assertIn("shadow:w1", [r["identity"] for r in facts["reservations"]])
         self.assertEqual(facts["released_shadow_reservations"], [])
+
+    def test_unproven_obligations_append_nothing(self):
+        self.allow("w1")
+        with mock.patch("terminal.application.wedge_source_terminal_producer.collect_portfolio_facts",
+                        side_effect=RuntimeError("collector unavailable")):
+            self.assertEqual(self.run_once(_frame(QUIET)), {"w1": "OBLIGATIONS_UNPROVEN"})
+        self.assertFalse(self.sidecar.exists())
+
+    def test_unretested_breakout_is_appended_and_releases(self):
+        sha = self.allow("w1")
+        self.assertEqual(self.run_once(_frame(BREAKOUT_NO_RETEST)), {"w1": "APPENDED"})
+        self.assertEqual(load_terminal_identities(self.sidecar, "paper"), frozenset({("w1", sha)}))
+        facts = self.facts()
+        self.assertEqual((facts["occupied_ro"], len(facts["released_shadow_reservations"])), (0, 1))
+
+    def test_breakout_then_retest_stays_reserved(self):
+        self.allow("w1")
+        closes = list(QUIET)
+        closes[4] = 126.0  # BREAKOUT at 15, the index-16 low touches the boundary: RETEST
+        self.assertEqual(self.run_once(_frame(closes)), {"w1": "NOT_PROVEN"})
+        self.assertFalse(self.sidecar.exists())
+        self.assertEqual(self.facts()["occupied_ro"], 1)
 
     def test_unreadable_sidecar_stops_the_run(self):
         self.allow("w1")

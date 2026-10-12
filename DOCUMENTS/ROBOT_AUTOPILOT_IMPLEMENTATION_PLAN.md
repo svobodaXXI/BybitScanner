@@ -527,6 +527,19 @@ ALLOW survives restart/OFF and continues to reserve one RO. A3 implements the
 linked Robot-candidate release route only; consuming a source-only terminal
 observation requires its own future append-and-release integration.
 
+Wedge source-terminal rule (A3-R4..R6, SHADOW RUN #5, rule
+`WEDGE_EXPIRED_AT_APEX_NO_RETEST` v2): a Wedge SHADOW ALLOW is source `EXPIRED`
+only when a complete, ordered replay of closed 1m candles from its frozen anchor
+through `robot_state_machine` reaches `EXPIRED_AT_APEX` with no RETEST. An
+unretested BREAKOUT ends this way too (the Robot enters only on a retest);
+BREAKOUT -> RETEST_DETECTED, gaps, identity mismatch and anything unproven stay
+reserved. The producer appends only for the exact (candidate_ref,
+snapshot_sha256) and only when the PAPER portfolio collector proves no position,
+working LIMIT or Robot idea on the symbol (unprovable: nothing appended). The
+Autopilot never admits a snapshot with such an event: it is REJECT
+`CANDIDATE_STALE`. Geometry, Box, RO/capital, risk and existing positions are
+unchanged.
+
 ## S2 ingress admission gate — 2026-10-10 / #448
 
 The Autopilot protection-health source is `make_autopilot_protection_health()`:

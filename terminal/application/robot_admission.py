@@ -20,6 +20,9 @@ from robot_candidate_store import approve_candidate, load_candidate
 import robot_l_shape
 from robot_state_machine import is_supported_pattern
 from terminal.domain.models import Symbol, TradingAccountId
+from terminal.persistence.source_terminal_events import (
+    SourceTerminalEventError, load_terminal_identities, source_terminal_events_path,
+)
 from terminal.persistence.sqlite_store import (
     PersistenceError,
     RobotCandidateRecord,
@@ -238,6 +241,27 @@ def box_plan_source_admission_error(
     return None
 
 
+def _reject_source_terminal_snapshot(
+    store: SQLiteStore, candidate_id: str, snapshot_sha256: str,
+) -> None:
+    """Fail closed: a proven source-terminal (EXPIRED/INVALIDATED) snapshot is never admitted.
+
+    A missing sidecar proves nothing and admits; an unreadable, foreign or
+    inconsistent one cannot be trusted, so a new admission is refused.
+    """
+    path = getattr(store, "path", None)
+    if path is None:
+        return
+    try:
+        identities = load_terminal_identities(
+            source_terminal_events_path(path), PAPER_ACCOUNT_ID.value,
+        )
+    except SourceTerminalEventError:
+        raise RobotAdmissionRejected("Source-terminal events are unavailable") from None
+    if identities is not None and (candidate_id, snapshot_sha256) in identities:
+        raise RobotAdmissionRejected("Scanner candidate snapshot is proven terminal")
+
+
 def admit_robot_candidate(
     candidate_id: str,
     *,
@@ -311,6 +335,7 @@ def admit_robot_candidate(
                     raise RobotAdmissionRejected("Robot runtime state is unavailable")
                 if runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":
                     raise RobotAdmissionRejected("Robot admission is not ready")
+                _reject_source_terminal_snapshot(store, candidate_id, snapshot_sha256)
 
                 owners = active_robot_owner_candidate_ids(
                     store, PAPER_ACCOUNT_ID, symbol, excluding_candidate_id=candidate_id,

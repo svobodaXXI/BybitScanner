@@ -52,7 +52,7 @@ from terminal.application.robot_autopilot import (
     evaluate_auto_admission,
     record_auto_decision,
 )
-from terminal.application.robot_portfolio import collect_portfolio_facts
+from terminal.application.robot_portfolio import _source_terminal_identities, collect_portfolio_facts
 from terminal.domain.models import Category, PositionKey, PositionSide, Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import (
     DuplicateIdentity,
@@ -384,6 +384,13 @@ class _BatchSnapshot:
         return updated
 
 
+def _proven_source_terminal(store: SQLiteStore, account: TradingAccountId, candidate: _Candidate) -> bool:
+    if candidate.snapshot_sha256 is None:
+        return False
+    identities, _status = _source_terminal_identities(store, account)
+    return (candidate.ref, candidate.snapshot_sha256) in identities
+
+
 def _fresh_facts(
     store: SQLiteStore, account: TradingAccountId, *, mode: str, candidate: _Candidate,
     decisions: tuple[RobotAutoDecisionRecord, ...],
@@ -420,7 +427,9 @@ def _fresh_facts(
         robot_recovery_status=runtime.recovery_status if runtime is not None else None,
         candidate_valid=candidate.valid,
         candidate_executable=candidate.executable,
-        candidate_stale=False,  # no age-based expiry; other admission gates still apply
+        # No age-based expiry: only a durable source-terminal event for this exact
+        # (ref, snapshot) identity proves the snapshot ended; other gates still apply.
+        candidate_stale=_proven_source_terminal(store, account, candidate),
         candidate_invalidated=candidate.invalidated,
         already_admitted=candidate.already_admitted,
         reconciliation_clear=(
