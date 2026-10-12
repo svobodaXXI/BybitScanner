@@ -357,3 +357,54 @@ While the current RVL-R6 owner run continues:
 6. CELO/manual position debt remains non-Robot and must not contaminate Robot
    ownership/recovery logic.
 
+
+
+## G-TRI-20261012 — owner-observed false triangle geometry (12 charts)
+
+**Status: OPEN / VISUAL_ONLY pending frozen source-time OHLC.** Owner explicitly prioritizes parallel *offline* Triangle geometry investigation while SHADOW RUN #4 operates unchanged on the main PC. Charts provided 2026-10-12; visual labels are not yet source-time deterministic acceptance fixtures. Do not tune parameters to screenshots, use post-decision candles, or modify the running Scanner/Robot. Owning Geometry Gold inventory and existing detector/spec remain authoritative.
+
+### Owner chart classification — preserve each observation
+
+| Symbol/TF | Owner assessment | Geometry defect / expected correction |
+|---|---|---|
+| ARXUSDT 1m | conditional acceptance | upper anchor should use earlier prominent high, then lower anchor might be valid; current upper start fails structural selection |
+| JASMYUSDT 5m | reject | no valid triangle; erratic spike/crossings mistaken for coherent bounded oscillation |
+| KASUSDT 5m | reject current geometry | lower anchor taken before impulse; select both from local post-impulse consolidation |
+| KERNELUSDT 5m | reject | malformed geometry: oscillations do not meaningfully cross centerline / traverse channel |
+| LITUSDT 5m | reject current geometry | lower anchor belongs to pre-impulse swing, not post-impulse local triangle |
+| MANAUSDT 5m | reject current geometry | same pre-impulse lower anchor; post-impulse locality required |
+| MEGAUSDT 5m | positive visual control | coherent local converging boundaries and internal oscillations; preserve detection |
+| MUBARAKUSDT 1m | relocate support anchor | use first local low after downside impulse; earlier/other low ignored |
+| PARTIUSDT 5m | reject current geometry | upper anchor too far from START/lower pivot; require neighboring opposite pivot anchors |
+| PYTHUSDT 1m | relocate lower anchor | lower should use next structural low after upper anchor, not distant pre-impulse low |
+| RSRUSDT 5m | relocate upper anchor | use impulse-ending highest high as upper anchor |
+| Additional rule across examples | reject formed breakouts/excursions | multi-candle arc outside triangle is invalid; only isolated wick or prompt sweep-and-reclaim may be tolerated. A structural excursion is not a wick. |
+
+### General structural requirements (hypotheses to test on exact candles)
+
+1. **Impulse boundary / segment locality:** detect impulse-ending pivot first; triangle candidate must begin *after* impulse and use pivots belonging to the same post-impulse consolidation. Never let an older swing set one boundary solely to maximize regression fit. Distinguish impulse direction and ending high/low without future leakage.
+2. **Paired initial anchors:** initial upper/lower anchors must be consecutive *opposite-type structural pivots* in the formation's swing sequence (not necessarily literally adjacent candles). Search multiple local start pairs; if none valid reject, do not borrow pre-impulse pivot. Account for ARX/RSR high and MUBARAK first low.
+3. **Swing engagement:** validate repeated alternating excursions around time-varying midline (upper+lower)/2; require meaningful penetration/touch of centerline on each qualifying leg and prefer boundary-to-boundary amplitude. Normalize amplitude by contemporaneous width/ATR; do not equate wick noise with a swing. Distinguish negative JASMY/KERNEL from MEGA.
+4. **Whole-candle boundary integrity:** reject multi-candle body closes outside lines, sustained arcs and unresolved breakout/retest. Define at most isolated wick / short sweep immediately reclaimed inside; boundary breaches must be judged as-of decision, not with future recovery.
+5. **Convergence & contacts:** positive width until observed decision, shrinking width and valid upper/lower touch ordering; score only after hard structure admission; old 80–100 scores are not correctness evidence.
+6. **Source-time discipline:** reconstruct and store exact OHLC, decision cutoff, timeframes, anchor indices, pivotal alternation and expected acceptance/ranges. Screenshots alone remain VISUAL_ONLY.
+
+### Narrow implementation plan / acceptance
+
+**G-TRI-1 evidence:** recover exact historical source-time windows from existing Scanner snapshots/archives if available; place manifest references and expected anchor ranges in existing Geometry Gold convention (no fabricated bars), label MEGA positive and owner rejects/relocations negative until confirmed by candles. Preserve all 12 chart labels.
+
+**G-TRI-2 anchor locality (first code slice):** on a separate worktree, prove RED on recovered KAS/LIT/MANA/PARTI/PYTH/MUBARAK/RSR cases; identify post-impulse pivot sequence, enforce neighboring opposing anchors and disallow old pre-impulse pivots; prove MEGA preserved. Change only Triangle detector/shared geometry boundary if owning spec permits; do not alter Wedge/Box without evidence.
+
+**G-TRI-3 structure admission (next independent slice):** enforce alternating midline engagement and continuous boundary integrity (sustained body excursion invalid, wick/sweep tolerance explicit); negative JASMY/KERNEL, preserve MEGA/valid controls. Define quantitative thresholds from OHLC distribution/ATR rather than arbitrary hardcoded ticker rules. Check ARX alternate upper anchor.
+
+**G-TRI-4 validation:** focused geometry tests for negative+positive set, source-time replay without lookahead, no regression of other patterns, then mandatory one complete real Scanner/Telegram universe acceptance when owner authorizes a new runtime cycle **after SHADOW RUN #4**. No runtime startup or hot replacement during active RUN #4.
+
+### External methodology reference (design input, not authority)
+
+- `GregoryMorse/trendln`: local minima/maxima, multiple trendline fit methods, wrong-side area/error: https://github.com/GregoryMorse/trendln
+- `ednunezg/pytrendline`: support/resistance line fit using confirmed pivots and exhaustive small-window combinations: https://github.com/ednunezg/pytrendline
+- `white07S/TradingPatternScanner`: triangle heuristics based on rolling extrema: https://github.com/white07S/TradingPatternScanner
+
+Adopt only the **ideas** (local extrema, candidate line enumeration, fit/breach validation), not external detectors wholesale: simple rolling triangle flags alone do not establish the owner's impulse locality and centerline/oscillation criteria. No external code copied.
+
+**Safety / scheduling:** SHADOW RUN #4 remains active; do not alter runtime code, live DB, scanner process, Telegram or trading modes. This is geometry documentation/research until owner authorizes an isolated implementation slice.
