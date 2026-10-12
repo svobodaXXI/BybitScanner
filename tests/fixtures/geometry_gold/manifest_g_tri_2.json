@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "evidence_class_note": "RECOVERED_PIVOT_EQUIVALENT cases are outside the READY seed (manifest_v1.json); negatives are expected RED until G-TRI anchor locality is implemented.",
+ "evidence_class_note": "RECOVERED_PIVOT_EQUIVALENT cases are outside the READY seed (manifest_v1.json); since G-TRI-3 all four cases are expected to pass (tests/test_geometry_triangle_local_anchors.py).",
  "cases": [
   {
    "case_id": "KASUSDT-5m-triangle-pre-impulse-anchor-20261012",
