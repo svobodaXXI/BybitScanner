@@ -32,7 +32,8 @@ LIMIT = 8
 class _Counting:
     """Count heavy whole-table reads made through the store during one arrival."""
 
-    NAMES = ("load_robot_candidates", "load_robot_auto_decisions", "load_paper_portfolio_rows")
+    NAMES = ("load_robot_candidates", "load_robot_auto_decisions", "load_paper_portfolio_rows",
+             "load_robot_candidates_for_portfolio", "load_robot_auto_decision_heads")
 
     def __init__(self, test):
         self.calls = dict.fromkeys(self.NAMES, 0)
@@ -122,9 +123,12 @@ class BoundedDueWaitBatchTests(unittest.TestCase):
         self.seed_waits(40)
         counting = _Counting(self)
         self.arrive("arrival-1", now=T1)
-        self.assertEqual(counting.calls, {"load_robot_candidates": 1,
-                                          "load_robot_auto_decisions": 1,
-                                          "load_paper_portfolio_rows": 1})
+        # P0 RUN #3: one reduced read of each kind, never the full audit/candidate tables.
+        self.assertEqual(counting.calls, {"load_robot_candidates": 0,
+                                          "load_robot_auto_decisions": 0,
+                                          "load_paper_portfolio_rows": 1,
+                                          "load_robot_candidates_for_portfolio": 1,
+                                          "load_robot_auto_decision_heads": 1})
 
     def test_ro_is_spent_sequentially_with_increasing_audit_sequence(self):
         self.seed_waits(24)  # health unknown at T0
@@ -180,9 +184,9 @@ class BoundedDueWaitBatchTests(unittest.TestCase):
 
     def test_time_budget_ends_the_batch_between_candidates(self):
         refs = self.seed_waits(12)
-        ticks = iter(range(0, 10_000, 5))  # 5 s per reading: over budget after the first WAIT
+        readings = iter([0.0, 0.5, 2.5])  # start, before WAIT 1 (in budget), before WAIT 2 (spent)
         original = shadow._monotonic
-        shadow._monotonic = lambda: float(next(ticks))
+        shadow._monotonic = lambda: next(readings, 99.0)
         self.addCleanup(setattr, shadow, "_monotonic", original)
         self.arrive("arrival-1", now=T1)
         at_t1 = self.evaluated_at(T1)
@@ -193,6 +197,21 @@ class BoundedDueWaitBatchTests(unittest.TestCase):
         self.arrive("arrival-2", now=T1)
         self.assertEqual(sorted(d.candidate_ref for d in self.evaluated_at(T1)
                                 if d.candidate_ref.startswith("w")), refs[:1 + LIMIT])
+
+    def test_reads_that_spend_the_budget_start_no_wait_evaluation(self):
+        # The batch reads count against the budget: if they alone spend it, no due WAIT
+        # is evaluated, only the arrival; every WAIT stays due for a later arrival.
+        refs = self.seed_waits(12)
+        readings = iter([0.0, 2.0])  # start, then the check before the first WAIT
+        original = shadow._monotonic
+        shadow._monotonic = lambda: next(readings, 99.0)
+        self.addCleanup(setattr, shadow, "_monotonic", original)
+        self.arrive("arrival-1", now=T1)
+        self.assertEqual([d.candidate_ref for d in self.evaluated_at(T1)], ["arrival-1"])
+        shadow._monotonic = original
+        self.arrive("arrival-2", now=T1)
+        self.assertEqual(sorted(d.candidate_ref for d in self.evaluated_at(T1)
+                                if d.candidate_ref.startswith("w")), refs[:LIMIT])
 
     def test_a_broken_old_wait_never_blocks_the_batch_or_the_arrival(self):
         refs = self.seed_waits(4)

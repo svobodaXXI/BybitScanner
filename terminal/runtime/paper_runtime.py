@@ -26,8 +26,9 @@ from terminal.api.models import (
     LiveMarketCommandRequest,
 )
 from terminal.application.robot_autopilot_shadow import (
-    SOURCE_BOX_PLAN, SOURCE_SCANNER, admit_arrived_auto_candidate,
-    observe_shadow_candidate, owner_autopilot_mode, resolve_autopilot_evidence_target,
+    DEFERRED_HANDOVER, SOURCE_BOX_PLAN, SOURCE_SCANNER, ShadowChunk, ShadowDeferredObserver,
+    admit_arrived_auto_candidate, commit_shadow_chunk, observe_shadow_candidate,
+    owner_autopilot_mode, resolve_autopilot_evidence_target,
 )
 from terminal.application.robot_breakout_monitor import (
     DEFAULT_TICK_INTERVAL_S, EmergencyClosePath, INACTIVE_LIMIT_STATUSES, RobotBreakoutMonitor,
@@ -607,6 +608,7 @@ class PaperRuntime:
         runtime_process_identity = RuntimeProcessIdentity.capture(
             deployment_identity=deployment_identity,
         )
+        self._process_instance_id = runtime_process_identity.instance_id
         live_limit_acceptance = (
             LiveLimitAcceptanceService(
                 self._account_manager, self.store, build_sha=live_limit_build_sha,
@@ -687,6 +689,12 @@ class PaperRuntime:
         # Autopilot SHADOW reads protection health from the coverage manager when
         # the HTTP runtime binds it; otherwise that fact is unknown (WAIT).
         self._autopilot_protection_health: Callable[[], bool] | None = None
+        # P0 RUN #3 (variant B): SHADOW is evaluated on the calling thread from a read
+        # snapshot; the owner only runs ``commit_shadow_chunk`` (bounded check and commit).
+        self._shadow_deferred = ShadowDeferredObserver(
+            database_path, self._paper_account_id, self._commit_shadow_chunk_via_owner,
+            protection_healthy=self._shadow_protection_health,
+        )
 
         context_provider = PaperCommandContextProvider(
             store=self.store,
@@ -946,9 +954,30 @@ class PaperRuntime:
                 f"source={source} candidate_ref={candidate_ref} "
                 f"error_class={type(error).__name__}"
             )
+        # SHADOW: evaluated here, off the owner; only a bounded commit reaches the owner.
+        # OFF / PAPER_AUTO (or a mode switched meanwhile): the unchanged owner entry decides.
+        if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
+            return
         self._dispatch_robot_command(
-            lambda runtime: runtime.observe_autopilot_candidate(source, candidate_ref)
+            lambda runtime: runtime.observe_autopilot_candidate(
+                source, candidate_ref, handover=True)
         )
+
+    def autopilot_shadow_deferred_metrics(self) -> dict[str, object]:
+        """Any thread. Per-process SHADOW deferred counters; dropped > 0 = incomplete run."""
+        return {**self._shadow_deferred.metrics(), "process_instance_id": self._process_instance_id}
+
+    def _shadow_protection_health(self) -> bool | None:
+        provider = self._autopilot_protection_health
+        return None if provider is None else provider()
+
+    def _commit_shadow_chunk_via_owner(self, chunk: ShadowChunk) -> str:
+        return self._dispatch_robot_command(lambda runtime: runtime.commit_shadow_chunk(chunk))
+
+    def commit_shadow_chunk(self, chunk: ShadowChunk) -> str:
+        """Owner thread. Bounded freshness check and audit commit of <= 2 SHADOW rows; never evaluates."""
+        return commit_shadow_chunk(
+            self.store, chunk, protection_healthy=self._shadow_protection_health)
 
     def _prepare_autopilot_evidence(self, source: str, candidate_ref: str) -> None:
         evidence = self.robot_catchup_evidence
@@ -971,16 +1000,26 @@ class PaperRuntime:
     def bind_autopilot_protection_health(self, provider: Callable[[], bool] | None) -> None:
         self._autopilot_protection_health = provider
 
-    def observe_autopilot_candidate(self, source: str, candidate_ref: str):
+    def observe_autopilot_candidate(
+        self, source: str, candidate_ref: str, *, handover: bool = False,
+    ):
         """Owner thread. Autopilot evaluation of one arrived candidate.
 
         OFF does nothing. SHADOW stays read-only for every trading object.
         PAPER_AUTO routes the same policy result through the canonical Robot
         admission boundary. A failure is logged and never reaches the Scanner
         pass or the Box plan freeze.
+
+        ``handover``: the deferred SHADOW observer saw a non-SHADOW mode. If the
+        mode became SHADOW meanwhile, the owner never runs the SHADOW evaluation;
+        the arrival is counted as dropped.
         """
         state = self.store.get_robot_autopilot_state(self._paper_account_id)
         mode = state.mode if state is not None else "OFF"
+        if handover and mode != "PAPER_AUTO":
+            if mode == "SHADOW":
+                self._shadow_deferred.record_drop(source, candidate_ref, "HANDOVER_MODE_SHADOW")
+            return None
         try:
             if mode == "PAPER_AUTO":
                 return admit_arrived_auto_candidate(

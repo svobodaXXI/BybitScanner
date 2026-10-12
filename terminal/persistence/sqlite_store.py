@@ -79,6 +79,85 @@ class ConcurrentUpdate(PersistenceError):
     """Raised when optimistic state no longer matches supplied evidence."""
 
 
+class ShadowCommitStale(PersistenceError):
+    """A SHADOW audit chunk was computed against state that has since changed (nothing written)."""
+
+
+class ShadowCommitBusy(PersistenceError):
+    """The write lock was not obtained within the short commit wait (nothing written)."""
+
+
+SHADOW_COMMIT_MAX_ROWS = 2
+
+
+def _validate_robot_auto_decision_fields(record: "RobotAutoDecisionRecord") -> None:
+    """Field invariants shared by ``append_robot_auto_decision`` and the bounded SHADOW commit."""
+    if (
+        not record.decision_id.strip()
+        or not record.candidate_ref.strip()
+        or not record.pattern.strip()
+        or not record.timeframe.strip()
+        or not record.source_identity.strip()
+        or not record.policy_version.strip()
+        or not record.reason_code.strip()
+    ):
+        raise ValueError("Robot auto decision identity fields must be non-empty")
+    if record.mode not in {"SHADOW", "PAPER_AUTO"}:
+        raise ValueError("Robot auto decision requires SHADOW or PAPER_AUTO mode")
+    if record.outcome not in ROBOT_AUTO_DECISION_OUTCOMES:
+        raise ValueError("unsupported Robot auto decision outcome")
+    if record.evaluated_at_ms < 0:
+        raise ValueError("Robot auto decision timestamp must not be negative")
+    if record.snapshot_sha256 is not None and (
+        len(record.snapshot_sha256) != 64
+        or any(ch not in "0123456789abcdef" for ch in record.snapshot_sha256)
+    ):
+        raise ValueError("Robot auto decision snapshot hash is invalid")
+
+
+_AUTO_DECISION_INSERT = """INSERT INTO robot_auto_decisions (
+    decision_id, trading_account_id, candidate_ref, pattern, symbol,
+    timeframe, source_identity, snapshot_sha256, mode, policy_version,
+    outcome, reason_code, evaluated_at_ms, resulting_candidate_id, facts_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
+def _auto_decision_values(record: "RobotAutoDecisionRecord") -> tuple:
+    return (
+        record.decision_id, record.trading_account_id.value, record.candidate_ref, record.pattern,
+        record.symbol.value, record.timeframe, record.source_identity, record.snapshot_sha256,
+        record.mode, record.policy_version, record.outcome, record.reason_code,
+        record.evaluated_at_ms, record.resulting_candidate_id, record.facts_json,
+    )
+
+
+# O(1) owner-side freshness check of a SHADOW chunk: Autopilot state (OFF/STOP/mode
+# toggles), Robot runtime state and the audit tail. Compared with the values read in
+# the snapshot the facts were computed from.
+_SHADOW_COMMIT_MARKERS_SQL = """SELECT
+    (SELECT json_array(version, updated_at_ms, mode) FROM robot_autopilot_state WHERE trading_account_id=:a),
+    (SELECT json_array(version, updated_at_ms, mode, recovery_status) FROM robot_runtime_state WHERE trading_account_id=:a),
+    (SELECT json_array(count(*), coalesce(max(evaluated_at_ms), 0)) FROM robot_auto_decisions WHERE trading_account_id=:a)"""
+
+# Everything the SHADOW facts are computed from, as ONE statement (one execute, one row):
+# every UPDATE of these tables bumps version/state_revision/updated_at_ms (checked against
+# the UPDATE statements in this module); append-only tables are covered by their count.
+_SHADOW_FULL_MARKERS_SQL = _SHADOW_COMMIT_MARKERS_SQL + """,
+    (SELECT json_array(count(*), coalesce(max(version), 0), coalesce(max(updated_at_ms), 0)) FROM paper_accounts WHERE trading_account_id=:a),
+    (SELECT json_array(count(*), coalesce(max(updated_at_ms), 0), coalesce(sum(updated_at_ms), 0),
+        coalesce(sum(length(status)), 0), coalesce(sum(length(filled_quantity)), 0), coalesce(sum(length(price)), 0))
+        FROM paper_limit_orders WHERE trading_account_id=:a),
+    (SELECT json_array(count(*)) FROM box_order_ownership WHERE trading_account_id=:a),
+    (SELECT json_array(count(*)) FROM executions WHERE trading_account_id=:a),
+    (SELECT json_array(count(*), coalesce(max(version), 0), coalesce(sum(version), 0), coalesce(max(updated_at_ms), 0))
+        FROM position_projections WHERE trading_account_id=:a),
+    (SELECT json_array(count(*), coalesce(max(version), 0), coalesce(sum(version), 0), coalesce(max(updated_at_ms), 0))
+        FROM trading_commands WHERE trading_account_id=:a),
+    (SELECT json_array(count(*), coalesce(sum(state_revision), 0), coalesce(max(updated_at_ms), 0))
+        FROM robot_candidates WHERE trading_account_id=:a),
+    (SELECT json_array(count(*), coalesce(sum(version), 0), coalesce(max(updated_at_ms), 0), coalesce(sum(exit_time_ms IS NULL), 0))
+        FROM robot_trades WHERE trading_account_id=:a)"""
+
+
 class ImmutableExecutionConflict(PersistenceError):
     """Raised when one execution identity is reused with different evidence."""
 
@@ -564,6 +643,28 @@ class RobotCandidateRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RobotCandidatePortfolioView:
+    """Portfolio-collector projection of one Robot candidate (A6, P0 RUN #3).
+
+    Identity, status, Robot state and lineage as in ``RobotCandidateRecord``. The
+    signal snapshot is the full, hash-verified snapshot only for a handoff participant
+    (a candidate carrying ``source_box_candidate_id``, or one named as a source); for
+    every other candidate it is empty, which is all the collector reads from it there.
+    """
+
+    candidate_id: str
+    trading_account_id: TradingAccountId
+    symbol: Symbol
+    status: str
+    signal_snapshot: dict[str, object]
+    snapshot_sha256: str
+    robot_state: dict[str, object] | None
+    state_revision: int
+    approved_at_ms: int | None
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class RobotCandidateStateRecord:
     """Lightweight active-candidate projection: no signal snapshot, no hash check."""
 
@@ -795,6 +896,28 @@ def _live_limit_operation_from_row(row: sqlite3.Row) -> LiveLimitOperationRecord
             int(row["schema_version"]), row["host_identity"],
         ),
         created_at_ms=int(row["created_at_ms"]),
+        updated_at_ms=int(row["updated_at_ms"]),
+    )
+
+
+def _robot_candidate_view_from_row(row: dict) -> RobotCandidatePortfolioView:
+    try:
+        state = json.loads(row["robot_state_json"]) if row["robot_state_json"] else None
+        snapshot = json.loads(row["snapshot"]) if row["snapshot"] is not None else {}
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise SchemaError("persisted Robot candidate JSON is corrupt") from exc
+    if not isinstance(snapshot, dict) or (state is not None and not isinstance(state, dict)):
+        raise SchemaError("persisted Robot candidate JSON must contain objects")
+    if row["snapshot"] is not None and hashlib.sha256(
+            _canonical_json(snapshot).encode("utf-8")).hexdigest() != row["snapshot_sha256"]:
+        raise SchemaError("persisted Robot candidate snapshot hash mismatch")
+    return RobotCandidatePortfolioView(
+        candidate_id=row["candidate_id"],
+        trading_account_id=TradingAccountId(row["trading_account_id"]),
+        symbol=Symbol(row["symbol"]), status=row["status"], signal_snapshot=snapshot,
+        snapshot_sha256=row["snapshot_sha256"], robot_state=state,
+        state_revision=int(row["state_revision"]),
+        approved_at_ms=(int(row["approved_at_ms"]) if row["approved_at_ms"] is not None else None),
         updated_at_ms=int(row["updated_at_ms"]),
     )
 
@@ -1052,6 +1175,7 @@ class SQLiteStore:
                 raise SchemaError("database did not enter WAL mode")
             cls._initialize_or_validate_schema(connection)
             cls._ensure_robot_candidate_read_indexes(connection)
+            cls._ensure_auto_decision_read_indexes(connection)
             return cls(connection, database_path, busy_timeout_ms)
         except (sqlite3.DatabaseError, OSError) as exc:
             if connection is not None:
@@ -1085,6 +1209,41 @@ class SQLiteStore:
         missing = [
             (name, target)
             for name, target in SQLiteStore._ROBOT_CANDIDATE_READ_INDEXES
+            if name not in present
+        ]
+        if not missing:
+            return  # steady state: no write transaction on open
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for name, target in missing:
+                connection.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+
+    # A6 owner-thread read access (P0 RUN #3 stall). robot_auto_decisions keeps a
+    # multi-KB facts_json per row and grows with every WAIT reevaluation; this
+    # covering index lets the A6 read set (first/latest decision per idea and
+    # every SHADOW ALLOW) be found without walking the audit table. Created
+    # idempotently on open with no version bump, like the candidate read indexes.
+    _AUTO_DECISION_READ_INDEXES = (
+        ("robot_auto_decisions_a6_heads",
+         "robot_auto_decisions(trading_account_id, candidate_ref, source_identity, mode, "
+         "policy_version, evaluated_at_ms, decision_id, outcome)"),
+    )
+
+    @staticmethod
+    def _ensure_auto_decision_read_indexes(connection: sqlite3.Connection) -> None:
+        present = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='robot_auto_decisions'"
+            )
+        }
+        missing = [
+            (name, target)
+            for name, target in SQLiteStore._AUTO_DECISION_READ_INDEXES
             if name not in present
         ]
         if not missing:
@@ -4234,6 +4393,28 @@ class SQLiteStore:
                 self._autopilot_transaction = False
                 self._robot_admission_transaction = False
 
+    def _table_columns(self, table: str) -> tuple[str, ...]:
+        cache = self.__dict__.setdefault("_table_columns_cache", {})
+        if table not in cache:
+            cache[table] = tuple(
+                row[1] for row in self._connection.execute(f"PRAGMA table_info({table})"))
+        return cache[table]
+
+    def _aggregated_rows(self, table: str, source_sql: str, params: tuple) -> list[dict]:
+        """Rows of ``source_sql`` (``SELECT * FROM table ...``) as dicts, fetched as ONE row.
+
+        P0 RUN #3: a cursor hands the GIL back on every row, so with busy threads a
+        per-row read of a few hundred rows waits seconds. SQLite builds one JSON array
+        instead; keys, order and INTEGER/TEXT/NULL values equal ``dict(row)``. Only for
+        tables without REAL/BLOB columns.
+        """
+        columns = self._table_columns(table)
+        fields = ", ".join(f"'{name}', {name}" for name in columns)
+        text = self._connection.execute(
+            f"SELECT json_group_array(json_object({fields})) FROM ({source_sql})", params,
+        ).fetchone()[0]
+        return json.loads(text)
+
     def load_paper_portfolio_rows(self, account: TradingAccountId) -> dict[str, tuple[dict, ...]]:
         """Read account-scoped facts; caller holds the decision snapshot transaction."""
         self._assert_owner()
@@ -4241,35 +4422,15 @@ class SQLiteStore:
             raise ValueError("portfolio collector is PAPER-only")
         tables = ("paper_limit_orders", "box_order_ownership", "executions",
                   "position_projections", "trading_commands")
-        return {table: tuple(dict(row) for row in self._connection.execute(
-            f"SELECT * FROM {table} WHERE trading_account_id=?", (account.value,),
+        return {table: tuple(self._aggregated_rows(
+            table, f"SELECT * FROM {table} WHERE trading_account_id=?", (account.value,),
         )) for table in tables}
 
     def append_robot_auto_decision(
         self, record: RobotAutoDecisionRecord,
     ) -> tuple[RobotAutoDecisionRecord, bool]:
         self._assert_owner()
-        if (
-            not record.decision_id.strip()
-            or not record.candidate_ref.strip()
-            or not record.pattern.strip()
-            or not record.timeframe.strip()
-            or not record.source_identity.strip()
-            or not record.policy_version.strip()
-            or not record.reason_code.strip()
-        ):
-            raise ValueError("Robot auto decision identity fields must be non-empty")
-        if record.mode not in {"SHADOW", "PAPER_AUTO"}:
-            raise ValueError("Robot auto decision requires SHADOW or PAPER_AUTO mode")
-        if record.outcome not in ROBOT_AUTO_DECISION_OUTCOMES:
-            raise ValueError("unsupported Robot auto decision outcome")
-        if record.evaluated_at_ms < 0:
-            raise ValueError("Robot auto decision timestamp must not be negative")
-        if record.snapshot_sha256 is not None and (
-            len(record.snapshot_sha256) != 64
-            or any(ch not in "0123456789abcdef" for ch in record.snapshot_sha256)
-        ):
-            raise ValueError("Robot auto decision snapshot hash is invalid")
+        _validate_robot_auto_decision_fields(record)
         state = self.get_robot_autopilot_state(record.trading_account_id)
         if state is None or state.mode != record.mode:
             raise PersistenceError("Robot auto decision mode does not match durable Autopilot state")
@@ -4281,21 +4442,7 @@ class SQLiteStore:
         context = nullcontext() if getattr(self, "_autopilot_transaction", False) else self._transaction()
         with context:
             try:
-                self._connection.execute(
-                    """INSERT INTO robot_auto_decisions (
-                        decision_id, trading_account_id, candidate_ref, pattern, symbol,
-                        timeframe, source_identity, snapshot_sha256, mode, policy_version,
-                        outcome, reason_code, evaluated_at_ms, resulting_candidate_id, facts_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        record.decision_id, record.trading_account_id.value,
-                        record.candidate_ref, record.pattern, record.symbol.value,
-                        record.timeframe, record.source_identity, record.snapshot_sha256,
-                        record.mode, record.policy_version, record.outcome,
-                        record.reason_code, record.evaluated_at_ms,
-                        record.resulting_candidate_id, record.facts_json,
-                    ),
-                )
+                self._connection.execute(_AUTO_DECISION_INSERT, _auto_decision_values(record))
             except sqlite3.IntegrityError as exc:
                 raise DuplicateIdentity("Robot auto decision identity conflicts with durable audit") from exc
         persisted = self.get_robot_auto_decision(record.decision_id)
@@ -4312,6 +4459,156 @@ class SQLiteStore:
             (decision_id.strip(),),
         ).fetchone()
         return _robot_auto_decision_from_row(row) if row is not None else None
+
+    def load_robot_auto_decision_heads(
+        self, trading_account_id: TradingAccountId, *, keep_mode: str, keep_outcome: str,
+    ) -> tuple[RobotAutoDecisionRecord, ...]:
+        """A6 read set without the full audit history, in audit order.
+
+        The first and the latest decision of every (candidate_ref, source_identity,
+        mode, policy_version) idea plus every ``keep_mode``/``keep_outcome`` decision.
+        For per-idea latest lookups, first-arrival order of ideas and the SHADOW ALLOW
+        reservations this is the same as ``load_robot_auto_decisions``; it is not a
+        replacement for audit counts (see ``count_robot_auto_decisions``).
+        """
+        self._assert_owner()
+        account = trading_account_id.value
+        # The outer read is by primary key (decision_id is unique); the account filter
+        # lives in the subqueries, which only touch the covering heads index. The rows
+        # arrive as one aggregated row and are put in audit order here.
+        rows = self._aggregated_rows(
+            "robot_auto_decisions",
+            """SELECT * FROM robot_auto_decisions
+               WHERE decision_id IN (
+                   SELECT decision_id FROM (
+                       SELECT decision_id,
+                              ROW_NUMBER() OVER idea_first AS first_rank,
+                              ROW_NUMBER() OVER idea_last AS last_rank
+                       FROM robot_auto_decisions WHERE trading_account_id=?
+                       WINDOW idea_first AS (
+                                  PARTITION BY candidate_ref, source_identity, mode, policy_version
+                                  ORDER BY evaluated_at_ms, decision_id),
+                              idea_last AS (
+                                  PARTITION BY candidate_ref, source_identity, mode, policy_version
+                                  ORDER BY evaluated_at_ms DESC, decision_id DESC))
+                   WHERE first_rank=1 OR last_rank=1
+                   UNION
+                   SELECT decision_id FROM robot_auto_decisions
+                   WHERE trading_account_id=? AND mode=? AND outcome=?)""",
+            (account, account, keep_mode, keep_outcome),
+        )
+        # Same order as ORDER BY evaluated_at_ms, decision_id (BINARY = code-point order).
+        rows.sort(key=lambda row: (row["evaluated_at_ms"], row["decision_id"]))
+        return tuple(_robot_auto_decision_from_row(row) for row in rows)
+
+    @classmethod
+    def open_reader(cls, path: str | Path, *, busy_timeout_ms: int = 5000) -> "SQLiteStore":
+        """A read-only connection owned by the CALLING thread (A6 SHADOW snapshot reads).
+
+        Never writes: no schema validation, no index creation, ``query_only``. Meant for
+        short-lived use on a caller thread beside the owner's writer; it never takes the
+        write lock, and a ``read_snapshot()`` never blocks the owner's writes (WAL).
+        """
+        database_path = Path(path)
+        if not str(database_path):
+            raise ValueError("an explicit database path is required")
+        connection = sqlite3.connect(
+            database_path, timeout=busy_timeout_ms / 1000, isolation_level=None)
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
+            connection.execute("PRAGMA query_only = ON")
+            return cls(connection, database_path, busy_timeout_ms)
+        except BaseException:
+            connection.close()
+            raise
+
+    @contextmanager
+    def read_snapshot(self) -> Iterator[None]:
+        """One consistent WAL read snapshot (deferred BEGIN); never holds the write lock."""
+        self._assert_owner()
+        self._connection.execute("BEGIN")
+        try:
+            yield
+        finally:
+            self._connection.execute("ROLLBACK")
+
+    def shadow_commit_markers(self, trading_account_id: TradingAccountId) -> tuple:
+        """Autopilot state, Robot runtime state and audit tail: the O(1) commit-time freshness check."""
+        self._assert_owner()
+        return tuple(self._connection.execute(
+            _SHADOW_COMMIT_MARKERS_SQL, {"a": trading_account_id.value}).fetchone())
+
+    def shadow_full_markers(self, trading_account_id: TradingAccountId) -> tuple:
+        """Markers of every input of the SHADOW facts, in one statement."""
+        self._assert_owner()
+        return tuple(self._connection.execute(
+            _SHADOW_FULL_MARKERS_SQL, {"a": trading_account_id.value}).fetchone())
+
+    def append_robot_auto_decisions_committed(
+        self, records: Iterable["RobotAutoDecisionRecord"], *, expected: tuple, lock_wait_ms: int,
+    ) -> int:
+        """Bounded owner commit of at most two SHADOW audit rows computed off the owner thread.
+
+        Same field invariants as ``append_robot_auto_decision`` (shared validation), same
+        identity rules (an equal row is skipped, a conflicting id aborts the whole chunk).
+        Fails closed with nothing written: ``ShadowCommitBusy`` if the write lock is not
+        obtained within ``lock_wait_ms``; ``ShadowCommitStale`` if the Autopilot state, Robot
+        runtime state or audit tail differ from ``expected`` (the durable mode check of the
+        standard append is part of the Autopilot marker). SHADOW only; PAPER_AUTO keeps the
+        standard path. Returns the number of rows inserted.
+        """
+        self._assert_owner()
+        rows = tuple(records)
+        if not rows or len(rows) > SHADOW_COMMIT_MAX_ROWS:
+            raise ValueError(f"a SHADOW commit takes 1..{SHADOW_COMMIT_MAX_ROWS} decisions")
+        account = rows[0].trading_account_id
+        for record in rows:
+            _validate_robot_auto_decision_fields(record)
+            if record.mode != "SHADOW" or record.trading_account_id != account:
+                raise ValueError("a bounded SHADOW commit takes SHADOW decisions of one account")
+        self._connection.execute(f"PRAGMA busy_timeout = {int(lock_wait_ms)}")
+        try:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                raise ShadowCommitBusy("the write lock was not obtained within the commit wait") from exc
+        finally:
+            self._connection.execute(f"PRAGMA busy_timeout = {int(self._busy_timeout_ms)}")
+        try:
+            markers = self.shadow_commit_markers(account)
+            if markers != expected or json.loads(markers[0])[2] != "SHADOW":
+                raise ShadowCommitStale("Autopilot/Robot state or the audit tail changed")
+            inserted = 0
+            for record in rows:
+                try:
+                    cursor = self._connection.execute(
+                        _AUTO_DECISION_INSERT.replace("INSERT INTO", "INSERT OR IGNORE INTO"),
+                        _auto_decision_values(record))
+                except sqlite3.IntegrityError as exc:
+                    raise DuplicateIdentity(
+                        "Robot auto decision identity conflicts with durable audit") from exc
+                if cursor.rowcount == 1:
+                    inserted += 1
+                    continue
+                existing = self.get_robot_auto_decision(record.decision_id)
+                if existing != record:
+                    raise DuplicateIdentity("Robot auto decision identity conflicts with durable audit")
+            # Each row is proven inside this transaction: inserted (rowcount 1) or an equal
+            # row already there; the standard append's re-read adds nothing before COMMIT.
+            self._connection.execute("COMMIT")
+            return inserted
+        except BaseException:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
+
+    def count_robot_auto_decisions(self, trading_account_id: TradingAccountId) -> int:
+        self._assert_owner()
+        return int(self._connection.execute(
+            "SELECT COUNT(*) FROM robot_auto_decisions WHERE trading_account_id=?",
+            (trading_account_id.value,),
+        ).fetchone()[0])
 
     def load_robot_auto_decisions(
         self, trading_account_id: TradingAccountId,
@@ -4703,6 +5000,58 @@ class SQLiteStore:
             "SELECT * FROM robot_candidates WHERE candidate_id=?", (candidate_id,),
         ).fetchone()
         return _robot_candidate_from_row(row) if row is not None else None
+
+    def load_robot_candidates_for_portfolio(
+        self, trading_account_id: TradingAccountId, *, plan_only_status: str,
+    ) -> tuple[RobotCandidatePortfolioView, ...]:
+        """Candidates the PAPER portfolio collector can reach, in ``load_robot_candidates`` order.
+
+        Every candidate except ``plan_only_status`` (Box plan) rows that nothing refers
+        to: a plan row is kept when it is the handoff source of a candidate, owns a Box
+        order, or has a trade. A plan row itself carries neither Robot state (schema
+        CHECK) nor a handoff lineage (exact Box snapshot contract). Unreferenced frozen
+        plans cannot change portfolio facts, and they are the bulk of the history.
+
+        P0 RUN #3: the collector reads identity, status, Robot state and lineage, and
+        compares full snapshots only across a handoff. So only handoff participants
+        carry (and hash-verify) their snapshot; all rows arrive as one aggregated row.
+        Status ranges keep the reads on the (account, status) index.
+        """
+        self._assert_owner()
+        account = trading_account_id.value
+        text = self._connection.execute(
+            """WITH named_sources(candidate_id) AS (
+                   SELECT json_extract(signal_snapshot_json, '$.source_box_candidate_id')
+                   FROM robot_candidates
+                   WHERE trading_account_id=? AND (status < ? OR status > ?)),
+               reachable AS (
+                   SELECT * FROM robot_candidates
+                   WHERE trading_account_id=? AND (status < ? OR status > ?)
+                   UNION ALL
+                   SELECT * FROM robot_candidates
+                   WHERE trading_account_id=? AND status=? AND candidate_id IN (
+                       SELECT candidate_id FROM named_sources
+                       UNION SELECT candidate_id FROM box_order_ownership WHERE trading_account_id=?
+                       UNION SELECT candidate_id FROM robot_trades WHERE trading_account_id=?))
+               SELECT json_group_array(json_object(
+                   'candidate_id', candidate_id, 'trading_account_id', trading_account_id,
+                   'symbol', symbol, 'status', status, 'snapshot_sha256', snapshot_sha256,
+                   'robot_state_json', robot_state_json, 'state_revision', state_revision,
+                   'approved_at_ms', approved_at_ms, 'updated_at_ms', updated_at_ms,
+                   'snapshot', CASE
+                       WHEN json_extract(signal_snapshot_json, '$.source_box_candidate_id') IS NOT NULL
+                         OR candidate_id IN (SELECT candidate_id FROM named_sources)
+                       THEN signal_snapshot_json END))
+               FROM reachable""",
+            (account, plan_only_status, plan_only_status,
+             account, plan_only_status, plan_only_status,
+             account, plan_only_status, account, account),
+        ).fetchone()[0]
+        rows = json.loads(text)
+        # Same order as ORDER BY approved_at_ms, candidate_id (NULLs first, BINARY ids).
+        rows.sort(key=lambda row: (row["approved_at_ms"] is not None, row["approved_at_ms"] or 0,
+                                   row["candidate_id"]))
+        return tuple(_robot_candidate_view_from_row(row) for row in rows)
 
     def load_robot_candidates(self, trading_account_id: TradingAccountId) -> tuple[RobotCandidateRecord, ...]:
         self._assert_owner()
