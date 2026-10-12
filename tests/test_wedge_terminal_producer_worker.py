@@ -5,7 +5,9 @@ The pass itself is a stub (no network, no sidecar); the mode reader is injected.
 import threading
 import unittest
 
-from terminal.application.wedge_source_terminal_producer import WedgeTerminalProducerWorker
+from terminal.application.wedge_source_terminal_producer import (
+    FetchRotation, WedgeTerminalProducerWorker,
+)
 from terminal.domain.models import TradingAccountId
 
 ACCOUNT = TradingAccountId("paper")
@@ -17,9 +19,11 @@ class _Recorder:
         self.fail = fail
         self.threads = set()
         self.ran = threading.Event()
+        self.rotations = []
 
-    def __call__(self, database_path, account, *, candidate_store_dir, should_stop):
+    def __call__(self, database_path, account, *, candidate_store_dir, should_stop, fetch_rotation):
         self.calls.append((database_path, account, candidate_store_dir))
+        self.rotations.append(fetch_rotation)
         self.threads.add(threading.current_thread().name)
         self.ran.set()
         if self.fail:
@@ -42,6 +46,21 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertTrue(recorder.ran.wait(2))
         self.assertEqual(recorder.calls[0], ("paper.sqlite3", ACCOUNT, None))
         self.assertNotIn(threading.current_thread().name, recorder.threads)
+
+    def test_passes_share_one_fetch_rotation_across_restarts(self):
+        recorder = _Recorder()
+        worker = _worker(recorder)
+        worker.start()
+        self.assertTrue(recorder.ran.wait(2))
+        recorder.ran.clear()
+        self.assertTrue(recorder.ran.wait(2))
+        worker.close()
+        recorder.ran.clear()
+        worker.start()
+        self.addCleanup(worker.close)
+        self.assertTrue(recorder.ran.wait(2))
+        self.assertIsInstance(recorder.rotations[0], FetchRotation)
+        self.assertTrue(all(rotation is recorder.rotations[0] for rotation in recorder.rotations))
 
     def test_no_pass_unless_autopilot_is_shadow(self):
         for mode in ("OFF", "PAPER_AUTO", None):
@@ -107,7 +126,7 @@ class _SlowPass:
         self.release = threading.Event()
         self.appended = []
 
-    def __call__(self, database_path, account, *, candidate_store_dir, should_stop):
+    def __call__(self, database_path, account, *, candidate_store_dir, should_stop, fetch_rotation):
         self.entered.set()
         self.release.wait(5)
         if not should_stop():

@@ -16,7 +16,10 @@ The portfolio collector consumes the event; no PAPER table is written here.
 Each signal's own anchor..apex range is loaded with explicit start/end in at most
 MAX_RANGE_PAGES pages, so historical ALLOWs are provable too; at most
 MAX_FETCHES_PER_PASS signals are fetched per pass and an OS file lock refuses a
-concurrent pass. ``python -m terminal.application.wedge_source_terminal_producer``
+concurrent pass. A ``FetchRotation`` shared between passes makes that budget
+round-robin: each pass starts after the last signal fetched by the previous one, so
+NOT_PROVEN signals cannot starve the DEFERRED rest (NOT_PROVEN still appends
+nothing). ``python -m terminal.application.wedge_source_terminal_producer``
 runs one pass as a separate process (no backend involvement).
 """
 from __future__ import annotations
@@ -180,6 +183,17 @@ def producer_pass_lock(sidecar: str | Path):
         handle.close()
 
 
+class FetchRotation:
+    """Round-robin cursor for the per-pass fetch budget, kept by the caller between passes.
+
+    Holds only the identity of the last signal that consumed budget; the next pass
+    starts right after it (from the start when it is unknown or no longer listed).
+    """
+
+    def __init__(self) -> None:
+        self.last_fetched: tuple[str, str] | None = None
+
+
 def run_wedge_terminal_producer_once(
     database_path: str | Path, account: TradingAccountId, *,
     candidate_store_dir: str | Path | None,
@@ -187,12 +201,15 @@ def run_wedge_terminal_producer_once(
     now_ms: int | None = None,
     max_fetches: int = MAX_FETCHES_PER_PASS,
     should_stop: Callable[[], bool] | None = None,
+    fetch_rotation: FetchRotation | None = None,
 ) -> dict[str, str]:
     """One pass over this account's Wedge SHADOW ALLOWs; returns status per candidate_ref.
 
     Returns {} when another pass holds the lock or the sidecar is unreadable.
     ``should_stop`` is checked before every fetch and again right before every append:
     once it is true the pass appends nothing more and marks the rest STOPPED.
+    With ``fetch_rotation`` the pass starts after the last signal fetched by the previous
+    pass and records its own last fetch, so the budget visits every pending signal.
     """
     should_stop = should_stop or (lambda: False)
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
@@ -214,9 +231,7 @@ def run_wedge_terminal_producer_once(
         finally:
             reader.close()
 
-        results: dict[str, str] = {}
-        seen = set()
-        budget = [max_fetches]
+        pending, seen = [], set()
         for decision in decisions:
             identity = (decision.candidate_ref, decision.snapshot_sha256)
             if (decision.mode != "SHADOW" or decision.outcome != "ALLOW"
@@ -225,10 +240,22 @@ def run_wedge_terminal_producer_once(
                     or decision.snapshot_sha256 is None or identity in seen):
                 continue
             seen.add(identity)
+            pending.append((identity, decision))
+        if fetch_rotation is not None and fetch_rotation.last_fetched is not None:
+            start = next((i + 1 for i, (identity, _decision) in enumerate(pending)
+                          if identity == fetch_rotation.last_fetched), 0)
+            pending = pending[start:] + pending[:start]
+
+        results: dict[str, str] = {}
+        budget = [max_fetches]
+        for identity, decision in pending:
+            remaining = budget[0]
             results[decision.candidate_ref] = (
                 "STOPPED" if should_stop() else _process(
                     decision, account, known, sidecar, candidate_store_dir, candle_range_loader,
                     now_ms, budget, should_stop))
+            if fetch_rotation is not None and budget[0] < remaining:
+                fetch_rotation.last_fetched = identity
         return results
 
 
@@ -304,6 +331,7 @@ class WedgeTerminalProducerWorker:
         self._run_pass = run_pass
         self._autopilot_mode = autopilot_mode or self._read_autopilot_mode
         self._candidate_store_dir = candidate_store_dir
+        self._fetch_rotation = FetchRotation()  # survives restarts of this worker
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -354,7 +382,8 @@ class WedgeTerminalProducerWorker:
                     continue
                 results = self._run_pass(self._database_path, self._account,
                                          candidate_store_dir=self._candidate_store_dir,
-                                         should_stop=stop.is_set)
+                                         should_stop=stop.is_set,
+                                         fetch_rotation=self._fetch_rotation)
                 if results:
                     LOGGER.info("Wedge terminal producer pass: %s", results)
             except Exception:

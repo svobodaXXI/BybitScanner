@@ -14,7 +14,7 @@ from robot_candidate_store import create_signal_snapshot
 from terminal.application.robot_admission import candidate_snapshot_sha256
 from terminal.application.robot_portfolio import collect_portfolio_facts
 from terminal.application.wedge_source_terminal_producer import (
-    MAX_KLINE_LIMIT, MAX_RANGE_PAGES, RULE, RangeLoadError, evaluate_wedge_apex_expiry,
+    MAX_KLINE_LIMIT, MAX_RANGE_PAGES, RULE, FetchRotation, RangeLoadError, evaluate_wedge_apex_expiry,
     load_closed_1m_range, producer_pass_lock, run_wedge_terminal_producer_once,
 )
 from terminal.domain.models import OrderId, OrderSide, Symbol
@@ -170,6 +170,49 @@ class ProducerRunTests(unittest.TestCase):
         self.allow("w2")
         self.assertEqual(self.run_once(_frame(QUIET), max_fetches=1), {"w1": "APPENDED", "w2": "DEFERRED"})
         self.assertEqual(len(self.loads), 1)
+
+    def test_fetch_budget_rotates_so_no_pending_wedge_starves(self):
+        # SHADOW RUN #5: 16 pending Wedges, budget 5, every fetched signal NOT_PROVEN.
+        refs = [f"w{n:02d}" for n in range(16)]
+        for ref in refs:
+            self.allow(ref)
+        closes = list(QUIET)
+        closes[4] = 126.0  # breakout before the apex: NOT_PROVEN, never EXPIRED
+        rotation, checked = FetchRotation(), []
+        for _pass in range(4):  # ceil(16 / 5) passes
+            self.loads.clear()
+            results = self.run_once(_frame(closes), max_fetches=5, fetch_rotation=rotation)
+            proven = [ref for ref, status in results.items() if status == "NOT_PROVEN"]
+            self.assertEqual(len(proven), 5)
+            self.assertEqual(len(self.loads), 5)
+            self.assertEqual(set(results.values()), {"NOT_PROVEN", "DEFERRED"})
+            checked.extend(proven)
+        self.assertEqual(set(checked), set(refs))
+        self.assertFalse(self.sidecar.exists())  # NOT_PROVEN appends nothing
+        self.assertEqual(self.facts()["occupied_ro"], 16)  # every reservation is kept
+
+    def test_without_rotation_the_same_signals_take_the_budget(self):
+        # The pre-fix behaviour a one-off pass (CLI) keeps: no cross-pass memory.
+        for n in range(16):
+            self.allow(f"w{n:02d}")
+        closes = list(QUIET)
+        closes[4] = 126.0
+        checked = set()
+        for _pass in range(4):
+            results = self.run_once(_frame(closes), max_fetches=5)
+            checked |= {ref for ref, status in results.items() if status == "NOT_PROVEN"}
+        self.assertEqual(len(checked), 5)
+
+    def test_rotation_restarts_from_the_beginning_for_an_unknown_cursor(self):
+        self.allow("w1")
+        self.allow("w2")
+        rotation = FetchRotation()
+        rotation.last_fetched = ("gone", "0" * 64)
+        self.assertEqual(self.run_once(_frame(QUIET), max_fetches=1, fetch_rotation=rotation),
+                         {"w1": "APPENDED", "w2": "DEFERRED"})
+        self.assertEqual(rotation.last_fetched[0], "w1")
+        self.assertEqual(self.run_once(_frame(QUIET), max_fetches=1, fetch_rotation=rotation),
+                         {"w2": "APPENDED", "w1": "ALREADY_TERMINAL"})
 
     def test_concurrent_pass_is_refused(self):
         self.allow("w1")
