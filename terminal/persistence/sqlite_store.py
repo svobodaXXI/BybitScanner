@@ -564,6 +564,28 @@ class RobotCandidateRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RobotCandidatePortfolioView:
+    """Portfolio-collector projection of one Robot candidate (A6, P0 RUN #3).
+
+    Identity, status, Robot state and lineage as in ``RobotCandidateRecord``. The
+    signal snapshot is the full, hash-verified snapshot only for a handoff participant
+    (a candidate carrying ``source_box_candidate_id``, or one named as a source); for
+    every other candidate it is empty, which is all the collector reads from it there.
+    """
+
+    candidate_id: str
+    trading_account_id: TradingAccountId
+    symbol: Symbol
+    status: str
+    signal_snapshot: dict[str, object]
+    snapshot_sha256: str
+    robot_state: dict[str, object] | None
+    state_revision: int
+    approved_at_ms: int | None
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class RobotCandidateStateRecord:
     """Lightweight active-candidate projection: no signal snapshot, no hash check."""
 
@@ -795,6 +817,28 @@ def _live_limit_operation_from_row(row: sqlite3.Row) -> LiveLimitOperationRecord
             int(row["schema_version"]), row["host_identity"],
         ),
         created_at_ms=int(row["created_at_ms"]),
+        updated_at_ms=int(row["updated_at_ms"]),
+    )
+
+
+def _robot_candidate_view_from_row(row: dict) -> RobotCandidatePortfolioView:
+    try:
+        state = json.loads(row["robot_state_json"]) if row["robot_state_json"] else None
+        snapshot = json.loads(row["snapshot"]) if row["snapshot"] is not None else {}
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise SchemaError("persisted Robot candidate JSON is corrupt") from exc
+    if not isinstance(snapshot, dict) or (state is not None and not isinstance(state, dict)):
+        raise SchemaError("persisted Robot candidate JSON must contain objects")
+    if row["snapshot"] is not None and hashlib.sha256(
+            _canonical_json(snapshot).encode("utf-8")).hexdigest() != row["snapshot_sha256"]:
+        raise SchemaError("persisted Robot candidate snapshot hash mismatch")
+    return RobotCandidatePortfolioView(
+        candidate_id=row["candidate_id"],
+        trading_account_id=TradingAccountId(row["trading_account_id"]),
+        symbol=Symbol(row["symbol"]), status=row["status"], signal_snapshot=snapshot,
+        snapshot_sha256=row["snapshot_sha256"], robot_state=state,
+        state_revision=int(row["state_revision"]),
+        approved_at_ms=(int(row["approved_at_ms"]) if row["approved_at_ms"] is not None else None),
         updated_at_ms=int(row["updated_at_ms"]),
     )
 
@@ -4270,6 +4314,28 @@ class SQLiteStore:
                 self._autopilot_transaction = False
                 self._robot_admission_transaction = False
 
+    def _table_columns(self, table: str) -> tuple[str, ...]:
+        cache = self.__dict__.setdefault("_table_columns_cache", {})
+        if table not in cache:
+            cache[table] = tuple(
+                row[1] for row in self._connection.execute(f"PRAGMA table_info({table})"))
+        return cache[table]
+
+    def _aggregated_rows(self, table: str, source_sql: str, params: tuple) -> list[dict]:
+        """Rows of ``source_sql`` (``SELECT * FROM table ...``) as dicts, fetched as ONE row.
+
+        P0 RUN #3: a cursor hands the GIL back on every row, so with busy threads a
+        per-row read of a few hundred rows waits seconds. SQLite builds one JSON array
+        instead; keys, order and INTEGER/TEXT/NULL values equal ``dict(row)``. Only for
+        tables without REAL/BLOB columns.
+        """
+        columns = self._table_columns(table)
+        fields = ", ".join(f"'{name}', {name}" for name in columns)
+        text = self._connection.execute(
+            f"SELECT json_group_array(json_object({fields})) FROM ({source_sql})", params,
+        ).fetchone()[0]
+        return json.loads(text)
+
     def load_paper_portfolio_rows(self, account: TradingAccountId) -> dict[str, tuple[dict, ...]]:
         """Read account-scoped facts; caller holds the decision snapshot transaction."""
         self._assert_owner()
@@ -4277,8 +4343,8 @@ class SQLiteStore:
             raise ValueError("portfolio collector is PAPER-only")
         tables = ("paper_limit_orders", "box_order_ownership", "executions",
                   "position_projections", "trading_commands")
-        return {table: tuple(dict(row) for row in self._connection.execute(
-            f"SELECT * FROM {table} WHERE trading_account_id=?", (account.value,),
+        return {table: tuple(self._aggregated_rows(
+            table, f"SELECT * FROM {table} WHERE trading_account_id=?", (account.value,),
         )) for table in tables}
 
     def append_robot_auto_decision(
@@ -4363,8 +4429,10 @@ class SQLiteStore:
         self._assert_owner()
         account = trading_account_id.value
         # The outer read is by primary key (decision_id is unique); the account filter
-        # lives in the subqueries, which only touch the covering heads index.
-        rows = self._connection.execute(
+        # lives in the subqueries, which only touch the covering heads index. The rows
+        # arrive as one aggregated row and are put in audit order here.
+        rows = self._aggregated_rows(
+            "robot_auto_decisions",
             """SELECT * FROM robot_auto_decisions
                WHERE decision_id IN (
                    SELECT decision_id FROM (
@@ -4381,10 +4449,11 @@ class SQLiteStore:
                    WHERE first_rank=1 OR last_rank=1
                    UNION
                    SELECT decision_id FROM robot_auto_decisions
-                   WHERE trading_account_id=? AND mode=? AND outcome=?)
-               ORDER BY evaluated_at_ms, decision_id""",
+                   WHERE trading_account_id=? AND mode=? AND outcome=?)""",
             (account, account, keep_mode, keep_outcome),
-        ).fetchall()
+        )
+        # Same order as ORDER BY evaluated_at_ms, decision_id (BINARY = code-point order).
+        rows.sort(key=lambda row: (row["evaluated_at_ms"], row["decision_id"]))
         return tuple(_robot_auto_decision_from_row(row) for row in rows)
 
     def count_robot_auto_decisions(self, trading_account_id: TradingAccountId) -> int:
@@ -4787,7 +4856,7 @@ class SQLiteStore:
 
     def load_robot_candidates_for_portfolio(
         self, trading_account_id: TradingAccountId, *, plan_only_status: str,
-    ) -> tuple[RobotCandidateRecord, ...]:
+    ) -> tuple[RobotCandidatePortfolioView, ...]:
         """Candidates the PAPER portfolio collector can reach, in ``load_robot_candidates`` order.
 
         Every candidate except ``plan_only_status`` (Box plan) rows that nothing refers
@@ -4795,27 +4864,47 @@ class SQLiteStore:
         order, or has a trade. A plan row itself carries neither Robot state (schema
         CHECK) nor a handoff lineage (exact Box snapshot contract). Unreferenced frozen
         plans cannot change portfolio facts, and they are the bulk of the history.
-        Status ranges keep both reads on the (account, status) index.
+
+        P0 RUN #3: the collector reads identity, status, Robot state and lineage, and
+        compares full snapshots only across a handoff. So only handoff participants
+        carry (and hash-verify) their snapshot; all rows arrive as one aggregated row.
+        Status ranges keep the reads on the (account, status) index.
         """
         self._assert_owner()
         account = trading_account_id.value
-        rows = self._connection.execute(
-            """SELECT * FROM robot_candidates
-               WHERE trading_account_id=? AND (status < ? OR status > ?)
-               UNION ALL
-               SELECT * FROM robot_candidates
-               WHERE trading_account_id=? AND status=? AND candidate_id IN (
+        text = self._connection.execute(
+            """WITH named_sources(candidate_id) AS (
                    SELECT json_extract(signal_snapshot_json, '$.source_box_candidate_id')
                    FROM robot_candidates
+                   WHERE trading_account_id=? AND (status < ? OR status > ?)),
+               reachable AS (
+                   SELECT * FROM robot_candidates
                    WHERE trading_account_id=? AND (status < ? OR status > ?)
-                   UNION SELECT candidate_id FROM box_order_ownership WHERE trading_account_id=?
-                   UNION SELECT candidate_id FROM robot_trades WHERE trading_account_id=?)
-               ORDER BY approved_at_ms, candidate_id""",
+                   UNION ALL
+                   SELECT * FROM robot_candidates
+                   WHERE trading_account_id=? AND status=? AND candidate_id IN (
+                       SELECT candidate_id FROM named_sources
+                       UNION SELECT candidate_id FROM box_order_ownership WHERE trading_account_id=?
+                       UNION SELECT candidate_id FROM robot_trades WHERE trading_account_id=?))
+               SELECT json_group_array(json_object(
+                   'candidate_id', candidate_id, 'trading_account_id', trading_account_id,
+                   'symbol', symbol, 'status', status, 'snapshot_sha256', snapshot_sha256,
+                   'robot_state_json', robot_state_json, 'state_revision', state_revision,
+                   'approved_at_ms', approved_at_ms, 'updated_at_ms', updated_at_ms,
+                   'snapshot', CASE
+                       WHEN json_extract(signal_snapshot_json, '$.source_box_candidate_id') IS NOT NULL
+                         OR candidate_id IN (SELECT candidate_id FROM named_sources)
+                       THEN signal_snapshot_json END))
+               FROM reachable""",
             (account, plan_only_status, plan_only_status,
-             account, plan_only_status,
-             account, plan_only_status, plan_only_status, account, account),
-        ).fetchall()
-        return tuple(_robot_candidate_from_row(row) for row in rows)
+             account, plan_only_status, plan_only_status,
+             account, plan_only_status, account, account),
+        ).fetchone()[0]
+        rows = json.loads(text)
+        # Same order as ORDER BY approved_at_ms, candidate_id (NULLs first, BINARY ids).
+        rows.sort(key=lambda row: (row["approved_at_ms"] is not None, row["approved_at_ms"] or 0,
+                                   row["candidate_id"]))
+        return tuple(_robot_candidate_view_from_row(row) for row in rows)
 
     def load_robot_candidates(self, trading_account_id: TradingAccountId) -> tuple[RobotCandidateRecord, ...]:
         self._assert_owner()

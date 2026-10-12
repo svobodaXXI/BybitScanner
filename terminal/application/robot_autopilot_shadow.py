@@ -313,7 +313,8 @@ class _BatchSnapshot:
     or candidate tables. ``decisions`` holds the first and latest decision of every
     idea plus every SHADOW ALLOW (latest lookups, due-WAIT order and reservations are
     unchanged); ``decision_count`` is the real audit size for ``audit_sequence``.
-    Candidates exclude only frozen Box plans that nothing refers to.
+    Candidates exclude only frozen Box plans that nothing refers to, and are portfolio
+    views: a full snapshot only across a handoff, which is all the batch reads.
     """
 
     def __init__(self, store: SQLiteStore, account: TradingAccountId):

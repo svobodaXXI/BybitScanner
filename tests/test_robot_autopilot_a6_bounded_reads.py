@@ -8,16 +8,19 @@ reach. These tests pin that the reduced read set yields the same decisions, fact
 and audit sequence as the full one, and that no full history read remains.
 """
 
+import hashlib
 import json
 import sqlite3
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
 from terminal.application import robot_autopilot_shadow as shadow
 from terminal.application.robot_autopilot import OUTCOME_ALLOW
 from terminal.application.robot_portfolio import collect_portfolio_facts
+from terminal.domain.models import OrderId, OrderSide, Symbol
 from terminal.persistence import schema
 from terminal.persistence import sqlite_store
 from terminal.persistence.sqlite_store import SQLiteStore
@@ -188,21 +191,133 @@ class CandidateReadSetTests(unittest.TestCase):
                     ("plan-free-2", "BOX_PLAN_ONLY", None, {"id": "free-2"}),
                     ("closed-1", "CLOSED", 5, {"id": "closed"}),
                 ]
-                for index, (ref, status, approved, snapshot) in enumerate(rows):
+                for ref, status, approved, snapshot in rows:
+                    text = sqlite_store._canonical_json(snapshot)
                     c.execute("INSERT INTO robot_candidates VALUES (?,?,?,?,?,?,NULL,0,?,?)",
-                              (ref, ACCOUNT.value, "BOXUSDT", status, json.dumps(snapshot),
-                               f"{index:064x}", approved, 20))
+                              (ref, ACCOUNT.value, "BOXUSDT", status, text,
+                               hashlib.sha256(text.encode()).hexdigest(), approved, 20))
                 c.execute("INSERT INTO box_attempt_ownership VALUES ('plan-owned','paper','BOXUSDT',1,1,0,0,?)",
                           ("0" * 64,))
                 c.execute("INSERT INTO box_order_ownership VALUES ('paper','slot-1','plan-owned','ENTRY',1)")
                 # Forged plans are not canonical Box contracts; only identity and order matter here.
                 with patch.object(sqlite_store, "_robot_candidate_from_row", lambda row: row["candidate_id"]):
                     full = list(store.load_robot_candidates(ACCOUNT))
-                    reduced = list(store.load_robot_candidates_for_portfolio(
-                        ACCOUNT, plan_only_status="BOX_PLAN_ONLY"))
+                reduced = [view.candidate_id for view in store.load_robot_candidates_for_portfolio(
+                    ACCOUNT, plan_only_status="BOX_PLAN_ONLY")]
                 self.assertEqual(reduced, [ref for ref in full if not ref.startswith("plan-free")])
                 self.assertIn("plan-src", reduced)    # handoff source
                 self.assertIn("plan-owned", reduced)  # owns a Box order
+            finally:
+                store.close()
+
+
+class PortfolioViewTests(unittest.TestCase):
+    """The collector's candidate view: full, verified snapshots only across a handoff."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = SQLiteStore.open(Path(self.tmp.name) / "paper.sqlite3")
+        self.addCleanup(self.store.close)
+        self.store.initialize_paper_account(ACCOUNT, Decimal("5000"), updated_at_ms=1)
+        self.c = self.store._connection
+
+    def insert(self, ref, status, snapshot, *, approved=10, state=None, symbol="BOXUSDT"):
+        text = sqlite_store._canonical_json(snapshot)
+        self.c.execute("INSERT INTO robot_candidates VALUES (?,?,?,?,?,?,?,?,?,?)",
+                       (ref, ACCOUNT.value, symbol, status, text, hashlib.sha256(text.encode()).hexdigest(),
+                        None if state is None else json.dumps(state), 0 if state is None else 1,
+                        approved, 20))
+
+    def views(self):
+        return {v.candidate_id: v for v in self.store.load_robot_candidates_for_portfolio(
+            ACCOUNT, plan_only_status="BOX_PLAN_ONLY")}
+
+    def handoff(self, *, state_lineage=True):
+        source, robot = "plan-src", "robot-a"
+        frozen = {"id": "frozen-source", "big": "x" * 500}
+        self.insert(source, "BOX_PLAN_ONLY", frozen, approved=None)
+        state = {"execution": {"limit_order_id": "slot"}}
+        if state_lineage:
+            state["source_box_candidate_id"] = source
+        self.insert(robot, "APPROVED", {**frozen, "source_box_candidate_id": source}, state=state)
+        self.insert("plain", "CLOSED", {"id": "plain", "big": "y" * 500}, approved=5, symbol="PLAINUSDT")
+        self.c.execute("INSERT INTO box_attempt_ownership VALUES (?,?,?,?,?,?,?,?)",
+                       (source, "paper", "BOXUSDT", 1, 1, 0, 0, "0" * 64))
+        self.store.create_paper_limit(client_action_id="slot", request_fingerprint="slot",
+                                      order_id=OrderId("slot"), order_link_id="slot",
+                                      trading_account_id=ACCOUNT, symbol=Symbol("BOXUSDT"),
+                                      side=OrderSide.BUY, price=Decimal(1),
+                                      quantity=Decimal("125"), created_at_ms=1)
+        self.c.execute("INSERT INTO box_order_ownership VALUES ('paper','slot',?,'ENTRY',1)", (source,))
+        return source, robot
+
+    def facts(self):
+        with self.store.autopilot_decision_transaction():
+            return collect_portfolio_facts(self.store, ACCOUNT, robot_candidates=tuple(self.views().values()),
+                                           auto_decisions=())
+
+    def test_only_handoff_participants_carry_their_full_snapshot(self):
+        source, robot = self.handoff()
+        views = self.views()
+        self.assertEqual(views[robot].signal_snapshot["source_box_candidate_id"], source)
+        self.assertEqual(views[source].signal_snapshot, {"id": "frozen-source", "big": "x" * 500})
+        self.assertEqual(views["plain"].signal_snapshot, {})  # never read by the collector
+        self.assertEqual(views[robot].robot_state["execution"], {"limit_order_id": "slot"})
+        self.assertEqual(list(views), [source, "plain", robot])  # NULL approval first, then time
+
+    def test_collector_proves_the_handoff_owner_from_views(self):
+        _source, robot = self.handoff()
+        facts = self.facts()
+        self.assertTrue(facts["available"], facts.get("data_error"))
+        self.assertEqual([r["identity"] for r in facts["reservations"]], ["robot:" + robot])
+
+    def test_a_snapshot_link_without_robot_state_lineage_stays_ambiguous(self):
+        self.handoff(state_lineage=False)
+        facts = self.facts()
+        self.assertFalse(facts["available"])
+        self.assertEqual(facts["data_error"], "order ownership is ambiguous")
+
+    def test_a_tampered_participant_snapshot_fails_closed(self):
+        source, _robot = self.handoff()
+        self.c.execute("DROP TRIGGER box_plan_no_update")
+        self.c.execute("UPDATE robot_candidates SET signal_snapshot_json=? WHERE candidate_id=?",
+                       (sqlite_store._canonical_json({"id": "forged"}), source))
+        with self.assertRaises(sqlite_store.SchemaError):
+            self.views()
+
+
+class AggregatedRowsTests(unittest.TestCase):
+    def test_paper_portfolio_rows_equal_a_per_row_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = _build_history(Path(tmp))
+            store = db.store
+            try:
+                c = store._connection
+                store.create_paper_limit(client_action_id="o1", request_fingerprint="o1",
+                                         order_id=OrderId("o1"), order_link_id="o1",
+                                         trading_account_id=ACCOUNT, symbol=Symbol("MANUSDT"),
+                                         side=OrderSide.BUY, price=Decimal("1.25"),
+                                         quantity=Decimal("125.5"), created_at_ms=1)
+                c.execute("INSERT INTO executions VALUES ('paper','linear','e1','o1','MANUSDT','Buy','1.25','20','0',3)")
+                c.execute("INSERT OR REPLACE INTO position_projections VALUES "
+                          "('paper','linear','MANUSDT',0,'Long','20','1.25','0','0','25','synced',1,10)")
+                c.execute("""INSERT INTO trading_commands (
+                    command_id, order_link_id, trading_account_id, category, symbol, position_idx,
+                    command_kind, side, requested_notional, normalized_price, normalized_quantity,
+                    origin, controller, current_state, version, exchange_order_id, created_at_ms, updated_at_ms
+                ) VALUES ('cmd-1','link-1','paper','linear','MANUSDT',0,'create_market','Buy','250',NULL,'1',
+                          'terminal_manual','manual','submitting',2,NULL,4,5)""")
+                aggregated = store.load_paper_portfolio_rows(ACCOUNT)
+                for table, rows in aggregated.items():
+                    per_row = tuple(dict(row) for row in c.execute(
+                        f"SELECT * FROM {table} WHERE trading_account_id=?", (ACCOUNT.value,)))
+                    self.assertEqual(rows, per_row, table)
+                    for got, want in zip(rows, per_row):
+                        self.assertEqual(list(got), list(want))  # same keys in the same order
+                        self.assertEqual([type(v) for v in got.values()], [type(v) for v in want.values()])
+                for table in ("paper_limit_orders", "executions", "position_projections", "trading_commands"):
+                    self.assertTrue(aggregated[table], table)
             finally:
                 store.close()
 
