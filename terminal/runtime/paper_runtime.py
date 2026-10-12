@@ -4000,12 +4000,15 @@ class PaperRuntime:
         )
 
     def close(self) -> None:
-        self._wedge_terminal_producer.close()
+        producer_stopped = self._wedge_terminal_producer.close()
         self._robot_breakout_monitor.close()
         self._scanner_control.close()
         self.store.close()
         if self._live_account_store is not None:
             self._live_account_store.close()
+        if not producer_stopped:
+            # Everything else is closed; do not report this shutdown as clean.
+            raise RuntimeError("Wedge terminal producer did not stop within its close timeout")
 
 
 def _fingerprint(*values: str) -> str:
