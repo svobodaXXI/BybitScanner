@@ -608,6 +608,7 @@ class PaperRuntime:
         runtime_process_identity = RuntimeProcessIdentity.capture(
             deployment_identity=deployment_identity,
         )
+        self._process_instance_id = runtime_process_identity.instance_id
         live_limit_acceptance = (
             LiveLimitAcceptanceService(
                 self._account_manager, self.store, build_sha=live_limit_build_sha,
@@ -958,8 +959,13 @@ class PaperRuntime:
         if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
             return
         self._dispatch_robot_command(
-            lambda runtime: runtime.observe_autopilot_candidate(source, candidate_ref)
+            lambda runtime: runtime.observe_autopilot_candidate(
+                source, candidate_ref, handover=True)
         )
+
+    def autopilot_shadow_deferred_metrics(self) -> dict[str, object]:
+        """Any thread. Per-process SHADOW deferred counters; dropped > 0 = incomplete run."""
+        return {**self._shadow_deferred.metrics(), "process_instance_id": self._process_instance_id}
 
     def _shadow_protection_health(self) -> bool | None:
         provider = self._autopilot_protection_health
@@ -994,16 +1000,26 @@ class PaperRuntime:
     def bind_autopilot_protection_health(self, provider: Callable[[], bool] | None) -> None:
         self._autopilot_protection_health = provider
 
-    def observe_autopilot_candidate(self, source: str, candidate_ref: str):
+    def observe_autopilot_candidate(
+        self, source: str, candidate_ref: str, *, handover: bool = False,
+    ):
         """Owner thread. Autopilot evaluation of one arrived candidate.
 
         OFF does nothing. SHADOW stays read-only for every trading object.
         PAPER_AUTO routes the same policy result through the canonical Robot
         admission boundary. A failure is logged and never reaches the Scanner
         pass or the Box plan freeze.
+
+        ``handover``: the deferred SHADOW observer saw a non-SHADOW mode. If the
+        mode became SHADOW meanwhile, the owner never runs the SHADOW evaluation;
+        the arrival is counted as dropped.
         """
         state = self.store.get_robot_autopilot_state(self._paper_account_id)
         mode = state.mode if state is not None else "OFF"
+        if handover and mode != "PAPER_AUTO":
+            if mode == "SHADOW":
+                self._shadow_deferred.record_drop(source, candidate_ref, "HANDOVER_MODE_SHADOW")
+            return None
         try:
             if mode == "PAPER_AUTO":
                 return admit_arrived_auto_candidate(

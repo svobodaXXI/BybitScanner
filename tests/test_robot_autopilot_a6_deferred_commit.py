@@ -587,5 +587,181 @@ class CommitChunkTests(StoreContractTests):
         self.assertEqual(owner_calls, [])
 
 
+class DeferredMetricsTests(Fixture):
+    """PR #477 P0: every arrival without a SHADOW decision is counted, per process."""
+
+    def test_commit_and_exhausted_attempts_are_counted_with_the_last_reason(self):
+        self.arrive()
+        observer = self.observer(health=lambda: True)
+        self.assertEqual(self.observe(observer), shadow.DEFERRED_COMMITTED)
+        self.assertEqual((observer.metrics()["committed"], observer.metrics()["dropped"]), (1, 0))
+        self.arrive("late-2", symbol="LATE2USDT")
+        busy = shadow.ShadowDeferredObserver(
+            self.db.store.path, ACCOUNT, lambda chunk: "BUSY", protection_healthy=lambda: True,
+            candidate_store_dir=self.db.candidates, clock_ms=lambda: NOW + 1)
+        self.assertEqual(busy.observe(shadow.SOURCE_SCANNER, "late-2"), shadow.DEFERRED_DROPPED)
+        metrics = busy.metrics()
+        self.assertEqual((metrics["committed"], metrics["dropped"]), (0, 1))
+        self.assertEqual(metrics["last_drop"]["reason"], "ATTEMPTS_EXHAUSTED:BUSY")
+        self.assertEqual(metrics["last_drop"]["candidate_ref"], "late-2")
+
+    def test_an_evaluation_error_is_counted_as_dropped(self):
+        from unittest.mock import patch
+
+        observer = self.observer(health=lambda: True)
+        with patch.object(shadow, "plan_shadow_observation", side_effect=RuntimeError("boom")):
+            self.assertEqual(observer.observe(shadow.SOURCE_SCANNER, "x"), shadow.DEFERRED_DROPPED)
+        metrics = observer.metrics()
+        self.assertEqual((metrics["committed"], metrics["dropped"]), (0, 1))
+        self.assertEqual(metrics["last_drop"]["reason"], "ERROR_RuntimeError")
+
+    def test_a_handover_is_neither_committed_nor_dropped_by_the_observer(self):
+        state = self.db.store.get_robot_autopilot_state(ACCOUNT)
+        self.db.store.update_robot_autopilot_state(
+            ACCOUNT, mode="OFF", expected_version=state.version, updated_at_ms=NOW)
+        observer = self.observer(health=lambda: True)
+        self.assertEqual(self.observe(observer), shadow.DEFERRED_HANDOVER)
+        metrics = observer.metrics()
+        self.assertEqual((metrics["committed"], metrics["dropped"], metrics["last_drop"]), (0, 0, None))
+
+    def test_metrics_never_wait_for_a_running_evaluation(self):
+        self.arrive()
+        seen = []
+
+        def hook(chunk):  # the evaluation lock is held here; a reader must not wait for it
+            if not seen:
+                reader = threading.Thread(target=lambda: seen.append(observer.metrics()))
+                reader.start()
+                reader.join(2.0)
+                seen.append(reader.is_alive())
+        observer = self.observer(hook=hook, health=lambda: True)
+        self.assertEqual(self.observe(observer), shadow.DEFERRED_COMMITTED)
+        self.assertEqual(seen[0]["committed"], 0)
+        self.assertIs(seen[1], False)
+        self.assertEqual(observer.metrics()["committed"], 1)
+
+    def test_concurrent_drops_are_all_counted(self):
+        observer = self.observer()
+        threads = [threading.Thread(target=lambda i=i: [
+            observer.record_drop(shadow.SOURCE_SCANNER, f"r{i}-{n}", "X") for n in range(200)])
+            for i in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(observer.metrics()["dropped"], 1600)
+
+    def test_a_new_process_starts_from_zero(self):
+        observer = self.observer()
+        observer.record_drop(shadow.SOURCE_SCANNER, "x", "X")
+        fresh = self.observer()  # a restarted backend builds a new runtime and observer
+        self.assertEqual((fresh.metrics()["committed"], fresh.metrics()["dropped"]), (0, 0))
+        self.assertGreaterEqual(fresh.metrics()["observer_started_at_ms"],
+                                observer.metrics()["observer_started_at_ms"])
+
+
+class HandoverOwnerTests(Fixture):
+    """PR #477 P0: a handover reaching the owner after OFF->SHADOW never evaluates there."""
+
+    def runtime(self, observer):
+        from terminal.runtime.paper_runtime import PaperRuntime
+
+        runtime = PaperRuntime.__new__(PaperRuntime)
+        runtime.store = self.db.store
+        runtime._paper_account_id = ACCOUNT
+        runtime._shadow_deferred = observer
+        runtime._process_instance_id = "proc-1"
+        runtime._autopilot_protection_health = lambda: True
+        runtime._autopilot_candidate_fresh = lambda symbol, snapshot: True
+        runtime._prepare_autopilot_evidence = lambda source, ref: None
+        return runtime
+
+    def set_mode(self, mode):
+        state = self.db.store.get_robot_autopilot_state(ACCOUNT)
+        self.db.store.update_robot_autopilot_state(
+            ACCOUNT, mode=mode, expected_version=state.version, updated_at_ms=NOW)
+
+    def patched(self):
+        from unittest.mock import patch
+        from terminal.runtime import paper_runtime
+
+        heavy = patch.object(paper_runtime, "observe_shadow_candidate",
+                             side_effect=AssertionError("heavy SHADOW evaluation on the owner"))
+        auto = patch.object(paper_runtime, "admit_arrived_auto_candidate", return_value="AUTO")
+        return heavy, auto
+
+    def test_off_to_shadow_race_drops_on_the_owner_without_the_heavy_path(self):
+        self.arrive()
+        self.set_mode("OFF")
+        observer = self.observer(health=lambda: True)
+        runtime = self.runtime(observer)
+
+        def dispatcher(operation):  # the operator's POST SHADOW lands before the owner runs
+            self.set_mode("SHADOW")
+            return operation(runtime)
+        runtime._robot_command_dispatcher = dispatcher
+        before = self.db.store.count_robot_auto_decisions(ACCOUNT)
+        heavy, auto = self.patched()
+        with heavy, auto as admit:
+            runtime._observe_autopilot_with_prepared_evidence(shadow.SOURCE_SCANNER, "late")
+        admit.assert_not_called()
+        self.assertEqual(self.db.store.count_robot_auto_decisions(ACCOUNT), before)
+        metrics = runtime.autopilot_shadow_deferred_metrics()
+        self.assertEqual((metrics["committed"], metrics["dropped"]), (0, 1))
+        self.assertEqual(metrics["last_drop"]["reason"], "HANDOVER_MODE_SHADOW")
+        self.assertEqual(metrics["process_instance_id"], "proc-1")
+
+    def test_handover_in_off_does_nothing_and_counts_nothing(self):
+        self.set_mode("OFF")
+        runtime = self.runtime(self.observer())
+        runtime._robot_command_dispatcher = lambda operation: operation(runtime)
+        heavy, auto = self.patched()
+        with heavy, auto as admit:
+            runtime._observe_autopilot_with_prepared_evidence(shadow.SOURCE_SCANNER, "x")
+        admit.assert_not_called()
+        self.assertEqual(runtime.autopilot_shadow_deferred_metrics()["dropped"], 0)
+
+    def test_handover_in_paper_auto_keeps_the_unchanged_admission_path(self):
+        self.set_mode("PAPER_AUTO")
+        runtime = self.runtime(self.observer())
+        runtime._robot_command_dispatcher = lambda operation: operation(runtime)
+        heavy, auto = self.patched()
+        with heavy, auto as admit:
+            runtime._observe_autopilot_with_prepared_evidence(shadow.SOURCE_SCANNER, "x")
+            self.assertEqual(runtime.observe_autopilot_candidate(shadow.SOURCE_SCANNER, "y"), "AUTO")
+        self.assertEqual([c.kwargs["candidate_ref"] for c in admit.call_args_list], ["x", "y"])
+        self.assertEqual(runtime.autopilot_shadow_deferred_metrics()["dropped"], 0)
+
+    def test_protection_health_payload_carries_the_counters_off_the_owner(self):
+        from terminal.runtime.paper_http_server import (
+            RobotProtectionCoverageManager, SerializedPaperRuntime,
+        )
+
+        observer = self.observer()
+        observer.record_drop(shadow.SOURCE_BOX_PLAN, "box-1", "HANDOVER_MODE_SHADOW")
+        runtime = self.runtime(observer)
+
+        class Owned:  # only what SerializedPaperRuntime picks up from the owned runtime
+            autopilot_shadow_deferred_metrics = runtime.autopilot_shadow_deferred_metrics
+
+            def close(self):
+                pass
+        serialized = SerializedPaperRuntime(Owned)
+        self.addCleanup(serialized.close)
+        blocked, release = threading.Event(), threading.Event()
+        serialized._requests.put((lambda runtime: (blocked.set(), release.wait(5)), threading.Event(), {}))
+        self.assertTrue(blocked.wait(5))  # the owner is busy: the counters must not wait for it
+        try:
+            manager = RobotProtectionCoverageManager(None, serialized, recovery_session=object())
+            health = manager.health()
+        finally:
+            release.set()
+        payload = health["autopilot_shadow_deferred"]
+        self.assertEqual((payload["committed"], payload["dropped"]), (0, 1))
+        self.assertEqual(payload["last_drop"]["reason"], "HANDOVER_MODE_SHADOW")
+        self.assertEqual(payload["process_instance_id"], "proc-1")
+        json.dumps(payload)  # served as JSON as is
+
+
 if __name__ == "__main__":
     unittest.main()

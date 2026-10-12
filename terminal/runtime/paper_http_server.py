@@ -1312,6 +1312,7 @@ class SerializedPaperRuntime:
         self._candle_cache = None  # the owned runtime's CachedClosedCandleProvider, if any
         self._catchup_evidence = None  # the owned runtime's PreparedCatchupEvidence, if any
         self._evidence_book_provider = None  # the owned runtime's book provider, if any
+        self._shadow_deferred_metrics = None  # the owned runtime's SHADOW deferred counters, if any
         self._protection_ingress_last_symbol: str | None = None
         self._protection_ingress_last_role: str | None = None
         self._protection_ingress_last_overflow_symbol: str | None = None
@@ -1490,6 +1491,11 @@ class SerializedPaperRuntime:
                 "last_overflow_role": self._protection_ingress_last_overflow_role,
             }
 
+    def autopilot_shadow_deferred_metrics(self) -> dict[str, object] | None:
+        """Read off the owner (the counters have their own lock); None without a runtime."""
+        metrics = self._shadow_deferred_metrics
+        return None if metrics is None else metrics()
+
     def protection_ingress_recent(self, window_s: float) -> dict[str, object]:
         """Recent-window protection ingress load for the Autopilot admission gate.
 
@@ -1611,6 +1617,7 @@ class SerializedPaperRuntime:
         self._candle_cache = getattr(runtime, "robot_closed_candle_cache", None)
         self._catchup_evidence = getattr(runtime, "robot_catchup_evidence", None)
         self._evidence_book_provider = getattr(runtime, "_book_provider", None)
+        self._shadow_deferred_metrics = getattr(runtime, "autopilot_shadow_deferred_metrics", None)
         self._ready.set()
         try:
             while True:
@@ -2166,6 +2173,8 @@ class RobotProtectionCoverageManager:
             }
         if hasattr(self._runtime, "protection_ingress_metrics"):
             health["ingress"] = self._runtime.protection_ingress_metrics()
+        if hasattr(self._runtime, "autopilot_shadow_deferred_metrics"):
+            health["autopilot_shadow_deferred"] = self._runtime.autopilot_shadow_deferred_metrics()
         return health
 
     def resync(self, *, shutdown_strict: bool = False) -> None:

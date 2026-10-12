@@ -944,6 +944,13 @@ class ShadowDeferredObserver:
         self._monotonic, self._attempts = monotonic, attempts
         self._max_age, self._expiry = snapshot_max_age_s, expiry_s
         self._lock = threading.Lock()
+        # Per-process counters (a new process starts at zero): every arrival this observer
+        # did not commit is counted as dropped, so a SHADOW run with dropped > 0 is incomplete.
+        self._metrics_lock = threading.Lock()
+        self._started_at_ms = int(time.time() * 1000)
+        self._committed = 0
+        self._dropped = 0
+        self._last_drop: dict[str, Any] | None = None
 
     def observe(self, source: str, candidate_ref: str) -> str:
         with self._lock:
@@ -957,14 +964,39 @@ class ShadowDeferredObserver:
                         f"source={source} candidate_ref={candidate_ref} "
                         f"error_class={type(error).__name__}"
                     )
+                    self.record_drop(source, candidate_ref, f"ERROR_{type(error).__name__}")
                     return DEFERRED_DROPPED
-                if outcome in (DEFERRED_COMMITTED, DEFERRED_HANDOVER):
+                if outcome == DEFERRED_COMMITTED:
+                    with self._metrics_lock:
+                        self._committed += 1
                     return outcome
-            print(
-                "[AUTOPILOT SHADOW DEFERRED DROPPED] "
-                f"source={source} candidate_ref={candidate_ref} last={outcome}"
-            )
+                if outcome == DEFERRED_HANDOVER:
+                    return outcome
+            self.record_drop(source, candidate_ref, f"ATTEMPTS_EXHAUSTED:{outcome}")
             return DEFERRED_DROPPED
+
+    def record_drop(self, source: str, candidate_ref: str, reason: str) -> None:
+        """Count one arrival without a SHADOW decision (any thread) and log it."""
+        print(
+            "[AUTOPILOT SHADOW DEFERRED DROPPED] "
+            f"source={source} candidate_ref={candidate_ref} last={reason}"
+        )
+        with self._metrics_lock:
+            self._dropped += 1
+            self._last_drop = {
+                "reason": reason, "source": source, "candidate_ref": str(candidate_ref),
+                "at_ms": int(time.time() * 1000),
+            }
+
+    def metrics(self) -> dict[str, Any]:
+        """Thread-safe snapshot; never waits for an evaluation or the owner."""
+        with self._metrics_lock:
+            return {
+                "observer_started_at_ms": self._started_at_ms,
+                "committed": self._committed,
+                "dropped": self._dropped,
+                "last_drop": None if self._last_drop is None else dict(self._last_drop),
+            }
 
     def _attempt(self, source: str, candidate_ref: str) -> str:
         started = self._monotonic()
