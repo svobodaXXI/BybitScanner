@@ -453,11 +453,10 @@ def calculate_pair_metrics(
 
         anchor_family = "triangle"
 
-        sequence_valid = True
-
     if anchor_family in (
         "rising",
-        "falling"
+        "falling",
+        "triangle"
     ):
 
         #
@@ -468,6 +467,12 @@ def calculate_pair_metrics(
         # pivot on the opposite side of that SAME local episode.
         # Rising vs falling shape must never decide which anchor came
         # first -- only the anchors' own chronological order does.
+        #
+        # G-TRI-3: Triangle Compression uses the same local-episode rule.
+        # A triangle anchored on a pivot from before the impulse-ending
+        # extreme (owner cases KAS/LIT/MANA, PR #478/#479) is not a local
+        # formation; the anchors' chronological order still decides the
+        # impulse direction, so no lower-before-upper ban is introduced.
         #
 
         opposite_points = []

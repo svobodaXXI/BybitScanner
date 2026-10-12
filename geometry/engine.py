@@ -160,13 +160,12 @@ def _is_anchor_sequence_valid(geometry):
     evidence; no new metric or threshold. A pair that fails this can never
     be rescued by ranking, score or relaxed validation elsewhere.
 
-    Triangle candidates have no single preceding-impulse anchor order to
-    validate and are left exactly as before (`anchor_sequence.valid` is
-    unconditionally True for them already).
+    G-TRI-3: Triangle Compression candidates follow the same rule, so a
+    triangle anchored across an older impulse is rejected, never rescued.
     """
     pair_metrics = getattr(geometry, "pair_metrics", {}) or {}
     anchor_sequence = pair_metrics.get("anchor_sequence") or {}
-    if anchor_sequence.get("family") not in ("rising", "falling"):
+    if anchor_sequence.get("family") not in ("rising", "falling", "triangle"):
         return True
     return bool(anchor_sequence.get("valid", False))
 
