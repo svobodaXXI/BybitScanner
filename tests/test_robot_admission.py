@@ -1,4 +1,6 @@
+import sys
 import tempfile
+import types
 import unittest
 from decimal import Decimal
 from pathlib import Path
@@ -7,8 +9,12 @@ from robot_candidate_store import create_signal_snapshot, load_candidate
 from terminal.application.robot_admission import (
     RobotAdmissionRejected,
     admit_robot_candidate,
+    candidate_snapshot_sha256,
 )
 from terminal.domain.models import Symbol, TradingAccountId
+from terminal.persistence.source_terminal_events import (
+    SourceTerminalEvent, append_source_terminal_event, source_terminal_events_path,
+)
 from terminal.persistence.sqlite_store import SQLiteStore
 
 
@@ -84,7 +90,24 @@ class RobotAdmissionGateTests(unittest.TestCase):
                 store.close()
 
     def test_unsupported_pattern_is_rejected_before_sqlite_admission(self):
-        import telegram_review
+        # config.py is local and may contain secrets; stub it only for this import and
+        # restore the module registry immediately afterward (isolated runs have none).
+        previous_config = sys.modules.get("config")
+        config_stub = types.ModuleType("config")
+        config_stub.TELEGRAM_TOKEN = "test-token"
+        config_stub.TELEGRAM_CHAT_ID = "owner"
+        config_stub.TELEGRAM_CHAT_IDS = ("owner",)
+        config_stub.TELEGRAM_ENABLED = True
+        config_stub.TELEGRAM_TEST_MODE = False
+        config_stub.TIMEFRAME = "5"
+        sys.modules["config"] = config_stub
+        try:
+            import telegram_review
+        finally:
+            if previous_config is None:
+                sys.modules.pop("config", None)
+            else:
+                sys.modules["config"] = previous_config
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -329,6 +352,42 @@ class RobotAdmissionGateTests(unittest.TestCase):
             self.assertEqual(record.trading_account_id, TradingAccountId("paper"))
             self.assertEqual(record.status, "APPROVED")
             self.assertEqual(load_candidate("candidate-1", store_dir=candidate_dir)["status"], "APPROVED")
+
+    def test_proven_source_terminal_snapshot_is_never_admitted_manually(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate_dir = root / "candidates"
+            db_path = root / "paper.sqlite3"
+            envelope = self._make_candidate(candidate_dir, "expired-1")
+            self._make_candidate(candidate_dir, "live-1")
+            self._ready_database(db_path)
+            sidecar = source_terminal_events_path(db_path)
+            append_source_terminal_event(sidecar, SourceTerminalEvent(
+                trading_account_id="paper", candidate_ref="expired-1",
+                snapshot_sha256=candidate_snapshot_sha256(envelope["signal_snapshot"]),
+                source="SCANNER", terminal_status="EXPIRED",
+                rule="WEDGE_EXPIRED_AT_APEX_NO_RETEST", rule_version="2",
+                evidence_json="{}", observed_at_ms=1))
+
+            def admit(ref):
+                return admit_robot_candidate(ref, database_path=db_path, store_dir=candidate_dir,
+                                             clock_ms=lambda: 2000)
+
+            with self.assertRaisesRegex(RobotAdmissionRejected, "proven terminal"):
+                admit("expired-1")
+            store = SQLiteStore.open(db_path)
+            try:
+                self.assertIsNone(store.get_robot_candidate("expired-1"))  # nothing was created
+            finally:
+                store.close()
+            self.assertEqual(load_candidate("expired-1", store_dir=candidate_dir)["status"], "AVAILABLE")
+
+            self.assertTrue(admit("live-1")[1])  # another signal is unaffected
+
+            sidecar.write_bytes(b"not a database")  # unreadable sidecar: no unsafe bypass
+            self._make_candidate(candidate_dir, "later-1")
+            with self.assertRaisesRegex(RobotAdmissionRejected, "unavailable"):
+                admit("later-1")
 
     def test_repeat_admission_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
