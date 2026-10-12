@@ -308,17 +308,26 @@ class _BatchSnapshot:
     so candidates and PAPER rows cannot change under the batch. The audit list and
     the virtual SHADOW reservations are advanced in memory after each append, exactly
     as a fresh ``collect_portfolio_facts`` would see them. Never kept across batches.
+
+    P0 (RUN #3): only the semantically needed history is read, never the whole audit
+    or candidate tables. ``decisions`` holds the first and latest decision of every
+    idea plus every SHADOW ALLOW (latest lookups, due-WAIT order and reservations are
+    unchanged); ``decision_count`` is the real audit size for ``audit_sequence``.
+    Candidates exclude only frozen Box plans that nothing refers to.
     """
 
     def __init__(self, store: SQLiteStore, account: TradingAccountId):
         self._store, self._account = store, account
-        self.decisions = list(store.load_robot_auto_decisions(account))
+        self.decisions = list(store.load_robot_auto_decision_heads(
+            account, keep_mode=SHADOW_MODE, keep_outcome=OUTCOME_ALLOW))
+        self.decision_count = store.count_robot_auto_decisions(account)
         self._candidates: tuple[RobotCandidateRecord, ...] | None = None
         self._portfolio: dict | None = None
 
     def robot_candidates(self) -> tuple[RobotCandidateRecord, ...]:
         if self._candidates is None:
-            self._candidates = self._store.load_robot_candidates(self._account)
+            self._candidates = self._store.load_robot_candidates_for_portfolio(
+                self._account, plan_only_status="BOX_PLAN_ONLY")
         return self._candidates
 
     def portfolio(self) -> dict:
@@ -333,6 +342,7 @@ class _BatchSnapshot:
         if not created:
             return
         self.decisions.append(decision)
+        self.decision_count += 1
         if (self._portfolio is not None and decision.mode == SHADOW_MODE
                 and decision.outcome == OUTCOME_ALLOW):
             self._portfolio = self._with_shadow_reservation(self._portfolio, decision)
@@ -382,7 +392,8 @@ def _fresh_facts(
     portfolio = _without_own_shadow_reservation(portfolio, candidate, prior_shadow_allow)
     if mode == PAPER_AUTO_MODE:
         portfolio = _physical_capital_only(portfolio)
-    portfolio["audit_sequence"] = len(decisions) + 1
+    # A batch holds a reduced decision read set; its count is the real audit size.
+    portfolio["audit_sequence"] = (len(decisions) if batch is None else batch.decision_count) + 1
     runtime = store.get_robot_runtime_state(account)
     try:
         healthy = None if protection_healthy is None else protection_healthy()
@@ -731,9 +742,11 @@ def observe_shadow_candidate(
             due = [ref for ref in _due_wait_refs(
                 batch.decisions, state, store.get_robot_runtime_state(account), now)
                 if ref != arrival]
-            for index, ref in enumerate(due[:A6_DUE_WAIT_BATCH_LIMIT]):
-                if index and _monotonic() - started >= A6_DUE_WAIT_BATCH_BUDGET_S:
-                    break  # candidate boundary: every written audit row is complete
+            for ref in due[:A6_DUE_WAIT_BATCH_LIMIT]:
+                # The budget includes the batch reads above; an exhausted budget starts
+                # no further WAIT evaluation (candidate boundary: written rows are complete).
+                if _monotonic() - started >= A6_DUE_WAIT_BATCH_BUDGET_S:
+                    break
                 try:
                     observe(*ref, batch)
                 except sqlite3.Error:

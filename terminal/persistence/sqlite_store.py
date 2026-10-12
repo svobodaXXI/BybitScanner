@@ -1052,6 +1052,7 @@ class SQLiteStore:
                 raise SchemaError("database did not enter WAL mode")
             cls._initialize_or_validate_schema(connection)
             cls._ensure_robot_candidate_read_indexes(connection)
+            cls._ensure_auto_decision_read_indexes(connection)
             return cls(connection, database_path, busy_timeout_ms)
         except (sqlite3.DatabaseError, OSError) as exc:
             if connection is not None:
@@ -1085,6 +1086,41 @@ class SQLiteStore:
         missing = [
             (name, target)
             for name, target in SQLiteStore._ROBOT_CANDIDATE_READ_INDEXES
+            if name not in present
+        ]
+        if not missing:
+            return  # steady state: no write transaction on open
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for name, target in missing:
+                connection.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+
+    # A6 owner-thread read access (P0 RUN #3 stall). robot_auto_decisions keeps a
+    # multi-KB facts_json per row and grows with every WAIT reevaluation; this
+    # covering index lets the A6 read set (first/latest decision per idea and
+    # every SHADOW ALLOW) be found without walking the audit table. Created
+    # idempotently on open with no version bump, like the candidate read indexes.
+    _AUTO_DECISION_READ_INDEXES = (
+        ("robot_auto_decisions_a6_heads",
+         "robot_auto_decisions(trading_account_id, candidate_ref, source_identity, mode, "
+         "policy_version, evaluated_at_ms, decision_id, outcome)"),
+    )
+
+    @staticmethod
+    def _ensure_auto_decision_read_indexes(connection: sqlite3.Connection) -> None:
+        present = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='robot_auto_decisions'"
+            )
+        }
+        missing = [
+            (name, target)
+            for name, target in SQLiteStore._AUTO_DECISION_READ_INDEXES
             if name not in present
         ]
         if not missing:
@@ -4313,6 +4349,51 @@ class SQLiteStore:
         ).fetchone()
         return _robot_auto_decision_from_row(row) if row is not None else None
 
+    def load_robot_auto_decision_heads(
+        self, trading_account_id: TradingAccountId, *, keep_mode: str, keep_outcome: str,
+    ) -> tuple[RobotAutoDecisionRecord, ...]:
+        """A6 read set without the full audit history, in audit order.
+
+        The first and the latest decision of every (candidate_ref, source_identity,
+        mode, policy_version) idea plus every ``keep_mode``/``keep_outcome`` decision.
+        For per-idea latest lookups, first-arrival order of ideas and the SHADOW ALLOW
+        reservations this is the same as ``load_robot_auto_decisions``; it is not a
+        replacement for audit counts (see ``count_robot_auto_decisions``).
+        """
+        self._assert_owner()
+        account = trading_account_id.value
+        # The outer read is by primary key (decision_id is unique); the account filter
+        # lives in the subqueries, which only touch the covering heads index.
+        rows = self._connection.execute(
+            """SELECT * FROM robot_auto_decisions
+               WHERE decision_id IN (
+                   SELECT decision_id FROM (
+                       SELECT decision_id,
+                              ROW_NUMBER() OVER idea_first AS first_rank,
+                              ROW_NUMBER() OVER idea_last AS last_rank
+                       FROM robot_auto_decisions WHERE trading_account_id=?
+                       WINDOW idea_first AS (
+                                  PARTITION BY candidate_ref, source_identity, mode, policy_version
+                                  ORDER BY evaluated_at_ms, decision_id),
+                              idea_last AS (
+                                  PARTITION BY candidate_ref, source_identity, mode, policy_version
+                                  ORDER BY evaluated_at_ms DESC, decision_id DESC))
+                   WHERE first_rank=1 OR last_rank=1
+                   UNION
+                   SELECT decision_id FROM robot_auto_decisions
+                   WHERE trading_account_id=? AND mode=? AND outcome=?)
+               ORDER BY evaluated_at_ms, decision_id""",
+            (account, account, keep_mode, keep_outcome),
+        ).fetchall()
+        return tuple(_robot_auto_decision_from_row(row) for row in rows)
+
+    def count_robot_auto_decisions(self, trading_account_id: TradingAccountId) -> int:
+        self._assert_owner()
+        return int(self._connection.execute(
+            "SELECT COUNT(*) FROM robot_auto_decisions WHERE trading_account_id=?",
+            (trading_account_id.value,),
+        ).fetchone()[0])
+
     def load_robot_auto_decisions(
         self, trading_account_id: TradingAccountId,
     ) -> tuple[RobotAutoDecisionRecord, ...]:
@@ -4703,6 +4784,38 @@ class SQLiteStore:
             "SELECT * FROM robot_candidates WHERE candidate_id=?", (candidate_id,),
         ).fetchone()
         return _robot_candidate_from_row(row) if row is not None else None
+
+    def load_robot_candidates_for_portfolio(
+        self, trading_account_id: TradingAccountId, *, plan_only_status: str,
+    ) -> tuple[RobotCandidateRecord, ...]:
+        """Candidates the PAPER portfolio collector can reach, in ``load_robot_candidates`` order.
+
+        Every candidate except ``plan_only_status`` (Box plan) rows that nothing refers
+        to: a plan row is kept when it is the handoff source of a candidate, owns a Box
+        order, or has a trade. A plan row itself carries neither Robot state (schema
+        CHECK) nor a handoff lineage (exact Box snapshot contract). Unreferenced frozen
+        plans cannot change portfolio facts, and they are the bulk of the history.
+        Status ranges keep both reads on the (account, status) index.
+        """
+        self._assert_owner()
+        account = trading_account_id.value
+        rows = self._connection.execute(
+            """SELECT * FROM robot_candidates
+               WHERE trading_account_id=? AND (status < ? OR status > ?)
+               UNION ALL
+               SELECT * FROM robot_candidates
+               WHERE trading_account_id=? AND status=? AND candidate_id IN (
+                   SELECT json_extract(signal_snapshot_json, '$.source_box_candidate_id')
+                   FROM robot_candidates
+                   WHERE trading_account_id=? AND (status < ? OR status > ?)
+                   UNION SELECT candidate_id FROM box_order_ownership WHERE trading_account_id=?
+                   UNION SELECT candidate_id FROM robot_trades WHERE trading_account_id=?)
+               ORDER BY approved_at_ms, candidate_id""",
+            (account, plan_only_status, plan_only_status,
+             account, plan_only_status,
+             account, plan_only_status, plan_only_status, account, account),
+        ).fetchall()
+        return tuple(_robot_candidate_from_row(row) for row in rows)
 
     def load_robot_candidates(self, trading_account_id: TradingAccountId) -> tuple[RobotCandidateRecord, ...]:
         self._assert_owner()
