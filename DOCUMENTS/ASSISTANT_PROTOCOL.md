@@ -437,6 +437,22 @@ a long acceptance run until this gate passes. Reuse already-proven unchanged
 evidence; this rule is a completeness gate, not permission for repetitive
 checks.
 
+### 2.2.5 CLICKABLE_REPLY_OPTIONS_RULE — OWNER STANDARD 2026-10-12
+
+When the owner must choose an action or report a short result (a decision between
+defined options, `да`/`нет`, `готово`/`не получилось`, PASS/FAIL of a simple
+observation), offer ready clickable answer options in the interface instead of asking
+for manual typing. Each option is one concrete, self-contained reply with its
+consequence evident from its label; the free-text path always remains available.
+
+Use options only where they save the owner effort: no buttons for open-ended input
+(logs, error text, paths, values, descriptions), for statements that need no reply, or
+as decoration. Options never replace `Сейчас сделай:` and its copy-ready block for
+commands or payloads (`2.1`, `2.2`), and never carry consent for a mandatory gate,
+LIVE/financial action or destructive step: those still require the owner's explicit
+current instruction. Where the client has no clickable-option mechanism, fall back to a
+short lettered list the owner can answer with one letter.
+
 
 ## 2.3 NO ASSUMED USER STATE + BEGINNER-SAFE STEP-BY-STEP
 
