@@ -28,6 +28,7 @@ import logging
 import math
 import os
 from pathlib import Path
+import threading
 import time
 from typing import Any, Callable, Mapping
 
@@ -185,11 +186,15 @@ def run_wedge_terminal_producer_once(
     candle_range_loader: Callable | None = None,
     now_ms: int | None = None,
     max_fetches: int = MAX_FETCHES_PER_PASS,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict[str, str]:
     """One pass over this account's Wedge SHADOW ALLOWs; returns status per candidate_ref.
 
     Returns {} when another pass holds the lock or the sidecar is unreadable.
+    ``should_stop`` is checked before every fetch and again right before every append:
+    once it is true the pass appends nothing more and marks the rest STOPPED.
     """
+    should_stop = should_stop or (lambda: False)
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
     sidecar = source_terminal_events_path(database_path)
     with producer_pass_lock(sidecar) as acquired:
@@ -220,14 +225,15 @@ def run_wedge_terminal_producer_once(
                     or decision.snapshot_sha256 is None or identity in seen):
                 continue
             seen.add(identity)
-            results[decision.candidate_ref] = _process(
-                decision, account, known, sidecar, candidate_store_dir, candle_range_loader,
-                now_ms, budget)
+            results[decision.candidate_ref] = (
+                "STOPPED" if should_stop() else _process(
+                    decision, account, known, sidecar, candidate_store_dir, candle_range_loader,
+                    now_ms, budget, should_stop))
         return results
 
 
 def _process(decision, account, known, sidecar, candidate_store_dir, candle_range_loader,
-             now_ms, budget) -> str:
+             now_ms, budget, should_stop) -> str:
     ref, sha = decision.candidate_ref, decision.snapshot_sha256
     if (ref, sha) in known:
         return "ALREADY_TERMINAL"
@@ -260,6 +266,8 @@ def _process(decision, account, known, sidecar, candidate_store_dir, candle_rang
     evidence = evaluate_wedge_apex_expiry(snapshot, frame)
     if evidence is None:
         return "NOT_PROVEN"
+    if should_stop():
+        return "STOPPED"  # closed while the request was in flight: never append afterwards
     try:
         _event, created = append_source_terminal_event(sidecar, SourceTerminalEvent(
             trading_account_id=account.value, candidate_ref=ref, snapshot_sha256=sha,
@@ -269,6 +277,88 @@ def _process(decision, account, known, sidecar, candidate_store_dir, candle_rang
     except (SourceTerminalEventError, OSError, ValueError):
         return "APPEND_FAILED"
     return "APPENDED" if created else "ALREADY_TERMINAL"
+
+
+DEFAULT_PRODUCER_INTERVAL_S = 300.0
+
+
+class WedgeTerminalProducerWorker:
+    """Background PaperRuntime worker: one producer pass per interval, SHADOW only.
+
+    Same lifecycle pattern as ScannerControlRuntime/RobotBreakoutMonitor: its own
+    thread and stop Event, a full interval is waited BEFORE the first pass, close()
+    joins. Nothing here touches the PAPER owner; a failed pass or mode read is logged
+    and the next interval tries again (no event = reservation kept).
+    """
+
+    THREAD_NAME = "wedge-terminal-producer"
+
+    def __init__(self, database_path, account: TradingAccountId, *,
+                 interval_s: float = DEFAULT_PRODUCER_INTERVAL_S,
+                 run_pass: Callable = run_wedge_terminal_producer_once,
+                 autopilot_mode: Callable[[], str | None] | None = None,
+                 candidate_store_dir=None) -> None:
+        self._database_path = database_path
+        self._account = account
+        self._interval_s = interval_s
+        self._run_pass = run_pass
+        self._autopilot_mode = autopilot_mode or self._read_autopilot_mode
+        self._candidate_store_dir = candidate_store_dir
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        """Idempotent while running; refuses to start over a thread that is still closing."""
+        if self._thread is not None and self._thread.is_alive():
+            if self._stop.is_set():
+                raise RuntimeError("the previous Wedge producer pass is still finishing")
+            return
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, args=(self._stop,),
+                                        name=self.THREAD_NAME, daemon=True)
+        self._thread.start()
+
+    def close(self, timeout_s: float = 5.0) -> bool:
+        """Stop and join for at most ``timeout_s``; False (and an ERROR log) if still running.
+
+        A pass blocked in a Bybit request (pybit: 10 s timeout, 3 attempts, 3 s delay)
+        may outlive the join; it is a daemon thread and its ``should_stop`` check
+        discards the late result, so nothing is appended after close().
+        """
+        self._stop.set()
+        thread = self._thread
+        if thread is None or thread is threading.current_thread():
+            return True
+        thread.join(timeout=timeout_s)
+        if thread.is_alive():
+            LOGGER.error("Wedge terminal producer did not stop within %.1f s; "
+                         "its in-flight result will be discarded", timeout_s)
+            return False
+        return True
+
+    def is_alive(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def _read_autopilot_mode(self) -> str | None:
+        reader = SQLiteStore.open_reader(self._database_path)
+        try:
+            state = reader.get_robot_autopilot_state(self._account)
+        finally:
+            reader.close()
+        return None if state is None else state.mode
+
+    def _run(self, stop: threading.Event) -> None:
+        while not stop.wait(self._interval_s):
+            try:
+                if self._autopilot_mode() != "SHADOW":
+                    continue
+                results = self._run_pass(self._database_path, self._account,
+                                         candidate_store_dir=self._candidate_store_dir,
+                                         should_stop=stop.is_set)
+                if results:
+                    LOGGER.info("Wedge terminal producer pass: %s", results)
+            except Exception:
+                LOGGER.warning("Wedge terminal producer pass failed; reservations kept", exc_info=True)
 
 
 def main(argv: list[str] | None = None) -> int:

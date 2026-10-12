@@ -30,6 +30,7 @@ from terminal.application.robot_autopilot_shadow import (
     admit_arrived_auto_candidate, commit_shadow_chunk, observe_shadow_candidate,
     owner_autopilot_mode, resolve_autopilot_evidence_target,
 )
+from terminal.application.wedge_source_terminal_producer import WedgeTerminalProducerWorker
 from terminal.application.robot_breakout_monitor import (
     DEFAULT_TICK_INTERVAL_S, EmergencyClosePath, INACTIVE_LIMIT_STATUSES, RobotBreakoutMonitor,
 )
@@ -890,6 +891,12 @@ class PaperRuntime:
             clock_ms=lambda: int(time.time() * 1000),
         )
         self._scanner_control.start()
+        # A3-R6: proven Wedge source-terminal events (sidecar) on its own thread,
+        # SHADOW only; candles/network never run on the PAPER owner.
+        self._wedge_terminal_producer = WedgeTerminalProducerWorker(
+            database_path, self._paper_account_id,
+        )
+        self._wedge_terminal_producer.start()
 
     def start_robot_monitor(
         self, dispatcher: Callable[[Callable[["PaperRuntime"], object]], object],
@@ -3993,11 +4000,15 @@ class PaperRuntime:
         )
 
     def close(self) -> None:
+        producer_stopped = self._wedge_terminal_producer.close()
         self._robot_breakout_monitor.close()
         self._scanner_control.close()
         self.store.close()
         if self._live_account_store is not None:
             self._live_account_store.close()
+        if not producer_stopped:
+            # Everything else is closed; do not report this shutdown as clean.
+            raise RuntimeError("Wedge terminal producer did not stop within its close timeout")
 
 
 def _fingerprint(*values: str) -> str:
