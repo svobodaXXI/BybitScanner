@@ -14,7 +14,8 @@ from robot_candidate_store import create_signal_snapshot
 from terminal.application.robot_admission import candidate_snapshot_sha256
 from terminal.application.robot_portfolio import collect_portfolio_facts
 from terminal.application.wedge_source_terminal_producer import (
-    MAX_KLINE_LIMIT, RULE, evaluate_wedge_apex_expiry, run_wedge_terminal_producer_once,
+    MAX_KLINE_LIMIT, MAX_RANGE_PAGES, RULE, RangeLoadError, evaluate_wedge_apex_expiry,
+    load_closed_1m_range, producer_pass_lock, run_wedge_terminal_producer_once,
 )
 from terminal.domain.models import OrderId, OrderSide, Symbol
 from terminal.persistence.source_terminal_events import (
@@ -108,15 +109,16 @@ class ProducerRunTests(unittest.TestCase):
         return sha
 
     def loader(self, frame):
-        def load(symbol, interval, limit, minimum=2):
-            self.loads.append((symbol, interval, limit))
-            return frame
+        """Range stub: the rows of ``frame`` inside [start_ms, end_ms]."""
+        def load(symbol, start_ms, end_ms):
+            self.loads.append((symbol, start_ms, end_ms))
+            return frame[(frame["time"] >= start_ms) & (frame["time"] <= end_ms)].reset_index(drop=True)
         return load
 
-    def run_once(self, frame, now_ms=T0 + 12 * MIN):
+    def run_once(self, frame, now_ms=T0 + 12 * MIN, **kwargs):
         return run_wedge_terminal_producer_once(
             self.store.path, ACCOUNT, candidate_store_dir=self.db.candidates,
-            candle_loader=self.loader(frame), now_ms=now_ms)
+            candle_range_loader=self.loader(frame), now_ms=now_ms, **kwargs)
 
     def facts(self):
         with self.store.autopilot_decision_transaction():
@@ -149,11 +151,34 @@ class ProducerRunTests(unittest.TestCase):
         self.assertEqual(self.run_once(_frame(QUIET), now_ms=T0 + 10 * MIN), {"w1": "NOT_DUE"})
         self.assertEqual(self.loads, [])
 
-    def test_out_of_kline_reach_is_kept_without_fetch(self):
-        self.allow("w1")
-        late = T0 + (MAX_KLINE_LIMIT + 5) * MIN
+    def test_old_signal_is_proven_from_its_own_anchor_range(self):
+        sha = self.allow("w1")
+        late = T0 + (MAX_KLINE_LIMIT * 3) * MIN  # far beyond one latest-candles request
+        self.assertEqual(self.run_once(_frame(QUIET), now_ms=late), {"w1": "APPENDED"})
+        self.assertEqual(self.loads, [("WEDGEUSDT", T0 + MIN, T0 + 11 * MIN)])  # anchor+1 .. apex+1
+        self.assertEqual(load_terminal_identities(self.sidecar, "paper"), frozenset({("w1", sha)}))
+
+    def test_apex_range_beyond_page_bound_is_kept_without_fetch(self):
+        far_apex = 10 + MAX_KLINE_LIMIT * MAX_RANGE_PAGES + 5
+        self.allow("w1", snapshot=_snapshot(apex=float(far_apex)))
+        late = T0 + (far_apex + 5) * MIN
         self.assertEqual(self.run_once(_frame(QUIET), now_ms=late), {"w1": "OUT_OF_REACH"})
         self.assertEqual(self.loads, [])
+
+    def test_fetch_budget_defers_the_rest_of_the_pass(self):
+        self.allow("w1")
+        self.allow("w2")
+        self.assertEqual(self.run_once(_frame(QUIET), max_fetches=1), {"w1": "APPENDED", "w2": "DEFERRED"})
+        self.assertEqual(len(self.loads), 1)
+
+    def test_concurrent_pass_is_refused(self):
+        self.allow("w1")
+        with producer_pass_lock(self.sidecar) as acquired:
+            self.assertTrue(acquired)
+            self.assertEqual(self.run_once(_frame(QUIET)), {})
+        self.assertEqual(self.loads, [])
+        self.assertEqual(self.run_once(_frame(QUIET)), {"w1": "APPENDED"})
+
 
     def test_snapshot_identity_mismatch_appends_nothing(self):
         self.allow("w1")
@@ -178,6 +203,41 @@ class ProducerRunTests(unittest.TestCase):
         self.sidecar.write_bytes(b"not a database")
         self.assertEqual(self.run_once(_frame(QUIET)), {})
         self.assertEqual(self.loads, [])
+
+
+class _FakeKlines:
+    """Bybit V5 get_kline stub: newest-first rows inside [start, end], at most ``limit``."""
+
+    def __init__(self, first_ms, count, fail=False):
+        self.rows = [[str(first_ms + k * MIN), "100", "100.5", "99.5", "100", "1", "1"] for k in range(count)]
+        self.calls = []
+        self.fail = fail
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.fail:
+            return {"retCode": 10006, "retMsg": "rate limit"}
+        inside = [r for r in self.rows if kwargs["start"] <= int(r[0]) <= kwargs["end"]]
+        return {"retCode": 0, "result": {"list": list(reversed(inside))[: kwargs["limit"]]}}
+
+
+class RangeLoaderTests(unittest.TestCase):
+    def test_paginates_in_bounded_windows_and_returns_ascending_rows(self):
+        klines = _FakeKlines(T0, 2500)
+        frame = load_closed_1m_range("WEDGEUSDT", T0, T0 + 2499 * MIN, get_kline=klines)
+        self.assertEqual(len(klines.calls), 3)
+        self.assertTrue(all(call["limit"] == MAX_KLINE_LIMIT and call["interval"] == "1"
+                            and call["category"] == "linear" for call in klines.calls))
+        self.assertEqual(list(frame["time"]), [T0 + k * MIN for k in range(2500)])
+
+    def test_api_error_or_page_bound_raises(self):
+        with self.assertRaises(RangeLoadError):
+            load_closed_1m_range("WEDGEUSDT", T0, T0 + 10 * MIN, get_kline=_FakeKlines(T0, 11, fail=True))
+        too_long = T0 + (MAX_KLINE_LIMIT * MAX_RANGE_PAGES) * MIN
+        klines = _FakeKlines(T0, 1)
+        with self.assertRaises(RangeLoadError):
+            load_closed_1m_range("WEDGEUSDT", T0, too_long, get_kline=klines)
+        self.assertEqual(klines.calls, [])
 
 
 if __name__ == "__main__":
