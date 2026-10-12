@@ -12,13 +12,21 @@ appends nothing, so the virtual reservation stays.
 Runs on the CALLING thread, never on the PAPER owner: it reads decisions through a
 read-only connection, loads candles itself and only appends to the sidecar file.
 The portfolio collector consumes the event; no PAPER table is written here.
+
+Each signal's own anchor..apex range is loaded with explicit start/end in at most
+MAX_RANGE_PAGES pages, so historical ALLOWs are provable too; at most
+MAX_FETCHES_PER_PASS signals are fetched per pass and an OS file lock refuses a
+concurrent pass. ``python -m terminal.application.wedge_source_terminal_producer``
+runs one pass as a separate process (no backend involvement).
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import json
 import logging
 import math
+import os
 from pathlib import Path
 import time
 from typing import Any, Callable, Mapping
@@ -41,7 +49,9 @@ LOGGER = logging.getLogger(__name__)
 
 RULE = "WEDGE_APEX_NO_BREAKOUT"
 RULE_VERSION = "1"
-MAX_KLINE_LIMIT = 1000  # one bounded Bybit kline request (no range parameter in the client)
+MAX_KLINE_LIMIT = 1000  # Bybit V5 kline page size
+MAX_RANGE_PAGES = 3  # anchor..apex history of at most 3000 minutes per signal
+MAX_FETCHES_PER_PASS = 5  # signals needing candles per pass; the rest are DEFERRED
 _COLUMNS = {"time", "high", "low", "close"}
 
 
@@ -96,45 +106,128 @@ def evaluate_wedge_apex_expiry(signal_snapshot: Mapping[str, Any], frame) -> dic
         return None
 
 
+class RangeLoadError(RuntimeError):
+    """The closed 1m range could not be loaded completely within the page bound."""
+
+
+def load_closed_1m_range(symbol: str, start_ms: int, end_ms: int, *, get_kline: Callable | None = None):
+    """Closed-candidate 1m rows for [start_ms, end_ms], ascending, in bounded pages.
+
+    Disjoint windows of at most MAX_KLINE_LIMIT minutes, each one Bybit V5 kline
+    request with explicit start/end, at most MAX_RANGE_PAGES requests. Any API error,
+    malformed row or out-of-order result raises; continuity is judged by the caller.
+    """
+    if end_ms < start_ms or start_ms % ONE_MINUTE_MS or end_ms % ONE_MINUTE_MS:
+        raise RangeLoadError("range bounds are invalid or not minute-aligned")
+    windows = math.ceil(((end_ms - start_ms) // ONE_MINUTE_MS + 1) / MAX_KLINE_LIMIT)
+    if windows > MAX_RANGE_PAGES:
+        raise RangeLoadError("range exceeds the bounded page budget")
+    if get_kline is None:
+        from bybit_api import session  # the project's existing proxied public client
+        get_kline = session.get_kline
+    import pandas as pd
+
+    rows = []
+    for page in range(windows):
+        window_start = start_ms + page * MAX_KLINE_LIMIT * ONE_MINUTE_MS
+        window_end = min(end_ms, window_start + (MAX_KLINE_LIMIT - 1) * ONE_MINUTE_MS)
+        response = get_kline(category="linear", symbol=symbol, interval="1",
+                             start=window_start, end=window_end, limit=MAX_KLINE_LIMIT)
+        if not isinstance(response, Mapping) or response.get("retCode") != 0:
+            raise RangeLoadError("kline request failed")
+        try:
+            page_rows = sorted((int(r[0]), float(r[2]), float(r[3]), float(r[4]))
+                               for r in response["result"]["list"])
+        except (KeyError, IndexError, TypeError, ValueError) as error:
+            raise RangeLoadError("kline response is malformed") from error
+        if any(not window_start <= row[0] <= window_end for row in page_rows):
+            raise RangeLoadError("kline response is outside the requested window")
+        rows.extend(page_rows)
+    if any(a[0] >= b[0] for a, b in zip(rows, rows[1:])):
+        raise RangeLoadError("kline rows are duplicated or out of order")
+    return pd.DataFrame(rows, columns=["time", "high", "low", "close"])
+
+
+@contextmanager
+def producer_pass_lock(sidecar: str | Path):
+    """Non-blocking OS file lock next to the sidecar; yields False when another pass holds it.
+
+    The OS releases the lock if the holding process dies, so no stale lock remains.
+    """
+    handle = open(Path(str(sidecar) + ".lock"), "a+b")
+    try:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
 def run_wedge_terminal_producer_once(
     database_path: str | Path, account: TradingAccountId, *,
     candidate_store_dir: str | Path | None,
-    candle_loader: Callable | None = None,
+    candle_range_loader: Callable | None = None,
     now_ms: int | None = None,
+    max_fetches: int = MAX_FETCHES_PER_PASS,
 ) -> dict[str, str]:
-    """One pass over this account's Wedge SHADOW ALLOWs; returns status per candidate_ref."""
+    """One pass over this account's Wedge SHADOW ALLOWs; returns status per candidate_ref.
+
+    Returns {} when another pass holds the lock or the sidecar is unreadable.
+    """
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
     sidecar = source_terminal_events_path(database_path)
-    try:
-        known = load_terminal_identities(sidecar, account.value) or frozenset()
-    except SourceTerminalEventError:
-        LOGGER.warning("source-terminal events store unavailable; Wedge producer pass skipped")
-        return {}
-    if candle_loader is None:
-        from analyzer.candles import load_candles
-        candle_loader = load_candles
-    reader = SQLiteStore.open_reader(database_path)
-    try:
-        decisions = reader.load_robot_auto_decisions(account)
-    finally:
-        reader.close()
+    with producer_pass_lock(sidecar) as acquired:
+        if not acquired:
+            LOGGER.info("another Wedge producer pass is running; this pass is skipped")
+            return {}
+        try:
+            known = load_terminal_identities(sidecar, account.value) or frozenset()
+        except SourceTerminalEventError:
+            LOGGER.warning("source-terminal events store unavailable; Wedge producer pass skipped")
+            return {}
+        if candle_range_loader is None:
+            candle_range_loader = load_closed_1m_range
+        reader = SQLiteStore.open_reader(database_path)
+        try:
+            decisions = reader.load_robot_auto_decisions(account)
+        finally:
+            reader.close()
 
-    results: dict[str, str] = {}
-    seen = set()
-    for decision in decisions:
-        identity = (decision.candidate_ref, decision.snapshot_sha256)
-        if (decision.mode != "SHADOW" or decision.outcome != "ALLOW"
-                or decision.trading_account_id != account
-                or decision.pattern not in robot_state_machine.SUPPORTED_PATTERNS
-                or decision.snapshot_sha256 is None or identity in seen):
-            continue
-        seen.add(identity)
-        results[decision.candidate_ref] = _process(
-            decision, account, known, sidecar, candidate_store_dir, candle_loader, now_ms)
-    return results
+        results: dict[str, str] = {}
+        seen = set()
+        budget = [max_fetches]
+        for decision in decisions:
+            identity = (decision.candidate_ref, decision.snapshot_sha256)
+            if (decision.mode != "SHADOW" or decision.outcome != "ALLOW"
+                    or decision.trading_account_id != account
+                    or decision.pattern not in robot_state_machine.SUPPORTED_PATTERNS
+                    or decision.snapshot_sha256 is None or identity in seen):
+                continue
+            seen.add(identity)
+            results[decision.candidate_ref] = _process(
+                decision, account, known, sidecar, candidate_store_dir, candle_range_loader,
+                now_ms, budget)
+        return results
 
 
-def _process(decision, account, known, sidecar, candidate_store_dir, candle_loader, now_ms) -> str:
+def _process(decision, account, known, sidecar, candidate_store_dir, candle_range_loader,
+             now_ms, budget) -> str:
     ref, sha = decision.candidate_ref, decision.snapshot_sha256
     if (ref, sha) in known:
         return "ALREADY_TERMINAL"
@@ -151,11 +244,17 @@ def _process(decision, account, known, sidecar, candidate_store_dir, candle_load
     apex_open_ms = source_time + (math.ceil(apex_index) - anchor_index) * ONE_MINUTE_MS
     if now_ms < apex_open_ms + 2 * ONE_MINUTE_MS:
         return "NOT_DUE"  # the apex candle is not closed with a newer bar after it yet
-    limit = (now_ms - source_time) // ONE_MINUTE_MS + 2
-    if limit > MAX_KLINE_LIMIT:
-        return "OUT_OF_REACH"  # anchor history is beyond one bounded request: keep reserved
+    # anchor+1 .. one bar after the apex candle; that last bar is ignored as "newest",
+    # so the apex candle itself is always a strictly older, closed bar.
+    start_ms, end_ms = source_time + ONE_MINUTE_MS, apex_open_ms + ONE_MINUTE_MS
+    pages = math.ceil(((end_ms - start_ms) // ONE_MINUTE_MS + 1) / MAX_KLINE_LIMIT)
+    if pages > MAX_RANGE_PAGES:
+        return "OUT_OF_REACH"  # beyond the bounded API budget: keep reserved
+    if budget[0] <= 0:
+        return "DEFERRED"
+    budget[0] -= 1
     try:
-        frame = candle_loader(decision.symbol.value, "1", limit, minimum=2)
+        frame = candle_range_loader(decision.symbol.value, start_ms, end_ms)
     except Exception:
         return "FETCH_FAILED"
     evidence = evaluate_wedge_apex_expiry(snapshot, frame)
@@ -170,3 +269,22 @@ def _process(decision, account, known, sidecar, candidate_store_dir, candle_load
     except (SourceTerminalEventError, OSError, ValueError):
         return "APPEND_FAILED"
     return "APPENDED" if created else "ALREADY_TERMINAL"
+
+
+def main(argv: list[str] | None = None) -> int:
+    """One producer pass as a separate process; paths follow the PAPER runtime defaults."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Wedge source-terminal EXPIRED producer (one pass)")
+    parser.add_argument("--db", default=os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
+    parser.add_argument("--candidate-store-dir", default=None)
+    parser.add_argument("--account", default="paper")
+    args = parser.parse_args(argv)
+    results = run_wedge_terminal_producer_once(
+        Path(args.db), TradingAccountId(args.account), candidate_store_dir=args.candidate_store_dir)
+    print(json.dumps(results, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
