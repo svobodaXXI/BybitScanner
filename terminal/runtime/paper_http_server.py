@@ -26,6 +26,9 @@ import requests
 import socks
 import websocket
 
+from terminal.runtime.nonblocking_console_logging import (
+    disable_console_quick_edit, install_nonblocking_console_logging,
+)
 from terminal.api.models import (
     CloseAllCommandRequest,
     AmendCommandRequest,
@@ -3994,10 +3997,14 @@ def create_configured_paper_runtime(
 
 
 def main() -> None:
-    logging.basicConfig(
+    # A3-R8: the owner thread must never block on the Windows console. Loggers only
+    # enqueue (bounded, drop on full); one daemon thread writes. QuickEdit selection
+    # in this backend window can no longer freeze output.
+    install_nonblocking_console_logging(
         level=os.environ.get("BYBITSCANNER_LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    disable_console_quick_edit()
     database_path = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
     port = int(os.environ.get("BYBITSCANNER_PAPER_PORT", str(PORT)))
 
