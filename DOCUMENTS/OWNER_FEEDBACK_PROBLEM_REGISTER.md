@@ -359,7 +359,7 @@ While the current RVL-R6 owner run continues:
 
 
 
-## G-TRI-20261012 — owner-observed false triangle geometry (12 charts)
+## G-TRI-20261012 — owner-observed false triangle geometry (11 charts)
 
 **Status: OPEN / VISUAL_ONLY pending frozen source-time OHLC.** Owner explicitly prioritizes parallel *offline* Triangle geometry investigation while SHADOW RUN #4 operates unchanged on the main PC. Charts provided 2026-10-12; visual labels are not yet source-time deterministic acceptance fixtures. Do not tune parameters to screenshots, use post-decision candles, or modify the running Scanner/Robot. Owning Geometry Gold inventory and existing detector/spec remain authoritative.
 
@@ -391,7 +391,7 @@ While the current RVL-R6 owner run continues:
 
 ### Narrow implementation plan / acceptance
 
-**G-TRI-1 evidence:** recover exact historical source-time windows from existing Scanner snapshots/archives if available; place manifest references and expected anchor ranges in existing Geometry Gold convention (no fabricated bars), label MEGA positive and owner rejects/relocations negative until confirmed by candles. Preserve all 12 chart labels.
+**G-TRI-1 evidence:** recover exact historical source-time windows from existing Scanner snapshots/archives if available; place manifest references and expected anchor ranges in existing Geometry Gold convention (no fabricated bars), label MEGA positive and owner rejects/relocations negative until confirmed by candles. Preserve all 11 chart labels and the cross-cutting excursion rule.
 
 **G-TRI-2 anchor locality (first code slice):** on a separate worktree, prove RED on recovered KAS/LIT/MANA/PARTI/PYTH/MUBARAK/RSR cases; identify post-impulse pivot sequence, enforce neighboring opposing anchors and disallow old pre-impulse pivots; prove MEGA preserved. Change only Triangle detector/shared geometry boundary if owning spec permits; do not alter Wedge/Box without evidence.
 
