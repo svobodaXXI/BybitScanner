@@ -118,7 +118,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
         )
         pattern = wedge_result.get("pattern") if wedge_result else None
         observed["pattern"] = pattern
-        if pattern == expectation["forbidden_pattern"]:
+        if "forbidden_pattern" in expectation and pattern == expectation["forbidden_pattern"]:
             errors.append(f"forbidden pattern emitted: {pattern}")
 
     elif kind == "LOCALITY_INVARIANT":
