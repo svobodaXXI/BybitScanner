@@ -3,7 +3,9 @@
 One Robot idea = one full RO. Manual working LIMITs are independent obligations.
 Fill identity merges the filled and pending portions; ambiguous reductions are
 unknown, never assigned to a convenient lot. Unresolved SHADOW selections stay
-reserved across restart/OFF until a linked real idea proves terminal and flat.
+reserved across restart/OFF until a linked real idea proves terminal and flat, or
+a durable source-terminal event of the same signal identity (A3-R3b sidecar store)
+proves it ended while no physical obligation remains on its symbol.
 """
 from __future__ import annotations
 
@@ -14,6 +16,9 @@ from typing import Iterable
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import (
     PersistenceError, RobotAutoDecisionRecord, RobotCandidateRecord, SQLiteStore,
+)
+from terminal.persistence.source_terminal_events import (
+    SourceTerminalEventError, load_terminal_identities, source_terminal_events_path,
 )
 
 RO_USDT = 250
@@ -290,6 +295,9 @@ def collect_portfolio_facts(
             for c in candidates.values() if "robot:" + c.candidate_id in reservations
         ]
         physical = set(reservations)
+        physical_symbols = set(symbols)
+        terminal_identities, facts["source_terminal_events"] = _source_terminal_identities(store, account)
+        released = []
         for decision in (store.load_robot_auto_decisions(account)
                          if auto_decisions is None else auto_decisions):
             if decision.mode != "SHADOW" or decision.outcome != "ALLOW":
@@ -308,8 +316,16 @@ def collect_portfolio_facts(
                     if c.symbol.value in symbols:
                         raise Unavailable("terminal SHADOW handoff has unproven position overlap")
                     continue  # physical collector proved no remaining obligation
+            if ((decision.candidate_ref, decision.snapshot_sha256) in terminal_identities
+                    and decision.symbol.value not in physical_symbols):
+                released.append({"candidate_ref": decision.candidate_ref,
+                                 "snapshot_sha256": decision.snapshot_sha256,
+                                 "symbol": decision.symbol.value})
+                continue  # proven source-terminal event, no physical obligation on the symbol
             # No invented expiry or simulated fills; pure SHADOW has no proven release.
             reserve("shadow:" + decision.candidate_ref, decision.symbol.value)
+        facts["released_shadow_reservations"] = sorted(
+            released, key=lambda item: (item["candidate_ref"], item["snapshot_sha256"]))
         facts.update(available=True, occupied_ro=sum(r["ro"] for r in reservations.values()),
                      occupied_usdt=sum(r["ro"] for r in reservations.values()) * RO_USDT,
                      owned_symbols=sorted(symbols),
@@ -320,3 +336,19 @@ def collect_portfolio_facts(
         # Do not persist exception strings (paths/secrets) or pretend partial facts are complete.
         facts.update(available=False, data_error="PAPER portfolio facts are incomplete or inconsistent")
     return facts
+
+
+def _source_terminal_identities(store: SQLiteStore, account: TradingAccountId):
+    """All proven (candidate_ref, snapshot_sha256) of this account, or none at all.
+
+    A missing, foreign, incomplete or inconsistent sidecar releases nothing: every
+    virtual reservation is kept rather than a partially read subset released.
+    """
+    path = getattr(store, "path", None)
+    if path is None:
+        return frozenset(), "ABSENT"
+    try:
+        identities = load_terminal_identities(source_terminal_events_path(path), account.value)
+    except SourceTerminalEventError:
+        return frozenset(), "UNAVAILABLE"
+    return (frozenset(), "ABSENT") if identities is None else (identities, "AVAILABLE")
