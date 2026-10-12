@@ -2,12 +2,16 @@
 
 A SHADOW ALLOW of a Rising/Falling Wedge is proven EXPIRED only by the existing
 Robot lifecycle rule: closed 1m candles replayed through ``robot_state_machine``
-from the frozen Scanner cursor anchor reach ``EXPIRED_AT_APEX`` with no BREAKOUT
-or RETEST on the way. Every minute after the anchor up to and including the first
-candle at/after the apex must be present, in order, and closed (the newest kline
-is treated as still forming, as in ``scanner_geometry_cursor``). Anything else --
-gap, unknown order, incomplete snapshot, identity mismatch, out-of-reach history --
-appends nothing, so the virtual reservation stays.
+from the frozen Scanner cursor anchor reach ``EXPIRED_AT_APEX`` with no RETEST on
+the way. A BREAKOUT that was never retested before the apex ends the same way (the
+Robot enters only on a retest); BREAKOUT -> RETEST_DETECTED is not expiry. Every
+minute after the anchor up to and including the first candle at/after the apex must
+be present, in order, and closed (the newest kline is treated as still forming, as
+in ``scanner_geometry_cursor``). The event is appended only when the PAPER portfolio
+collector proves no physical obligation (position, working LIMIT, Robot idea) on the
+symbol. Anything else -- gap, unknown order, incomplete snapshot, identity mismatch,
+out-of-reach history, unproven obligations -- appends nothing, so the virtual
+reservation stays.
 
 Runs on the CALLING thread, never on the PAPER owner: it reads decisions through a
 read-only connection, loads candles itself and only appends to the sidecar file.
@@ -42,6 +46,7 @@ from scanner_geometry_cursor import (
     _state_candle_from_row,
 )
 from terminal.application.robot_admission import candidate_snapshot_sha256
+from terminal.application.robot_portfolio import collect_portfolio_facts
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.source_terminal_events import (
     SourceTerminalEvent, SourceTerminalEventError, append_source_terminal_event,
@@ -51,8 +56,8 @@ from terminal.persistence.sqlite_store import SQLiteStore
 
 LOGGER = logging.getLogger(__name__)
 
-RULE = "WEDGE_APEX_NO_BREAKOUT"
-RULE_VERSION = "1"
+RULE = "WEDGE_EXPIRED_AT_APEX_NO_RETEST"
+RULE_VERSION = "2"  # v1 (no BREAKOUT at all) was never appended; v2 admits an unretested BREAKOUT
 MAX_KLINE_LIMIT = 1000  # Bybit V5 kline page size
 MAX_RANGE_PAGES = 3  # anchor..apex history of at most 3000 minutes per signal
 MAX_FETCHES_PER_PASS = 5  # signals needing candles per pass; the rest are DEFERRED
@@ -60,7 +65,7 @@ _COLUMNS = {"time", "high", "low", "close"}
 
 
 def evaluate_wedge_apex_expiry(signal_snapshot: Mapping[str, Any], frame) -> dict[str, Any] | None:
-    """Evidence dict when EXPIRED_AT_APEX is proven without BREAKOUT, else None."""
+    """Evidence dict when EXPIRED_AT_APEX is proven without RETEST, else None."""
     try:
         if signal_snapshot.get("pattern") not in robot_state_machine.SUPPORTED_PATTERNS:
             return None
@@ -92,15 +97,17 @@ def evaluate_wedge_apex_expiry(signal_snapshot: Mapping[str, Any], frame) -> dic
         replayed, events = robot_state_machine.replay_closed_candles(signal_snapshot, state, candles)
         if (replayed.get("phase") != robot_state_machine.PHASE_EXPIRED_AT_APEX
                 or events[-1:] != (robot_state_machine.EVENT_EXPIRED_AT_APEX,)
-                or robot_state_machine.EVENT_BREAKOUT in events
                 or robot_state_machine.EVENT_RETEST in events):
             return None
+        breakout_index = (replayed.get("breakout_index")
+                          if robot_state_machine.EVENT_BREAKOUT in events else None)
         digest = hashlib.sha256(json.dumps(
             [[c["time_ms"], c["high"], c["low"], c["close"]] for c in candles],
             separators=(",", ":")).encode("utf-8")).hexdigest()
         return {
             "rule": RULE, "rule_version": RULE_VERSION, "apex_index": apex_index,
-            "anchor_index": anchor_index, "first_index": candles[0]["geometry_index"],
+            "anchor_index": anchor_index, "breakout_index": breakout_index,
+            "first_index": candles[0]["geometry_index"],
             "apex_candle_index": candles[-1]["geometry_index"], "candles": len(candles),
             "from_time_ms": candles[0]["time_ms"], "to_time_ms": candles[-1]["time_ms"],
             "candles_sha256": digest,
@@ -248,19 +255,42 @@ def run_wedge_terminal_producer_once(
 
         results: dict[str, str] = {}
         budget = [max_fetches]
+        obligations: list = []  # this pass's physical-symbol proof, read once on first need
+
+        def physical_symbols():
+            if not obligations:
+                obligations.append(_physical_obligation_symbols(database_path, account))
+            return obligations[0]
+
         for identity, decision in pending:
             remaining = budget[0]
             results[decision.candidate_ref] = (
                 "STOPPED" if should_stop() else _process(
                     decision, account, known, sidecar, candidate_store_dir, candle_range_loader,
-                    now_ms, budget, should_stop))
+                    now_ms, budget, should_stop, physical_symbols))
             if fetch_rotation is not None and budget[0] < remaining:
                 fetch_rotation.last_fetched = identity
         return results
 
 
+def _physical_obligation_symbols(database_path, account: TradingAccountId) -> frozenset[str] | None:
+    """Symbols with a position, working LIMIT or Robot idea; None when not proven."""
+    try:
+        reader = SQLiteStore.open_reader(database_path)
+        try:
+            facts = collect_portfolio_facts(reader, account)
+        finally:
+            reader.close()
+        if facts.get("available") is not True:
+            return None
+        return frozenset(row["symbol"] for key in ("positions", "working_limits", "robot_ideas")
+                         for row in facts[key])
+    except Exception:
+        return None
+
+
 def _process(decision, account, known, sidecar, candidate_store_dir, candle_range_loader,
-             now_ms, budget, should_stop) -> str:
+             now_ms, budget, should_stop, physical_symbols) -> str:
     ref, sha = decision.candidate_ref, decision.snapshot_sha256
     if (ref, sha) in known:
         return "ALREADY_TERMINAL"
@@ -293,6 +323,11 @@ def _process(decision, account, known, sidecar, candidate_store_dir, candle_rang
     evidence = evaluate_wedge_apex_expiry(snapshot, frame)
     if evidence is None:
         return "NOT_PROVEN"
+    symbols = physical_symbols()
+    if symbols is None:
+        return "OBLIGATIONS_UNPROVEN"
+    if decision.symbol.value in symbols:
+        return "OBLIGATION_PENDING"
     if should_stop():
         return "STOPPED"  # closed while the request was in flight: never append afterwards
     try:
