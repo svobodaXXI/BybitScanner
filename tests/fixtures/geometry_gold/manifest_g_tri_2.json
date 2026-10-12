@@ -1,0 +1,95 @@
+{
+ "schema_version": 1,
+ "evidence_class_note": "RECOVERED_PIVOT_EQUIVALENT cases are outside the READY seed (manifest_v1.json); negatives are expected RED until G-TRI anchor locality is implemented.",
+ "cases": [
+  {
+   "case_id": "KASUSDT-5m-triangle-pre-impulse-anchor-20261012",
+   "pattern_family": "TRIANGLE",
+   "symbol": "KASUSDT",
+   "timeframe": "5",
+   "evidence_class": "RECOVERED_PIVOT_EQUIVALENT",
+   "fixture_ref": "tests/fixtures/geometry_gold/KASUSDT_5m_triangle_pre_impulse_anchor_20261012.json",
+   "as_of_index": 199,
+   "provenance": "G-TRI-2 recovered 2026-10-12 owner chart case (PR #478); pivot-equivalent, not source-time equivalent.",
+   "expectation": {
+    "kind": "FORBIDDEN_ANCHOR_PAIR",
+    "forbidden_anchor_pair": [
+     142,
+     108
+    ],
+    "structural_constraint": "up-impulse ends at upper anchor 142; the lower boundary anchor must be a low pivot after 142 (same post-impulse formation). Lower anchor 108 precedes the impulse end and is forbidden.",
+    "post_impulse_low_pivots": [
+     152,
+     162,
+     182
+    ]
+   }
+  },
+  {
+   "case_id": "LITUSDT-5m-triangle-pre-impulse-anchor-20261012",
+   "pattern_family": "TRIANGLE",
+   "symbol": "LITUSDT",
+   "timeframe": "5",
+   "evidence_class": "RECOVERED_PIVOT_EQUIVALENT",
+   "fixture_ref": "tests/fixtures/geometry_gold/LITUSDT_5m_triangle_pre_impulse_anchor_20261012.json",
+   "as_of_index": 199,
+   "provenance": "G-TRI-2 recovered 2026-10-12 owner chart case (PR #478); pivot-equivalent, not source-time equivalent.",
+   "expectation": {
+    "kind": "FORBIDDEN_ANCHOR_PAIR",
+    "forbidden_anchor_pair": [
+     150,
+     107
+    ],
+    "structural_constraint": "up-impulse ends at upper anchor 150; the lower boundary anchor must be a low pivot after 150 (same post-impulse formation). Lower anchor 107 precedes the impulse end and is forbidden.",
+    "post_impulse_low_pivots": [
+     185,
+     191
+    ]
+   }
+  },
+  {
+   "case_id": "MANAUSDT-5m-triangle-pre-impulse-anchor-20261012",
+   "pattern_family": "TRIANGLE",
+   "symbol": "MANAUSDT",
+   "timeframe": "5",
+   "evidence_class": "RECOVERED_PIVOT_EQUIVALENT",
+   "fixture_ref": "tests/fixtures/geometry_gold/MANAUSDT_5m_triangle_pre_impulse_anchor_20261012.json",
+   "as_of_index": 199,
+   "provenance": "G-TRI-2 recovered 2026-10-12 owner chart case (PR #478); pivot-equivalent, not source-time equivalent.",
+   "expectation": {
+    "kind": "FORBIDDEN_ANCHOR_PAIR",
+    "forbidden_anchor_pair": [
+     130,
+     77
+    ],
+    "structural_constraint": "up-impulse ends at upper anchor 130; the lower boundary anchor must be a low pivot after 130 (same post-impulse formation). Lower anchor 77 precedes the impulse end and is forbidden.",
+    "post_impulse_low_pivots": [
+     147,
+     184
+    ]
+   }
+  },
+  {
+   "case_id": "MEGAUSDT-5m-triangle-local-positive-20261012",
+   "pattern_family": "TRIANGLE",
+   "symbol": "MEGAUSDT",
+   "timeframe": "5",
+   "evidence_class": "RECOVERED_PIVOT_EQUIVALENT",
+   "fixture_ref": "tests/fixtures/geometry_gold/MEGAUSDT_5m_triangle_local_positive_20261012.json",
+   "as_of_index": 199,
+   "provenance": "G-TRI-2 recovered 2026-10-12 owner chart case (PR #478); pivot-equivalent, not source-time equivalent.",
+   "expectation": {
+    "kind": "POSITIVE_ANCHOR",
+    "geometry_identity": [
+     119,
+     178,
+     131,
+     172,
+     119,
+     186
+    ],
+    "detected": true
+   }
+  }
+ ]
+}
