@@ -28,6 +28,7 @@ from dataclasses import dataclass
 import json
 import sqlite3
 import time
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -54,10 +55,14 @@ from terminal.application.robot_autopilot import (
 from terminal.application.robot_portfolio import collect_portfolio_facts
 from terminal.domain.models import Category, PositionKey, PositionSide, Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import (
+    DuplicateIdentity,
     PersistenceError,
     RobotAutoDecisionRecord,
     RobotCandidateRecord,
+    ShadowCommitBusy,
+    ShadowCommitStale,
     SQLiteStore,
+    SHADOW_COMMIT_MAX_ROWS,
 )
 
 
@@ -738,32 +743,15 @@ def observe_shadow_candidate(
             state = store.get_robot_autopilot_state(account)
             if state is None or state.mode != SHADOW_MODE:
                 return None
-            started = _monotonic()
-            batch = _BatchSnapshot(store, account)
-            due = [ref for ref in _due_wait_refs(
-                batch.decisions, state, store.get_robot_runtime_state(account), now)
-                if ref != arrival]
-            for ref in due[:A6_DUE_WAIT_BATCH_LIMIT]:
-                # The budget includes the batch reads above; an exhausted budget starts
-                # no further WAIT evaluation (candidate boundary: written rows are complete).
-                if _monotonic() - started >= A6_DUE_WAIT_BATCH_BUDGET_S:
-                    break
-                try:
-                    observe(*ref, batch)
-                except sqlite3.Error:
-                    raise
-                except Exception as error:  # an old WAIT must never block the arrival
-                    print(
-                        "[AUTOPILOT SHADOW WAIT REEVALUATION ERROR] "
-                        f"candidate_ref={ref[0]} error_class={type(error).__name__}"
-                    )
-            in_arrival = True
-            try:
-                return observe(*arrival, batch)
-            except sqlite3.Error:
-                raise
-            except Exception as error:  # keep the completed batch, then report
-                arrival_error = error
+            def mark_arrival() -> None:
+                nonlocal in_arrival
+                in_arrival = True
+
+            result, arrival_error = _run_a6_batch(
+                store, account, state, now, arrival, observe, started=_monotonic(),
+                on_arrival=mark_arrival)
+            if arrival_error is None:
+                return result
     except sqlite3.Error as error:
         if in_arrival or not began:
             raise  # busy BEGIN IMMEDIATE: one timeout, nothing written, WAITs stay due
@@ -775,6 +763,254 @@ def observe_shadow_candidate(
         with store.autopilot_decision_transaction():
             return observe(*arrival, None)
     raise arrival_error
+
+
+def _run_a6_batch(
+    store: Any, account: TradingAccountId, state: Any, now: int, arrival: tuple[str, str],
+    observe: Callable[..., ShadowObservation | None], *, started: float,
+    on_arrival: Callable[[], None] | None = None,
+) -> tuple[ShadowObservation | None, Exception | None]:
+    """The A6 batch in audit order: due WAITs first, then the arrival. Shared by the owner
+    path (inside one decision transaction) and the off-owner snapshot plan."""
+    batch = _BatchSnapshot(store, account)
+    due = [ref for ref in _due_wait_refs(
+        batch.decisions, state, store.get_robot_runtime_state(account), now)
+        if ref != arrival]
+    for ref in due[:A6_DUE_WAIT_BATCH_LIMIT]:
+        # The budget includes the batch reads above; an exhausted budget starts
+        # no further WAIT evaluation (candidate boundary: written rows are complete).
+        if _monotonic() - started >= A6_DUE_WAIT_BATCH_BUDGET_S:
+            break
+        try:
+            observe(*ref, batch)
+        except sqlite3.Error:
+            raise
+        except Exception as error:  # an old WAIT must never block the arrival
+            print(
+                "[AUTOPILOT SHADOW WAIT REEVALUATION ERROR] "
+                f"candidate_ref={ref[0]} error_class={type(error).__name__}"
+            )
+    if on_arrival is not None:
+        on_arrival()
+    try:
+        return observe(*arrival, batch), None
+    except sqlite3.Error:
+        raise
+    except Exception as error:  # keep the completed batch, then report
+        return None, error
+
+
+# ---- Variant B (P0 RUN #3): SHADOW is evaluated OFF the owner thread ---------------------
+#
+# The calling thread (Scanner pass / Box preparation) reads one WAL snapshot on its own
+# read-only connection (no write lock), runs the unchanged A6 evaluation there and builds
+# the audit rows. The owner only checks Autopilot/Robot-runtime versions and the audit tail
+# and writes at most SHADOW_COMMIT_MAX_ROWS rows per call with a short lock wait. Every
+# conflict (OFF, STOP, a version or tail change, lock, expiry, protection change) writes
+# nothing and the attempt is recomputed or dropped; the owner never evaluates.
+
+SHADOW_COMMIT_LOCK_WAIT_MS = 100
+SHADOW_DEFERRED_ATTEMPTS = 3
+SHADOW_SNAPSHOT_MAX_AGE_S = 30.0  # a plan older than this (from the snapshot start) is never committed
+SHADOW_COMMIT_EXPIRY_S = 1.0  # an owner call dequeued later than this after it was sent does nothing
+DEFERRED_COMMITTED = "COMMITTED"
+DEFERRED_HANDOVER = "HANDOVER"  # Autopilot is not SHADOW: the existing owner entry decides
+DEFERRED_DROPPED = "DROPPED"  # nothing (more) was committed; the arrival has no SHADOW decision
+_MIXED = object()
+
+
+@dataclass(frozen=True, slots=True)
+class ShadowChunk:
+    """One bounded owner commit: <= SHADOW_COMMIT_MAX_ROWS rows and what they were computed from."""
+
+    account: TradingAccountId
+    records: tuple[RobotAutoDecisionRecord, ...]
+    expected: tuple  # Autopilot state, Robot runtime state, audit tail at the snapshot
+    expires_at: float  # monotonic; an owner that dequeues the call later writes nothing
+    protection: Any  # the protection-health value the facts used (re-read on the owner)
+
+
+@dataclass(frozen=True, slots=True)
+class ShadowPlan:
+    records: tuple[RobotAutoDecisionRecord, ...]
+    expected: tuple
+    full: tuple
+    protection: Any
+    arrival_error: Exception | None
+
+
+class _RecordingStore:
+    """Evaluation store for a snapshot plan: reads pass through, audit appends are recorded."""
+
+    def __init__(self, reader: SQLiteStore, records: list[RobotAutoDecisionRecord]):
+        self._reader, self._records = reader, records
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._reader, name)
+
+    def append_robot_auto_decision(self, record: RobotAutoDecisionRecord):
+        self._records.append(record)
+        return record, True
+
+
+def _normalized_health(provider: Callable[[], bool] | None) -> Any:
+    try:
+        healthy = None if provider is None else provider()
+        return None if healthy is None else bool(healthy)
+    except Exception:
+        return None
+
+
+def plan_shadow_observation(
+    reader: SQLiteStore, account: TradingAccountId, *, source: str, candidate_ref: str,
+    protection_healthy: Callable[[], bool] | None, candidate_store_dir: Path | str | None,
+    now_ms: Callable[[], int],
+) -> ShadowPlan | None:
+    """Evaluate one arrival (and its due WAITs) in a read snapshot; ``None`` unless SHADOW."""
+    arrival = (str(candidate_ref), source)
+    with reader.read_snapshot():
+        state = reader.get_robot_autopilot_state(account)
+        if state is None or state.mode != SHADOW_MODE:
+            return None
+        full = reader.shadow_full_markers(account)
+        expected = full[:3]
+        # Never earlier than the audit tail: the audit order is (evaluated_at_ms, decision_id).
+        now = max(int(now_ms()), int(json.loads(expected[2])[1]))
+        records: list[RobotAutoDecisionRecord] = []
+        recorder = _RecordingStore(reader, records)
+
+        def observe(ref: str, ref_source: str, batch: _BatchSnapshot | None):
+            return _observe_shadow_candidate_locked(
+                recorder, account, source=ref_source, candidate_ref=ref,
+                protection_healthy=protection_healthy,
+                candidate_store_dir=candidate_store_dir, clock_ms=lambda: now, batch=batch,
+            )
+
+        _result, arrival_error = _run_a6_batch(
+            recorder, account, state, now, arrival, observe, started=_monotonic())
+    values = {json.loads(record.facts_json)["protection_healthy"] for record in records}
+    protection = (next(iter(values)) if len(values) == 1 else (None if not values else _MIXED))
+    return ShadowPlan(tuple(records), tuple(expected), tuple(full), protection, arrival_error)
+
+
+def commit_shadow_chunk(
+    store: SQLiteStore, chunk: ShadowChunk, *, protection_healthy: Callable[[], bool] | None,
+    monotonic: Callable[[], float] = time.monotonic, lock_wait_ms: int = SHADOW_COMMIT_LOCK_WAIT_MS,
+) -> str:
+    """Owner thread: bounded freshness check and audit commit of one chunk. Never evaluates.
+
+    Returns COMMITTED, EXPIRED, STALE, BUSY, CONFLICT or NOT_SHADOW; anything but
+    COMMITTED wrote nothing.
+    """
+    if monotonic() > chunk.expires_at:
+        return "EXPIRED"
+    if chunk.protection is _MIXED or _normalized_health(protection_healthy) != chunk.protection:
+        return "STALE"
+    try:
+        inserted = store.append_robot_auto_decisions_committed(
+            chunk.records, expected=chunk.expected, lock_wait_ms=lock_wait_ms)
+    except ShadowCommitBusy:
+        return "BUSY"
+    except ShadowCommitStale:
+        state = store.get_robot_autopilot_state(chunk.account)
+        return "NOT_SHADOW" if state is None or state.mode != SHADOW_MODE else "STALE"
+    except DuplicateIdentity:
+        return "CONFLICT"
+    return "COMMITTED" if inserted == len(chunk.records) else "CONFLICT"
+
+
+class ShadowDeferredObserver:
+    """Variant B entry for one runtime: evaluate on the calling thread, commit via the owner.
+
+    One lock serializes evaluations (arrivals keep their order; a second caller waits just as
+    it waited in the owner queue). No thread is started. After ``attempts`` failed attempts
+    the arrival is dropped with a log line: the owner never runs the evaluation instead.
+    """
+
+    def __init__(
+        self, database_path: Path | str, account: TradingAccountId,
+        commit: Callable[[ShadowChunk], str], *,
+        protection_healthy: Callable[[], bool] | None = None,
+        candidate_store_dir: Path | str | None = None,
+        clock_ms: Callable[[], int] | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+        attempts: int = SHADOW_DEFERRED_ATTEMPTS,
+        snapshot_max_age_s: float = SHADOW_SNAPSHOT_MAX_AGE_S,
+        expiry_s: float = SHADOW_COMMIT_EXPIRY_S,
+    ) -> None:
+        self._path, self._account, self._commit = database_path, account, commit
+        self._health, self._dir = protection_healthy, candidate_store_dir
+        self._clock = clock_ms if clock_ms is not None else (lambda: int(time.time() * 1000))
+        self._monotonic, self._attempts = monotonic, attempts
+        self._max_age, self._expiry = snapshot_max_age_s, expiry_s
+        self._lock = threading.Lock()
+
+    def observe(self, source: str, candidate_ref: str) -> str:
+        with self._lock:
+            outcome = "RETRY"
+            for _ in range(self._attempts):
+                try:
+                    outcome = self._attempt(source, str(candidate_ref))
+                except Exception as error:  # a SHADOW failure never reaches the caller
+                    print(
+                        "[AUTOPILOT SHADOW ERROR] "
+                        f"source={source} candidate_ref={candidate_ref} "
+                        f"error_class={type(error).__name__}"
+                    )
+                    return DEFERRED_DROPPED
+                if outcome in (DEFERRED_COMMITTED, DEFERRED_HANDOVER):
+                    return outcome
+            print(
+                "[AUTOPILOT SHADOW DEFERRED DROPPED] "
+                f"source={source} candidate_ref={candidate_ref} last={outcome}"
+            )
+            return DEFERRED_DROPPED
+
+    def _attempt(self, source: str, candidate_ref: str) -> str:
+        started = self._monotonic()
+        reader = SQLiteStore.open_reader(self._path)
+        try:
+            try:
+                plan = plan_shadow_observation(
+                    reader, self._account, source=source, candidate_ref=candidate_ref,
+                    protection_healthy=self._health, candidate_store_dir=self._dir,
+                    now_ms=self._clock)
+            except sqlite3.Error as error:
+                return f"READ_{type(error).__name__}"
+            if plan is None:
+                return DEFERRED_HANDOVER
+            # Everything the facts were computed from, unchanged since the snapshot (checked
+            # here, off the owner); the owner re-checks the O(1) subset and the expiry.
+            if (self._monotonic() - started > self._max_age
+                    or reader.shadow_full_markers(self._account) != plan.full):
+                return "STALE"
+        finally:
+            reader.close()
+        rows, done, expected = plan.records, 0, plan.expected
+        while done < len(rows):
+            chunk_rows = rows[done:done + SHADOW_COMMIT_MAX_ROWS]
+            chunk = ShadowChunk(
+                self._account, tuple(chunk_rows), expected, self._monotonic() + self._expiry, plan.protection)
+            try:
+                status = self._commit(chunk)
+            except Exception as error:  # e.g. the owner call timed out: its outcome is unknown
+                return f"COMMIT_{type(error).__name__}"
+            if status == "NOT_SHADOW":
+                return DEFERRED_HANDOVER
+            if status != "COMMITTED":
+                return status
+            done += len(chunk_rows)
+            count, tail = json.loads(expected[2])
+            expected = (expected[0], expected[1], json.dumps(
+                [count + len(chunk_rows), max(tail, *(r.evaluated_at_ms for r in chunk_rows))],
+                separators=(",", ":")))
+        if plan.arrival_error is not None:
+            print(
+                "[AUTOPILOT SHADOW ERROR] "
+                f"source={source} candidate_ref={candidate_ref} "
+                f"error_class={type(plan.arrival_error).__name__}"
+            )
+        return DEFERRED_COMMITTED
 
 
 def _due_wait_refs(

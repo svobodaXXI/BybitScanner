@@ -321,7 +321,7 @@ class ShadowRuntimeHookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             runtime = self._runtime(temp, "SHADOW")
             try:
-                with patch("terminal.runtime.paper_runtime.observe_shadow_candidate",
+                with patch("terminal.application.robot_autopilot_shadow.plan_shadow_observation",
                            side_effect=RuntimeError("shadow failure")):
                     source_id = runtime._dispatch_ikigai_box_plan_preparation(
                         "BTCUSDT", "5", _CONFIRMED_BOX_FORMATION)

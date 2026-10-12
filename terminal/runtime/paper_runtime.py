@@ -26,8 +26,9 @@ from terminal.api.models import (
     LiveMarketCommandRequest,
 )
 from terminal.application.robot_autopilot_shadow import (
-    SOURCE_BOX_PLAN, SOURCE_SCANNER, admit_arrived_auto_candidate,
-    observe_shadow_candidate, owner_autopilot_mode, resolve_autopilot_evidence_target,
+    DEFERRED_HANDOVER, SOURCE_BOX_PLAN, SOURCE_SCANNER, ShadowChunk, ShadowDeferredObserver,
+    admit_arrived_auto_candidate, commit_shadow_chunk, observe_shadow_candidate,
+    owner_autopilot_mode, resolve_autopilot_evidence_target,
 )
 from terminal.application.robot_breakout_monitor import (
     DEFAULT_TICK_INTERVAL_S, EmergencyClosePath, INACTIVE_LIMIT_STATUSES, RobotBreakoutMonitor,
@@ -687,6 +688,12 @@ class PaperRuntime:
         # Autopilot SHADOW reads protection health from the coverage manager when
         # the HTTP runtime binds it; otherwise that fact is unknown (WAIT).
         self._autopilot_protection_health: Callable[[], bool] | None = None
+        # P0 RUN #3 (variant B): SHADOW is evaluated on the calling thread from a read
+        # snapshot; the owner only runs ``commit_shadow_chunk`` (bounded check and commit).
+        self._shadow_deferred = ShadowDeferredObserver(
+            database_path, self._paper_account_id, self._commit_shadow_chunk_via_owner,
+            protection_healthy=self._shadow_protection_health,
+        )
 
         context_provider = PaperCommandContextProvider(
             store=self.store,
@@ -946,9 +953,25 @@ class PaperRuntime:
                 f"source={source} candidate_ref={candidate_ref} "
                 f"error_class={type(error).__name__}"
             )
+        # SHADOW: evaluated here, off the owner; only a bounded commit reaches the owner.
+        # OFF / PAPER_AUTO (or a mode switched meanwhile): the unchanged owner entry decides.
+        if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
+            return
         self._dispatch_robot_command(
             lambda runtime: runtime.observe_autopilot_candidate(source, candidate_ref)
         )
+
+    def _shadow_protection_health(self) -> bool | None:
+        provider = self._autopilot_protection_health
+        return None if provider is None else provider()
+
+    def _commit_shadow_chunk_via_owner(self, chunk: ShadowChunk) -> str:
+        return self._dispatch_robot_command(lambda runtime: runtime.commit_shadow_chunk(chunk))
+
+    def commit_shadow_chunk(self, chunk: ShadowChunk) -> str:
+        """Owner thread. Bounded freshness check and audit commit of <= 2 SHADOW rows; never evaluates."""
+        return commit_shadow_chunk(
+            self.store, chunk, protection_healthy=self._shadow_protection_health)
 
     def _prepare_autopilot_evidence(self, source: str, candidate_ref: str) -> None:
         evidence = self.robot_catchup_evidence

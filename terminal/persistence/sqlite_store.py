@@ -79,6 +79,85 @@ class ConcurrentUpdate(PersistenceError):
     """Raised when optimistic state no longer matches supplied evidence."""
 
 
+class ShadowCommitStale(PersistenceError):
+    """A SHADOW audit chunk was computed against state that has since changed (nothing written)."""
+
+
+class ShadowCommitBusy(PersistenceError):
+    """The write lock was not obtained within the short commit wait (nothing written)."""
+
+
+SHADOW_COMMIT_MAX_ROWS = 2
+
+
+def _validate_robot_auto_decision_fields(record: "RobotAutoDecisionRecord") -> None:
+    """Field invariants shared by ``append_robot_auto_decision`` and the bounded SHADOW commit."""
+    if (
+        not record.decision_id.strip()
+        or not record.candidate_ref.strip()
+        or not record.pattern.strip()
+        or not record.timeframe.strip()
+        or not record.source_identity.strip()
+        or not record.policy_version.strip()
+        or not record.reason_code.strip()
+    ):
+        raise ValueError("Robot auto decision identity fields must be non-empty")
+    if record.mode not in {"SHADOW", "PAPER_AUTO"}:
+        raise ValueError("Robot auto decision requires SHADOW or PAPER_AUTO mode")
+    if record.outcome not in ROBOT_AUTO_DECISION_OUTCOMES:
+        raise ValueError("unsupported Robot auto decision outcome")
+    if record.evaluated_at_ms < 0:
+        raise ValueError("Robot auto decision timestamp must not be negative")
+    if record.snapshot_sha256 is not None and (
+        len(record.snapshot_sha256) != 64
+        or any(ch not in "0123456789abcdef" for ch in record.snapshot_sha256)
+    ):
+        raise ValueError("Robot auto decision snapshot hash is invalid")
+
+
+_AUTO_DECISION_INSERT = """INSERT INTO robot_auto_decisions (
+    decision_id, trading_account_id, candidate_ref, pattern, symbol,
+    timeframe, source_identity, snapshot_sha256, mode, policy_version,
+    outcome, reason_code, evaluated_at_ms, resulting_candidate_id, facts_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
+def _auto_decision_values(record: "RobotAutoDecisionRecord") -> tuple:
+    return (
+        record.decision_id, record.trading_account_id.value, record.candidate_ref, record.pattern,
+        record.symbol.value, record.timeframe, record.source_identity, record.snapshot_sha256,
+        record.mode, record.policy_version, record.outcome, record.reason_code,
+        record.evaluated_at_ms, record.resulting_candidate_id, record.facts_json,
+    )
+
+
+# O(1) owner-side freshness check of a SHADOW chunk: Autopilot state (OFF/STOP/mode
+# toggles), Robot runtime state and the audit tail. Compared with the values read in
+# the snapshot the facts were computed from.
+_SHADOW_COMMIT_MARKERS_SQL = """SELECT
+    (SELECT json_array(version, updated_at_ms, mode) FROM robot_autopilot_state WHERE trading_account_id=:a),
+    (SELECT json_array(version, updated_at_ms, mode, recovery_status) FROM robot_runtime_state WHERE trading_account_id=:a),
+    (SELECT json_array(count(*), coalesce(max(evaluated_at_ms), 0)) FROM robot_auto_decisions WHERE trading_account_id=:a)"""
+
+# Everything the SHADOW facts are computed from, as ONE statement (one execute, one row):
+# every UPDATE of these tables bumps version/state_revision/updated_at_ms (checked against
+# the UPDATE statements in this module); append-only tables are covered by their count.
+_SHADOW_FULL_MARKERS_SQL = _SHADOW_COMMIT_MARKERS_SQL + """,
+    (SELECT json_array(count(*), coalesce(max(version), 0), coalesce(max(updated_at_ms), 0)) FROM paper_accounts WHERE trading_account_id=:a),
+    (SELECT json_array(count(*), coalesce(max(updated_at_ms), 0), coalesce(sum(updated_at_ms), 0),
+        coalesce(sum(length(status)), 0), coalesce(sum(length(filled_quantity)), 0), coalesce(sum(length(price)), 0))
+        FROM paper_limit_orders WHERE trading_account_id=:a),
+    (SELECT json_array(count(*)) FROM box_order_ownership WHERE trading_account_id=:a),
+    (SELECT json_array(count(*)) FROM executions WHERE trading_account_id=:a),
+    (SELECT json_array(count(*), coalesce(max(version), 0), coalesce(sum(version), 0), coalesce(max(updated_at_ms), 0))
+        FROM position_projections WHERE trading_account_id=:a),
+    (SELECT json_array(count(*), coalesce(max(version), 0), coalesce(sum(version), 0), coalesce(max(updated_at_ms), 0))
+        FROM trading_commands WHERE trading_account_id=:a),
+    (SELECT json_array(count(*), coalesce(sum(state_revision), 0), coalesce(max(updated_at_ms), 0))
+        FROM robot_candidates WHERE trading_account_id=:a),
+    (SELECT json_array(count(*), coalesce(sum(version), 0), coalesce(max(updated_at_ms), 0), coalesce(sum(exit_time_ms IS NULL), 0))
+        FROM robot_trades WHERE trading_account_id=:a)"""
+
+
 class ImmutableExecutionConflict(PersistenceError):
     """Raised when one execution identity is reused with different evidence."""
 
@@ -4351,27 +4430,7 @@ class SQLiteStore:
         self, record: RobotAutoDecisionRecord,
     ) -> tuple[RobotAutoDecisionRecord, bool]:
         self._assert_owner()
-        if (
-            not record.decision_id.strip()
-            or not record.candidate_ref.strip()
-            or not record.pattern.strip()
-            or not record.timeframe.strip()
-            or not record.source_identity.strip()
-            or not record.policy_version.strip()
-            or not record.reason_code.strip()
-        ):
-            raise ValueError("Robot auto decision identity fields must be non-empty")
-        if record.mode not in {"SHADOW", "PAPER_AUTO"}:
-            raise ValueError("Robot auto decision requires SHADOW or PAPER_AUTO mode")
-        if record.outcome not in ROBOT_AUTO_DECISION_OUTCOMES:
-            raise ValueError("unsupported Robot auto decision outcome")
-        if record.evaluated_at_ms < 0:
-            raise ValueError("Robot auto decision timestamp must not be negative")
-        if record.snapshot_sha256 is not None and (
-            len(record.snapshot_sha256) != 64
-            or any(ch not in "0123456789abcdef" for ch in record.snapshot_sha256)
-        ):
-            raise ValueError("Robot auto decision snapshot hash is invalid")
+        _validate_robot_auto_decision_fields(record)
         state = self.get_robot_autopilot_state(record.trading_account_id)
         if state is None or state.mode != record.mode:
             raise PersistenceError("Robot auto decision mode does not match durable Autopilot state")
@@ -4383,21 +4442,7 @@ class SQLiteStore:
         context = nullcontext() if getattr(self, "_autopilot_transaction", False) else self._transaction()
         with context:
             try:
-                self._connection.execute(
-                    """INSERT INTO robot_auto_decisions (
-                        decision_id, trading_account_id, candidate_ref, pattern, symbol,
-                        timeframe, source_identity, snapshot_sha256, mode, policy_version,
-                        outcome, reason_code, evaluated_at_ms, resulting_candidate_id, facts_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        record.decision_id, record.trading_account_id.value,
-                        record.candidate_ref, record.pattern, record.symbol.value,
-                        record.timeframe, record.source_identity, record.snapshot_sha256,
-                        record.mode, record.policy_version, record.outcome,
-                        record.reason_code, record.evaluated_at_ms,
-                        record.resulting_candidate_id, record.facts_json,
-                    ),
-                )
+                self._connection.execute(_AUTO_DECISION_INSERT, _auto_decision_values(record))
             except sqlite3.IntegrityError as exc:
                 raise DuplicateIdentity("Robot auto decision identity conflicts with durable audit") from exc
         persisted = self.get_robot_auto_decision(record.decision_id)
@@ -4455,6 +4500,108 @@ class SQLiteStore:
         # Same order as ORDER BY evaluated_at_ms, decision_id (BINARY = code-point order).
         rows.sort(key=lambda row: (row["evaluated_at_ms"], row["decision_id"]))
         return tuple(_robot_auto_decision_from_row(row) for row in rows)
+
+    @classmethod
+    def open_reader(cls, path: str | Path, *, busy_timeout_ms: int = 5000) -> "SQLiteStore":
+        """A read-only connection owned by the CALLING thread (A6 SHADOW snapshot reads).
+
+        Never writes: no schema validation, no index creation, ``query_only``. Meant for
+        short-lived use on a caller thread beside the owner's writer; it never takes the
+        write lock, and a ``read_snapshot()`` never blocks the owner's writes (WAL).
+        """
+        database_path = Path(path)
+        if not str(database_path):
+            raise ValueError("an explicit database path is required")
+        connection = sqlite3.connect(
+            database_path, timeout=busy_timeout_ms / 1000, isolation_level=None)
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
+            connection.execute("PRAGMA query_only = ON")
+            return cls(connection, database_path, busy_timeout_ms)
+        except BaseException:
+            connection.close()
+            raise
+
+    @contextmanager
+    def read_snapshot(self) -> Iterator[None]:
+        """One consistent WAL read snapshot (deferred BEGIN); never holds the write lock."""
+        self._assert_owner()
+        self._connection.execute("BEGIN")
+        try:
+            yield
+        finally:
+            self._connection.execute("ROLLBACK")
+
+    def shadow_commit_markers(self, trading_account_id: TradingAccountId) -> tuple:
+        """Autopilot state, Robot runtime state and audit tail: the O(1) commit-time freshness check."""
+        self._assert_owner()
+        return tuple(self._connection.execute(
+            _SHADOW_COMMIT_MARKERS_SQL, {"a": trading_account_id.value}).fetchone())
+
+    def shadow_full_markers(self, trading_account_id: TradingAccountId) -> tuple:
+        """Markers of every input of the SHADOW facts, in one statement."""
+        self._assert_owner()
+        return tuple(self._connection.execute(
+            _SHADOW_FULL_MARKERS_SQL, {"a": trading_account_id.value}).fetchone())
+
+    def append_robot_auto_decisions_committed(
+        self, records: Iterable["RobotAutoDecisionRecord"], *, expected: tuple, lock_wait_ms: int,
+    ) -> int:
+        """Bounded owner commit of at most two SHADOW audit rows computed off the owner thread.
+
+        Same field invariants as ``append_robot_auto_decision`` (shared validation), same
+        identity rules (an equal row is skipped, a conflicting id aborts the whole chunk).
+        Fails closed with nothing written: ``ShadowCommitBusy`` if the write lock is not
+        obtained within ``lock_wait_ms``; ``ShadowCommitStale`` if the Autopilot state, Robot
+        runtime state or audit tail differ from ``expected`` (the durable mode check of the
+        standard append is part of the Autopilot marker). SHADOW only; PAPER_AUTO keeps the
+        standard path. Returns the number of rows inserted.
+        """
+        self._assert_owner()
+        rows = tuple(records)
+        if not rows or len(rows) > SHADOW_COMMIT_MAX_ROWS:
+            raise ValueError(f"a SHADOW commit takes 1..{SHADOW_COMMIT_MAX_ROWS} decisions")
+        account = rows[0].trading_account_id
+        for record in rows:
+            _validate_robot_auto_decision_fields(record)
+            if record.mode != "SHADOW" or record.trading_account_id != account:
+                raise ValueError("a bounded SHADOW commit takes SHADOW decisions of one account")
+        self._connection.execute(f"PRAGMA busy_timeout = {int(lock_wait_ms)}")
+        try:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                raise ShadowCommitBusy("the write lock was not obtained within the commit wait") from exc
+        finally:
+            self._connection.execute(f"PRAGMA busy_timeout = {int(self._busy_timeout_ms)}")
+        try:
+            markers = self.shadow_commit_markers(account)
+            if markers != expected or json.loads(markers[0])[2] != "SHADOW":
+                raise ShadowCommitStale("Autopilot/Robot state or the audit tail changed")
+            inserted = 0
+            for record in rows:
+                try:
+                    cursor = self._connection.execute(
+                        _AUTO_DECISION_INSERT.replace("INSERT INTO", "INSERT OR IGNORE INTO"),
+                        _auto_decision_values(record))
+                except sqlite3.IntegrityError as exc:
+                    raise DuplicateIdentity(
+                        "Robot auto decision identity conflicts with durable audit") from exc
+                if cursor.rowcount == 1:
+                    inserted += 1
+                    continue
+                existing = self.get_robot_auto_decision(record.decision_id)
+                if existing != record:
+                    raise DuplicateIdentity("Robot auto decision identity conflicts with durable audit")
+            # Each row is proven inside this transaction: inserted (rowcount 1) or an equal
+            # row already there; the standard append's re-read adds nothing before COMMIT.
+            self._connection.execute("COMMIT")
+            return inserted
+        except BaseException:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
 
     def count_robot_auto_decisions(self, trading_account_id: TradingAccountId) -> int:
         self._assert_owner()
