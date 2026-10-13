@@ -34,6 +34,7 @@ from pattern_robot_integration import prepare_robot_handoff
 from timeframe_format import format_timeframe_ru
 
 import config
+import metascalp_bridge
 from telegram_labels import SCANNER_EMOJI
 
 
@@ -357,6 +358,22 @@ def build_tradingview_keyboard(
             }
         ]
     ]
+
+    # TG-METASCALP-2: owner-only; the local Telegram listener opens a new
+    # MetaScalp order book for this exact signal symbol.
+    metascalp_callback = (
+        metascalp_bridge.callback_data(symbol)
+        if include_review_actions
+        else None
+    )
+
+    if metascalp_callback:
+        keyboard[0].append(
+            {
+                "text": "📊 MetaScalp",
+                "callback_data": metascalp_callback,
+            }
+        )
 
     if robot_candidate_id:
         keyboard.append(

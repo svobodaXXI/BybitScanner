@@ -30,6 +30,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import requests
 
 import config
+import metascalp_bridge
 import telegram_bot
 import telegram_runtime_intent
 from telegram_labels import SCANNER_EMOJI, ROBOT_EMOJI
@@ -716,6 +717,40 @@ def _process_message(message) -> bool:
     return True
 
 
+def _signal_has_button(message, data: str) -> bool:
+    markup = (message or {}).get("reply_markup") or {}
+    return any(
+        isinstance(button, dict) and button.get("callback_data") == data
+        for row in markup.get("inline_keyboard") or []
+        for button in row or []
+    )
+
+
+def _process_metascalp_callback(callback_query) -> bool:
+    """TG-METASCALP-2: owner tap opens a new MetaScalp order book (no retry)."""
+    data = callback_query.get("data", "")
+    symbol = metascalp_bridge.parse_callback(data)
+    if symbol is None:
+        return False
+    callback_id = callback_query.get("id")
+    if not _is_owner((callback_query.get("from") or {}).get("id")):
+        _answer_callback(callback_id, "Недостаточно прав")
+        return True
+    # The symbol must come from the signal card's own button.
+    if not symbol or not _signal_has_button(callback_query.get("message"), data):
+        _answer_callback(callback_id, "Некорректный тикер сигнала")
+        return True
+    try:
+        text = metascalp_bridge.open_order_book(symbol)
+    except metascalp_bridge.MetaScalpError as exc:
+        text = str(exc)
+    except Exception as exc:
+        print("[METASCALP ERROR]", exc)
+        text = "MetaScalp: внутренняя ошибка"
+    _answer_callback(callback_id, text)
+    return True
+
+
 def _process_positions_callback(callback_query) -> bool:
     data = callback_query.get("data", "")
     card_symbol = parse_position_card_callback(data)
@@ -914,7 +949,8 @@ def poll_updates_once(offset):
 
         callback_query = update.get("callback_query")
         if callback_query:
-            if not (_process_positions_callback(callback_query)
+            if not (_process_metascalp_callback(callback_query)
+                    or _process_positions_callback(callback_query)
                     or _process_monitor_callback(callback_query)):
                 import telegram_review
 

@@ -2008,6 +2008,14 @@ For example, activating the button on a `SOLUSDT` signal opens a new MetaScalp t
 `SOLUSDT` DOM without replacing existing `BTCUSDT` or `ETHUSDT` tabs. A simple change-ticker operation on
 an existing working DOM does not satisfy this requirement.
 
+**Owner decision 2026-10-13 (TG-METASCALP-2, supersedes the "new tab" wording above).** One owner tap
+on the owner's Scanner signal card (`📊 MetaScalp`) opens a NEW MetaScalp order book (combo) for the
+signal symbol through the official `POST /api/combo {"Ticker": SYMBOL}`. MetaScalp's own placement is
+accepted, including a separate window; no specific tab is selected. Existing order books, tickers and
+link groups are never changed. Owner-verified on MetaScalp 1.0.250: one controlled call for `DOGEUSDT`
+returned `200 {"status":"ok"}` and opened a new order book. Scope is the local computer only; routing for
+a second PC/laptop or a future VPS is a separate later stage.
+
 ### 24.4 MetaScalp official API verification gate
 
 The official MetaScalp Linking API is the preferred future integration boundary. Current research
@@ -2026,6 +2034,15 @@ authorized verification must establish:
 If the official API cannot guarantee `NEW TAB + NEW DOM + PRESERVE EXISTING TABS`, implementation must
 return an explicit integration blocker/product gap. It must not silently substitute change-ticker.
 
+Verified contract (TG-METASCALP-2): `/api/combo` has no connection selector and "opens on the currently
+active exchange and market connection". The implementation therefore checks before every POST that
+`GET /api/connections` returns exactly one connection with `ExchangeId 6` (Bybit), `MarketType 5`
+(USDT Perpetual) and `State 2` (Connected), and that `GET /api/connections/{id}/tickers` lists the
+symbol; otherwise it refuses and reports the reason in Telegram. Port discovery uses `GET /ping` on
+`127.0.0.1:17845-17855`. The POST is sent once with a bounded timeout and never retried. No order,
+position, change-ticker, panel or link-group route is used. Repeated calls for the same symbol were not
+verified and are not deduplicated.
+
 ### 24.5 Architectural and lifecycle boundary
 
 The intended future flow is:
@@ -2035,6 +2052,11 @@ The intended future flow is:
 The browser or Telegram client never receives direct access to the local MetaScalp API. The local helper,
 callback authorization, port discovery and failure handling belong to a separately authorized bounded
 integration block.
+
+Implemented by TG-METASCALP-2: `notification.build_tradingview_keyboard` adds the owner-only button
+(`ms:open:SYMBOL`); the local listener `telegram_monitoring.py` accepts it only from the owner and only
+when the pressed data is the card's own button, then `metascalp_bridge.open_order_book` performs the
+gated `/api/combo` call and the result is returned through `answerCallbackQuery`.
 
 Stage 7 is complete at commit `61520861b6058a585460b3f5f964613d19dcd35b`. Stage 8 remains
 `NOT_STARTED_NOT_AUTHORIZED`; revision 1.17 selects the frontend stack but does not authorize its dependencies,

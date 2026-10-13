@@ -248,7 +248,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
                     self.assertEqual(call.kwargs["caption"], "")
                     buttons = [b for row in call.kwargs["reply_markup"]["inline_keyboard"] for b in row]
                     callbacks = [b["callback_data"] for b in buttons if "callback_data" in b]
-                    self.assertEqual(callbacks, [f"review:{action}:TESTUSDT:5" for action in
+                    self.assertEqual(callbacks, ["ms:open:TESTUSDT"] + [f"review:{action}:TESTUSDT:5" for action in
                                                ("queue", "good", "geometry", "anchor")] if index == 0 else [])
                     self.assertTrue(any("url" in b for b in buttons))
                 saved.assert_not_called()
