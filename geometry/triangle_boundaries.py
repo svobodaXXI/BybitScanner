@@ -45,6 +45,40 @@ def is_triangle_only(candidate):
     return isinstance(candidate, dict) and bool(candidate.get("triangle_only"))
 
 
+def anchor_order_possible(upper_line, lower_line, highs, lows):
+    """TRI-PERF-1: necessary condition of anchor_sequence.valid, checked
+    before the expensive pair evaluation.
+
+    Same rule as pair_metrics.calculate_pair_metrics: the later anchor must
+    be the first confirmed opposite-side pivot after the earlier anchor;
+    equal anchor indices never form a valid sequence. A pair failing it can
+    never be admitted, so skipping it changes no result.
+    """
+
+    upper_anchor = upper_line.get("anchor_index")
+    lower_anchor = lower_line.get("anchor_index")
+
+    if upper_anchor is None or lower_anchor is None or upper_anchor == lower_anchor:
+        return False
+
+    if upper_anchor < lower_anchor:
+        primary, secondary, opposite = upper_anchor, lower_anchor, lows
+    else:
+        primary, secondary, opposite = lower_anchor, upper_anchor, highs
+
+    following = [
+        point["index"]
+        for point in (opposite or [])
+        if (
+            isinstance(point, dict)
+            and point.get("index") is not None
+            and point["index"] > primary
+        )
+    ]
+
+    return bool(following) and min(following) == secondary
+
+
 def _line_key(candidate):
     return (
         candidate["anchor_index"],

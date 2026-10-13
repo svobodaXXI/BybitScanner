@@ -12,7 +12,12 @@ import pandas as pd
 
 from geometry.candidate import build_candidate_lines
 from geometry.envelope_metrics import _with_own_points
-from geometry.triangle_boundaries import build_triangle_only_lines, local_alternation_pivots
+from geometry.pair_metrics import calculate_pair_metrics
+from geometry.triangle_boundaries import (
+    anchor_order_possible,
+    build_triangle_only_lines,
+    local_alternation_pivots,
+)
 from pivots import find_pivots
 from tests.geometry_gold import ROOT, _load_frame, load_manifest, run_geometry_gold
 
@@ -74,6 +79,38 @@ class RsrOwnerReferenceTest(unittest.TestCase):
         for points in (highs, lows):
             for candidate in build_candidate_lines(points):
                 self.assertEqual(_with_own_points(points, candidate), points)
+
+    def test_anchor_order_precheck_matches_pair_metrics(self):
+        # TRI-PERF-1: the pre-evaluation skip is exactly the secondary==expected
+        # part of anchor_sequence.valid, so no skipped pair could be admitted.
+        frame = _load_frame(_case())
+        highs, lows = find_pivots(frame.copy())
+        current = len(frame) - 1
+        base_upper, base_lower = build_candidate_lines(highs), build_candidate_lines(lows)
+        upper, lower = build_triangle_only_lines(
+            highs, lows, base_upper, base_lower, current, candles=frame,
+        )
+        checked = skipped = 0
+        for u in base_upper + upper:
+            for w in base_lower + lower:
+                if not (u.get("triangle_only") or w.get("triangle_only")):
+                    continue
+                if not (u["line"]["slope"] < 0 < w["line"]["slope"]):
+                    continue
+                metrics = calculate_pair_metrics(u, w, current, highs=highs, lows=lows, candles=frame)
+                if metrics is None:
+                    continue
+                sequence = metrics["anchor_sequence"]
+                expected = (
+                    sequence["secondary_anchor"] is not None
+                    and sequence["secondary_anchor"] == sequence["expected_secondary_index"]
+                )
+                possible = anchor_order_possible(u["line"], w["line"], highs, lows)
+                self.assertEqual(possible, expected, (u["anchor_index"], w["anchor_index"]))
+                checked += 1
+                skipped += not possible
+        self.assertGreater(skipped, 0)
+        self.assertGreater(checked, skipped)
 
 
 if __name__ == "__main__":

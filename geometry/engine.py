@@ -49,6 +49,7 @@ from .ranking import (
 )
 
 from .triangle_boundaries import (
+    anchor_order_possible,
     build_triangle_only_lines,
     is_triangle_only
 )
@@ -350,6 +351,12 @@ def analyze_geometry(
             ) and not (
                 upper_candidate["line"].get("slope", 0) < 0
                 and lower_candidate["line"].get("slope", 0) > 0
+                and anchor_order_possible(
+                    upper_candidate["line"],
+                    lower_candidate["line"],
+                    highs,
+                    lows
+                )
             ):
                 continue
 
