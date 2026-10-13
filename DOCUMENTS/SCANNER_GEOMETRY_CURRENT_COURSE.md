@@ -114,7 +114,15 @@ new full-pass run is authorized merely by reading this index.
   a relevant code/input change.
 - **Remaining gaps (not implied to be solved by #191):** a local extreme is
   not necessarily the end of the *preceding directional impulse*; a regular
-  countertrend swing can pass the local A/B/C checks. Also, the existing
+  countertrend swing can pass the local A/B/C checks. **Closed for Triangle
+  Compression only (TRI-START-3, owner-approved 2026-10-13):** with A the
+  chronologically first anchor and B the next confirmed opposite pivot, let M be
+  the latest confirmed pivot on A's side before A strictly beyond A's price (none:
+  the analysed history starts the leg) and O the most extreme confirmed
+  opposite-side pivot strictly between M and A. The pair is admissible only if
+  O exists and `abs(P[A] - P[O]) > abs(P[B] - P[A])` (confirmed pivots up to the
+  decision bar, no threshold). Example: ARXUSDT 5m low 113 is the origin of the
+  rally to high 124, not the end of a DOWN impulse. Wedges are unchanged. Also, the existing
   `geometry/candidate.py` generator requires `min_line_span=30`, and
   `geometry/filter.py` retains the 50 lowest-error lines **before** A/B/C
   admission; an otherwise valid local start can be absent from that pool.

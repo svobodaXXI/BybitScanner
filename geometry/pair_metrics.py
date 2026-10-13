@@ -246,6 +246,71 @@ def _is_leg_extreme(
     return all(value >= price for value in values)
 
 
+def _triangle_impulse_leg(
+    side,
+    anchor_index,
+    anchor_price,
+    secondary_price,
+    same_points,
+    opposite_points
+):
+    """
+    TRI-START (Triangle Compression only): the coarse directional leg
+    ending at the first anchor A must be larger than the next wave A->B.
+
+    M = latest confirmed same-side pivot before A strictly beyond A's
+    price (none: the analysed history starts the leg); O = the most
+    extreme confirmed opposite-side pivot strictly between M and A.
+    No O means A does not end a directional leg. Confirmed pivots only;
+    plain comparison, no threshold. Returns (O index, valid).
+    """
+
+    def beyond(price):
+        return price > anchor_price if side == "high" else price < anchor_price
+
+    def points(source):
+        return [
+            (point["index"], float(point["price"]))
+            for point in (source or [])
+            if (
+                isinstance(point, dict)
+                and point.get("index") is not None
+                and point.get("price") is not None
+            )
+        ]
+
+    previous_beyond = [
+        index
+        for index, price in points(same_points)
+        if index < anchor_index and beyond(price)
+    ]
+
+    leg_start = max(previous_beyond) if previous_beyond else None
+
+    leg_opposite = [
+        (index, price)
+        for index, price in points(opposite_points)
+        if (
+            index < anchor_index
+            and (leg_start is None or index > leg_start)
+        )
+    ]
+
+    if not leg_opposite or secondary_price is None:
+        return None, False
+
+    origin_index, origin_price = (
+        min(leg_opposite, key=lambda item: item[1])
+        if side == "high"
+        else max(leg_opposite, key=lambda item: item[1])
+    )
+
+    return origin_index, (
+        abs(float(anchor_price) - origin_price)
+        > abs(float(secondary_price) - float(anchor_price))
+    )
+
+
 def calculate_pair_metrics(
     upper_candidate,
     lower_candidate,
@@ -616,12 +681,39 @@ def calculate_pair_metrics(
                     < abs(float(secondary_price) - float(primary_price))
                 )
 
+        # TRI-START: a triangle's first anchor must end the coarse
+        # directional leg (not merely the micro-leg from the last opposite
+        # pivot), so a rally's origin cannot pose as the end of a DOWN
+        # impulse. Wedges are unchanged.
+
+        impulse_leg_origin_index = None
+        impulse_leg_valid = True
+
+        if anchor_family == "triangle":
+
+            impulse_leg_valid = False
+
+            if (
+                primary_anchor is not None
+                and primary_price is not None
+            ):
+
+                impulse_leg_origin_index, impulse_leg_valid = _triangle_impulse_leg(
+                    primary_side,
+                    primary_anchor,
+                    float(primary_price),
+                    secondary_price,
+                    same_points,
+                    opposite_points
+                )
+
         sequence_valid = (
             secondary_anchor is not None
             and secondary_anchor
             == expected_secondary_index
             and first_anchor_terminal
             and swing_contraction_valid
+            and impulse_leg_valid
         )
 
     else:
@@ -630,6 +722,8 @@ def calculate_pair_metrics(
         first_anchor_terminal = None
         third_pivot_index = None
         swing_contraction_valid = None
+        impulse_leg_origin_index = None
+        impulse_leg_valid = None
 
     anchor_sequence = {
         "family":
@@ -655,6 +749,12 @@ def calculate_pair_metrics(
 
         "swing_contraction_valid":
             swing_contraction_valid,
+
+        "impulse_leg_origin_index":
+            impulse_leg_origin_index,
+
+        "impulse_leg_valid":
+            impulse_leg_valid,
 
         "valid":
             sequence_valid
