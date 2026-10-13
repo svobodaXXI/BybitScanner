@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "evidence_class_note": "RECOVERED_PIVOT_EQUIVALENT cases are outside the READY seed (manifest_v1.json); since G-TRI-3 all four cases are expected to pass (tests/test_geometry_triangle_local_anchors.py).",
+ "evidence_class_note": "RECOVERED_PIVOT_EQUIVALENT cases are outside the READY seed (manifest_v1.json); since G-TRI-3 all cases are expected to pass (tests/test_geometry_triangle_local_anchors.py); ARXUSDT added by TRI-START-3.",
  "cases": [
   {
    "case_id": "KASUSDT-5m-triangle-pre-impulse-anchor-20261012",
@@ -89,6 +89,31 @@
      186
     ],
     "detected": true
+   }
+  },
+  {
+   "case_id": "ARXUSDT-5m-triangle-pre-impulse-anchor-20261012",
+   "pattern_family": "TRIANGLE",
+   "symbol": "ARXUSDT",
+   "timeframe": "5",
+   "evidence_class": "RECOVERED_PIVOT_EQUIVALENT",
+   "fixture_ref": "tests/fixtures/geometry_gold/ARXUSDT_5m_triangle_pre_impulse_anchor_20261012.json",
+   "as_of_index": 199,
+   "provenance": "G-TRI-1 report window recovered 2026-10-13 (TRI-START-1..3); pivot-equivalent, not source-time equivalent.",
+   "expectation": {
+    "kind": "FORBIDDEN_ANCHOR_PAIR",
+    "forbidden_anchor_pair": [
+     124,
+     113
+    ],
+    "structural_constraint": "up-impulse 113 -> 124 ends at upper anchor 124; lower anchor 113 is that impulse's origin (its incoming leg 108 -> 113 is smaller than the next wave 113 -> 124) and is forbidden.",
+    "post_impulse_low_pivots": [
+     130,
+     142,
+     154,
+     176,
+     191
+    ]
    }
   }
  ]

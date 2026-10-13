@@ -20,7 +20,7 @@ G_TRI_2_MANIFEST = ROOT / "tests" / "fixtures" / "geometry_gold" / "manifest_g_t
 class RecoveredOwnerTriangleCasesTest(unittest.TestCase):
     def test_pre_impulse_anchors_rejected_and_mega_preserved(self):
         results = {result["symbol"]: result for result in run_geometry_gold(G_TRI_2_MANIFEST)}
-        self.assertEqual(set(results), {"KASUSDT", "LITUSDT", "MANAUSDT", "MEGAUSDT"})
+        self.assertEqual(set(results), {"ARXUSDT", "KASUSDT", "LITUSDT", "MANAUSDT", "MEGAUSDT"})
         failures = [result for result in results.values() if not result["passed"]]
         self.assertEqual(failures, [], failures)
         self.assertEqual(
@@ -90,6 +90,65 @@ class TriangleImpulseDirectionSymmetryTest(unittest.TestCase):
         self.assertEqual(sequence["family"], "triangle")
         self.assertEqual(sequence["primary_anchor"], 5)
         self.assertNotEqual(sequence["expected_secondary_index"], 30)
+        self.assertFalse(sequence["valid"])
+
+
+class TriangleImpulseLegTest(unittest.TestCase):
+    """TRI-START: the coarse leg ending at A (from O, the opposite extreme since M) must
+    exceed the next wave A->B. Here A = LOW10 at 100, B = HIGH40 at 110, C = LOW50 at 104."""
+
+    UPPER = dict(slope=-.1, intercept=114., anchor_index=40, anchor_price=110., structure_span=20)
+    LOWER = dict(slope=.05, intercept=99.5, anchor_index=10, anchor_price=100., structure_span=40)
+
+    def _sequence(self, highs, lows):
+        return _triangle_sequence(highs=highs, lows=lows, upper=self.UPPER, lower=self.LOWER)
+
+    def test_rally_origin_after_a_micro_dip_is_rejected(self):
+        # M = LOW0 (98) is beyond A; O = HIGH5 (101): leg 1 < wave A->B 10. Same shape as ARX 108->113->124.
+        sequence = self._sequence(
+            highs=[dict(index=5, price=101.), dict(index=40, price=110.)],
+            lows=[dict(index=0, price=98.), dict(index=10, price=100.), dict(index=50, price=104.)],
+        )
+        self.assertTrue(sequence["first_anchor_terminal"])
+        self.assertTrue(sequence["swing_contraction_valid"])
+        self.assertEqual(sequence["impulse_leg_origin_index"], 5)
+        self.assertFalse(sequence["impulse_leg_valid"])
+        self.assertFalse(sequence["valid"])
+
+    def test_dominant_incoming_leg_is_valid(self):
+        # Same pivots, but O = HIGH5 at 112: leg 12 > wave 10.
+        sequence = self._sequence(
+            highs=[dict(index=5, price=112.), dict(index=40, price=110.)],
+            lows=[dict(index=0, price=98.), dict(index=10, price=100.), dict(index=50, price=104.)],
+        )
+        self.assertEqual(sequence["impulse_leg_origin_index"], 5)
+        self.assertTrue(sequence["impulse_leg_valid"])
+        self.assertTrue(sequence["valid"])
+
+    def test_equal_leg_and_wave_is_rejected(self):
+        sequence = self._sequence(
+            highs=[dict(index=5, price=110.), dict(index=40, price=110.)],
+            lows=[dict(index=0, price=98.), dict(index=10, price=100.), dict(index=50, price=104.)],
+        )
+        self.assertFalse(sequence["impulse_leg_valid"])
+
+    def test_without_m_the_leg_starts_at_the_analysed_history(self):
+        # No earlier low beyond 100: O is the highest high before A (HIGH2 at 115).
+        sequence = self._sequence(
+            highs=[dict(index=2, price=115.), dict(index=5, price=101.), dict(index=40, price=110.)],
+            lows=[dict(index=10, price=100.), dict(index=50, price=104.)],
+        )
+        self.assertEqual(sequence["impulse_leg_origin_index"], 2)
+        self.assertTrue(sequence["impulse_leg_valid"])
+
+    def test_no_opposite_pivot_between_m_and_a_is_rejected(self):
+        # Insufficient history: no confirmed high before A at all.
+        sequence = self._sequence(
+            highs=[dict(index=40, price=110.)],
+            lows=[dict(index=10, price=100.), dict(index=50, price=104.)],
+        )
+        self.assertIsNone(sequence["impulse_leg_origin_index"])
+        self.assertFalse(sequence["impulse_leg_valid"])
         self.assertFalse(sequence["valid"])
 
 
