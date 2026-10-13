@@ -25,10 +25,28 @@ round-robin: each pass starts after the last signal fetched by the previous one,
 NOT_PROVEN signals cannot starve the DEFERRED rest (NOT_PROVEN still appends
 nothing). ``python -m terminal.application.wedge_source_terminal_producer``
 runs one pass as a separate process (no backend involvement).
+
+SHADOW-RESERVE-1: the event records that the observed trading OPPORTUNITY is over
+(the source signal can no longer be traded), never that a position was closed; a
+linked Robot candidate's CLOSED stays the only position-closure release. Two more
+existing-rule terminals, each proven from closed 1m candles only:
+
+* Wedge ``WEDGE_RETEST_TAKE_REACHED_AFTER_APEX``: BREAKOUT -> RETEST before the apex,
+  then a candle strictly after the apex candle reaches the Robot's frozen TAKE
+  (``frozen_take_90``). The Robot cancels an unfilled retest LIMIT at the apex, so
+  after it either nothing was entered or the entered position meets its TAKE (or
+  already met its STOP): every branch is over. A RETEST without that proof (STOP
+  depends on the unprovable actual fill) stays reserved.
+* Ikigai Box ``IKIGAI_BOX_FIRST_GRID_EXIT_REACHED``: the frozen plan's first grid
+  LIMIT (P1) is touched, then a strictly later candle reaches the plan's common TAKE
+  or shared STOP (#416 completion, plus the STOP beyond the full grid). A Box that is
+  never entered has no terminal rule (no age-based expiry) and stays reserved.
 """
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
+from decimal import Decimal
 import hashlib
 import json
 import logging
@@ -39,6 +57,7 @@ import threading
 import time
 from typing import Any, Callable, Mapping
 
+import robot_protection
 import robot_state_machine
 from robot_candidate_store import load_candidate
 from scanner_geometry_cursor import (
@@ -46,6 +65,7 @@ from scanner_geometry_cursor import (
     _state_candle_from_row,
 )
 from terminal.application.robot_admission import candidate_snapshot_sha256
+from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor, RobotBreakoutMonitorError
 from terminal.application.robot_portfolio import collect_portfolio_facts
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.source_terminal_events import (
@@ -58,10 +78,61 @@ LOGGER = logging.getLogger(__name__)
 
 RULE = "WEDGE_EXPIRED_AT_APEX_NO_RETEST"
 RULE_VERSION = "2"  # v1 (no BREAKOUT at all) was never appended; v2 admits an unretested BREAKOUT
+TAKE_RULE = "WEDGE_RETEST_TAKE_REACHED_AFTER_APEX"
+TAKE_RULE_VERSION = "1"
+BOX_RULE = "IKIGAI_BOX_FIRST_GRID_EXIT_REACHED"
+BOX_RULE_VERSION = "1"
+BOX_PATTERN = "IKIGAI_BOX"
 MAX_KLINE_LIMIT = 1000  # Bybit V5 kline page size
-MAX_RANGE_PAGES = 3  # anchor..apex history of at most 3000 minutes per signal
+MAX_RANGE_PAGES = 3  # anchor..apex (or Box decision..) history of at most 3000 minutes per signal
+MAX_POST_APEX_PAGES = 2  # after-apex TAKE search of a retested Wedge: at most 2000 minutes
 MAX_FETCHES_PER_PASS = 5  # signals needing candles per pass; the rest are DEFERRED
 _COLUMNS = {"time", "high", "low", "close"}
+_EVIDENCE_ERRORS = (
+    robot_state_machine.RobotStateMachineError, ScannerGeometryCursorError,
+    robot_protection.RobotProtectionError, RobotBreakoutMonitorError,
+    KeyError, TypeError, ValueError, OverflowError, AttributeError, ArithmeticError,
+)
+
+
+def _candles_digest(rows) -> str:
+    return hashlib.sha256(json.dumps(
+        [[row["time_ms"], row["high"], row["low"], row["close"]] for row in rows],
+        separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _replay_to_apex(signal_snapshot: Mapping[str, Any], frame):
+    """Replay of the proven, gap-free closed anchor..apex candles; None when unproven.
+
+    Raises the ``_EVIDENCE_ERRORS`` of malformed input; callers turn them into None.
+    """
+    anchor_index, source_time = _anchor_values(signal_snapshot)
+    apex_index = _frozen_apex_index(signal_snapshot)
+    state, _event = robot_state_machine.initialize_state({
+        "status": "APPROVED", "timeframe": "1", "signal_snapshot": dict(signal_snapshot),
+    })
+    if (state["geometry_cursor"] != anchor_index
+            or state["phase"] != robot_state_machine.PHASE_WAITING_BREAKOUT):
+        return None
+    if frame is None or len(frame) < 2 or not _COLUMNS.issubset(frame.columns):
+        return None
+    candles, expected = [], source_time + ONE_MINUTE_MS
+    for position in range(len(frame) - 1):  # the newest row may still be forming
+        row = frame.iloc[position]
+        time_ms = int(row["time"])
+        if time_ms <= source_time:
+            continue
+        if time_ms != expected:
+            return None  # gap, duplicate or out-of-order evidence
+        candle = _state_candle_from_row(signal_snapshot, row)
+        candles.append(candle)
+        expected += ONE_MINUTE_MS
+        if candle["geometry_index"] >= apex_index:
+            break
+    else:
+        return None  # the apex candle is not proven closed yet
+    replayed, events = robot_state_machine.replay_closed_candles(signal_snapshot, state, candles)
+    return replayed, events, candles, anchor_index, apex_index
 
 
 def evaluate_wedge_apex_expiry(signal_snapshot: Mapping[str, Any], frame) -> dict[str, Any] | None:
@@ -69,51 +140,181 @@ def evaluate_wedge_apex_expiry(signal_snapshot: Mapping[str, Any], frame) -> dic
     try:
         if signal_snapshot.get("pattern") not in robot_state_machine.SUPPORTED_PATTERNS:
             return None
-        anchor_index, source_time = _anchor_values(signal_snapshot)
-        apex_index = _frozen_apex_index(signal_snapshot)
-        state, _event = robot_state_machine.initialize_state({
-            "status": "APPROVED", "timeframe": "1", "signal_snapshot": dict(signal_snapshot),
-        })
-        if (state["geometry_cursor"] != anchor_index
-                or state["phase"] != robot_state_machine.PHASE_WAITING_BREAKOUT):
+        proof = _replay_to_apex(signal_snapshot, frame)
+        if proof is None:
             return None
-        if frame is None or len(frame) < 2 or not _COLUMNS.issubset(frame.columns):
-            return None
-        candles, expected = [], source_time + ONE_MINUTE_MS
-        for position in range(len(frame) - 1):  # the newest row may still be forming
-            row = frame.iloc[position]
-            time_ms = int(row["time"])
-            if time_ms <= source_time:
-                continue
-            if time_ms != expected:
-                return None  # gap, duplicate or out-of-order evidence
-            candle = _state_candle_from_row(signal_snapshot, row)
-            candles.append(candle)
-            expected += ONE_MINUTE_MS
-            if candle["geometry_index"] >= apex_index:
-                break
-        else:
-            return None  # the apex candle is not proven closed yet
-        replayed, events = robot_state_machine.replay_closed_candles(signal_snapshot, state, candles)
+        replayed, events, candles, anchor_index, apex_index = proof
         if (replayed.get("phase") != robot_state_machine.PHASE_EXPIRED_AT_APEX
                 or events[-1:] != (robot_state_machine.EVENT_EXPIRED_AT_APEX,)
                 or robot_state_machine.EVENT_RETEST in events):
             return None
         breakout_index = (replayed.get("breakout_index")
                           if robot_state_machine.EVENT_BREAKOUT in events else None)
-        digest = hashlib.sha256(json.dumps(
-            [[c["time_ms"], c["high"], c["low"], c["close"]] for c in candles],
-            separators=(",", ":")).encode("utf-8")).hexdigest()
         return {
             "rule": RULE, "rule_version": RULE_VERSION, "apex_index": apex_index,
             "anchor_index": anchor_index, "breakout_index": breakout_index,
             "first_index": candles[0]["geometry_index"],
             "apex_candle_index": candles[-1]["geometry_index"], "candles": len(candles),
             "from_time_ms": candles[0]["time_ms"], "to_time_ms": candles[-1]["time_ms"],
-            "candles_sha256": digest,
+            "candles_sha256": _candles_digest(candles),
         }
-    except (robot_state_machine.RobotStateMachineError, ScannerGeometryCursorError,
-            KeyError, TypeError, ValueError, OverflowError, AttributeError):
+    except _EVIDENCE_ERRORS:
+        return None
+
+
+def wedge_retest_take(signal_snapshot: Mapping[str, Any], frame) -> dict[str, Any] | None:
+    """Proven BREAKOUT -> RETEST before the apex plus the Robot's frozen TAKE; else None.
+
+    The TAKE is the one the Robot arms after an entry fill (``frozen_take_90`` of the
+    snapshot's frozen reference/target); it does not depend on the actual fill price.
+    """
+    try:
+        if signal_snapshot.get("pattern") not in robot_state_machine.SUPPORTED_PATTERNS:
+            return None
+        proof = _replay_to_apex(signal_snapshot, frame)
+        if proof is None:
+            return None
+        replayed, events, candles, anchor_index, apex_index = proof
+        if (replayed.get("phase") != robot_state_machine.PHASE_RETEST_DETECTED
+                or events[-1:] != (robot_state_machine.EVENT_RETEST,)):
+            return None
+        direction = replayed["direction"]
+        reference, target = RobotBreakoutMonitor._frozen_prices(signal_snapshot, direction)
+        take = robot_protection.frozen_take_90(
+            direction, frozen_signal_reference_price=reference, frozen_scanner_target_price=target)
+        retest_index = replayed["retest_index"]
+        return {
+            "direction": direction, "take_price": take, "anchor_index": anchor_index,
+            "apex_index": apex_index, "breakout_index": replayed["breakout_index"],
+            "retest_index": retest_index,
+            "candles": [c for c in candles if c["geometry_index"] <= retest_index],
+        }
+    except _EVIDENCE_ERRORS:
+        return None
+
+
+def evaluate_wedge_take_after_apex(
+    retest: Mapping[str, Any], post_frame, apex_open_ms: int,
+) -> dict[str, Any] | None:
+    """Evidence when a closed candle strictly after the apex candle reaches the frozen TAKE.
+
+    The retest LIMIT is cancelled at the apex candle, so no entry can follow such a
+    candle: whatever was entered meets its TAKE there, if its STOP did not end it first.
+    """
+    try:
+        if post_frame is None or len(post_frame) < 2 or not _COLUMNS.issubset(post_frame.columns):
+            return None
+        take, long = retest["take_price"], retest["direction"] == robot_state_machine.DIRECTION_LONG
+        rows, previous = [], int(apex_open_ms)
+        for position in range(len(post_frame) - 1):  # the newest row may still be forming
+            row = post_frame.iloc[position]
+            time_ms = int(row["time"])
+            if time_ms <= previous:
+                return None  # not strictly after the apex candle, or out of order
+            previous = time_ms
+            high, low = Decimal(str(row["high"])), Decimal(str(row["low"]))
+            if not high.is_finite() or not low.is_finite() or low <= 0 or low > high:
+                return None
+            rows.append({"time_ms": time_ms, "high": float(row["high"]),
+                         "low": float(row["low"]), "close": float(row["close"])})
+            if (high >= take) if long else (low <= take):
+                replay = retest["candles"]
+                return {
+                    "rule": TAKE_RULE, "rule_version": TAKE_RULE_VERSION,
+                    "outcome": "TAKE_REACHED_AFTER_APEX", "direction": retest["direction"],
+                    "take_price": str(take), "anchor_index": retest["anchor_index"],
+                    "apex_index": retest["apex_index"], "breakout_index": retest["breakout_index"],
+                    "retest_index": retest["retest_index"], "take_candle_time_ms": time_ms,
+                    "candles": len(replay) + len(rows), "from_time_ms": replay[0]["time_ms"],
+                    "to_time_ms": time_ms, "candles_sha256": _candles_digest([*replay, *rows]),
+                }
+        return None
+    except _EVIDENCE_ERRORS:
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class BoxPlanTerms:
+    """Frozen first-grid levels of one BOX_PLAN_ONLY source; no order, no admission."""
+
+    direction: str
+    entry_price: Decimal  # P1: the first grid LIMIT the market reaches
+    take_price: Decimal
+    stop_price: Decimal
+    start_ms: int  # first 1m candle strictly after the plan's decision minute
+
+
+def box_plan_terms(snapshot: Mapping[str, Any]) -> BoxPlanTerms | None:
+    """The frozen plan's P1/TAKE/STOP, or None when the plan is not a consistent first grid."""
+    try:
+        if snapshot.get("pattern") != BOX_PATTERN:
+            return None
+        plan = snapshot["plan"]
+        direction = str(plan["direction"])
+        if direction not in ("LONG", "SHORT") or direction != snapshot["identity"]["direction"]:
+            return None
+        limits = [Decimal(str(price)) for price in plan["limit_prices"]]
+        take, stop = Decimal(str(plan["take_price"])), Decimal(str(plan["stop_price"]))
+        if not limits or not all(p.is_finite() and p > 0 for p in (*limits, take, stop)):
+            return None
+        if direction == "LONG":
+            entry = max(limits)
+            if not stop < min(limits) or not entry < take:
+                return None
+        else:
+            entry = min(limits)
+            if not take < entry or not max(limits) < stop:
+                return None
+        decision = snapshot["decision_time_ms"]
+        if type(decision) is not int or decision < 0:
+            return None
+        start_ms = decision - decision % ONE_MINUTE_MS + ONE_MINUTE_MS
+        return BoxPlanTerms(direction, entry, take, stop, start_ms)
+    except _EVIDENCE_ERRORS:
+        return None
+
+
+def evaluate_box_first_grid_exit(terms: BoxPlanTerms, frame) -> dict[str, Any] | None:
+    """Evidence when P1 is touched and a strictly later closed candle reaches TAKE or STOP.
+
+    Gap-free closed 1m candles from ``terms.start_ms`` only. A candle that touches P1
+    and an exit level at once is ambiguous and never counts as the exit itself.
+    """
+    try:
+        if frame is None or len(frame) < 2 or not _COLUMNS.issubset(frame.columns):
+            return None
+        long = terms.direction == "LONG"
+        rows, entered_ms, expected = [], None, terms.start_ms
+        for position in range(len(frame) - 1):  # the newest row may still be forming
+            row = frame.iloc[position]
+            time_ms = int(row["time"])
+            if time_ms != expected:
+                return None  # gap, duplicate or out-of-order evidence
+            expected += ONE_MINUTE_MS
+            high, low = Decimal(str(row["high"])), Decimal(str(row["low"]))
+            if not high.is_finite() or not low.is_finite() or low <= 0 or low > high:
+                return None
+            rows.append({"time_ms": time_ms, "high": float(row["high"]),
+                         "low": float(row["low"]), "close": float(row["close"])})
+            if entered_ms is None:
+                if (low <= terms.entry_price) if long else (high >= terms.entry_price):
+                    entered_ms = time_ms
+                continue
+            take_hit = (high >= terms.take_price) if long else (low <= terms.take_price)
+            stop_hit = (low <= terms.stop_price) if long else (high >= terms.stop_price)
+            if take_hit or stop_hit:
+                outcome = ("TAKE_OR_STOP_REACHED" if take_hit and stop_hit
+                           else "TAKE_REACHED" if take_hit else "STOP_REACHED")
+                return {
+                    "rule": BOX_RULE, "rule_version": BOX_RULE_VERSION, "outcome": outcome,
+                    "direction": terms.direction, "entry_price": str(terms.entry_price),
+                    "take_price": str(terms.take_price), "stop_price": str(terms.stop_price),
+                    "entry_candle_time_ms": entered_ms, "exit_candle_time_ms": time_ms,
+                    "candles": len(rows), "from_time_ms": rows[0]["time_ms"], "to_time_ms": time_ms,
+                    "candles_sha256": _candles_digest(rows),
+                }
+        return None
+    except _EVIDENCE_ERRORS:
         return None
 
 
@@ -210,7 +411,7 @@ def run_wedge_terminal_producer_once(
     should_stop: Callable[[], bool] | None = None,
     fetch_rotation: FetchRotation | None = None,
 ) -> dict[str, str]:
-    """One pass over this account's Wedge SHADOW ALLOWs; returns status per candidate_ref.
+    """One pass over this account's Wedge and Box SHADOW ALLOWs; status per candidate_ref.
 
     Returns {} when another pass holds the lock or the sidecar is unreadable.
     ``should_stop`` is checked before every fetch and again right before every append:
@@ -235,19 +436,22 @@ def run_wedge_terminal_producer_once(
         reader = SQLiteStore.open_reader(database_path)
         try:
             decisions = reader.load_robot_auto_decisions(account)
+            pending, seen = [], set()
+            for decision in decisions:
+                identity = (decision.candidate_ref, decision.snapshot_sha256)
+                if (decision.mode != "SHADOW" or decision.outcome != "ALLOW"
+                        or decision.trading_account_id != account
+                        or (decision.pattern not in robot_state_machine.SUPPORTED_PATTERNS
+                            and decision.pattern != BOX_PATTERN)
+                        or decision.snapshot_sha256 is None or identity in seen):
+                    continue
+                seen.add(identity)
+                pending.append((identity, decision))
+            # The frozen BOX_PLAN_ONLY sources, read in the same read-only session.
+            box_sources = {decision.candidate_ref: reader.get_robot_candidate(decision.candidate_ref)
+                           for _identity, decision in pending if decision.pattern == BOX_PATTERN}
         finally:
             reader.close()
-
-        pending, seen = [], set()
-        for decision in decisions:
-            identity = (decision.candidate_ref, decision.snapshot_sha256)
-            if (decision.mode != "SHADOW" or decision.outcome != "ALLOW"
-                    or decision.trading_account_id != account
-                    or decision.pattern not in robot_state_machine.SUPPORTED_PATTERNS
-                    or decision.snapshot_sha256 is None or identity in seen):
-                continue
-            seen.add(identity)
-            pending.append((identity, decision))
         if fetch_rotation is not None and fetch_rotation.last_fetched is not None:
             start = next((i + 1 for i, (identity, _decision) in enumerate(pending)
                           if identity == fetch_rotation.last_fetched), 0)
@@ -264,10 +468,16 @@ def run_wedge_terminal_producer_once(
 
         for identity, decision in pending:
             remaining = budget[0]
-            results[decision.candidate_ref] = (
-                "STOPPED" if should_stop() else _process(
+            if should_stop():
+                results[decision.candidate_ref] = "STOPPED"
+            elif decision.pattern == BOX_PATTERN:
+                results[decision.candidate_ref] = _process_box(
+                    decision, box_sources.get(decision.candidate_ref), account, known, sidecar,
+                    candle_range_loader, now_ms, budget, should_stop, physical_symbols)
+            else:
+                results[decision.candidate_ref] = _process(
                     decision, account, known, sidecar, candidate_store_dir, candle_range_loader,
-                    now_ms, budget, should_stop, physical_symbols))
+                    now_ms, budget, should_stop, physical_symbols)
             if fetch_rotation is not None and budget[0] < remaining:
                 fetch_rotation.last_fetched = identity
         return results
@@ -322,7 +532,62 @@ def _process(decision, account, known, sidecar, candidate_store_dir, candle_rang
         return "FETCH_FAILED"
     evidence = evaluate_wedge_apex_expiry(snapshot, frame)
     if evidence is None:
+        retest = wedge_retest_take(snapshot, frame)
+        if retest is None:
+            return "NOT_PROVEN"
+        if should_stop():
+            return "STOPPED"
+        # Strictly after the apex candle, bounded; the newest row is ignored as forming.
+        post_end_ms = min(apex_open_ms + MAX_POST_APEX_PAGES * MAX_KLINE_LIMIT * ONE_MINUTE_MS,
+                          now_ms - now_ms % ONE_MINUTE_MS)
+        try:
+            post_frame = candle_range_loader(
+                decision.symbol.value, apex_open_ms + ONE_MINUTE_MS, post_end_ms)
+        except Exception:
+            return "FETCH_FAILED"
+        evidence = evaluate_wedge_take_after_apex(retest, post_frame, apex_open_ms)
+        if evidence is None:
+            return "NOT_PROVEN"
+    return _append_proven(decision, account, sidecar, "SCANNER", evidence, now_ms,
+                          should_stop, physical_symbols)
+
+
+def _process_box(decision, source, account, known, sidecar, candle_range_loader,
+                 now_ms, budget, should_stop, physical_symbols) -> str:
+    ref, sha = decision.candidate_ref, decision.snapshot_sha256
+    if (ref, sha) in known:
+        return "ALREADY_TERMINAL"
+    if source is None:
+        return "SOURCE_UNAVAILABLE"
+    if (source.status != "BOX_PLAN_ONLY" or source.trading_account_id != account
+            or source.snapshot_sha256 != sha or source.symbol != decision.symbol):
+        return "IDENTITY_MISMATCH"
+    terms = box_plan_terms(source.signal_snapshot)
+    if terms is None:
+        return "SOURCE_UNAVAILABLE"
+    now_floor_ms = now_ms - now_ms % ONE_MINUTE_MS
+    if now_floor_ms < terms.start_ms + ONE_MINUTE_MS:
+        return "NOT_DUE"  # not even the first candle after the decision is closed yet
+    # Decision+1 .. at most MAX_RANGE_PAGES pages or the forming candle (ignored as newest).
+    end_ms = min(terms.start_ms + (MAX_RANGE_PAGES * MAX_KLINE_LIMIT - 1) * ONE_MINUTE_MS,
+                 now_floor_ms)
+    if budget[0] <= 0:
+        return "DEFERRED"
+    budget[0] -= 1
+    try:
+        frame = candle_range_loader(decision.symbol.value, terms.start_ms, end_ms)
+    except Exception:
+        return "FETCH_FAILED"
+    evidence = evaluate_box_first_grid_exit(terms, frame)
+    if evidence is None:
         return "NOT_PROVEN"
+    return _append_proven(decision, account, sidecar, "BOX_PLAN", evidence, now_ms,
+                          should_stop, physical_symbols)
+
+
+def _append_proven(decision, account, sidecar, source, evidence, now_ms,
+                   should_stop, physical_symbols) -> str:
+    """Append the proven source-terminal event unless a physical obligation is pending."""
     symbols = physical_symbols()
     if symbols is None:
         return "OBLIGATIONS_UNPROVEN"
@@ -332,8 +597,9 @@ def _process(decision, account, known, sidecar, candidate_store_dir, candle_rang
         return "STOPPED"  # closed while the request was in flight: never append afterwards
     try:
         _event, created = append_source_terminal_event(sidecar, SourceTerminalEvent(
-            trading_account_id=account.value, candidate_ref=ref, snapshot_sha256=sha,
-            source="SCANNER", terminal_status="EXPIRED", rule=RULE, rule_version=RULE_VERSION,
+            trading_account_id=account.value, candidate_ref=decision.candidate_ref,
+            snapshot_sha256=decision.snapshot_sha256, source=source, terminal_status="EXPIRED",
+            rule=evidence["rule"], rule_version=evidence["rule_version"],
             evidence_json=json.dumps(evidence, sort_keys=True), observed_at_ms=now_ms,
         ))
     except (SourceTerminalEventError, OSError, ValueError):
