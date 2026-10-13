@@ -39,8 +39,12 @@ existing-rule terminals, each proven from closed 1m candles only:
   depends on the unprovable actual fill) stays reserved.
 * Ikigai Box ``IKIGAI_BOX_FIRST_GRID_EXIT_REACHED``: the frozen plan's first grid
   LIMIT (P1) is touched, then a strictly later candle reaches the plan's common TAKE
-  or shared STOP (#416 completion, plus the STOP beyond the full grid). A Box that is
-  never entered has no terminal rule (no age-based expiry) and stays reserved.
+  or shared STOP (#416 completion, plus the STOP beyond the full grid). A TAKE counts
+  only on a candle touching no grid LIMIT untouched before it: the Robot finalizes
+  only a FLAT Box and gives a slice its TAKE after the fill, so a fresh deeper fill
+  may outlive that candle with P(k+1).. still resting. The STOP closes the whole lot
+  and cancels every owned order, so it needs no such guard. A Box that is never
+  entered has no terminal rule (no age-based expiry) and stays reserved.
 """
 from __future__ import annotations
 
@@ -242,6 +246,7 @@ class BoxPlanTerms:
     take_price: Decimal
     stop_price: Decimal
     start_ms: int  # first 1m candle strictly after the plan's decision minute
+    grid: tuple[Decimal, ...]  # P1..P4 in adverse fill order
 
 
 def box_plan_terms(snapshot: Mapping[str, Any]) -> BoxPlanTerms | None:
@@ -257,6 +262,7 @@ def box_plan_terms(snapshot: Mapping[str, Any]) -> BoxPlanTerms | None:
         take, stop = Decimal(str(plan["take_price"])), Decimal(str(plan["stop_price"]))
         if not limits or not all(p.is_finite() and p > 0 for p in (*limits, take, stop)):
             return None
+        grid = tuple(sorted(limits, reverse=direction == "LONG"))
         if direction == "LONG":
             entry = max(limits)
             if not stop < min(limits) or not entry < take:
@@ -269,7 +275,7 @@ def box_plan_terms(snapshot: Mapping[str, Any]) -> BoxPlanTerms | None:
         if type(decision) is not int or decision < 0:
             return None
         start_ms = decision - decision % ONE_MINUTE_MS + ONE_MINUTE_MS
-        return BoxPlanTerms(direction, entry, take, stop, start_ms)
+        return BoxPlanTerms(direction, entry, take, stop, start_ms, grid)
     except _EVIDENCE_ERRORS:
         return None
 
@@ -278,13 +284,15 @@ def evaluate_box_first_grid_exit(terms: BoxPlanTerms, frame) -> dict[str, Any] |
     """Evidence when P1 is touched and a strictly later closed candle reaches TAKE or STOP.
 
     Gap-free closed 1m candles from ``terms.start_ms`` only. A candle that touches P1
-    and an exit level at once is ambiguous and never counts as the exit itself.
+    and an exit level at once is ambiguous and never counts as the exit itself; nor does
+    a TAKE on a candle that first touches a deeper grid LIMIT (its slice TAKE may not
+    rest yet). A STOP always counts: it closes the whole lot and cancels the grid.
     """
     try:
         if frame is None or len(frame) < 2 or not _COLUMNS.issubset(frame.columns):
             return None
         long = terms.direction == "LONG"
-        rows, entered_ms, expected = [], None, terms.start_ms
+        rows, entered_ms, depth, expected = [], None, 0, terms.start_ms
         for position in range(len(frame) - 1):  # the newest row may still be forming
             row = frame.iloc[position]
             time_ms = int(row["time"])
@@ -296,13 +304,14 @@ def evaluate_box_first_grid_exit(terms: BoxPlanTerms, frame) -> dict[str, Any] |
                 return None
             rows.append({"time_ms": time_ms, "high": float(row["high"]),
                          "low": float(row["low"]), "close": float(row["close"])})
+            reached = sum(1 for price in terms.grid if ((low <= price) if long else (high >= price)))
             if entered_ms is None:
-                if (low <= terms.entry_price) if long else (high >= terms.entry_price):
-                    entered_ms = time_ms
+                if reached:
+                    entered_ms, depth = time_ms, reached
                 continue
             take_hit = (high >= terms.take_price) if long else (low <= terms.take_price)
             stop_hit = (low <= terms.stop_price) if long else (high >= terms.stop_price)
-            if take_hit or stop_hit:
+            if stop_hit or (take_hit and reached <= depth):
                 outcome = ("TAKE_OR_STOP_REACHED" if take_hit and stop_hit
                            else "TAKE_REACHED" if take_hit else "STOP_REACHED")
                 return {
@@ -310,9 +319,11 @@ def evaluate_box_first_grid_exit(terms: BoxPlanTerms, frame) -> dict[str, Any] |
                     "direction": terms.direction, "entry_price": str(terms.entry_price),
                     "take_price": str(terms.take_price), "stop_price": str(terms.stop_price),
                     "entry_candle_time_ms": entered_ms, "exit_candle_time_ms": time_ms,
+                    "grid_levels_reached": max(depth, reached),
                     "candles": len(rows), "from_time_ms": rows[0]["time_ms"], "to_time_ms": time_ms,
                     "candles_sha256": _candles_digest(rows),
                 }
+            depth = max(depth, reached)
         return None
     except _EVIDENCE_ERRORS:
         return None

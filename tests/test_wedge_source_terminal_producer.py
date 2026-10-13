@@ -322,6 +322,14 @@ class EvaluateRetestTakeTests(unittest.TestCase):
                                                          self.APEX_OPEN))
         self.assertIsNone(evaluate_wedge_take_after_apex(retest, post, self.APEX_OPEN))  # not after apex
 
+    def test_missing_post_apex_candle_does_not_hide_a_later_take(self):
+        # No entry follows the apex candle, so a skipped candle cannot reopen the trade:
+        # whatever it did (STOP, TAKE or nothing), the later TAKE candle ends every branch.
+        retest = wedge_retest_take(_take_snapshot(), _frame(RETESTED))
+        post = _frame(RETESTED + [100.0, 118.0], skip={11})  # index 21 missing
+        evidence = evaluate_wedge_take_after_apex(retest, post[post["time"] > self.APEX_OPEN], self.APEX_OPEN)
+        self.assertEqual(evidence["take_candle_time_ms"], T0 + 12 * MIN)
+
     def test_forming_row_never_proves_the_take(self):
         retest = wedge_retest_take(_take_snapshot(), _frame(RETESTED))
         post = _frame(RETESTED + [100.0], forming=False)
@@ -410,6 +418,18 @@ class EvaluateBoxExitTests(unittest.TestCase):
     def test_ambiguous_entry_bar_is_settled_by_a_later_exit(self):
         evidence = evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE, (99.5, 93.9), TAKE_BAR]))
         self.assertEqual(evidence["exit_candle_time_ms"], T0 + 3 * MIN)
+
+    def test_take_on_a_candle_first_touching_a_deeper_limit_waits(self):
+        # P2 93.2 first filled on the TAKE candle: its slice TAKE may not rest yet, so the
+        # Box need not be FLAT (P3/P4 still resting). Only a later TAKE proves the exit.
+        deeper = (99.5, 93.0)
+        self.assertIsNone(evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE, ENTRY, deeper])))
+        evidence = evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE, ENTRY, deeper, TAKE_BAR]))
+        self.assertEqual((evidence["outcome"], evidence["exit_candle_time_ms"], evidence["grid_levels_reached"]),
+                         ("TAKE_REACHED", T0 + 4 * MIN, 2))
+        # The STOP closes the whole lot and cancels the grid, deeper fills included.
+        stop = evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE, ENTRY, STOP_BAR]))
+        self.assertEqual(stop["grid_levels_reached"], 4)
 
     def test_inconsistent_plan_has_no_terms(self):
         snapshot = _box_snapshot()
