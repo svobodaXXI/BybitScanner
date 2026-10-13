@@ -1,0 +1,28 @@
+{
+ "schema_version": 1,
+ "evidence_class_note": "RSR-ANCHORS-4: exact owner Triangle Compression reference; the frozen window carries three post-decision bars (incl. the 10:00 UTC breakdown) that as_of_index excludes.",
+ "cases": [
+  {
+   "case_id": "RSRUSDT-5m-triangle-owner-reference-20261012",
+   "pattern_family": "TRIANGLE",
+   "symbol": "RSRUSDT",
+   "timeframe": "5",
+   "evidence_class": "RECOVERED_PIVOT_EQUIVALENT",
+   "fixture_ref": "tests/fixtures/geometry_gold/RSRUSDT_5m_triangle_owner_reference_20261012.json",
+   "as_of_index": 199,
+   "provenance": "G-TRI-1 RSRUSDT report window; owner anchors confirmed in RSR-ANCHORS-2.",
+   "expectation": {
+    "kind": "POSITIVE_ANCHOR",
+    "geometry_identity": [
+     144,
+     192,
+     148,
+     178,
+     144,
+     192
+    ],
+    "detected": true
+   }
+  }
+ ]
+}
