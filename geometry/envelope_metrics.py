@@ -1176,6 +1176,32 @@ def evaluate_formation_body_fit(upper_line, lower_line, candles, end_index):
     return result
 
 
+def _with_own_points(
+    points,
+    candidate
+):
+    """Global pivots plus candidate points at indices not already present."""
+
+    points = list(points or [])
+
+    known = {
+        point.get("index")
+        for point in points
+        if isinstance(point, dict)
+    }
+
+    for point in candidate.get("points") or []:
+        if (
+            isinstance(point, dict)
+            and point.get("index") is not None
+            and point["index"] not in known
+        ):
+            known.add(point["index"])
+            points.append(point)
+
+    return points
+
+
 def calculate_envelope_metrics(
     upper_candidate,
     lower_candidate,
@@ -1228,9 +1254,17 @@ def calculate_envelope_metrics(
     if current_index <= common_start:
         return None
 
+    #
+    # R1 (RSR-ANCHORS-4): support counts the candidate's own confirmed
+    # points too. For regular candidates they already belong to the global
+    # pivots (no change); a Triangle-only line built from local pivots keeps
+    # the support its generator confirmed. Same index counted once; the
+    # minimum support threshold is unchanged.
+    #
+
     upper = evaluate_boundary(
         upper_line,
-        highs,
+        _with_own_points(highs, upper_candidate),
         "upper",
         common_start,
         current_index,
@@ -1239,7 +1273,7 @@ def calculate_envelope_metrics(
 
     lower = evaluate_boundary(
         lower_line,
-        lows,
+        _with_own_points(lows, lower_candidate),
         "lower",
         common_start,
         current_index,

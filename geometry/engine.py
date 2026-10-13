@@ -48,6 +48,11 @@ from .ranking import (
     rank_geometry
 )
 
+from .triangle_boundaries import (
+    build_triangle_only_lines,
+    is_triangle_only
+)
+
 from .debug.logger import (
     debug
 )
@@ -290,6 +295,32 @@ def analyze_geometry(
         }
     )
 
+    #
+    # 2b. Triangle-only boundary lines (RSR-ANCHORS-4)
+    #
+    # Two-point hull edges (T) and lines from local alternation-aware
+    # pivots (Q). Added after filtering and admitted below only for a
+    # Triangle Compression pair; global pivot lists stay unchanged.
+    #
+
+    triangle_upper, triangle_lower = build_triangle_only_lines(
+        highs,
+        lows,
+        upper_candidates,
+        lower_candidates,
+        current_index,
+        candles=candles,
+        max_span=(
+            round((current_index + 1) * GEOMETRY_MAX_STRUCTURE_SPAN_RATIO)
+            if current_index is not None
+            else None
+        )
+    )
+
+    upper_candidates = upper_candidates + triangle_upper
+
+    lower_candidates = lower_candidates + triangle_lower
+
     if (
         not upper_candidates
         or
@@ -307,6 +338,21 @@ def analyze_geometry(
 
         for lower_candidate in lower_candidates:
 
+            #
+            # 3a. A Triangle-only line pairs only into a Triangle: falling
+            # upper and rising lower slope (the same rule that sets
+            # anchor_sequence.family). Skip other pairs before evaluation.
+            #
+
+            if (
+                is_triangle_only(upper_candidate)
+                or is_triangle_only(lower_candidate)
+            ) and not (
+                upper_candidate["line"].get("slope", 0) < 0
+                and lower_candidate["line"].get("slope", 0) > 0
+            ):
+                continue
+
             geometry = evaluate_candidate_pair(
                 upper_candidate,
                 lower_candidate,
@@ -317,6 +363,21 @@ def analyze_geometry(
             )
 
             if geometry is None:
+                continue
+
+            #
+            # 3b. Triangle-only lines never form any other family.
+            #
+
+            if (
+                is_triangle_only(upper_candidate)
+                or is_triangle_only(lower_candidate)
+            ) and (
+                (getattr(geometry, "pair_metrics", {}) or {})
+                .get("anchor_sequence", {})
+                .get("family")
+                != "triangle"
+            ):
                 continue
 
             #
