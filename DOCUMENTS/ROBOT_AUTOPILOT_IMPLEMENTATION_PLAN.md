@@ -540,6 +540,30 @@ Autopilot never admits a snapshot with such an event: it is REJECT
 `CANDIDATE_STALE`. Geometry, Box, RO/capital, risk and existing positions are
 unchanged.
 
+SHADOW-RESERVE-1 (2026-10-14): the sidecar event means "the observed trading
+OPPORTUNITY is over" (the source can no longer be traded); it never means "a
+position was closed" — a linked Robot candidate `CLOSED` stays the only
+position-closure release, and no fill/closure is simulated. The same producer,
+gates (exact identity, no physical obligation on the symbol, idempotent append,
+bounded closed-1m evidence) and status `EXPIRED` add two existing-rule terminals:
+- `WEDGE_RETEST_TAKE_REACHED_AFTER_APEX` v1: proven BREAKOUT -> RETEST before
+  the apex, then a closed candle strictly after the apex candle reaches the
+  Robot's frozen TAKE (`frozen_take_90`, fill-independent). The retest LIMIT is
+  cancelled at the apex, so every branch (never filled / filled and TAKE / filled
+  and STOP earlier) is over. Search window: at most 2000 minutes after the apex.
+- `IKIGAI_BOX_FIRST_GRID_EXIT_REACHED` v1 (source `BOX_PLAN`): the frozen plan's
+  P1 is touched, then a strictly later closed candle reaches its common TAKE
+  (#416 completion) or its shared STOP beyond the full grid. A TAKE counts only on
+  a candle that touches no grid LIMIT untouched before it (the Robot finalizes a
+  FLAT Box only, and a fresh slice gets its TAKE after the fill); the STOP closes
+  the whole lot and cancels every owned order. Evidence starts after the plan's
+  decision minute, at most 3000 minutes.
+Still BLOCKED (kept reserved, no proof): a retested Wedge whose post-apex TAKE is
+not reached (its STOP depends on the unprovable actual fill price); Scanner-side
+Wedge invalidation (no durable producer exists); the 20-candle breakout timeout
+(accepted design, never implemented); a Box never entered (no age-based expiry);
+and any terminal beyond the bounded windows.
+
 ## S2 ingress admission gate — 2026-10-10 / #448
 
 The Autopilot protection-health source is `make_autopilot_protection_health()`:

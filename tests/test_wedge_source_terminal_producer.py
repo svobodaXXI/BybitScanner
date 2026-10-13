@@ -15,14 +15,17 @@ from robot_candidate_store import create_signal_snapshot
 from terminal.application.robot_admission import candidate_snapshot_sha256
 from terminal.application.robot_portfolio import collect_portfolio_facts
 from terminal.application.wedge_source_terminal_producer import (
-    MAX_KLINE_LIMIT, MAX_RANGE_PAGES, RULE, FetchRotation, RangeLoadError, evaluate_wedge_apex_expiry,
-    load_closed_1m_range, producer_pass_lock, run_wedge_terminal_producer_once,
+    BOX_RULE, MAX_KLINE_LIMIT, MAX_RANGE_PAGES, RULE, TAKE_RULE, FetchRotation, RangeLoadError,
+    box_plan_terms, evaluate_box_first_grid_exit, evaluate_wedge_apex_expiry,
+    evaluate_wedge_take_after_apex, load_closed_1m_range, producer_pass_lock,
+    run_wedge_terminal_producer_once, wedge_retest_take,
 )
 from terminal.domain.models import OrderId, OrderSide, Symbol
 from terminal.persistence.source_terminal_events import (
     append_source_terminal_event, load_terminal_identities, source_terminal_events_path,
 )
 from terminal.persistence.sqlite_store import RobotAutoDecisionRecord
+from tests.runtime_replay import _box_plan_snapshot
 from tests.test_robot_autopilot_shadow import _Db, ACCOUNT
 from decimal import Decimal
 
@@ -95,7 +98,9 @@ class EvaluateApexExpiryTests(unittest.TestCase):
         self.assertIsNone(evaluate_wedge_apex_expiry(_snapshot(pattern="L-shape"), _frame(QUIET)))
 
 
-class ProducerRunTests(unittest.TestCase):
+class _ProducerCase(unittest.TestCase):
+    """Temporary PAPER DB, candidate store and sidecar; no test methods of its own."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -133,6 +138,8 @@ class ProducerRunTests(unittest.TestCase):
         with self.store.autopilot_decision_transaction():
             return collect_portfolio_facts(self.store, ACCOUNT)
 
+
+class ProducerRunTests(_ProducerCase):
     def test_proven_expiry_appends_matching_identity_and_releases(self):
         sha = self.allow("w1")
         self.assertEqual(self.facts()["occupied_ro"], 1)
@@ -278,6 +285,223 @@ class ProducerRunTests(unittest.TestCase):
         self.sidecar.write_bytes(b"not a database")
         self.assertEqual(self.run_once(_frame(QUIET)), {})
         self.assertEqual(self.loads, [])
+
+
+RETESTED = list(QUIET)
+RETESTED[4] = 126.0  # BREAKOUT at 15 (close > upper 115), the index-16 low touches upper 114: RETEST
+# frozen_take_90: reference 100, start_width 20 -> LONG target 120, TAKE 100 + 20 * 0.9 = 118.
+PAIR_METRICS = {"reference_price": 100.0, "start_width": 20.0}
+
+
+def _take_snapshot(**kwargs):
+    snapshot = _snapshot(**kwargs)
+    snapshot["geometry"] = {"pair_metrics": dict(PAIR_METRICS)}
+    return snapshot
+
+
+class EvaluateRetestTakeTests(unittest.TestCase):
+    """SHADOW-RESERVE-1: BREAKOUT -> RETEST, then the frozen TAKE strictly after the apex candle."""
+
+    APEX_OPEN = T0 + 10 * MIN  # index 20
+
+    def test_take_after_apex_is_proven(self):
+        retest = wedge_retest_take(_take_snapshot(), _frame(RETESTED))
+        self.assertEqual((retest["breakout_index"], retest["retest_index"]), (15, 16))
+        self.assertEqual(retest["take_price"], Decimal("118.0"))
+        post = _frame(RETESTED + [100.0, 118.0])  # index 22 high 118.5 >= TAKE 118
+        evidence = evaluate_wedge_take_after_apex(retest, post[post["time"] > self.APEX_OPEN], self.APEX_OPEN)
+        self.assertEqual((evidence["rule"], evidence["outcome"]), (TAKE_RULE, "TAKE_REACHED_AFTER_APEX"))
+        self.assertEqual(evidence["take_candle_time_ms"], T0 + 12 * MIN)
+
+    def test_take_only_before_or_at_the_apex_is_not_proven(self):
+        closes = list(RETESTED)
+        closes[7] = 119.0  # index 18 reaches TAKE before the apex: an entry could still follow
+        retest = wedge_retest_take(_take_snapshot(), _frame(closes))
+        post = _frame(closes + [100.0, 100.0])
+        self.assertIsNone(evaluate_wedge_take_after_apex(retest, post[post["time"] > self.APEX_OPEN],
+                                                         self.APEX_OPEN))
+        self.assertIsNone(evaluate_wedge_take_after_apex(retest, post, self.APEX_OPEN))  # not after apex
+
+    def test_missing_post_apex_candle_does_not_hide_a_later_take(self):
+        # No entry follows the apex candle, so a skipped candle cannot reopen the trade:
+        # whatever it did (STOP, TAKE or nothing), the later TAKE candle ends every branch.
+        retest = wedge_retest_take(_take_snapshot(), _frame(RETESTED))
+        post = _frame(RETESTED + [100.0, 118.0], skip={11})  # index 21 missing
+        evidence = evaluate_wedge_take_after_apex(retest, post[post["time"] > self.APEX_OPEN], self.APEX_OPEN)
+        self.assertEqual(evidence["take_candle_time_ms"], T0 + 12 * MIN)
+
+    def test_forming_row_never_proves_the_take(self):
+        retest = wedge_retest_take(_take_snapshot(), _frame(RETESTED))
+        post = _frame(RETESTED + [100.0], forming=False)
+        post.loc[len(post)] = {"time": T0 + 12 * MIN, "high": 130.0, "low": 99.0, "close": 120.0}
+        self.assertIsNone(evaluate_wedge_take_after_apex(retest, post[post["time"] > self.APEX_OPEN],
+                                                         self.APEX_OPEN))
+
+    def test_no_retest_or_no_frozen_take_is_not_a_retest_proof(self):
+        self.assertIsNone(wedge_retest_take(_take_snapshot(), _frame(QUIET)))
+        self.assertIsNone(wedge_retest_take(_take_snapshot(), _frame(BREAKOUT_NO_RETEST)))
+        self.assertIsNone(wedge_retest_take(_snapshot(), _frame(RETESTED)))  # no pair_metrics
+
+    def test_short_wedge_take_is_symmetric(self):
+        closes = list(QUIET)
+        closes[4], closes[5] = 80.0, 106.0  # close 80 < lower 105: BREAKOUT; high 106.5 >= 106: RETEST
+        snapshot = _take_snapshot(pattern="Rising Wedge")
+        retest = wedge_retest_take(snapshot, _frame(closes))
+        self.assertEqual((retest["direction"], retest["take_price"]), ("SHORT", Decimal("82.0")))
+        post = _frame(closes + [81.0, 100.0])  # index 21 low 80.5 <= TAKE 82
+        evidence = evaluate_wedge_take_after_apex(retest, post[post["time"] > self.APEX_OPEN], self.APEX_OPEN)
+        self.assertEqual(evidence["take_candle_time_ms"], T0 + 11 * MIN)
+
+
+class RetestTakeProducerTests(_ProducerCase):
+    def test_retest_then_take_after_apex_appends_and_releases(self):
+        sha = self.allow("w1", snapshot=_take_snapshot())
+        self.assertEqual(self.facts()["occupied_ro"], 1)
+        frame = _frame(RETESTED + [100.0, 118.0, 100.0])
+        self.assertEqual(self.run_once(frame, now_ms=T0 + 14 * MIN), {"w1": "APPENDED"})
+        self.assertEqual(self.loads, [("WEDGEUSDT", T0 + MIN, T0 + 11 * MIN),
+                                      ("WEDGEUSDT", T0 + 11 * MIN, T0 + 14 * MIN)])
+        self.assertEqual(load_terminal_identities(self.sidecar, "paper"), frozenset({("w1", sha)}))
+        facts = self.facts()
+        self.assertEqual((facts["occupied_ro"], len(facts["released_shadow_reservations"])), (0, 1))
+
+    def test_retest_without_take_after_apex_stays_reserved(self):
+        self.allow("w1", snapshot=_take_snapshot())
+        self.assertEqual(self.run_once(_frame(RETESTED + [100.0, 100.0]), now_ms=T0 + 13 * MIN),
+                         {"w1": "NOT_PROVEN"})
+        self.assertFalse(self.sidecar.exists())
+        self.assertEqual(self.facts()["occupied_ro"], 1)
+
+
+def _box_snapshot():
+    snapshot = _box_plan_snapshot("BOXUSDT")  # LONG: P1 94, TAKE 99.2, STOP 89.6
+    snapshot["decision_time_ms"] = T0
+    return snapshot
+
+
+def _box_frame(bars, *, skip=()):
+    """(high, low) rows for minutes 1..len(bars) after the decision minute, plus a forming row."""
+    rows = [{"time": T0 + k * MIN, "high": high, "low": low, "close": (high + low) / 2}
+            for k, (high, low) in enumerate(bars, start=1) if k not in skip]
+    rows.append({"time": T0 + (len(bars) + 1) * MIN, "high": 100.5, "low": 99.5, "close": 100.0})
+    return pd.DataFrame(rows)
+
+
+ABOVE = (100.5, 99.5)  # above P1 94 (and above TAKE 99.2 before any entry)
+ENTRY = (95.0, 93.9)  # low touches P1 94
+TAKE_BAR = (99.5, 95.0)  # high reaches TAKE 99.2
+STOP_BAR = (94.0, 89.5)  # low reaches STOP 89.6
+
+
+class EvaluateBoxExitTests(unittest.TestCase):
+    def setUp(self):
+        self.terms = box_plan_terms(_box_snapshot())
+
+    def test_terms_come_from_the_frozen_plan(self):
+        self.assertEqual((self.terms.direction, self.terms.entry_price, self.terms.take_price,
+                          self.terms.stop_price, self.terms.start_ms),
+                         ("LONG", Decimal("94"), Decimal("99.2"), Decimal("89.6"), T0 + MIN))
+
+    def test_entry_then_take_or_stop(self):
+        take = evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE, ENTRY, TAKE_BAR]))
+        self.assertEqual((take["rule"], take["outcome"]), (BOX_RULE, "TAKE_REACHED"))
+        self.assertEqual((take["entry_candle_time_ms"], take["exit_candle_time_ms"]), (T0 + 2 * MIN, T0 + 3 * MIN))
+        stop = evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE, ENTRY, STOP_BAR]))
+        self.assertEqual(stop["outcome"], "STOP_REACHED")
+
+    def test_no_entry_ambiguous_bar_or_gap_is_not_proven(self):
+        self.assertIsNone(evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE] * 5)))
+        self.assertIsNone(evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE, (99.5, 93.9)])))
+        self.assertIsNone(evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE, ENTRY, TAKE_BAR], skip={2})))
+        self.assertIsNone(evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE, ENTRY])))  # exit forming
+
+    def test_ambiguous_entry_bar_is_settled_by_a_later_exit(self):
+        evidence = evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE, (99.5, 93.9), TAKE_BAR]))
+        self.assertEqual(evidence["exit_candle_time_ms"], T0 + 3 * MIN)
+
+    def test_take_on_a_candle_first_touching_a_deeper_limit_waits(self):
+        # P2 93.2 first filled on the TAKE candle: its slice TAKE may not rest yet, so the
+        # Box need not be FLAT (P3/P4 still resting). Only a later TAKE proves the exit.
+        deeper = (99.5, 93.0)
+        self.assertIsNone(evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE, ENTRY, deeper])))
+        evidence = evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE, ENTRY, deeper, TAKE_BAR]))
+        self.assertEqual((evidence["outcome"], evidence["exit_candle_time_ms"], evidence["grid_levels_reached"]),
+                         ("TAKE_REACHED", T0 + 4 * MIN, 2))
+        # The STOP closes the whole lot and cancels the grid, deeper fills included.
+        stop = evaluate_box_first_grid_exit(self.terms, _box_frame([ABOVE, ENTRY, STOP_BAR]))
+        self.assertEqual(stop["grid_levels_reached"], 4)
+
+    def test_inconsistent_plan_has_no_terms(self):
+        snapshot = _box_snapshot()
+        snapshot["plan"]["stop_price"] = "95"  # STOP inside the grid
+        self.assertIsNone(box_plan_terms(snapshot))
+        self.assertIsNone(box_plan_terms({**_box_snapshot(), "pattern": "Falling Wedge"}))
+
+
+class BoxProducerTests(_ProducerCase):
+    def allow_box(self, *, decision_id="d-box", sha=None):
+        source, _ = self.store.save_box_plan_only(snapshot=_box_snapshot(), created_at_ms=T0)
+        ref, sha = source.candidate_id, sha or source.snapshot_sha256
+        self.store.append_robot_auto_decision(RobotAutoDecisionRecord(
+            decision_id=decision_id, trading_account_id=ACCOUNT, candidate_ref=ref, pattern="IKIGAI_BOX",
+            symbol=Symbol("BOXUSDT"), timeframe="5", source_identity=f"{ref}:{sha}", snapshot_sha256=sha,
+            mode="SHADOW", policy_version="test", outcome="ALLOW", reason_code="ELIGIBLE",
+            evaluated_at_ms=T0 + MIN, resulting_candidate_id=None))
+        return ref, sha
+
+    def test_box_take_after_entry_appends_and_releases(self):
+        ref, sha = self.allow_box()
+        self.assertEqual(self.facts()["occupied_ro"], 1)
+        self.assertEqual(self.run_once(_box_frame([ABOVE, ENTRY, TAKE_BAR]), now_ms=T0 + 5 * MIN),
+                         {ref: "APPENDED"})
+        self.assertEqual(self.loads, [("BOXUSDT", T0 + MIN, T0 + 5 * MIN)])
+        self.assertEqual(load_terminal_identities(self.sidecar, "paper"), frozenset({(ref, sha)}))
+        self.assertEqual(self.facts()["occupied_ro"], 0)
+
+    def test_box_without_proven_exit_stays_reserved(self):
+        ref, _sha = self.allow_box()
+        self.assertEqual(self.run_once(_box_frame([ABOVE, ENTRY, ENTRY]), now_ms=T0 + 4 * MIN),
+                         {ref: "NOT_PROVEN"})
+        self.assertEqual(self.run_once(_box_frame([ABOVE] * 3), now_ms=T0 + 4 * MIN), {ref: "NOT_PROVEN"})
+        self.assertFalse(self.sidecar.exists())
+        self.assertEqual(self.facts()["occupied_ro"], 1)
+
+    def test_repeat_and_restart_release_once_without_refetch(self):
+        ref, _sha = self.allow_box()
+        self.allow_box(decision_id="d-box-repeat")  # a repeated ALLOW of the same frozen plan
+        self.assertEqual(self.facts()["occupied_ro"], 1)
+        frame = _box_frame([ABOVE, ENTRY, STOP_BAR])
+        self.assertEqual(self.run_once(frame, now_ms=T0 + 5 * MIN), {ref: "APPENDED"})
+        self.loads.clear()
+        for rotation in (None, FetchRotation()):  # same process, then a restarted worker
+            self.assertEqual(self.run_once(frame, now_ms=T0 + 5 * MIN, fetch_rotation=rotation),
+                             {ref: "ALREADY_TERMINAL"})
+        self.assertEqual(self.loads, [])
+        facts = self.facts()
+        self.assertEqual(facts["occupied_ro"], 0)
+        self.assertEqual({item["candidate_ref"] for item in facts["released_shadow_reservations"]}, {ref})
+
+    def test_historical_reservation_is_proven_from_its_own_decision_window(self):
+        ref, _sha = self.allow_box()
+        late = T0 + 5 * MAX_KLINE_LIMIT * MIN  # far beyond the bounded window
+        self.assertEqual(self.run_once(_box_frame([ABOVE, ENTRY, TAKE_BAR]), now_ms=late), {ref: "APPENDED"})
+        self.assertEqual(self.loads, [("BOXUSDT", T0 + MIN, T0 + MAX_RANGE_PAGES * MAX_KLINE_LIMIT * MIN)])
+
+    def test_box_identity_mismatch_or_missing_source_appends_nothing(self):
+        ref, _sha = self.allow_box(sha="f" * 64)
+        self.assertEqual(self.run_once(_box_frame([ABOVE, ENTRY, TAKE_BAR]), now_ms=T0 + 5 * MIN),
+                         {ref: "IDENTITY_MISMATCH"})
+        self.assertEqual(self.loads, [])
+        self.assertFalse(self.sidecar.exists())
+
+    def test_box_physical_obligation_keeps_the_reservation(self):
+        ref, _sha = self.allow_box()
+        self.store.create_paper_limit(client_action_id="o", request_fingerprint="o", order_id=OrderId("o"),
+            order_link_id="o", trading_account_id=ACCOUNT, symbol=Symbol("BOXUSDT"), side=OrderSide.BUY,
+            price=Decimal(1), quantity=Decimal(125), created_at_ms=1)
+        self.assertEqual(self.run_once(_box_frame([ABOVE, ENTRY, TAKE_BAR]), now_ms=T0 + 5 * MIN),
+                         {ref: "OBLIGATION_PENDING"})
+        self.assertFalse(self.sidecar.exists())
 
 
 class _FakeKlines:
