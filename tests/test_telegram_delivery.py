@@ -264,6 +264,7 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             [button["text"] for row in owner_keyboard for button in row],
             [
                 "📈 Open TradingView",
+                "📊 MetaScalp",
                 "📌 В разбор",
                 "✅ Хороший",
                 "❌ Геометрия",
@@ -274,6 +275,27 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
         self.assertEqual(
             [button["text"] for button in friend_keyboard[0]],
             ["📈 Open TradingView"],
+        )
+
+    def test_triangle_compression_owner_card_has_metascalp_button(self):
+        # TG-METASCALP-2: every send_signal pattern shares the common card builder.
+        signal = dict(self.signal(), symbol="RSRUSDT", pattern="Triangle Compression")
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "RSRUSDT_analysis.png").write_bytes(b"test-image")
+            with patch.object(notification.config, "TELEGRAM_CHAT_IDS", ("owner",)), \
+                    patch.object(notification.config, "TELEGRAM_CHAT_ID", "owner"), \
+                    patch.object(notification, "CHARTS_DIR", directory), \
+                    patch.object(notification, "send_message", return_value={"ok": True}), \
+                    patch.object(notification, "send_photo", return_value={"ok": True}) as photo_mock:
+                self.assertTrue(notification.send_signal(signal))
+        buttons = [
+            button
+            for row in photo_mock.call_args.kwargs["reply_markup"]["inline_keyboard"]
+            for button in row
+        ]
+        self.assertIn(
+            {"text": "📊 MetaScalp", "callback_data": "ms:open:RSRUSDT"},
+            buttons,
         )
 
     def test_5m_robot_button_requires_proven_handoff(self):
