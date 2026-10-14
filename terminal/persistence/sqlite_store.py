@@ -4614,12 +4614,14 @@ class SQLiteStore:
         self, trading_account_id: TradingAccountId,
     ) -> tuple[RobotAutoDecisionRecord, ...]:
         self._assert_owner()
+        # Large facts_json payloads make SQLite's filtered/ordered read expensive
+        # on the PAPER audit DB. Keep the sequential fetch and do the account
+        # selection before constructing records; preserve the public audit order.
         rows = self._connection.execute(
-            """SELECT * FROM robot_auto_decisions
-               WHERE trading_account_id=?
-               ORDER BY evaluated_at_ms, decision_id""",
-            (trading_account_id.value,),
+            "SELECT * FROM robot_auto_decisions",
         ).fetchall()
+        rows = [row for row in rows if row["trading_account_id"] == trading_account_id.value]
+        rows.sort(key=lambda row: (row["evaluated_at_ms"], row["decision_id"]))
         return tuple(_robot_auto_decision_from_row(row) for row in rows)
 
     def initialize_scanner_runtime_state(
