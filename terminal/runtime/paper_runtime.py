@@ -3351,12 +3351,70 @@ class PaperRuntime:
             projection = self.store.get_position_projection(position_key)
             if projection is not None and projection.quantity.value > 0:
                 still_pending_protection.append(record.candidate_id)
+                continue
+
+            if self._terminalize_stopped_pre_entry_wedge(record, prior):
+                terminalized_candidate_ids.append(record.candidate_id)
 
         return RobotSynchronizePendingEntriesResponse(
             tuple(cancelled_order_ids), tuple(finalized_candidate_ids),
             tuple(terminalized_candidate_ids), tuple(still_pending_protection),
             tuple(unresolved_candidate_ids),
         )
+
+    _PRE_ENTRY_WEDGE_PHASES = frozenset({"WAITING_BREAKOUT", "WAITING_RETEST", "RETEST_DETECTED"})
+
+    def _terminalize_stopped_pre_entry_wedge(self, record, prior) -> bool:
+        """ROBOT_STOPPED only: end a Wedge idea proven never to have traded.
+
+        A missing ``limit_order_id`` is not proof: an entry submitted by a caller
+        that timed out may still have been executed by the owner later (2026-10-14
+        AAVEUSDT). This pass runs on the owner, so every earlier queued command has
+        already run, and ROBOT_STOPPED admits no new entry. Ownership is then
+        proven only from durable PAPER evidence on the symbol: no working LIMIT,
+        no fill since approval, no unfinished command, no open Robot trade or
+        unresolved protection obligation (an open position was handled above).
+        Anything unproven is left APPROVED for the caller to report.
+        """
+        runtime_state = self.store.get_robot_runtime_state(self._account_id)
+        if runtime_state is None or runtime_state.mode != "ROBOT_STOPPED":
+            return False
+        state = record.robot_state or {}
+        if (
+            record.status != "APPROVED"
+            or prior.robot_state is None
+            or state.get("phase") not in self._PRE_ENTRY_WEDGE_PHASES
+            or record.approved_at_ms is None
+        ):
+            return False
+        symbol = record.symbol
+        if self.store.load_active_paper_limits(self._account_id, symbol):
+            return False
+        if any(execution.exchange_timestamp_ms >= record.approved_at_ms
+               for execution in self.store.load_executions_for_symbol(self._account_id, symbol)):
+            return False
+        if any(command.trading_account_id == self._account_id and command.symbol == symbol
+               for command in self.store.load_unfinished_commands()):
+            return False
+        if self.store.get_open_robot_trade_for_symbol(self._account_id, symbol) is not None:
+            return False
+        if any(obligation.symbol == symbol for obligation in
+               self.store.load_unresolved_paper_protection_obligations(self._account_id)):
+            return False
+        execution = dict(state.get("execution") or {})
+        now_ms = int(time.time() * 1000)
+        execution["stopped_without_entry_at_ms"] = now_ms
+        execution["stopped_without_entry_reason"] = (
+            "ROBOT_STOPPED before Wedge entry (no order, fill or exposure)"
+        )
+        self.store.save_robot_candidate_state(
+            record.candidate_id,
+            status="INVALIDATED",
+            robot_state={**state, "execution": execution},
+            expected_revision=record.state_revision,
+            updated_at_ms=now_ms,
+        )
+        return True
 
     def _robot_reconciliation_required_state(self, reason: str):
         state = self.store.get_robot_runtime_state(self._paper_account_id)

@@ -160,9 +160,17 @@ class SynchronizePendingEntriesOwnerKlineTests(unittest.TestCase):
                 self.assertEqual(fixture.loaders.owner_calls(), [])
                 # Durable state exists: no catch-up target, no second replay.
                 self.assertNotIn(("MainThread", "catchup"), fixture.loaders.calls)
-                self.assertEqual(fixture.candidate(), first)
+                # The fixture Robot is ROBOT_STOPPED: an initialized pre-entry Wedge
+                # with no order, fill or exposure is terminalized (safe stop).
+                second = fixture.candidate()
+                self.assertEqual(second.status, "INVALIDATED")
+                self.assertEqual(second.robot_state["phase"], first.robot_state["phase"])
+                self.assertEqual(second_response.terminalized_candidate_ids, ("candidate-1",))
                 self.assertEqual(second_response.unresolved_candidate_ids, ())
                 self.assertEqual(fixture.side_effects(), (0, 0, 0))
+                third_response = fixture.synchronize()
+                self.assertEqual(fixture.candidate(), second)
+                self.assertEqual(third_response.terminalized_candidate_ids, ())
             finally:
                 fixture.close()
 
