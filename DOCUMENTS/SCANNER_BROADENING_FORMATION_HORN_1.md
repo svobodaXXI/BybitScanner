@@ -210,6 +210,14 @@ recovered with the G-TRI-1 method and frozen.
   - Produce a reproducible PRELIMINARY/MATURE candidate list from saved OHLC for owner review (hypotheses only).
   - Paired Wedge-vs-Horn same-window cases for owner judgment (issue #490).
 - **HORN-4 (separately authorized).** Scanner/Telegram presentation with explicit provisional status and the mandatory full-universe Scanner pass. Trading/Robot remain out of this quest.
+  - **Implemented 2026-10-14, observation only (issue #504).**
+    - Code: `horn_scanner.py` + `geometry/broadening_chart.py`, called from `main.py` next to L-shape for every symbol/timeframe.
+    - Card: chart with candles, P1..Pn, START, both boundaries projected, stage, symbol/TF; TradingView button only. No Robot candidate, no admission, no direction.
+    - Delivery: sent once per formation identity and stage (MATURE upgrade re-sent once); a failed recipient stays retryable.
+    - Evidence: appended and fsynced per event in `runtime/terminal/horn_observations/` (`events.jsonl`, `ohlc/`, `progress.json`), including the Wedge geometry of the same snapshot.
+    - Progress: `[SCAN PROGRESS] i/N` console line per symbol/TF.
+    - Off switch: `BYBITSCANNER_HORN_OBSERVATION=0`.
+    - **Acceptance is still open:** the owner-run full Scanner pass.
 
 **HORN-2 acceptance:**
 
