@@ -13,6 +13,18 @@
 7. **Transparent long operations:** for tasks expected to exceed 30 seconds, provide stage, meaningful progress with an honest denominator or UNKNOWN, error state and USB/device release status. But *visibility does not justify work that should have been eliminated*.
 8. **Stop condition:** after the target is verified, STOP. Do not append a blanket audit, recovery framework, complete archive or new worktree without demonstrated need.
 
+## One deadline, then diagnosis — universal rule
+
+For **any** startup, network request, tool operation, file transfer, CI job, or recovery action that is unexpectedly stuck:
+- Set **one** justified bounded deadline or use the existing command's deadline. Do not chain 60s → 4m → 8m or repeat an operation while the first instance may still be alive.
+- At the deadline, **stop passive waiting and polling**. Collect one bounded snapshot of the blocking stage using existing logs/process state and available evidence. Distinguish slow but advancing work (measurable progress) from no progress; do not call slow work hung merely because an API is temporarily unresponsive.
+- Diagnose and fix the **cause on the critical path**, not symptoms. Do not simply raise a timeout, retry indefinitely, spawn a duplicate, add a watchdog, or create another launcher.
+- Retry **once only if** a specific cause was corrected or new evidence justifies it, after confirming the previous attempt cannot conflict with the retry.
+- Preserve mandatory safe-stop/reconciliation, in-flight writes, open PAPER positions, USB mounts and other non-interruptible safety constraints. If it is unsafe to stop the work, stop *waiting*, collect a status snapshot, and report BLOCKED / owner decision instead of forcibly killing it.
+- Report **READY, specific BLOCKED, or measurable active progress with a justified ETA**; no stream of “still waiting” updates without new information.
+
+Applied 2026-10-14: backend held port 8765 without accepting connections while synchronous Bybit REST over xray delayed startup. Repeated launcher start created a competing backend, and additional 4–8 minute waits only consumed owner time. The correct response is one diagnostic snapshot and a narrow correction, not escalating waits.
+
 ### Routine computer ↔ laptop handoff: standard path
 
 - **Code/PR/docs**: GitHub first. Fetch and fast-forward tracked code; use remote branches/PRs to recreate required worktrees. Do not copy entire repositories or old worktrees just to follow an already pushed commit.
