@@ -55,6 +55,8 @@ def build_scan_finished_message(
     elapsed_minutes,
     elapsed_remainder,
     box_observation_count=0,
+    horn_found_count=0,
+    horn_sent_count=0,
 ):
     """Build the final Scanner notification from the admission-owned count."""
 
@@ -63,6 +65,8 @@ def build_scan_finished_message(
         f"Найдено сигналов: {approved_pattern_count}\n"
         f"Отправлено в Telegram: {sent_to_telegram_count}\n"
         + (f"Наблюдений коробки Икигаи: {box_observation_count}\n" if box_observation_count else "")
+        + (f"Рупор (наблюдение): найдено {horn_found_count}, отправлено {horn_sent_count}\n"
+           if horn_found_count else "")
         + f"Просканировано тикеров: {total_symbols_scanned}\n"
         f"Elapsed: "
         f"{elapsed_minutes:02d}:"
@@ -93,11 +97,47 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
     approved_pattern_count = 0
     sent_to_telegram_count = 0
     box_observation_count = 0
+    horn_found_count = 0
+    horn_sent_count = 0
+    error_count = 0
 
     symbols = get_symbols()
 
     if MAX_SYMBOLS is not None:
         symbols = symbols[:MAX_SYMBOLS]
+
+    # Issue #504: progress is visible during the pass (console line flushed per
+    # symbol/timeframe and progress.json on disk), never only at the end.
+    from horn_scanner import (
+        horn_observation_enabled,
+        observe_broadening,
+        send_broadening_observation,
+        write_progress,
+    )
+
+    horn_enabled = horn_observation_enabled()
+
+    def report_progress(position, symbol, timeframe):
+        progress = {
+            "symbols_done": position,
+            "symbols_total": len(symbols),
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "horn_found": horn_found_count,
+            "horn_sent": horn_sent_count,
+            "sent_to_telegram": sent_to_telegram_count,
+            "errors": error_count,
+        }
+        print(
+            f"[SCAN PROGRESS] {position}/{len(symbols)} {symbol} {timeframe}m "
+            f"horn_found={horn_found_count} horn_sent={horn_sent_count} "
+            f"telegram_sent={sent_to_telegram_count} errors={error_count}",
+            flush=True,
+        )
+        try:
+            write_progress(progress)
+        except Exception as progress_error:
+            print(f"[SCAN PROGRESS WRITE ERROR] {progress_error}", flush=True)
 
     print("=" * 60)
     print("BybitScanner")
@@ -128,7 +168,7 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
             e
         )
 
-    for symbol in symbols:
+    for position, symbol in enumerate(symbols, 1):
         for timeframe in ("5", "1"):
             if control_checkpoint is not None and not control_checkpoint():
                 print("[SCANNER] current pass stopped by owner")
@@ -159,7 +199,30 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
                             sent_to_telegram_count += 1
                             print(f"{symbol:<15} {timeframe}m L-SHAPE observation SENT")
                     except Exception as observation_error:
+                        error_count += 1
                         print(f"{symbol:<15} {timeframe}m L-SHAPE ERROR: {observation_error}")
+
+                # Broadening («Рупор») is observation only: chart + evidence,
+                # no Robot/admission/orders. It runs next to Wedge and never
+                # suppresses it; its failure must not affect other delivery.
+                if horn_enabled and analysis_result.get("data") is not None:
+                    try:
+                        horn = observe_broadening(
+                            symbol, analysis_result["data"], timeframe=timeframe,
+                            wedge_result=analysis_result.get("result"),
+                        )
+                        if horn:
+                            horn_found_count += 1
+                            if send_broadening_observation(
+                                symbol, horn, timeframe=timeframe,
+                                test_mode=config.TELEGRAM_TEST_MODE,
+                            ):
+                                horn_sent_count += 1
+                                sent_to_telegram_count += 1
+                                print(f"{symbol:<15} {timeframe}m HORN observation SENT", flush=True)
+                    except Exception as horn_error:
+                        error_count += 1
+                        print(f"{symbol:<15} {timeframe}m HORN ERROR: {horn_error}", flush=True)
 
                 # Experimental Box observations are explicitly opt-in and use
                 # the same fetched OHLC snapshot even when no Wedge exists.
@@ -189,6 +252,7 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
                     except Exception as box_error:
                         # An experimental pattern must not suppress the existing
                         # Wedge Scanner signal on the same market.
+                        error_count += 1
                         print(f"{symbol:<15} {timeframe}m IKIGAI BOX ERROR: {box_error}")
 
                     # WATCH is an additional early-observation mode, never a
@@ -212,6 +276,7 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
                                 sent_to_telegram_count += 1
                                 print(f"{symbol:<15} {timeframe}m IKIGAI BOX WATCH observation SENT")
                         except Exception as watch_error:
+                            error_count += 1
                             print(f"{symbol:<15} {timeframe}m IKIGAI BOX WATCH ERROR: {watch_error}")
 
                 analysis = analysis_result.get("result")
@@ -335,6 +400,7 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
                 )
 
             except Exception as e:
+                error_count += 1
                 error_text = str(e)
 
                 if len(error_text) > 45:
@@ -345,9 +411,14 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
                     f"ERROR: {error_text}"
                 )
 
+            finally:
+                report_progress(position, symbol, timeframe)
+
     print(f"Найдено паттернов: {approved_pattern_count}")
     if box_observation_count:
         print(f"Наблюдений коробки Икигаи: {box_observation_count}")
+    if horn_found_count:
+        print(f"Рупор (наблюдение): найдено {horn_found_count}, отправлено {horn_sent_count}")
     print(f"Отправлено в Telegram: {sent_to_telegram_count}")
     print(f"Просканировано тикеров: {len(symbols)}")
 
@@ -383,6 +454,8 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
                 elapsed_minutes,
                 elapsed_remainder,
                 box_observation_count=box_observation_count,
+                horn_found_count=horn_found_count,
+                horn_sent_count=horn_sent_count,
             )
         )
     except Exception as e:

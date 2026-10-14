@@ -513,6 +513,10 @@ unit/regression suites: keep focused development tests proportionate, and
 avoid redundant full passes when neither implementation nor acceptance
 evidence changed.
 
+### Observable acceptance and incremental evidence — OWNER RULE 2026-10-14 (#504)
+
+Results before infrastructure: after minimal focused/Gold checks, accept new features through the real observable full Scanner pass (new patterns observation-only), not opaque offline studies. Progress (symbols done/total, TF, found, sent, errors) and evidence (OHLC, as-of time, geometry, stage, delivery) are flushed per step, never held only in RAM or buffered to the end (HORN-3 antipattern). Keep overlapping geometries (Wedge vs Horn) for owner comparison. Runtime start stays owner-only. Full text: GitHub issue #504.
+
 For routine work, start from the intended outcome. Do not require the user to provide recovery boilerplate, file lists, skills, Git commands, safety checklists, or test lists that the repository can infer.
 
 Recovery is staged and stops as soon as the task is safe to execute:
