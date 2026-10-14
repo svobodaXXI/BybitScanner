@@ -20,7 +20,10 @@ G_TRI_2_MANIFEST = ROOT / "tests" / "fixtures" / "geometry_gold" / "manifest_g_t
 class RecoveredOwnerTriangleCasesTest(unittest.TestCase):
     def test_pre_impulse_anchors_rejected_and_mega_preserved(self):
         results = {result["symbol"]: result for result in run_geometry_gold(G_TRI_2_MANIFEST)}
-        self.assertEqual(set(results), {"ARXUSDT", "KASUSDT", "LITUSDT", "MANAUSDT", "MEGAUSDT"})
+        self.assertEqual(
+            set(results),
+            {"ARXUSDT", "KASUSDT", "LITUSDT", "MANAUSDT", "MEGAUSDT", "KERNELUSDT", "JASMYUSDT"},
+        )
         failures = [result for result in results.values() if not result["passed"]]
         self.assertEqual(failures, [], failures)
         self.assertEqual(
@@ -91,6 +94,52 @@ class TriangleImpulseDirectionSymmetryTest(unittest.TestCase):
         self.assertEqual(sequence["primary_anchor"], 5)
         self.assertNotEqual(sequence["expected_secondary_index"], 30)
         self.assertFalse(sequence["valid"])
+
+
+class TriangleSingleFirstWaveTest(unittest.TestCase):
+    """TRI-WAVE-1: A and B are adjacent opposite-type confirmed pivots; a confirmed
+    pivot on A's side strictly between them splits the first wave (KERNEL L108-L152-H164)."""
+
+    def test_after_down_impulse_low_between_a_and_b_is_rejected(self):
+        # Valid TriangleImpulseDirectionSymmetryTest DOWN case plus LOW25 (103) inside 10->40.
+        sequence = _triangle_sequence(
+            highs=[dict(index=0, price=110.), dict(index=40, price=105.)],
+            lows=[dict(index=10, price=100.), dict(index=25, price=103.), dict(index=50, price=102.)],
+            upper=TriangleImpulseDirectionSymmetryTest.DOWN_UPPER,
+            lower=TriangleImpulseDirectionSymmetryTest.DOWN_LOWER,
+        )
+        self.assertEqual(sequence["expected_secondary_index"], 40)
+        self.assertTrue(sequence["first_anchor_terminal"])
+        self.assertTrue(sequence["swing_contraction_valid"])
+        self.assertTrue(sequence["impulse_leg_valid"])
+        self.assertEqual(sequence["first_wave_split_index"], 25)
+        self.assertFalse(sequence["first_wave_single"])
+        self.assertFalse(sequence["valid"])
+
+    def test_after_up_impulse_high_between_a_and_b_is_rejected(self):
+        # Valid UP case (HIGH10 -> LOW40) plus HIGH25 (107) inside 10->40.
+        sequence = _triangle_sequence(
+            highs=[dict(index=10, price=110.), dict(index=25, price=107.), dict(index=50, price=106.)],
+            lows=[dict(index=0, price=95.), dict(index=40, price=100.)],
+            upper=dict(slope=-.1, intercept=111., anchor_index=10, anchor_price=110., structure_span=40),
+            lower=dict(slope=.05, intercept=98., anchor_index=40, anchor_price=100., structure_span=20),
+        )
+        self.assertEqual(sequence["expected_secondary_index"], 40)
+        self.assertTrue(sequence["first_anchor_terminal"])
+        self.assertTrue(sequence["swing_contraction_valid"])
+        self.assertEqual(sequence["first_wave_split_index"], 25)
+        self.assertFalse(sequence["valid"])
+
+    def test_adjacent_anchors_keep_single_wave(self):
+        sequence = _triangle_sequence(
+            highs=[dict(index=0, price=110.), dict(index=40, price=105.)],
+            lows=[dict(index=10, price=100.), dict(index=50, price=102.)],
+            upper=TriangleImpulseDirectionSymmetryTest.DOWN_UPPER,
+            lower=TriangleImpulseDirectionSymmetryTest.DOWN_LOWER,
+        )
+        self.assertIsNone(sequence["first_wave_split_index"])
+        self.assertTrue(sequence["first_wave_single"])
+        self.assertTrue(sequence["valid"])
 
 
 class TriangleImpulseLegTest(unittest.TestCase):
