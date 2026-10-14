@@ -1,3 +1,15 @@
+## CURRENT OWNER PRIORITY — 2026-10-14 — TRIANGLE COMPRESSION GEOMETRY
+
+Owner reprioritized: **finish Triangle Compression geometry** (owner cases
+G-TRI-20261012; JASMY/KERNEL structure first). The Autopilot task to bind a
+runtime Bybit markPrice source for the daily-loss gate (known limit of
+AUTOPILOT-DAILY-GATE-1 in `ROBOT_AUTOPILOT_IMPLEMENTATION_PLAN.md`) moves to
+the **deferred Autopilot queue**, not cancelled. This overrides the 2026-10-09
+section below for task selection only; no runtime start, PAPER_AUTO/LIVE or
+risk change. Current stage and next slice: `QUEST_STATE.md` (TRI-WAVE-1).
+
+---
+
 ## CURRENT OWNER PRIORITY — 2026-10-09 — REPOSITORY ORDER / AUDIT
 
 Owner explicitly reprioritized: **repository consistency and workflow audit first**; the first laptop PAPER launch is **deferred**, not cancelled, until the owner resumes it. This overrides the historical September `NOW` sections below for task selection only.
