@@ -973,18 +973,19 @@ class PaperRuntime:
         # OFF / PAPER_AUTO (or a mode switched meanwhile): the unchanged owner entry decides.
         if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
             return
-        # The source is already durable: an owner timeout here (2026-10-14 AGIUSDT Box,
-        # PAPER_AUTO) must not discard it and with it the owner's Robot button.
+        # The source is already durable: only the owner's wait timeout (2026-10-14
+        # AGIUSDT Box, PAPER_AUTO) must not discard it and the owner's Robot button.
+        # The owner keeps running the evaluation and records its own decision; any
+        # other failure (owner unavailable, store) still propagates.
         try:
             self._dispatch_robot_command(
                 lambda runtime: runtime.observe_autopilot_candidate(
                     source, candidate_ref, handover=True)
             )
-        except Exception as error:
+        except TimeoutError:
             print(
-                "[AUTOPILOT OBSERVATION ERROR] "
-                f"source={source} candidate_ref={candidate_ref} "
-                f"error_class={type(error).__name__}"
+                "[AUTOPILOT OBSERVATION TIMEOUT] "
+                f"source={source} candidate_ref={candidate_ref}"
             )
 
     def autopilot_shadow_deferred_metrics(self) -> dict[str, object]:

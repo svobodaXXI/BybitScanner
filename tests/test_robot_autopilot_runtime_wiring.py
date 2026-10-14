@@ -240,6 +240,18 @@ class RuntimeWiringTests(unittest.TestCase):
                     with self.assertRaises(TimeoutError):
                         runtime._dispatch_ikigai_box_plan_preparation(
                             "ETHUSDT", "5", _CONFIRMED_BOX_FORMATION)
+
+                # Only the owner wait timeout is absorbed; any other observation
+                # failure (owner unavailable, store error) is not hidden.
+                unavailable = RuntimeError("PAPER runtime owner is unavailable")
+                with patch.object(runtime, "observe_autopilot_candidate", side_effect=unavailable):
+                    with self.assertRaises(RuntimeError):
+                        runtime._dispatch_ikigai_box_plan_preparation(
+                            "SOLUSDT", "5", _CONFIRMED_BOX_FORMATION)
+                # No admission, Robot idea or trading object came out of any of it.
+                self.assertEqual(runtime.store.load_robot_auto_decisions(ACCOUNT), ())
+                self.assertEqual([c for c in runtime.store.load_robot_candidates(ACCOUNT)
+                                  if c.status != "BOX_PLAN_ONLY"], [])
             finally:
                 runtime.close()
 
