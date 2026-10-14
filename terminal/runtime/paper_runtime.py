@@ -973,10 +973,19 @@ class PaperRuntime:
         # OFF / PAPER_AUTO (or a mode switched meanwhile): the unchanged owner entry decides.
         if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
             return
-        self._dispatch_robot_command(
-            lambda runtime: runtime.observe_autopilot_candidate(
-                source, candidate_ref, handover=True)
-        )
+        # The source is already durable: an owner timeout here (2026-10-14 AGIUSDT Box,
+        # PAPER_AUTO) must not discard it and with it the owner's Robot button.
+        try:
+            self._dispatch_robot_command(
+                lambda runtime: runtime.observe_autopilot_candidate(
+                    source, candidate_ref, handover=True)
+            )
+        except Exception as error:
+            print(
+                "[AUTOPILOT OBSERVATION ERROR] "
+                f"source={source} candidate_ref={candidate_ref} "
+                f"error_class={type(error).__name__}"
+            )
 
     def autopilot_shadow_deferred_metrics(self) -> dict[str, object]:
         """Any thread. Per-process SHADOW deferred counters; dropped > 0 = incomplete run."""
