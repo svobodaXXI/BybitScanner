@@ -1,4 +1,15 @@
-## CURRENT OWNER PRIORITY — 2026-10-14 — TRIANGLE COMPRESSION GEOMETRY
+## CURRENT OWNER PRIORITY — 2026-10-14 — HORN-1 BROADENING FORMATION
+
+Owner set a new active quest: **Broadening Formation (Expanding Wedge),
+HORN-1 «Рупор»**. Design and acceptance:
+`DOCUMENTS/SCANNER_BROADENING_FORMATION_HORN_1.md`; next slice HORN-2 (offline
+detector + tests, no Scanner/Telegram/Robot/trading). Still open and not to be
+lost: Triangle Compression PR #499 (TRI-WAVE-1) owner merge and its mandatory
+full Scanner pass. The Autopilot markPrice task stays deferred.
+
+---
+
+## PREVIOUS OWNER PRIORITY — 2026-10-14 — TRIANGLE COMPRESSION GEOMETRY
 
 Owner reprioritized: **finish Triangle Compression geometry** (owner cases
 G-TRI-20261012; JASMY/KERNEL structure first). The Autopilot task to bind a

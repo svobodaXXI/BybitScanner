@@ -1,4 +1,20 @@
-## Активный квест — 2026-10-14 — TRI-GEOMETRY-NEXT / Triangle Compression
+## Активный квест — 2026-10-14 — HORN-1 «Рупор» / Broadening Formation
+
+Команда владельца: новый активный квест — паттерн Broadening Formation
+(Expanding Wedge). Этап HORN-1 — только дизайн:
+`DOCUMENTS/SCANNER_BROADENING_FORMATION_HORN_1.md` (отдельный детектор
+`geometry/broadening.py`, не внутри сходящегося `analyze_geometry`). Следующий
+slice: HORN-2 — детектор + синтетика + негативные Gold, без Scanner/Telegram/
+Robot. Реальный положительный Gold отсутствует: нужен один размеченный
+владельцем график рупора.
+Незавершённое, не потерять: Triangle Compression — PR #499 TRI-WAVE-1 открыт
+(merge только владельцем), затем обязательный полный проход Scanner для
+визуальной приёмки. Autopilot markPrice остаётся в отложенной очереди.
+Runtime не запускать; PAPER DB/SHADOW/LIVE не трогать. XP не изменён.
+
+---
+
+## Квест (на паузе, приёмка не завершена) — 2026-10-14 — TRI-GEOMETRY-NEXT / Triangle Compression
 
 Команда владельца: приоритет — завершить геометрию Triangle Compression.
 Autopilot-задача «привязать runtime-источник Bybit markPrice для daily-loss
