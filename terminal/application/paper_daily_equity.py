@@ -241,17 +241,30 @@ def collect_paper_daily_equity_facts(
     ``store`` is a reader (``SQLiteStore.open_reader``) owned by the calling thread;
     nothing is written. ``marks`` come from the running runtime; nothing is fetched.
     """
-    if type(max_mark_age_ms) is not int or max_mark_age_ms < 0 or type(as_of_ms) is not int:
-        raise ValueError("explicit integer as_of_ms and non-negative max_mark_age_ms are required")
+    _require_inputs(as_of_ms, max_mark_age_ms)
     try:
         with store.read_snapshot():
-            record = store.get_paper_account(account)
-            rows = (store.load_paper_portfolio_rows(account)
-                    if account.value == "paper" else None)
+            return paper_daily_equity_facts_in_transaction(
+                store, account, as_of_ms=as_of_ms, marks=marks, max_mark_age_ms=max_mark_age_ms)
     except Exception:
-        business_date, day_start_ms = msk_day_start_ms(as_of_ms)
-        return PaperDailyEquityFacts(account.value, business_date, day_start_ms, as_of_ms,
-                                     None, None, None, None, False, READ_FAILED)
+        return _read_failed(account, as_of_ms)
+
+
+def paper_daily_equity_facts_in_transaction(
+    store, account: TradingAccountId, *, as_of_ms: int,
+    marks: Mapping[str, MarkPrice], max_mark_age_ms: int,
+) -> PaperDailyEquityFacts:
+    """Same facts from the caller's already open transaction (e.g. the admission one).
+
+    The caller's BEGIN IMMEDIATE snapshot makes the rows consistent with every other
+    admission fact; a read error is READ_FAILED, never an implicit pass.
+    """
+    _require_inputs(as_of_ms, max_mark_age_ms)
+    try:
+        record = store.get_paper_account(account)
+        rows = store.load_paper_portfolio_rows(account) if account.value == "paper" else None
+    except Exception:
+        return _read_failed(account, as_of_ms)
     account_row = None if record is None else {
         "trading_account_id": record.trading_account_id.value,
         "initial_deposit_usdt": record.initial_deposit_usdt,
@@ -263,3 +276,14 @@ def collect_paper_daily_equity_facts(
         account_row, rows["executions"] if rows else (), rows["position_projections"] if rows else (),
         trading_account_id=account.value, as_of_ms=as_of_ms, marks=marks,
         max_mark_age_ms=max_mark_age_ms)
+
+
+def _require_inputs(as_of_ms: int, max_mark_age_ms: int) -> None:
+    if type(max_mark_age_ms) is not int or max_mark_age_ms < 0 or type(as_of_ms) is not int:
+        raise ValueError("explicit integer as_of_ms and non-negative max_mark_age_ms are required")
+
+
+def _read_failed(account: TradingAccountId, as_of_ms: int) -> PaperDailyEquityFacts:
+    business_date, day_start_ms = msk_day_start_ms(as_of_ms)
+    return PaperDailyEquityFacts(account.value, business_date, day_start_ms, as_of_ms,
+                                 None, None, None, None, False, READ_FAILED)

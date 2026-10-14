@@ -508,6 +508,20 @@ the PAPER simulator model (not a LIVE assumption); a rewritten account row
 tied same-symbol fill times or a missing/stale mark yield DATA_UNAVAILABLE with an
 exact reason. Owner limits for the later gate: -10% blocks, resume strictly above
 -7%, explicit PAPER-acceptance disable switch, enabled by default.
+AUTOPILOT-DAILY-GATE-1 wires it into PAPER_AUTO admission only (SHADOW/LIVE
+unchanged). Inside the existing BEGIN IMMEDIATE admission transaction the facts
+are computed at the decision time and stored in the decision's `facts_json`
+(`daily_loss_gate`). Gate order: after every candidate/Robot/reconciliation/
+ownership/protection gate. Hysteresis: <= -10% latches DAILY_LOSS_LIMIT; once
+latched, admission resumes only strictly above -7%; the latch is the newest audited
+PAPER_AUTO observation of the same MSK business day (append-only audit: restart-
+safe, serialized; no migration); a new MSK day starts unlatched on its own proven
+baseline. Enabled gate + unavailable equity or mark -> WAIT DAILY_EQUITY_UNAVAILABLE.
+Disable switch: only `BYBITSCANNER_PAPER_DAILY_LOSS_GATE=DISABLED_FOR_PAPER_DEBUG`
+in the PAPER runtime environment (read once per start, logged); it skips only this
+gate and the facts/crossings are still audited. Known limits: crossings are observed
+only at PAPER_AUTO evaluations (no continuous intraday monitor); no runtime mark
+source is bound yet, so any open PAPER position keeps the enabled gate unavailable.
 Snapshot, replay lookup and ALLOW append share BEGIN IMMEDIATE, serializing
 parallel callers across SQLite connections. Repeats return the original facts.
 ALLOW rows are virtual SHADOW reservations, independent of real PAPER capital.

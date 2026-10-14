@@ -30,7 +30,7 @@ import sqlite3
 import time
 import threading
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from pattern_robot_integration import is_robot_executable_signal
 from robot_candidate_store import approve_candidate, load_candidate
@@ -49,9 +49,11 @@ from terminal.application.robot_autopilot import (
     REASON_ALREADY_ADMITTED,
     RobotAutoAdmissionFacts,
     RobotAutoAdmissionResult,
+    daily_loss_gate_facts,
     evaluate_auto_admission,
     record_auto_decision,
 )
+from terminal.application.paper_daily_equity import MarkPrice, paper_daily_equity_facts_in_transaction
 from terminal.application.robot_portfolio import _source_terminal_identities, collect_portfolio_facts
 from terminal.domain.models import Category, PositionKey, PositionSide, Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import (
@@ -77,6 +79,28 @@ _ACTIVE_STATUSES = ("APPROVED", "OPEN")
 A6_DUE_WAIT_BATCH_LIMIT = 8
 A6_DUE_WAIT_BATCH_BUDGET_S = 2.0
 _monotonic = time.monotonic
+# Fresh runtime mark prices for the daily-loss gate: (marks by symbol, maximum age ms).
+DailyMarkProvider = Callable[[], tuple[Mapping[str, MarkPrice], int]]
+
+
+def _daily_loss_gate(
+    store: SQLiteStore, account: TradingAccountId, *, now_ms: int,
+    decisions: tuple[RobotAutoDecisionRecord, ...], enabled: bool,
+    daily_marks: DailyMarkProvider | None,
+) -> dict:
+    """PAPER_AUTO daily-loss facts from the caller's admission transaction."""
+    marks: Mapping[str, MarkPrice] = {}
+    max_age_ms = 0
+    if daily_marks is not None:
+        try:
+            supplied, supplied_age = daily_marks()
+            if type(supplied_age) is int and supplied_age >= 0:
+                marks, max_age_ms = dict(supplied), supplied_age
+        except Exception:
+            marks, max_age_ms = {}, 0  # no proven mark -> unavailable for open positions
+    equity = paper_daily_equity_facts_in_transaction(
+        store, account, as_of_ms=now_ms, marks=marks, max_mark_age_ms=max_age_ms)
+    return daily_loss_gate_facts(equity, decisions, enabled=enabled)
 
 @dataclass(frozen=True, slots=True)
 class ShadowObservation:
@@ -398,6 +422,9 @@ def _fresh_facts(
     candidate_fresh: FreshnessProver | None = None,
     prior_shadow_allow: RobotAutoDecisionRecord | None = None,
     batch: _BatchSnapshot | None = None,
+    now_ms: int | None = None,
+    daily_loss_gate_enabled: bool = True,
+    daily_marks: DailyMarkProvider | None = None,
 ) -> RobotAutoAdmissionFacts:
     portfolio = (collect_portfolio_facts(store, account) if batch is None
                  else dict(batch.portfolio()))  # the batch copy is never mutated here
@@ -420,6 +447,11 @@ def _fresh_facts(
         except Exception:
             proven = None  # unprovable freshness is never an implicit ALLOW
         fresh = None if proven is None else bool(proven)
+    daily_gate = None
+    if mode == PAPER_AUTO_MODE and now_ms is not None:
+        daily_gate = _daily_loss_gate(
+            store, account, now_ms=now_ms, decisions=decisions,
+            enabled=daily_loss_gate_enabled, daily_marks=daily_marks)
     return RobotAutoAdmissionFacts(
         autopilot_mode=mode,
         environment="PAPER",
@@ -441,6 +473,7 @@ def _fresh_facts(
         portfolio_policy_ready=True,
         portfolio_facts=portfolio,
         candidate_fresh=fresh,
+        daily_loss_gate=daily_gate,
     )
 
 
@@ -511,6 +544,8 @@ def admit_paper_auto_candidate(
     candidate_fresh: FreshnessProver | None = None,
     candidate_store_dir: Path | str | None = None,
     clock_ms: Callable[[], int] | None = None,
+    daily_loss_gate_enabled: bool = True,
+    daily_marks: DailyMarkProvider | None = None,
 ) -> PaperAutoAdmission | None:
     """Recheck one immutable SHADOW ALLOW and use canonical Robot admission.
 
@@ -573,6 +608,8 @@ def admit_paper_auto_candidate(
                 store, account, mode=PAPER_AUTO_MODE, candidate=candidate,
                 decisions=decisions, protection_healthy=protection_healthy,
                 candidate_fresh=candidate_fresh, prior_shadow_allow=prior,
+                now_ms=now, daily_loss_gate_enabled=daily_loss_gate_enabled,
+                daily_marks=daily_marks,
             )
             result = evaluate_auto_admission(facts)
             robot_candidate = None
@@ -628,6 +665,8 @@ def admit_arrived_auto_candidate(
     candidate_fresh: FreshnessProver | None = None,
     candidate_store_dir: Path | str | None = None,
     clock_ms: Callable[[], int] | None = None,
+    daily_loss_gate_enabled: bool = True,
+    daily_marks: DailyMarkProvider | None = None,
 ) -> PaperAutoAdmission | None:
     """A7: evaluate one arrived candidate in PAPER_AUTO and admit it canonically.
 
@@ -671,7 +710,8 @@ def admit_arrived_auto_candidate(
         facts = _fresh_facts(
             store, account, mode=PAPER_AUTO_MODE, candidate=candidate,
             decisions=decisions, protection_healthy=protection_healthy,
-            candidate_fresh=candidate_fresh,
+            candidate_fresh=candidate_fresh, now_ms=now,
+            daily_loss_gate_enabled=daily_loss_gate_enabled, daily_marks=daily_marks,
         )
         result = evaluate_auto_admission(facts)
         robot_candidate = None
