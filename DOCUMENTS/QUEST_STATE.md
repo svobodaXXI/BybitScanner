@@ -1,3 +1,19 @@
+## Активный квест — 2026-10-14 — TRI-GEOMETRY-NEXT / Triangle Compression
+
+Команда владельца: приоритет — завершить геометрию Triangle Compression.
+Autopilot-задача «привязать runtime-источник Bybit markPrice для daily-loss
+gate» (известный предел AUTOPILOT-DAILY-GATE-1) — в **отложенной очереди
+Autopilot**, не отменена; PAPER_AUTO по-прежнему недоступен.
+База: `stable/adfb50b-forward` / `df652788941050cc898b891e7ca525859eb17b91`.
+Босс этапа: JASMY/KERNEL (владелец: reject, G-TRI-20261012). На HEAD JASMY уже
+без геометрии; KERNEL — ложный треугольник `[164,194,108,186,108,194]`:
+волна A=L108→B=H164 содержит подтверждённый L152, т.е. A→B не одна волна.
+Следующий узкий slice: TRI-WAVE-1 (Triangle-only, без порогов): A и B должны
+быть соседними в последовательности подтверждённых пивотов. Runtime не
+запускать; PAPER DB/SHADOW/LIVE не трогать. XP и достижения не изменены.
+
+---
+
 ## Активный квест — 2026-10-10 — AUTOPILOT A3 / SHADOW capital
 
 Команда владельца и #446 заменяют прежний активный аудит. База:
