@@ -498,6 +498,16 @@ The collector does not create manual idea identity or mutate trading objects.
 The existing append-only audit gains facts_json through additive schema v25;
 legacy rows retain {}. Deferred per-asset 2 RO, correlation, cluster, direction
 and daily-loss controls are NOT_EVALUATED. They are never reported as passed.
+AUTOPILOT-EQUITY-1B adds only the read-only daily-loss input,
+`terminal/application/paper_daily_equity.py` (PAPER-equity v1, not yet wired
+into admission): baseline at 00:00 MSK replayed from `executions` only when every
+position was FLAT strictly before the boundary; current equity = deposit +
+realized - fees + unrealized at caller-supplied fresh marks; funding is zero by
+the PAPER simulator model (not a LIVE assumption); a rewritten account row
+(external transfer), a journal that does not reproduce `position_projections`,
+tied same-symbol fill times or a missing/stale mark yield DATA_UNAVAILABLE with an
+exact reason. Owner limits for the later gate: -10% blocks, resume strictly above
+-7%, explicit PAPER-acceptance disable switch, enabled by default.
 Snapshot, replay lookup and ALLOW append share BEGIN IMMEDIATE, serializing
 parallel callers across SQLite connections. Repeats return the original facts.
 ALLOW rows are virtual SHADOW reservations, independent of real PAPER capital.
