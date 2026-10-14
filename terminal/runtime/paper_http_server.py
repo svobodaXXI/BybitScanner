@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import hmac
 import logging
@@ -10,6 +11,7 @@ import os
 import queue
 import socket
 import ssl
+import sys
 import threading
 import math
 import time
@@ -4023,11 +4025,63 @@ def _install_console_log_queue(level, fmt: str, *, stream=None,
     return listener
 
 
+class _QueuedConsoleText(io.TextIOBase):
+    """print()/stderr text as log records in the console queue, one per line.
+
+    2026-10-14: a console window left in QuickEdit "Select" mode froze the
+    startup print() before serve_forever, so port 8765 was bound but never
+    served. Only the queue's listener thread may block on the console.
+    """
+
+    def __init__(self, logger_name: str, level: int) -> None:
+        super().__init__()
+        self._logger = logging.getLogger(logger_name)
+        self._logger.setLevel(level)  # never filtered out by BYBITSCANNER_LOG_LEVEL
+        self._level = level
+        self._pending = ""
+        self._lock = threading.Lock()
+
+    @property
+    def encoding(self) -> str:
+        return "utf-8"
+
+    def writable(self) -> bool:
+        return True
+
+    def isatty(self) -> bool:
+        return False
+
+    def write(self, text) -> int:
+        text = str(text)
+        with self._lock:
+            *lines, self._pending = (self._pending + text).split("\n")
+        for line in lines:
+            self._emit(line)
+        return len(text)
+
+    def flush(self) -> None:
+        with self._lock:
+            line, self._pending = self._pending, ""
+        self._emit(line)
+
+    def _emit(self, line: str) -> None:
+        line = line.rstrip("\r")
+        if line:
+            self._logger.log(self._level, line)
+
+
+def _route_console_text_to_log_queue() -> None:
+    """After ``_install_console_log_queue`` (its handler keeps the real stderr)."""
+    sys.stdout = _QueuedConsoleText("console.stdout", logging.INFO)
+    sys.stderr = _QueuedConsoleText("console.stderr", logging.WARNING)
+
+
 def main() -> None:
     _install_console_log_queue(
         os.environ.get("BYBITSCANNER_LOG_LEVEL", "INFO").upper(),
         "%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    _route_console_text_to_log_queue()
     database_path = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
     port = int(os.environ.get("BYBITSCANNER_PAPER_PORT", str(PORT)))
 
