@@ -33,6 +33,25 @@ from terminal.persistence.sqlite_store import SQLiteStore
 from tests.test_continuity_recovery_candidate_snapshot import _runtime
 from tests.test_terminal_paper_runtime import _CONFIRMED_BOX_FORMATION, _set_admission
 
+
+# AUTOPILOT-DAILY-GATE-1: these fixtures use near-epoch clocks and injected fills that
+# cannot prove a 00:00 MSK equity baseline. The daily-loss gate itself is covered by
+# tests/test_robot_autopilot_daily_gate.py; here it is a proven, unblocked gate.
+import unittest.mock as _daily_gate_mock  # noqa: E402
+
+_OPEN_DAILY_GATE = _daily_gate_mock.patch(
+    "terminal.application.robot_autopilot_shadow._daily_loss_gate",
+    lambda *args, **kwargs: {"enabled": True, "latched": False, "data_available": True,
+                             "business_date_msk": "fixture", "transition": None})
+
+
+def setUpModule():
+    _OPEN_DAILY_GATE.start()
+
+
+def tearDownModule():
+    _OPEN_DAILY_GATE.stop()
+
 ACCOUNT = TradingAccountId("paper")
 TRADING_TABLES = ("paper_limit_orders", "executions", "trading_commands", "robot_trades")
 

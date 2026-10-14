@@ -7,8 +7,10 @@ caller-supplied authoritative facts, then may append an immutable audit record.
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+from decimal import Decimal
 import hashlib
 import json
+from typing import Any, Mapping, Sequence
 
 from terminal.domain.models import Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import (
@@ -41,6 +43,18 @@ REASON_PROTECTION_HEALTH_UNKNOWN = "PROTECTION_HEALTH_UNKNOWN"
 REASON_PORTFOLIO_POLICY_UNSET = "PORTFOLIO_POLICY_UNSET"
 REASON_PORTFOLIO_DATA_UNAVAILABLE = "PORTFOLIO_DATA_UNAVAILABLE"
 REASON_PORTFOLIO_AGGREGATE_CAP = "PORTFOLIO_AGGREGATE_CAP"
+REASON_DAILY_EQUITY_UNAVAILABLE = "DAILY_EQUITY_UNAVAILABLE"
+REASON_DAILY_LOSS_LIMIT = "DAILY_LOSS_LIMIT"
+
+# AUTOPILOT-DAILY-GATE-1 (owner decision): PAPER_AUTO daily-loss gate on the proven
+# 00:00 MSK equity baseline. Block at <= -10%; once blocked, resume only strictly
+# above -7% (hysteresis). A new MSK business day starts unblocked.
+DAILY_LOSS_BLOCK_PCT = Decimal("-10")
+DAILY_LOSS_RESUME_PCT = Decimal("-7")
+# The ONLY way to disable the gate: this exact value in the PAPER runtime's environment
+# (owner debugging of PAPER strategies). Anything else, including unset, keeps it on.
+DAILY_LOSS_GATE_ENV = "BYBITSCANNER_PAPER_DAILY_LOSS_GATE"
+DAILY_LOSS_GATE_DISABLED_VALUE = "DISABLED_FOR_PAPER_DEBUG"
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +77,9 @@ class RobotAutoAdmissionFacts:
     # A7, PAPER_AUTO only. True/False only from authoritative evidence that the
     # idea is still live; None means it could not be proven -> WAIT, never ALLOW.
     candidate_fresh: bool | None = None
+    # PAPER_AUTO only: daily-loss gate facts computed in the admission transaction
+    # (see ``daily_loss_gate_facts``). None in PAPER_AUTO -> WAIT, never ALLOW.
+    daily_loss_gate: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +130,18 @@ def evaluate_auto_admission(
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PROTECTION_UNHEALTHY)
     if not facts.portfolio_policy_ready:
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PORTFOLIO_POLICY_UNSET)
+    if facts.autopilot_mode == "PAPER_AUTO":
+        # Account-level daily-loss gate after every candidate/Robot/protection gate (a
+        # dead idea stays REJECT): always audited, enforced unless the owner explicitly
+        # disabled it for PAPER debugging. Disabled skips only this gate.
+        gate = facts.daily_loss_gate
+        if not isinstance(gate, dict) or not isinstance(gate.get("enabled"), bool):
+            return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_DAILY_EQUITY_UNAVAILABLE)
+        if gate["enabled"]:
+            if gate.get("latched") is None:
+                return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_DAILY_EQUITY_UNAVAILABLE)
+            if gate["latched"]:
+                return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_DAILY_LOSS_LIMIT)
     portfolio = facts.portfolio_facts
     if not portfolio or portfolio.get("available") is not True:
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PORTFOLIO_DATA_UNAVAILABLE)
@@ -122,6 +151,78 @@ def evaluate_auto_admission(
     if occupied + 1 > 19:
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PORTFOLIO_AGGREGATE_CAP)
     return RobotAutoAdmissionResult(OUTCOME_ALLOW, REASON_ELIGIBLE)
+
+
+def daily_loss_gate_enabled(environ: Mapping[str, str]) -> bool:
+    """True unless the PAPER environment carries the exact owner disable value."""
+    return environ.get(DAILY_LOSS_GATE_ENV) != DAILY_LOSS_GATE_DISABLED_VALUE
+
+
+def _previous_latch(decisions: Sequence[Any], business_date: str) -> bool | None:
+    """Latch of the newest audited PAPER_AUTO observation of the same MSK business day.
+
+    The audit is append-only and written in the same BEGIN IMMEDIATE transaction as
+    every gate evaluation, so this survives restarts and serializes concurrent
+    admissions. A row that cannot be read is a contradiction -> raises.
+    """
+    for decision in reversed(decisions):
+        if decision.mode != "PAPER_AUTO":
+            continue
+        gate = json.loads(decision.facts_json or "{}").get("daily_loss_gate")
+        if not isinstance(gate, dict) or gate.get("business_date_msk") != business_date:
+            continue
+        latched = gate.get("latched")
+        if latched is None:
+            continue  # an unavailable observation carries no latch information
+        if not isinstance(latched, bool):
+            raise ValueError("audited daily-loss latch is malformed")
+        return latched
+    return None
+
+
+def daily_loss_gate_facts(
+    equity: Any, decisions: Sequence[Any], *, enabled: bool,
+) -> dict:
+    """Audit-ready gate facts from fresh ``PaperDailyEquityFacts``.
+
+    ``latched`` is True (blocked), False (open) or None (no proven daily equity and no
+    same-day latch). Same-day blocked stays blocked while unavailable.
+    """
+    previous = _previous_latch(decisions, equity.business_date_msk)
+    pct = equity.daily_change_pct
+    if not equity.data_available or not isinstance(pct, Decimal):
+        latched = True if previous is True else None
+        transition = None
+    elif pct <= DAILY_LOSS_BLOCK_PCT:
+        latched = True
+        transition = "BLOCKED" if previous is not True else None
+    elif previous is True and pct <= DAILY_LOSS_RESUME_PCT:
+        latched, transition = True, None
+    else:
+        latched = False
+        transition = "RESUMED" if previous is True else None
+
+    def text(value):
+        return None if value is None else str(value)
+
+    return {
+        "enabled": bool(enabled),
+        "business_date_msk": equity.business_date_msk,
+        "day_start_ms": equity.day_start_ms,
+        "as_of_ms": equity.as_of_ms,
+        "baseline_equity_usdt": text(equity.baseline_equity_usdt),
+        "current_adjusted_equity_usdt": text(equity.current_adjusted_equity_usdt),
+        "daily_change_usdt": text(equity.daily_change_usdt),
+        "daily_change_pct": text(pct),
+        "data_available": bool(equity.data_available),
+        "unavailability_reason": equity.unavailability_reason,
+        "funding_model": equity.funding_model,
+        "block_pct": str(DAILY_LOSS_BLOCK_PCT),
+        "resume_pct": str(DAILY_LOSS_RESUME_PCT),
+        "previous_latched": previous,
+        "latched": latched,
+        "transition": transition,
+    }
 
 
 def record_auto_decision(

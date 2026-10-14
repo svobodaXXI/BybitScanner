@@ -26,6 +26,25 @@ from terminal.application.robot_portfolio import collect_portfolio_facts
 from terminal.domain.models import Symbol
 from tests.test_robot_autopilot_shadow import ACCOUNT, TRADING_TABLES, _Db, _wedge
 
+
+# AUTOPILOT-DAILY-GATE-1: these fixtures use near-epoch clocks and injected fills that
+# cannot prove a 00:00 MSK equity baseline. The daily-loss gate itself is covered by
+# tests/test_robot_autopilot_daily_gate.py; here it is a proven, unblocked gate.
+import unittest.mock as _daily_gate_mock  # noqa: E402
+
+_OPEN_DAILY_GATE = _daily_gate_mock.patch(
+    "terminal.application.robot_autopilot_shadow._daily_loss_gate",
+    lambda *args, **kwargs: {"enabled": True, "latched": False, "data_available": True,
+                             "business_date_msk": "fixture", "transition": None})
+
+
+def setUpModule():
+    _OPEN_DAILY_GATE.start()
+
+
+def tearDownModule():
+    _OPEN_DAILY_GATE.stop()
+
 T_ENABLE = 1_000_000
 T_ARRIVE = 2_000_000
 

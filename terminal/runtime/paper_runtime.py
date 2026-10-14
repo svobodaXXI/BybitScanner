@@ -25,6 +25,7 @@ from terminal.api.models import (
     TimeInForce, to_primitive,
     LiveMarketCommandRequest,
 )
+from terminal.application.robot_autopilot import daily_loss_gate_enabled
 from terminal.application.robot_autopilot_shadow import (
     DEFERRED_HANDOVER, SOURCE_BOX_PLAN, SOURCE_SCANNER, ShadowChunk, ShadowDeferredObserver,
     admit_arrived_auto_candidate, commit_shadow_chunk, observe_shadow_candidate,
@@ -690,6 +691,13 @@ class PaperRuntime:
         # Autopilot SHADOW reads protection health from the coverage manager when
         # the HTTP runtime binds it; otherwise that fact is unknown (WAIT).
         self._autopilot_protection_health: Callable[[], bool] | None = None
+        # AUTOPILOT-DAILY-GATE-1: PAPER_AUTO daily-loss gate (-10% / resume > -7%) is ON
+        # unless the owner set the exact PAPER-only disable value; read once per start.
+        # No runtime mark source is bound yet: an open position makes it unavailable (WAIT).
+        self._autopilot_daily_loss_gate_enabled = daily_loss_gate_enabled(os.environ)
+        if not self._autopilot_daily_loss_gate_enabled:
+            print("[AUTOPILOT] PAPER daily-loss gate DISABLED by owner environment; "
+                  "still computed and audited")
         # P0 RUN #3 (variant B): SHADOW is evaluated on the calling thread from a read
         # snapshot; the owner only runs ``commit_shadow_chunk`` (bounded check and commit).
         self._shadow_deferred = ShadowDeferredObserver(
@@ -1034,6 +1042,7 @@ class PaperRuntime:
                     source=source, candidate_ref=str(candidate_ref),
                     protection_healthy=self._autopilot_protection_health,
                     candidate_fresh=self._autopilot_candidate_fresh,
+                    daily_loss_gate_enabled=getattr(self, "_autopilot_daily_loss_gate_enabled", True),
                 )
             return observe_shadow_candidate(
                 self.store, self._paper_account_id,
