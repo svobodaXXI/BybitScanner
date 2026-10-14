@@ -13,8 +13,10 @@ Prioritize the owner's end-to-end time over redundant archiving, worktree
 copies, broad checks and new tooling. Routine desktop/laptop sync uses GitHub
 for code and only necessary consistent local state; full USB recovery is not
 the default. Preserve all mandatory safety gates. This rule is deliberately
-a rapid self-check, not another planning ceremony. Recover it from the
-repository at a new session instead of relying on chat memory alone.
+a rapid self-check, not another planning ceremony. **One deadline, then
+cause diagnosis**: no escalating waits/polling or duplicate retries; preserve
+safe-stop constraints and report a concrete blocker. Recover these rules from
+the repository at a new session instead of relying on chat memory alone.
 
 
 ## Автоматический игровой bootstrap для новых чатов — OWNER RULE 2026-09-25
