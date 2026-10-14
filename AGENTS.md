@@ -4,6 +4,19 @@ Compact mandatory entry point for coding agents. It routes to project authority;
 
 ## Fast task entry
 
+## Strategic time-first gate — OWNER RULE 2026-10-14
+
+**Mandatory on every new task and new-chat bootstrap:** read and apply
+`DOCUMENTS/STRATEGIC_TIME_POLICY.md` before proposing a plan or delegating.
+Ask **Outcome → Reuse → Eliminate → Fastest safe path → Safety → Stop**.
+Prioritize the owner's end-to-end time over redundant archiving, worktree
+copies, broad checks and new tooling. Routine desktop/laptop sync uses GitHub
+for code and only necessary consistent local state; full USB recovery is not
+the default. Preserve all mandatory safety gates. This rule is deliberately
+a rapid self-check, not another planning ceremony. Recover it from the
+repository at a new session instead of relying on chat memory alone.
+
+
 ## Автоматический игровой bootstrap для новых чатов — OWNER RULE 2026-09-25
 
 Для первого BybitScanner-запроса в каждом новом ChatGPT-чате игровой режим
