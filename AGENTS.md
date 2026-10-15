@@ -1,5 +1,7 @@
 # BybitScanner — lean agent entry (Codex / repository agents)
 
+Generated ContextDumps, reports, snapshots, caches, chat history, and memory are derived context, not authority.
+
 Purpose: smallest safe, outcome-first entry. The complete prior `AGENTS.md` is
 preserved **verbatim** at `DOCUMENTS/AGENT_GUIDE_FULL.md`; it remains authoritative
 for its applicable contracts. **Do not eagerly read that entire document**:
