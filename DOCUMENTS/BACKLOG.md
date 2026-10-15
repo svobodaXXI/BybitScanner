@@ -1,3 +1,13 @@
+## TOP OWNER PRIORITY — 2026-10-15 — AUTONOMOUS PAPER EXECUTION
+
+**Priority P0:** every next project step must advance a verified real automatic PAPER trade, rather than another research loop. Other geometry (Triangle/HORN), generic tooling, speculative optimization, diagnostics and lower-priority backlog entries are deferred until PAPER execution acceptance or until the owner reprioritizes. Safety gates remain mandatory; proven blockers receive only a narrow fix.
+
+Shortest safe path: safe-stop preflight of current runtime → explicit owner-approved canonical stop → update deployed stable to merged PR #526 (`4d97e56`) → restart with owner approval and validate Scanner process isolation/protection → explicit owner approval for PAPER_AUTO after safety checks → verify automated order, fill, STOP/TAKE, exit and fee-aware net PnL. Do not mistake SHADOW ALLOW for live PAPER order execution, and do not equate a profitable outcome with correctness; risk-compliant execution is the acceptance milestone. No LIVE, automatic merge, automatic runtime mutation or PAPER_AUTO enablement without applicable authorization.
+
+See current execution state and historical observation caveats in `DOCUMENTS/QUEST_STATE.md`.
+
+---
+
 ## DEFERRED TOOLING QUEUE — 2026-10-15 — CODEX CONTEXT / PROTECTED TASK HARNESS
 
 Owner request: improve development throughput and conserve Codex five-hour
