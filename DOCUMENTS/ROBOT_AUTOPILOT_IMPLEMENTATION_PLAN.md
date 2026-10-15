@@ -588,6 +588,24 @@ Wedge invalidation (no durable producer exists); the 20-candle breakout timeout
 (accepted design, never implemented); a Box never entered (no age-based expiry);
 and any terminal beyond the bounded windows.
 
+A3-RESERVE-1 owner decision (2026-10-15): virtual SHADOW capital and physical
+PAPER capital are separate. SHADOW keeps counting its own virtual ALLOW
+reservations exactly as above (cap 19 RO, virtual symbol ownership). PAPER_AUTO
+counts only physical obligations — Robot ideas, working LIMITs, manual positions
+and its own canonical admissions — so virtual SHADOW RO never holds the PAPER_AUTO
+aggregate cap or owns a symbol for it. The view is `_physical_capital_only` (#469):
+the collector, the append-only audit and the virtual reservations themselves are
+unchanged; PAPER_AUTO facts record them as `isolated_shadow_ro`. The 19 RO /
+250 USDT cap stays enforced by the existing BEGIN IMMEDIATE decision transaction
+together with canonical `admit_robot_candidate()`; no second reservation mechanism
+exists. Unknown or ambiguous obligations still give PORTFOLIO_DATA_UNAVAILABLE.
+Regression: `tests/test_robot_autopilot_capital_isolation.py` and
+`tests/test_robot_autopilot_capital_isolation_races.py` (saturated SHADOW with an
+empty PAPER portfolio, physical obligations, two-connection race for the last
+physical RO, repeated arrival, restart). Real evidence: the 2026-10-15 PAPER_AUTO
+decisions recorded `isolated_shadow_ro=19` while `occupied_ro` grew 0→7 from
+physical admissions only.
+
 ## S2 ingress admission gate — 2026-10-10 / #448
 
 The Autopilot protection-health source is `make_autopilot_protection_health()`:
