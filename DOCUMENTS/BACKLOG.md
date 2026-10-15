@@ -1,3 +1,46 @@
+## DEFERRED TOOLING QUEUE — 2026-10-15 — CODEX CONTEXT / PROTECTED TASK HARNESS
+
+Owner request: improve development throughput and conserve Codex five-hour
+usage **after** current higher-priority Scanner/Robot work. This is a future
+workflow optimization, **not** authorization to weaken safety gates, change
+trading runtime or interrupt active acceptance.
+
+1. **CTX-1 — Deliver lean Codex bootstrap.** Review and publish the scoped
+   `AGENTS.md` router and preserved full guide
+   (`DOCUMENTS/AGENT_GUIDE_FULL.md`) from branch
+   `docs/codex-lean-bootstrap-20261015`. Do not merge without owner approval;
+   confirm all critical contracts are reachable. Existing `CLAUDE.md` and
+   the three project Skills remain unchanged.
+2. **CTX-2 — Measure real Codex economy.** After CTX-1 is integrated,
+   compare comparable, narrowly scoped Codex tasks at the same model/effort
+   against owner-observed **41% of a five-hour allowance consumed in one
+   task**. Record model, effort, task scope, context reads, tool/test calls,
+   wall time and allowance delta where visible. Do not invent a token-cost
+   formula, assume the observation is universally representative, or run
+   synthetic load just to spend allowance. Stop if changes have no
+   measurable end-to-end value.
+3. **HARNESS-EFF-1 — Audit and optimize protected task harness (DEFERRED).**
+   Profile one real scoped `python -m tools.dev.task start` → `finish`
+   lifecycle using existing evidence/logs first; locate duplicated sync,
+   context generation, Git/CI checks, LegacyWarning gates, broad reads,
+   serial waits and unnecessary subprocess startup. For each candidate,
+   distinguish irreducible safety proof from removable repeated work.
+   Implement only narrow evidence-backed improvements, with regression
+   coverage and before/after measurements (wall time, tool calls, context
+   volume) on matching tasks.
+   **Non-negotiable:** do not bypass transaction/path scope, user-owned
+   files, PAPER/LIVE isolation, stop/protection gates, output receipts,
+   validation, fail-closed behavior or publication policy. No blanket
+   increase in timeouts; one bounded wait, then diagnose. If no clear
+   bottleneck is proven, record the finding and stop.
+
+Dependency/order: CTX-1 → opportunistic CTX-2 on normal work → HARNESS-EFF-1
+when current trading reliability and priority queue permit. Research,
+installation of extra Skills/plugins, runtime restarts and PAPER_AUTO are
+**not** prerequisites. This queue does not supersede active HORN/Robot work.
+
+---
+
 ## CURRENT OWNER PRIORITY — 2026-10-14 — HORN-1 BROADENING FORMATION
 
 Owner set a new active quest: **Broadening Formation (Expanding Wedge),
