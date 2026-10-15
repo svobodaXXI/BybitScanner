@@ -7,6 +7,12 @@ preserved **verbatim** at `DOCUMENTS/AGENT_GUIDE_FULL.md`; it remains authoritat
 for its applicable contracts. **Do not eagerly read that entire document**:
 follow the scoped routing below. Never replace a safety check with an economy shortcut.
 
+## 1. Current owner outcome priority — 2026-10-15
+
+**Top priority: advance toward a verified autonomous PAPER trade, not another research cycle.** At each next step, choose the shortest safe action that materially advances: canonical safe runtime stop (if required) → deploy merged process isolation (`4d97e56`) → verify Scanner/Robot separation and protection health → obtain explicit owner authorization for PAPER_AUTO → prove automatic admission, fill, active STOP/TAKE, terminal exit and fee-aware net PnL. Trading profit is not guaranteed; verified execution and risk compliance are acceptance criteria.
+
+Defer standalone geometry, generic instrumentation, duplicate tests, broad audits, workflow/tooling and documentation work unless an evidenced **mandatory safety blocker** prevents the next trading step. For such blockers, make the smallest justified fix and return to PAPER acceptance; never bypass protection, admission, loss limits or owner approval. Preserve current Scanner progress where practical, but it must not delay PAPER trading acceptance indefinitely. Existing runtime remains SHADOW until explicitly authorized to change.
+
 ## Fast task entry
 
 1. Name the owner's requested result and its observable acceptance criterion.
