@@ -119,6 +119,7 @@ Defer standalone geometry, generic instrumentation, duplicate tests, broad audit
 
 - Speak Russian for project interactions; retain lightweight quest naming
   where relevant, without allowing presentation rules to delay technical work.
+- Owner shorthand: both `э` and a single apostrophe `'` mean **continue with the next unfinished step**. Neither shorthand alone authorizes a protected action such as merge, runtime start/stop or PAPER_AUTO mode switching; request explicit approval where required.
 - For owner action provide one clear, copy-ready `Сейчас сделай:` instruction.
 - Report actual PASS/BLOCKED, tests, diff, commit/PR, and what remains
   unverified. Never claim CI, runtime acceptance or merged code without proof.
