@@ -12,14 +12,20 @@ Lifecycle and fail-closed rules:
 - one pass, one child; at most one active child per backend process
   (``ScannerProcessBusy`` for a concurrent request);
 - the backend terminates the child whenever the pass ends for any reason;
-- a lost parent ends the child's pass at its next checkpoint (pipe EOF = stop);
+- the child never outlives the backend: on Windows it runs in a kill-on-close
+  Job Object, so even an abrupt backend loss ends it at once (a child that
+  cannot be bound is stopped and the pass refused), and a normal backend exit
+  stops a still-running child first; elsewhere a lost parent ends the pass at
+  its next checkpoint (pipe EOF = stop);
 - a child that exits without reporting completion raises ``ScannerProcessError``
   and never touches Robot state.
 """
 from __future__ import annotations
 
+import atexit
 import importlib
 import multiprocessing
+import multiprocessing.util  # registers its exit hook before ours, so ours runs first
 import sys
 import threading
 from typing import Callable
@@ -28,8 +34,11 @@ SCANNER_PASS_TARGET = "main:run_scan_pass"
 CHILD_POLL_S = 0.2
 CHILD_EXIT_GRACE_S = 5.0
 CHILD_TERMINATE_WAIT_S = 5.0
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 
 _active_lock = threading.Lock()
+_active_process = None
 
 
 class ScannerProcessError(RuntimeError):
@@ -48,6 +57,7 @@ def run_scan_pass_in_child_process(
     target: str = SCANNER_PASS_TARGET,
 ) -> None:
     """Run ``target`` (``module:function``) once in a child and serve its callbacks here."""
+    global _active_process
     if not _active_lock.acquire(blocking=False):
         raise ScannerProcessBusy("a Scanner pass process is already active")
     try:
@@ -60,15 +70,93 @@ def run_scan_pass_in_child_process(
             name="bybitscanner-scanner-pass", daemon=True,
         )
         process.start()
+        _active_process = process
         child_end.close()
+        job = None
         try:
+            if sys.platform == "win32":
+                try:
+                    job = _bind_child_to_backend_lifetime(process)
+                except OSError as error:
+                    raise ScannerProcessError(
+                        f"Scanner child cannot be bound to the backend lifetime: {error}") from error
             _serve(parent_end, process, box_plan_preparer, control_checkpoint,
                    robot_candidate_observer)
         finally:
             _end_child(process)
+            _active_process = None
             parent_end.close()
+            if job is not None:
+                job.close()
     finally:
         _active_lock.release()
+
+
+class _KillOnCloseJob:
+    """Windows Job Object that kills its processes when its last handle closes.
+
+    The handle is held only by this backend, so the OS ends the Scanner child as
+    soon as the backend disappears for any reason, including an abrupt kill.
+    """
+
+    def __init__(self, kernel32, handle):
+        self._kernel32, self._handle = kernel32, handle
+
+    def close(self) -> None:
+        if self._handle:
+            self._kernel32.CloseHandle(self._handle)
+            self._handle = None
+
+
+def _bind_child_to_backend_lifetime(process) -> _KillOnCloseJob:
+    import ctypes
+    from ctypes import wintypes
+
+    class _Basic(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD)]
+
+    class _Extended(ctypes.Structure):
+        _fields_ = [("BasicLimitInformation", _Basic), ("IoInfo", ctypes.c_ulonglong * 6),
+                    ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+    kernel32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+    kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel32.CreateJobObjectW(None, None)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    job = _KillOnCloseJob(kernel32, handle)
+    info = _Extended()
+    info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    process_handle = getattr(getattr(process, "_popen", None), "_handle", None)
+    if (process_handle is None
+            or not kernel32.SetInformationJobObject(
+                handle, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info), ctypes.sizeof(info))
+            or not kernel32.AssignProcessToJobObject(handle, int(process_handle))):
+        error = ctypes.get_last_error()
+        job.close()
+        raise ctypes.WinError(error)
+    return job
+
+
+@atexit.register
+def _stop_active_child_at_exit() -> None:
+    """A normal backend exit never leaves a Scanner child behind.
+
+    Runs before multiprocessing's own exit hook, which would end the child with
+    TERMINATE and then fail on the shadowed ``signal`` module.
+    """
+    process = _active_process
+    if process is not None and process.exitcode is None:
+        _hard_stop(process)
 
 
 def _end_child(process) -> None:
@@ -76,6 +164,10 @@ def _end_child(process) -> None:
     process.join(CHILD_EXIT_GRACE_S)
     if process.exitcode is not None:
         return
+    _hard_stop(process)
+
+
+def _hard_stop(process) -> None:
     handle = getattr(getattr(process, "_popen", None), "_handle", None)
     if sys.platform == "win32" and handle is not None:
         # Exit code 1, not multiprocessing's TERMINATE: its wait() maps TERMINATE to

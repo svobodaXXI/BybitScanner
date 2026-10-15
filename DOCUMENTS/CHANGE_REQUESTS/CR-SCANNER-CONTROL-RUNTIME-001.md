@@ -223,6 +223,15 @@ without completion raises `ScannerProcessError`, the coordinator returns to
 `SCANNER_STOPPED`, and Robot protection is untouched. A finishing child exits by
 itself; only a child that does not is hard-stopped (exit code 1).
 
+The child never outlives its backend (no second Scanner owner, no Scanner
+Telegram/file effects without an owner): on Windows it runs in a Job Object with
+`KILL_ON_JOB_CLOSE` whose only handle the backend holds, so the OS ends it the
+moment the backend disappears, including an abrupt kill; a child that cannot be
+bound is stopped and the pass refused (fail closed). A normal backend exit stops a
+still-running child (exit code 1) before multiprocessing's own exit hook, which
+would otherwise end it with TERMINATE and fail on the shadowed `signal` module.
+Non-Windows hosts rely on pipe EOF at the next checkpoint.
+
 Compatibility: this repository's own `signal` package (used by
 `analyzer/core.py`) shadows the standard module whenever the project root is on
 `sys.path`; the child restores the backend's import view of it, and the backend

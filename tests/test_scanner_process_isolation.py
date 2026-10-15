@@ -51,6 +51,13 @@ def _pass_imports_analyzer_signal_package(*, box_plan_preparer, control_checkpoi
     robot_candidate_observer(f"signal-package:{callable(evaluate_quality)}")
 
 
+def _pass_never_checkpoints(**_callbacks):
+    # A long analysis: never reaches a checkpoint, so only the OS can end it.
+    Path(os.environ["SCANNER_CHILD_PID_FILE"]).write_text(str(os.getpid()))
+    while True:
+        time.sleep(0.05)
+
+
 def _pass_crashes(**_callbacks):
     os._exit(3)
 
@@ -168,6 +175,87 @@ class ChildProcessBoundaryTests(unittest.TestCase):
         recorded.clear()
         _child_main(child_end, f"{ME}:_pass_records_checkpoint_locally", (False, True, False))
         self.assertEqual(recorded, [False])
+
+
+_BACKEND_STAND_IN = """
+import os, sys, threading, time
+from terminal.runtime.scanner_process import run_scan_pass_in_child_process
+threading.Thread(target=run_scan_pass_in_child_process, daemon=True, kwargs=dict(
+    target="tests.test_scanner_process_isolation:_pass_never_checkpoints")).start()
+deadline = time.time() + 60
+while not os.path.exists(os.environ["SCANNER_CHILD_PID_FILE"]) and time.time() < deadline:
+    time.sleep(0.05)
+print("child-ready", flush=True)
+if sys.argv[1] == "exit":
+    sys.exit(0)
+time.sleep(600)
+"""
+
+
+def _alive(pid):
+    import _winapi
+    try:
+        handle = _winapi.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    except OSError:
+        return False
+    try:
+        return _winapi.GetExitCodeProcess(handle) == 259  # STILL_ACTIVE
+    finally:
+        _winapi.CloseHandle(handle)
+
+
+def _kill(pid):
+    import _winapi
+    try:
+        handle = _winapi.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE
+        _winapi.TerminateProcess(handle, 1)
+        _winapi.CloseHandle(handle)
+    except OSError:
+        pass
+
+
+@unittest.skipUnless(os.name == "nt", "the PAPER runtime host is Windows")
+class BackendLossTests(unittest.TestCase):
+    """The Scanner child must never outlive its backend (one Scanner owner)."""
+
+    def start_backend(self, mode):
+        import subprocess
+        import sys
+
+        self.pid_file = Path(tempfile.mkdtemp()) / "child.pid"
+        env = {**os.environ, "SCANNER_CHILD_PID_FILE": str(self.pid_file)}
+        # -c from the project root: the project's own `signal` package shadows the
+        # standard module exactly as it does inside the real backend.
+        backend = subprocess.Popen(
+            [sys.executable, "-c", _BACKEND_STAND_IN, mode], cwd=Path(__file__).resolve().parents[1],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(backend.stdout.readline().strip(), "child-ready")
+        # The child wrote its pid and then loops forever: only the OS can end it.
+        child = int(self.pid_file.read_text())
+        self.addCleanup(_kill, child)
+        if mode == "kill":
+            self.assertTrue(_alive(child))
+        return backend, child
+
+    def assert_gone(self, pid):
+        deadline = time.monotonic() + 10
+        while _alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(_alive(pid), "Scanner child outlived its backend")
+
+    def test_killed_backend_takes_the_scanner_child_with_it(self):
+        backend, child = self.start_backend("kill")
+        backend.kill()  # abrupt loss: no Python cleanup runs
+        backend.communicate(timeout=30)
+        self.assert_gone(child)
+
+    def test_backend_exit_with_a_running_child_is_clean(self):
+        backend, child = self.start_backend("exit")
+        _out, err = backend.communicate(timeout=60)
+        self.assertEqual(backend.returncode, 0, err)
+        self.assertNotIn("SIGTERM", err)
+        self.assertNotIn("Exception ignored", err)
+        self.assert_gone(child)
 
 
 class CoordinatorIntegrationTests(unittest.TestCase):
