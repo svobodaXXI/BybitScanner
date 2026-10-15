@@ -13,6 +13,7 @@ import ssl
 import threading
 import math
 import time
+from terminal.protection_timing import capture_callback, protection_span
 from collections import deque
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
@@ -1195,6 +1196,7 @@ class _OwnerTask:
     enqueued_at: float
     symbol: str
     coverage_role: str
+    event_id: str = ""
 
 
 # Wakes the owner thread when protection work is pending; carries no work itself.
@@ -1373,6 +1375,7 @@ class SerializedPaperRuntime:
         *,
         symbol: str = "",
         coverage_role: str = "UNKNOWN",
+        event_id: str = "",
     ) -> None:
         """Submit ``operation`` to the serialized owner without waiting for it.
 
@@ -1414,6 +1417,7 @@ class SerializedPaperRuntime:
                 time.perf_counter(),
                 normalized_symbol,
                 normalized_role,
+                event_id,
             ))
             wake = not self._protection_wake_pending
             self._protection_wake_pending = True
@@ -1574,8 +1578,10 @@ class SerializedPaperRuntime:
     def _run_protection_task(self, runtime, task: _OwnerTask) -> None:
         started_at = time.perf_counter()
         queue_latency_ms = (started_at - task.enqueued_at) * 1000
+        trace = None
         try:
-            task.operation(runtime)
+            with capture_callback() as trace:
+                task.operation(runtime)
         except BaseException:
             LOGGER.exception("PAPER owner task failed")
         finally:
@@ -1600,10 +1606,18 @@ class SerializedPaperRuntime:
                     self._protection_ingress_recent.popleft()
                 self._protection_ingress_recent.append(
                     (completed_at, queue_latency_ms, processing_ms))
+            timing_detail = ""
+            if processing_ms > SLOW_OWNER_TASK_WARNING_MS and trace is not None:
+                try:
+                    timing_detail = " protection_timing=" + json.dumps(
+                        trace.report(task.event_id, processing_ms), separators=(",", ":"),
+                    )
+                except Exception:
+                    timing_detail = " protection_timing=unavailable"
             self._observe_owner_task(
                 "protection", task.operation, processing_ms,
                 f" queue_latency_ms={queue_latency_ms:.1f} protection_pending={pending}"
-                f" symbol={task.symbol or 'UNKNOWN'} role={task.coverage_role}"
+                f" symbol={task.symbol or 'UNKNOWN'} role={task.coverage_role}" + timing_detail
                 if processing_ms > SLOW_OWNER_TASK_WARNING_MS else "",
             )
 
@@ -2518,17 +2532,18 @@ class RobotProtectionCoverageManager:
             # barrier. Owner-queue latency must not retroactively invalidate
             # valid old-generation evidence by rereading reconnect_count.
             if continuity_reason is not None:
-                recovered = runtime.recover_robot_protection_continuity_loss(
-                    symbol,
-                    book,
-                    event_id=book_update_id,
-                    received_at_ms=received_at_ms,
-                    reason=continuity_reason,
-                )
-                if recovered:
-                    self._mark_healthy(symbol)
-                    self._release_continuity_fence(runtime, symbol)
-                return recovered
+                with protection_span("recovery"):
+                    recovered = runtime.recover_robot_protection_continuity_loss(
+                        symbol,
+                        book,
+                        event_id=book_update_id,
+                        received_at_ms=received_at_ms,
+                        reason=continuity_reason,
+                    )
+                    if recovered:
+                        self._mark_healthy(symbol)
+                        self._release_continuity_fence(runtime, symbol)
+                    return recovered
             return runtime.process_robot_market_event(
                 symbol, book, event_id=book_update_id, received_at_ms=received_at_ms,
             )
@@ -2538,6 +2553,7 @@ class RobotProtectionCoverageManager:
                 _evaluate_ordered_event,
                 symbol=symbol,
                 coverage_role=coverage_role,
+                event_id=book_update_id,
             )
         except ProtectionIngressOverflow:
             self._mark_unhealthy(symbol, "ingress_overflow")

@@ -6,6 +6,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+from terminal.protection_timing import protection_span
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -1813,18 +1814,22 @@ class SQLiteStore:
     @contextmanager
     def _transaction(self) -> Iterator[None]:
         self._assert_owner()
-        self._connection.execute("BEGIN IMMEDIATE")
+        with protection_span("sqlite_begin"):
+            self._connection.execute("BEGIN IMMEDIATE")
         try:
             yield
         except Exception:
-            self._connection.execute("ROLLBACK")
+            with protection_span("sqlite_rollback"):
+                self._connection.execute("ROLLBACK")
             raise
         else:
             try:
-                self._connection.execute("COMMIT")
+                with protection_span("sqlite_commit"):
+                    self._connection.execute("COMMIT")
             except Exception:
                 if self._connection.in_transaction:
-                    self._connection.execute("ROLLBACK")
+                    with protection_span("sqlite_rollback"):
+                        self._connection.execute("ROLLBACK")
                 raise
 
     def settings(self) -> StoreSettings:

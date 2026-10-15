@@ -1,4 +1,33 @@
-## Активный квест — 2026-10-15 — PAPER_AUTO PERFORMANCE RECOVERY
+## Активный квест — 2026-10-15 — PROTECTION-2
+
+База: stable `9ff0385`, включая merged #517/#518/#519. В существующем worktree
+`.worktrees/auto-decisions-scan`, ветка `codex/protection-callback-timing`,
+добавлена только коррелированная диагностика медленного protection callback.
+Исходная причина задержек PROTECTION-1 пока не установлена.
+
+Чтение будущей записи `Slow PAPER owner task`: прежнее `queue_latency_ms`
+означает ожидание до callback; `processing_ms` — elapsed самого callback.
+JSON `protection_timing` содержит тот же `event_id`, `callback_elapsed_ms`,
+неперекрывающиеся этапы `state / limit / fill / protection / recovery`,
+`stage_sum_ms`, `unmeasured_ms` и `accounting_valid`.
+Проверка: сумма этапов + остаток = callback elapsed. Все времена монотонные,
+не CPU time. `state` включает загрузку/декодирование кандидатов и проверку
+ownership; другие чтения остаются внутри своего этапа. `limit` включает
+сопоставление и применение fill; `fill` — последующую финализацию.
+`sqlite_control_nested_ms` измеряет только BEGIN/COMMIT/ROLLBACK в общем
+SQLiteStore._transaction: это вложенные интервалы, их нельзя прибавлять к
+этапам. Это не весь SQL, не отдельный OS fsync и не все специализированные
+ручные транзакции. Recovery измеряется одним отдельным этапом.
+Для служебных callback без book event ID поле null; ID не выдумывается.
+Новые подробности выводятся только выше существующего slow-warning порога.
+
+Runtime/PAPER_AUTO не запускать. Рабочая PAPER DB, торговая логика и safety
+не менялись. Нужна будущая запись реального медленного события; отсутствие
+новой аварии не доказывает устранение задержки. XP/достижения не изменены.
+
+---
+
+## Предыдущий квест — 2026-10-15 — PAPER_AUTO PERFORMANCE RECOVERY
 
 Текущая команда владельца приоритетнее прежних записей HORN/BACKLOG:
 продолжить незавершённую работу Claude Code без запуска runtime и без изменений

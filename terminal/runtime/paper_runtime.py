@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from terminal.protection_timing import protection_span
 from types import SimpleNamespace
 
 import hashlib
@@ -1760,64 +1761,68 @@ class PaperRuntime:
         normalized = Symbol(symbol.strip().upper())
         if book.symbol != normalized:
             raise ValueError("Robot market event symbol does not match book")
-        owned_limit_ids: set[str] = set()
-        for candidate in self.store.load_robot_candidates_for_symbol(
-            self._paper_account_id, normalized,
-        ):
-            if candidate.symbol != normalized or candidate.robot_state is None:
-                continue
-            execution = candidate.robot_state.get("execution") or {}
-            phase = candidate.robot_state.get("phase")
-            if candidate.status == "APPROVED" and phase == "RETEST_DETECTED":
-                order_id = execution.get("limit_order_id")
-                if order_id:
-                    owned_limit_ids.add(order_id)
-                continue
-            if (
-                candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
-                and candidate.status in {"APPROVED", "OPEN"}
-                and phase == "BOX_ENTRY_READY"
+        with protection_span("state"):
+            owned_limit_ids: set[str] = set()
+            for candidate in self.store.load_robot_candidates_for_symbol(
+                self._paper_account_id, normalized,
             ):
-                source_id = execution.get("source_box_candidate_id")
-                if not isinstance(source_id, str) or not source_id.strip():
-                    source_id = candidate.robot_state.get("source_box_candidate_id")
-                if not isinstance(source_id, str) or not source_id.strip():
+                if candidate.symbol != normalized or candidate.robot_state is None:
                     continue
-                try:
-                    self.store.prove_box_owned_position(source_id.strip())
-                except Exception:
-                    self.fence_robot_protection_continuity_loss(
-                        normalized.value, "box_ownership_unproven_before_limit_match",
-                    )
+                execution = candidate.robot_state.get("execution") or {}
+                phase = candidate.robot_state.get("phase")
+                if candidate.status == "APPROVED" and phase == "RETEST_DETECTED":
+                    order_id = execution.get("limit_order_id")
+                    if order_id:
+                        owned_limit_ids.add(order_id)
                     continue
-                for owner in self.store.load_box_order_ownership(source_id.strip()):
-                    if owner.role == "EXIT" and owner.slot == 0:
+                if (
+                    candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
+                    and candidate.status in {"APPROVED", "OPEN"}
+                    and phase == "BOX_ENTRY_READY"
+                ):
+                    source_id = execution.get("source_box_candidate_id")
+                    if not isinstance(source_id, str) or not source_id.strip():
+                        source_id = candidate.robot_state.get("source_box_candidate_id")
+                    if not isinstance(source_id, str) or not source_id.strip():
                         continue
-                    order = self.store.get_paper_limit(
-                        owner.order_id.value, self._paper_account_id,
-                    )
-                    if order is not None and order.status not in INACTIVE_LIMIT_STATUSES:
-                        owned_limit_ids.add(owner.order_id.value)
-        matched_fills = self._match_limits_only(
-            normalized, book, event_id, allowed_order_ids=owned_limit_ids,
-        )
-        finalized: tuple[str, ...] = ()
-        if matched_fills:
-            monitor = RobotBreakoutMonitor(
-                lambda: self.store,
-                self._paper_account_id,
-                get_closed_candle=self._owner_closed_candle,
-                get_admission_catchup_candles=self.robot_catchup_evidence,
-                action_executor=_DirectRobotActionExecutor(self),
-                emergency_close_path=self._owner_emergency_close_path(book),
-                tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
-                clock_ms=lambda: int(time.time() * 1000),
-                incident_dir=self._robot_incident_dir,
+                    try:
+                        self.store.prove_box_owned_position(source_id.strip())
+                    except Exception:
+                        self.fence_robot_protection_continuity_loss(
+                            normalized.value, "box_ownership_unproven_before_limit_match",
+                        )
+                        continue
+                    for owner in self.store.load_box_order_ownership(source_id.strip()):
+                        if owner.role == "EXIT" and owner.slot == 0:
+                            continue
+                        order = self.store.get_paper_limit(
+                            owner.order_id.value, self._paper_account_id,
+                        )
+                        if order is not None and order.status not in INACTIVE_LIMIT_STATUSES:
+                            owned_limit_ids.add(owner.order_id.value)
+        with protection_span("limit"):
+            matched_fills = self._match_limits_only(
+                normalized, book, event_id, allowed_order_ids=owned_limit_ids,
             )
-            finalized = monitor.process_authoritative_fill(normalized.value)
-        obligation = self.evaluate_robot_protection_crossing(
-            normalized.value, book, event_id=event_id, received_at_ms=received_at_ms,
-        )
+        finalized: tuple[str, ...] = ()
+        with protection_span("fill"):
+            if matched_fills:
+                monitor = RobotBreakoutMonitor(
+                    lambda: self.store,
+                    self._paper_account_id,
+                    get_closed_candle=self._owner_closed_candle,
+                    get_admission_catchup_candles=self.robot_catchup_evidence,
+                    action_executor=_DirectRobotActionExecutor(self),
+                    emergency_close_path=self._owner_emergency_close_path(book),
+                    tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
+                    clock_ms=lambda: int(time.time() * 1000),
+                    incident_dir=self._robot_incident_dir,
+                )
+                finalized = monitor.process_authoritative_fill(normalized.value)
+        with protection_span("protection"):
+            obligation = self.evaluate_robot_protection_crossing(
+                normalized.value, book, event_id=event_id, received_at_ms=received_at_ms,
+            )
         return finalized, obligation
 
     def fence_robot_protection_continuity_loss(
