@@ -5,7 +5,7 @@ preserved **verbatim** at `DOCUMENTS/AGENT_GUIDE_FULL.md`; it remains authoritat
 for its applicable contracts. **Do not eagerly read that entire document**:
 follow the scoped routing below. Never replace a safety check with an economy shortcut.
 
-## 1. Start a task (seconds, not a ceremony)
+## Fast task entry
 
 1. Name the owner's requested result and its observable acceptance criterion.
 2. Inspect current branch/HEAD, relevant dirty files and the exact affected path.
