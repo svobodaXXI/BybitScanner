@@ -234,7 +234,9 @@ def verify(
             checks.append({"name": label, "status": "PASS" if passed else "FAIL", "detail": detail})
         for test_file in test_files:
             label = f"focused-test:{Path(test_file).name}"
-            module = test_file[:-3].replace("/", ".")
+            # runtime_replay contains shared fixtures; its tests live in the sibling.
+            module = ("tests.test_runtime_replay" if test_file == "tests/runtime_replay.py"
+                      else test_file[:-3].replace("/", "."))
             name, passed, detail = _run_check(verification_root, label, (sys.executable, "-m", "unittest", module))
             checks.append({"name": name, "status": "PASS" if passed else "FAIL", "detail": detail})
         if any(path.startswith(CONTRACT_PREFIXES) for path in paths):
