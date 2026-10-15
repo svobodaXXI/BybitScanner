@@ -2,6 +2,7 @@
 import json
 import tempfile
 import threading
+import time
 import unittest
 from collections import deque
 from pathlib import Path
@@ -195,3 +196,86 @@ class ProtectionCallbackTimingTests(unittest.TestCase):
             self.assertGreater(trace.elapsed["sqlite_commit"], 0)
         finally:
             case.doCleanups()
+
+
+class ThreadCpuTimingTests(unittest.TestCase):
+    """PROTECTION-5: owner-thread CPU time beside elapsed time, diagnostics only."""
+
+    def run_slow(self, operation, cpu_clock, runtime=None):
+        owner, clock = owner_queue(), Clock()
+        with patch("time.perf_counter", clock), patch("time.thread_time_ns", cpu_clock), \
+                patch("terminal.runtime.paper_http_server.LOGGER") as log:
+            owner.enqueue(lambda rt: operation(rt, clock), symbol="AKEUSDT",
+                          coverage_role="EXPOSURE", event_id="AKEUSDT:1:1")
+            owner._run_protection_task(runtime, owner._protection_tasks.popleft())
+        self.assertEqual(owner._protection_ingress_pending, 0)
+        return log, json.loads(log.warning.call_args.args[-1].split(" protection_timing=")[1])
+
+    @staticmethod
+    def staged(rt, clock):
+        with protection_span("state"):
+            clock.advance(100)
+        with protection_span("protection"):
+            clock.advance(200)
+        clock.advance(25)
+        if rt is not None:
+            rt.append("once")
+
+    def test_cpu_and_non_cpu_wall_are_reported_beside_unchanged_stage_accounting(self):
+        cpu = iter((1_000_000_000, 1_040_000_000))  # 40 ms of thread CPU
+        effects = []
+        _log, report = self.run_slow(self.staged, lambda: next(cpu), effects)
+        self.assertEqual(effects, ["once"])
+        self.assertAlmostEqual(report["callback_elapsed_ms"], 325)
+        self.assertAlmostEqual(report["callback_cpu_ms"], 40)
+        self.assertAlmostEqual(report["callback_non_cpu_wall_ms"], 285)
+        self.assertEqual(report["cpu_clock"], "thread_time_ns")
+        self.assertIn("cpu_clock_resolution_ms", report)
+        # Existing fields keep their meaning and values.
+        self.assertAlmostEqual(report["stages_ms"]["state"], 100)
+        self.assertAlmostEqual(report["stages_ms"]["protection"], 200)
+        self.assertAlmostEqual(report["stage_sum_ms"], 300)
+        self.assertAlmostEqual(report["unmeasured_ms"], 25)
+        self.assertTrue(report["accounting_valid"])
+
+    def test_unavailable_cpu_clock_gives_null_cpu_fields_and_changes_nothing_else(self):
+        def broken():
+            raise OSError("no thread CPU clock")
+
+        effects = []
+        _log, report = self.run_slow(self.staged, broken, effects)
+        self.assertEqual(effects, ["once"])
+        self.assertIsNone(report["callback_cpu_ms"])
+        self.assertIsNone(report["callback_non_cpu_wall_ms"])
+        self.assertAlmostEqual(report["callback_elapsed_ms"], 325)
+        self.assertAlmostEqual(report["unmeasured_ms"], 25)
+        self.assertTrue(report["accounting_valid"])
+
+    def test_backwards_cpu_clock_is_not_reported_as_a_negative_cpu_time(self):
+        cpu = iter((2_000_000_000, 1_000_000_000))
+        _log, report = self.run_slow(self.staged, lambda: next(cpu))
+        self.assertIsNone(report["callback_cpu_ms"])
+        self.assertIsNone(report["callback_non_cpu_wall_ms"])
+
+    def test_business_exception_still_propagates_to_the_owner_log_with_cpu_fields(self):
+        cpu = iter((0, 5_000_000))
+
+        def fail(_rt, clock):
+            with protection_span("protection"):
+                clock.advance(500)
+                raise ValueError("original error")
+
+        log, report = self.run_slow(fail, lambda: next(cpu))
+        log.exception.assert_called_once_with("PAPER owner task failed")
+        self.assertAlmostEqual(report["callback_cpu_ms"], 5)
+        self.assertAlmostEqual(report["stages_ms"]["protection"], 500)
+
+    def test_real_clocks_separate_cpu_work_from_sleeping(self):
+        with capture_callback() as trace:
+            time.sleep(0.12)
+        resolution = trace.report("x", 0)["cpu_clock_resolution_ms"] or 0
+        self.assertIsNotNone(trace.cpu_ms)
+        # A sleeping callback uses almost no thread CPU; the clock may be coarse.
+        self.assertLessEqual(trace.cpu_ms, 2 * resolution + 5)
+        report = trace.report("x", 120.0)
+        self.assertGreaterEqual(report["callback_non_cpu_wall_ms"], 120 - 2 * resolution - 5)
