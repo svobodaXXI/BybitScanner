@@ -1,4 +1,37 @@
-## Активный квест — 2026-10-14 — HORN-1 «Рупор» / Broadening Formation
+## Активный квест — 2026-10-15 — PAPER_AUTO PERFORMANCE RECOVERY
+
+Текущая команда владельца приоритетнее прежних записей HORN/BACKLOG:
+продолжить незавершённую работу Claude Code без запуска runtime и без изменений
+рабочей PAPER DB. Основной checkout: stable/adfb50b-forward `79a9f62`.
+Восстановлен существующий worktree `.worktrees/auto-decisions-scan`, ветка
+`fix/auto-decisions-load-scan`; исходные benchmark и копии Claude сохранены.
+
+Задача А: на одной копии БД Claude доказал полное равенство 5096 решений;
+медианы старого метода 5334/4766 мс, SELECT с Python-фильтрацией и сортировкой
+937/1023 мс. Минимальный патч `29f9f80` сохраняет account isolation,
+порядок `(evaluated_at_ms, decision_id)` и opaque facts_json. Focused tests:
+7 PASS; защищённая транзакция `20261014T221741Z-8e533509fd4e`: finish PASS.
+Публикация в PR к stable; merge и runtime-приёмка ещё не выполнены.
+
+Задача Б: узкий offline профиль на отдельной копии сохранённой Claude БД
+`tmpjse7p7fd/c.sqlite3` (один AAVEUSDT LIMIT, открытых позиций нет).
+Шесть синтетических non-crossing событий AAVEUSDT/AKEUSDT, 1000 уровней:
+16.6–49.1 мс целиком, SQLite read 4.1–9.9 мс, LIMIT-этап вместе с его чтением
+0.36–0.53 мс. Записей в этих событиях нет. Отдельный write probe только на
+копии: BEGIN+UPDATE 0.88 мс, COMMIT включая sync 2.92 мс; WAL/FULL сохранены.
+OS fsync отдельно не измерен. Задержка 0.5–1.4 с не воспроизведена;
+причина аварии AKEUSDT не доказана, protection не исправлялся.
+Следующее доказательство: сохранённое состояние перед аварией и соответствующий
+market event либо отдельно разрешённое измерение реального медленного события.
+Отсутствие воспроизведения не означает готовность PAPER_AUTO к возобновлению.
+
+Backend/Scanner/Robot/Telegram не запускались; рабочая PAPER DB не открывалась
+для записи. Тайм-ауты, ёмкость очереди, durability и LIVE не менялись.
+XP и достижения не изменены. Квест в целом не завершён.
+
+---
+
+## Предыдущий квест — 2026-10-14 — HORN-1 «Рупор» / Broadening Formation
 
 Команда владельца: новый активный квест — паттерн Broadening Formation
 (Expanding Wedge). Этап HORN-1 — только дизайн:
