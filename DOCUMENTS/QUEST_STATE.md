@@ -1,3 +1,9 @@
+## OWNER DECISION — 2026-10-16 — Telegram bot token rotation deferred
+
+Owner explicitly decided to defer Telegram bot token rotation until preparation for LIVE trading. **Do not raise this topic again unprompted during PAPER development**, do not create a separate rotation task or repeatedly recommend rotation. Resume discussion only if the owner asks, LIVE preparation begins, or concrete new evidence indicates active misuse/compromise that materially changes the risk. This is a recorded owner risk decision, not a claim that the exposed token is secure. Never copy or publish the token or unredacted console dumps; preserve existing access controls. LIVE remains forbidden without separate explicit owner authorization.
+
+---
+
 ## ACTIVE OWNER PRIORITY — 2026-10-15 — REAL AUTONOMOUS PAPER TRADE
 
 Owner directive: **every next development step must lead measurably toward a real automatically executed PAPER trade, rather than another research cycle**. This overrides older HORN/triangle, general tooling and speculative research queues for task selection, without deleting them.
