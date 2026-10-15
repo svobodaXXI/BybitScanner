@@ -148,7 +148,8 @@
     "status": "PENDING_CHECKPOINT_COMMIT"
   },
   "amendment_history": [
-    {"revision": "1.0", "reason": "Human-authorized durable CR opened formalizing the already-ACCEPTED DOCUMENTS/SCANNER_CONTROL_RUNTIME_DECISION.md and RECORDED DOCUMENTS/SCANNER_CONTROL_RUNTIME_INVESTIGATION.md into a scoped, git-governed ChangeRequest, following the CR-ROBOT-CONTROL-001/CR-ROBOT-BREAKOUT-MONITOR-001 pattern. Investigation section 12 (verify all main.py launch paths) closed by direct repository verification. The five architecture decisions approved in chat recorded as approved_decisions, including the critical SQLiteStore thread-ownership requirement discovered as a live, currently-unresolved defect while re-verifying CR-ROBOT-BREAKOUT-MONITOR-001's already-closed work. IMPLEMENT explicitly not authorized pending separate human confirmation", "date": "2026-09-12"}
+    {"revision": "1.0", "reason": "Human-authorized durable CR opened formalizing the already-ACCEPTED DOCUMENTS/SCANNER_CONTROL_RUNTIME_DECISION.md and RECORDED DOCUMENTS/SCANNER_CONTROL_RUNTIME_INVESTIGATION.md into a scoped, git-governed ChangeRequest, following the CR-ROBOT-CONTROL-001/CR-ROBOT-BREAKOUT-MONITOR-001 pattern. Investigation section 12 (verify all main.py launch paths) closed by direct repository verification. The five architecture decisions approved in chat recorded as approved_decisions, including the critical SQLiteStore thread-ownership requirement discovered as a live, currently-unresolved defect while re-verifying CR-ROBOT-BREAKOUT-MONITOR-001's already-closed work. IMPLEMENT explicitly not authorized pending separate human confirmation", "date": "2026-09-12"},
+    {"revision": "1.1", "reason": "PROCESS-ISOLATION-1 (owner-approved 2026-10-15): the accepted GIL/shared-process risk is resolved by running each Scanner pass in a spawned child process (terminal/runtime/scanner_process.py). See section 'PROCESS-ISOLATION-1' below", "date": "2026-10-15"}
   ]
 }
 ```
@@ -196,3 +197,40 @@ frontend change has been written. A separate human approval is required before i
 
 Material scope, approved decision, risk, acceptance, lifecycle or implementation-authorization changes
 require a new revision and explicit human approval.
+
+## PROCESS-ISOLATION-1 — Scanner pass in a child process (revision 1.1, 2026-10-15)
+
+Owner-approved resolution of the risk recorded above as accepted. Evidence: the
+AKEUSDT PAPER_AUTO trade was closed by `EMERGENCY_CLOSE` after a protection
+`ingress_overflow` (64/64, queue latency up to 22.8 s) while every owner task in
+the backend ran ~300 ms; offline, a competing pure-Python CPU thread raised the
+protection callback median from 20.4 to 184-220 ms, almost all non-CPU wall time.
+The historical role of the Scanner is strongly supported, not proven.
+
+Boundary: `ScannerControlRuntime` and its durable state, the PAPER owner thread,
+protection, ingress and the PAPER DB stay in the backend. Only the scan pass
+(`main.run_scan_pass`, CPU-heavy analysis, chart/report files, Scanner Telegram
+delivery and the file-based Robot signal snapshots it already writes) runs in a
+spawned child. The child never opens the PAPER DB: the three existing callbacks —
+control checkpoint, Box plan preparation and Robot candidate observer — are
+requests to the backend, which serves them with the unchanged dispatch to its
+single owner. No second Robot runtime, DB owner or admission path exists.
+
+Lifecycle: one pass = one child; at most one active child per backend
+(`ScannerProcessBusy`); the backend is a single instance per PAPER DB as before.
+A checkpoint that fails or a lost parent stops the pass; a child that exits
+without completion raises `ScannerProcessError`, the coordinator returns to
+`SCANNER_STOPPED`, and Robot protection is untouched. A finishing child exits by
+itself; only a child that does not is hard-stopped (exit code 1).
+
+Compatibility: this repository's own `signal` package (used by
+`analyzer/core.py`) shadows the standard module whenever the project root is on
+`sys.path`; the child restores the backend's import view of it, and the backend
+never relies on multiprocessing's TERMINATE→`signal.SIGTERM` mapping.
+
+Verification: `tests/test_scanner_process_isolation.py` (callbacks served in the
+backend process, stop/checkpoint failure, crash and exception, single flight,
+lost parent, coordinator stop and crash with a real background thread, project
+`signal` package in the child, wiring). Bounded offline benchmark on the
+PROTECTION-4 fixtures: A 20.5 ms median, same load in-process 220.5 ms, same load
+in the Scanner child 21.0 ms.

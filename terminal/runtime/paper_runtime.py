@@ -311,10 +311,14 @@ DEFAULT_SCANNER_SCAN_INTERVAL_S = 5.0
 def _run_scanner_scan_pass(
     *, box_plan_preparer=None, control_checkpoint=None, robot_candidate_observer=None,
 ) -> None:
-    """Load Scanner/config only when an actual scan pass is due."""
-    from main import run_scan_pass
+    """Run one Scanner pass in its own child process (PROCESS-ISOLATION-1).
 
-    run_scan_pass(
+    The CPU-heavy analysis leaves this interpreter, so it no longer competes with
+    the PAPER owner thread. The three callbacks still run here, unchanged.
+    """
+    from terminal.runtime.scanner_process import run_scan_pass_in_child_process
+
+    run_scan_pass_in_child_process(
         box_plan_preparer=box_plan_preparer,
         control_checkpoint=control_checkpoint,
         robot_candidate_observer=robot_candidate_observer,
