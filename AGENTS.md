@@ -1,627 +1,128 @@
-# BybitScanner Agent Guide
+# BybitScanner — lean agent entry (Codex / repository agents)
 
-Compact mandatory entry point for coding agents. It routes to project authority; it does not duplicate it.
+Purpose: smallest safe, outcome-first entry. The complete prior `AGENTS.md` is
+preserved **verbatim** at `DOCUMENTS/AGENT_GUIDE_FULL.md`; it remains authoritative
+for its applicable contracts. **Do not eagerly read that entire document**:
+follow the scoped routing below. Never replace a safety check with an economy shortcut.
 
 ## Fast task entry
 
-## Автоматический игровой bootstrap для новых чатов — OWNER RULE 2026-09-25
-
-Для первого BybitScanner-запроса в каждом новом ChatGPT-чате игровой режим
-восстанавливается автоматически из репозитория.
-
-После чтения этого файла и минимального task-scoped recovery агент обязан:
-
-1. прочитать `DOCUMENTS/QUEST_STATE.md`;
-2. сверить активный квест с текущей командой владельца и верхним актуальным
-   priority index в `DOCUMENTS/BACKLOG.md`;
-3. при конфликте считать текущую команду владельца и BACKLOG более сильной
-   властью, чем QUEST_STATE;
-4. продолжить работу уже в **русском игровом режиме** без просьбы владельцу
-   вручную переносить контекст, квесты, XP или ачивки;
-5. использовать русские названия игровых сущностей из
-   `DOCUMENTS/GTD_QUEST_SYSTEM.md`;
-6. обновлять `QUEST_STATE.md` при изменении активного квеста, очереди,
-   завершённого босса/рейда, XP, уровня или ачивок;
-7. не создавать отдельный ContextDump/chat-handoff только ради игрового
-   состояния.
-
-Игровой режим относится к BybitScanner. В посторонних темах он не навязывается.
-Он не меняет safety, trading authority, runtime ownership, acceptance или
-технические приоритеты.
-
-### Game-mode response invariant — OWNER RULE 2026-09-26
-
-Чтение `QUEST_STATE.md` само по себе **не считается восстановлением игрового
-режима**. После bootstrap и до явной команды владельца отключить игровой слой
-каждый BybitScanner-ответ обязан сохранять его в user-visible подаче.
-
-Минимальный инвариант ответа:
-- когда работа движется по активному состоянию, назвать текущую игровую сущность
-  (рейд / квест / босс / ворота / добыча / достижение) естественно и кратко;
-- технические команды, diff, safety и acceptance остаются точными и не
-  превращаются в декоративную RPG-подачу;
-- XP, уровень и ачивки упоминаются/меняются только при реально доказанном
-  outcome согласно `GTD_QUEST_SYSTEM.md`;
-- перед отправкой ответа выполнить внутренний self-check: если BybitScanner
-  bootstrap уже выполнен, но user-visible игровой слой исчез, восстановить его
-  из `QUEST_STATE.md` автоматически, без напоминания владельца.
-
-Нельзя объявлять bootstrap успешным только потому, что технический state
-восстановлен. Для ачивки «Контекст не потерян» новый чат должен без ручного
-напоминания восстановить **и state, и игровой response-mode**.
-
-Global ChatGPT Custom Instructions служат только внешним условным bootstrap-
-указателем и не являются источником текущего состояния. Полный проектный
-контракт остаётся в BybitScanner Project Instructions; внутри проекта он
-приоритетнее глобальных Custom Instructions. Канонические тексты обоих слоёв:
-`DOCUMENTS/CUSTOM_INSTRUCTIONS_BYBITSCANNER.md`. При явной просьбе владельца
-«освежи контекст», при возврате к BybitScanner после заметного перерыва, при
-изменившемся repo state или конфликте памяти с репозиторием выполни быстрое
-освежение: QUEST_STATE -> актуальный priority section BACKLOG -> owning spec
-текущего квеста. Не расширяй это до полного deep recovery без причины.
-
-### Canonical game rewards — OWNER RULE 2026-09-27
-
-XP, уровень, ачивки и reusable loot восстанавливаются из
-`DOCUMENTS/QUEST_REWARD_LEDGER.md`; `QUEST_STATE.md` — только компактная
-проекция. При доказанном изменении игрового результата ledger + QUEST_STATE
-обновляются как часть того же Definition of Done. Не менять счёт только потому,
-что в чате названо другое число: сначала reconcile ledger/evidence.
-
-### Unified Signal / Robot owner UX — OWNER RULE 2026-09-27
-
-Для всех Scanner-паттернов действует
-`DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md`.
-
-Общий Telegram UX, durable candidate/admission, Robot controls, execution
-ownership, protection, position cards, lifecycle notifications, monitoring и
-reconciliation являются platform-level инфраструктурой и не копируются по
-паттернам. `🤖 Робот` всегда означает admission этого конкретного durable
-candidate; одна и та же подпись не может означать status для одного паттерна и
-admission для другого. Pattern-specific остаются только detector/evidence и
-торговые правила adapter'а.
-
-
-### No harness recovery spiral — OWNER RULE 2026-10-10
-
-A tool/harness error is NOT authorization to launch a new infrastructure task.
-For `PREEXISTING_DIRTY`, `not a managed worktree`, reparse-point/`apply_patch`
-failure, or a nested task-transaction rejection:
-
-1. Preserve the current task diff, user changes and exact failure evidence; identify
-   whether the failure is workspace/tooling rather than product code.
-2. Reuse the original task/worktree and its already-passing checks. Attempt at most
-   ONE narrowly supported, authorized recovery with the existing harness.
-3. Never silently stash/pop, reset, clean, move worktrees, recreate tasks, or modify
-   audit contracts, task metadata or harness guards merely to manufacture PASS.
-   A workaround requires a proven supported procedure and explicit permission;
-   no permission bypasses a mandatory gate.
-4. If recovery fails, STOP with exact blocker, location of preserved diff and
-   smallest supported next action. Do not chain fallbacks or reopen transactions.
-5. Once unblocked, finish the original product delta and mandatory targeted proof,
-   then STOP. Do not create another preparatory quest.
-
-This rule does not weaken repository integrity, fail-closed protection, PAPER/LIVE
-boundaries, mandatory gates or owner runtime authority.
-
-### Agent-owned GitHub delivery — OWNER RULE 2026-10-10
-
-The owner is NOT a courier between ChatGPT, Codex, Claude, sandboxes and GitHub.
-For tasks whose outcome is code or a PR, select an execution environment with
-write access to the intended repository and a supported task harness **before**
-delegation. The assigned agent owns the complete chain: scoped edit, targeted
-verification, harness finish, commit, push and opening its own PR. ChatGPT owns
-PR review, CI/safety-gate verification and an owner-authorized merge.
-
-Do not ask the owner to copy patches, paste code between agents, upload working
-tree diffs, perform routine git push or run GitHub UI merge merely because an
-agent chose a read-only sandbox. A read-only agent may audit or design, but is
-not the default executor for a delivery requiring publication.
-
-If the assigned environment unexpectedly lacks write access: STOP, preserve
-the exact changes and evidence, state the access blocker, and use an already
-connected and permitted direct GitHub workflow if one exists. Do not initiate
-a chain of sandbox-to-sandbox transfers or invent an infrastructure workaround.
-If no supported direct path exists, ask for the smallest *one-time connection*
-action rather than repeated manual patch forwarding. Never claim that a
-read-only sandbox's task finish passed if it failed.
-
-All existing scope, owner authorization, CI/harness, PAPER/LIVE, safety,
-runtime-start and no-auto-merge boundaries still apply.
-
-### GitHub PR merge via ChatGPT — OWNER RULE 2026-10-10
-
-The owner should not need to click "Squash and merge" on GitHub when the
-connected integration can do it. Explicit permission to merge named PR(s), or
-a standalone «э» in direct response to the assistant's immediately preceding
-explicit proposal to merge those named PR(s), authorizes **only those PRs**.
-No blanket auto-merge or inference from CI success alone.
-
-Before merge, verify each PR's target base, current head SHA, mergeability,
-required CI/reviews and known safety blockers. Use squash merge with the
-expected head SHA and confirm the resulting GitHub merge commit. On conflict,
-changed head or unsatisfied gate, stop without merge. A new «э» after a blocker
-authorizes only the clearly proposed next remedy, not bypassing a gate.
-
-Owner-only runtime starts, PAPER/LIVE constraints, and mandatory safety gates
-remain unchanged. Never merge other PRs implicitly.
-
-## Mandatory task execution gate — OWNER RULE 2026-10-10
-
-This is an **enforcement entry point**, not a new planning process. Apply the
-existing `DOCUMENTS/ASSISTANT_PROTOCOL.md` §§3.2, 3.2.1a and the
-Reuse-First principle to **every** delegated Codex/Claude task, including
-backups, synchronization and handoffs.
-
-Before issuing or executing a task, the assistant/agent must establish:
-1. **Owner-visible outcome:** one deliverable and a concrete stop condition.
-2. **Reuse first:** locate the already-working command, backup, artifact or
-   successful evidence; do not create a script/subsystem if it suffices.
-3. **Minimum delta:** one bounded action, only required checks, run once
-   after a meaningful change; reuse prior PASS evidence.
-4. **Risk triage:** proven mandatory safety blocker -> stop unsafe work and
-   request the smallest remedy; bounded nonblocking risk -> record and
-   continue the owner's milestone, not an automatic side quest.
-5. **Failure boundary:** after one failed method and one narrowly justified
-   retry, STOP and report the blocker. No autonomous fallback chains,
-   scaffolding, test loops or escalating backup frameworks.
-6. **Owner resource budget:** avoid unnecessary agent calls, waiting, repeated
-   discovery, full-repository audits and new worktrees. Deliver PASS/BLOCKED,
-   concrete evidence and the smallest next action, then exit.
-
-**Migration/backup application:** keep established runtime/database stop and
-consistent-snapshot safety gates; use existing verified backup/PowerShell/Git
-facilities. Do not generate new transfer tooling as a prerequisite. A missing
-nonessential artifact is reported rather than triggering reconstruction of
-the whole package. Never sacrifice data integrity to meet a time budget.
-
-**ChatGPT delegation gate:** if a proposed prompt is an extended checklist
-or multi-phase quest, narrow it *before sending*, except where a specific
-mandatory safety procedure requires those steps. The assistant is
-accountable for prompt scope, not the owner.
-
-## Outcome-first Scanner / PAPER Robot priorities — owner direction
-
-**Business goal:** a Scanner that shows faithful, independently checkable
-formation geometry and a PAPER Robot that reliably completes the signal →
-order → protection → closure lifecycle. Optimize for working results, not
-more test campaigns, new infrastructure, prettier charts or more alerts.
-
-**When choosing the next dependent development slice, use this order:**
-
-1. **False patterns first:** eliminate demonstrably wrong formations and
-   misplaced anchors/START using real saved decision-time candles. A strong
-   score, display adjustment or retrospective fit does not make a wrong
-   structure acceptable.
-2. **Reliable PAPER execution next:** for already confirmed signals, make the
-   Robot's entry, protection, reconciliation and exit work end-to-end and
-   fail-closed. Do not enable or alter LIVE trading or change risk/strategy
-   parameters merely to advance this priority.
-3. **Missed patterns systematically, not by owner manual browsing:** compare
-   source-time Scanner outputs against independently generated potential
-   formation windows in saved OHLC history; surface reproducible chart cases
-   for review. These proposals are **hypotheses**, not proof of real missed
-   patterns or permission to lower admission gates. Measure coverage only
-   after false positives and PAPER reliability are under control.
-
-The owner can visually identify wrong drawn formations and broken PAPER
-execution, but cannot reasonably discover all missed patterns by manually
-watching charts. **Do not outsource missed-pattern discovery to the owner.**
-Follow the currently authorized, task-specific route (the L-shaped detector
-is the active geometry implementation scope); this priority ordering is a
-decision guide, **not permission to switch tasks, restart services, start
-trading, or expand the current slice**. Prefer one evidence-backed micro-slice
-and its narrow changed-behavior checks during implementation; complete the
-mandatory full-universe Scanner acceptance pass below for every new pattern
-or Scanner correction, without redundant repeated passes.
-
-## Reference-first parity and migration — OWNER RULE 2026-10-08
-
-When moving an already-working BybitScanner runtime to another machine or recovering
-the same behavior on an existing machine, **do not rebuild the workflow from scratch**:
-
-1. Establish the latest *verified* working source machine/runtime configuration
-   as the reference. Separate tracked code/commit, machine-local launchers,
-   shortcut arguments, environment, dependencies, DB state, and process composition.
-2. Compare the target machine against that reference using existing project evidence
-   and direct, narrow checks. Reuse proven migration and parity results; investigate
-   only actual differences or gaps.
-3. Correct only a demonstrated mismatch with the smallest reversible change.
-   Do not introduce new architecture, repeated preflight campaigns, or change a
-   working launcher intent merely because the target host is new.
-4. Validate the changed boundary and the owner-visible outcome against the
-   reference; do not declare functional parity based only on Git HEAD, CI,
-   static checks or a READY flag.
-5. Preserve safety gates: a verified risky behavior in the reference is not
-   permission to reproduce it blindly. Document the blocking deviation, keep
-   Scanner/Robot under owner-only runtime control, and request a decision only
-   when a genuine safety trade-off remains.
-
-**Operator burden:** the assistant leads reference discovery, comparison, scoped
-patch and checks. Do not make the owner discover obvious mismatches or repeat
-already-proven work. If reference host is unavailable, state the evidence boundary
-and defer host-specific changes rather than guessing.
-
-## GitHub ↔ Codex/local handoff sync guard — OWNER RULE 2026-09-26
-
-When work is about to move from ChatGPT-led GitHub-first edits/review to
-Codex/local implementation, or back from local/Codex work to GitHub-first
-editing, do not assume both sides still describe the same repository state.
-
-Before the first **mutating** task on the destination side, automatically
-apply the synchronization preflight in `DOCUMENTS/ASSISTANT_PROTOCOL.md`
-§4.1–4.2. The assistant must initiate or propose that preflight itself; the
-owner must not have to remember to ask for synchronization.
-
-If the relevant checkout/worktree is ahead, behind, diverged, dirty in the
-task scope, detached on an obsolete commit, or its relation to the intended
-remote branch is unknown, stop before editing and reconcile the states
-explicitly while preserving all user-owned work. A read-only repository
-inspection does not require synchronization by itself.
-
-## Delegated prompt budget — NO REDUNDANT TEST/ITERATION LOOPS (OWNER RULE 2026-09-23)
-
-For EVERY subsequent Codex/Claude Code prompt, apply
-`DOCUMENTS/ASSISTANT_PROTOCOL.md` §3.2.1a: one short bounded task, reuse
-existing evidence, run only the minimum necessary focused check once for the
-changed behavior, then STOP and report. Do not request repeated tests,
-automatic test/fix loops, broad exploratory rechecks, full campaigns or
-polling/waiting to burn agent quotas. Retry a failed check only after a
-specific fix; retain genuinely mandatory safety/contract/final gates without
-adding duplicate verification. Never delegate a real Scanner pass to an agent.
-
-## Owner desktop launch surface — PERMANENT UX CONTRACT (OWNER RULE 2026-09-27)
-
-The owner's normal runtime entrypoint is the **existing desktop shortcut surface**,
-not ad-hoc terminal commands and not a newly invented launcher workflow.
-
-Known owner-facing shortcuts:
-- `start_scanner` — manual Scanner launch/control entry;
-- `Запуск робота` — manual Robot/prototype launch entry;
-- the companion desktop stop shortcut remains part of the same owner-facing surface.
-
-For all future Scanner/Robot/runtime development:
-
-1. preserve these desktop shortcuts as the owner's stable launch UX;
-2. when implementation changes canonical scripts, runtime ownership, readiness gates,
-   or accepted startup composition, **upgrade the scripts/targets behind this existing
-   desktop surface automatically as part of the task** rather than asking the owner to
-   switch to a different launch method;
-3. do not repeatedly ask which shortcut the owner uses once this contract is loaded;
-4. do not replace the desktop surface with PowerShell/CMD instructions except for a
-   bounded diagnostic or one-time repair that cannot be performed otherwise;
-5. before declaring a runtime change complete, verify that the desktop launch path
-   reaches the new canonical implementation and preserves the project's safety/readiness
-   gates;
-6. the owner still performs the actual Scanner/Robot start manually. Updating the
-   shortcut path does not authorize an agent to launch runtime.
-
-If the underlying target path is migrated, maintain compatibility or update the shortcut
-as part of the same implementation slice and record the new target in project docs.
-
-## Scanner runtime ownership — MANUAL ONLY (OWNER RULE 2026-09-23)
-
-**Only the owner manually starts the real Scanner through the verified existing
-Scanner-only control surface.** ChatGPT, Codex, Claude Code and delegated agents
-must not launch, resume, restart, schedule, or keep a full Scanner pass running
-inside an agent session, including acceptance passes. No automatic/manual-via-
-agent handoff that leaves the agent consuming quota while the Scanner runs.
-Codex may perform a bounded read-only preflight and necessary focused developer
-checks, then MUST terminate its task and hand back a concise result. The owner
-separately decides when to launch the one complete real Scanner/Telegram pass.
-A full-pass acceptance requirement does NOT authorize agents to execute it.
-Do not stop an existing process blindly: identify ownership and impact on
-Robot/positions first; if a possibly active agent-run Scanner is reported,
-prioritize a safe owner-controlled stop of that specific process, not a broad
-shutdown. Do not repeatedly poll/wait for a long run inside Codex. See
-`DOCUMENTS/ASSISTANT_PROTOCOL.md` and `DOCUMENTS/BACKLOG.md`.
-
-## Exclusive visual acceptance workflow — full real Scanner pass ONLY (OWNER OVERRIDE 2026-09-23)
-
-**The owner inspects and accepts ALL Scanner changes solely via ONE COMPLETE
-real Scanner pass across EVERY available eligible symbol, using normal
-configured Telegram signal delivery for ALL integrated patterns.** This applies
-to **every** new pattern, chart/caption/button/presentation adjustment,
-detector/geometry fix and Scanner behavior change, including a seemingly
-small Ikigai Box card change. Do not offer an isolated updated card, a
-single-symbol chart, a hand-picked example, a two-candidate demo, a cropped
-symbol set, a partial pass, a local PNG, a screenshot from a test, or a
-silent/offline replay **as the owner's visual review or as a preliminary
-visual acceptance step**. No substitute "quick look first" workflow.
-Focused technical/unit tests and local developer diagnostics may be used
-only to implement and check code, **not** to ask the owner to inspect an
-artifact or to declare visual acceptance. Do not commission extra test
-campaigns in place of the owner's visual process.
-
-**Mandatory instruction-construction guard:** before asking the owner or
-Codex to visually check a Scanner change, the assistant/agent must read
-this rule and ask for exactly one complete eligible-universe production-path
-Scanner pass with **ordinary real Telegram notifications and all integrated
-patterns enabled**; collect the completion count, per-interval/per-pattern
-signal totals, delivery failures and the charts actually received in Telegram.
-If the requested change has been merged but full-pass acceptance is pending,
-**the next visual step is the full pass, never an isolated proof image/card**.
-Do not describe a 302/777-style interrupted run or 5m-only subset as
-complete. When the required 5m→1m per-symbol workflow has been implemented,
-verify 5m then immediately 1m for each ticker; until then, report the
-current implementation truth rather than claiming dual-timeframe coverage.
-
-**Safety is not a substitute for acceptance:** before launching, establish
-the real entrypoint/side effects, process and Telegram-poller ownership,
-current Robot/position state, and fail-closed boundaries. A full Scanner
-pass does not authorize Robot/PAPER/LIVE trading, order placement, unsafe
-service restart or risk changes. If a safe full pass is blocked, report
-the *specific blocker and leave visual acceptance pending*; do not replace
-the full pass with a shorter run or request a manual single-card review.
-This rule is permanent and supersedes any conflicting older milestone,
-queue phrasing or assistant/Codex prompt unless the owner explicitly
-changes it.
-
-## Telegram-first visual development for every new Scanner pattern — OWNER RULE (2026-09-23)
-
-**A newly developed pattern must reach the owner's ordinary Telegram signal
-feed with its actual chart as part of its first Scanner integration.** The
-owner visually tests formations **in Telegram**, not by inspecting hidden
-local observer logs or `charts/` directories. Do not call a pattern integrated,
-ready for owner acceptance or finished if it only prints local candidates,
-saves local PNGs, or requires the owner to request notification wiring later.
-When implementing a new pattern, include source-time detection → real Scanner
-candidate → current shared Telegram presentation/photo and applicable
-standard owner buttons → full-universe Scanner pass → owner visual feedback
-in the same user-visible delivery milestone. Do not defer Telegram delivery
-behind a separate silent-observer acceptance stage.
-
-Local/offline/shadow runs are permitted **only for developer diagnosis and
-focused regression**, never as a substitute for owner-visible Telegram
-delivery or the mandated complete real Scanner pass. Deliver normal configured
-notifications; do not unilaterally silence them or demand that the owner
-search the filesystem for charts. Each emitted formation must have valid
-owner-defined geometry at candidate construction; Telegram visibility is not
-permission to distribute known malformed formations.
-
-**Telegram visual signal != trading authorization.** Reuse the common chart/
-caption/button layout; expose only actions that are supported and safe for
-that pattern, never a nonfunctional Robot approval button. PAPER/LIVE order
-placement, admission, risk and deployment require their separate approved
-contracts. Before a real pass, check launcher side effects, duplicate workers
-and current Robot/position safety; do not bypass fail-closed protection.
-
-**Current milestone:** PR #204 integrated L-shape Telegram photos into
-GitHub main. PR #205 simplified the Ikigai Box chart and Telegram card.
-Their owner visual acceptance remains **pending until the single complete
-real Scanner pass** specified above; do not offer either pattern or card
-as an isolated owner visual sample. The 5m→1m per-symbol Scanner extension
-is separately queued and not yet implemented.
-
-## Permanent Scanner 5m → 1m per-symbol workflow — OWNER RULE (2026-09-23)
-
-For **each eligible symbol**, the Scanner must process its **5-minute candles
-first, then immediately its 1-minute candles**, before moving to the next
-symbol. Run **every integrated Scanner pattern** on both intervals and deliver
-each genuinely constructed formation in the ordinary Telegram signal feed
-with its actual chart, clearly labeled `5м` or `1м`. A pattern must not be
-silently excluded on 1m because its old path assumed 5m. Keep each
-(symbol, timeframe, pattern, formation identity) independent in candidate
-selection, closed-candle source-time anchors, signal memory, deduplication,
-notifications and charts: a 1m result must not overwrite/suppress a 5m
-result or vice versa. If one interval fails, record it and continue to the
-other and the next symbol without fabricating a signal.
-
-This is a **permanent desired Scanner behavior**, not a claim that the
-current runtime already does it. Its implementation belongs **after the
-ongoing Ikigai Box card simplification (including approximately 40% narrower
-candlesticks) and before the queued geometry repairs**. Do not interrupt
-that card task or start the full Scanner pass merely to document the rule.
-After implementation, owner acceptance requires one full real eligible-symbol
-Scanner pass showing the ordered 5m→1m coverage and Telegram charts for all
-integrated patterns. Keep existing Robot/PAPER/LIVE risk and protective state unchanged. Owner update
-2026-09-26: supported executable Wedge signals on both 1m and 5m must retain
-the owner Robot action; explicit 1m Scanner analysis is no longer
-observational-only merely because its timeframe was passed explicitly.
-Admission remains fail-closed at the normal Robot boundary, and this does not
-authorize unsupported patterns or LIVE trading.
-
-## Current mandatory task sequence — OWNER UPDATE (2026-09-23)
-
-The user's current execution order is **(1) L-shape Telegram integration
-merged → (2) Ikigai Box card simplification and approximately 40% narrower
-candles merged → (3) one complete real Scanner pass for owner visual review
-of both integrations, with no isolated card preview → (4) implement
-per-symbol 5m then 1m Scanner search and Telegram delivery for every
-integrated pattern → (5) fix queued Scanner geometry errors** (APTUSDT, B3USDT, DASHUSDT, ATHUSDT; preserve B2USDT
-as Box positive control). Follow
-the top **"Binding owner execution order"** section of
-`DOCUMENTS/BACKLOG.md` as the authoritative next-task index. Do **not**
-advance geometry tasks ahead of Telegram integration or Box presentation by
-reading generic priority labels or stale next-step statements elsewhere.
-Correct candidate construction remains the mandatory end-state for all
-patterns; this owner order governs **when** its work is resumed. Each changed
-Scanner behavior still requires one complete real eligible-universe run for
-the owner's Telegram visual acceptance. No automatic Robot/PAPER/LIVE
-activation or risk changes.
-
-## Active feedback queue and resumption
-
-For the current owner-prioritized Scanner geometry → Box setup lifecycle →
-PAPER execution → unified Telegram work, open the **first section** of
-`DOCUMENTS/BACKLOG.md` ("ACTIVE owner-feedback action plan — 2026-09-23")
-before selecting the next slice. It records APTUSDT/B3USDT false construction,
-ATHUSDT Box impulse/completion and B2USDT positive control. **The immediate
-user-visible blocker is L-shape Telegram delivery**: PR #197's local-only
-observer is not the owner-accepted integration. Complete its ordinary
-Telegram photo/caption/buttons path first, while keeping Robot execution
-separately unauthorized.
-
-## Geometry construction first — owner-defined search-system outcome (2026-09-23)
-
-**Invalid geometry must never be constructed as a search candidate.** This is
-the required end state for **every pattern**, not a notification/admission
-filtering task. Search begins with the owner's pattern-specific structural
-definition: identify the real local episode, directional impulse, chronologically
-valid anchors and START, and all required legs/shelf using evidence available
-at the original decision candle. Only **structurally valid formations** may
-proceed to line fitting, ranking, quality scores, presentation, Telegram or
-Robot. No valid construction means **no formation candidate** for that
-episode, not a false candidate subsequently hidden by score, freshness,
-delivery, or Robot filters.
-
-For an observed false formation, trace the actual selected candidate backward
-through generation, episode/anchor selection and geometry construction;
-fix the **earliest causative stage** and the general pattern rule, not the
-display, score threshold or signal-delivery gate. Never rescue an invalid
-construction by moving START, fitting visually convenient boundaries,
-enlarging the chart or adding downstream suppression. Preserve source-time
-reproducibility; do not invent a universal rule from a single screenshot.
-The owner reviews the output of a correctly constructed search system, not
-a stream of malformed proposals requiring manual rejection.
-
-Pattern rules stay distinct: Ikigai first-impulse candle-colour constraints
-must be resolved in its owning strategy specification and enforced at its
-first-leg construction stage, not copied to wedges, triangles or L-shapes.
-A formation's historical market completion and a Robot trade's proven fill/
-exit lifecycle are separate states; do not infer execution from a chart.
-
-## Scanner visual acceptance: full passes only — owner rule (2026-09-23)
-
-**Permanent, universal rule for ALL new Scanner patterns and ALL future
-Scanner corrections** (detector, geometry, candidate selection, signal/chart
-presentation and other scan-pass behavior): after implementation and focused
-code verification, perform **one complete real Scanner pass across the entire
-available eligible symbol universe** for the owner's visual/operational
-acceptance. This applies even when a small offline sample or focused tests
-already passed. Do not wait for the owner to reassert this rule per pattern,
-bugfix or session. For the currently integrated L-shaped observer, enable its
-opt-in observation/preview for the pass.
-
-Use the normal Scanner flow, configured delivery, and actual production-path
-chart generation; collect the resulting pattern charts and per-symbol
-candidate/skip/error summary for owner review. **No truncated/sampled runs,
-`MAX_SYMBOLS` caps, two-candidate demos, synthetic/offline-only replays, or
-unilaterally notification-suppressed runs in place of full acceptance.**
-Do not silently disable existing Telegram delivery to make the pass "quiet".
-If no candidate is found, report zero honestly; do not invent one or claim
-visual acceptance. If market-data access or safe execution blocks the full
-pass, report the specific blocker and leave acceptance open, rather than
-substituting a short run.
-
-A full Scanner pass is **not** blanket authorization to enable Robot/LIVE
-trading, place orders, change risk/strategy, deploy, change credentials or
-override protective controls. Resolve the actual launcher dependency and
-side-effect chain before running; preserve existing approval and fail-closed
-boundaries. This rule governs **real Scanner acceptance**, not the scope of
-unit/regression suites: keep focused development tests proportionate, and
-avoid redundant full passes when neither implementation nor acceptance
-evidence changed.
-
-### Observable acceptance and incremental evidence — OWNER RULE 2026-10-14 (#504)
-
-Results before infrastructure: after minimal focused/Gold checks, accept new features through the real observable full Scanner pass (new patterns observation-only), not opaque offline studies. Progress (symbols done/total, TF, found, sent, errors) and evidence (OHLC, as-of time, geometry, stage, delivery) are flushed per step, never held only in RAM or buffered to the end (HORN-3 antipattern). Keep overlapping geometries (Wedge vs Horn) for owner comparison. Runtime start stays owner-only. Full text: GitHub issue #504.
-
-For routine work, start from the intended outcome. Do not require the user to provide recovery boilerplate, file lists, skills, Git commands, safety checklists, or test lists that the repository can infer.
-
-Recovery is staged and stops as soon as the task is safe to execute:
-
-1. **Local reality** — branch/HEAD/status, requested outcome, relevant dirty scope.
-2. **Task authority** — active mission pointer in `DOCUMENTS/PROJECT_STATE.md` or the applicable Task/Spec/ChangeRequest.
-3. **Scoped authority** — only owning sections required by the affected paths and risk.
-4. **Deep recovery** — `PROJECT_STATE.md`, `PROJECT_TREE.md`, `PROJECT_RULES.md`, `ARCHITECTURE.md`, and `ASSISTANT_PROTOCOL.md` only for unknown scope, authority conflict, severe interruption, or architecture-wide work.
-
-Routine scoped work must not run full Project Sync, generate a ContextDump, or load the deep-recovery set merely to restore context. Reuse fresh authority already loaded.
-
-**Operational requests:** For start/stop/restart, enable/configure, deploy, or synchronize requests, resolve the actual entrypoint and invoked dependency/side-effect chain from repository sources before asking the user to inspect files or run commands. Follow `DOCUMENTS/ASSISTANT_PROTOCOL.md` §2.2.3; request only genuinely host-local evidence that the connector cannot provide. A launcher name alone never proves which services it starts. This is a task-triggered check, not another routine recovery stage.
-
-## Repository edits
-
-For a local/Codex edit, use the protected task facade:
-
-```text
-python -m tools.dev.task start --intent "SHORT INTENT" --path EXACT_PATH
-...minimal implementation...
-python -m tools.dev.task finish --task TASK_ID
-```
-
-Repeat `--path` only for paths genuinely in scope. Read-only work needs no transaction. New paths mid-task require a revised protected transaction; do not widen scope silently.
-
-`task start` owns sync preflight, compact task-context generation, the routine scoped LegacyWarning gate, and protected transaction setup. Do not run a second `codex_workflow lightweight` command after a successful `task start`, and do not repeat successful fetch/status/context checks without new cause. `task finish` owns final exact-scope verification and the PASS receipt; do not duplicate it with a standalone final verifier unless evidence changed or an independent check is required.
-
-For development feedback only:
-
-```text
-python -m tools.dev.verify --focused --path EXACT_PATH
-```
-
-Use additional tests/builds only when the changed behavior or applicable contract requires them.
-
-## Project Sync / governance escalation
-
-Full Project Sync is an escalation mechanism, not a routine task step.
-
-The standalone `tools.project_sync.governance.codex_workflow lightweight` command remains available for read-only diagnosis or compatibility, but routine edit tasks receive the same scoped LegacyWarning enforcement from `task start` and must not run both gates.
-
-Use the durable governance path only when its distinct value is needed:
-
-- `durable CHANGE_REQUEST` for an approved durable/multi-session change;
-- ContextDump generation only for multi-session, context-heavy, recovery-package, or explicit requests.
-
-`PASS`/`ADVISORY` may continue; `STALE`/`FAIL`/`BLOCKING` stop. Never add recovery, worktrees, branches, full regression, ContextDump, or Project Sync “just in case”.
-
-## Communication bootstrap
-
-Before the first project-specific user action in a session, load the relevant communication/user-action rules from `DOCUMENTS/ASSISTANT_PROTOCOL.md`. Reload only changed/uncertain sections.
-
-If user action is objectively required, follow the protocol’s exact `Сейчас сделай:` and copy-ready rules. Do not ask the user to run read-only repository inspection that an available repository connector can perform. Never use the owner as a human search/filter/parser for diagnostics: if decisive evidence is host-local, give one bounded ready command or delegated prompt that collects, searches, filters and formats it automatically; manual log/console/file hunting is last-resort and opt-in only.
-
-## Active Scanner geometry course
-
-For any Wedge/Triangle or L-shaped formation geometry task, open the **short current index** `DOCUMENTS/SCANNER_GEOMETRY_CURRENT_COURSE.md` first. Its `Universal wedge anchor rule` is mandatory for wedges only. The active L-shaped formation scope and next step are recorded separately in the same index; follow scoped links only for evidence the task actually needs. It names implemented vs pending behavior and historical vs active decisions. Do not load lengthy past research, run Project Sync or repeat closed diagnostics by default.
-
-## Authority routing
-
-Use the narrowest owner that answers the current question:
-
-- current local filesystem/Git — actual checkout/runtime state;
-- `DOCUMENTS/PROJECT_STATE.md` — current mission, phase, priority, next action;
-- active Task/Spec/ChangeRequest — authorized scope;
-- `DOCUMENTS/PROJECT_CONTRACTS.md` / `PROJECT_RULES.md` — normative contracts/rules;
-- `DOCUMENTS/ARCHITECTURE.md` / `PROJECT_TREE.md` — architecture and canonical path roles;
-- `DOCUMENTS/ASSISTANT_PROTOCOL.md` — assistant communication/execution behavior;
-- `DOCUMENTS/GITHUB_FIRST_WORKFLOW.md` — GitHub publication behavior;
-- `DOCUMENTS/EXTERNAL_REFERENCE_REUSE_POLICY.md` — external-reference reuse when external examples materially inform a feature.
-
-Generated ContextDumps, reports, snapshots, caches, chat history, and memory are derived context, not authority.
-
-## Skills
-
-No procedural skill is required for ordinary work. Load a skill only for its distinct procedure:
-
-- unknown/non-trivial defect → `.agents/skills/systematic-debugging/SKILL.md`;
-- requested/material high-risk change review → `.agents/skills/change-review/SKILL.md`;
-- trading strategy observation/hypothesis capture → `.agents/skills/strategy-hypothesis-capture/SKILL.md`.
-
-Do not eagerly load multiple skills. Handoff/workflow-improvement references are consulted only when their specific trigger applies.
-
-## Trading / durable scope
-
-Small routine changes use the lightweight task path. Substantial, risky, architectural, or multi-session work requires the applicable approved durable ChangeRequest under `DOCUMENTS/CHANGE_REQUESTS/`.
-
-For Trading Workspace, PAPER trading, or terminal behavior, route through the active ChangeRequest and `DOCUMENTS/TRADING_WORKSPACE_MASTER_ROADMAP.md` when those records own the affected behavior. Financial/LIVE/risk decisions never become authorized merely because a task or verification gate passes.
-
-## Change safety
-
-Treat unrelated pre-existing dirty/untracked work as user-owned. Never overwrite, stage, restore, reset, clean, move, delete, discard, commit, or push it without explicit authority. Keep changes minimal, scoped, reversible, and contract-compatible.
-
-Do not create speculative infrastructure or refactor adjacent code “while here”. At equal safety, prefer fewer files, commands, worktrees, branches, PRs, tests, and user turns.
-
-## Verification and publication
-
-Use the minimum evidence that proves the claim. Critical deterministic trading behavior requires focused regression evidence; frontend source changes require the production build before browser/phone acceptance; real UI/touch/live claims require real-environment acceptance.
-
-For GitHub origins, `python -m tools.dev.checkpoint --message "..."` is **user-run validation only**. It validates the current PASS receipt and must not stage, commit, or push. Publication belongs to the GitHub branch/PR flow in `DOCUMENTS/GITHUB_FIRST_WORKFLOW.md`; after merge, local checkouts synchronize from GitHub.
-
-For non-GitHub/local test repositories, legacy checkpoint publication semantics may apply.
-
-## Workflow proportionality
-
-One logical change should normally remain one branch/PR and one usable worktree. Continue small review fixes in the same integration surface. Add isolation, a new task/branch/worktree/PR, broad recovery, or full regression only for a concrete dependency, risk, conflict, approval boundary, or demonstrated inability of the current workflow to prove the delta safely.
-
-Git owns detailed implementation history. Update authoritative documentation only when the state/contract/decision it owns actually changes.
+1. Name the owner's requested result and its observable acceptance criterion.
+2. Inspect current branch/HEAD, relevant dirty files and the exact affected path.
+3. Reuse existing worktree, proven diagnosis, benchmark, tests and PR before
+   proposing new scaffolding or rediscovering past work.
+4. Read **only the relevant sections** of the full guide and canonical specs.
+   Use heading/grep/range lookup rather than copying whole documents into context.
+5. Respect the current user instruction over stale queue items and historical
+   milestones; identify actual runtime state from current evidence, never memory.
+6. One logical change → one scoped task/worktree/PR; stop when verified.
+
+## 2. Safety and ownership — always applicable
+
+- **PAPER / LIVE separation is mandatory.** Never enable LIVE or issue real
+  exchange mutations without explicit, task-specific owner authorization.
+- Runtime start/stop, PAPER_AUTO enablement, emergency operations and merge
+  require applicable owner approval and the host's own permissions. An older
+  owner-only rule can be overridden only by an explicit new instruction; neither
+  is a bypass of host permissions or fail-closed risk gates.
+- Preserve STOP/TAKE, protection, reconciliation, data continuity, capital
+  limits, daily loss safeguards, DB durability and SQLite consistency.
+- Do not infer a safe position/flat state from a projection alone. Prove actual
+  orders, fills, positions, obligations and late owner commands before shutdown.
+- Do not kill a blocking process, overwrite a database, reset a worktree or
+  remove user-owned files merely to finish a task. Fail safely with evidence.
+- No bulk staging (`git add .` / `git add -A`), destructive reset/clean, forced
+  push or unrelated edits; preserve secrets and never print local tokens.
+- Full end-to-end trading acceptance means real PAPER lifecycle evidence,
+  including fill, active protection, terminal exit and PnL—not just tests/READY.
+- Safety and action details: see relevant headings in
+  `DOCUMENTS/AGENT_GUIDE_FULL.md` and applicable strategy/runtime spec.
+
+## 3. Avoid expensive context and testing
+
+- Do **not** read `DOCUMENTS/PROJECT_STATE.md` (6347+ lines) from beginning to
+  end for routine tasks. Target sections only when current-state authority is
+  needed; confirm dynamic facts via Git, logs or local state.
+- `CLAUDE.md` is the separate short Claude Code bridge. Do not concatenate
+  `CLAUDE.md`, `AGENTS.md`, full guide, project state, backlogs and specs by
+  default. Follow explicit dependencies, scoped to changed paths.
+- Do not run full Project Sync, ContextDump, broad sweeps, extra worktrees,
+  duplicate benchmarks, blanket audits or full test suites without a reason.
+- Use existing focused tests; do not repeat passing evidence unchanged.
+- One bounded timeout; after expiry, diagnose the specific blocking step.
+  No escalating wait ladder, endless polling or duplicate launches.
+- Never infer cause merely from correlation. Reproduce with cheapest safe
+  discriminating test; patch only a supported cause. No modifying safety limits,
+  latency thresholds, queues or durability settings to hide a performance defect.
+- Optimize owner's end-to-end time: **Outcome → Reuse → Eliminate → Fastest safe
+  path → Safety → Stop**. This is a quick self-check, not a new planning workflow.
+
+## 4. Task harness and GitHub
+
+- For scoped repository edits use the existing protected task harness documented
+  in `DOCUMENTS/AGENT_GUIDE_FULL.md`, section `Repository edits`:
+  `python -m tools.dev.task start` and `finish` with the real path scope.
+- `task start` already performs the required scoped preflight; do not
+  duplicate it with the legacy lightweight workflow. `task finish` supplies
+  completion proof; avoid redundant final verification.
+- If harness fails, attempt at most one narrowly evidenced repair, within
+  authorization; never turn it into an infrastructure side quest.
+- Use GitHub-first branch/PR workflow from
+  `DOCUMENTS/GITHUB_FIRST_WORKFLOW.md`; no automatic merge.
+- If local `gh` is unavailable, push the prepared branch and report it; do
+  not retrieve secrets or invent workarounds. The GitHub connector may create
+  the PR separately.
+- Update canonical documentation only when a contract, state or decision
+  materially changes; avoid rewriting unrelated historical documents.
+
+## 5. Routes into exact project authority
+
+- Current user task + branch/HEAD govern immediate priorities. For dynamic
+  mission consult **targeted** `DOCUMENTS/QUEST_STATE.md` and the top relevant
+  `DOCUMENTS/BACKLOG.md` section, not a deep recovery.
+- Wedge / triangle / L-shape geometry: first read the relevant heading of
+  `DOCUMENTS/SCANNER_GEOMETRY_CURRENT_COURSE.md`, then linked owning spec.
+- Ikigai Box admission and protection: scoped
+  `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md` and runtime code/tests.
+- Telegram cards / controls: relevant `notification.py`, delivery and review
+  modules, UX contract headings of the full guide.
+- Windows launcher / runtime safety: applicable owner-launch and ownership
+  headings in `DOCUMENTS/AGENT_GUIDE_FULL.md`.
+- Full Scanner visual acceptance, 5m→1m order, Telegram signal delivery and
+  pattern gates: relevant dedicated sections of the full guide.
+- Communication, requested owner actions and evidence reporting:
+  task-specific sections of `DOCUMENTS/ASSISTANT_PROTOCOL.md`.
+- Historical decisions, game rewards and older priority notes: consult only
+  when the task changes or needs those records; do not load for a routine bug.
+
+## 6. Existing skills — load selectively
+
+- Non-trivial defect, unknown cause:
+  `.agents/skills/systematic-debugging/SKILL.md`.
+- Material/high-risk change review:
+  `.agents/skills/change-review/SKILL.md`.
+- Research-only trading hypothesis capture:
+  `.agents/skills/strategy-hypothesis-capture/SKILL.md`.
+- Ordinary simple fixes require no skill. Do not eagerly load all three.
+- The preserved full guide may point to other procedures; open only when the
+  current task meets their conditions.
+
+## 7. Interaction and reporting
+
+- Speak Russian for project interactions; retain lightweight quest naming
+  where relevant, without allowing presentation rules to delay technical work.
+- For owner action provide one clear, copy-ready `Сейчас сделай:` instruction.
+- Report actual PASS/BLOCKED, tests, diff, commit/PR, and what remains
+  unverified. Never claim CI, runtime acceptance or merged code without proof.
+- If work is blocked by lack of authority, disclose the exact boundary; do not
+  retry through an alternative token, command or process.
+- Prefer a single concise report after one bounded step over streams of
+  unchanged “still waiting” messages.
+
+## 8. Scope compatibility
+
+The original full guide was moved, **not deleted**. For any rule not included
+in this lean entry, the relevant full-guide section remains binding when its
+trigger applies. This router does not override specific safety, acceptance,
+owner-action, publishing or protected-task contracts. If there is ambiguity,
+read only the pertinent original section and resolve it before taking action.
