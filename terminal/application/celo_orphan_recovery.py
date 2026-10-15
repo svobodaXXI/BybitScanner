@@ -6,6 +6,7 @@ from terminal.application.paper_orphan_market_commands import (
 )
 from terminal.domain.models import CommandId
 from terminal.domain.states import CommandState
+from terminal.persistence.sqlite_store import SchemaError
 
 # Exact identities and original normalized request evidence from the incident.
 ALLOWED_ORPHAN_COMMANDS = {
@@ -27,6 +28,35 @@ HISTORY = ((None, CommandState.ADMITTED, "admitted before exchange submission"),
 def _require(condition, reason):
     if not condition:
         raise OrphanEvidenceError(reason)
+
+
+def _prove_inert_box_plan(store, row):
+    """Exclude only an intact immutable plan with no execution handoff/ownership."""
+    _require(row['status'] == 'BOX_PLAN_ONLY' and row['approved_at_ms'] is None
+             and row['robot_state_json'] is None and row['state_revision'] == 0,
+             'active/uncertain obligation: robot_candidates')
+    try:
+        plan = store.get_robot_candidate(row['candidate_id'])
+    except (SchemaError, ValueError, TypeError) as exc:
+        raise OrphanEvidenceError('invalid non-executable Box plan') from exc
+    _require(plan is not None and plan.trading_account_id.value == 'paper'
+             and plan.symbol.value == 'CELOUSDT' and plan.status == 'BOX_PLAN_ONLY',
+             'Box plan identity mismatch')
+    # get_robot_candidate validates canonical hash, plan identity and both
+    # execution_authorized flags against the existing persistence contract.
+    source = plan.candidate_id
+    handoff = 'box-robot-' + source.removeprefix('box-plan-')
+    c = store._connection
+    for table in ('box_attempt_ownership', 'box_order_ownership', 'robot_trades'):
+        _require(c.execute(f'SELECT 1 FROM {table} WHERE candidate_id IN (?,?) LIMIT 1',
+                           (source, handoff)).fetchone() is None, 'Box plan has ownership/trade: ' + table)
+    # Any durable reference is ambiguous here, even a closed or cross-account
+    # handoff. Do not infer that its execution obligations are settled.
+    _require(c.execute("""SELECT 1 FROM robot_candidates WHERE candidate_id<>? AND
+                (candidate_id=? OR instr(signal_snapshot_json,?)>0
+                 OR instr(COALESCE(robot_state_json,''),?)>0) LIMIT 1""",
+                       (source, handoff, source, source)).fetchone() is None,
+             'Box plan has linked execution candidate')
 
 
 def _prove_flat(store):
@@ -56,11 +86,13 @@ def _prove_flat(store):
     for row in c.execute("SELECT command_id,current_state FROM trading_commands WHERE trading_account_id=? AND symbol=?", scope):
         _require(row['command_id'] in ALLOWED_ORPHAN_COMMANDS or row['current_state'] in terminal,
                  "another unfinished command")
+    for row in c.execute("SELECT * FROM robot_candidates WHERE trading_account_id=? AND symbol=? "
+                         "AND status NOT IN ('CLOSED','EXPIRED','INVALIDATED')", scope):
+        _prove_inert_box_plan(store, row)
     guards = (
         ("paper_limit_orders", "status NOT IN ('filled','cancelled')"),
         ("robot_trades", "exit_time_ms IS NULL"),
         ("paper_protection_obligations", "status <> 'RESOLVED'"),
-        ("robot_candidates", "status NOT IN ('CLOSED','EXPIRED','INVALIDATED')"),
         ("protection_intents", "status <> 'no_protection_configured'"),
         ("protection_projections", "status <> 'no_protection_configured'"),
         ("reconciliation_checkpoints", "completed_at_ms IS NULL"),

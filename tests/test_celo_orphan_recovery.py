@@ -135,3 +135,64 @@ class CeloRecoveryTests(unittest.TestCase):
         for _ in range(2):
             self.assertEqual(tool.main(args+['--apply'], probe_listening=lambda _:False, out=lambda _:None, clock_ms=lambda:NOW), tool.EXIT_OK)
         self.assertTrue(all(self.s.get_command(CommandId(cid)).current_state is CommandState.FAILED for cid in IDS))
+
+
+    def box_plan(self):
+        from tests.test_box_plan_persistence import snapshot
+        data = snapshot()
+        data['identity']['symbol'] = 'CELOUSDT'
+        return self.s.save_box_plan_only(snapshot=data, created_at_ms=3000)[0]
+
+    def test_inert_box_plan_is_preserved_and_recovery_passes(self):
+        plan = self.box_plan()
+        before = self.c.execute('SELECT * FROM robot_candidates').fetchall()
+        self.assertEqual([r.current_state for r in self.apply()], [CommandState.FAILED]*3)
+        self.assertEqual(before, self.c.execute('SELECT * FROM robot_candidates').fetchall())
+        self.assertEqual(self.s.get_robot_candidate(plan.candidate_id), plan)
+
+    def test_box_plan_with_handoff_even_closed_refuses(self):
+        from terminal.domain.models import Symbol
+        plan = self.box_plan()
+        child, _ = self.s.handoff_box_plan_to_robot(plan.candidate_id, symbol=Symbol('CELOUSDT'),
+            expected_snapshot_sha256=plan.snapshot_sha256, approved_at_ms=4000)
+        self.refused()
+        self.c.execute("UPDATE robot_candidates SET status='CLOSED' WHERE candidate_id=?", (child.candidate_id,))
+        self.refused()
+
+    def test_box_plan_ownership_refuses(self):
+        plan = self.box_plan()
+        self.c.execute("INSERT INTO box_attempt_ownership VALUES (?,'paper','CELOUSDT',1,2,200,2,?)",
+                       (plan.candidate_id, '0'*64))
+        self.refused()
+
+    def test_corrupt_or_authorized_plan_refuses(self):
+        import json
+        plan = self.box_plan()
+        original = dict(self.c.execute('SELECT * FROM robot_candidates WHERE candidate_id=?', (plan.candidate_id,)).fetchone())
+        for field in ('hash', 'authorization', 'nested_authorization', 'identity', 'json'):
+            with self.subTest(field=field):
+                row = dict(original)
+                data = json.loads(row['signal_snapshot_json'])
+                if field == 'hash': row['snapshot_sha256'] = '0'*64
+                elif field == 'authorization': data['execution_authorized'] = True
+                elif field == 'nested_authorization': data['plan']['execution_authorized'] = True
+                elif field == 'identity': row['candidate_id'] = 'box-plan-wrong'
+                else: row['signal_snapshot_json'] = '{'
+                if field in ('authorization', 'nested_authorization'):
+                    import hashlib
+                    row['signal_snapshot_json'] = json.dumps(data, sort_keys=True, separators=(',',':'))
+                    row['snapshot_sha256'] = hashlib.sha256(row['signal_snapshot_json'].encode()).hexdigest()
+                # Corrupt persisted input in a disposable fixture; never relax schema guards.
+                self.c.execute('DELETE FROM robot_candidates')
+                self.c.execute('INSERT INTO robot_candidates VALUES (?,?,?,?,?,?,?,?,?,?)', tuple(row.values()))
+                self.refused()
+
+    def test_unknown_or_approved_candidate_fields_refuse(self):
+        from terminal.application.celo_orphan_recovery import _prove_inert_box_plan
+        plan = self.box_plan()
+        row = dict(self.c.execute('SELECT * FROM robot_candidates').fetchone())
+        for field, value in (('status','UNKNOWN'), ('status','APPROVED'),
+                             ('approved_at_ms',4000), ('robot_state_json','{}'), ('state_revision',1)):
+            with self.subTest(field=field, value=value):
+                with self.assertRaises(OrphanEvidenceError):
+                    _prove_inert_box_plan(self.s, {**row, field:value})
