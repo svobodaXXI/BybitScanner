@@ -1,3 +1,21 @@
+## OWNER DECISION — 2026-10-16 — Telegram bot token rotation deferred
+
+Owner explicitly decided to defer Telegram bot token rotation until preparation for LIVE trading. **Do not raise this topic again unprompted during PAPER development**, do not create a separate rotation task or repeatedly recommend rotation. Resume discussion only if the owner asks, LIVE preparation begins, or concrete new evidence indicates active misuse/compromise that materially changes the risk. This is a recorded owner risk decision, not a claim that the exposed token is secure. Never copy or publish the token or unredacted console dumps; preserve existing access controls. LIVE remains forbidden without separate explicit owner authorization.
+
+---
+
+## ACTIVE OWNER PRIORITY — 2026-10-15 — REAL AUTONOMOUS PAPER TRADE
+
+Owner directive: **every next development step must lead measurably toward a real automatically executed PAPER trade, rather than another research cycle**. This overrides older HORN/triangle, general tooling and speculative research queues for task selection, without deleting them.
+
+Confirmed repository checkpoint: PROCESS-ISOLATION-1 PR #526 merged into `stable/adfb50b-forward` as `4d97e56cd993e3240e4d93ae55bd053d2980d3db`; 25 focused tests and task finish PASS per implementer. Offline callback median under synthetic Scanner-like contention: 220.5ms in-process vs 21.0ms separated. **Real Windows full-pass and protected-position load acceptance are not yet proven**. Runtime observed running on old code at 23:12: Scanner 321/798, Robot RUNNING, PAPER_AUTO SHADOW, zero open PAPER positions. These are time-bound observations, not live-state authority.
+
+Next sequence: (1) current read-only safe-stop preflight with orders/fills/positions/protection/reconciliation proof, preserving completed Scanner artifacts; (2) owner-authorized canonical stop and fast-forward deployment to merged stable; (3) owner-authorized restart, verify separate Scanner PID, single PAPER DB owner, Telegram path, ingress and protection; (4) explicit owner authorization for PAPER_AUTO **only if mandatory safety gates pass**; (5) real PAPER automatic entry → fill → effective STOP/TAKE → closed exit → fee-aware net PnL with auditable evidence. No promise of profitable PnL. Do not claim acceptance from SHADOW/READY/tests alone.
+
+Do not start unrelated development, geometry, generalized tracing or repeat already passed benchmarks. A proven mandatory protection blocker permits a minimal targeted repair, then immediately resume trading acceptance. LIVE never enabled without separate explicit authorization. Runtime stop/start, PAPER_AUTO switch and merge each require their own applicable owner approval; nothing here authorizes them implicitly.
+
+---
+
 ## Активный квест — 2026-10-15 — PROTECTION-2
 
 База: stable `9ff0385`, включая merged #517/#518/#519. В существующем worktree
