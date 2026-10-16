@@ -204,6 +204,70 @@ class PhysicalCapitalStillBlocksTests(_Case):
         self.assertIsNone(self.db.store.get_robot_candidate("real-blocked"))
 
 
+class FreshFactsReadReuseTests(_Case):
+    """FIX-1: reuse only rows read inside the current admission transaction."""
+
+    def test_fresh_facts_equal_full_collector_including_ambiguous_commands(self):
+        self.shadow_allow(2)
+        self.physical_ideas(2)
+        self.manual_limit()
+        self.manual_position()
+        self.enable_paper_auto()
+        _wedge(self.db.candidates, "fresh", symbol="FREEUSDT")
+        store = self.db.store
+        for ambiguous in (False, True):
+            with self.subTest(ambiguous=ambiguous):
+                if ambiguous:
+                    store._connection.execute(
+                        "INSERT INTO trading_commands VALUES ('cmd-stuck','link-stuck','paper',"
+                        "'linear','STUCKUSDT',0,'create_market','Buy','250',NULL,'1',"
+                        "'terminal_manual','manual','submitting',2,NULL,1,2)")
+                with store.autopilot_decision_transaction():
+                    candidate = robot_autopilot_shadow._resolve_candidate(
+                        store, ACCOUNT, source=SOURCE_SCANNER, candidate_ref="fresh",
+                        candidate_store_dir=self.db.candidates)
+                    decisions = store.load_robot_auto_decisions(ACCOUNT)
+                    kwargs = dict(mode=PAPER_AUTO_MODE, candidate=candidate, decisions=decisions,
+                                  protection_healthy=_healthy, candidate_fresh=_fresh,
+                                  now_ms=T_ARRIVE)
+                    with mock.patch.object(
+                        robot_autopilot_shadow, "collect_portfolio_facts",
+                        side_effect=lambda s, a, **_: collect_portfolio_facts(s, a),
+                    ):
+                        before = robot_autopilot_shadow._fresh_facts(store, ACCOUNT, **kwargs)
+                    with mock.patch.object(store, "load_robot_auto_decisions",
+                                           side_effect=AssertionError("repeated decisions read")), \
+                         mock.patch.object(store, "load_robot_candidates",
+                                           side_effect=AssertionError("full candidate read")), \
+                         mock.patch.object(store, "load_robot_candidates_for_portfolio",
+                                           wraps=store.load_robot_candidates_for_portfolio) as views:
+                        after = robot_autopilot_shadow._fresh_facts(store, ACCOUNT, **kwargs)
+                    views.assert_called_once_with(ACCOUNT, plan_only_status="BOX_PLAN_ONLY")
+                    self.assertEqual(after, before)
+                    self.assertEqual(after.portfolio_facts["audit_sequence"], len(decisions) + 1)
+                    self.assertEqual(after.portfolio_facts["available"], not ambiguous)
+                    if ambiguous:
+                        result = robot_autopilot_shadow.evaluate_auto_admission(after)
+                        self.assertEqual((result.outcome, result.reason_code),
+                                         (OUTCOME_WAIT, REASON_PORTFOLIO_DATA_UNAVAILABLE))
+
+    def test_arrival_loads_decisions_once_and_never_loads_full_candidates(self):
+        self.shadow_allow(2)
+        self.enable_paper_auto()
+        store = self.db.store
+        with mock.patch.object(store, "load_robot_auto_decisions",
+                               wraps=store.load_robot_auto_decisions) as decisions, \
+             mock.patch.object(store, "load_robot_candidates",
+                               side_effect=AssertionError("full candidate read")), \
+             mock.patch.object(store, "load_robot_candidates_for_portfolio",
+                               wraps=store.load_robot_candidates_for_portfolio) as views:
+            admitted = self.arrive("fresh", "FREEUSDT")
+        self.assertOutcome(admitted, OUTCOME_ALLOW, REASON_ELIGIBLE)
+        decisions.assert_called_once_with(ACCOUNT)
+        views.assert_called_once_with(ACCOUNT, plan_only_status="BOX_PLAN_ONLY")
+        self.assertEqual(self.facts_of(admitted)["audit_sequence"], 3)
+
+
 class ShadowBehaviorUnchangedTests(_Case):
     def test_shadow_still_counts_virtual_ro_and_hits_the_cap(self):
         self.shadow_allow(19)
@@ -259,9 +323,9 @@ class S3ConversionTests(_Case):
 
         real_collect = robot_autopilot_shadow.collect_portfolio_facts
 
-        def without_own(store, account):
+        def without_own(store, account, **kwargs):
             # A consistent collector answer in which the matching reservation is missing.
-            facts = real_collect(store, account)
+            facts = real_collect(store, account, **kwargs)
             kept = [row for row in facts["reservations"] if row["identity"] != "shadow:convert-lost"]
             facts.update(
                 reservations=kept,
