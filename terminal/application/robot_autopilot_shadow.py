@@ -210,7 +210,7 @@ def _box_plan_candidate(
         raise LookupError(f"Box plan source not found: {ref}")
     identity = source.signal_snapshot.get("identity") or {}
     if robot_candidates is None:
-        robot_candidates = store.load_robot_candidates(account)
+        robot_candidates = store.load_robot_candidates_for_box_source(account, source.candidate_id)
     linked = [
         item for item in robot_candidates
         if item.status != "BOX_PLAN_ONLY"

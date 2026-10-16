@@ -5108,6 +5108,26 @@ class SQLiteStore:
         )
         return tuple(_robot_candidate_from_row(row) for row in rows)
 
+    def load_robot_candidates_for_box_source(
+        self, trading_account_id: TradingAccountId, source_candidate_id: str,
+    ) -> tuple[RobotCandidateRecord, ...]:
+        """Exact non-plan lineage read for _box_plan_candidate, in full-read order.
+
+        Keep every linked status and symbol: terminal or cross-symbol rows still
+        affect invalidation/already-admitted/ownership. Only the matching records
+        are materialized, with the same snapshot integrity checks as a full read.
+        The caller holds the admission transaction; this is not a cached view.
+        """
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT * FROM robot_candidates
+               WHERE trading_account_id=? AND (status < ? OR status > ?)
+                 AND json_extract(signal_snapshot_json, '$.source_box_candidate_id')=?
+               ORDER BY approved_at_ms, candidate_id""",
+            (trading_account_id.value, "BOX_PLAN_ONLY", "BOX_PLAN_ONLY", source_candidate_id),
+        )
+        return tuple(_robot_candidate_from_row(row) for row in rows)
+
     def load_robot_candidates_by_status(
         self, trading_account_id: TradingAccountId, statuses: Iterable[str],
     ) -> tuple[RobotCandidateRecord, ...]:
