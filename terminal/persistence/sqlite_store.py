@@ -4608,6 +4608,46 @@ class SQLiteStore:
                 self._connection.execute("ROLLBACK")
             raise
 
+    def load_robot_auto_decisions_for_admission(
+        self, trading_account_id: TradingAccountId, *, candidate_ref: str,
+        source_identity: str, policy_version: str, business_date_msk: str,
+    ) -> tuple[RobotAutoDecisionRecord, ...]:
+        """PAPER_AUTO read set, inside the caller's admission transaction.
+
+        Unlike A6 heads, no first-arrival ordering or other ideas' latest rows are
+        needed. Keep the current idea's latest decision, every SHADOW ALLOW used
+        by the portfolio, and the latest informative same-day PAPER_AUTO latch.
+        A6 heads alone can lose a latch between an idea's first/latest rows.
+        Null/missing latches carry no information; malformed non-null values are
+        retained so _previous_latch still raises. Audit sequence uses COUNT(*).
+        """
+        self._assert_owner()
+        account = trading_account_id.value
+        rows = self._aggregated_rows(
+            "robot_auto_decisions",
+            """SELECT * FROM robot_auto_decisions WHERE decision_id IN (
+                   SELECT decision_id FROM (
+                       SELECT decision_id FROM robot_auto_decisions
+                       WHERE trading_account_id=? AND candidate_ref=?
+                         AND source_identity=? AND mode='PAPER_AUTO' AND policy_version=?
+                       ORDER BY evaluated_at_ms DESC, decision_id DESC LIMIT 1)
+                   UNION
+                   SELECT decision_id FROM robot_auto_decisions
+                   WHERE trading_account_id=? AND mode='SHADOW' AND outcome='ALLOW'
+                   UNION
+                   SELECT decision_id FROM (
+                       SELECT decision_id FROM robot_auto_decisions
+                       WHERE trading_account_id=? AND mode='PAPER_AUTO'
+                         AND json_type(facts_json, '$.daily_loss_gate')='object'
+                         AND json_extract(facts_json, '$.daily_loss_gate.business_date_msk')=?
+                         AND json_type(facts_json, '$.daily_loss_gate.latched') != 'null'
+                       ORDER BY evaluated_at_ms DESC, decision_id DESC LIMIT 1))""",
+            (account, candidate_ref, source_identity, policy_version,
+             account, account, business_date_msk),
+        )
+        rows.sort(key=lambda row: (row["evaluated_at_ms"], row["decision_id"]))
+        return tuple(_robot_auto_decision_from_row(row) for row in rows)
+
     def count_robot_auto_decisions(self, trading_account_id: TradingAccountId) -> int:
         self._assert_owner()
         return int(self._connection.execute(
