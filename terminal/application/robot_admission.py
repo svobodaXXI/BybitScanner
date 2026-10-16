@@ -97,8 +97,10 @@ def _admit_box_plan_candidate(
     context = store.robot_admission_transaction() if owns_store else nullcontext()
     try:
         with context:
-            candidates = store.load_robot_candidates(PAPER_ACCOUNT_ID)
-            sources = [item for item in candidates if item.candidate_id.startswith(source_prefix)]
+            # FIX-4: exact reads instead of the whole candidate table. The prefix read
+            # holds every id the handle can name (any status); the lineage read holds
+            # every non-plan row naming this source (any status, any symbol).
+            sources = store.load_robot_candidates_by_id_prefix(PAPER_ACCOUNT_ID, source_prefix)
             if len(sources) != 1:
                 raise RobotAdmissionRejected("Scanner candidate is not admissible")
             source = sources[0]
@@ -110,7 +112,8 @@ def _admit_box_plan_candidate(
                 raise RobotAdmissionRejected("Robot candidate immutable snapshot changed")
 
             linked = [
-                item for item in candidates
+                item for item in store.load_robot_candidates_for_box_source(
+                    PAPER_ACCOUNT_ID, source.candidate_id)
                 if item.status != "BOX_PLAN_ONLY"
                 and item.signal_snapshot.get("source_box_candidate_id") == source.candidate_id
             ]

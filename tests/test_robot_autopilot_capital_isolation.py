@@ -251,19 +251,21 @@ class FreshFactsReadReuseTests(_Case):
                         self.assertEqual((result.outcome, result.reason_code),
                                          (OUTCOME_WAIT, REASON_PORTFOLIO_DATA_UNAVAILABLE))
 
-    def test_arrival_loads_decisions_once_and_never_loads_full_candidates(self):
+    def test_arrival_loads_bounded_decisions_once_and_never_loads_full_candidates(self):
         self.shadow_allow(2)
         self.enable_paper_auto()
         store = self.db.store
         with mock.patch.object(store, "load_robot_auto_decisions",
-                               wraps=store.load_robot_auto_decisions) as decisions, \
+                               side_effect=AssertionError("full decision read")), \
+             mock.patch.object(store, "load_robot_auto_decisions_for_admission",
+                               wraps=store.load_robot_auto_decisions_for_admission) as decisions, \
              mock.patch.object(store, "load_robot_candidates",
                                side_effect=AssertionError("full candidate read")), \
              mock.patch.object(store, "load_robot_candidates_for_portfolio",
                                wraps=store.load_robot_candidates_for_portfolio) as views:
             admitted = self.arrive("fresh", "FREEUSDT")
         self.assertOutcome(admitted, OUTCOME_ALLOW, REASON_ELIGIBLE)
-        decisions.assert_called_once_with(ACCOUNT)
+        self.assertEqual(decisions.call_count, 1)
         views.assert_called_once_with(ACCOUNT, plan_only_status="BOX_PLAN_ONLY")
         self.assertEqual(self.facts_of(admitted)["audit_sequence"], 3)
 
