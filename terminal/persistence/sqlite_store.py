@@ -5128,6 +5128,30 @@ class SQLiteStore:
         )
         return tuple(_robot_candidate_from_row(row) for row in rows)
 
+    def load_robot_candidates_by_id_prefix(
+        self, trading_account_id: TradingAccountId, prefix: str,
+    ) -> tuple[RobotCandidateRecord, ...]:
+        """Every status of the account whose id starts with ``prefix``, in full-read order.
+
+        Exactly ``[r for r in load_robot_candidates(account) if r.candidate_id.startswith(prefix)]``:
+        BINARY ids order by code point, so ``[prefix, successor)`` is a primary-key range
+        holding the prefixed ids and nothing else. Only those rows are materialized,
+        with the same integrity checks as a full read. The unary ``+`` keeps the
+        planner on that range: the (account, status) index would visit every row.
+        """
+        self._assert_owner()
+        if not prefix or ord(prefix[-1]) >= 0x10FFFF:
+            raise ValueError("invalid Robot candidate id prefix")
+        successor = prefix[:-1] + chr(ord(prefix[-1]) + 1)
+        rows = self._connection.execute(
+            """SELECT * FROM robot_candidates
+               WHERE candidate_id >= ? AND candidate_id < ? AND +trading_account_id=?
+               ORDER BY approved_at_ms, candidate_id""",
+            (prefix, successor, trading_account_id.value),
+        )
+        return tuple(record for record in map(_robot_candidate_from_row, rows)
+                     if record.candidate_id.startswith(prefix))
+
     def load_robot_candidates_by_status(
         self, trading_account_id: TradingAccountId, statuses: Iterable[str],
     ) -> tuple[RobotCandidateRecord, ...]:
