@@ -426,7 +426,11 @@ def _fresh_facts(
     daily_loss_gate_enabled: bool = True,
     daily_marks: DailyMarkProvider | None = None,
 ) -> RobotAutoAdmissionFacts:
-    portfolio = (collect_portfolio_facts(store, account) if batch is None
+    portfolio = (collect_portfolio_facts(
+        store, account, auto_decisions=decisions,
+        robot_candidates=store.load_robot_candidates_for_portfolio(
+            account, plan_only_status="BOX_PLAN_ONLY"),
+    ) if batch is None
                  else dict(batch.portfolio()))  # the batch copy is never mutated here
     # S3 conversion first: it keeps its fail-closed "exactly one matching reservation" proof.
     portfolio = _without_own_shadow_reservation(portfolio, candidate, prior_shadow_allow)
