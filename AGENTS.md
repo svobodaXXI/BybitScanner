@@ -19,6 +19,38 @@ follow the scoped routing below. Never replace a safety check with an economy sh
    milestones; identify actual runtime state from current evidence, never memory.
 6. One logical change → one scoped task/worktree/PR; stop when verified.
 
+## 1A. Result-first transition gate — OWNER RULE 2026-10-17
+
+Apply this gate **before choosing every next task, delegated prompt, PR/review
+action or acceptance step**, including after CI PASS or a tool failure. It is
+an internal decision within the current work item, **not** a new audit, form,
+ticket or report. Detailed contract: `DOCUMENTS/ASSISTANT_PROTOCOL.md`,
+section `RESULT-FIRST NEXT-ACTION GATE`.
+
+1. **Outcome:** identify the next unproven observable milestone in the owner's
+   *current approved* goal. For autonomous PAPER this is
+   signal → admission → entry → fill → protected position → close → net PnL.
+   Code, PRs, receipts and CI are delivery evidence, not that outcome.
+2. **Evidence:** reuse already passing, still-applicable checks and existing
+   PR/worktree. Do not repackage proven work as a new preparatory quest.
+3. **Risk:** block only for a proven mandatory safety/acceptance failure or an
+   unresolved fact material to safe action. For the latter, request one minimal
+   decisive check, then stop if still unknown. Record known bounded nonblocking
+   risks without interrupting the outcome. An owner-accepted non-safety
+   limitation does not waive STOP/TAKE, continuity, reconciliation, fail-closed
+   or any mandatory gate.
+4. **Pull next:** select exactly one shortest safe dependent move: deliver,
+   satisfy a proven blocker, or ask for the missing owner authorization.
+   Keep one owner-priority critical path active; queue unrelated improvements.
+5. **Stop or advance:** after necessary proof, advance to the next owner-approved
+   milestone; do not respond with another generic review/audit/checklist.
+   Never infer authorization to merge, start Scanner/Robot or enable PAPER_AUTO.
+
+An unchanged passing CI is not a reason for more CI. An absent/failed harness
+receipt is reported truthfully and assessed against *actual* mandatory
+integration rules; neither silently waive a required gate nor manufacture
+extra process merely to produce a cosmetic PASS.
+
 ## 2. Safety and ownership — always applicable
 
 - **PAPER / LIVE separation is mandatory.** Never enable LIVE or issue real
