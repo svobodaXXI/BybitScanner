@@ -122,6 +122,14 @@ class DesktopStartupNoticeTests(unittest.TestCase):
                             dialog.call_count, 0 if outcome == runtime_intent.OUTCOME_READY else 1,
                         )
 
+    def test_desktop_main_routes_through_dialog_enabled_run(self):
+        with mock.patch.object(runtime_intent.RuntimeIntentBootstrap, "run",
+                               return_value=runtime_intent.EXIT_BLOCKED) as run:
+            self.assertEqual(
+                runtime_intent.main(["ALL"]), runtime_intent.EXIT_BLOCKED,
+            )
+            run.assert_called_once_with("ALL", desktop_notice=True)
+
     def test_programmatic_run_does_not_open_any_dialog(self):
         result = self._result(runtime_intent.OUTCOME_BLOCKED)
         with mock.patch.object(runtime_intent.RuntimeIntentBootstrap, "execute",
