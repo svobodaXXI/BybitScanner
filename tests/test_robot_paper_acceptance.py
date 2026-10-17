@@ -319,9 +319,9 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 ) / trade.entry_quantity
                 self.assertEqual(trade.average_entry, expected_vwap)
                 self.assertGreater(expected_vwap, Decimal("100"))
-                # The structural STOP is >2% away, so the existing fallback
+                # The structural STOP is >2% away, so the Wedge LONG 1.5% fallback
                 # proves protection was rebuilt from actual entry, not top ask.
-                self.assertEqual(trade.stop_price, expected_vwap * Decimal("0.98"))
+                self.assertEqual(trade.stop_price, expected_vwap * Decimal("0.985"))
                 self.assertEqual(trade.take_price, Decimal("118"))
                 self.assertEqual(protection_observations, [
                     ("_robot_create_stop", expected_vwap),

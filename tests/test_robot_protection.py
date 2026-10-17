@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from robot_protection import (
+    MAX_STOP_DISTANCE,
     PROTECTION_DEADLINE_MS,
     RECOVERY_CLOSED,
     RECOVERY_EMERGENCY_CLOSE,
@@ -23,6 +24,7 @@ from robot_protection import (
     submit_emergency_close,
     submit_initial_protection,
     tighten_stop,
+    WEDGE_LONG_FALLBACK_STOP_DISTANCE,
 )
 from robot_state_machine import DIRECTION_LONG, DIRECTION_SHORT
 
@@ -213,7 +215,7 @@ class RobotProtectionTests(unittest.TestCase):
                     confirmed_average_entry=Decimal(entry),
                 )
 
-    def test_long_structural_stop_one_tick_and_two_percent_fallback(self):
+    def test_long_structural_stop_one_tick_and_one_and_half_percent_fallback(self):
         near = structural_stop(
             DIRECTION_LONG,
             average_entry=Decimal("100"), structural_extreme=Decimal("99"),
@@ -225,7 +227,50 @@ class RobotProtectionTests(unittest.TestCase):
             tick_size=Decimal("0.1"),
         )
         self.assertEqual(near, Decimal("98.9"))
-        self.assertEqual(far, Decimal("98.00"))
+        self.assertEqual(far, Decimal("98.500"))
+
+    def test_long_fallback_threshold_stays_two_percent(self):
+        # Structural STOP between 1.5% and 2% is still used as-is; only a
+        # candidate beyond MAX_STOP_DISTANCE (2%) switches to the 1.5% fallback.
+        self.assertEqual(MAX_STOP_DISTANCE, Decimal("0.02"))
+        self.assertEqual(WEDGE_LONG_FALLBACK_STOP_DISTANCE, Decimal("0.015"))
+        at_two_percent = structural_stop(
+            DIRECTION_LONG,
+            average_entry=Decimal("100"), structural_extreme=Decimal("98.1"),
+            tick_size=Decimal("0.1"),
+        )
+        beyond_two_percent = structural_stop(
+            DIRECTION_LONG,
+            average_entry=Decimal("100"), structural_extreme=Decimal("98.0"),
+            tick_size=Decimal("0.1"),
+        )
+        self.assertEqual(at_two_percent, Decimal("98.0"))
+        self.assertEqual(beyond_two_percent, Decimal("98.500"))
+
+    def test_short_fallback_stays_two_percent_and_threshold(self):
+        at_two_percent = structural_stop(
+            DIRECTION_SHORT,
+            average_entry=Decimal("100"), structural_extreme=Decimal("101.9"),
+            tick_size=Decimal("0.1"),
+        )
+        beyond_two_percent = structural_stop(
+            DIRECTION_SHORT,
+            average_entry=Decimal("100"), structural_extreme=Decimal("102.0"),
+            tick_size=Decimal("0.1"),
+        )
+        self.assertEqual(at_two_percent, Decimal("102.0"))
+        self.assertEqual(beyond_two_percent, Decimal("102.00"))
+
+    def test_deepusdt_wrong_side_extreme_uses_one_and_half_percent_fallback(self):
+        # RM-STRUCT-1 control case: frozen counted lower-touch min 0.02107 is
+        # above the actual LIMIT fill, so the Wedge LONG fallback applies.
+        stop = structural_stop(
+            DIRECTION_LONG,
+            average_entry=Decimal("0.0209372"), structural_extreme=Decimal("0.02107"),
+            tick_size=Decimal("0.00001"),
+        )
+        self.assertEqual(stop, Decimal("0.0209372") * Decimal("0.985"))
+        self.assertLess(stop, Decimal("0.0209372"))
 
     def test_short_structural_stop_one_tick_and_two_percent_fallback(self):
         near = structural_stop(
@@ -382,7 +427,7 @@ class RobotProtectionTests(unittest.TestCase):
         )
         self.assertEqual(decision.action, RECOVERY_PROTECTED)
 
-    def test_long_structural_at_or_above_entry_falls_back_to_two_percent(self):
+    def test_long_structural_at_or_above_entry_falls_back_to_one_and_half_percent(self):
         # Post-BATUSDT-defect fix: a structural candidate on the wrong side of
         # (or equal to) the actual authoritative entry must never leave a
         # filled position with no computable STOP at all.
@@ -401,9 +446,9 @@ class RobotProtectionTests(unittest.TestCase):
             average_entry=Decimal("100"), structural_extreme=Decimal("0.05"),
             tick_size=Decimal("0.1"),
         )
-        self.assertEqual(at_entry, Decimal("98.00"))
-        self.assertEqual(above_entry, Decimal("98.00"))
-        self.assertEqual(non_positive, Decimal("98.00"))
+        self.assertEqual(at_entry, Decimal("98.500"))
+        self.assertEqual(above_entry, Decimal("98.500"))
+        self.assertEqual(non_positive, Decimal("98.500"))
         self.assertLess(above_entry, Decimal("100"))
 
     def test_short_structural_at_or_below_entry_falls_back_to_two_percent(self):

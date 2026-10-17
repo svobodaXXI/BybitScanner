@@ -104,8 +104,10 @@ def _evaluate(
 
 
 class RobotLateAdmissionTests(unittest.TestCase):
+    # The RR boundary uses a structural STOP exactly 2% away (98.1 - 1 tick),
+    # independent of the Wedge LONG fallback distance.
     def test_rr_exactly_one_point_five_is_viable(self):
-        decision = _evaluate()
+        decision = _evaluate(structural_extreme=Decimal("98.1"))
 
         self.assertEqual(decision.action, DECISION_MARKET_ENTRY)
         self.assertEqual(decision.projected_vwap, Decimal("100"))
@@ -115,10 +117,20 @@ class RobotLateAdmissionTests(unittest.TestCase):
         self.assertEqual(decision.rr, Decimal("1.5"))
 
     def test_rr_below_one_point_five_is_blocked(self):
-        decision = _evaluate(book=_book(asks=((Decimal("100.1"), 10),)))
+        decision = _evaluate(
+            book=_book(asks=((Decimal("100.1"), 10),)),
+            structural_extreme=Decimal("98.2"),
+        )
 
         self.assertEqual(decision.action, DECISION_SKIPPED_POOR_RR)
         self.assertLess(decision.rr, Decimal("1.5"))
+
+    def test_far_structural_extreme_uses_wedge_long_fallback(self):
+        decision = _evaluate()
+
+        self.assertEqual(decision.action, DECISION_MARKET_ENTRY)
+        self.assertEqual(decision.stop_price, Decimal("98.500"))
+        self.assertEqual(decision.rr, Decimal("2"))
 
     def test_expected_reward_exactly_one_percent_is_viable(self):
         decision = _evaluate(
