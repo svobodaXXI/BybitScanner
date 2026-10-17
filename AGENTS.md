@@ -13,8 +13,8 @@ historical task snapshots; normative safety and approval contracts still apply.
    and the immediate change/decision boundary.
 2. Use the matching routes below; read only the indicated section(s) and
    owning task-specific specification. Reuse already-current evidence.
-3. For each next action, use the **Result-First** decision section below.
-   This index grants no permission to merge, change trading state or run services.
+3. For each next action, follow the **Result-First** route in the table.
+   The referenced contracts retain all approval and safety boundaries.
 
 ## Always-applicable routing
 
