@@ -1,3 +1,29 @@
+## CURRENT OWNER GOAL — 2026-10-18 — RESULT-FIRST PROCESS CONSISTENCY
+
+Owner-directed task: systematically reconcile the BybitScanner development
+process with the merged Result-First next-action gate (PR #535).
+Target: remove **proven contradictory process routes**, not launch a new
+tooling framework, another architecture redesign or runtime experiment.
+
+Current corrective scope: legacy blanket Project Sync/full-document steps,
+ambiguous GitHub vs local authority, stale dated "current" task headings and
+unnecessary user-delivered source files. Preserve runtime, harness enforcement,
+mandatory safety and owner-only approvals. Scope changes use a reviewed PR,
+not a change to PAPER DB, trading strategy or CI gates.
+
+After this process task reaches its evidence/owner-review boundary, return
+to the owner's existing PAPER_AUTO mission and already-published stack
+#529 → #530 → MDC-DIAG-1 → #534. The owner accepted the **known non-safety
+latency limit of FIX-1**; this is not acceptance of unknown protection risk.
+No new runtime readiness, local host sync or PAPER acceptance is implied
+by PR/CI success. Do not re-open this process audit as another prerequisite
+unless new evidence proves a specific critical contradiction.
+
+Historical priorities below are records, not binding CURRENT orders.
+The latest owner command and `AGENTS.md` task routing control next work.
+
+---
+
 ## DEFERRED TOOLING QUEUE — 2026-10-15 — CODEX CONTEXT / PROTECTED TASK HARNESS
 
 Owner request: improve development throughput and conserve Codex five-hour
@@ -41,7 +67,7 @@ installation of extra Skills/plugins, runtime restarts and PAPER_AUTO are
 
 ---
 
-## CURRENT OWNER PRIORITY — 2026-10-14 — HORN-1 BROADENING FORMATION
+## HISTORICAL OWNER PRIORITY — 2026-10-14 — HORN-1 BROADENING FORMATION
 
 Owner set a new active quest: **Broadening Formation (Expanding Wedge),
 HORN-1 «Рупор»**. Design and acceptance:
@@ -64,7 +90,7 @@ risk change. Current stage and next slice: `QUEST_STATE.md` (TRI-WAVE-1).
 
 ---
 
-## CURRENT OWNER PRIORITY — 2026-10-09 — REPOSITORY ORDER / AUDIT
+## HISTORICAL OWNER PRIORITY — 2026-10-09 — REPOSITORY ORDER / AUDIT
 
 Owner explicitly reprioritized: **repository consistency and workflow audit first**; the first laptop PAPER launch is **deferred**, not cancelled, until the owner resumes it. This overrides the historical September `NOW` sections below for task selection only.
 
