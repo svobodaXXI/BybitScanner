@@ -170,6 +170,74 @@ def _json_or_none(response: HttpResponse):
         return None
 
 
+
+# Desktop errors must remain visible even if the shortcut's cmd window closes.
+# Presentation only: no retry, no runtime state mutation, and no LIVE access.
+_STARTUP_BLOCKER_TEXT = {
+    "PAPER_LIVE_UNSAFE": "Изоляция PAPER от LIVE не подтверждена.",
+    "SCANNER_ACCEPTANCE_NOT_READY": "Конфигурация полного прохода Scanner не готова.",
+    "ROBOT_PROTECTION_UNHEALTHY": "Защита Robot неисправна или не подтверждена.",
+    "ROBOT_STOPPED_RECONCILIATION_REQUIRED": "Robot остановлен, но требуется сверка.",
+    "ROBOT_RECONCILIATION_REQUIRED": "Сверка Robot ещё не завершена.",
+    "ROBOT_RECONCILIATION_FAILED": "Безопасная сверка Robot не удалась.",
+    "ROBOT_START_FAILED": "Штатный запуск Robot завершился ошибкой.",
+    "ROBOT_RESUME_FAILED": "Возобновление Robot завершилось ошибкой.",
+    "ROBOT_NOT_CONVERGED": "Robot не достиг запрошенного состояния.",
+    "ROBOT_STATE_UNKNOWN": "Состояние Robot не установлено.",
+    "SCANNER_STATE_UNKNOWN": "Состояние Scanner не установлено.",
+    "SCANNER_START_FAILED": "Запуск Scanner завершился ошибкой.",
+    "SCANNER_RESUME_FAILED": "Возобновление Scanner завершилось ошибкой.",
+    "SCANNER_NOT_RUNNING": "Scanner не перешёл в состояние RUNNING.",
+}
+
+
+def startup_issue_notice(result: BootstrapResult) -> str:
+    """Bounded user-readable explanation of the existing failure result."""
+    reason = "\n".join(
+        f"- {code}: {_STARTUP_BLOCKER_TEXT.get(code, 'Защитная проверка не пройдена.')}"
+        for code in result.blocked_by
+    )
+    if not reason:
+        reason = result.message.replace("\x00", "").strip()[:650] or "Причина неизвестна."
+
+    final = ", ".join(f"{key}={value}" for key, value in result.final.items()) or "неизвестно"
+    changed = ", ".join(result.changed) or "нет подтверждённых"
+    action = (
+        "Исход команды неизвестен. Не повторяйте запуск вслепую: "
+        "сначала проверьте состояние PAPER backend."
+        if result.outcome == OUTCOME_ERROR else
+        "Не обходите блокировку и не нажимайте «Запуск» повторно вслепую."
+    )
+    return (
+        "BYBITSCANNER — ЗАПУСК НЕ ПОДТВЕРЖДЁН\n\n"
+        f"Сценарий: {result.intent}\n"
+        f"Результат: {result.outcome}\n"
+        f"Причина:\n{reason}\n\n"
+        f"Подтверждённые переходы: {changed}\n"
+        f"Состояние компонентов: {final}\n\n"
+        "Внимание: PAPER backend и Telegram могли уже запуститься, "
+        "а Robot — частично изменить состояние. "
+        "Это окно ничего не останавливает и не перезапускает.\n\n"
+        f"{action}"
+    )
+
+
+def show_startup_issue_dialog(result: BootstrapResult) -> bool:
+    """Show one foreground/topmost native Windows dialog; never raise or retry."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+
+        # MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST.
+        return bool(ctypes.windll.user32.MessageBoxW(
+            None, startup_issue_notice(result),
+            "BybitScanner — запуск заблокирован", 0x10 | 0x10000 | 0x40000,
+        ))
+    except Exception:
+        return False
+
+
 class RuntimeIntentBootstrap:
     def __init__(
         self,
@@ -202,9 +270,13 @@ class RuntimeIntentBootstrap:
         port = self._env.get("BYBITSCANNER_TELEGRAM_MONITORING_PORT") or DEFAULT_TELEGRAM_PORT
         self._telegram_health = f"http://127.0.0.1:{port}/health"
 
-    def run(self, intent: str) -> int:
+    def run(self, intent: str, *, desktop_notice: bool = False) -> int:
         result = self.execute(intent)
         self._out(result.message)
+        if desktop_notice and not result.ok:
+            # Only the desktop entrypoint can create a modal warning window.
+            if not show_startup_issue_dialog(result):
+                self._out("WARNING: startup warning window unavailable; start not confirmed.")
         return result.exit_code
 
     def execute(self, intent: str) -> BootstrapResult:
@@ -344,7 +416,9 @@ def main(argv: list[str] | None = None) -> int:
     if len(args) > 1:
         print("usage: python -m tools.runtime_intent [ALL|SCANNER|ROBOT]", flush=True)
         return EXIT_USAGE
-    return RuntimeIntentBootstrap(require_telegram=True).run(args[0] if args else "ALL")
+    return RuntimeIntentBootstrap(require_telegram=True).run(
+        args[0] if args else "ALL", desktop_notice=True,
+    )
 
 
 if __name__ == "__main__":
