@@ -1842,7 +1842,8 @@ invariants:
 
 * TASK establishes objective, constraints and initial scope;
 * SPEC establishes approved behavior, scope, non-goals and acceptance;
-* CONTEXT derives task-scoped context from the current local checkout;
+* CONTEXT derives task-scoped evidence from the intended GitHub ref for remote work,
+  or the current local checkout for local implementation/runtime verification;
 * IMPLEMENT requires the applicable approval and valid context;
 * VERIFY evaluates approved acceptance and regression requirements;
 * RECORD preserves the scoped authoritative result in Git/PR for GitHub origins;
