@@ -53,7 +53,9 @@ from terminal.application.robot_autopilot import (
     evaluate_auto_admission,
     record_auto_decision,
 )
-from terminal.application.paper_daily_equity import MarkPrice, paper_daily_equity_facts_in_transaction
+from terminal.application.paper_daily_equity import (
+    MarkPrice, msk_day_start_ms, paper_daily_equity_facts_in_transaction,
+)
 from terminal.application.robot_portfolio import _source_terminal_identities, collect_portfolio_facts
 from terminal.domain.models import Category, PositionKey, PositionSide, Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import (
@@ -208,7 +210,7 @@ def _box_plan_candidate(
         raise LookupError(f"Box plan source not found: {ref}")
     identity = source.signal_snapshot.get("identity") or {}
     if robot_candidates is None:
-        robot_candidates = store.load_robot_candidates(account)
+        robot_candidates = store.load_robot_candidates_for_box_source(account, source.candidate_id)
     linked = [
         item for item in robot_candidates
         if item.status != "BOX_PLAN_ONLY"
@@ -423,6 +425,7 @@ def _fresh_facts(
     prior_shadow_allow: RobotAutoDecisionRecord | None = None,
     batch: _BatchSnapshot | None = None,
     now_ms: int | None = None,
+    decision_count: int | None = None,
     daily_loss_gate_enabled: bool = True,
     daily_marks: DailyMarkProvider | None = None,
 ) -> RobotAutoAdmissionFacts:
@@ -437,7 +440,8 @@ def _fresh_facts(
     if mode == PAPER_AUTO_MODE:
         portfolio = _physical_capital_only(portfolio)
     # A batch holds a reduced decision read set; its count is the real audit size.
-    portfolio["audit_sequence"] = (len(decisions) if batch is None else batch.decision_count) + 1
+    count = (len(decisions) if decision_count is None else decision_count)
+    portfolio["audit_sequence"] = (count if batch is None else batch.decision_count) + 1
     runtime = store.get_robot_runtime_state(account)
     try:
         healthy = None if protection_healthy is None else protection_healthy()
@@ -588,7 +592,10 @@ def admit_paper_auto_candidate(
             raise PersistenceError("SHADOW ALLOW immutable candidate identity changed")
 
         now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
-        decisions = store.load_robot_auto_decisions(account)
+        decisions = store.load_robot_auto_decisions_for_admission(
+            account, candidate_ref=candidate.ref, source_identity=candidate.source_identity,
+            policy_version=POLICY_VERSION, business_date_msk=msk_day_start_ms(now)[0])
+        decision_count = store.count_robot_auto_decisions(account)
         existing = _latest_decision(
             decisions, candidate.ref, candidate.source_identity, PAPER_AUTO_MODE,
         )
@@ -612,7 +619,8 @@ def admit_paper_auto_candidate(
                 store, account, mode=PAPER_AUTO_MODE, candidate=candidate,
                 decisions=decisions, protection_healthy=protection_healthy,
                 candidate_fresh=candidate_fresh, prior_shadow_allow=prior,
-                now_ms=now, daily_loss_gate_enabled=daily_loss_gate_enabled,
+                now_ms=now, decision_count=decision_count,
+                daily_loss_gate_enabled=daily_loss_gate_enabled,
                 daily_marks=daily_marks,
             )
             result = evaluate_auto_admission(facts)
@@ -693,7 +701,10 @@ def admit_arrived_auto_candidate(
             candidate_store_dir=candidate_store_dir,
         )
         now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
-        decisions = store.load_robot_auto_decisions(account)
+        decisions = store.load_robot_auto_decisions_for_admission(
+            account, candidate_ref=candidate.ref, source_identity=candidate.source_identity,
+            policy_version=POLICY_VERSION, business_date_msk=msk_day_start_ms(now)[0])
+        decision_count = store.count_robot_auto_decisions(account)
         existing = _latest_decision(
             decisions, candidate.ref, candidate.source_identity, PAPER_AUTO_MODE,
         )
@@ -714,7 +725,7 @@ def admit_arrived_auto_candidate(
         facts = _fresh_facts(
             store, account, mode=PAPER_AUTO_MODE, candidate=candidate,
             decisions=decisions, protection_healthy=protection_healthy,
-            candidate_fresh=candidate_fresh, now_ms=now,
+            candidate_fresh=candidate_fresh, now_ms=now, decision_count=decision_count,
             daily_loss_gate_enabled=daily_loss_gate_enabled, daily_marks=daily_marks,
         )
         result = evaluate_auto_admission(facts)
