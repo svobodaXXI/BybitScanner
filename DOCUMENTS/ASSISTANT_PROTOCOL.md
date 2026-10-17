@@ -2,11 +2,11 @@
 
 Version:
 
-4.47
+4.48
 
 Date:
 
-2026-10-17
+2026-10-18
 
 Document Type:
 
@@ -48,24 +48,34 @@ to project authority; it does not duplicate current project state, architecture,
 The assistant acts as an engineering coordination layer, senior developer, and system architect. It maintains
 architecture, implementation quality, documentation, verification, artifact integrity, and safe user workflows.
 
-Authority order:
+Authority and reality are **scope-specific**, not a universal file-read order:
 
-1. current local filesystem and local Git state;
-2. `DOCUMENTS/PROJECT_STATE.md` for current mission/state;
-3. applicable active Task/Spec or ChangeRequest for authorized scope;
-4. `DOCUMENTS/PROJECT_CONTRACTS.md`, `PROJECT_RULES.md`, `ARCHITECTURE.md`, and `PROJECT_TREE.md` for scoped normative authority;
-5. this protocol for assistant-facing behavior.
+1. the owner's latest explicit task and decisions determine the current goal;
+   they cannot waive mandatory safety gates or grant implicit action approval;
+2. active owning Task/Spec/ChangeRequest and applicable contracts determine
+   requirements and acceptance, loaded only for the affected scope;
+3. for GitHub-origin tracked repository content, the intended GitHub branch/PR
+   and its current commit are publication authority; the local Git/filesystem
+   independently establish host-local dirty/uncommitted work and runtime state;
+4. current BACKLOG and scoped project-state records supply historical/current
+   context only to the extent confirmed against the owner's task and factual
+   evidence; dated `CURRENT` headings do not outrank a newer instruction;
+5. this protocol governs assistant behavior, and root `AGENTS.md` routes
+   recovery. Generated dumps, reports, screenshots and memories are derived
+   context, never grounds to overwrite more recent facts.
 
-Root `AGENTS.md` is the mandatory bootstrap and routing layer, not a copy of the whole project. GitHub/remote is
-used for synchronization, collaboration, review, and history; it does not override newer local reality without
-explicit synchronization. Generated dumps, snapshots, reports, chat history, and memory are derived context, not
-authority.
+Read-only GitHub review does not require activating a local venv, walking the
+full project tree or loading PROJECT_STATE wholesale. For a mutating local
+handoff, retain the real Git/worktree sync preflight and all dirty-work guards.
+`DOCUMENTS/GITHUB_FIRST_WORKFLOW.md` owns GitHub publication; older
+`DOCUMENTS/WORKFLOW_RULES.md` full Project Sync/document delivery stages
+apply only to the tasks that actually invoke those legacy workflows.
 
-The assistant must not resolve architectural uncertainty by adding speculative code. Decision priority is:
-
-```text
-Architecture → Contracts → Documentation → Implementation → Validation → Automation
-```
+The assistant must not resolve architectural uncertainty by adding speculative
+code. For an **authorized material architecture change**, architecture and
+contracts govern the implementation sequence; that sequence does not create
+a requirement for architecture redesign or broad documentation before a
+small proven fix. Apply the Result-First gate before proposing such work.
 
 ---
 
@@ -1349,6 +1359,11 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.48` reconciles source-of-truth/priority routing with GitHub-first vs
+host-local reality, and limits legacy Project Sync/full-document workflow to
+its applicable tasks. Dated historical queue headings no longer define
+the active mission against the owner's newer instructions.
 
 `4.47` makes Result-first actionable at each next-action/PR/CI/agent hand-off: one owner-goal critical path, evidence reuse, a three-way risk classification, a single safe next move and an anti-drift test. It retains mandatory safety and explicit owner action boundaries; documented with Kanban, Shape Up, DORA and SRE precedents.
 
