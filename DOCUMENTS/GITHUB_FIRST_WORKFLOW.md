@@ -20,6 +20,35 @@ Default flow:
 
 Do not insert a local publication round-trip between GitHub-authored changes and GitHub integration merely because the local harness exists.
 
+## Result-first hand-off between delivery stages
+
+At each transition (scoped implementation → evidence → PR/CI review →
+owner-approved integration → runtime acceptance), apply the
+`AGENTS.md` Result-first transition gate. This is a decision inside the
+existing PR/task workflow, not an extra ticket, approval or dashboard.
+
+- State the nearest owner-visible outcome and the **one** unproven prerequisite
+  on its critical path. Work in small batches; avoid parallel preparatory
+  PRs that do not unblock that outcome.
+- Reuse current CI, tests, merge/review and source evidence. Once the required
+  checks pass, proceed to the next authorized dependent action rather than
+  creating another inspection step.
+- A tool, transaction or receipt failure is not automatically a product
+  failure. Report its exact status, determine whether the failed evidence is
+  *actually required* for this change, and fix only a proven mandatory gate.
+  Never claim PASS on failed evidence or bypass an applicable requirement.
+- A known bounded limitation may be accepted by the owner only where the
+  relevant contract permits it. Unknown material safety facts still need
+  narrow evidence. STOP/TAKE, fail-closed, continuity, reconciliation,
+  PAPER/LIVE separation and owner-only runtime/merge approvals are unchanged.
+- For a code-ready trading change, GitHub integration is **not** a claim of
+  real PAPER success; after safe integration, offer the owner the smallest
+  authorized runtime acceptance step. Count completed protected PAPER
+  lifecycles and net PnL as product outcomes, not PR/check counts.
+
+Do not change CI filters, branch protections, transaction/harness contracts
+or trading safety rules to make the critical path appear green.
+
 ## Review-fix continuity
 
 One logical PR remains one integration surface. Small review fixes within its authorized scope are published to that same branch and PR, then re-reviewed. Preserve a usable local worktree when local verification is actually needed.
