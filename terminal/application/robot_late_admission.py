@@ -45,6 +45,7 @@ DECISION_BLOCKED_INSUFFICIENT_LIQUIDITY = "BLOCKED_INSUFFICIENT_LIQUIDITY"
 DECISION_SKIPPED_POOR_RR = "SKIPPED_POOR_RR"
 DECISION_SKIPPED_LOW_REWARD = "SKIPPED_LOW_REWARD"
 DECISION_SKIPPED_EXCESS_SLIPPAGE = "SKIPPED_EXCESS_SLIPPAGE"
+DECISION_SKIPPED_STOP_BEYOND_LIMIT = "SKIPPED_STOP_BEYOND_LIMIT"
 
 
 class RobotLateAdmissionError(RuntimeError):
@@ -217,12 +218,21 @@ def evaluate_late_admission(
     else:
         adverse_slippage = max(Decimal("0"), (best_price - vwap) / best_price)
 
-    stop_price = robot_protection.structural_stop(
+    stop_price = robot_protection.structural_stop_within_limit(
         direction,
         average_entry=vwap,
         structural_extreme=structural_extreme,
         tick_size=tick_size,
     )
+    if stop_price is None:
+        # Structural STOP is invalid or beyond MAX_STOP_DISTANCE from the
+        # projected fill: no Market entry; never tighten STOP into structure.
+        return LateAdmissionDecision(
+            DECISION_SKIPPED_STOP_BEYOND_LIMIT,
+            projected_vwap=vwap,
+            best_price=best_price,
+            adverse_slippage=adverse_slippage,
+        )
     take_price = robot_protection.frozen_take_90(
         direction,
         frozen_signal_reference_price=frozen_signal_reference_price,

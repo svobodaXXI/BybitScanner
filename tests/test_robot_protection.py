@@ -23,8 +23,9 @@ from robot_protection import (
     structural_stop,
     submit_emergency_close,
     submit_initial_protection,
+    stop_within_limit,
+    structural_stop_within_limit,
     tighten_stop,
-    WEDGE_LONG_FALLBACK_STOP_DISTANCE,
 )
 from robot_state_machine import DIRECTION_LONG, DIRECTION_SHORT
 
@@ -138,6 +139,30 @@ class RobotProtectionTests(unittest.TestCase):
                 frozen, average_entry=Decimal("98.9"),
             )
 
+    def test_box_stop_is_excluded_from_non_box_limit(self):
+        # Ikigai Box keeps its own P4/RR policy: a 3.4% STOP stays accepted.
+        frozen = {
+            "pattern": "IKIGAI_BOX",
+            "plan": {
+                "direction": "LONG",
+                "limit_prices": ["94", "93.2", "92.4", "91.6"],
+                "take_price": "99.2",
+                "stop_price": "89.6",
+            },
+            "inputs": {
+                "tick_size": "0.01",
+                "entry_fee_rate": "0",
+                "target_fee_rate": "0",
+                "stop_fee_rate": "0",
+            },
+        }
+        stop = box_stop_for_actual_entry(frozen, average_entry=Decimal("92.8"))
+        self.assertEqual(stop, Decimal("89.6"))
+        self.assertGreater((Decimal("92.8") - stop) / Decimal("92.8"), MAX_STOP_DISTANCE)
+        self.assertFalse(stop_within_limit(
+            DIRECTION_LONG, entry_price=Decimal("92.8"), stop_price=stop,
+        ))
+
     def test_box_actual_fill_stop_mirrors_short_and_never_widens(self):
         frozen = {
             "pattern": "IKIGAI_BOX",
@@ -229,37 +254,65 @@ class RobotProtectionTests(unittest.TestCase):
         self.assertEqual(near, Decimal("98.9"))
         self.assertEqual(far, Decimal("98.500"))
 
-    def test_long_fallback_threshold_stays_two_percent(self):
-        # Structural STOP between 1.5% and 2% is still used as-is; only a
-        # candidate beyond MAX_STOP_DISTANCE (2%) switches to the 1.5% fallback.
-        self.assertEqual(MAX_STOP_DISTANCE, Decimal("0.02"))
-        self.assertEqual(WEDGE_LONG_FALLBACK_STOP_DISTANCE, Decimal("0.015"))
-        at_two_percent = structural_stop(
-            DIRECTION_LONG,
-            average_entry=Decimal("100"), structural_extreme=Decimal("98.1"),
-            tick_size=Decimal("0.1"),
+    def test_non_box_limit_is_one_and_half_percent_both_directions(self):
+        self.assertEqual(MAX_STOP_DISTANCE, Decimal("0.015"))
+        cases = (
+            # direction, extreme, structural STOP exactly at 1.5%, beyond -> fallback
+            (DIRECTION_LONG, Decimal("98.6"), Decimal("98.5"), Decimal("98.5"), Decimal("98.500")),
+            (DIRECTION_SHORT, Decimal("101.4"), Decimal("101.5"), Decimal("101.5"), Decimal("101.500")),
         )
-        beyond_two_percent = structural_stop(
-            DIRECTION_LONG,
-            average_entry=Decimal("100"), structural_extreme=Decimal("98.0"),
-            tick_size=Decimal("0.1"),
-        )
-        self.assertEqual(at_two_percent, Decimal("98.0"))
-        self.assertEqual(beyond_two_percent, Decimal("98.500"))
+        for direction, at_extreme, at_stop, beyond_extreme, fallback in cases:
+            with self.subTest(direction=direction):
+                self.assertEqual(
+                    structural_stop_within_limit(
+                        direction, average_entry=Decimal("100"),
+                        structural_extreme=at_extreme, tick_size=Decimal("0.1"),
+                    ),
+                    at_stop,
+                )
+                self.assertIsNone(
+                    structural_stop_within_limit(
+                        direction, average_entry=Decimal("100"),
+                        structural_extreme=beyond_extreme, tick_size=Decimal("0.1"),
+                    )
+                )
+                self.assertEqual(
+                    structural_stop(
+                        direction, average_entry=Decimal("100"),
+                        structural_extreme=beyond_extreme, tick_size=Decimal("0.1"),
+                    ),
+                    fallback,
+                )
 
-    def test_short_fallback_stays_two_percent_and_threshold(self):
-        at_two_percent = structural_stop(
-            DIRECTION_SHORT,
-            average_entry=Decimal("100"), structural_extreme=Decimal("101.9"),
-            tick_size=Decimal("0.1"),
-        )
-        beyond_two_percent = structural_stop(
-            DIRECTION_SHORT,
-            average_entry=Decimal("100"), structural_extreme=Decimal("102.0"),
-            tick_size=Decimal("0.1"),
-        )
-        self.assertEqual(at_two_percent, Decimal("102.0"))
-        self.assertEqual(beyond_two_percent, Decimal("102.00"))
+    def test_structural_stop_within_limit_rejects_wrong_side(self):
+        self.assertIsNone(structural_stop_within_limit(
+            DIRECTION_LONG, average_entry=Decimal("100"),
+            structural_extreme=Decimal("100.1"), tick_size=Decimal("0.1"),
+        ))
+        self.assertIsNone(structural_stop_within_limit(
+            DIRECTION_SHORT, average_entry=Decimal("100"),
+            structural_extreme=Decimal("99.9"), tick_size=Decimal("0.1"),
+        ))
+
+    def test_stop_within_limit_boundaries(self):
+        self.assertTrue(stop_within_limit(
+            DIRECTION_LONG, entry_price=Decimal("100"), stop_price=Decimal("98.5"),
+        ))
+        self.assertFalse(stop_within_limit(
+            DIRECTION_LONG, entry_price=Decimal("100"), stop_price=Decimal("98.49"),
+        ))
+        self.assertFalse(stop_within_limit(
+            DIRECTION_LONG, entry_price=Decimal("100"), stop_price=Decimal("100"),
+        ))
+        self.assertTrue(stop_within_limit(
+            DIRECTION_SHORT, entry_price=Decimal("100"), stop_price=Decimal("101.5"),
+        ))
+        self.assertFalse(stop_within_limit(
+            DIRECTION_SHORT, entry_price=Decimal("100"), stop_price=Decimal("101.51"),
+        ))
+        self.assertFalse(stop_within_limit(
+            DIRECTION_SHORT, entry_price=Decimal("100"), stop_price=Decimal("100"),
+        ))
 
     def test_deepusdt_wrong_side_extreme_uses_one_and_half_percent_fallback(self):
         # RM-STRUCT-1 control case: frozen counted lower-touch min 0.02107 is
@@ -272,7 +325,7 @@ class RobotProtectionTests(unittest.TestCase):
         self.assertEqual(stop, Decimal("0.0209372") * Decimal("0.985"))
         self.assertLess(stop, Decimal("0.0209372"))
 
-    def test_short_structural_stop_one_tick_and_two_percent_fallback(self):
+    def test_short_structural_stop_one_tick_and_one_and_half_percent_fallback(self):
         near = structural_stop(
             DIRECTION_SHORT,
             average_entry=Decimal("100"), structural_extreme=Decimal("101"),
@@ -284,7 +337,7 @@ class RobotProtectionTests(unittest.TestCase):
             tick_size=Decimal("0.1"),
         )
         self.assertEqual(near, Decimal("101.1"))
-        self.assertEqual(far, Decimal("102.00"))
+        self.assertEqual(far, Decimal("101.500"))
 
     def test_topup_stop_can_only_tighten(self):
         self.assertEqual(
@@ -451,7 +504,7 @@ class RobotProtectionTests(unittest.TestCase):
         self.assertEqual(non_positive, Decimal("98.500"))
         self.assertLess(above_entry, Decimal("100"))
 
-    def test_short_structural_at_or_below_entry_falls_back_to_two_percent(self):
+    def test_short_structural_at_or_below_entry_falls_back_to_one_and_half_percent(self):
         at_entry = structural_stop(
             DIRECTION_SHORT,
             average_entry=Decimal("100"), structural_extreme=Decimal("99.9"),
@@ -462,8 +515,8 @@ class RobotProtectionTests(unittest.TestCase):
             average_entry=Decimal("100"), structural_extreme=Decimal("99"),
             tick_size=Decimal("0.1"),
         )
-        self.assertEqual(at_entry, Decimal("102.00"))
-        self.assertEqual(below_entry, Decimal("102.00"))
+        self.assertEqual(at_entry, Decimal("101.500"))
+        self.assertEqual(below_entry, Decimal("101.500"))
         self.assertGreater(below_entry, Decimal("100"))
 
 

@@ -78,7 +78,9 @@ def _instrument(symbol: str = SYMBOL) -> InstrumentSnapshot:
     )
 
 
-def _snapshot() -> dict:
+def _snapshot(lower_touch_prices=(96.0, 97.0)) -> dict:
+    # Default structural STOP 95.9 is within the 1.5% non-Box limit of the
+    # 97.2 retest LIMIT.
     current_index = 100
     return {
         "symbol": SYMBOL,
@@ -90,8 +92,7 @@ def _snapshot() -> dict:
             "current_index": current_index,
             "touches": {
                 "lower_touch_points": [
-                    {"price": 80.0, "counted": True},
-                    {"price": 82.0, "counted": True},
+                    {"price": price, "counted": True} for price in lower_touch_prices
                 ],
                 "upper_touch_points": [
                     {"price": 150.0, "counted": True},
@@ -123,9 +124,10 @@ def _short_snapshot() -> dict:
                     {"price": 98.0, "counted": True},
                     {"price": 99.0, "counted": True},
                 ],
+                # Structural STOP 101.1 is within 1.5% of the 100.1 SELL LIMIT.
                 "upper_touch_points": [
-                    {"price": 111.0, "counted": True},
-                    {"price": 113.0, "counted": True},
+                    {"price": 100.8, "counted": True},
+                    {"price": 101.0, "counted": True},
                 ],
             },
             "pair_metrics": {"reference_price": 100.0, "start_width": 20.0},
@@ -279,7 +281,8 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
             runtime = SerializedPaperRuntime(factory)
             try:
                 start_robot(database_path=database_path)
-                snapshot = _snapshot()
+                # Structural STOP 98.9 is within 1.5% of the ~100.2 projected VWAP.
+                snapshot = _snapshot(lower_touch_prices=(99.0, 99.5))
                 create_signal_snapshot(
                     snapshot, timeframe="1", store_dir=candidate_dir,
                     candidate_id=CANDIDATE_ID, created_at="2026-09-15T00:00:00+00:00",
@@ -319,9 +322,10 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 ) / trade.entry_quantity
                 self.assertEqual(trade.average_entry, expected_vwap)
                 self.assertGreater(expected_vwap, Decimal("100"))
-                # The structural STOP is >2% away, so the Wedge LONG 1.5% fallback
-                # proves protection was rebuilt from actual entry, not top ask.
-                self.assertEqual(trade.stop_price, expected_vwap * Decimal("0.985"))
+                # Structural STOP (99.0 - 1 tick) within 1.5% of the actual VWAP;
+                # protection_observations below prove it was placed after the
+                # actual fill, not from the top ask.
+                self.assertEqual(trade.stop_price, Decimal("98.9"))
                 self.assertEqual(trade.take_price, Decimal("118"))
                 self.assertEqual(protection_observations, [
                     ("_robot_create_stop", expected_vwap),

@@ -87,6 +87,8 @@ INACTIVE_LIMIT_STATUSES = {"filled", "cancelled"}
 PHASE_INVALIDATED_UNSUPPORTED_PATTERN = "INVALIDATED_UNSUPPORTED_PATTERN"
 ENTRY_RR_SKIP_POOR_RR = "SKIPPED_POOR_RR"  # same name as the late-admission decision
 ENTRY_RR_SKIP_UNAVAILABLE = "SKIPPED_RR_UNAVAILABLE"
+# Structural STOP invalid or beyond robot_protection.MAX_STOP_DISTANCE (non-Box).
+ENTRY_STOP_SKIP_BEYOND_LIMIT = "SKIPPED_STOP_BEYOND_LIMIT"
 
 
 class ActionExecutor(Protocol):
@@ -2135,6 +2137,11 @@ class RobotBreakoutMonitor:
             take_price=str(terms.target),
             rr=str(rr),
         )
+        if not robot_protection.stop_within_limit(
+            terms.direction, entry_price=plan.request.limit_price, stop_price=terms.stop,
+        ):
+            details["max_stop_distance"] = str(robot_protection.MAX_STOP_DISTANCE)
+            return ENTRY_STOP_SKIP_BEYOND_LIMIT, details
         if rr <= 0 or rr < threshold:
             return ENTRY_RR_SKIP_POOR_RR, details
         return None
@@ -2148,8 +2155,9 @@ class RobotBreakoutMonitor:
         Uses the same inputs as ``robot_protection.build_protection_plan`` after
         the fill (structural extreme and frozen prices from the snapshot), with
         the LIMIT price as the entry. Returns ``(reason, details)`` when the
-        candidate must be skipped, ``None`` only when RR is computable and
-        meets the threshold. Existing filled positions continue through their
+        candidate must be skipped, ``None`` only when the structural STOP is
+        within ``MAX_STOP_DISTANCE`` and RR is computable and meets the
+        threshold. Existing filled positions continue through their
         independent post-fill protection and emergency-close lifecycle.
         """
         threshold = robot_protection.min_entry_rr()
@@ -2161,10 +2169,22 @@ class RobotBreakoutMonitor:
             structural_extreme = self._structural_extreme(record.signal_snapshot, direction)
             tick_size = self._tick_size_provider(record.symbol.value)
             reference_price, target_price = self._frozen_prices(record.signal_snapshot, direction)
-            stop_price = robot_protection.structural_stop(
+            stop_price = robot_protection.structural_stop_within_limit(
                 direction, average_entry=plan.request.limit_price,
                 structural_extreme=structural_extreme, tick_size=tick_size,
             )
+            if stop_price is None:
+                details.update(
+                    structural_extreme=str(structural_extreme),
+                    max_stop_distance=str(robot_protection.MAX_STOP_DISTANCE),
+                )
+                print(
+                    "[ROBOT ENTRY SKIPPED] "
+                    f"candidate_id={record.candidate_id} symbol={record.symbol.value} "
+                    f"reason={ENTRY_STOP_SKIP_BEYOND_LIMIT} "
+                    f"structural_extreme={structural_extreme}"
+                )
+                return ENTRY_STOP_SKIP_BEYOND_LIMIT, details
             take_price = robot_protection.frozen_take_90(
                 direction, frozen_signal_reference_price=reference_price,
                 frozen_scanner_target_price=target_price,
