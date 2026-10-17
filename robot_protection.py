@@ -23,9 +23,9 @@ from terminal.api.models import (
 )
 
 # Maximum STOP distance from actual entry for every non-Box Robot pattern
-# (Wedge and L-shape, LONG and SHORT; RM-STRUCT-2, owner 2026-10-17). A new
-# entry whose structural STOP is invalid or beyond it is rejected; after a fill
-# the same distance is the protection fallback. Ikigai Box has its own policy.
+# (Wedge and L-shape, LONG and SHORT; RM-STRUCT-2, owner 2026-10-17). A
+# structural STOP that is invalid or beyond it is replaced by the fallback at
+# exactly this distance; the entry is not rejected. Ikigai Box has its own policy.
 MAX_STOP_DISTANCE = Decimal("0.015")
 TAKE_REALIZATION = Decimal("0.90")
 PROTECTION_DEADLINE_MS = 5_000
@@ -136,34 +136,23 @@ def stop_within_limit(direction: str, *, entry_price: Decimal, stop_price: Decim
     raise RobotProtectionError("unsupported Robot direction")
 
 
-def structural_stop_within_limit(
-    direction: str,
-    *,
-    average_entry: Decimal,
-    structural_extreme: Decimal,
-    tick_size: Decimal,
-) -> Decimal | None:
-    """Structural STOP (extreme -/+ one tick) for a new entry, or None when it
-    is on the wrong side of entry or farther than MAX_STOP_DISTANCE.
+def limited_stop(direction: str, *, entry_price: Decimal, preferred_stop: Decimal) -> Decimal:
+    """Preferred STOP when within MAX_STOP_DISTANCE on the protective side,
+    else the fallback exactly MAX_STOP_DISTANCE from entry (LONG below, SHORT above)."""
 
-    New entries must be rejected on None; the STOP is never pulled inside the
-    structure only to satisfy the limit.
-    """
-
-    extreme = _decimal(structural_extreme, "structural_extreme")
-    tick = _decimal(tick_size, "tick_size")
+    entry = _decimal(entry_price, "entry_price")
     normalized_direction = str(direction).strip().upper()
     if normalized_direction == DIRECTION_LONG:
-        candidate = extreme - tick
+        fallback = entry * (Decimal("1") - MAX_STOP_DISTANCE)
     elif normalized_direction == DIRECTION_SHORT:
-        candidate = extreme + tick
+        fallback = entry * (Decimal("1") + MAX_STOP_DISTANCE)
     else:
         raise RobotProtectionError("unsupported Robot direction")
-    if candidate <= 0:
-        return None
-    if not stop_within_limit(direction, entry_price=average_entry, stop_price=candidate):
-        return None
-    return candidate
+    if preferred_stop <= 0:
+        return fallback
+    if stop_within_limit(normalized_direction, entry_price=entry, stop_price=preferred_stop):
+        return preferred_stop
+    return fallback
 
 
 def structural_stop(
@@ -173,14 +162,13 @@ def structural_stop(
     structural_extreme: Decimal,
     tick_size: Decimal,
 ) -> Decimal:
-    """Return structural STOP with a distance fallback for a filled position.
+    """Return structural STOP with the 1.5% distance fallback.
 
     LONG structural stop is one tick below the relevant low. SHORT is one tick
     above the relevant high. If that stop is farther than MAX_STOP_DISTANCE
-    (1.5%) from authoritative average entry, use exactly the 1.5% fallback
-    instead. New entries are gated by ``structural_stop_within_limit`` first, so
-    the fallback only protects fills whose actual price moved the structure out
-    of the limit (late Market VWAP, retest slippage).
+    (1.5%) from the entry, use exactly the 1.5% fallback instead; the entry is
+    not rejected for distance alone. The same function serves planned entries
+    (RR gates) and filled positions.
 
     A filled Robot position must never end up with no STOP at all. The
     structural candidate is derived from the frozen signal geometry, but
@@ -195,20 +183,16 @@ def structural_stop(
     """
 
     entry = _decimal(average_entry, "average_entry")
+    extreme = _decimal(structural_extreme, "structural_extreme")
+    tick = _decimal(tick_size, "tick_size")
     normalized_direction = str(direction).strip().upper()
     if normalized_direction == DIRECTION_LONG:
-        fallback = entry * (Decimal("1") - MAX_STOP_DISTANCE)
+        candidate = extreme - tick
     elif normalized_direction == DIRECTION_SHORT:
-        fallback = entry * (Decimal("1") + MAX_STOP_DISTANCE)
+        candidate = extreme + tick
     else:
         raise RobotProtectionError("unsupported Robot direction")
-    candidate = structural_stop_within_limit(
-        normalized_direction,
-        average_entry=entry,
-        structural_extreme=structural_extreme,
-        tick_size=tick_size,
-    )
-    return fallback if candidate is None else candidate
+    return limited_stop(normalized_direction, entry_price=entry, preferred_stop=candidate)
 
 
 def tighten_stop(direction: str, *, existing_stop: Decimal | None, proposed_stop: Decimal) -> Decimal:
@@ -656,7 +640,8 @@ def build_l_shape_protection_plan(
         raise RobotProtectionError("L-shape direction conflicts with frozen terms")
 
     entry = _decimal(average_entry, "average_entry")
-    stop = terms.stop
+    # Frozen L-shape STOP within 1.5% of the actual entry, else the 1.5% fallback.
+    stop = limited_stop(direction, entry_price=entry, preferred_stop=terms.stop)
     take = terms.target
     if direction == DIRECTION_LONG and not (stop < entry < take):
         raise RobotProtectionError("LONG L-shape protection geometry is invalid")

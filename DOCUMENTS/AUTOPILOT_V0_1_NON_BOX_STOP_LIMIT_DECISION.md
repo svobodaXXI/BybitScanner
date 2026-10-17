@@ -1,45 +1,43 @@
 # BybitScanner — AUTOPILOT v0.1 Non-Box STOP Limit Decision (RM-STRUCT-2)
 
-Version: 1.0
+Version: 1.1
 Date: 2026-10-17
 Status: ACCEPTED (owner decision) / PAPER
 Supersedes for non-Box patterns: the 2% threshold and fallback of
 `AUTOPILOT_V0_1_STOP_FALLBACK_DECISION.md` and RM-STRUCT-1 (Wedge LONG 1.5% fallback).
 
+Amendment v1.0 → v1.1 (owner correction): v1.0 rejected new entries whose
+structural STOP was beyond the limit (`SKIPPED_STOP_BEYOND_LIMIT`). That
+contradicted the owner decision and is removed. Distance alone never rejects an entry.
+
 ## Decision
 
 For every Robot pattern except Ikigai Box (Wedge LONG/SHORT, L-shape LONG/SHORT),
-the maximum STOP distance from the actual entry price is **1.5%**
-(`robot_protection.MAX_STOP_DISTANCE`).
+the maximum STOP distance from the entry price is **1.5%**
+(`robot_protection.MAX_STOP_DISTANCE`):
 
-## New entries — reject, never tighten
+1. Compute the STOP beyond the structural extreme (Wedge: extreme -/+ one tick;
+   L-shape: frozen `l_shape.stop`).
+2. If it is on the protective side of entry and its distance is <= 1.5%, use it.
+3. If the distance is > 1.5%, or the structural STOP is unavailable or on the wrong
+   side of entry, use the fallback exactly 1.5% from entry: LONG below, SHORT above
+   (`robot_protection.limited_stop`).
 
-Before a new entry is placed, the correct structural STOP must be on the protective
-side of the planned entry and within 1.5% of it. Otherwise the entry is rejected with
-reason `SKIPPED_STOP_BEYOND_LIMIT`; the STOP is never pulled inside the structure only
-to satisfy the limit. Checked routes:
+The entry is not rejected only because the structural STOP is farther than 1.5%.
 
-- Wedge initial retest LIMIT: candidate terminated `INVALIDATED`, no LIMIT placed;
-  `execution.entry_rr_filter` records `structural_extreme` and `max_stop_distance`.
-- Wedge LIMIT reprice: the amend is not made; the original resting order is kept
-  (same as a poor-RR reprice).
-- Wedge late-admission Market: decision `SKIPPED_STOP_BEYOND_LIMIT`, no Market order;
-  re-evaluated on the next tick like the other late-admission skips.
-- L-shape retest LIMIT: frozen `l_shape.stop` must be within 1.5% of the LIMIT price,
-  else `SKIPPED_STOP_BEYOND_LIMIT`.
+## Where it applies
 
-The STOP check runs before the RR gate. RR (`MIN_ENTRY_RR`, L-shape net RR 2:1),
-fees, tick size and fail-closed handling are unchanged.
+The same STOP is used for planning and protection:
 
-## Filled positions — fallback stays
+- Wedge retest LIMIT RR gate, LIMIT reprice RR gate and late-admission Market RR
+  gate: entry = planned LIMIT price / projected VWAP.
+- Wedge post-fill protection (`build_protection_plan`): entry = actual average entry.
+- L-shape retest LIMIT net-RR gate and post-fill protection
+  (`build_l_shape_protection_plan`).
 
-A filled position must always get a STOP (CR-PAPER-PROTECTION-LIFECYCLE-001). If the
-actual fill moves the structural STOP to the wrong side or beyond 1.5% (late Market
-VWAP, LIMIT fill price), `structural_stop()` places the fallback exactly 1.5% from the
-actual average entry, LONG below and SHORT above. A LIMIT fill is never worse than its
-LIMIT price, so the pre-entry check bounds the LIMIT routes. L-shape post-fill
-protection keeps the frozen STOP unchanged. Later fills never widen an existing STOP
-(`tighten_stop`). Positions opened before this change keep their existing protection.
+RR thresholds (`MIN_ENTRY_RR`, L-shape net RR 2:1), fees, tick size, fail-closed
+handling, `tighten_stop` (later fills never widen STOP) and the other safety gates are
+unchanged. Positions opened before this change keep their existing protection.
 
 ## Excluded
 

@@ -1186,56 +1186,55 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(record.status, "APPROVED")
         self.assertEqual(record.robot_state["execution"]["last_limit_index"], 104)
 
-    def test_reprice_beyond_stop_limit_keeps_original_entry(self):
-        # Initial LIMIT 96.2 with structural STOP 95.9 is within 1.5%; the
-        # reprice to 91.2 would leave the structure above entry, so it is
-        # rejected and the original order is kept (STOP never moved inward).
+    def test_reprice_with_structure_above_entry_uses_fallback_and_amends(self):
+        # Initial LIMIT with structural STOP 95.9 is within 1.5%; after the
+        # reprice to 91.2 the structure is above entry, so RR is planned with
+        # the 1.5% fallback (91.2 * 0.985) and the reprice is not rejected.
         self._create_candidate()
         self._drive_to_retest_detected()
         self.monitor.tick()
         record = self.store.get_robot_candidate("candidate-1")
         order_id = record.robot_state["execution"]["limit_order_id"]
-        original_price = self.store.get_paper_limit(order_id, ACCOUNT_ID).price
 
         self.feed.push(SYMBOL, _candle_at(109, high=99, low=90, close=92))
-        with redirect_stdout(io.StringIO()) as output:
-            advanced = self.monitor.tick()
+        advanced = self.monitor.tick()
 
-        self.assertEqual(advanced, ())
-        self.assertIn("SKIPPED_STOP_BEYOND_LIMIT", output.getvalue())
-        self.assertEqual(self.executor.amend_calls, [])
-        self.assertEqual(self.executor.cancel_calls, [])
-        self.assertEqual(self.store.get_paper_limit(order_id, ACCOUNT_ID).price, original_price)
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(len(self.executor.amend_calls), 1)
+        self.assertEqual(self.executor.amend_calls[0].limit_price, Decimal("91.2"))
+        self.assertEqual(self.store.get_paper_limit(order_id, ACCOUNT_ID).price, Decimal("91.2"))
         self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "APPROVED")
 
-    def test_initial_entry_beyond_stop_limit_places_no_limit_and_terminates(self):
-        # Structural STOP 79.9 is ~17% below the 97.2 LIMIT.
+    def test_far_structural_stop_does_not_reject_initial_entry(self):
+        # Structural STOP 79.9 is ~17% below the LIMIT: RR uses the 1.5%
+        # fallback and the LIMIT is placed; distance alone never rejects.
         self._create_candidate(lower_touch_prices=(80.0, 82.0))
         self._drive_to_retest_detected()
-        with redirect_stdout(io.StringIO()):
-            self.monitor.tick()
+        self.monitor.tick()
 
         record = self.store.get_robot_candidate("candidate-1")
-        self.assertEqual(record.status, "INVALIDATED")
-        execution = record.robot_state["execution"]
-        self.assertEqual(execution["stopped_without_entry_reason"], "SKIPPED_STOP_BEYOND_LIMIT")
-        self.assertEqual(execution["entry_rr_filter"]["structural_extreme"], "80.0")
-        self.assertEqual(self.executor.limit_calls, [])
+        self.assertEqual(record.status, "APPROVED")
+        self.assertIn("limit_order_id", record.robot_state["execution"])
+        self.assertEqual(len(self.executor.limit_calls), 1)
 
-    def test_entry_stop_limit_boundary_for_long_and_short(self):
-        # Entry 1000: structural STOP exactly 1.5% away passes to the RR gate,
-        # one tick beyond is rejected before RR (no tightening into structure).
-        for direction, at_limit, beyond in (
-            ("LONG", 985.1, 985.0),     # stop 985.0 (1.5%) / 984.9
-            ("SHORT", 1014.9, 1015.0),  # stop 1015.0 (1.5%) / 1015.1
+    def test_entry_rr_uses_structural_stop_at_limit_and_fallback_beyond(self):
+        # Entry 1000: structural STOP exactly 1.5% away is used as-is; one tick
+        # farther, RR is planned with the 1.5% fallback. A strict threshold
+        # exposes the planned STOP in the skip details.
+        for direction, at_limit, beyond, expected_stop in (
+            ("LONG", 985.1, 985.0, Decimal("985")),      # 985.0 / 984.9 -> 985.000
+            ("SHORT", 1014.9, 1015.0, Decimal("1015")),  # 1015.0 / 1015.1 -> 1015.000
         ):
             with self.subTest(direction=direction):
                 reference = 1100.0 if direction == "LONG" else 900.0
                 self.assertIsNone(self._rr_check(direction, reference=reference, extreme=at_limit))
-                skipped = self._rr_check(direction, reference=reference, extreme=beyond)
-                self.assertEqual(skipped[0], "SKIPPED_STOP_BEYOND_LIMIT")
-                self.assertEqual(skipped[1]["max_stop_distance"], "0.015")
-                self.assertNotIn("stop_price", skipped[1])
+                self.assertIsNone(self._rr_check(direction, reference=reference, extreme=beyond))
+                for extreme in (at_limit, beyond):
+                    skipped = self._rr_check(
+                        direction, reference=reference, extreme=extreme, env="10",
+                    )
+                    self.assertEqual(skipped[0], "SKIPPED_POOR_RR")
+                    self.assertEqual(Decimal(skipped[1]["stop_price"]), expected_stop)
 
     def test_unavailable_rr_reprice_does_not_amend_original_entry(self):
         self._create_candidate()
@@ -2830,9 +2829,9 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             ["create_stop", "create_take"],
         )
 
-    def test_l_shape_stop_beyond_limit_places_no_limit_and_terminates(self):
-        # Frozen L-shape STOP 96 is 4.2% from the 100.2 LIMIT: rejected, never
-        # tightened toward the limit.
+    def test_l_shape_far_stop_enters_and_protects_with_fallback(self):
+        # Frozen L-shape STOP 96 is 4.2% from the 100.2 LIMIT: the entry is not
+        # rejected; RR and protection use the 1.5% fallback 100.2 * 0.985.
         snapshot = _l_shape_snapshot(stop=96)
         candidate, _ = self.store.create_robot_candidate(
             candidate_id="candidate-lshape",
@@ -2866,15 +2865,20 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             },
         )
         self.monitor.tick()  # RETEST_DETECTED
-        self.monitor.tick()  # entry evaluation
+        self.monitor.tick()  # entry evaluation places the LIMIT
 
-        record = self.store.get_robot_candidate("candidate-lshape")
-        self.assertEqual(record.status, "INVALIDATED")
-        execution = record.robot_state["execution"]
-        self.assertEqual(execution["stopped_without_entry_reason"], "SKIPPED_STOP_BEYOND_LIMIT")
-        self.assertEqual(execution["entry_rr_filter"]["stop_price"], "96")
-        self.assertEqual(execution["entry_rr_filter"]["max_stop_distance"], "0.015")
-        self.assertEqual(self.executor.limit_calls, [])
+        order_id = self.store.get_robot_candidate("candidate-lshape").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("100.2"),
+        )
+        self.assertEqual(
+            self.monitor.process_authoritative_fill(SYMBOL),
+            ("candidate-lshape",),
+        )
+        trade = self.store.get_robot_trade("robot-trade-candidate-lshape")
+        self.assertEqual(trade.average_entry, Decimal("100.2"))
+        self.assertEqual(trade.stop_price, Decimal("100.2") * Decimal("0.985"))
+        self.assertEqual(trade.take_price, Decimal("110"))
 
 
 class RobotBreakoutMonitorRealThreadTests(unittest.TestCase):

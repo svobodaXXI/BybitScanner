@@ -23,8 +23,8 @@ from robot_protection import (
     structural_stop,
     submit_emergency_close,
     submit_initial_protection,
+    limited_stop,
     stop_within_limit,
-    structural_stop_within_limit,
     tighten_stop,
 )
 from robot_state_machine import DIRECTION_LONG, DIRECTION_SHORT
@@ -264,17 +264,11 @@ class RobotProtectionTests(unittest.TestCase):
         for direction, at_extreme, at_stop, beyond_extreme, fallback in cases:
             with self.subTest(direction=direction):
                 self.assertEqual(
-                    structural_stop_within_limit(
+                    structural_stop(
                         direction, average_entry=Decimal("100"),
                         structural_extreme=at_extreme, tick_size=Decimal("0.1"),
                     ),
                     at_stop,
-                )
-                self.assertIsNone(
-                    structural_stop_within_limit(
-                        direction, average_entry=Decimal("100"),
-                        structural_extreme=beyond_extreme, tick_size=Decimal("0.1"),
-                    )
                 )
                 self.assertEqual(
                     structural_stop(
@@ -284,15 +278,21 @@ class RobotProtectionTests(unittest.TestCase):
                     fallback,
                 )
 
-    def test_structural_stop_within_limit_rejects_wrong_side(self):
-        self.assertIsNone(structural_stop_within_limit(
-            DIRECTION_LONG, average_entry=Decimal("100"),
-            structural_extreme=Decimal("100.1"), tick_size=Decimal("0.1"),
-        ))
-        self.assertIsNone(structural_stop_within_limit(
-            DIRECTION_SHORT, average_entry=Decimal("100"),
-            structural_extreme=Decimal("99.9"), tick_size=Decimal("0.1"),
-        ))
+    def test_limited_stop_keeps_preferred_or_falls_back_to_one_and_half_percent(self):
+        cases = (
+            (DIRECTION_LONG, Decimal("98.5"), Decimal("98.5")),     # exactly 1.5%: kept
+            (DIRECTION_LONG, Decimal("96"), Decimal("98.500")),     # 4%: fallback
+            (DIRECTION_LONG, Decimal("100.1"), Decimal("98.500")),  # wrong side: fallback
+            (DIRECTION_SHORT, Decimal("101.5"), Decimal("101.5")),
+            (DIRECTION_SHORT, Decimal("104"), Decimal("101.500")),
+            (DIRECTION_SHORT, Decimal("99.9"), Decimal("101.500")),
+        )
+        for direction, preferred, expected in cases:
+            with self.subTest(direction=direction, preferred=preferred):
+                self.assertEqual(
+                    limited_stop(direction, entry_price=Decimal("100"), preferred_stop=preferred),
+                    expected,
+                )
 
     def test_stop_within_limit_boundaries(self):
         self.assertTrue(stop_within_limit(
