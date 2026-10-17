@@ -2121,17 +2121,24 @@ class RobotBreakoutMonitor:
         }
         try:
             terms = robot_l_shape.frozen_terms(record.signal_snapshot)
+            # Same STOP the post-fill protection plan uses: frozen STOP within
+            # 1.5% of the entry, else the 1.5% fallback.
+            stop_price = robot_protection.limited_stop(
+                terms.direction,
+                entry_price=plan.request.limit_price,
+                preferred_stop=terms.stop,
+            )
             rr = robot_l_shape.net_reward_risk(
                 terms.direction,
                 entry_price=plan.request.limit_price,
-                stop_price=terms.stop,
+                stop_price=stop_price,
                 target_price=terms.target,
             )
         except Exception as error:
             details["error"] = str(error)
             return ENTRY_RR_SKIP_UNAVAILABLE, details
         details.update(
-            stop_price=str(terms.stop),
+            stop_price=str(stop_price),
             take_price=str(terms.target),
             rr=str(rr),
         )

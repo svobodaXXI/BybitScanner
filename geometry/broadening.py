@@ -40,6 +40,7 @@ Only candles 0..as_of_index are read, so later bars cannot change a verdict.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from confirmation import calculate_atr
@@ -92,6 +93,37 @@ def _line(first, last):
         "second_index": last[0],
         "second_price": last[2],
     }
+
+
+def _rounding_bound(*prices):
+    """Floating-point rounding bound for a boundary value built from `prices`.
+
+    A projected boundary price comes from a handful of float operations on the
+    anchor prices, so its absolute rounding error is a few ulps of the largest
+    magnitude involved. This is a numeric-precision bound, not a market
+    threshold: it only stops a zero width from passing as positive.
+    """
+    return 8 * math.ulp(max(abs(price) for price in prices))
+
+
+def _positive_width(upper, lower, first_index, last_index):
+    """upper(t) > lower(t) for every t in [first_index, last_index].
+
+    Both boundaries are straight lines, so their difference is linear and its
+    minimum on a closed interval is at one of the ends: checking both ends
+    proves the whole interval. Touching (zero width within rounding) and
+    crossed boundaries are rejected.
+    """
+    for index in (first_index, last_index):
+        upper_value, lower_value = _value(upper, index), _value(lower, index)
+        bound = _rounding_bound(
+            upper_value, lower_value,
+            upper["anchor_price"], upper["second_price"],
+            lower["anchor_price"], lower["second_price"],
+        )
+        if not upper_value - lower_value > bound:
+            return False
+    return True
 
 
 def _sequence(highs, lows):
@@ -174,6 +206,15 @@ def detect_broadening(candles, as_of_index=None):
     width_end = _value(upper, as_of_index) - _value(lower, as_of_index)
 
     if not (width_end > width_start):
+        return None
+
+    # The channel must be open over the whole formation: from START through
+    # the last anchor and on to the decision bar the upper boundary stays
+    # strictly above the lower one. Without it the two-point lines can cross
+    # between P1 and P2, so at START the upper line is below the lower one
+    # (UNIUSDT 5m, 2026-10-16) while the width still "grows".
+    last_index = max(run[-1][0], as_of_index)
+    if not _positive_width(upper, lower, start_index, last_index):
         return None
 
     # Hull: no confirmed same-side pivot from START to the decision bar lies
