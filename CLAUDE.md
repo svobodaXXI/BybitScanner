@@ -32,6 +32,15 @@ Repository authority beats conversational memory and generated snapshots.
 - `python -m tools.dev.checkpoint` is user-run only.
 - For a GitHub origin, checkpoint is validation-only: it must not stage, commit, or push. GitHub branch/PR publication is owned by `DOCUMENTS/GITHUB_FIRST_WORKFLOW.md`.
 
+## Result-first transition
+
+At **every** task hand-off or suggested follow-up, use the mandatory
+`AGENTS.md` Result-first transition gate: prefer the next directly observable
+owner outcome over another audit, PR or check; reuse unchanged evidence,
+stop only at proven safety/mandatory gates or a material safety unknown, and
+choose one shortest authorized action. This creates no extra checklist or
+report and cannot authorize a merge or Scanner/Robot runtime action.
+
 ## Economy rule
 
 Prefer the smallest safe path from intent to evidence. Reuse already-loaded authority and successful checks while they remain current. Batch compatible work, avoid serial micro-questions, and escalate process only for a concrete risk, dependency, approval boundary, conflict, or failed proof.
