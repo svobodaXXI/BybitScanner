@@ -17,7 +17,14 @@ follow the scoped routing below. Never replace a safety check with an economy sh
    Use heading/grep/range lookup rather than copying whole documents into context.
 5. Respect the current user instruction over stale queue items and historical
    milestones; identify actual runtime state from current evidence, never memory.
+   Dated "CURRENT", "active" and "mandatory next" headings in BACKLOG,
+   QUEST_STATE, PROJECT_STATE or the preserved full guide are historical
+   snapshots until confirmed for today's owner request. Do not resurrect them
+   as new prerequisites, or rewrite their entire history to change priority.
 6. One logical change → one scoped task/worktree/PR; stop when verified.
+   A GitHub-first source/doc edit may be published and reviewed directly:
+   the local harness is required only for applicable local verification,
+   not as a GitHub publication step or an automatic reason for a new worktree.
 
 ## 1A. Result-first transition gate — OWNER RULE 2026-10-17
 
