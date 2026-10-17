@@ -79,7 +79,7 @@ def _evaluate(
     current_geometry_index=104,
     now_ms=1_500,
     max_book_age_ms=1_000,
-    structural_extreme=Decimal("90"),
+    structural_extreme=Decimal("98.6"),  # STOP 98.5: exactly 1.5% below the 100 VWAP
     tick_size=Decimal("0.1"),
     frozen_signal_reference_price=Decimal("94"),
     frozen_scanner_target_price=Decimal("104"),
@@ -104,21 +104,46 @@ def _evaluate(
 
 
 class RobotLateAdmissionTests(unittest.TestCase):
+    # RR boundary: structural STOP 99.0 (1% risk), take 97 + 0.9 * 5 = 101.5.
     def test_rr_exactly_one_point_five_is_viable(self):
-        decision = _evaluate()
+        decision = _evaluate(
+            structural_extreme=Decimal("99.1"),
+            frozen_signal_reference_price=Decimal("97"),
+            frozen_scanner_target_price=Decimal("102"),
+        )
 
         self.assertEqual(decision.action, DECISION_MARKET_ENTRY)
         self.assertEqual(decision.projected_vwap, Decimal("100"))
-        self.assertEqual(decision.stop_price, Decimal("98.00"))
-        self.assertEqual(decision.take_price, Decimal("103.00"))
-        self.assertEqual(decision.expected_reward, Decimal("0.03"))
+        self.assertEqual(decision.stop_price, Decimal("99.0"))
+        self.assertEqual(decision.take_price, Decimal("101.5"))
+        self.assertEqual(decision.expected_reward, Decimal("0.015"))
         self.assertEqual(decision.rr, Decimal("1.5"))
 
     def test_rr_below_one_point_five_is_blocked(self):
-        decision = _evaluate(book=_book(asks=((Decimal("100.1"), 10),)))
+        decision = _evaluate(
+            book=_book(asks=((Decimal("100.1"), 10),)),
+            structural_extreme=Decimal("99.1"),
+            frozen_signal_reference_price=Decimal("97"),
+            frozen_scanner_target_price=Decimal("102"),
+        )
 
         self.assertEqual(decision.action, DECISION_SKIPPED_POOR_RR)
         self.assertLess(decision.rr, Decimal("1.5"))
+
+    def test_structural_stop_at_limit_is_kept_and_beyond_uses_fallback(self):
+        at_limit = _evaluate()  # STOP 98.5, exactly 1.5%
+        self.assertEqual(at_limit.action, DECISION_MARKET_ENTRY)
+        self.assertEqual(at_limit.stop_price, Decimal("98.5"))
+        self.assertEqual(at_limit.rr, Decimal("2"))
+
+        for extreme in (Decimal("98.5"), Decimal("90"), Decimal("100.5")):
+            with self.subTest(structural_extreme=extreme):
+                # 98.4 (1.6%), 89.9 (far) and 100.4 (wrong side): the Market
+                # entry is still viable with the 1.5% fallback 100 * 0.985.
+                decision = _evaluate(structural_extreme=extreme)
+                self.assertEqual(decision.action, DECISION_MARKET_ENTRY)
+                self.assertEqual(decision.stop_price, Decimal("98.500"))
+                self.assertEqual(decision.rr, Decimal("2"))
 
     def test_expected_reward_exactly_one_percent_is_viable(self):
         decision = _evaluate(
@@ -235,17 +260,36 @@ class RobotLateAdmissionTests(unittest.TestCase):
             snapshot=snapshot,
             state=state,
             book=_book(bids=((100, 10),), asks=((101, 10),)),
-            structural_extreme=Decimal("110"),
-            frozen_signal_reference_price=Decimal("106"),
-            frozen_scanner_target_price=Decimal("96"),
+            structural_extreme=Decimal("100.9"),
+            frozen_signal_reference_price=Decimal("103"),
+            frozen_scanner_target_price=Decimal("98"),
         )
 
         self.assertEqual(decision.action, DECISION_MARKET_ENTRY)
         self.assertEqual(decision.best_price, Decimal("100"))
         self.assertEqual(decision.projected_vwap, Decimal("100"))
-        self.assertEqual(decision.stop_price, Decimal("102.00"))
-        self.assertEqual(decision.take_price, Decimal("97.00"))
+        self.assertEqual(decision.stop_price, Decimal("101.0"))
+        self.assertEqual(decision.take_price, Decimal("98.5"))
         self.assertEqual(decision.rr, Decimal("1.5"))
+
+    def test_short_structural_stop_beyond_limit_uses_fallback(self):
+        snapshot = _snapshot(pattern="Rising Wedge")
+        state = _state(direction=robot_state_machine.DIRECTION_SHORT)
+        for extreme, expected_stop in (
+            (Decimal("101.4"), Decimal("101.5")),    # structural STOP exactly 1.5%
+            (Decimal("101.5"), Decimal("101.500")),  # 101.6 beyond -> 100 * 1.015
+        ):
+            with self.subTest(structural_extreme=extreme):
+                decision = _evaluate(
+                    snapshot=snapshot,
+                    state=state,
+                    book=_book(bids=((100, 10),), asks=((101, 10),)),
+                    structural_extreme=extreme,
+                    frozen_signal_reference_price=Decimal("106"),
+                    frozen_scanner_target_price=Decimal("96"),
+                )
+                self.assertEqual(decision.action, DECISION_MARKET_ENTRY)
+                self.assertEqual(decision.stop_price, expected_stop)
 
     def test_only_catchup_marked_retest_is_accepted(self):
         ordinary = _state()

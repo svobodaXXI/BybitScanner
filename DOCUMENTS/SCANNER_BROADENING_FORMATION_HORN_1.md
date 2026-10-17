@@ -144,6 +144,12 @@ changes Wedge/Triangle output (owner decisions 6, 8).
 3. Boundaries: two-point lines through the first and last HIGH / LOW of the run,
    projected forward to and beyond `as_of_index`. The upper slope must be > 0 and
    the lower slope < 0. Width at `as_of_index` must exceed width at START.
+   The channel must be open on the whole formation: `upper(t) > lower(t)` for
+   every t from START through the last anchor and the decision bar (lines are
+   straight, so both interval ends are checked). Touching or crossed lines are
+   rejected; the only tolerance is a floating-point rounding bound (a few ulps
+   of the prices), not a market threshold. Regression: UNIUSDT 5m, decision
+   1792253400000, where the lines crossed between P1 and P2.
 4. Admission: hull on both sides, body fit (`< GEOMETRY_MAX_BODY_BREACH_RUN`;
    isolated wicks tolerated). Locality is applied through START (item 2).
 5. Stage:
