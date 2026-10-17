@@ -2,11 +2,11 @@
 
 Version:
 
-3.10
+3.11
 
 Date:
 
-2026-09-27
+2026-10-18
 
 Document Type:
 
@@ -1842,20 +1842,25 @@ invariants:
 
 * TASK establishes objective, constraints and initial scope;
 * SPEC establishes approved behavior, scope, non-goals and acceptance;
-* CONTEXT derives task-scoped context from the current local checkout;
+* CONTEXT derives task-scoped evidence from the intended GitHub ref for remote work,
+  or the current local checkout for local implementation/runtime verification;
 * IMPLEMENT requires the applicable approval and valid context;
 * VERIFY evaluates approved acceptance and regression requirements;
-* RECORD stores current authoritative state and a scoped Git checkpoint;
+* RECORD preserves the scoped authoritative result in Git/PR for GitHub origins;
+  local checkpoint is validation-only when applicable and cannot publish;
+  it does not replace mandatory task/approval evidence or runtime acceptance;
 * interruption recovery resumes from the latest persisted completed stage;
 * material scope or contract changes return work to SPEC and require approval.
 
 authority_boundary:
 
-* current local filesystem and local Git state define current working reality;
-* owning authoritative local documents define normative project meaning;
-* Git owns detailed implementation history and deltas;
-* GitHub is a remote collaboration/review layer and does not override a newer local checkout;
-* generated context, reports, snapshots, backups and historical copies are non-authoritative.
+* current owner instruction sets task priority within mandatory safety/approval contracts;
+* GitHub branch/PR is publication authority for tracked code/docs when origin is GitHub;
+* the local filesystem, Git state and running processes define actual host-local
+  work and runtime truth; newer uncommitted work is never overwritten by remote sync;
+* owning task/spec/contracts define normative behavior for their applicable scope;
+* generated context, reports, snapshots, backups and historical copies are non-authoritative;
+* read-only GitHub-first work does not require a local checkout or Project Sync run.
 
 ---
 
