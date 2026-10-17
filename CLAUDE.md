@@ -1,6 +1,10 @@
 # BybitScanner — Claude Code Bridge
 
-Short, always-loaded bootstrap for Claude Code sessions in this repository. This file intentionally contains no current branch, mission, priority, checkpoint, or runtime snapshot; dynamic state belongs to current Git/filesystem reality and `DOCUMENTS/PROJECT_STATE.md`.
+Short, always-loaded bootstrap for Claude Code sessions in this repository.
+No current branch/mission snapshot lives here; the owner's current task,
+intended GitHub ref and relevant host-local Git/runtime evidence supply
+dynamic state. `DOCUMENTS/PROJECT_STATE.md` is a persisted checkpoint,
+not an automatically current runtime fact.
 
 ## Fast bootstrap
 
@@ -13,16 +17,18 @@ Before acting:
 
 Do not run full Project Sync, deep recovery, ContextDump generation, broad status/diff/test sweeps, or extra worktree/branch setup merely because those mechanisms exist.
 
-## Authority order
+## Authority and current-state routing
 
-1. Current local filesystem and Git state.
-2. `DOCUMENTS/PROJECT_STATE.md`.
-3. Applicable Task/Spec or durable ChangeRequest.
-4. Scoped `PROJECT_CONTRACTS.md`, `PROJECT_RULES.md`, `ARCHITECTURE.md`, `PROJECT_TREE.md`.
-5. `DOCUMENTS/ASSISTANT_PROTOCOL.md` for assistant behavior and communication.
-6. `AGENTS.md` for routing and harness detail.
+Current owner goal + mandatory safety gates come first. Use `AGENTS.md`
+for scope routing, then the affected Task/Spec/ChangeRequest and relevant
+contracts. For GitHub-published code/docs use the intended GitHub branch/PR
+and HEAD; for local unsaved work/runtime trust actual host-local evidence.
+`PROJECT_STATE.md`, BACKLOG and QUEST_STATE contain checkpoints, not a
+license to override newer owner commands with dated "current" headings.
+`DOCUMENTS/ASSISTANT_PROTOCOL.md` owns communication and Result-First
+transitions. Avoid broad PROJECT_STATE reads on routine tasks.
 
-Repository authority beats conversational memory and generated snapshots.
+Repository/host evidence beats conversational memory and generated snapshots.
 
 ## Git / user-owned-work safety
 
