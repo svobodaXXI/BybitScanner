@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import queue
 import threading
 import time
+from datetime import datetime, timezone
 from terminal.protection_timing import protection_span
 from types import SimpleNamespace
 
@@ -113,6 +115,46 @@ from terminal.runtime.paper_context import (
 
 
 LOGGER = logging.getLogger(__name__)
+
+DIAGNOSTICS_QUEUE_LIMIT = 32
+
+
+class _BestEffortDiagnosticsWriter:
+    """Off-owner FIFO for small diagnostic file writes (MDC-DIAG-1).
+
+    The owner only enqueues; one daemon thread performs the IO. A full queue or
+    any failure drops the record and counts it: never raised, never waited on.
+    """
+
+    def __init__(self, limit: int = DIAGNOSTICS_QUEUE_LIMIT) -> None:
+        self._queue: queue.Queue = queue.Queue(maxsize=limit)
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self.dropped = 0
+
+    def submit(self, write: Callable[[], object]) -> bool:
+        try:
+            with self._lock:
+                if self._thread is None or not self._thread.is_alive():
+                    self._thread = threading.Thread(
+                        target=self._run, name="robot-diagnostics-writer", daemon=True)
+                    self._thread.start()
+            self._queue.put_nowait(write)
+            return True
+        except Exception:
+            self.dropped += 1
+            return False
+
+    def _run(self) -> None:
+        while True:
+            write = self._queue.get()
+            try:
+                write()
+            except Exception:
+                self.dropped += 1
+
+
+_DIAGNOSTICS_WRITER = _BestEffortDiagnosticsWriter()
 
 
 def _live_working_volume_projection(
@@ -1842,6 +1884,7 @@ class PaperRuntime:
         normalized = symbol.strip().upper()
         if not normalized:
             raise ValueError("Robot protection coverage symbol is required")
+        noted = self._take_continuity_evidence(normalized)
         state = self.store.get_robot_runtime_state(self._paper_account_id)
         if state is None or state.mode != ROBOT_RUNNING:
             return False
@@ -1866,7 +1909,84 @@ class PaperRuntime:
                 state.recovery_status, fenced.version, fenced.reason,
             )
             self._continuity_recovered.discard(normalized)
+        self._record_continuity_fence(normalized, reason, state, fenced, noted)
         return True
+
+    # ---- MDC-DIAG-1: best-effort evidence of the first continuity fence ----------------
+    #
+    # The durable fence reason lives only in robot_runtime_state.reason and is overwritten
+    # by the next transition. The first transition into RECONCILIATION_REQUIRED therefore
+    # keeps one bounded in-memory record and hands its incident file to an off-owner writer.
+    # Nothing here decides, delays or can fail a fence, a recovery or an EMERGENCY_CLOSE.
+
+    def note_continuity_evidence(self, symbol: str, evidence: Mapping[str, object]) -> None:
+        """Owner thread, right before the fence of the same queued task. Memory only."""
+        try:
+            pending = self.__dict__.setdefault("_continuity_evidence_pending", {})
+            pending.setdefault(symbol.strip().upper(), dict(evidence))
+        except Exception:
+            pass
+
+    def _take_continuity_evidence(self, symbol: str) -> dict[str, object]:
+        try:
+            return dict(self.__dict__.get("_continuity_evidence_pending", {}).pop(symbol, None) or {})
+        except Exception:
+            return {}
+
+    def _record_continuity_fence(self, symbol, reason, prior, fenced, noted) -> None:
+        try:
+            fenced_at_ms = int(time.time() * 1000)
+            core = {
+                "fence_id": f"continuity-fence-{fenced.version}",
+                "fence_symbol": symbol,
+                "continuity_reason": reason.strip() or "unknown",
+                "prior_recovery_status": prior.recovery_status,
+                "fence_version": fenced.version,
+                "fenced_at_ms": fenced_at_ms,
+                "fenced_at_utc": datetime.fromtimestamp(fenced_at_ms / 1000, timezone.utc)
+                .strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+            }
+            extra = {
+                str(key): value for key, value in (noted or {}).items()
+                if value is None or isinstance(value, (bool, int, float, str))
+            }
+            record = {**extra, **core}
+            self._continuity_fence_evidence = record
+            incident_dir = self._robot_incident_dir
+
+            def write() -> None:
+                record_robot_incident(
+                    incident_type="ROBOT_PROTECTION_CONTINUITY_FENCE",
+                    stage="continuity_fence",
+                    reason_code="MARKET_DATA_CONTINUITY_FENCE",
+                    symbol=symbol,
+                    facts=record,
+                    selected_recovery_action="FENCE_ROBOT_ADMISSION",
+                    incident_dir=incident_dir,
+                    timestamp_ms=fenced_at_ms,
+                )
+
+            submit = getattr(self, "_diagnostic_submit", None) or _DIAGNOSTICS_WRITER.submit
+            submit(write)
+        except Exception:
+            print("[ROBOT DIAGNOSTIC ERROR] continuity_fence_evidence_failed")
+
+    def _continuity_fence_link(self, reason: str, event_id: str, book) -> dict[str, object]:
+        """Facts linking an EMERGENCY_CLOSE to the fence that started its recovery."""
+        try:
+            fence = getattr(self, "_continuity_fence_evidence", None)
+            fence = fence if isinstance(fence, Mapping) else {}
+            return {
+                "continuity_fence_id": fence.get("fence_id"),
+                "continuity_fence_symbol": fence.get("fence_symbol"),
+                "continuity_fence_reason": fence.get("continuity_reason"),
+                "continuity_fence_at_ms": fence.get("fenced_at_ms"),
+                "recovery_reason": reason,
+                "recovery_event_id": event_id,
+                "recovery_source_generation": getattr(book, "source_generation", None),
+            }
+        except Exception:
+            return {}
 
     def release_robot_protection_continuity_fence(
         self, symbol: str, *, ingress_healthy,
@@ -1911,6 +2031,7 @@ class PaperRuntime:
             return False
         self._continuity_fence_origin.pop(fence_symbol, None)
         self._continuity_recovered.discard(fence_symbol)
+        self._continuity_fence_evidence = None  # MDC-DIAG-1: that fence is over
         if prior_status == PAUSED:
             return True
         resumed = resume_robot_in_store(
@@ -2150,6 +2271,7 @@ class PaperRuntime:
                 "age_ms": None,
                 "source_received_at_ms": received_at_ms,
                 "source_event_at_ms": book.source_event_at_ms,
+                **self._continuity_fence_link(reason, event_id, book),
             },
             selected_recovery_action="EMERGENCY_CLOSE",
             incident_dir=self._robot_incident_dir,

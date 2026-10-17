@@ -1202,6 +1202,25 @@ class _OwnerTask:
 # Wakes the owner thread when protection work is pending; carries no work itself.
 _PROTECTION_WAKE = object()
 
+# MDC-DIAG-1: the ingress snapshot kept with the first continuity fence.
+_CONTINUITY_INGRESS_FIELDS = (
+    "capacity", "current_pending", "high_watermark", "max_queue_latency_ms",
+    "max_processing_ms", "slowest_task_label", "slowest_task_ms",
+    "last_symbol", "last_overflow_symbol",
+)
+
+
+def _fence_with_evidence(runtime, symbol: str, reason: str, evidence) -> bool:
+    """Owner task: note diagnostics best-effort, then the unchanged fence call."""
+    if evidence:
+        note = getattr(runtime, "note_continuity_evidence", None)
+        if note is not None:
+            try:
+                note(symbol, evidence)
+            except Exception:
+                pass
+    return runtime.fence_robot_protection_continuity_loss(symbol, reason)
+
 
 class ProtectionIngressOverflow(RuntimeError):
     """Raised when bounded Robot protection ingress cannot admit another
@@ -2252,7 +2271,8 @@ class RobotProtectionCoverageManager:
                 try:
                     self._attach(symbol)
                 except Exception:
-                    self._mark_unhealthy(symbol, "subscribe_failed")
+                    self._mark_unhealthy(
+                        symbol, "subscribe_failed", self._continuity_evidence(symbol))
                     LOGGER.exception("Robot protection coverage subscribe failed; symbol=%s", symbol)
             for symbol in sorted(to_drop):
                 if shutdown_strict:
@@ -2471,11 +2491,11 @@ class RobotProtectionCoverageManager:
             coverage_role = self._roles.get(symbol, "UNKNOWN")
             continuity_reason = f"websocket_disconnect:{reason or 'UNKNOWN'}"
             self._unhealthy[symbol] = continuity_reason
+        evidence = self._continuity_evidence(
+            symbol, source_generation=generation, coverage_role=coverage_role)
 
         def _fence_after_prior_events(runtime):
-            return runtime.fence_robot_protection_continuity_loss(
-                symbol, continuity_reason,
-            )
+            return _fence_with_evidence(runtime, symbol, continuity_reason, evidence)
 
         try:
             self._runtime.enqueue(
@@ -2512,7 +2532,9 @@ class RobotProtectionCoverageManager:
             return
         expected_event_id = f"{symbol}:{book.source_sequence}:{book.source_update_id}"
         if book_update_id != expected_event_id:
-            self._mark_unhealthy(symbol, "event_identity_mismatch")
+            self._mark_unhealthy(symbol, "event_identity_mismatch", self._continuity_evidence(
+                symbol, source_generation=book.source_generation, coverage_role=coverage_role,
+                event_id=book_update_id, snapshot_event_id=expected_event_id))
             LOGGER.error(
                 "Robot protection book identity mismatch; symbol=%s "
                 "listener_event=%s snapshot_event=%s",
@@ -2556,7 +2578,9 @@ class RobotProtectionCoverageManager:
                 event_id=book_update_id,
             )
         except ProtectionIngressOverflow:
-            self._mark_unhealthy(symbol, "ingress_overflow")
+            self._mark_unhealthy(symbol, "ingress_overflow", self._continuity_evidence(
+                symbol, source_generation=book.source_generation, coverage_role=coverage_role,
+                event_id=book_update_id))
             metrics = (
                 self._runtime.protection_ingress_metrics()
                 if hasattr(self._runtime, "protection_ingress_metrics")
@@ -2569,18 +2593,20 @@ class RobotProtectionCoverageManager:
             )
             return
         except Exception:
-            self._mark_unhealthy(symbol, "admission_failed")
+            self._mark_unhealthy(symbol, "admission_failed", self._continuity_evidence(
+                symbol, source_generation=book.source_generation, coverage_role=coverage_role,
+                event_id=book_update_id))
             LOGGER.exception(
                 "Robot protection coverage admission failed; symbol=%s event=%s",
                 symbol, book_update_id,
             )
             return
-    def _enqueue_runtime_fence(self, symbol: str, reason: str) -> None:
+    def _enqueue_runtime_fence(
+        self, symbol: str, reason: str, evidence: Mapping[str, object] | None = None,
+    ) -> None:
         try:
             self._runtime.enqueue(
-                lambda runtime: runtime.fence_robot_protection_continuity_loss(
-                    symbol, reason,
-                )
+                lambda runtime: _fence_with_evidence(runtime, symbol, reason, evidence)
             )
         except Exception:
             LOGGER.exception(
@@ -2589,10 +2615,31 @@ class RobotProtectionCoverageManager:
                 symbol, reason,
             )
 
-    def _mark_unhealthy(self, symbol: str, reason: str) -> None:
+    def _mark_unhealthy(
+        self, symbol: str, reason: str, evidence: Mapping[str, object] | None = None,
+    ) -> None:
         with self._lock:
             self._unhealthy[symbol] = reason
-        self._enqueue_runtime_fence(symbol, reason)
+        self._enqueue_runtime_fence(symbol, reason, evidence)
+
+    def _continuity_evidence(self, symbol: str, **known: object) -> dict[str, object]:
+        """MDC-DIAG-1: bounded facts for the fence about to be queued; never raises.
+
+        Captured here, off the owner, when continuity is lost: the owner keeps only
+        the first fence's copy and writes it through its background diagnostics writer.
+        """
+        try:
+            evidence: dict[str, object] = {"evidence_captured_at_ms": int(time.time() * 1000)}
+            evidence.update({key: value for key, value in known.items() if value is not None})
+            try:
+                metrics = self._runtime.protection_ingress_metrics()
+                for key in _CONTINUITY_INGRESS_FIELDS:
+                    evidence["ingress_" + key] = metrics.get(key)
+            except Exception:
+                evidence["ingress_metrics"] = "UNAVAILABLE"
+            return evidence
+        except Exception:
+            return {}  # the fail-closed fence that follows must never depend on this
 
     def _mark_healthy(self, symbol: str) -> None:
         with self._lock:
