@@ -25,6 +25,10 @@ class CommandState(str, Enum):
     FAILED = "failed"
     UNKNOWN = "unknown"
     RECONCILING = "reconciling"
+    # Administrative closure of a stale historical record on the OWNER'S STATEMENT.
+    # It is not exchange evidence and never replaces CANCELLED/FILLED. Written only
+    # by terminal.application.legacy_live_limit_owner_attestation.
+    OWNER_ATTESTED_CLOSED = "owner_attested_closed"
 
 
 class OrderState(str, Enum):
@@ -72,6 +76,7 @@ _COMMAND_TRANSITIONS = {
         CommandState.FILLED,
         CommandState.CANCEL_PENDING,
         CommandState.RECONCILING,
+        CommandState.OWNER_ATTESTED_CLOSED,
     }),
     CommandState.PARTIALLY_FILLED: frozenset({
         CommandState.FILLED,
@@ -103,6 +108,7 @@ _COMMAND_TRANSITIONS = {
     CommandState.AMENDED: frozenset(),
     CommandState.REJECTED: frozenset(),
     CommandState.FAILED: frozenset(),
+    CommandState.OWNER_ATTESTED_CLOSED: frozenset(),
 }
 
 COMMAND_TRANSITIONS = MappingProxyType(_COMMAND_TRANSITIONS)
