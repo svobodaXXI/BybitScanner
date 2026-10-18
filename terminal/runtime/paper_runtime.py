@@ -653,6 +653,8 @@ class PaperRuntime:
         # version, reason)) and the symbols whose recovery has been proven since.
         self._continuity_fence_origin: dict[str, tuple[str, int, str]] = {}
         self._continuity_recovered: set[str] = set()
+        # Fenced symbols whose proven recovery waits only for off-owner candle evidence.
+        self._continuity_release_deferred: set[str] = set()
 
         self.store = SQLiteStore.open(database_path)
         runtime_process_identity = RuntimeProcessIdentity.capture(
@@ -2026,6 +2028,25 @@ class PaperRuntime:
         except Exception:
             return {}
 
+    def robot_recovery_evidence_ready(self) -> bool:
+        """True if a reconciliation pass can read every closed candle it needs, no fetch.
+
+        Mirrors what ``RobotRecoveryCoordinator`` asks the cache for: the symbols of
+        APPROVED candidates that go through the geometry-index provider. With no
+        cache (injected plain provider) there is nothing to prepare.
+        """
+        cache = getattr(self, "robot_closed_candle_cache", None)
+        if cache is None:
+            return True
+        return all(
+            cache.peek(symbol) is not None
+            for symbol in self._robot_recovery.symbols_needing_geometry_evidence()
+        )
+
+    def robot_continuity_release_deferred(self) -> bool:
+        """True while a proven coverage-loss fence waits only for candle evidence."""
+        return bool(self._continuity_release_deferred)
+
     def release_robot_protection_continuity_fence(
         self, symbol: str, *, ingress_healthy,
     ) -> bool:
@@ -2064,6 +2085,16 @@ class PaperRuntime:
         ):
             return False
         prior_status = origin[0]
+        # Reconciliation reads each APPROVED candidate's latest closed candle from
+        # the cache and never fetches on this owner thread. If that evidence has not
+        # been prepared off-owner yet, running it would overwrite this fence's durable
+        # reason with "closed candle cache unavailable" and lose the automatic
+        # release. Keep the fence exactly as it is and let the coverage manager warm
+        # the cache off-owner and retry; admission stays closed meanwhile.
+        if not self.robot_recovery_evidence_ready():
+            self._continuity_release_deferred.add(fence_symbol)
+            return False
+        self._continuity_release_deferred.discard(fence_symbol)
         reconciled = self.robot_reconcile()
         if not reconciled.success or reconciled.recovery_status != PAUSED:
             return False
