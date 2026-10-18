@@ -31,6 +31,8 @@ from tradingview_bridge import (
 
 from pattern_robot_integration import prepare_robot_handoff
 
+from signal_archive import record_original_signal
+
 from timeframe_format import format_timeframe_ru
 
 import config
@@ -510,6 +512,17 @@ def send_signal(
     robot_candidate_id = handoff.candidate_id
     robot_candidate_failed = handoff.persistence_failed
 
+    # The chart file is overwritten by the next signal for this symbol: keep the
+    # exact bytes about to be sent so "К сигналу" can repost the original.
+    archived_image = None
+    if robot_candidate_id:
+        try:
+            with open(chart_path, "rb") as chart_file:
+                archived_image = chart_file.read()
+        except OSError:
+            archived_image = None
+    owner_photo_response = None
+
     for chat_id in get_telegram_chat_ids():
         try:
             is_owner = (
@@ -542,6 +555,8 @@ def send_signal(
                     f"[TELEGRAM PHOTO ERROR] "
                     f"chat_id={chat_id} response={response}"
                 )
+            elif is_owner:
+                owner_photo_response = response
 
         except Exception as error:
             all_delivered = False
@@ -549,6 +564,13 @@ def send_signal(
                 f"[TELEGRAM PHOTO ERROR] "
                 f"chat_id={chat_id} error={error}"
             )
+
+    if robot_candidate_id and archived_image and owner_photo_response is not None:
+        record_original_signal(
+            robot_candidate_id, symbol=symbol, timeframe=timeframe,
+            pattern=result.get("pattern", ""), text=message,
+            image_bytes=archived_image, photo_response=owner_photo_response,
+        )
 
     # After the ordinary card/photo delivery, tell the owner (only) why the
     # Robot button is missing. The warning never affects delivery status.

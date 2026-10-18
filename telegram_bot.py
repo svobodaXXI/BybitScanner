@@ -115,3 +115,39 @@ def send_photo(
         )
 
     return response.json()
+
+
+def send_photo_by_file_id(
+    token,
+    chat_id,
+    file_id,
+    caption="",
+    reply_markup=None
+):
+    """
+    Повторная отправка уже загруженного Telegram изображения по file_id.
+    """
+
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{token}/sendPhoto"
+    )
+
+    data = {
+        "chat_id": chat_id,
+        "photo": file_id,
+        "caption": caption
+    }
+
+    if reply_markup is not None:
+        data["reply_markup"] = json.dumps(
+            reply_markup
+        )
+
+    response = requests.post(
+        url,
+        data=data,
+        timeout=20
+    )
+
+    return response.json()

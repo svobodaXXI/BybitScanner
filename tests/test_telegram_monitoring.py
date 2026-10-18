@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import call, patch
@@ -111,13 +112,15 @@ class TelegramMonitoringTests(unittest.TestCase):
         record = self._record()
         record = monitoring.replace(record, status="CLOSED")
         store.return_value.__enter__.return_value.load_robot_candidates.return_value = (record,)
-        with patch.object(monitoring, "_load_candidate_candles",
-                          return_value=(monitoring._candidate_view(record), None,
-                                        "Исторические свечи сигнала недоступны")):
+        with tempfile.TemporaryDirectory() as empty_archive, \
+                patch.dict(os.environ, {"BYBITSCANNER_SIGNAL_ARCHIVE_DIR": empty_archive}), \
+                patch.object(monitoring, "_load_candidate_candles",
+                             return_value=(monitoring._candidate_view(record), None,
+                                           "Исторические свечи сигнала недоступны")):
             monitoring._send_source_signal_card(
                 123, monitoring._candidate_callback_token(record.candidate_id),
             )
-        self.assertIn("Исходный сигнал", send.call_args.args[1])
+        self.assertIn("Оригинал сигнала по 1000NEIROCTOUSDT не сохранён", send.call_args.args[1])
         self.assertIn("Исторические свечи сигнала недоступны", send.call_args.args[1])
 
     def test_frozen_source_chart_excludes_unclosed_and_future_bars(self):

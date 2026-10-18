@@ -32,6 +32,7 @@ import requests
 
 import config
 import metascalp_bridge
+import signal_archive
 import telegram_bot
 import telegram_runtime_intent
 from telegram_labels import SCANNER_EMOJI, ROBOT_EMOJI
@@ -50,6 +51,7 @@ from robot_telegram_feed import (
     format_paper_positions_view,
     format_robot_status_text, parse_robot_view_callback,
 )
+from terminal.application.robot_admission import box_plan_admission_handle
 from terminal.application.robot_control import get_robot_runtime_status
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import RobotCandidateRecord, SQLiteStore
@@ -662,6 +664,79 @@ def _load_candidate_candles(record: RobotCandidateRecord, *, source: bool = Fals
     return view, df, (f"Цена: {close:.8g} · свеча {checked_at}" + (" · ДАННЫЕ УСТАРЕЛИ" if stale else ""))
 
 
+SIGNAL_REPOST_MARK = "🔁 ДУБЛИРОВАНИЕ"
+RESTORED_SIGNAL_MARK = "♻️ ВОССТАНОВЛЕННЫЙ СИГНАЛ (не оригинал)"
+TELEGRAM_CAPTION_LIMIT = 1024
+
+
+def _signal_archive_ids(record: RobotCandidateRecord) -> list[str]:
+    """Exact ids under which the Scanner stored this candidate's original signal.
+
+    The Robot candidate id, or the Box plan id it was handed off from. Never a ticker.
+    """
+    ids = [record.candidate_id]
+    source_id = record.signal_snapshot.get("source_box_candidate_id")
+    if source_id:
+        ids.append(str(source_id))
+        try:
+            # The Box scanner archives under the callback-safe handle of its plan.
+            ids.append(box_plan_admission_handle(str(source_id)))
+        except ValueError:
+            pass
+    return ids
+
+
+def _format_signal_time(ms) -> str:
+    return datetime.fromtimestamp(int(ms) / 1000, timezone.utc).strftime("%d.%m.%Y %H:%M:%S UTC")
+
+
+def _repost_keyboard(symbol: str, timeframe: str) -> dict:
+    """Neutral keyboard: no Robot admission, review or MetaScalp actions on a repost."""
+    rows = []
+    try:
+        rows.append([{"text": "📈 Open TradingView",
+                      "url": create_tradingview_url(symbol, timeframe)}])
+    except Exception as exc:
+        print("[SIGNAL REPOST TV ERROR]", symbol, exc)
+    rows.append([{"text": "⬅️ К кандидатам", "callback_data": "monitor:list"}])
+    return {"inline_keyboard": rows}
+
+
+def _repost_caption(original: Mapping) -> str:
+    head = f"{SIGNAL_REPOST_MARK}\nОригинал отправлен: {_format_signal_time(original['sent_at_ms'])}\n\n"
+    body = str(original.get("text") or "").strip()
+    room = TELEGRAM_CAPTION_LIMIT - len(head)
+    if len(body) > room:
+        body = body[: max(room - 1, 0)] + "…"
+    return head + body
+
+
+def _repost_original_signal(chat_id, original: Mapping) -> bool:
+    """New message at the end of the feed with the archived original image and text.
+
+    Reuses the Telegram file_id when it still works, otherwise the archived PNG bytes.
+    The original message is never edited or deleted.
+    """
+    caption = _repost_caption(original)
+    markup = _repost_keyboard(str(original.get("symbol", "")), str(original.get("timeframe", "")))
+    file_id = original.get("photo_file_id")
+    if file_id:
+        try:
+            if _delivered(telegram_bot.send_photo_by_file_id(
+                    config.TELEGRAM_TOKEN, chat_id, file_id, caption=caption, reply_markup=markup)):
+                return True
+        except Exception as exc:
+            print("[SIGNAL REPOST FILE_ID ERROR]", original.get("symbol"), exc)
+    try:
+        if _delivered(telegram_bot.send_photo(
+                config.TELEGRAM_TOKEN, chat_id, original["image_path"],
+                caption=caption, reply_markup=markup)):
+            return True
+    except Exception as exc:
+        print("[SIGNAL REPOST PHOTO ERROR]", original.get("symbol"), exc)
+    return False
+
+
 def _send_source_signal_card(chat_id, token: str) -> None:
     # Closed candidates are also needed for OPENED/CLOSED trade posts.
     with _robot_store() as store:
@@ -671,25 +746,44 @@ def _send_source_signal_card(chat_id, token: str) -> None:
     if record is None:
         _send_text(chat_id, "Исходный сигнал не найден или ссылка неоднозначна.")
         return
-    header = (f"📡 Исходный сигнал · {record.symbol.value}\n"
-              f"Паттерн: {record.signal_snapshot.get('pattern', '—')}\n"
-              f"Снимок: {record.candidate_id}")
+    symbol = record.symbol.value
+    original = signal_archive.load_original_signal(_signal_archive_ids(record))
+    if original is not None:
+        if _repost_original_signal(chat_id, original):
+            return
+        # The archived record is intact but Telegram would not take the image.
+        _send_text(
+            chat_id,
+            f"{SIGNAL_REPOST_MARK}\nОригинал отправлен: {_format_signal_time(original['sent_at_ms'])}\n\n"
+            f"{original.get('text', '')}\n\n"
+            "⚠️ Изображение оригинала не удалось отправить повторно.",
+            reply_markup=_repost_keyboard(symbol, str(original.get("timeframe", ""))),
+        )
+        return
+    # No archived original (a candidate created before the archive existed, or it was
+    # lost). Reconstruct from the immutable snapshot only when its signal time is
+    # proven; never substitute the current market and never present it as the original.
+    unavailable = (
+        f"ℹ️ Оригинал сигнала по {symbol} не сохранён: кандидат создан до включения архива "
+        "сигналов или запись недоступна. Показать его точную копию нельзя, "
+        "график текущего рынка не подставляю."
+    )
     try:
         view, candles, context = _load_candidate_candles(record, source=True)
-        caption = header + "\n" + context
-        if candles is not None:
-            _send_chart_card(
-                chat_id, view, candles, caption,
-                _with_signal_button(
-                    {"inline_keyboard": [[{"text": "⬅️ К кандидатам", "callback_data": "monitor:list"}]]},
-                    None,
-                ),
-            )
-            return
     except Exception as exc:
-        print("[SOURCE SIGNAL ERROR]", record.symbol.value, exc)
-        caption = header + "\nИсторический график недоступен"
-    _send_text(chat_id, caption)
+        print("[SOURCE SIGNAL ERROR]", symbol, exc)
+        _send_text(chat_id, unavailable)
+        return
+    if candles is None:
+        _send_text(chat_id, unavailable + "\n" + context)
+        return
+    caption = (f"{RESTORED_SIGNAL_MARK}\n{symbol} · {record.signal_snapshot.get('pattern', '—')}\n"
+               f"{context}\nТочная копия исходного сообщения не сохранена: "
+               "график воссоздан из сохранённого снимка, только закрытые свечи на момент сигнала.")
+    _send_chart_card(
+        chat_id, view, candles, caption,
+        {"inline_keyboard": [[{"text": "⬅️ К кандидатам", "callback_data": "monitor:list"}]]},
+    )
 
 
 def parse_monitor_callback(data: str):
