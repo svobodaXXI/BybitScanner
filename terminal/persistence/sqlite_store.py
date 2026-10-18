@@ -3756,11 +3756,12 @@ class SQLiteStore:
             CommandState.AMENDED.value,
             CommandState.REJECTED.value,
             CommandState.FAILED.value,
+            CommandState.OWNER_ATTESTED_CLOSED.value,
         )
         rows = self._connection.execute(
             """
             SELECT * FROM trading_commands
-            WHERE current_state NOT IN (?, ?, ?, ?, ?)
+            WHERE current_state NOT IN (?, ?, ?, ?, ?, ?)
             ORDER BY created_at_ms, command_id
             """,
             final_states,
