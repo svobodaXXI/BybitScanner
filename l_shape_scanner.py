@@ -17,6 +17,7 @@ from notification import (
     get_telegram_owner_chat_id,
     send_photo,
 )
+from signal_archive import record_original_signal
 from signal_memory import load_memory, save_memory
 
 
@@ -159,6 +160,12 @@ def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False)
 
     all_delivered = True
     sent_new = False
+    archived_image = None
+    if robot_candidate_id:
+        try:
+            archived_image = Path(observation["chart_path"]).read_bytes()
+        except OSError:
+            archived_image = None
     for chat_id in recipients:
         if chat_id in already_sent:
             continue
@@ -180,6 +187,12 @@ def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False)
                 all_delivered = False
                 continue
             sent_new = True
+            if is_owner and robot_candidate_id and archived_image:
+                record_original_signal(
+                    robot_candidate_id, symbol=symbol, timeframe=timeframe,
+                    pattern="L-shape", text=caption, image_bytes=archived_image,
+                    photo_response=response,
+                )
             if not test_mode:
                 already_sent.add(chat_id)
                 memory[memory_key] = {
