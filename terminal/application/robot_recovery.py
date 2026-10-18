@@ -323,20 +323,32 @@ class RobotRecoveryCoordinator:
                     f"Robot protection is incomplete for {candidate.symbol.value}"
                 )
 
+    @staticmethod
+    def _needs_geometry_evidence(candidate) -> bool:
+        """True if recovery asks the geometry-index provider about this candidate."""
+        return not (
+            (
+                candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
+                and isinstance(candidate.robot_state, Mapping)
+                and candidate.robot_state.get("phase") == "BOX_ENTRY_READY"
+            )
+            or robot_l_shape.is_l_shape_snapshot(candidate.signal_snapshot)
+        )
+
+    def symbols_needing_geometry_evidence(self) -> tuple[str, ...]:
+        """Symbols whose latest closed candle a reconciliation pass would read."""
+        _candidates, _open_positions, approved = self._load_candidate_sets()
+        return tuple(sorted({
+            item.symbol.value for item in approved if self._needs_geometry_evidence(item)
+        }))
+
     def _latest_geometry_indices(self, approved) -> dict[str, int]:
         if not approved:
             return {}
         provider = self._latest_geometry_index_provider
         result: dict[str, int] = {}
         for candidate in approved:
-            if (
-                (
-                    candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
-                    and isinstance(candidate.robot_state, Mapping)
-                    and candidate.robot_state.get("phase") == "BOX_ENTRY_READY"
-                )
-                or robot_l_shape.is_l_shape_snapshot(candidate.signal_snapshot)
-            ):
+            if not self._needs_geometry_evidence(candidate):
                 continue
             value = provider(candidate.symbol.value, candidate.signal_snapshot)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:

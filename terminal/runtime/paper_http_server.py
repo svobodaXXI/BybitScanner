@@ -1213,6 +1213,8 @@ class _BookUpdateNotification:
 
 
 SLOW_OWNER_TASK_WARNING_MS = 200.0
+# Minimum spacing of deferred continuity-fence release retries (each warms candles).
+DEFERRED_RELEASE_RETRY_INTERVAL_S = 10.0
 
 # Autopilot admission gate (#448 S2). Owner-tunable; any breach is WAIT, never ALLOW.
 AUTOPILOT_INGRESS_WINDOW_S = 60.0
@@ -2215,6 +2217,9 @@ class RobotProtectionCoverageManager:
         # that symbol succeeds again. Never cleared by silently continuing.
         self._unhealthy: dict[str, str] = {}
         self._recovery_inflight: set[str] = set()
+        # Proven-recovered fences whose release waits for off-owner candle evidence.
+        self._release_retry: set[str] = set()
+        self._release_retry_not_before = 0.0
         # Temporary ENTRY_PENDING arms taken before a resting entry LIMIT exists
         # (arm_entry_coverage). resync() keeps them covered and ends each one in
         # the pass that first sees the symbol's durable coverage role.
@@ -2698,10 +2703,53 @@ class RobotProtectionCoverageManager:
             LOGGER.exception(
                 "Robot protection continuity fence release failed; symbol=%s", symbol,
             )
+        # The runtime defers the release (fence untouched, admission closed) while a
+        # reconciliation would need closed-candle evidence that was not prepared off
+        # the owner thread; retry it from the coverage thread after warming the cache.
+        deferred = False
+        try:
+            deferred = bool(runtime.robot_continuity_release_deferred())
+        except Exception:
+            LOGGER.exception("Robot continuity release deferral check failed")
+        with self._lock:
+            if deferred:
+                self._release_retry.add(symbol)
+            else:
+                self._release_retry.discard(symbol)
+
+    def _retry_deferred_fence_releases(self) -> None:
+        """Coverage thread, never the owner: warm candles, then retry on the owner."""
+        with self._lock:
+            pending = sorted(self._release_retry)
+        if not pending:
+            return
+        now = time.monotonic()
+        if now < self._release_retry_not_before:
+            return
+        self._release_retry_not_before = now + DEFERRED_RELEASE_RETRY_INTERVAL_S
+        warm = getattr(self._runtime, "warm_robot_closed_candles", None)
+        if warm is not None:
+            try:
+                warm()
+            except Exception:
+                LOGGER.warning("Robot candle cache warm-up failed", exc_info=True)
+        for symbol in pending:
+            try:
+                self._runtime.call(
+                    lambda runtime, symbol=symbol: self._release_continuity_fence(runtime, symbol)
+                )
+            except Exception:
+                LOGGER.exception(
+                    "Robot continuity fence deferred release failed; symbol=%s", symbol,
+                )
 
     def _run(self) -> None:
         while not self._stop.wait(self._resync_interval_s):
             self.resync()
+            try:
+                self._retry_deferred_fence_releases()
+            except Exception:
+                LOGGER.exception("Robot continuity fence release retry failed")
 
     def close(self) -> None:
         self._stop.set()
