@@ -792,6 +792,9 @@ def _process_monitor_callback(callback_query) -> bool:
     if chat_id is None:
         _answer_callback(callback_query.get("id"), "Чат не найден")
         return True
+    if str(chat_id) != _owner_id():
+        _answer_callback(callback_query.get("id"), "Только личный чат владельца")
+        return True
     _answer_callback(callback_query.get("id"))
     if parsed["action"] == "list":
         _send_candidate_list(chat_id)
