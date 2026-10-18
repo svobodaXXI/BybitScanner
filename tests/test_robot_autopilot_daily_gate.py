@@ -266,3 +266,96 @@ class AdmissionTransactionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DailyMarksRuntimeWiringTests(unittest.TestCase):
+    """No network or owner-runtime start: prove source completeness and fail-closed handoff."""
+
+    def test_off_owner_provider_requires_all_exchange_marks(self):
+        import time
+        from terminal.runtime.paper_http_server import LiveOrderBookProvider
+
+        now = int(time.time() * 1000)
+
+        class Response:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return self.payload
+
+        class Session:
+            def __init__(self, payload):
+                self.payload = payload
+                self.calls = []
+
+            def get(self, url, *, params, timeout):
+                self.calls.append((url, params, timeout))
+                return Response(self.payload)
+
+        def feed(tickers, *, age=0):
+            session = Session({"retCode": 0, "time": now-age, "result": {"list": tickers}})
+            provider = LiveOrderBookProvider(None, rest_session=session)
+            return provider.get_mark_prices(("ALPHAUSDT", "BETAUSDT")), session.calls
+
+        full, calls = feed([
+            {"symbol": "ALPHAUSDT", "markPrice": "101.25"},
+            {"symbol": "BETAUSDT", "markPrice": "3.2"},
+        ])
+        self.assertEqual(set(full), {"ALPHAUSDT", "BETAUSDT"})
+        self.assertEqual(full["ALPHAUSDT"].price, Decimal("101.25"))
+        self.assertEqual(len(calls), 1)
+        self.assertIn("/v5/market/tickers", calls[0][0])
+        self.assertEqual(calls[0][1], {"category": "linear"})
+        self.assertEqual(feed([{"symbol": "ALPHAUSDT", "markPrice": "101.25"}])[0], {})
+        self.assertEqual(feed([
+            {"symbol": "ALPHAUSDT", "markPrice": "101.25"},
+            {"symbol": "BETAUSDT", "markPrice": "0"},
+        ])[0], {})
+        self.assertEqual(feed([
+            {"symbol": "ALPHAUSDT", "markPrice": "101.25"},
+            {"symbol": "BETAUSDT", "markPrice": "3.2"},
+        ], age=10_000)[0], {})
+
+    def test_runtime_owner_reads_all_positions_and_binds_one_captured_snapshot(self):
+        from types import SimpleNamespace
+        from terminal.runtime.paper_runtime import PaperRuntime
+
+        runtime = object.__new__(PaperRuntime)
+        runtime._paper_account_id = ACCOUNT
+        runtime.store = SimpleNamespace(load_open_position_projections=mock.Mock(return_value=(
+            SimpleNamespace(position_key=SimpleNamespace(symbol=SimpleNamespace(value="ALPHAUSDT"))),
+            SimpleNamespace(position_key=SimpleNamespace(symbol=SimpleNamespace(value="BETAUSDT"))),
+        )))
+        runtime._robot_command_dispatcher = lambda operation: operation(runtime)
+        mark = MarkPrice(Decimal("2"), D0 + MIN)
+        provider = mock.Mock()
+        provider.get_mark_prices.return_value = {"ALPHAUSDT": mark, "BETAUSDT": mark}
+        runtime._book_provider = provider
+        captured = runtime._prepare_autopilot_daily_marks()
+        self.assertEqual(captured, ({"ALPHAUSDT": mark, "BETAUSDT": mark}, 5000))
+        provider.get_mark_prices.assert_called_once_with(("ALPHAUSDT", "BETAUSDT"))
+        provider.get_mark_prices.return_value = {"ALPHAUSDT": mark}
+        self.assertEqual(runtime._prepare_autopilot_daily_marks(), ({}, 0))
+        provider.get_mark_prices.side_effect = RuntimeError("REST down")
+        self.assertEqual(runtime._prepare_autopilot_daily_marks(), ({}, 0))
+
+    def test_runtime_forwards_prepared_marks_to_existing_gate_without_disabling(self):
+        from types import SimpleNamespace
+        from terminal.runtime.paper_runtime import PaperRuntime
+        runtime = object.__new__(PaperRuntime)
+        runtime.store = SimpleNamespace(get_robot_autopilot_state=lambda _: SimpleNamespace(mode="PAPER_AUTO"))
+        runtime._paper_account_id = ACCOUNT
+        runtime._autopilot_protection_health = lambda: True
+        runtime._autopilot_daily_loss_gate_enabled = True
+        runtime._autopilot_candidate_fresh = lambda *_: True
+        marks = ({"ALPHAUSDT": MarkPrice(Decimal("2"), D0 + MIN)}, 5000)
+        with mock.patch("terminal.runtime.paper_runtime.admit_arrived_auto_candidate") as admission:
+            runtime.observe_autopilot_candidate("SCANNER", "candidate", daily_marks=marks)
+        kwargs = admission.call_args.kwargs
+        self.assertIs(kwargs["daily_loss_gate_enabled"], True)
+        self.assertEqual(kwargs["daily_marks"](), marks)
+

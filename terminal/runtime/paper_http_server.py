@@ -1075,6 +1075,47 @@ class LiveOrderBookProvider:
             return None
         return self._load_rest_book(symbol)
 
+    def get_mark_prices(self, symbols: tuple[str, ...]):
+        """Read real Bybit ticker markPrice for every open PAPER position off-owner."""
+        from terminal.application.paper_daily_equity import MarkPrice
+
+        required = frozenset(symbols)
+        if not required:
+            return {}
+        if self._rest_session is None or any(not symbol.isalnum() for symbol in required):
+            return {}
+        try:
+            response = self._rest_session.get(
+                "https://api.bybit.com/v5/market/tickers",
+                params={"category": "linear"}, timeout=4,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("retCode") != 0:
+                return {}
+            observed_at_ms = payload.get("time")
+            now_ms = int(time.time() * 1000)
+            if type(observed_at_ms) is not int or not 0 <= now_ms - observed_at_ms <= 5000:
+                return {}
+            tickers = payload.get("result", {}).get("list")
+            if not isinstance(tickers, list):
+                return {}
+            marks = {}
+            for item in tickers:
+                if not isinstance(item, dict) or item.get("symbol") not in required:
+                    continue
+                symbol = item["symbol"]
+                if symbol in marks:
+                    return {}
+                price = Decimal(str(item["markPrice"]))
+                if not price.is_finite() or price <= 0:
+                    return {}
+                marks[symbol] = MarkPrice(price, observed_at_ms)
+            return marks if marks.keys() == required else {}
+        except (AttributeError, InvalidOperation, KeyError, TypeError,
+                ValueError, requests.RequestException):
+            return {}
+
     def get_streamed_book(self, symbol: Symbol) -> NormalizedOrderBook | None:
         """Current READY book from an already-streamed buffer, never REST.
 

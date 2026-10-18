@@ -29,6 +29,7 @@ from terminal.api.models import (
     LiveMarketCommandRequest,
 )
 from terminal.application.robot_autopilot import daily_loss_gate_enabled
+from terminal.application.paper_daily_equity import MarkPrice
 from terminal.application.robot_autopilot_shadow import (
     DEFERRED_HANDOVER, SOURCE_BOX_PLAN, SOURCE_SCANNER, ShadowChunk, ShadowDeferredObserver,
     admit_arrived_auto_candidate, commit_shadow_chunk, observe_shadow_candidate,
@@ -1016,14 +1017,49 @@ class PaperRuntime:
                 f"source={source} candidate_ref={candidate_ref} "
                 f"error_class={type(error).__name__}"
             )
+        # Fetch exchange mark prices on the Scanner/handler thread, never under
+        # the owner's serialized admission transaction. Capture immutable marks
+        # for this one decision; late arrivals remain fail-closed by age.
         # SHADOW: evaluated here, off the owner; only a bounded commit reaches the owner.
-        # OFF / PAPER_AUTO (or a mode switched meanwhile): the unchanged owner entry decides.
+        # No ticker REST request unless a real PAPER_AUTO handover is due.
         if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
             return
+        prepared_marks = self._prepare_autopilot_daily_marks()
         self._dispatch_robot_command(
             lambda runtime: runtime.observe_autopilot_candidate(
-                source, candidate_ref, handover=True)
+                source, candidate_ref, handover=True, daily_marks=prepared_marks)
         )
+
+    def _autopilot_open_position_symbols(self) -> tuple[str, ...]:
+        """Owner-only read of the complete PAPER position set."""
+        return tuple(sorted({
+            item.position_key.symbol.value
+            for item in self.store.load_open_position_projections(self._paper_account_id)
+        }))
+
+    def _prepare_autopilot_daily_marks(self):
+        """Off-owner fresh ticker snapshot; one request for all open positions.
+
+        Missing price data is NOT substituted by bid/ask or a previous close.
+        The daily-loss gate receives only a captured, time-bounded price map.
+        """
+        try:
+            symbols = self._dispatch_robot_command(
+                lambda runtime: runtime._autopilot_open_position_symbols()
+            )
+            if not symbols:
+                return ({}, 5000)
+            provider = getattr(self._book_provider, "get_mark_prices", None)
+            if provider is None:
+                return ({}, 0)
+            marks = provider(symbols)
+            if not isinstance(marks, Mapping) or set(marks) != set(symbols):
+                return ({}, 0)
+            if any(not isinstance(mark, MarkPrice) for mark in marks.values()):
+                return ({}, 0)
+            return (dict(marks), 5000)
+        except Exception:
+            return ({}, 0)
 
     def autopilot_shadow_deferred_metrics(self) -> dict[str, object]:
         """Any thread. Per-process SHADOW deferred counters; dropped > 0 = incomplete run."""
@@ -1064,6 +1100,7 @@ class PaperRuntime:
 
     def observe_autopilot_candidate(
         self, source: str, candidate_ref: str, *, handover: bool = False,
+        daily_marks=None,
     ):
         """Owner thread. Autopilot evaluation of one arrived candidate.
 
@@ -1090,6 +1127,7 @@ class PaperRuntime:
                     protection_healthy=self._autopilot_protection_health,
                     candidate_fresh=self._autopilot_candidate_fresh,
                     daily_loss_gate_enabled=getattr(self, "_autopilot_daily_loss_gate_enabled", True),
+                    daily_marks=(lambda: daily_marks) if daily_marks is not None else None,
                 )
             return observe_shadow_candidate(
                 self.store, self._paper_account_id,
