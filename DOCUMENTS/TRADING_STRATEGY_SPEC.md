@@ -741,6 +741,32 @@ walk-forward samples, with no dependence on hindsight definitions. Kill or narro
 after controlling for breakout magnitude, volatility, level type, regime or costs, or if a robust decision-time
 `without accumulation` definition cannot be established.
 
+**Owner extension — 2026-10-18 (`MECHANICS_REFINEMENT / EXISTING_HYPOTHESIS_VARIANT`, not a new H-ID):**
+the naked breakout itself requires a **full real-body crossing in one candle** (open and close strictly on opposite
+sides of a frozen horizontal level or time-evaluated sloped boundary); wick-only or an already-crossed opening fails.
+No additional acceptance/settlement candle is mandatory. Absence of pre-breakout compression is preferred, but its
+measurable tolerance remains `NEEDS VALIDATION`. Observe static mirror/prior-extremum and horizontal pattern
+boundaries as well as dynamic wedge/channel/triangle boundaries; preserve one identity for geometrically identical
+levels from several detectors.
+
+Research one bounded **RETEST CAMPAIGN** per naked-crossed boundary: repeatedly seek qualified Box, L-shape or
+confirmed candle reversal entries toward the same level (at least three *possible* attempts, never compulsory
+fills), with cumulative realized losses and worst-case pending exposure no greater than half the **remaining
+after-cost reward** at permitted size, bounded also by the original fixed idea-risk ceiling. STOP ends an attempt,
+not the hypothesis. The **first source-time-proven retest** permanently terminates that campaign (even if no entry
+occurred); do not re-arm it on later taps. Preserve all account-wide/daily risk and fill/protection constraints.
+
+After retest, a new reversal Box/SHORT or other subsequent setup belongs to a **different idea with a fresh
+campaign-specific risk budget**, without forgiving historical account PnL. Detect nested/sequential Box formations
+continuously as `BOX CHAIN` independent of any retest campaign; an observed Box is not automatic permission to
+trade. Box F1.0 / L-shape standard-target 25% partial and 75% dynamic retest runner with fee-inclusive break-even
+are **comparison candidates** until independently validated, not amendments to current executable strategies.
+
+**Owning future design, external-engine comparison, bounded implementation slices and non-goals:**
+[RETEST_BOX_CHAIN_IMPLEMENTATION_PLAN.md](RETEST_BOX_CHAIN_IMPLEMENTATION_PLAN.md). The user's BRUSDT 1m screenshots
+from 2026-10-18 are an observation, not verified Gold or evidence of an out-of-sample edge. No current Robot or
+PAPER_AUTO runtime change is authorized.
+
 ---
 
 # 8. AKEUSDT CASE STUDY
@@ -1031,6 +1057,9 @@ No item below authorizes code.
   classification, retest-hold rule and trailing/profit-lock logic;
 * formalize H-016 decision-time `without accumulation` definition, level/boundary taxonomy, `DEEP_RETEST` threshold
   and prepared-breakout matched controls;
+* for H-016, record whole-body-crossing source-time geometry, first-touch campaign terminality, nested Box observations,
+  confirmed candle-entry variants and a fixed-ceiling 1:2 cumulative after-cost risk-to-remaining-reward ledger;
+  follow `RETEST_BOX_CHAIN_IMPLEMENTATION_PLAN.md` without changing Robot runtime;
 * complete an end-to-end Falling Wedge strategy definition with separate context and entry-mode cohorts;
 * preserve the AKEUSDT source/reference case only if original evidence and case identity are supplied.
 
@@ -1053,6 +1082,8 @@ No item below authorizes code.
   rebuild, candidate `75/25` and `70/30` distributions versus neighboring fractions, and runner/trailing variants;
 * test H-016 return-to-level, deep-retest and failed-breakout rates against prepared-breakout and matched-strength
   controls across pattern/level families and regimes;
+* compare H-016 single entry versus 3+ risk-capped attempts, Box-only versus Box/L-shape/candle confluence,
+  and fixed pattern exits versus partial dynamic-boundary retest; measure execution costs, aborts and incomplete retests;
 * evaluate structural pullback and exhaustion/reversal accumulation separately;
 * optimize/compare trade-management mechanisms only after a stable eligible-entry dataset exists;
 * compare H-014 entry fractions and `MID_100`, `MID_70_TOP_30`, `MID_50_TOP_50`,
