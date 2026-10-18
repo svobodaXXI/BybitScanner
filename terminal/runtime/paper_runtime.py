@@ -1020,11 +1020,11 @@ class PaperRuntime:
         # Fetch exchange mark prices on the Scanner/handler thread, never under
         # the owner's serialized admission transaction. Capture immutable marks
         # for this one decision; late arrivals remain fail-closed by age.
-        prepared_marks = self._prepare_autopilot_daily_marks()
         # SHADOW: evaluated here, off the owner; only a bounded commit reaches the owner.
-        # OFF / PAPER_AUTO (or a mode switched meanwhile): the unchanged owner entry decides.
+        # No ticker REST request unless a real PAPER_AUTO handover is due.
         if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
             return
+        prepared_marks = self._prepare_autopilot_daily_marks()
         self._dispatch_robot_command(
             lambda runtime: runtime.observe_autopilot_candidate(
                 source, candidate_ref, handover=True, daily_marks=prepared_marks)
