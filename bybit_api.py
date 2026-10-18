@@ -134,7 +134,9 @@ def get_symbols():
 def get_candles(
     symbol,
     interval,
-    limit
+    limit,
+    *,
+    end_ms=None,
 ):
     """
     Загружает свечи Bybit
@@ -143,12 +145,12 @@ def get_candles(
 
     try:
 
-        data = session.get_kline(
-            category=BYBIT_CATEGORY,
-            symbol=symbol,
-            interval=interval,
-            limit=limit
-        )
+        params = dict(category=BYBIT_CATEGORY, symbol=symbol,
+                      interval=interval, limit=limit)
+        if end_ms is not None:
+            # Historical preview; do not request candles later than signal time.
+            params['end'] = int(end_ms)
+        data = session.get_kline(**params)
 
         rows = (
             data

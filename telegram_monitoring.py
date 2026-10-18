@@ -22,6 +22,7 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import replace
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Mapping
@@ -41,7 +42,8 @@ from robot_lifecycle_posts import (
 )
 from robot_position_chart import render_position_chart
 from robot_position_view import (
-    chart_candle_limit, format_position_card, load_position_view, with_last_price,
+    PositionView, chart_candle_limit, format_position_card, load_position_view,
+    signal_chart_candle_minutes, with_last_price,
 )
 from robot_telegram_feed import (
     VIEW_POSITIONS, build_robot_control_keyboard,
@@ -272,6 +274,8 @@ def build_position_card_markup(view) -> dict[str, list[list[dict[str, str]]]]:
     """Read-only navigation for one position; invalid symbols fail closed to Back only."""
     symbol = str(getattr(view, "symbol", "")).strip().upper()
     timeframe = str(getattr(view, "chart_candle_minutes", "")).strip()
+    if not (symbol and symbol.isalnum() and timeframe.isdigit()):
+        return POSITIONS_BACK_MARKUP
     rows: list[list[dict[str, str]]] = []
     if symbol and symbol.isalnum() and timeframe.isdigit():
         rows.append([{
@@ -279,7 +283,7 @@ def build_position_card_markup(view) -> dict[str, list[list[dict[str, str]]]]:
             "url": create_tradingview_url(symbol, timeframe),
         }])
     rows.append([{"text": "⬅️ К позициям", "callback_data": "robot:view:positions"}])
-    return {"inline_keyboard": rows}
+    return _with_signal_button({"inline_keyboard": rows}, getattr(getattr(view, "trade", None), "candidate_id", None))
 
 
 def build_position_buttons(positions) -> list[list[dict[str, str]]]:
@@ -379,7 +383,10 @@ def _send_chart_card(chat_id, view, candles, caption, reply_markup) -> bool:
 def _send_lifecycle_post(chat_id, event, view) -> bool:
     view, candles = _with_candles(view)
     caption = format_lifecycle_caption(event, view)
-    return _send_chart_card(chat_id, view, candles, caption, build_lifecycle_keyboard())
+    return _send_chart_card(
+        chat_id, view, candles, caption,
+        _with_signal_button(build_lifecycle_keyboard(), getattr(getattr(view, "trade", None), "candidate_id", None)),
+    )
 
 
 def poll_lifecycle_once(now_ms: int | None = None) -> None:
@@ -506,6 +513,7 @@ def _candidate_button_label(record: RobotCandidateRecord) -> str:
 
 
 MONITOR_CANDIDATE_PREFIX = "monitor:c:"
+SOURCE_SIGNAL_PREFIX = "monitor:s:"
 MONITOR_TOKEN_HEX_LENGTH = 16
 
 
@@ -588,10 +596,110 @@ def format_candidate_card(record: RobotCandidateRecord) -> str:
     )
 
 
+def _signal_button(candidate_id: str | None) -> dict[str, str] | None:
+    """Opaque, bounded callback. The candidate id stays outside Telegram payloads."""
+    if not candidate_id:
+        return None
+    return {
+        "text": "↩️ К сигналу",
+        "callback_data": SOURCE_SIGNAL_PREFIX + _candidate_callback_token(str(candidate_id)),
+    }
+
+
+def _with_signal_button(markup: dict, candidate_id: str | None) -> dict:
+    rows = list(markup.get("inline_keyboard", []))
+    button = _signal_button(candidate_id)
+    if button:
+        rows.insert(0, [button])
+    return {"inline_keyboard": rows}
+
+
+def _candidate_view(record: RobotCandidateRecord) -> PositionView:
+    snapshot = record.signal_snapshot
+    state = record.robot_state or {}
+    return PositionView(
+        symbol=record.symbol.value,
+        direction=str(state.get("direction") or snapshot.get("direction") or "—"),
+        is_open=False, quantity=None, average_entry=None, stop_price=None,
+        take_price=None,
+        pattern=str(snapshot.get("pattern") or state.get("pattern") or "—"),
+        signal_snapshot=snapshot,
+        chart_candle_minutes=signal_chart_candle_minutes(snapshot),
+    )
+
+
+def _load_candidate_candles(record: RobotCandidateRecord, *, source: bool = False):
+    """One read-only Bybit request. Historical source chart never contains future candles."""
+    import bybit_api
+
+    view = _candidate_view(record)
+    interval = view.chart_candle_minutes
+    if source:
+        try:
+            as_of = int(record.signal_snapshot["decision_time_ms"])
+        except (KeyError, TypeError, ValueError):
+            return view, None, "Исходный график: время сигнала не сохранено"
+        if as_of <= 0:
+            return view, None, "Исходный график: время сигнала недостоверно"
+        df = bybit_api.get_candles(view.symbol, str(interval), 120, end_ms=as_of)
+        if df is None or df.empty:
+            return view, None, "Исторические свечи сигнала недоступны"
+        # Source-time invariant: a bar is drawable only if it closed by decision_time.
+        df = df.loc[df["time"] + interval * 60_000 <= as_of].copy()
+        if df.empty:
+            return view, None, "Свечи на момент сигнала не подтверждены"
+        return view, df, ("Сохранённая геометрия сигнала · "
+                           + datetime.fromtimestamp(as_of / 1000, timezone.utc).strftime("%d.%m %H:%M UTC"))
+    df = bybit_api.get_candles(view.symbol, str(interval), 120 if interval != 1 else 300)
+    if df is None or df.empty:
+        return view, None, "Актуальные свечи недоступны"
+    last_open = int(df["time"].iloc[-1])
+    now = int(time.time() * 1000)
+    last_close = last_open + interval * 60_000
+    stale = last_open > now + 60_000 or now - last_close > interval * 2 * 60_000
+    close = float(df["close"].iloc[-1])
+    checked_at = datetime.fromtimestamp(last_open / 1000, timezone.utc).strftime("%d.%m %H:%M UTC")
+    return view, df, (f"Цена: {close:.8g} · свеча {checked_at}" + (" · ДАННЫЕ УСТАРЕЛИ" if stale else ""))
+
+
+def _send_source_signal_card(chat_id, token: str) -> None:
+    # Closed candidates are also needed for OPENED/CLOSED trade posts.
+    with _robot_store() as store:
+        record = _resolve_candidate_callback_token(
+            token, store.load_robot_candidates(PAPER_ACCOUNT_ID)
+        )
+    if record is None:
+        _send_text(chat_id, "Исходный сигнал не найден или ссылка неоднозначна.")
+        return
+    header = (f"📡 Исходный сигнал · {record.symbol.value}\n"
+              f"Паттерн: {record.signal_snapshot.get('pattern', '—')}\n"
+              f"Снимок: {record.candidate_id}")
+    try:
+        view, candles, context = _load_candidate_candles(record, source=True)
+        caption = header + "\n" + context
+        if candles is not None:
+            _send_chart_card(
+                chat_id, view, candles, caption,
+                _with_signal_button(
+                    {"inline_keyboard": [[{"text": "⬅️ К кандидатам", "callback_data": "monitor:list"}]]},
+                    None,
+                ),
+            )
+            return
+    except Exception as exc:
+        print("[SOURCE SIGNAL ERROR]", record.symbol.value, exc)
+        caption = header + "\nИсторический график недоступен"
+    _send_text(chat_id, caption)
+
+
 def parse_monitor_callback(data: str):
     text = str(data)
     if text == "monitor:list":
         return {"action": "list"}
+    if text.startswith(SOURCE_SIGNAL_PREFIX):
+        token = text[len(SOURCE_SIGNAL_PREFIX):]
+        if len(token) == MONITOR_TOKEN_HEX_LENGTH and all(c in "0123456789abcdef" for c in token):
+            return {"action": "source", "token": token}
     if text.startswith(MONITOR_CANDIDATE_PREFIX):
         token = text[len(MONITOR_CANDIDATE_PREFIX):]
         if len(token) == MONITOR_TOKEN_HEX_LENGTH and all(char in "0123456789abcdef" for char in token):
@@ -642,13 +750,25 @@ def _send_candidate_card(chat_id, candidate_id: str) -> None:
         )
         _require_monitoring_delivery(response, "candidate stale sendMessage")
         return
+    markup = {"inline_keyboard": [
+        [{"text": "🔄 Обновить график",
+          "callback_data": MONITOR_CANDIDATE_PREFIX + _candidate_callback_token(record.candidate_id)}],
+        [{"text": "⬅️ К кандидатам", "callback_data": "monitor:list"}],
+    ]}
+    markup = _with_signal_button(markup, record.candidate_id)
+    caption = format_candidate_card(record)
+    try:
+        view, candles, context = _load_candidate_candles(record)
+        caption += "\n" + context
+        if candles is not None:
+            if _send_chart_card(chat_id, view, candles, caption, markup):
+                return
+            raise RuntimeError("candidate card delivery failed")
+    except Exception as exc:
+        print("[CANDIDATE CHART ERROR]", record.symbol.value, exc)
+        caption += "\nГрафик недоступен"
     response = telegram_bot.send_message(
-        config.TELEGRAM_TOKEN,
-        chat_id,
-        format_candidate_card(record),
-        reply_markup={
-            "inline_keyboard": [[{"text": "⬅️ К кандидатам", "callback_data": "monitor:list"}]]
-        },
+        config.TELEGRAM_TOKEN, chat_id, caption, reply_markup=markup,
     )
     _require_monitoring_delivery(response, "candidate card sendMessage")
 
@@ -674,9 +794,14 @@ def _process_monitor_callback(callback_query) -> bool:
     if chat_id is None:
         _answer_callback(callback_query.get("id"), "Чат не найден")
         return True
+    if str(chat_id) != _owner_id():
+        _answer_callback(callback_query.get("id"), "Только личный чат владельца")
+        return True
     _answer_callback(callback_query.get("id"))
     if parsed["action"] == "list":
         _send_candidate_list(chat_id)
+    elif parsed["action"] == "source":
+        _send_source_signal_card(chat_id, parsed["token"])
     elif "candidate_id" in parsed:
         _send_candidate_card(chat_id, parsed["candidate_id"])
     else:

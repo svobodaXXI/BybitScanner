@@ -61,6 +61,99 @@ class TelegramMonitoringTests(unittest.TestCase):
             updated_at_ms=2,
         )
 
+    def test_source_callback_is_bounded_and_owner_scoped(self):
+        record = self._record(candidate_id="signal-" + "x" * 70)
+        callback = monitoring._signal_button(record.candidate_id)
+        self.assertLessEqual(len(callback["callback_data"].encode()), 64)
+        self.assertEqual(
+            monitoring.parse_monitor_callback(callback["callback_data"]),
+            {"action": "source", "token": monitoring._candidate_callback_token(record.candidate_id)},
+        )
+        self.assertIsNone(monitoring.parse_monitor_callback("monitor:s:invalid"))
+        view = SimpleNamespace(
+            symbol="FLOWUSDT", chart_candle_minutes=5,
+            trade=SimpleNamespace(candidate_id=record.candidate_id),
+        )
+        self.assertEqual(
+            monitoring.build_position_card_markup(view)["inline_keyboard"][0][0]["callback_data"],
+            callback["callback_data"],
+        )
+        self.assertNotIn(
+            "К сигналу",
+            str(monitoring.build_position_card_markup(SimpleNamespace(
+                symbol="FLOWUSDT", chart_candle_minutes=5, trade=None,
+            ))),
+        )
+
+    @patch("telegram_monitoring._send_chart_card", return_value=True)
+    @patch("telegram_monitoring._load_candidate_candles")
+    @patch("telegram_monitoring.SQLiteStore.open")
+    @patch("telegram_monitoring.telegram_bot.send_message")
+    def test_candidate_card_is_fresh_chart_with_source_and_refresh(
+        self, send_message, open_store, candles, send_chart,
+    ):
+        record = self._record()
+        open_store.return_value.__enter__.return_value.get_robot_candidate.return_value = record
+        candles.return_value = (
+            monitoring._candidate_view(record), object(), "Цена: 0.562 · свеча 18.10 12:40 UTC",
+        )
+        monitoring._send_candidate_card(123, record.candidate_id)
+        send_chart.assert_called_once()
+        self.assertIn("Цена: 0.562", send_chart.call_args.args[3])
+        markup = send_chart.call_args.args[4]
+        self.assertEqual(markup["inline_keyboard"][0][0]["text"], "↩️ К сигналу")
+        self.assertEqual(markup["inline_keyboard"][1][0]["text"], "🔄 Обновить график")
+        send_message.assert_not_called()
+
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring._robot_store")
+    def test_source_is_read_only_and_supports_closed_candidates(self, store, send):
+        record = self._record()
+        record = monitoring.replace(record, status="CLOSED")
+        store.return_value.__enter__.return_value.load_robot_candidates.return_value = (record,)
+        with patch.object(monitoring, "_load_candidate_candles",
+                          return_value=(monitoring._candidate_view(record), None,
+                                        "Исторические свечи сигнала недоступны")):
+            monitoring._send_source_signal_card(
+                123, monitoring._candidate_callback_token(record.candidate_id),
+            )
+        self.assertIn("Исходный сигнал", send.call_args.args[1])
+        self.assertIn("Исторические свечи сигнала недоступны", send.call_args.args[1])
+
+    def test_frozen_source_chart_excludes_unclosed_and_future_bars(self):
+        import pandas as pd
+
+        record = self._record()
+        as_of = 1_800_000
+        record.signal_snapshot["decision_time_ms"] = as_of
+        record.signal_snapshot["scanner_source_timeframe"] = "5"
+        candles = pd.DataFrame({
+            "time": [900_000, 1_200_000, 1_500_000, 1_800_000],
+            "close": [1.0, 2.0, 3.0, 4.0],
+        })
+        api = ModuleType("bybit_api")
+        api.get_candles = lambda *args, **kwargs: candles
+        with patch.dict(sys.modules, {"bybit_api": api}):
+            view, actual, text = monitoring._load_candidate_candles(record, source=True)
+        self.assertEqual(view.chart_candle_minutes, 5)
+        self.assertEqual(actual["time"].tolist(), [900_000, 1_200_000, 1_500_000])
+        self.assertIn("Сохранённая геометрия", text)
+
+    @patch("telegram_monitoring._send_source_signal_card")
+    @patch("telegram_monitoring._answer_callback")
+    def test_source_navigation_respects_owner_authorization(self, answer, source):
+        token = "0123456789abcdef"
+        callback = {
+            "id": "cb", "from": {"id": "456"},
+            "message": {"chat": {"id": 123}},
+            "data": "monitor:s:" + token,
+        }
+        self.assertTrue(monitoring._process_monitor_callback(callback))
+        source.assert_not_called()
+        callback["from"]["id"] = "123"
+        self.assertTrue(monitoring._process_monitor_callback(callback))
+        source.assert_called_once_with(123, token)
+
     def test_phase_labels_are_human_readable(self):
         self.assertEqual(monitoring._phase_label(self._record(phase="WAITING_BREAKOUT")), "Ожидание пробоя")
         self.assertEqual(monitoring._phase_label(self._record(phase="WAITING_RETEST")), "Ожидание ретеста")
