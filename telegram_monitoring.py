@@ -274,6 +274,8 @@ def build_position_card_markup(view) -> dict[str, list[list[dict[str, str]]]]:
     """Read-only navigation for one position; invalid symbols fail closed to Back only."""
     symbol = str(getattr(view, "symbol", "")).strip().upper()
     timeframe = str(getattr(view, "chart_candle_minutes", "")).strip()
+    if not (symbol and symbol.isalnum() and timeframe.isdigit()):
+        return POSITIONS_BACK_MARKUP
     rows: list[list[dict[str, str]]] = []
     if symbol and symbol.isalnum() and timeframe.isdigit():
         rows.append([{
