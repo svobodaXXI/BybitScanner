@@ -49,7 +49,7 @@ const runMutationDirectly: PaperMutationRunner = (_key, operation) => operation(
 const descriptions: Record<WorkspaceMode, string> = {
   TERMINAL: "Manual PAPER execution is available for the development instrument.",
   AUTOPILOT: "Robot observation is read-only; Robot control is not implemented yet.",
-  EDITOR: "Editor tools are reserved for a later authorized slice.",
+  EDITOR: "Локальная разметка графика. Торговые действия отключены; отправка исправлений и изменение позиции пока недоступны.",
 };
 
 export function ModePanel({
@@ -317,7 +317,7 @@ export function ModePanel({
     previousPopupLimitDraftCount.current = popupLimitDrafts.length;
   }, [limitPresentationSide, popupLimitDrafts.length]);
 
-  const alternatives = (["TERMINAL", "AUTOPILOT"] as const).filter(
+  const alternatives = (["TERMINAL", "AUTOPILOT", "EDITOR"] as const).filter(
     (candidate) => candidate !== mode,
   );
   const pnlPercent = positionPnlPercent(
@@ -745,6 +745,10 @@ export function ModePanel({
           </button>
         ))}
       </nav>
+
+      {mode === "EDITOR" ? (
+        <p role="status">Редактор: разметка сохраняется отдельно от торговых рисунков. Исправления Scanner и STOP/TAKE пока не отправляются.</p>
+      ) : null}
 
       {mode === "TERMINAL" ? (
         <>
