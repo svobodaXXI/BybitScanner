@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import { useState, type ComponentProps } from "react";
 import {
   ModePanel as LegacyModePanel,
   type WorkspaceMode as LegacyWorkspaceMode,
@@ -16,14 +16,15 @@ export function ModePanel({
   autopilotTradeEpisodeId = null,
   ...props
 }: ModePanelProps) {
+  const [openPositionsRequest, setOpenPositionsRequest] = useState(0);
   const accountKey = `${props.accountWorkspaceProjection?.account_id ?? "unknown"}:${props.accountWorkspaceProjection?.session_generation ?? 0}`;
 
   return (
     <>
-      <LegacyModePanel {...props} />
+      <LegacyModePanel {...props} openPositionsRequest={openPositionsRequest} />
       {props.mode === "AUTOPILOT" ? (
         <>
-          <AutopilotFirstScreen />
+          <AutopilotFirstScreen onOpenPositions={() => setOpenPositionsRequest((value) => value + 1)} />
           <AutopilotDiaryControls
             accountKey={accountKey}
             tradeEpisodeId={autopilotTradeEpisodeId}
