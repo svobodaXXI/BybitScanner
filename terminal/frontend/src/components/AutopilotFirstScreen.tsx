@@ -383,6 +383,18 @@ export function AutopilotFirstScreen({
         <SummaryItem label="Autopilot">
           <LoadState value={autopilot} render={(value) => value.mode} />
         </SummaryItem>
+        <SummaryItem label="Версия политики Autopilot">
+          <LoadState value={autopilot} render={(value) => value.version > 0 ? String(value.version) : <Missing source="Версия политики недоступна" />} />
+        </SummaryItem>
+        <SummaryItem label="Причина режима">
+          <LoadState value={autopilot} render={(value) => value.reason?.trim() || <Missing source="Причина режима не предоставлена" />} />
+        </SummaryItem>
+        <SummaryItem label="PAPER live-safe">
+          <LoadState value={health} render={(value) =>
+            value.paperLiveSafe === null ? <Missing source="Health: paper_live_safe" /> :
+              value.paperLiveSafe ? "Да" : "Нет"
+          } />
+        </SummaryItem>
         <SummaryItem label="Допуск Robot">
           <LoadState
             value={health}
