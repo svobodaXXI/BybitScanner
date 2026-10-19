@@ -5,7 +5,12 @@ import type { DrawingObject } from "../chart/drawingModel";
  * Draft-only conversion. Use the *frozen* signal candle window, never live market
  * candles. No trading API calls, side effects, persistence or silent index clamping.
  */
-export type TimestampAnchor = { bar_open_time_ms: number; price: number };
+export type TimestampAnchor = {
+  bar_open_time_ms: number;
+  /** Exact fractional shift in chart bars, in [0, 1). Zero means snapped to the candle. */
+  bar_offset: number;
+  price: number;
+};
 export type TimestampDrawing = {
   id: string;
   type: DrawingObject["type"];
@@ -45,11 +50,13 @@ export function serializeReviewDrawings(
       id: drawing.id,
       type: drawing.type,
       anchors: drawing.anchors.map(({ logical, price }) => {
-        if (!Number.isInteger(logical) || logical < 0 || logical >= times.length)
+        if (!Number.isFinite(logical) || logical < 0 || logical > times.length - 1)
           throw new Error("Drawing anchor does not map to a frozen candle");
         if (!Number.isFinite(price) || price <= 0)
           throw new Error("Drawing anchor price is invalid");
-        return { bar_open_time_ms: times[logical], price };
+        const index = Math.floor(logical);
+        const bar_offset = logical - index;
+        return { bar_open_time_ms: times[index], bar_offset, price };
       }),
     };
   });

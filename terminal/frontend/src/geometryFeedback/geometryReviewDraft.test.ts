@@ -18,13 +18,19 @@ const base = {
 describe("Geometry Feedback review draft", () => {
   it("converts drawing indices into stable UTC candle-open timestamps", () => {
     expect(serializeReviewDrawings([line], candles)[0].anchors).toEqual([
-      { bar_open_time_ms: Date.parse(candles[0].time), price: 12 },
-      { bar_open_time_ms: Date.parse(candles[1].time), price: 13 },
+      { bar_open_time_ms: Date.parse(candles[0].time), bar_offset: 0, price: 12 },
+      { bar_open_time_ms: Date.parse(candles[1].time), bar_offset: 0, price: 13 },
     ]);
     expect(buildGeometryReviewDraft({ ...base, label: "GEOMETRY_CORRECTED" }).corrected_boundaries).toHaveLength(1);
   });
-  it("fails closed on fractional, out-of-window or invalid-price anchors", () => {
-    for (const anchor of [{ logical: 0.5, price: 12 }, { logical: 2, price: 12 }, { logical: 1, price: Number.NaN }])
+  it("preserves fractional anchor locations without rounding", () => {
+    const adjusted = { ...line, anchors: [{ logical: 0.375, price: 12.4 }, line.anchors[1]] };
+    expect(serializeReviewDrawings([adjusted], candles)[0].anchors[0]).toEqual({
+      bar_open_time_ms: Date.parse(candles[0].time), bar_offset: 0.375, price: 12.4,
+    });
+  });
+  it("fails closed on out-of-window or invalid-price anchors", () => {
+    for (const anchor of [{ logical: -0.5, price: 12 }, { logical: 1.5, price: 12 }, { logical: 2, price: 12 }, { logical: 1, price: Number.NaN }])
       expect(() => serializeReviewDrawings([{ ...line, anchors: [anchor, line.anchors[1]] }], candles)).toThrow();
   });
   it("rejects duplicate IDs, incomplete drawings and non-monotonic candles", () => {
