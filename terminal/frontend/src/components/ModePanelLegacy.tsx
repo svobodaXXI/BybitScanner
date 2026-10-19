@@ -100,6 +100,7 @@ export function ModePanel({
   liveMarketAllowed = false,
   liveLimitAllowed = false,
   liveProtectionAllowed = false,
+  openPositionsRequest = 0,
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
@@ -150,6 +151,7 @@ export function ModePanel({
   liveMarketAllowed?: boolean;
   liveLimitAllowed?: boolean;
   liveProtectionAllowed?: boolean;
+  openPositionsRequest?: number;
 }) {
   const tradingInputFocus = useTradingNumericInputFocusPolicy();
   const [executionStatus, setExecutionStatus] = useState("");
@@ -157,6 +159,13 @@ export function ModePanel({
   const [openPositionsVisible, setOpenPositionsVisible] = useState(
     () => new URLSearchParams(window.location.search).get("view") === "positions",
   );
+  // Reuse the existing Terminal positions overlay; a request is navigation only.
+  const lastOpenPositionsRequest = useRef(openPositionsRequest);
+  useEffect(() => {
+    if (openPositionsRequest === lastOpenPositionsRequest.current) return;
+    lastOpenPositionsRequest.current = openPositionsRequest;
+    setOpenPositionsVisible(true);
+  }, [openPositionsRequest]);
   const [diaryVisible, setDiaryVisible] = useState(false);
   const [activeAccountLabel, setActiveAccountLabel] = useState<{ id: string; name: string } | null>(null);
   const [limitPresentationSide, setLimitPresentationSide] =
