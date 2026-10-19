@@ -99,6 +99,21 @@ function PositionCard({
   entryBasis: Loadable<string | null>;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsCloseRef = useRef<HTMLButtonElement>(null);
+  const detailsTriggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!detailsOpen) return;
+    detailsCloseRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDetailsOpen(false);
+        detailsTriggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [detailsOpen]);
   const side = position.position_side === "Long" ? "LONG" : "SHORT";
   const pnl =
     position.unrealized_pnl === null
@@ -186,7 +201,7 @@ function PositionCard({
           <Missing source="Robot: состояние удержания позиции не публикуется API" />
         </SummaryItem>
       </dl>
-      <button type="button" onClick={() => setDetailsOpen(true)}>
+      <button type="button" ref={detailsTriggerRef} onClick={() => setDetailsOpen(true)}>
         Подробности сделки
       </button>
       {detailsOpen ? (
@@ -198,7 +213,7 @@ function PositionCard({
         >
           <header>
             <strong>{position.symbol} · {side}</strong>
-            <button type="button" onClick={() => setDetailsOpen(false)}>
+            <button type="button" ref={detailsCloseRef} onClick={() => { setDetailsOpen(false); detailsTriggerRef.current?.focus(); }}>
               Закрыть подробности
             </button>
           </header>
