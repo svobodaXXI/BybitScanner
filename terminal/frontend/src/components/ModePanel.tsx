@@ -17,6 +17,7 @@ export function ModePanel({
   ...props
 }: ModePanelProps) {
   const [openPositionsRequest, setOpenPositionsRequest] = useState(0);
+  const [requestedTradeEpisodeId, setRequestedTradeEpisodeId] = useState<string | null>(null);
   const accountKey = `${props.accountWorkspaceProjection?.account_id ?? "unknown"}:${props.accountWorkspaceProjection?.session_generation ?? 0}`;
 
   return (
@@ -24,10 +25,12 @@ export function ModePanel({
       <LegacyModePanel {...props} openPositionsRequest={openPositionsRequest} />
       {props.mode === "AUTOPILOT" ? (
         <>
-          <AutopilotFirstScreen onOpenPositions={() => setOpenPositionsRequest((value) => value + 1)} />
+          <AutopilotFirstScreen accountKey={accountKey} onOpenPositions={() => setOpenPositionsRequest((value) => value + 1)} onTradeDetails={setRequestedTradeEpisodeId} />
           <AutopilotDiaryControls
             accountKey={accountKey}
             tradeEpisodeId={autopilotTradeEpisodeId}
+            requestedTradeEpisodeId={requestedTradeEpisodeId}
+            onRequestConsumed={() => setRequestedTradeEpisodeId(null)}
           />
         </>
       ) : null}
