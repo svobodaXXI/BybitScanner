@@ -266,8 +266,10 @@ function PositionCard({
 
 export function AutopilotFirstScreen({
   now = () => Date.now(),
+  onOpenPositions,
 }: {
   now?: () => number;
+  onOpenPositions?: () => void;
 }) {
   const [autopilot, setAutopilot] = useState<Loadable<AutopilotModeState>>({
     status: "loading",
@@ -443,6 +445,14 @@ export function AutopilotFirstScreen({
         </SummaryItem>
       </dl>
 
+      <div className="autopilot-first-screen-header">
+        <strong>Открытые позиции</strong>
+        {onOpenPositions ? (
+          <button type="button" onClick={onOpenPositions}>
+            Все открытые позиции
+          </button>
+        ) : null}
+      </div>
       <section className="autopilot-positions" aria-label="Открытые позиции">
         <LoadState
           value={positions}
