@@ -19,7 +19,7 @@ from terminal.application.pretrade_guard import (
 from terminal.application.protection import ManualProtectionIntent
 from terminal.application.trading_application import (
     AmendIntent, ApplicationMutationsDisabled, ApplicationResult, CancelIntent,
-    TradingApplication,
+    PROVIDER_BOOK, TradingApplication,
 )
 from terminal.domain.states import CommandState
 from terminal.domain.models import OrderSide, TradingAccountId
@@ -63,8 +63,11 @@ class TerminalCommandApi:
         request: MarketCommandRequest,
         *,
         identity: CommandIdentityCandidate | None = None,
+        market_book=PROVIDER_BOOK,
     ) -> CommandResult:
-        return self._submit(request, OrderKind.MARKET, identity=identity)
+        return self._submit(
+            request, OrderKind.MARKET, identity=identity, market_book=market_book,
+        )
 
     def market_preflight(
         self,
@@ -87,7 +90,9 @@ class TerminalCommandApi:
             None,
         )
 
-    def full_close(self, request: FullCloseCommandRequest) -> CommandResult:
+    def full_close(
+        self, request: FullCloseCommandRequest, *, market_book=PROVIDER_BOOK,
+    ) -> CommandResult:
         action_id = request.client_action_id.value
         try:
             symbol = _symbol(request.symbol)
@@ -103,7 +108,9 @@ class TerminalCommandApi:
                 _close_reference_price(context), None,
                 SlippageMetadata(SlippageToleranceType.PERCENT, Decimal("0.5")),
             )
-            return _application_result(action_id, self._application.submit(intent, pretrade))
+            return _application_result(action_id, self._application.submit(
+                intent, pretrade, **_market_book_kwargs(market_book),
+            ))
         except Exception as exc:
             return _safe_error(action_id, exc)
 
@@ -188,11 +195,12 @@ class TerminalCommandApi:
         kind: OrderKind,
         *,
         identity: CommandIdentityCandidate | None = None,
+        market_book=PROVIDER_BOOK,
     ) -> CommandResult:
         def action():
             intent, pretrade = self._submission_inputs(request, kind)
             return self._application.submit(
-                intent, pretrade, identity=identity,
+                intent, pretrade, identity=identity, **_market_book_kwargs(market_book),
             )
         return self._execute(request.client_action_id.value, action)
 
@@ -231,6 +239,11 @@ def _application_result(action_id: str, result: ApplicationResult) -> CommandRes
                        "request completed", command_id)
     return _result(action_id, CommandResultStatus.ACCEPTED_PENDING, "accepted_pending",
                    "request is pending authoritative exchange confirmation", command_id)
+
+
+def _market_book_kwargs(market_book) -> dict[str, object]:
+    """Forward caller-supplied execution evidence only; manual calls keep the provider path."""
+    return {} if market_book is PROVIDER_BOOK else {"market_book": market_book}
 
 
 def _safe_error(action_id: str, exc: Exception) -> CommandResult:
