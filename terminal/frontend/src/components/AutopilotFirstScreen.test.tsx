@@ -204,6 +204,7 @@ describe("AutopilotFirstScreen (UI-1)", () => {
     fireEvent.click(within(lsk).getByRole("button", { name: "Подробности сделки" }));
     const details = screen.getByRole("dialog", { name: "Подробности сделки LSKUSDT" });
     expect(within(details).getByText("Falling Wedge retest")).toBeInTheDocument();
+    expect(within(details).getByRole("button", { name: "Закрыть подробности" })).toHaveFocus();
     expect(within(details).getByText("Причина удержания")).toBeInTheDocument();
     expect(within(details).getAllByText("Нет источника данных").length).toBeGreaterThan(0);
     fireEvent.click(within(details).getByRole("button", { name: "Закрыть подробности" }));
@@ -211,6 +212,18 @@ describe("AutopilotFirstScreen (UI-1)", () => {
     for (const call of fetchMock.mock.calls as unknown as [string, RequestInit?][]) {
       expect(call[1]?.method ?? "GET").toBe("GET");
     }
+  });
+
+  it("closes details on Escape and returns focus to the originating trade", async () => {
+    mockFetch(healthyRoutes);
+    render(<AutopilotFirstScreen now={() => NOW} />);
+    const lsk = await screen.findByRole("article", { name: "Сделка LSKUSDT" });
+    const trigger = within(lsk).getByRole("button", { name: "Подробности сделки" });
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Подробности сделки LSKUSDT" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 
   it("issues only GET requests", async () => {
