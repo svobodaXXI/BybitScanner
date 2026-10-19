@@ -42,6 +42,7 @@ export type DiaryTradeSummaryRow = {
   pnl: string | null;
   details?: { decision?: { decision_reason?: string | null } } | null;
   symbol: string;
+  trade_episode_id?: string;
   readiness: string;
 };
 
@@ -147,9 +148,12 @@ export async function loadPositionProtection(
   return body.protection ?? null;
 }
 
-export async function loadDiaryTrades(): Promise<DiaryTradeSummaryRow[]> {
+export async function loadDiaryTrades(accountKey?: string): Promise<DiaryTradeSummaryRow[]> {
   const body = await getJson(marketApiRoutes.diaryTrades);
   if (!Array.isArray(body.trades)) throw new Error("diary trades are missing");
+  if (accountKey !== undefined && `${body.active_account_id}:${body.session_generation}` !== accountKey) {
+    throw new Error("diary account identity mismatch");
+  }
   return body.trades as DiaryTradeSummaryRow[];
 }
 
@@ -163,4 +167,12 @@ export function entryBasisFor(
   );
   const reason = open?.details?.decision?.decision_reason;
   return typeof reason === "string" && reason.trim() ? reason : null;
+}
+
+/** Never link a symbol to an ambiguous open trading episode. */
+export function uniqueOpenEpisodeId(symbol: string, trades: DiaryTradeSummaryRow[]): string | null {
+  const matches = trades.filter((trade) => trade.symbol === symbol && trade.closed_at_ms === null);
+  if (matches.length !== 1) return null;
+  const id = matches[0].trade_episode_id;
+  return typeof id === "string" && id.trim() ? id : null;
 }
