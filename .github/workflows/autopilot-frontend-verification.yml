@@ -34,6 +34,6 @@ jobs:
         continue-on-error: true
         run: npm run check
       - name: AUTOPILOT and Geometry Feedback focused regression
-        run: npm test -- src/autopilot/autopilotFirstScreenData.test.ts src/components/AutopilotFirstScreen.test.tsx src/geometryFeedback/geometryReviewDraft.test.ts src/geometryFeedback/rayCorrectionComparison.test.ts
+        run: npm test -- src/autopilot/autopilotFirstScreenData.test.ts src/components/AutopilotFirstScreen.test.tsx src/geometryFeedback/geometryReviewDraft.test.ts src/geometryFeedback/rayCorrectionComparison.test.ts src/geometryFeedback/patternBoundaryComparison.test.ts
       - name: Build frontend
         run: npm run build
