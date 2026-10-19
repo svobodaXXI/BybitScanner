@@ -98,6 +98,7 @@ function PositionCard({
   protection: PositionProtection;
   entryBasis: Loadable<string | null>;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const side = position.position_side === "Long" ? "LONG" : "SHORT";
   const pnl =
     position.unrealized_pnl === null
@@ -185,6 +186,61 @@ function PositionCard({
           <Missing source="Robot: состояние удержания позиции не публикуется API" />
         </SummaryItem>
       </dl>
+      <button type="button" onClick={() => setDetailsOpen(true)}>
+        Подробности сделки
+      </button>
+      {detailsOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Подробности сделки ${position.symbol}`}
+          className="autopilot-trade-details"
+        >
+          <header>
+            <strong>{position.symbol} · {side}</strong>
+            <button type="button" onClick={() => setDetailsOpen(false)}>
+              Закрыть подробности
+            </button>
+          </header>
+          <dl>
+            <SummaryItem label="Основание входа">
+              <LoadState value={entryBasis} render={(value) =>
+                value ?? <Missing source="Diary: decision_reason" />
+              } />
+            </SummaryItem>
+            <SummaryItem label="Подтверждения при входе">
+              <Missing source="API не предоставляет подтверждения исходного сигнала" />
+            </SummaryItem>
+            <SummaryItem label="Причина удержания">
+              <Missing source="Robot API не предоставляет текущую причину удержания" />
+            </SummaryItem>
+            <SummaryItem label="Условия инвалидации">
+              <Missing source="API не предоставляет условия инвалидации" />
+            </SummaryItem>
+            <SummaryItem label="Размер позиции">{position.position_quantity}</SummaryItem>
+            <SummaryItem label="Live PnL">
+              {Number.isFinite(pnl) ? formatUsdt(pnl) : <Missing source="Текущая цена недоступна" />}
+            </SummaryItem>
+            <SummaryItem label="STOP и TAKE">
+              <LoadState value={protection} render={(value) => (
+                value ? `STOP: ${price(value.stop_loss)} · TAKE: ${price(value.take_profit)}`
+                      : <Missing source="Нет данных о защите позиции" />
+              )} />
+            </SummaryItem>
+            <SummaryItem label="Статус защиты">
+              <LoadState value={protection} render={(value) =>
+                value?.status ?? <Missing source="Нет статуса защиты" />
+              } />
+            </SummaryItem>
+            <SummaryItem label="Ограничения риска">
+              <Missing source="Нет подтверждённых ограничений риска для этой сделки" />
+            </SummaryItem>
+            <SummaryItem label="Изменения после входа">
+              <Missing source="Нет подтверждённого журнала событий позиции" />
+            </SummaryItem>
+          </dl>
+        </div>
+      ) : null}
     </article>
   );
 }
