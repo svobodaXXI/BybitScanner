@@ -4,6 +4,7 @@ import {
   type WorkspaceMode as LegacyWorkspaceMode,
 } from "./ModePanelLegacy";
 import { AutopilotDiaryControls } from "./AutopilotDiaryControls";
+import { AutopilotFirstScreen } from "./AutopilotFirstScreen";
 
 export type WorkspaceMode = LegacyWorkspaceMode;
 
@@ -21,10 +22,13 @@ export function ModePanel({
     <>
       <LegacyModePanel {...props} />
       {props.mode === "AUTOPILOT" ? (
-        <AutopilotDiaryControls
-          accountKey={accountKey}
-          tradeEpisodeId={autopilotTradeEpisodeId}
-        />
+        <>
+          <AutopilotFirstScreen />
+          <AutopilotDiaryControls
+            accountKey={accountKey}
+            tradeEpisodeId={autopilotTradeEpisodeId}
+          />
+        </>
       ) : null}
     </>
   );

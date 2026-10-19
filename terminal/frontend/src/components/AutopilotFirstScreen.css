@@ -1,0 +1,95 @@
+.autopilot-first-screen {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+  padding: 0.6rem;
+  border: 1px solid #27313b;
+  border-radius: 0.35rem;
+  background: #10151b;
+  color: #d5dde5;
+  font-size: 0.78rem;
+}
+
+.autopilot-first-screen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.autopilot-first-screen-header h3 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.autopilot-summary,
+.autopilot-trade-card dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.4rem 0.8rem;
+  margin: 0;
+}
+
+.autopilot-summary-item dt {
+  color: #758391;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.autopilot-summary-item dd {
+  margin: 0.1rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.autopilot-positions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  gap: 0.5rem;
+}
+
+.autopilot-trade-card {
+  min-width: 0;
+  padding: 0.5rem;
+  border: 1px solid #27313b;
+  border-radius: 0.3rem;
+  background: #0b0f14;
+}
+
+.autopilot-trade-card header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+
+.autopilot-side-long {
+  color: #3fb27f;
+}
+
+.autopilot-side-short {
+  color: #e05d5d;
+}
+
+.autopilot-missing,
+.autopilot-loading,
+.autopilot-empty {
+  color: #758391;
+}
+
+.autopilot-error {
+  color: #e0a35d;
+}
+
+.autopilot-control-slot {
+  padding: 0.4rem 0.5rem;
+  border: 1px dashed #27313b;
+  border-radius: 0.3rem;
+  color: #758391;
+}
+
+.autopilot-control-slot p,
+.autopilot-empty {
+  margin: 0;
+}

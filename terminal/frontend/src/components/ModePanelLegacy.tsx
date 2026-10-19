@@ -48,7 +48,7 @@ const runMutationDirectly: PaperMutationRunner = (_key, operation) => operation(
 
 const descriptions: Record<WorkspaceMode, string> = {
   TERMINAL: "Manual PAPER execution is available for the development instrument.",
-  AUTOPILOT: "Robot observation and control are intentionally not implemented.",
+  AUTOPILOT: "Robot observation is read-only; Robot control is not implemented yet.",
   EDITOR: "Editor tools are reserved for a later authorized slice.",
 };
 
