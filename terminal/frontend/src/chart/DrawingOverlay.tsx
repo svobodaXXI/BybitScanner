@@ -38,6 +38,7 @@ const fmtDuration = (seconds: number) =>
 
 export function DrawingOverlay({
   drawings,
+  referenceDrawings = [],
   selectedId,
   tool,
   magnet,
@@ -50,6 +51,8 @@ export function DrawingOverlay({
   priceFormatter = (price) => price.toFixed(4),
 }: {
   drawings: DrawingObject[];
+  /** Immutable Scanner geometry: displayed but never included in hit testing or commits. */
+  referenceDrawings?: readonly DrawingObject[];
   selectedId: string | null;
   tool: DrawingTool;
   magnet: boolean;
@@ -116,6 +119,7 @@ export function DrawingOverlay({
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
     for (const drawing of [
+      ...referenceDrawings,
       ...drawings,
       ...(draftRef.current && !drawings.some((item) => item.id === draftRef.current?.id)
         ? [draftRef.current]
@@ -126,6 +130,8 @@ export function DrawingOverlay({
         .map(pointOf)
         .filter((p): p is Point => p !== null);
       if (!points.length) continue;
+      const isReference = referenceDrawings.includes(drawing);
+      ctx.setLineDash(isReference ? [6, 4] : []);
       ctx.strokeStyle = drawing.style.color;
       ctx.fillStyle = drawing.style.color;
       ctx.lineWidth = drawing.style.lineWidth;
@@ -192,7 +198,8 @@ export function DrawingOverlay({
           b.y - 8,
         );
       }
-      if (drawing.id === selectedId) {
+      ctx.setLineDash([]);
+      if (!isReference && drawing.id === selectedId) {
         for (const p of points) {
           ctx.beginPath();
           ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
@@ -216,7 +223,7 @@ export function DrawingOverlay({
       ctx.stroke();
       ctx.restore();
     }
-  }, [drawings, pointOf, selectedId, coordinates, priceFormatter]);
+  }, [drawings, referenceDrawings, pointOf, selectedId, coordinates, priceFormatter]);
   useEffect(() => {
     redraw();
     const id = requestAnimationFrame(redraw);
