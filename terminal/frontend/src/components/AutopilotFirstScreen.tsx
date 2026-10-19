@@ -20,6 +20,7 @@ import {
   type ProtectionHealth,
   type RuntimeHealth,
   summarizeDay,
+  uniqueOpenEpisodeId,
 } from "../autopilot/autopilotFirstScreenData";
 import type { PaperOpenPosition } from "../contracts/trading";
 import {
@@ -93,31 +94,15 @@ function PositionCard({
   position,
   protection,
   entryBasis,
+  episodeId,
+  onTradeDetails,
 }: {
   position: PaperOpenPosition;
   protection: PositionProtection;
   entryBasis: Loadable<string | null>;
+  episodeId: string | null;
+  onTradeDetails?: (episodeId: string) => void;
 }) {
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const detailsCloseRef = useRef<HTMLButtonElement>(null);
-  const detailsTriggerRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!detailsOpen) return;
-    detailsCloseRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Tab") {
-        // The close action is the only interactive element in this read-only dialog.
-        event.preventDefault();
-        detailsCloseRef.current?.focus();
-      } else if (event.key === "Escape") {
-        event.preventDefault();
-        setDetailsOpen(false);
-        detailsTriggerRef.current?.focus();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [detailsOpen]);
   const side = position.position_side === "Long" ? "LONG" : "SHORT";
   const pnl =
     position.unrealized_pnl === null
@@ -205,61 +190,14 @@ function PositionCard({
           <Missing source="Robot: состояние удержания позиции не публикуется API" />
         </SummaryItem>
       </dl>
-      <button type="button" ref={detailsTriggerRef} onClick={() => setDetailsOpen(true)}>
+      <button
+        type="button"
+        disabled={!episodeId || !onTradeDetails}
+        title={!episodeId ? "Нет однозначной связи с эпизодом сделки" : undefined}
+        onClick={() => { if (episodeId) onTradeDetails?.(episodeId); }}
+      >
         Подробности сделки
       </button>
-      {detailsOpen ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Подробности сделки ${position.symbol}`}
-          className="autopilot-trade-details"
-        >
-          <header>
-            <strong>{position.symbol} · {side}</strong>
-            <button type="button" ref={detailsCloseRef} onClick={() => { setDetailsOpen(false); detailsTriggerRef.current?.focus(); }}>
-              Закрыть подробности
-            </button>
-          </header>
-          <dl>
-            <SummaryItem label="Основание входа">
-              <LoadState value={entryBasis} render={(value) =>
-                value ?? <Missing source="Diary: decision_reason" />
-              } />
-            </SummaryItem>
-            <SummaryItem label="Подтверждения при входе">
-              <Missing source="API не предоставляет подтверждения исходного сигнала" />
-            </SummaryItem>
-            <SummaryItem label="Причина удержания">
-              <Missing source="Robot API не предоставляет текущую причину удержания" />
-            </SummaryItem>
-            <SummaryItem label="Условия инвалидации">
-              <Missing source="API не предоставляет условия инвалидации" />
-            </SummaryItem>
-            <SummaryItem label="Размер позиции">{position.position_quantity}</SummaryItem>
-            <SummaryItem label="Live PnL">
-              {Number.isFinite(pnl) ? formatUsdt(pnl) : <Missing source="Текущая цена недоступна" />}
-            </SummaryItem>
-            <SummaryItem label="STOP и TAKE">
-              <LoadState value={protection} render={(value) => (
-                value ? `STOP: ${price(value.stop_loss)} · TAKE: ${price(value.take_profit)}`
-                      : <Missing source="Нет данных о защите позиции" />
-              )} />
-            </SummaryItem>
-            <SummaryItem label="Статус защиты">
-              <LoadState value={protection} render={(value) =>
-                value?.status ?? <Missing source="Нет статуса защиты" />
-              } />
-            </SummaryItem>
-            <SummaryItem label="Ограничения риска">
-              <Missing source="Нет подтверждённых ограничений риска для этой сделки" />
-            </SummaryItem>
-            <SummaryItem label="Изменения после входа">
-              <Missing source="Нет подтверждённого журнала событий позиции" />
-            </SummaryItem>
-          </dl>
-        </div>
-      ) : null}
     </article>
   );
 }
@@ -267,9 +205,13 @@ function PositionCard({
 export function AutopilotFirstScreen({
   now = () => Date.now(),
   onOpenPositions,
+  accountKey,
+  onTradeDetails,
 }: {
   now?: () => number;
   onOpenPositions?: () => void;
+  accountKey?: string;
+  onTradeDetails?: (episodeId: string) => void;
 }) {
   const [autopilot, setAutopilot] = useState<Loadable<AutopilotModeState>>({
     status: "loading",
@@ -330,10 +272,10 @@ export function AutopilotFirstScreen({
       settle(loadAutopilotMode).then(apply(setAutopilot)),
       settle(loadRuntimeHealth).then(apply(setHealth)),
       settle(loadProtectionHealth).then(apply(setProtection)),
-      settle(loadDiaryTrades).then(apply(setTrades)),
+      settle(() => loadDiaryTrades(accountKey)).then(apply(setTrades)),
       positionsResult,
     ]);
-  }, []);
+  }, [accountKey]);
 
   useEffect(() => {
     void refresh();
@@ -468,6 +410,8 @@ export function AutopilotFirstScreen({
                     positionProtection[position.symbol] ?? { status: "loading" }
                   }
                   entryBasis={entryBasis(position.symbol)}
+                  episodeId={trades.status === "ready" ? uniqueOpenEpisodeId(position.symbol, trades.value) : null}
+                  onTradeDetails={onTradeDetails}
                 />
               ))
             )
