@@ -231,6 +231,16 @@ describe("AutopilotFirstScreen (UI-1)", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("routes all-positions navigation through the parent rather than creating an overlay", async () => {
+    const onOpenPositions = vi.fn();
+    mockFetch(healthyRoutes);
+    render(<AutopilotFirstScreen now={() => NOW} onOpenPositions={onOpenPositions} />);
+    await screen.findByText("PAPER_AUTO");
+    fireEvent.click(screen.getByRole("button", { name: "Все открытые позиции" }));
+    expect(onOpenPositions).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog", { name: /Открытые позиции/ })).not.toBeInTheDocument();
+  });
+
   it("issues only GET requests", async () => {
     const fetchMock = mockFetch(healthyRoutes);
     render(<AutopilotFirstScreen now={() => NOW} />);
