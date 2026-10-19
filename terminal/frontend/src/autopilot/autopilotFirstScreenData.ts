@@ -67,7 +67,8 @@ export function summarizeDay(
 ): DaySummary {
   const dayStartMs = mskDayStartMs(nowMs);
   const closed = trades.filter(
-    (trade) => trade.closed_at_ms !== null && trade.closed_at_ms >= dayStartMs,
+    (trade) => trade.closed_at_ms !== null &&
+      Number.isFinite(trade.closed_at_ms) &&\n      trade.closed_at_ms >= dayStartMs &&\n      trade.closed_at_ms <= nowMs,
   );
   let total = 0;
   let tradesWithoutPnl = 0;
