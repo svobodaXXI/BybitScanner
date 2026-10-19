@@ -247,11 +247,17 @@ def process_closed_candle(
     candle: Mapping[str, Any],
     *,
     retest_tolerance: float = 0.0,
+    ambiguity_resolver: Callable[[Mapping[str, Any], float], str | None] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Advance by exactly one closed candle; reads nothing beyond it.
 
     ``retest_tolerance`` (price distance, see ``atr_tolerance``) applies only
     to the retest zone, never to the strict naked-breakout test.
+
+    ``ambiguity_resolver(candle, tolerance)`` may settle an ``AMBIGUOUS``
+    contact from finer closed candles lying inside this candle (5m -> 1m); it
+    returns ``"PROVEN"``, ``"AMBIGUOUS"`` or None (no contact). It is never
+    asked about the breakout or about later data.
     """
 
     _validate_state(boundary, state)
@@ -298,6 +304,10 @@ def process_closed_candle(
     contact = retest_contact(
         boundary, new_state["breakout"]["direction"], row | {"closed": True}, retest_tolerance
     )
+    if contact == "AMBIGUOUS" and ambiguity_resolver is not None:
+        contact = ambiguity_resolver(row | {"closed": True}, float(retest_tolerance))
+        if contact not in ("PROVEN", "AMBIGUOUS", None):
+            raise NakedRetestError(f"invalid ambiguity resolution: {contact!r}")
     if contact is None:
         new_state["last_event"] = EVENT_NO_TRANSITION
         return new_state, EVENT_NO_TRANSITION

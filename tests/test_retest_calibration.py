@@ -170,6 +170,96 @@ def test_detection_labels(result, reference, expected):
     assert label_detection(result, reference, FIVE) == expected
 
 
+# --- MIRROR RETEST-5 -------------------------------------------------------
+
+from retest_calibration import (  # noqa: E402
+    exit_improvement_bps,
+    fine_resolver,
+    hold_excursions_bps,
+    market_exit_after,
+    resting_limit_exit_at_line,
+    sign_test_p,
+)
+from geometry.naked_retest import (  # noqa: E402
+    EVENT_RETEST_PROVEN,
+    EVENT_RETEST_UNPROVEN,
+    initialize_state,
+    process_closed_candle,
+)
+
+RISING = Boundary("rise", 0, 100.0, 1.0 / FIVE, 0)  # +1 per 5 minutes
+
+
+def five(i, o, h, l, c):
+    return {"open_time_ms": i * FIVE, "close_time_ms": (i + 1) * FIVE,
+            "open": o, "high": h, "low": l, "close": c, "closed": True}
+
+
+def broken_out():
+    state, _ = initialize_state(RISING)
+    state, _ = process_closed_candle(RISING, state, five(0, 99.5, 101.6, 99.4, 101.5))
+    return state
+
+
+AMBIGUOUS_5M = five(1, 104.0, 104.5, 101.5, 103.5)  # line 101 -> 102, low in between
+
+
+def ones(lows):
+    return [bar(5 + i, 103.5, 104.0, low, 103.6) for i, low in enumerate(lows)]
+
+
+def test_fine_candles_settle_an_ambiguous_coarse_touch_both_ways():
+    state = broken_out()
+    _, unresolved = process_closed_candle(RISING, state, AMBIGUOUS_5M)
+    assert unresolved == EVENT_RETEST_UNPROVEN
+    # Line is 101.8 -> 102.0 during the last minute: a 101.5 low there touches.
+    touched = fine_resolver(RISING, "UP", ones([103.0, 103.0, 103.0, 103.0, 101.5]))
+    _, event = process_closed_candle(RISING, state, AMBIGUOUS_5M, ambiguity_resolver=touched)
+    assert event == EVENT_RETEST_PROVEN
+    # The same low in the first minute (line 101.0 -> 101.2) did not reach the line.
+    missed = fine_resolver(RISING, "UP", ones([101.5, 102.5, 102.5, 103.0, 103.0]))
+    new_state, event = process_closed_candle(RISING, state, AMBIGUOUS_5M, ambiguity_resolver=missed)
+    assert event == "NO_TRANSITION" and new_state["phase"] == "RETEST_CAMPAIGN_ACTIVE"
+
+
+def test_fine_resolver_never_reads_outside_the_coarse_candle():
+    state = broken_out()
+    # A later fine candle that touches cannot rescue an incomplete coarse window.
+    partial = ones([103.0, 103.0, 103.0, 103.0]) + [bar(10, 101.0, 101.5, 99.0, 100.0)]
+    _, event = process_closed_candle(RISING, state, AMBIGUOUS_5M,
+                                     ambiguity_resolver=fine_resolver(RISING, "UP", partial[:4] + partial[4:]))
+    assert event == EVENT_RETEST_UNPROVEN
+
+
+def test_market_exit_is_the_next_open_after_the_detection_close():
+    rows = [bar(9, 1, 1, 1, 1), bar(10, 2.0, 2.0, 2.0, 2.0)]
+    assert market_exit_after(rows, 10 * MINUTE, MINUTE) == {"time_ms": 10 * MINUTE, "price": 2.0}
+    assert market_exit_after([bar(12, 2.0, 2.0, 2.0, 2.0)], 10 * MINUTE, MINUTE) is None
+
+
+def test_resting_limit_needs_a_trade_through_not_a_touch():
+    rows = [bar(0, 101.0, 101.5, 100.0, 101.0), bar(1, 101.0, 101.5, 99.9, 100.5)]
+    assert resting_limit_exit_at_line(LEVEL, "UP", rows, 0) == {"time_ms": 2 * MINUTE, "price": 100.0}
+    assert resting_limit_exit_at_line(LEVEL, "UP", rows[:1], 0) is None
+    mirrored = [bar(0, 99.0, 100.0, 98.5, 99.0), bar(1, 99.0, 100.1, 98.5, 99.5)]
+    assert resting_limit_exit_at_line(LEVEL, "DOWN", mirrored, 0)["time_ms"] == 2 * MINUTE
+
+
+def test_exit_improvement_and_excursions_follow_campaign_direction():
+    # UP breakout -> SHORT campaign: buying back cheaper is better.
+    assert exit_improvement_bps("UP", 99.0, 100.0) == pytest.approx(100.0)
+    assert exit_improvement_bps("DOWN", 99.0, 100.0) == pytest.approx(-100.0)
+    rows = [bar(0, 100.0, 101.0, 98.0, 100.0)]
+    assert hold_excursions_bps("UP", rows, 0, MINUTE, 100.0) == pytest.approx((200.0, 100.0))
+    assert hold_excursions_bps("DOWN", rows, 0, MINUTE, 100.0) == pytest.approx((100.0, 200.0))
+
+
+def test_sign_test():
+    assert sign_test_p([0.0, 0.0]) is None
+    assert sign_test_p([1, 1, 1, 1, 1]) == pytest.approx(1 / 32)
+    assert sign_test_p([1, -1]) == pytest.approx(0.75)
+
+
 def test_summary_bounds_keep_near_misses_unresolved():
     labels = [(LABEL_TP, 0), (LABEL_TP, 0), (LABEL_UNLABELED_NEAR_MISS, -60_000),
               (LABEL_UNLABELED_NEAR_MISS, None), (LABEL_FN, None), (LABEL_TN, None)]

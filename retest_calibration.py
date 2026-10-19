@@ -74,11 +74,52 @@ def causal_atr_series(candles: Sequence[Mapping[str, Any]], period: int) -> list
             for value in values]
 
 
-def evaluate_case(case: CalibrationCase, candidate: Candidate) -> dict[str, Any]:
-    """Run one boundary with ``multiplier * ATR(period)`` as the retest zone."""
+def fine_resolver(
+    boundary: Boundary,
+    breakout_direction: str,
+    fine_candles: Sequence[Mapping[str, Any]],
+) -> Callable[[Mapping[str, Any], float], str | None]:
+    """Settle an ambiguous coarse contact from the fine candles inside it.
+
+    Only fine candles fully inside the already closed coarse candle are read,
+    so nothing later than the coarse decision is used. Any fine contact means
+    the coarse candle touched (``PROVEN``); otherwise an ambiguous fine candle
+    keeps it ``AMBIGUOUS``; full coverage without contact means no touch.
+    Incomplete fine coverage stays ``AMBIGUOUS`` (fail-closed).
+    """
+
+    by_open = {c["open_time_ms"]: c for c in fine_candles}
+
+    def resolve(coarse: Mapping[str, Any], tolerance: float) -> str | None:
+        inside, t = [], coarse["open_time_ms"]
+        while t < coarse["close_time_ms"]:
+            candle = by_open.get(t)
+            if candle is None or candle["close_time_ms"] > coarse["close_time_ms"]:
+                return "AMBIGUOUS"
+            inside.append(candle)
+            t = candle["close_time_ms"]
+        contacts = [retest_contact(boundary, breakout_direction, c, tolerance) for c in inside]
+        if "PROVEN" in contacts:
+            return "PROVEN"
+        return "AMBIGUOUS" if "AMBIGUOUS" in contacts else None
+
+    return resolve
+
+
+def evaluate_case(
+    case: CalibrationCase,
+    candidate: Candidate,
+    fine_candles: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Run one boundary with ``multiplier * ATR(period)`` as the retest zone.
+
+    With ``fine_candles`` an ambiguous coarse contact is settled by
+    ``fine_resolver`` (5m -> 1m) at the same coarse close.
+    """
 
     atr = causal_atr_series(case.candles, candidate.atr_period)
     state, _ = initialize_state(case.boundary)
+    resolver = None
     outcome = None
     for index, candle in enumerate(case.candles):
         tolerance = 0.0
@@ -87,7 +128,10 @@ def evaluate_case(case: CalibrationCase, candidate: Candidate) -> dict[str, Any]
                 outcome = OUTCOME_ATR_UNAVAILABLE
                 break
             tolerance = atr_tolerance(atr[index], candidate.multiplier)
-        state, event = process_closed_candle(case.boundary, state, candle, retest_tolerance=tolerance)
+            if fine_candles is not None and resolver is None:
+                resolver = fine_resolver(case.boundary, state["breakout"]["direction"], fine_candles)
+        state, event = process_closed_candle(
+            case.boundary, state, candle, retest_tolerance=tolerance, ambiguity_resolver=resolver)
         if event == EVENT_DATA_GAP:
             outcome = OUTCOME_DATA_GAP
             break
@@ -201,6 +245,87 @@ def summarize_labels(labels: Sequence[tuple[str, int | None]]) -> dict[str, Any]
         "touch_recall": (tp + early_with_touch) / touches if touches else None,
         "median_delay_ms": delays[len(delays) // 2] if delays else None,
     }
+
+
+# --- MIRROR RETEST-5: detection vs execution, entry-independent exit comparison
+
+def _campaign_sign(breakout_direction: str) -> int:
+    """+1 when the campaign is LONG (DOWN breakout), -1 when SHORT (UP breakout)."""
+
+    return 1 if breakout_direction == "DOWN" else -1
+
+
+def market_exit_after(fine_candles: Sequence[Mapping[str, Any]], detection_close_ms: int,
+                      fine_ms: int) -> dict[str, Any] | None:
+    """Earliest executable reference after a closed-candle detection.
+
+    The detection is known only once its candle closed, so the exit is priced
+    at the open of the first fine candle starting at that close (within one
+    fine interval; otherwise the data cannot prove an execution and None is
+    returned). This is a price reference, not a fill proof.
+    """
+
+    for candle in fine_candles:
+        if candle["open_time_ms"] < detection_close_ms:
+            continue
+        if candle["open_time_ms"] - detection_close_ms > fine_ms:
+            return None
+        return {"time_ms": candle["open_time_ms"], "price": candle["open"]}
+    return None
+
+
+def resting_limit_exit_at_line(boundary: Boundary, breakout_direction: str,
+                               fine_candles: Sequence[Mapping[str, Any]],
+                               from_ms: int) -> dict[str, Any] | None:
+    """Resting LIMIT at the line, re-priced to ``boundary(open)`` each fine candle.
+
+    Filled only when price trades strictly through the limit (a touch is not
+    a fill); fill price is the limit. Gaps end the evidence (None).
+    """
+
+    previous_close = None
+    for candle in fine_candles:
+        if candle["open_time_ms"] < from_ms:
+            continue
+        if previous_close is not None and candle["open_time_ms"] > previous_close + 1:
+            return None
+        previous_close = candle["close_time_ms"]
+        limit = boundary.price_at(candle["open_time_ms"])
+        through = candle["low"] < limit if breakout_direction == "UP" else candle["high"] > limit
+        if through:
+            return {"time_ms": candle["close_time_ms"], "price": limit}
+    return None
+
+
+def exit_improvement_bps(breakout_direction: str, candidate_price: float, baseline_price: float) -> float:
+    """Candidate exit minus baseline exit in the campaign's favour, in bps of baseline."""
+
+    return _campaign_sign(breakout_direction) * (candidate_price - baseline_price) / baseline_price * 1e4
+
+
+def hold_excursions_bps(breakout_direction: str, fine_candles: Sequence[Mapping[str, Any]],
+                        start_ms: int, end_ms: int, reference_price: float) -> tuple[float, float]:
+    """MFE / MAE (bps, >= 0) of keeping the campaign position from start to end."""
+
+    sign = _campaign_sign(breakout_direction)
+    window = [c for c in fine_candles if c["open_time_ms"] >= start_ms and c["close_time_ms"] <= end_ms]
+    if not window:
+        return 0.0, 0.0
+    best = max(c["high"] for c in window) if sign > 0 else min(c["low"] for c in window)
+    worst = min(c["low"] for c in window) if sign > 0 else max(c["high"] for c in window)
+    mfe = max(sign * (best - reference_price), 0.0) / reference_price * 1e4
+    mae = max(sign * (reference_price - worst), 0.0) / reference_price * 1e4
+    return mfe, mae
+
+
+def sign_test_p(values: Sequence[float]) -> float | None:
+    """One-sided exact sign test P(X >= positives) for H0 median <= 0; ties dropped."""
+
+    positive = sum(v > 0 for v in values)
+    n = positive + sum(v < 0 for v in values)
+    if n == 0:
+        return None
+    return sum(math.comb(n, k) for k in range(positive, n + 1)) / 2 ** n
 
 
 def _span(case: CalibrationCase) -> tuple[int, int]:
