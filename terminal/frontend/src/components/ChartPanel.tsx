@@ -136,6 +136,7 @@ export function ChartPanel({
   averageEntryPrice = null,
   workspaceControls,
   editorMode = false,
+  referenceDrawings = [],
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
@@ -172,6 +173,8 @@ export function ChartPanel({
   averageEntryPrice?: string | null;
   workspaceControls?: ReactNode;
   editorMode?: boolean;
+  /** Read-only source geometry; only supplied from a verified signal snapshot. */
+  referenceDrawings?: readonly DrawingObject[];
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -779,6 +782,7 @@ export function ChartPanel({
         <div ref={hostRef} className="chart-engine" />
         <DrawingOverlay
           drawings={drawings}
+          referenceDrawings={editorMode ? referenceDrawings : []}
           selectedId={selectedId}
           tool={tool}
           magnet={magnet}
