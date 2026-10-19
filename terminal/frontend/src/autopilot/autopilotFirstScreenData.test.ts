@@ -57,6 +57,23 @@ describe("AUTOPILOT first-screen data", () => {
     });
   });
 
+  it("does not include future or invalid close timestamps in today's PnL", () => {
+    const summary = summarizeDay(
+      [
+        trade({ closed_at_ms: DAY_START + 1000, pnl: "2", readiness: "CLOSED_READY" }),
+        trade({ closed_at_ms: NOW + 1, pnl: "999", readiness: "CLOSED_READY" }),
+        trade({ closed_at_ms: Number.NaN, pnl: "999", readiness: "CLOSED_READY" }),
+        trade({ closed_at_ms: Number.POSITIVE_INFINITY, pnl: "999", readiness: "CLOSED_READY" }),
+      ],
+      NOW,
+    );
+    expect(summary).toMatchObject({
+      closedTrades: 1,
+      netPnl: 2,
+      tradesWithoutPnl: 0,
+    });
+  });
+
   it("never reports a day PnL when any closed trade has no PnL", () => {
     const summary = summarizeDay(
       [
