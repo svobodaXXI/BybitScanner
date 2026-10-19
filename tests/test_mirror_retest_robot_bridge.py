@@ -1,7 +1,7 @@
 """MIRROR-INTEGRATION-1: no-execution contract tests."""
 import unittest
 
-from geometry.naked_retest import PHASE_CAMPAIGN_ACTIVE, PHASE_RETEST_PROVEN
+from geometry.naked_retest import PHASE_CAMPAIGN_ACTIVE, PHASE_RETEST_PROVEN, PHASE_RETEST_UNPROVEN
 from retest_campaign import open_campaign_budget
 from mirror_retest_robot_bridge import observe_for_robot
 
@@ -50,6 +50,28 @@ class MirrorRobotBridgeTests(unittest.TestCase):
         self.assertEqual(row.exit_intent, "CLOSE_REMAINDER")
         self.assertEqual(row.risk_decision, "DENY")
         self.assertFalse(row.executable)
+
+    def test_unproven_retest_never_emits_exit_intent(self):
+        row = observe_for_robot(boundary_id="b1", state=self.state(PHASE_RETEST_UNPROVEN))
+        self.assertEqual(row.risk_decision, "DENY")
+        self.assertIsNone(row.exit_intent)
+        self.assertFalse(row.admission_allowed)
+
+    def test_observation_does_not_mutate_research_state(self):
+        state = self.state()
+        before = {"boundary_id": state["boundary_id"], "phase": state["phase"],
+                  "breakout": dict(state["breakout"]), "data_blocked": False}
+        observe_for_robot(boundary_id="b1", state=state)
+        self.assertEqual(state, before)
+
+    def test_missing_account_budget_is_not_admission(self):
+        row = observe_for_robot(boundary_id="b1", state=self.state(), data_reliable=True,
+                                realized_loss_costs_usdt=0,
+                                live_pending_worst_case_usdt=0,
+                                new_attempt_worst_case_usdt=1,
+                                remaining_net_reward_usdt=20)
+        self.assertEqual(row.risk_decision, "WAIT")
+        self.assertFalse(row.admission_allowed)
 
     def test_wrong_boundary_fails_closed(self):
         with self.assertRaises(ValueError):
