@@ -54,6 +54,7 @@ WEDGE_PATTERNS = frozenset({"Rising Wedge", "Falling Wedge"})
 COARSE_MS = 300_000
 PAPER_FEE_RATE = Decimal("0.0006")   # documented PAPER per-side fee (paper_runtime.py plan fee)
 OBSERVATION_QUEUE_LIMIT = 32
+PROTECTION_RECHECK_EVERY = 10   # candidates between protection re-checks inside one cycle
 
 
 class ClosedCandleSource(Protocol):
@@ -79,6 +80,7 @@ class SidecarMetrics:
     candidates_unusable: int = 0
     observations_submitted: int = 0
     observations_dropped: int = 0
+    fine_unavailable: int = 0
 
 
 def _iso_ms(value: Any) -> int | None:
@@ -183,7 +185,10 @@ class MirrorSidecar:
             self.arrival_cursor_ms = max(self.arrival_cursor_ms, evaluated_at)
             self._track(ref)
         produced: list[Observation] = []
-        for candidate in list(self.tracked.values()):
+        for index, candidate in enumerate(list(self.tracked.values())):
+            if index and index % PROTECTION_RECHECK_EVERY == 0 and self._protection_has_priority():
+                self.metrics.skipped_for_protection += 1
+                break                                    # protection work started: yield immediately
             produced.extend(self._advance(candidate, account))
         return produced
 
@@ -209,6 +214,8 @@ class MirrorSidecar:
             return
         self.formations.add(key)
         self.tracked[ref] = TrackedCandidate(ref, str(envelope["symbol"]), key, boundaries)
+        # Start at the 5m boundary at/before the candidate was known: nothing earlier is ever read.
+        self.candle_cursor.setdefault(ref, created - created % COARSE_MS)
         self.metrics.candidates_tracked += 1
 
     def _advance(self, candidate: TrackedCandidate, account: AccountFacts) -> list[Observation]:
@@ -217,12 +224,22 @@ class MirrorSidecar:
         produced: list[Observation] = []
         for candle in candles:
             blocked = False
+            fine = None
+            if any((self.states.get(b.boundary_id) or {}).get("phase") == PHASE_CAMPAIGN_ACTIVE
+                   for b in candidate.boundaries) and hasattr(self.candles, "fine_candles"):
+                try:
+                    fine = self.candles.fine_candles(candidate.symbol, candle)
+                except Exception:
+                    # Without 1m proof an ambiguous touch would end the campaign as UNPROVEN:
+                    # hold the cursor and retry this candle on a later cycle instead.
+                    self.metrics.fine_unavailable += 1
+                    break
             for boundary in candidate.boundaries:
                 state = self.states.get(boundary.boundary_id)
                 if state is not None and state["phase"] not in (PHASE_WAITING_BREAKOUT, PHASE_CAMPAIGN_ACTIVE):
                     continue
                 state, record = observe_closed_candle(
-                    boundary, state, candle, symbol=candidate.symbol, account=account)
+                    boundary, state, candle, symbol=candidate.symbol, account=account, fine_candles=fine)
                 self.states[boundary.boundary_id] = state
                 if record is not None and record.observation_id not in self.emitted:
                     self.emitted.add(record.observation_id)
