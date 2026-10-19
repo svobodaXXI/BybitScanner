@@ -1,0 +1,38 @@
+name: AUTOPILOT frontend verification
+
+on:
+  pull_request:
+    paths:
+      - "terminal/frontend/**"
+      - ".github/workflows/autopilot-frontend-verification.yml"
+  push:
+    branches:
+      - "ci/autopilot-ui-9-frontend-verification"
+    paths:
+      - "terminal/frontend/**"
+      - ".github/workflows/autopilot-frontend-verification.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terminal/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: terminal/frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci --ignore-scripts
+      - name: Check formatting and lint
+        run: npm run check
+      - name: AUTOPILOT focused regression
+        run: npm test -- src/autopilot/autopilotFirstScreenData.test.ts src/components/AutopilotFirstScreen.test.tsx
+      - name: Build frontend
+        run: npm run build
