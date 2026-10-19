@@ -204,7 +204,12 @@ describe("AutopilotFirstScreen (UI-1)", () => {
     fireEvent.click(within(lsk).getByRole("button", { name: "Подробности сделки" }));
     const details = screen.getByRole("dialog", { name: "Подробности сделки LSKUSDT" });
     expect(within(details).getByText("Falling Wedge retest")).toBeInTheDocument();
-    expect(within(details).getByRole("button", { name: "Закрыть подробности" })).toHaveFocus();
+    const close = within(details).getByRole("button", { name: "Закрыть подробности" });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(close).toHaveFocus();
     expect(within(details).getByText("Причина удержания")).toBeInTheDocument();
     expect(within(details).getAllByText("Нет источника данных").length).toBeGreaterThan(0);
     fireEvent.click(within(details).getByRole("button", { name: "Закрыть подробности" }));
