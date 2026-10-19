@@ -93,3 +93,32 @@
 .autopilot-empty {
   margin: 0;
 }
+
+.autopilot-trade-details {
+  position: fixed;
+  z-index: 30;
+  inset: 10vh 10vw auto;
+  max-height: 80vh;
+  overflow: auto;
+  padding: 1rem;
+  background: #10151b;
+  border: 1px solid #546576;
+  border-radius: 0.4rem;
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 60%);
+  color: #d5dde5;
+}
+.autopilot-trade-details header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.autopilot-trade-details dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0 0;
+}
+@media (max-width: 640px) {
+  .autopilot-trade-details { inset: 5vh 0.5rem auto; max-height: 90vh; }
+}
