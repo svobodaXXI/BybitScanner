@@ -105,7 +105,11 @@ function PositionCard({
     if (!detailsOpen) return;
     detailsCloseRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Tab") {
+        // The close action is the only interactive element in this read-only dialog.
+        event.preventDefault();
+        detailsCloseRef.current?.focus();
+      } else if (event.key === "Escape") {
         event.preventDefault();
         setDetailsOpen(false);
         detailsTriggerRef.current?.focus();
