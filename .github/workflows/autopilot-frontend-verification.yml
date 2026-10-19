@@ -33,7 +33,7 @@ jobs:
       - name: Baseline-wide formatting and lint (informational)
         continue-on-error: true
         run: npm run check
-      - name: AUTOPILOT focused regression
-        run: npm test -- src/autopilot/autopilotFirstScreenData.test.ts src/components/AutopilotFirstScreen.test.tsx
+      - name: AUTOPILOT and Geometry Feedback focused regression
+        run: npm test -- src/autopilot/autopilotFirstScreenData.test.ts src/components/AutopilotFirstScreen.test.tsx src/geometryFeedback/geometryReviewDraft.test.ts
       - name: Build frontend
         run: npm run build
