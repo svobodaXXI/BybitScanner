@@ -31,7 +31,7 @@ decision WAIT | BLOCK + reasons --ObservationJournal--> idempotent JSONL record 
 | still active at window end | — | 3 |
 
 Final phase equals the published RETEST-5 refined outcome for **67/67** boundaries; executable / admission-allowed
-observations: **0**. Tests: `tests/test_mirror_retest_observer.py` (14) with two real cases as fixtures
+observations: **0**. Tests: `tests/test_mirror_retest_observer.py` (13) with two real cases as fixtures
 (`tests/fixtures/mirror_integration_2/`: 1000LUNCUSDT upper — proven, BRUSDT upper — unproven; Bybit public klines).
 
 ## Shared contract required for live observation (NOT implemented — agreement first)
