@@ -110,3 +110,70 @@ def test_selection_requires_train_cases_and_candidates(kwargs):
 def test_invalid_candidates_are_rejected(period, multiplier):
     with pytest.raises(Exception):
         Candidate(period, multiplier)
+
+
+# --- MIRROR RETEST-4: fine physical-touch reference and labels -------------
+
+from retest_calibration import (  # noqa: E402
+    LABEL_EXCLUDED,
+    LABEL_FN,
+    LABEL_FP_LATE,
+    LABEL_TN,
+    LABEL_TP,
+    LABEL_UNLABELED_NEAR_MISS,
+    REF_AMBIGUOUS,
+    REF_DATA_GAP,
+    REF_NO_TOUCH,
+    REF_TOUCH,
+    label_detection,
+    reference_touch,
+    summarize_labels,
+)
+
+FIVE = 5 * MINUTE
+LEVEL = Boundary.horizontal("lvl", 100.0, as_of_time_ms=0)
+
+
+def fine(i, low):
+    return bar(i, 101.0, 101.5, low, 101.2)
+
+
+def test_reference_is_first_exact_fine_touch_after_breakout_close():
+    rows = [fine(4, 99.0), fine(5, 100.4), fine(6, 100.0), fine(7, 99.0)]
+    ref = reference_touch(LEVEL, "UP", 5 * MINUTE, rows)  # bar 4 is before the close
+    assert (ref["status"], ref["touch_close_time_ms"]) == (REF_TOUCH, 7 * MINUTE)
+    assert reference_touch(LEVEL, "UP", 0, [fine(0, 100.4), fine(1, 100.2)])["status"] == REF_NO_TOUCH
+    assert reference_touch(LEVEL, "UP", 0, [fine(0, 100.4), fine(2, 99.0)])["status"] == REF_DATA_GAP
+    rising = Boundary("rise", 0, 100.0, 1.0 / MINUTE, 0)
+    assert reference_touch(rising, "UP", 0, [bar(0, 102.0, 102.5, 100.5, 102.2)])["status"] == REF_AMBIGUOUS
+
+
+def outcome(phase, close=None):
+    return {"outcome": phase, "retest_close_time_ms": close}
+
+
+TOUCH = {"status": REF_TOUCH, "touch_open_time_ms": 6 * MINUTE, "touch_close_time_ms": 7 * MINUTE}
+
+
+@pytest.mark.parametrize("result,reference,expected", [
+    (outcome("RETEST_PROVEN", 2 * FIVE), TOUCH, (LABEL_TP, 3 * MINUTE)),        # same 5m candle
+    (outcome("RETEST_PROVEN", FIVE), TOUCH, (LABEL_UNLABELED_NEAR_MISS, -2 * MINUTE)),
+    (outcome("RETEST_PROVEN", 3 * FIVE), TOUCH, (LABEL_FP_LATE, 8 * MINUTE)),
+    (outcome("RETEST_PROVEN", FIVE), {"status": REF_NO_TOUCH}, (LABEL_UNLABELED_NEAR_MISS, None)),
+    (outcome("RETEST_CAMPAIGN_ACTIVE"), TOUCH, (LABEL_FN, None)),
+    (outcome("RETEST_UNPROVEN"), TOUCH, (LABEL_FN, None)),
+    (outcome("RETEST_CAMPAIGN_ACTIVE"), {"status": REF_NO_TOUCH}, (LABEL_TN, None)),
+    (outcome("ATR_UNAVAILABLE"), TOUCH, (LABEL_EXCLUDED, None)),
+    (outcome("RETEST_PROVEN", FIVE), {"status": REF_AMBIGUOUS}, (LABEL_EXCLUDED, None)),
+])
+def test_detection_labels(result, reference, expected):
+    assert label_detection(result, reference, FIVE) == expected
+
+
+def test_summary_bounds_keep_near_misses_unresolved():
+    labels = [(LABEL_TP, 0), (LABEL_TP, 0), (LABEL_UNLABELED_NEAR_MISS, -60_000),
+              (LABEL_UNLABELED_NEAR_MISS, None), (LABEL_FN, None), (LABEL_TN, None)]
+    s = summarize_labels(labels)
+    assert (s["detections"], s["precision_lower"], s["precision_upper"]) == (4, 0.5, 1.0)
+    assert s["touch_recall"] == 3 / 4  # 2 TP + 1 early detection of a later touch, 1 FN
+    assert summarize_labels([])["precision_lower"] is None

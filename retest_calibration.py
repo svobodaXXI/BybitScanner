@@ -30,11 +30,13 @@ from confirmation import calculate_atr
 from geometry.naked_retest import (
     EVENT_DATA_GAP,
     PHASE_CAMPAIGN_ACTIVE,
+    PHASE_RETEST_PROVEN,
     TERMINAL_PHASES,
     Boundary,
     atr_tolerance,
     initialize_state,
     process_closed_candle,
+    retest_contact,
 )
 
 
@@ -101,6 +103,103 @@ def evaluate_case(case: CalibrationCase, candidate: Candidate) -> dict[str, Any]
         "breakout_close_time_ms": breakout.get("close_time_ms"),
         "retest_close_time_ms": retest.get("close_time_ms"),
         "retest_tolerance": retest.get("tolerance"),
+    }
+
+
+REF_TOUCH = "TOUCH"
+REF_NO_TOUCH = "NO_TOUCH"
+REF_AMBIGUOUS = "AMBIGUOUS"
+REF_DATA_GAP = "DATA_GAP"
+
+LABEL_TP = "TP"
+LABEL_FP_LATE = "FP_LATE"
+LABEL_UNLABELED_NEAR_MISS = "UNLABELED_NEAR_MISS"
+LABEL_FN = "FN"
+LABEL_TN = "TN"
+LABEL_EXCLUDED = "EXCLUDED"
+
+
+def reference_touch(
+    boundary: Boundary,
+    breakout_direction: str,
+    breakout_close_time_ms: int,
+    fine_candles: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Physical-touch reference from finer closed candles (e.g. 1m under 5m).
+
+    Exact contact only (zero tolerance), first proven contact after the coarse
+    breakout candle closed. It measures whether price reached the line; it is
+    NOT an owner judgement of which near-misses count as a retest.
+    """
+
+    previous_close = None
+    for candle in fine_candles:
+        if candle["open_time_ms"] < breakout_close_time_ms:
+            continue
+        if previous_close is not None and candle["open_time_ms"] > previous_close + 1:
+            return {"status": REF_DATA_GAP, "touch_close_time_ms": None}
+        previous_close = candle["close_time_ms"]
+        contact = retest_contact(boundary, breakout_direction, candle, 0.0)
+        if contact == "PROVEN":
+            return {"status": REF_TOUCH, "touch_open_time_ms": candle["open_time_ms"],
+                    "touch_close_time_ms": candle["close_time_ms"]}
+        if contact == "AMBIGUOUS":
+            return {"status": REF_AMBIGUOUS, "touch_close_time_ms": None}
+    return {"status": REF_NO_TOUCH, "touch_close_time_ms": None}
+
+
+def label_detection(outcome: Mapping[str, Any], reference: Mapping[str, Any],
+                    coarse_ms: int) -> tuple[str, int | None]:
+    """Compare one coarse detection with the fine physical-touch reference.
+
+    Returns ``(label, delay_ms)``; delay = detection close - reference touch
+    close (negative: detected before price physically reached the line).
+    An earlier detection, or one without any reference touch, is a near-miss
+    detection whose correctness needs an independent owner label.
+    """
+
+    if reference["status"] in (REF_AMBIGUOUS, REF_DATA_GAP) or outcome["outcome"] in (
+        OUTCOME_ATR_UNAVAILABLE, OUTCOME_DATA_GAP
+    ):
+        return LABEL_EXCLUDED, None
+    detected = outcome["outcome"] == PHASE_RETEST_PROVEN
+    touched = reference["status"] == REF_TOUCH
+    if not detected:
+        return (LABEL_FN if touched else LABEL_TN), None
+    if not touched:
+        return LABEL_UNLABELED_NEAR_MISS, None
+    detection_close = outcome["retest_close_time_ms"]
+    delay = detection_close - reference["touch_close_time_ms"]
+    detection_open = detection_close - coarse_ms
+    if reference["touch_open_time_ms"] >= detection_open and reference["touch_close_time_ms"] <= detection_close:
+        return LABEL_TP, delay
+    return (LABEL_UNLABELED_NEAR_MISS if delay < 0 else LABEL_FP_LATE), delay
+
+
+def summarize_labels(labels: Sequence[tuple[str, int | None]]) -> dict[str, Any]:
+    """Counts, precision bounds (near-miss as FP / as TP), touch recall, delays."""
+
+    counts = {name: 0 for name in (LABEL_TP, LABEL_FP_LATE, LABEL_UNLABELED_NEAR_MISS,
+                                   LABEL_FN, LABEL_TN, LABEL_EXCLUDED)}
+    delays = []
+    early_with_touch = 0
+    for label, delay in labels:
+        counts[label] += 1
+        if delay is not None:
+            delays.append(delay)
+            if label == LABEL_UNLABELED_NEAR_MISS:
+                early_with_touch += 1
+    tp, late, near = counts[LABEL_TP], counts[LABEL_FP_LATE], counts[LABEL_UNLABELED_NEAR_MISS]
+    detections = tp + late + near
+    touches = tp + late + early_with_touch + counts[LABEL_FN]
+    delays.sort()
+    return {
+        **counts,
+        "detections": detections,
+        "precision_lower": tp / detections if detections else None,
+        "precision_upper": (tp + near) / detections if detections else None,
+        "touch_recall": (tp + early_with_touch) / touches if touches else None,
+        "median_delay_ms": delays[len(delays) // 2] if delays else None,
     }
 
 
