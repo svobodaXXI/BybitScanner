@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AutopilotFirstScreen } from "./AutopilotFirstScreen";
@@ -195,6 +195,22 @@ describe("AutopilotFirstScreen (UI-1)", () => {
     expect(
       screen.getAllByRole("button").map((button) => button.textContent),
     ).toEqual(["Обновить"]);
+  });
+
+  it("opens trade-specific read-only details and closes without mutations", async () => {
+    const fetchMock = mockFetch(healthyRoutes);
+    render(<AutopilotFirstScreen now={() => NOW} />);
+    const lsk = await screen.findByRole("article", { name: "Сделка LSKUSDT" });
+    fireEvent.click(within(lsk).getByRole("button", { name: "Подробности сделки" }));
+    const details = screen.getByRole("dialog", { name: "Подробности сделки LSKUSDT" });
+    expect(within(details).getByText("Falling Wedge retest")).toBeInTheDocument();
+    expect(within(details).getByText("Причина удержания")).toBeInTheDocument();
+    expect(within(details).getAllByText("Нет источника данных").length).toBeGreaterThan(0);
+    fireEvent.click(within(details).getByRole("button", { name: "Закрыть подробности" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    for (const call of fetchMock.mock.calls as unknown as [string, RequestInit?][]) {
+      expect(call[1]?.method ?? "GET").toBe("GET");
+    }
   });
 
   it("issues only GET requests", async () => {
