@@ -4,6 +4,7 @@ import {
   entryBasisFor,
   mskDayStartMs,
   summarizeDay,
+  uniqueOpenEpisodeId,
 } from "./autopilotFirstScreenData";
 
 // 2026-10-19 12:00:00 UTC == 15:00 MSK; the MSK business day began at 2026-10-18 21:00 UTC.
@@ -21,6 +22,14 @@ const trade = (
 });
 
 describe("AUTOPILOT first-screen data", () => {
+  it("never guesses an episode from symbol when matching open rows are ambiguous", () => {
+    const first = { ...trade({ symbol: "LSKUSDT" }), trade_episode_id: "one" };
+    const second = { ...trade({ symbol: "LSKUSDT" }), trade_episode_id: "two" };
+    expect(uniqueOpenEpisodeId("LSKUSDT", [first])).toBe("one");
+    expect(uniqueOpenEpisodeId("LSKUSDT", [first, second])).toBeNull();
+    expect(uniqueOpenEpisodeId("LSKUSDT", [trade({ symbol: "LSKUSDT" })])).toBeNull();
+  });
+
   it("uses the 00:00 MSK business-day boundary of the daily-loss gate", () => {
     expect(mskDayStartMs(NOW)).toBe(DAY_START);
     expect(mskDayStartMs(DAY_START)).toBe(DAY_START);
