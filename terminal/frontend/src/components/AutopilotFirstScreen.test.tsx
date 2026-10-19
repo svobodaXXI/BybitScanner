@@ -57,6 +57,8 @@ const healthyRoutes: Routes = {
   },
   "/api/diary/trades": {
     ok: true,
+    active_account_id: "paper",
+    session_generation: 1,
     trades: [
       {
         symbol: "OLDUSDT",
@@ -66,6 +68,7 @@ const healthyRoutes: Routes = {
       },
       {
         symbol: "LSKUSDT",
+        trade_episode_id: "episode-lsk",
         closed_at_ms: null,
         pnl: null,
         readiness: "OPEN",
@@ -197,38 +200,28 @@ describe("AutopilotFirstScreen (UI-1)", () => {
     ).toEqual(["Обновить"]);
   });
 
-  it("opens trade-specific read-only details and closes without mutations", async () => {
+  it("delegates details only with a uniquely identified open episode", async () => {
+    const onTradeDetails = vi.fn();
     const fetchMock = mockFetch(healthyRoutes);
-    render(<AutopilotFirstScreen now={() => NOW} />);
+    render(<AutopilotFirstScreen now={() => NOW} accountKey="paper:1" onTradeDetails={onTradeDetails} />);
     const lsk = await screen.findByRole("article", { name: "Сделка LSKUSDT" });
     fireEvent.click(within(lsk).getByRole("button", { name: "Подробности сделки" }));
-    const details = screen.getByRole("dialog", { name: "Подробности сделки LSKUSDT" });
-    expect(within(details).getByText("Falling Wedge retest")).toBeInTheDocument();
-    const close = within(details).getByRole("button", { name: "Закрыть подробности" });
-    expect(close).toHaveFocus();
-    fireEvent.keyDown(document, { key: "Tab" });
-    expect(close).toHaveFocus();
-    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
-    expect(close).toHaveFocus();
-    expect(within(details).getByText("Причина удержания")).toBeInTheDocument();
-    expect(within(details).getAllByText("Нет источника данных").length).toBeGreaterThan(0);
-    fireEvent.click(within(details).getByRole("button", { name: "Закрыть подробности" }));
+    expect(onTradeDetails).toHaveBeenCalledWith("episode-lsk");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const night = screen.getByRole("article", { name: "Сделка NIGHTUSDT" });
+    expect(within(night).getByRole("button", { name: "Подробности сделки" })).toBeDisabled();
     for (const call of fetchMock.mock.calls as unknown as [string, RequestInit?][]) {
       expect(call[1]?.method ?? "GET").toBe("GET");
     }
   });
 
-  it("closes details on Escape and returns focus to the originating trade", async () => {
+  it("refuses to link diary episodes across account identities", async () => {
+    const onTradeDetails = vi.fn();
     mockFetch(healthyRoutes);
-    render(<AutopilotFirstScreen now={() => NOW} />);
+    render(<AutopilotFirstScreen now={() => NOW} accountKey="other-account:1" onTradeDetails={onTradeDetails} />);
     const lsk = await screen.findByRole("article", { name: "Сделка LSKUSDT" });
-    const trigger = within(lsk).getByRole("button", { name: "Подробности сделки" });
-    fireEvent.click(trigger);
-    expect(screen.getByRole("dialog", { name: "Подробности сделки LSKUSDT" })).toBeInTheDocument();
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(trigger).toHaveFocus();
+    expect(within(lsk).getByRole("button", { name: "Подробности сделки" })).toBeDisabled();
+    expect(onTradeDetails).not.toHaveBeenCalled();
   });
 
   it("routes all-positions navigation through the parent rather than creating an overlay", async () => {
