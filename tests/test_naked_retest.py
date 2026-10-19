@@ -7,14 +7,13 @@ from geometry.naked_retest import (
     CAMPAIGN_SHORT,
     EVENT_BEFORE_AS_OF,
     EVENT_IGNORED_STALE,
-    EVENT_LEVEL_INVALIDATED,
+    EVENT_DATA_GAP,
     EVENT_NAKED_BREAKOUT,
     EVENT_NO_TRANSITION,
     EVENT_RETEST_PROVEN,
     EVENT_RETEST_UNPROVEN,
     EVENT_TERMINAL,
     PHASE_CAMPAIGN_ACTIVE,
-    PHASE_LEVEL_INVALIDATED,
     PHASE_RETEST_PROVEN,
     PHASE_RETEST_UNPROVEN,
     PHASE_WAITING_BREAKOUT,
@@ -22,7 +21,6 @@ from geometry.naked_retest import (
     NakedRetestError,
     atr_tolerance,
     initialize_state,
-    mark_level_invalidated,
     naked_breakout_direction,
     process_closed_candle,
     replay_closed_candles,
@@ -242,23 +240,44 @@ def test_campaign_has_no_fixed_horizon():
     assert set(events[1:]) == {EVENT_NO_TRANSITION}
 
 
-def test_proven_loss_of_level_relevance_is_terminal_and_not_retroactive():
-    state, _ = run(LEVEL, [bar(0, 99.0, 103.0, 98.9, 102.5), bar(1, 102.5, 104.0, 101.0, 103.0)])
-    with pytest.raises(NakedRetestError):
-        mark_level_invalidated(LEVEL, state, reason="x", evidence_close_time_ms=MINUTE)
-    with pytest.raises(NakedRetestError):
-        mark_level_invalidated(LEVEL, state, reason=" ", evidence_close_time_ms=2 * MINUTE)
-    ended, event = mark_level_invalidated(
-        LEVEL, state, reason="caller_proof", evidence_close_time_ms=2 * MINUTE)
-    assert (event, ended["phase"]) == (EVENT_LEVEL_INVALIDATED, PHASE_LEVEL_INVALIDATED)
-    assert process_closed_candle(LEVEL, ended, bar(2, 103.0, 103.0, 99.0, 99.5))[1] == EVENT_TERMINAL
+# --- MIRROR RETEST-3 -------------------------------------------------------
+
+def test_structure_changes_do_not_end_the_campaign_only_a_retest_does():
+    # Price trends far away and reverses structure without touching the level.
+    away = [bar(i, 103.0 + i, 104.0 + i, 102.5 + i, 103.5 + i) for i in range(1, 30)]
+    back = [bar(i, 130.0 - (i - 30), 130.5 - (i - 30), 101.0, 129.0 - (i - 30)) for i in range(30, 31)]
+    state, events = run(LEVEL, [bar(0, 99.0, 103.0, 98.9, 102.5)] + away + back)
+    assert EVENT_RETEST_PROVEN not in events and state["phase"] == PHASE_CAMPAIGN_ACTIVE
+    state, event = process_closed_candle(LEVEL, state, bar(31, 101.5, 101.6, 99.9, 100.5))
+    assert (event, state["phase"]) == (EVENT_RETEST_PROVEN, PHASE_RETEST_PROVEN)
 
 
-def test_only_an_active_campaign_can_be_invalidated():
-    waiting, _ = initialize_state(LEVEL)
+def test_missing_candle_blocks_without_consuming_and_recovers_when_filled():
+    state, _ = run(LEVEL, [bar(0, 99.0, 103.0, 98.9, 102.5)])
+    gapped = bar(2, 101.0, 101.5, 99.0, 99.5)  # would be a retest, but bar 1 is missing
+    blocked, event = process_closed_candle(LEVEL, state, gapped)
+    assert (event, blocked["data_blocked"], blocked["phase"]) == (EVENT_DATA_GAP, True, PHASE_CAMPAIGN_ACTIVE)
+    assert blocked["cursor_close_time_ms"] == state["cursor_close_time_ms"]
+    filled, event = process_closed_candle(LEVEL, blocked, bar(1, 102.5, 103.0, 99.5, 101.0))
+    assert (event, filled["data_blocked"]) == (EVENT_RETEST_PROVEN, False)
+
+
+def test_replay_stops_at_a_gap_and_mirror_twin_matches():
+    candles = [bar(0, 99.0, 103.0, 98.9, 102.5), bar(2, 101.0, 101.5, 99.0, 99.5), bar(3, 99.0, 99.5, 98.0, 98.5)]
+    state, events = run(LEVEL, candles)
+    assert events == (EVENT_NAKED_BREAKOUT, EVENT_DATA_GAP) and state["data_blocked"] is True
+    twin, twin_events = run(mirror_boundary(LEVEL), [mirror_bar(c) for c in candles])
+    assert twin_events == events and twin["data_blocked"] is True
+
+
+def test_close_equals_next_open_minus_one_ms_is_contiguous():
+    first = bar(0, 99.0, 103.0, 98.9, 102.5) | {"close_time_ms": MINUTE - 1}
+    state, events = run(LEVEL, [first, bar(1, 102.5, 103.0, 101.0, 102.0)])
+    assert events == (EVENT_NAKED_BREAKOUT, EVENT_NO_TRANSITION) and state["data_blocked"] is False
+
+
+def test_overlapping_candle_is_untrusted():
+    state, _ = run(LEVEL, [bar(0, 99.0, 103.0, 98.9, 102.5)])
+    overlap = bar(0, 102.0, 103.0, 101.0, 102.5) | {"open_time_ms": MINUTE // 2, "close_time_ms": 3 * MINUTE // 2}
     with pytest.raises(NakedRetestError):
-        mark_level_invalidated(LEVEL, waiting, reason="x", evidence_close_time_ms=0)
-    boundary, candles, _, _ = SCENARIOS["horizontal_naked_then_retest"]
-    retested, _ = run(boundary, candles)
-    assert mark_level_invalidated(
-        boundary, retested, reason="x", evidence_close_time_ms=10 * MINUTE) == (retested, EVENT_TERMINAL)
+        process_closed_candle(LEVEL, state, overlap)

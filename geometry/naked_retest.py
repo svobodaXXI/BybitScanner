@@ -21,9 +21,15 @@ is terminal for the campaign; later taps never re-arm it (plan 2.5).
 
 Owner decisions 2026-10-19 (MIRROR RETEST-2): prior compression is allowed
 (no accumulation filter); the retest is a wick touch or entry into a small
-dynamic ATR zone (coefficient not yet approved, so the caller passes it); the
-campaign has no fixed horizon and ends only at the first retest or at
-caller-proven loss of level relevance (``mark_level_invalidated``).
+dynamic ATR zone passed by the caller; the campaign has no fixed horizon.
+
+Owner decisions MIRROR RETEST-3: ATR period and coefficient are chosen by
+historical trials without look-ahead (``retest_calibration``); the mirror level
+stays valid until the first confirmed retest regardless of later market
+structure, so nothing but a retest ends a campaign; unreliable data blocks.
+A candle that does not continue the processed history (gap) is not consumed:
+the state is flagged ``data_blocked`` until the missing candle arrives, and
+``retest_campaign.entry_gate`` admits nothing while it is set.
 
 Contact proof from closed OHLC only. For an UP breakout (price above the line)
 a candle proves contact when its open or close is at/below the line (plus
@@ -41,8 +47,8 @@ Not responsible for (owned elsewhere or still owner-undecided):
 - detecting the boundary itself (existing geometry detectors);
 - entries, confirmations, orders, STOP/TAKE, Robot or Scanner wiring; no
   runtime module imports this file;
-- the ATR coefficient/period and the proof of lost level relevance (owner
-  pending); campaign risk and exit intents live in ``retest_campaign``.
+- choosing the ATR period/coefficient (``retest_calibration``); campaign risk
+  and exit intents live in ``retest_campaign``.
 """
 
 from __future__ import annotations
@@ -65,7 +71,6 @@ PHASE_WAITING_BREAKOUT = "WAITING_NAKED_BREAKOUT"
 PHASE_CAMPAIGN_ACTIVE = "RETEST_CAMPAIGN_ACTIVE"
 PHASE_RETEST_PROVEN = "RETEST_PROVEN"
 PHASE_RETEST_UNPROVEN = "RETEST_UNPROVEN"
-PHASE_LEVEL_INVALIDATED = "LEVEL_INVALIDATED"
 
 EVENT_INITIALIZED = "INITIALIZED"
 EVENT_NO_TRANSITION = "NO_TRANSITION"
@@ -74,10 +79,10 @@ EVENT_IGNORED_STALE = "IGNORED_STALE_CANDLE"
 EVENT_NAKED_BREAKOUT = "NAKED_BREAKOUT"
 EVENT_RETEST_PROVEN = "RETEST_PROVEN"
 EVENT_RETEST_UNPROVEN = "RETEST_UNPROVEN"
-EVENT_LEVEL_INVALIDATED = "LEVEL_INVALIDATED"
+EVENT_DATA_GAP = "DATA_GAP_BLOCKED"
 EVENT_TERMINAL = "TERMINAL_STATE"
 
-TERMINAL_PHASES = frozenset({PHASE_RETEST_PROVEN, PHASE_RETEST_UNPROVEN, PHASE_LEVEL_INVALIDATED})
+TERMINAL_PHASES = frozenset({PHASE_RETEST_PROVEN, PHASE_RETEST_UNPROVEN})
 _PHASES = frozenset({PHASE_WAITING_BREAKOUT, PHASE_CAMPAIGN_ACTIVE}) | TERMINAL_PHASES
 _CAMPAIGN_FOR_BREAKOUT = {BREAKOUT_UP: CAMPAIGN_SHORT, BREAKOUT_DOWN: CAMPAIGN_LONG}
 
@@ -222,7 +227,7 @@ def initialize_state(boundary: Boundary) -> tuple[dict[str, Any], str]:
         "cursor_close_time_ms": None,
         "breakout": None,
         "retest": None,
-        "invalidation": None,
+        "data_blocked": False,
         "last_event": EVENT_INITIALIZED,
     }, EVENT_INITIALIZED
 
@@ -260,6 +265,15 @@ def process_closed_candle(
         return new_state, EVENT_IGNORED_STALE
     if row["open_time_ms"] < boundary.as_of_time_ms:
         return new_state, EVENT_BEFORE_AS_OF
+    if cursor is not None:
+        if row["open_time_ms"] < cursor:
+            raise NakedRetestError("candle overlaps already processed history")
+        # Accept both close = next open and close = next open - 1 ms conventions.
+        if row["open_time_ms"] > cursor + 1:
+            new_state["data_blocked"] = True
+            new_state["last_event"] = EVENT_DATA_GAP
+            return new_state, EVENT_DATA_GAP
+    new_state["data_blocked"] = False
     new_state["cursor_close_time_ms"] = row["close_time_ms"]
 
     if new_state["phase"] == PHASE_WAITING_BREAKOUT:
@@ -301,39 +315,6 @@ def process_closed_candle(
     return new_state, new_state["last_event"]
 
 
-def mark_level_invalidated(
-    boundary: Boundary,
-    state: Mapping[str, Any],
-    *,
-    reason: str,
-    evidence_close_time_ms: int,
-) -> tuple[dict[str, Any], str]:
-    """End an active campaign on caller-proven loss of level relevance.
-
-    Owner rule 2026-10-19: no fixed campaign horizon; it lives until the first
-    retest or proven loss of the level's relevance. What constitutes that proof
-    is not yet defined, so this only records a caller-supplied reason at a
-    closed-candle time not earlier than the already processed history.
-    """
-
-    _validate_state(boundary, state)
-    new_state = deepcopy(dict(state))
-    if new_state["phase"] in TERMINAL_PHASES:
-        return new_state, EVENT_TERMINAL
-    if new_state["phase"] != PHASE_CAMPAIGN_ACTIVE:
-        raise NakedRetestError("only an active retest campaign can lose level relevance")
-    if not str(reason or "").strip():
-        raise NakedRetestError("invalidation reason is required")
-    evidence_time = _time_ms(evidence_close_time_ms, "evidence_close_time_ms")
-    if evidence_time < new_state["cursor_close_time_ms"]:
-        raise NakedRetestError("invalidation evidence predates processed candles")
-    new_state["cursor_close_time_ms"] = evidence_time
-    new_state["phase"] = PHASE_LEVEL_INVALIDATED
-    new_state["invalidation"] = {"reason": str(reason), "evidence_close_time_ms": evidence_time}
-    new_state["last_event"] = EVENT_LEVEL_INVALIDATED
-    return new_state, EVENT_LEVEL_INVALIDATED
-
-
 def replay_closed_candles(
     boundary: Boundary,
     state: Mapping[str, Any],
@@ -341,7 +322,7 @@ def replay_closed_candles(
     *,
     retest_tolerance_for: Callable[[Mapping[str, Any]], float] | None = None,
 ) -> tuple[dict[str, Any], tuple[str, ...]]:
-    """Feed candles through ``process_closed_candle``; stop at a terminal phase.
+    """Feed candles through ``process_closed_candle``; stop at a terminal phase or data gap.
 
     ``retest_tolerance_for(candle)`` supplies the per-candle dynamic (ATR)
     tolerance from closed history up to that candle; omitted means exact contact.
@@ -355,6 +336,6 @@ def replay_closed_candles(
             boundary, new_state, candle, retest_tolerance=tolerance
         )
         events.append(event)
-        if new_state["phase"] in TERMINAL_PHASES:
+        if new_state["phase"] in TERMINAL_PHASES or event == EVENT_DATA_GAP:
             break
     return new_state, tuple(events)
