@@ -616,10 +616,10 @@ def run_manager_stall_replay(
 
             production_enqueue = owner.enqueue
 
-            def observed_enqueue(operation, *, symbol="", coverage_role="UNKNOWN"):
+            def observed_enqueue(operation, *, symbol="", coverage_role="UNKNOWN", event_id=""):
                 nonlocal fence_overflows
                 try:
-                    production_enqueue(operation, symbol=symbol, coverage_role=coverage_role)
+                    production_enqueue(operation, symbol=symbol, coverage_role=coverage_role, event_id=event_id)
                 except ProtectionIngressOverflow:
                     if symbol:
                         overflowed.append(current_event[0])
@@ -963,10 +963,10 @@ def run_coverage_manager_replay(
 
             production_enqueue = owner.enqueue
 
-            def observed_enqueue(operation, *, symbol="", coverage_role="UNKNOWN"):
+            def observed_enqueue(operation, *, symbol="", coverage_role="UNKNOWN", event_id=""):
                 nonlocal fence_overflows
                 try:
-                    production_enqueue(operation, symbol=symbol, coverage_role=coverage_role)
+                    production_enqueue(operation, symbol=symbol, coverage_role=coverage_role, event_id=event_id)
                 except ProtectionIngressOverflow:
                     if symbol:
                         overflowed.append(current_event[0])
