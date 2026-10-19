@@ -17,6 +17,10 @@ Runs beside the PAPER runtime, never inside it:
 * journal writes go through the existing best-effort off-owner writer
   (``paper_runtime._BestEffortDiagnosticsWriter``): a full queue drops and counts.
 
+Cost (MIRROR-INTEGRATION-6): an empty cycle costs one ``count_robot_auto_decisions`` on the
+append-only audit; arrivals are re-read only when that count changed, and the R0 account snapshot
+is read lazily, fresh, at most once per cycle and only when a decision in an active campaign needs it.
+
 STOP/TAKE priority: a cycle is skipped entirely (no read at all) whenever the
 caller's ``protection_busy()`` says protection work is pending or unhealthy, or
 cannot answer. The daily-loss headroom is only an upper bound for R0, never a
@@ -81,6 +85,42 @@ class SidecarMetrics:
     observations_submitted: int = 0
     observations_dropped: int = 0
     fine_unavailable: int = 0
+    arrival_reads: int = 0
+    arrival_reads_skipped: int = 0
+    account_reads: int = 0
+    account_read_failures: int = 0
+
+
+class _LazyAccountFacts:
+    """``AccountFacts`` read only when a decision actually needs it, at most once per cycle.
+
+    ``decide`` touches the account only for a state in an active campaign; empty
+    cycles and cycles without such an event never pay for the R0 snapshot. The value
+    is read fresh from the database at that moment and is never carried into another
+    cycle, so no stale account data reaches a decision. A failed read gives the empty
+    ``AccountFacts`` (R0 unknown -> WAIT), exactly as an eager failure did.
+    """
+
+    def __init__(self, load: Callable[[], AccountFacts], metrics: SidecarMetrics) -> None:
+        self._load, self._metrics, self._value = load, metrics, None
+
+    def _facts(self) -> AccountFacts:
+        if self._value is None:
+            self._metrics.account_reads += 1
+            try:
+                self._value = self._load()
+            except Exception:
+                self._metrics.account_read_failures += 1
+                self._value = AccountFacts()
+        return self._value
+
+    @property
+    def daily_gate(self):
+        return self._facts().daily_gate
+
+    @property
+    def committed_worst_case_usdt(self):
+        return self._facts().committed_worst_case_usdt
 
 
 def _iso_ms(value: Any) -> int | None:
@@ -152,6 +192,9 @@ class MirrorSidecar:
     states: dict[str, dict] = field(default_factory=dict)
     candle_cursor: dict[str, int | None] = field(default_factory=dict)
     emitted: set[str] = field(default_factory=set)
+    # Row count of the append-only Autopilot audit (UPDATE/DELETE are rejected by triggers) at the
+    # last successful arrival read: an unchanged count proves there is no new arrival to read.
+    audit_rows_seen: int | None = None
 
     def _protection_has_priority(self) -> bool:
         try:
@@ -166,21 +209,24 @@ class MirrorSidecar:
         if self._protection_has_priority():
             self.metrics.skipped_for_protection += 1
             return []
-        now = self.clock_ms()
         try:
             reader = self.reader_factory(self.database_path)
             try:
                 with reader.read_snapshot():
-                    arrivals = read_new_wedge_arrivals(reader, self.account, after_ms=self.arrival_cursor_ms)
-                    try:
-                        account = read_account_facts(reader, self.account, now_ms=now)
-                    except Exception:
-                        account = AccountFacts()          # R0 unavailable -> WAIT, never a pass
+                    audit_rows = reader.count_robot_auto_decisions(self.account)
+                    if audit_rows == self.audit_rows_seen:
+                        arrivals = []                     # audit unchanged: nothing new to read
+                        self.metrics.arrival_reads_skipped += 1
+                    else:
+                        arrivals = read_new_wedge_arrivals(reader, self.account, after_ms=self.arrival_cursor_ms)
+                        self.metrics.arrival_reads += 1
             finally:
                 reader.close()
         except Exception:
             self.metrics.read_failures += 1
             return []
+        self.audit_rows_seen = audit_rows
+        account = _LazyAccountFacts(self._read_account_facts, self.metrics)
         for ref, evaluated_at in arrivals:
             self.arrival_cursor_ms = max(self.arrival_cursor_ms, evaluated_at)
             self._track(ref)
@@ -191,6 +237,14 @@ class MirrorSidecar:
                 break                                    # protection work started: yield immediately
             produced.extend(self._advance(candidate, account))
         return produced
+
+    def _read_account_facts(self) -> AccountFacts:
+        reader = self.reader_factory(self.database_path)
+        try:
+            with reader.read_snapshot():
+                return read_account_facts(reader, self.account, now_ms=self.clock_ms())
+        finally:
+            reader.close()
 
     def _track(self, ref: str) -> None:
         if ref in self.tracked:
