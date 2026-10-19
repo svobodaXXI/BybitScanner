@@ -1165,17 +1165,18 @@ export function App() {
           className={`workspace-market-row ${marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
         >
           <ChartPanel
-          key={`${market.book.symbol}:${timeframe}`}
+          key={`${market.book.symbol}:${timeframe}:${mode}`}
           candles={market.candles}
+          editorMode={mode === "EDITOR"}
           tickSize={market.tickSize}
           symbol={market.book.symbol}
           timeframe={timeframe}
           activeLimitOrders={
-            currentPaperState?.ok ? currentPaperState.active_limit_orders : []
+            mode !== "EDITOR" && currentPaperState?.ok ? currentPaperState.active_limit_orders : []
           }
-          pendingLimitDraft={limitDraftState.draft}
+          pendingLimitDraft={mode === "EDITOR" ? null : limitDraftState.draft}
           liveLimitDrafts={accountProjection?.provider === "BYBIT"}
-          pendingLimitDrafts={visibleLimitDrafts}
+          pendingLimitDrafts={mode === "EDITOR" ? [] : visibleLimitDrafts}
           pendingLimitVolumeValid={{
             Buy: sideDraftVolumesValid(visibleLimitDrafts, "Buy", selectedVolumes.Buy),
             Sell: sideDraftVolumesValid(visibleLimitDrafts, "Sell", selectedVolumes.Sell),
@@ -1193,12 +1194,12 @@ export function App() {
             dispatchLimitDraft({ type: "update-price", price, draftId })
           }
           onPendingLimitConfirm={submitLimitDraft}
-          fastLimitActive={fastLimitIntent !== null}
+          fastLimitActive={mode !== "EDITOR" && fastLimitIntent !== null}
           onFastLimitPriceSelect={createFastLimitDraft}
           onActiveLimitAmend={amendPaperLimit}
           onActiveLimitCancel={cancelPaperLimit}
-          authoritativeStopPrice={activeStopPrice}
-          stopDraft={stopDraft}
+          authoritativeStopPrice={mode === "EDITOR" ? null : activeStopPrice}
+          stopDraft={mode === "EDITOR" ? null : stopDraft}
           onStopDraftPriceChange={updateStopDraftPrice}
           onStopConfirm={() => {
             setProtectionSettings(null);
@@ -1210,8 +1211,8 @@ export function App() {
           }}
           onStopEdit={beginStopEdit}
           onStopDelete={() => deleteProtection("STOP")}
-          authoritativeTakePrice={activeTakePrice}
-          takeDraft={takeDraft}
+          authoritativeTakePrice={mode === "EDITOR" ? null : activeTakePrice}
+          takeDraft={mode === "EDITOR" ? null : takeDraft}
           onTakeDraftPriceChange={updateTakeDraftPrice}
           onTakeConfirm={() => {
             setProtectionSettings(null);
@@ -1223,7 +1224,7 @@ export function App() {
           }}
           onTakeEdit={beginTakeEdit}
           onTakeDelete={() => deleteProtection("TAKE")}
-          averageEntryPrice={protectionPositionSide !== "Flat" ? protectionAverageEntry : null}
+          averageEntryPrice={mode !== "EDITOR" && protectionPositionSide !== "Flat" ? protectionAverageEntry : null}
           workspaceControls={(
             <WorkspaceHeader
               instruments={instruments}
@@ -1263,13 +1264,13 @@ export function App() {
                 book={market.book}
                 centerPrice={ladderCenterPrice}
                 onCenterPriceChange={setLadderCenterPrice}
-                ownOrders={domOwnOrders}
-                onOwnOrderCancel={(orderId) => {
+                ownOrders={mode === "EDITOR" ? [] : domOwnOrders}
+                onOwnOrderCancel={mode === "EDITOR" ? undefined : (orderId) => {
                   void cancelPaperLimit(orderId).catch(() => {});
                 }}
                 compression={domCompression}
                 onCompressionChange={setDomCompression}
-                fastLimitActive={fastLimitIntent !== null}
+                fastLimitActive={mode !== "EDITOR" && fastLimitIntent !== null}
                 onFastLimitPriceSelect={submitDomLimit}
                 onViewportGeometryChange={setDomViewportGeometry}
               />
