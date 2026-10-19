@@ -57,6 +57,9 @@ from tools.research_mirror_retest_4 import COARSE_MS, FINE_MS, candles  # noqa: 
 FEE = Decimal("0.0006")       # documented PAPER per-side fee (LIMIT and MARKET)
 BOX_WINDOW = 90               # trailing candles handed to the prefix-only Box detector
 ONE = Decimal(1)
+# RETEST-7 sensitivity hook. 0 (default) reproduces RETEST-6 exactly: STOP and RETEST market
+# exits fill at their price. A positive value is a measured/assumed adverse fraction of price.
+STOP_SLIPPAGE = Decimal(0)
 
 FILLED_NONE = "NO_FILL"
 CLOSED = "CLOSED"
@@ -94,6 +97,13 @@ class Trade:
     events: list = field(default_factory=list)
 
 
+def market_exit_price(direction: str, price: Decimal) -> Decimal:
+    """Adverse fill of a market-style exit (STOP trigger, campaign RETEST close)."""
+
+    adverse = price * STOP_SLIPPAGE
+    return price - adverse if direction == "LONG" else price + adverse
+
+
 def _pnl(direction, fills, exits) -> Decimal:
     sign = ONE if direction == "LONG" else -ONE
     cost = sum(p * q for p, q in fills)
@@ -123,7 +133,7 @@ def simulate(trade: Trade, fine) -> dict:
             # Campaign retest: cancel unfilled entries, close the remainder (rule 7).
             if not fills:
                 return {"status": FILLED_NONE, "reason": "retest_before_fill", "end_ms": t.retest_exit["time_ms"]}
-            exits.append((d(t.retest_exit["price"]), remaining))
+            exits.append((market_exit_price(t.direction, d(t.retest_exit["price"])), remaining))
             return {"status": CLOSED, "exit": "RETEST", "pnl": _pnl(t.direction, fills, exits),
                     "fills": len(fills), "partial_take": partial_done, "end_ms": t.retest_exit["time_ms"]}
         new = [(p, q) for p, q in pending if through(t.direction, "entry", p, candle)]
@@ -140,13 +150,13 @@ def simulate(trade: Trade, fine) -> dict:
         # A TAKE in the fill candle itself is never assumed (wick != fill).
         hit_take = had_position and not partial_done and through(t.direction, "exit", t.take, candle)
         if hit_stop and hit_take:
-            pessimistic = exits + [(stop, remaining)]
+            pessimistic = exits + [(market_exit_price(t.direction, stop), remaining)]
             return {"status": AMBIGUOUS, "reason": "stop_and_take_in_one_candle",
                     "pnl_pessimistic": _pnl(t.direction, fills, pessimistic),
                     "pnl_optimistic": None if mirror else _pnl(t.direction, fills, exits + [(t.take, remaining)]),
                     "fills": len(fills), "end_ms": None}
         if hit_stop:
-            exits.append((stop, remaining))
+            exits.append((market_exit_price(t.direction, stop), remaining))
             return {"status": CLOSED, "exit": "STOP" if stop == t.stop else "BREAK_EVEN_STOP",
                     "pnl": _pnl(t.direction, fills, exits), "fills": len(fills),
                     "partial_take": partial_done, "end_ms": candle["close_time_ms"]}

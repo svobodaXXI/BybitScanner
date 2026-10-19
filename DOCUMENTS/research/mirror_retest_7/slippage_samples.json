@@ -1,0 +1,263 @@
+{
+ "stats": {
+  "n_stop_exits": 34,
+  "adverse_fraction": {
+   "min": -0.011840739927763255,
+   "max": 0.21195787170097355,
+   "P50": 0.0007723657078443544,
+   "P75": 0.003042057770320109,
+   "P90": 0.03367841248627397
+  },
+  "better_than_stop": 2,
+  "worse_than_1pct": 8,
+  "other_exit_reasons": {
+   "EMERGENCY_CLOSE": 16,
+   "STOP": 34,
+   "TAKE": 12
+  },
+  "caveats": [
+   "stop_price is the recorded protective stop of the trade; a stop moved after entry or a long hold can make the gap larger than a single stop-trigger slippage",
+   "PAPER simulator fills, not exchange fills; EMERGENCY_CLOSE exits have no reference price and are excluded"
+  ]
+ },
+ "samples": [
+  {
+   "trade_id": "robot-trade-2845885bc267ff6b1428893b",
+   "symbol": "MINAUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.21195787170097355,
+   "hold_minutes": 0.1
+  },
+  {
+   "trade_id": "robot-trade-90bed38923c7166e49ea037c",
+   "symbol": "AAOIUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.00045473066122645866,
+   "hold_minutes": 0.0
+  },
+  {
+   "trade_id": "robot-trade-b9ac623ce7ffe503090db77b",
+   "symbol": "BILLUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.000791765637371338,
+   "hold_minutes": 1.6
+  },
+  {
+   "trade_id": "robot-trade-6d1a03bea7bd44608bde3ac5",
+   "symbol": "BSBUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.04446468001023682,
+   "hold_minutes": 85.8
+  },
+  {
+   "trade_id": "robot-trade-da9ecfc788e68fc165369197",
+   "symbol": "BIRBUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.015055675765592148,
+   "hold_minutes": 219.8
+  },
+  {
+   "trade_id": "robot-trade-e7f17f7244e73fab8b9e3a73",
+   "symbol": "AKTUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.04165958536656621,
+   "hold_minutes": 4356.2
+  },
+  {
+   "trade_id": "robot-trade-dcc50f2951cf56f9f5ef0b95",
+   "symbol": "CLUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.0016507973330405947,
+   "hold_minutes": 4333.8
+  },
+  {
+   "trade_id": "robot-trade-507c993dd4c0b2c02f403e95",
+   "symbol": "FARTCOINUSDT",
+   "direction": "LONG",
+   "adverse_fraction": -0.011840739927763255,
+   "hold_minutes": 7165.3
+  },
+  {
+   "trade_id": "robot-trade-f0e284a5b28624787f7586c6",
+   "symbol": "WUSDT",
+   "direction": "SHORT",
+   "adverse_fraction": -0.00014155795119245268,
+   "hold_minutes": 0.5
+  },
+  {
+   "trade_id": "robot-trade-761b8838451e58596bdb9304",
+   "symbol": "RIOTUSDT",
+   "direction": "SHORT",
+   "adverse_fraction": 0.0008342747198792896,
+   "hold_minutes": 14.6
+  },
+  {
+   "trade_id": "robot-trade-03c63ce53b5ccc5c804dffa2",
+   "symbol": "SAGAUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.0007308223213602571,
+   "hold_minutes": 32.1
+  },
+  {
+   "trade_id": "robot-trade-b952c30d35718dc68d63a187",
+   "symbol": "XTZUSDT",
+   "direction": "SHORT",
+   "adverse_fraction": 0.00035236081747709656,
+   "hold_minutes": 23.8
+  },
+  {
+   "trade_id": "robot-trade-088d9dfd9074740ceb77681b",
+   "symbol": "AVAUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.0032543131465562966,
+   "hold_minutes": 42.9
+  },
+  {
+   "trade_id": "robot-trade-66886620dc9e7479fbb7e90c",
+   "symbol": "STGUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.12085797717362473,
+   "hold_minutes": 2223.5
+  },
+  {
+   "trade_id": "robot-trade-6211d14190286c98a1ed8df8",
+   "symbol": "DBRUSDT",
+   "direction": "SHORT",
+   "adverse_fraction": 0.001148942664360874,
+   "hold_minutes": 28.3
+  },
+  {
+   "trade_id": "robot-trade-95710e133cbff170fb2b01bb",
+   "symbol": "FUSDT",
+   "direction": "SHORT",
+   "adverse_fraction": 0.00022038410606967527,
+   "hold_minutes": 82.3
+  },
+  {
+   "trade_id": "robot-trade-d31c60b4abeda16305c062bf",
+   "symbol": "BLENDUSDT",
+   "direction": "SHORT",
+   "adverse_fraction": 0.0020396270396270395,
+   "hold_minutes": 0.0
+  },
+  {
+   "trade_id": "robot-trade-6e00791127c911fc032513e8",
+   "symbol": "XNYUSDT",
+   "direction": "SHORT",
+   "adverse_fraction": 0.0005812173888283824,
+   "hold_minutes": 72.5
+  },
+  {
+   "trade_id": "robot-trade-35425ee7125266f2af263744",
+   "symbol": "MORPHOUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.010492040520984082,
+   "hold_minutes": 3923.2
+  },
+  {
+   "trade_id": "robot-trade-566a495b77e0248a3ef3503f",
+   "symbol": "CAPUSDT",
+   "direction": "SHORT",
+   "adverse_fraction": 0.0003219255034137067,
+   "hold_minutes": 1.8
+  },
+  {
+   "trade_id": "robot-trade-f31fecff3e328a98abd829b7",
+   "symbol": "ASRUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.00045410586955615256,
+   "hold_minutes": 0.0
+  },
+  {
+   "trade_id": "robot-trade-b92dbc0c51ad01f5b23127f5",
+   "symbol": "ARKUSDT",
+   "direction": "SHORT",
+   "adverse_fraction": 0.00033049888795153005,
+   "hold_minutes": 0.5
+  },
+  {
+   "trade_id": "robot-trade-acaf2952c5e65e260843124b",
+   "symbol": "ENJUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.0002742882713932106,
+   "hold_minutes": 9.8
+  },
+  {
+   "trade_id": "robot-trade-2af2ba9177aefba7ec889afc",
+   "symbol": "EIGENUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.011707323781419067,
+   "hold_minutes": 55.9
+  },
+  {
+   "trade_id": "robot-trade-3da7198b9d34a523655ce188",
+   "symbol": "DUSKUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.0007064338027663729,
+   "hold_minutes": 64.2
+  },
+  {
+   "trade_id": "robot-trade-6365650fa9e79d46e3fad8ca",
+   "symbol": "AVAUSDT",
+   "direction": "SHORT",
+   "adverse_fraction": 0.0007529657783173708,
+   "hold_minutes": 28.8
+  },
+  {
+   "trade_id": "robot-trade-2b32629998dc0bfbbe76d835",
+   "symbol": "FILUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.00020398036243912928,
+   "hold_minutes": 92.2
+  },
+  {
+   "trade_id": "robot-trade-6555849a9716b84cbd2be6e7",
+   "symbol": "EVAAUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.010300604336878932,
+   "hold_minutes": 48.5
+  },
+  {
+   "trade_id": "robot-trade-8ab97bf62be409e2336a867b",
+   "symbol": "EDUUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.0005516392703509805,
+   "hold_minutes": 131.6
+  },
+  {
+   "trade_id": "robot-trade-ef2d3b3e927f9d609e779d36",
+   "symbol": "ENSOUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.00023645046616418795,
+   "hold_minutes": 7.4
+  },
+  {
+   "trade_id": "robot-trade-8bc1f997f7e818de3c5cbbff",
+   "symbol": "1000RATSUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.0024052916416115455,
+   "hold_minutes": 6.9
+  },
+  {
+   "trade_id": "robot-trade-62a0c9af8f053e9856269571",
+   "symbol": "ACTUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.0009072696168429717,
+   "hold_minutes": 24.7
+  },
+  {
+   "trade_id": "robot-trade-4073dbe2792eeff2706c2cc8",
+   "symbol": "ARIAUSDT",
+   "direction": "SHORT",
+   "adverse_fraction": 0.0004659803929106569,
+   "hold_minutes": 1.1
+  },
+  {
+   "trade_id": "robot-trade-92966e60ce12b325c561d027",
+   "symbol": "BATUSDT",
+   "direction": "LONG",
+   "adverse_fraction": 0.0011786282557598227,
+   "hold_minutes": 2.4
+  }
+ ]
+}
