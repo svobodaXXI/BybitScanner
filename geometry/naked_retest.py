@@ -19,13 +19,19 @@ boundary): UP breakout -> SHORT campaign, DOWN breakout -> LONG campaign.
 The first proven contact with ``boundary(t)`` after the breakout candle closes
 is terminal for the campaign; later taps never re-arm it (plan 2.5).
 
+Owner decisions 2026-10-19 (MIRROR RETEST-2): prior compression is allowed
+(no accumulation filter); the retest is a wick touch or entry into a small
+dynamic ATR zone (coefficient not yet approved, so the caller passes it); the
+campaign has no fixed horizon and ends only at the first retest or at
+caller-proven loss of level relevance (``mark_level_invalidated``).
+
 Contact proof from closed OHLC only. For an UP breakout (price above the line)
-a candle proves contact when its open or close is at/below the line at that
-time, or its low is at/below the line at every instant of the candle
-(``low <= min(boundary(t_open), boundary(t_close))``). When the low lies only
-between the two line values the touch time is unknown: the campaign ends
-fail-closed as ``RETEST_UNPROVEN`` instead of being counted or ignored. A
-horizontal level can never be ambiguous. DOWN mirrors with highs.
+a candle proves contact when its open or close is at/below the line (plus
+tolerance) at that time, or its low is at/below it at every instant of the
+candle (``low <= min(boundary(t_open), boundary(t_close)) + tolerance``). When
+the low lies only between the two values the touch time is unknown: the
+campaign ends fail-closed as ``RETEST_UNPROVEN`` instead of being counted or
+ignored. A horizontal level can never be ambiguous. DOWN mirrors with highs.
 
 Responsibility:
 - pure transition over one authoritative closed candle at a time;
@@ -33,15 +39,15 @@ Responsibility:
 
 Not responsible for (owned elsewhere or still owner-undecided):
 - detecting the boundary itself (existing geometry detectors);
-- entries, confirmations, risk budget, orders, STOP/TAKE, Robot or Scanner
-  wiring; no runtime module imports this file;
-- pre-breakout "no accumulation" filtering, retest tolerance zone, overshoot,
-  campaign horizon/expiry (all ``NEEDS VALIDATION``).
+- entries, confirmations, orders, STOP/TAKE, Robot or Scanner wiring; no
+  runtime module imports this file;
+- the ATR coefficient/period and the proof of lost level relevance (owner
+  pending); campaign risk and exit intents live in ``retest_campaign``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 import math
@@ -59,6 +65,7 @@ PHASE_WAITING_BREAKOUT = "WAITING_NAKED_BREAKOUT"
 PHASE_CAMPAIGN_ACTIVE = "RETEST_CAMPAIGN_ACTIVE"
 PHASE_RETEST_PROVEN = "RETEST_PROVEN"
 PHASE_RETEST_UNPROVEN = "RETEST_UNPROVEN"
+PHASE_LEVEL_INVALIDATED = "LEVEL_INVALIDATED"
 
 EVENT_INITIALIZED = "INITIALIZED"
 EVENT_NO_TRANSITION = "NO_TRANSITION"
@@ -67,10 +74,11 @@ EVENT_IGNORED_STALE = "IGNORED_STALE_CANDLE"
 EVENT_NAKED_BREAKOUT = "NAKED_BREAKOUT"
 EVENT_RETEST_PROVEN = "RETEST_PROVEN"
 EVENT_RETEST_UNPROVEN = "RETEST_UNPROVEN"
+EVENT_LEVEL_INVALIDATED = "LEVEL_INVALIDATED"
 EVENT_TERMINAL = "TERMINAL_STATE"
 
-_TERMINAL_PHASES = frozenset({PHASE_RETEST_PROVEN, PHASE_RETEST_UNPROVEN})
-_PHASES = frozenset({PHASE_WAITING_BREAKOUT, PHASE_CAMPAIGN_ACTIVE}) | _TERMINAL_PHASES
+TERMINAL_PHASES = frozenset({PHASE_RETEST_PROVEN, PHASE_RETEST_UNPROVEN, PHASE_LEVEL_INVALIDATED})
+_PHASES = frozenset({PHASE_WAITING_BREAKOUT, PHASE_CAMPAIGN_ACTIVE}) | TERMINAL_PHASES
 _CAMPAIGN_FOR_BREAKOUT = {BREAKOUT_UP: CAMPAIGN_SHORT, BREAKOUT_DOWN: CAMPAIGN_LONG}
 
 
@@ -161,21 +169,49 @@ def naked_breakout_direction(boundary: Boundary, candle: Mapping[str, Any]) -> s
     return None
 
 
-def retest_contact(boundary: Boundary, breakout_direction: str, candle: Mapping[str, Any]) -> str | None:
-    """``"PROVEN"``, ``"AMBIGUOUS"`` or None for one closed post-breakout candle."""
+def atr_tolerance(atr: Any, multiplier: Any) -> float:
+    """Owner rule 2026-10-19: retest zone = ``multiplier * ATR``.
+
+    Neither value has an approved default: the coefficient is still owner
+    pending and the ATR (period, source candles) is supplied by the caller from
+    closed history up to and including the evaluated candle only.
+    """
+
+    atr_value = _finite(atr, "atr")
+    factor = _finite(multiplier, "tolerance multiplier")
+    if atr_value < 0 or factor < 0:
+        raise NakedRetestError("ATR and tolerance multiplier must be non-negative")
+    return atr_value * factor
+
+
+def retest_contact(
+    boundary: Boundary,
+    breakout_direction: str,
+    candle: Mapping[str, Any],
+    tolerance: float = 0.0,
+) -> str | None:
+    """``"PROVEN"``, ``"AMBIGUOUS"`` or None for one closed post-breakout candle.
+
+    ``tolerance`` widens the boundary toward the breakout side by a price
+    distance (``atr_tolerance``); ``0.0`` is exact contact.
+    """
 
     row = _candle(candle)
-    at_open = boundary.price_at(row["open_time_ms"])
-    at_close = boundary.price_at(row["close_time_ms"])
+    tolerance = _finite(tolerance, "tolerance")
+    if tolerance < 0:
+        raise NakedRetestError("tolerance must be non-negative")
+    if breakout_direction not in (BREAKOUT_UP, BREAKOUT_DOWN):
+        raise NakedRetestError(f"unknown breakout direction: {breakout_direction!r}")
+    shift = tolerance if breakout_direction == BREAKOUT_UP else -tolerance
+    at_open = boundary.price_at(row["open_time_ms"]) + shift
+    at_close = boundary.price_at(row["close_time_ms"]) + shift
     if breakout_direction == BREAKOUT_UP:
         if row["open"] <= at_open or row["close"] <= at_close or row["low"] <= min(at_open, at_close):
             return "PROVEN"
         return "AMBIGUOUS" if row["low"] <= max(at_open, at_close) else None
-    if breakout_direction == BREAKOUT_DOWN:
-        if row["open"] >= at_open or row["close"] >= at_close or row["high"] >= max(at_open, at_close):
-            return "PROVEN"
-        return "AMBIGUOUS" if row["high"] >= min(at_open, at_close) else None
-    raise NakedRetestError(f"unknown breakout direction: {breakout_direction!r}")
+    if row["open"] >= at_open or row["close"] >= at_close or row["high"] >= max(at_open, at_close):
+        return "PROVEN"
+    return "AMBIGUOUS" if row["high"] >= min(at_open, at_close) else None
 
 
 def initialize_state(boundary: Boundary) -> tuple[dict[str, Any], str]:
@@ -186,6 +222,7 @@ def initialize_state(boundary: Boundary) -> tuple[dict[str, Any], str]:
         "cursor_close_time_ms": None,
         "breakout": None,
         "retest": None,
+        "invalidation": None,
         "last_event": EVENT_INITIALIZED,
     }, EVENT_INITIALIZED
 
@@ -203,13 +240,19 @@ def process_closed_candle(
     boundary: Boundary,
     state: Mapping[str, Any],
     candle: Mapping[str, Any],
+    *,
+    retest_tolerance: float = 0.0,
 ) -> tuple[dict[str, Any], str]:
-    """Advance by exactly one closed candle; reads nothing beyond it."""
+    """Advance by exactly one closed candle; reads nothing beyond it.
+
+    ``retest_tolerance`` (price distance, see ``atr_tolerance``) applies only
+    to the retest zone, never to the strict naked-breakout test.
+    """
 
     _validate_state(boundary, state)
     row = _candle(candle)
     new_state = deepcopy(dict(state))
-    if new_state["phase"] in _TERMINAL_PHASES:
+    if new_state["phase"] in TERMINAL_PHASES:
         return new_state, EVENT_TERMINAL
 
     cursor = new_state.get("cursor_close_time_ms")
@@ -238,7 +281,9 @@ def process_closed_candle(
         new_state["last_event"] = EVENT_NAKED_BREAKOUT
         return new_state, EVENT_NAKED_BREAKOUT
 
-    contact = retest_contact(boundary, new_state["breakout"]["direction"], row | {"closed": True})
+    contact = retest_contact(
+        boundary, new_state["breakout"]["direction"], row | {"closed": True}, retest_tolerance
+    )
     if contact is None:
         new_state["last_event"] = EVENT_NO_TRANSITION
         return new_state, EVENT_NO_TRANSITION
@@ -246,6 +291,7 @@ def process_closed_candle(
     new_state["phase"] = PHASE_RETEST_PROVEN if proven else PHASE_RETEST_UNPROVEN
     new_state["retest"] = {
         "contact": contact,
+        "tolerance": float(retest_tolerance),
         "open_time_ms": row["open_time_ms"],
         "close_time_ms": row["close_time_ms"],
         "boundary_at_open": boundary.price_at(row["open_time_ms"]),
@@ -255,18 +301,60 @@ def process_closed_candle(
     return new_state, new_state["last_event"]
 
 
+def mark_level_invalidated(
+    boundary: Boundary,
+    state: Mapping[str, Any],
+    *,
+    reason: str,
+    evidence_close_time_ms: int,
+) -> tuple[dict[str, Any], str]:
+    """End an active campaign on caller-proven loss of level relevance.
+
+    Owner rule 2026-10-19: no fixed campaign horizon; it lives until the first
+    retest or proven loss of the level's relevance. What constitutes that proof
+    is not yet defined, so this only records a caller-supplied reason at a
+    closed-candle time not earlier than the already processed history.
+    """
+
+    _validate_state(boundary, state)
+    new_state = deepcopy(dict(state))
+    if new_state["phase"] in TERMINAL_PHASES:
+        return new_state, EVENT_TERMINAL
+    if new_state["phase"] != PHASE_CAMPAIGN_ACTIVE:
+        raise NakedRetestError("only an active retest campaign can lose level relevance")
+    if not str(reason or "").strip():
+        raise NakedRetestError("invalidation reason is required")
+    evidence_time = _time_ms(evidence_close_time_ms, "evidence_close_time_ms")
+    if evidence_time < new_state["cursor_close_time_ms"]:
+        raise NakedRetestError("invalidation evidence predates processed candles")
+    new_state["cursor_close_time_ms"] = evidence_time
+    new_state["phase"] = PHASE_LEVEL_INVALIDATED
+    new_state["invalidation"] = {"reason": str(reason), "evidence_close_time_ms": evidence_time}
+    new_state["last_event"] = EVENT_LEVEL_INVALIDATED
+    return new_state, EVENT_LEVEL_INVALIDATED
+
+
 def replay_closed_candles(
     boundary: Boundary,
     state: Mapping[str, Any],
     candles: Iterable[Mapping[str, Any]],
+    *,
+    retest_tolerance_for: Callable[[Mapping[str, Any]], float] | None = None,
 ) -> tuple[dict[str, Any], tuple[str, ...]]:
-    """Feed candles through ``process_closed_candle``; stop at a terminal phase."""
+    """Feed candles through ``process_closed_candle``; stop at a terminal phase.
+
+    ``retest_tolerance_for(candle)`` supplies the per-candle dynamic (ATR)
+    tolerance from closed history up to that candle; omitted means exact contact.
+    """
 
     new_state = deepcopy(dict(state))
     events: list[str] = []
     for candle in candles:
-        new_state, event = process_closed_candle(boundary, new_state, candle)
+        tolerance = 0.0 if retest_tolerance_for is None else retest_tolerance_for(candle)
+        new_state, event = process_closed_candle(
+            boundary, new_state, candle, retest_tolerance=tolerance
+        )
         events.append(event)
-        if new_state["phase"] in _TERMINAL_PHASES:
+        if new_state["phase"] in TERMINAL_PHASES:
             break
     return new_state, tuple(events)

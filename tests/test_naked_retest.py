@@ -7,21 +7,26 @@ from geometry.naked_retest import (
     CAMPAIGN_SHORT,
     EVENT_BEFORE_AS_OF,
     EVENT_IGNORED_STALE,
+    EVENT_LEVEL_INVALIDATED,
     EVENT_NAKED_BREAKOUT,
     EVENT_NO_TRANSITION,
     EVENT_RETEST_PROVEN,
     EVENT_RETEST_UNPROVEN,
     EVENT_TERMINAL,
     PHASE_CAMPAIGN_ACTIVE,
+    PHASE_LEVEL_INVALIDATED,
     PHASE_RETEST_PROVEN,
     PHASE_RETEST_UNPROVEN,
     PHASE_WAITING_BREAKOUT,
     Boundary,
     NakedRetestError,
+    atr_tolerance,
     initialize_state,
+    mark_level_invalidated,
     naked_breakout_direction,
     process_closed_candle,
     replay_closed_candles,
+    retest_contact,
 )
 
 
@@ -171,3 +176,89 @@ def test_state_from_another_boundary_is_rejected():
     state, _ = initialize_state(LEVEL)
     with pytest.raises(NakedRetestError):
         process_closed_candle(RISING, state, bar(0, 99.0, 103.0, 98.0, 102.5))
+
+
+# --- MIRROR RETEST-2: owner decisions 2026-10-19 ---------------------------
+
+def test_prior_compression_does_not_block_a_naked_breakout():
+    # Several candles hugging the level before the strict body crossing.
+    hugging = [bar(i, 99.8, 100.0, 99.6, 99.9) for i in range(5)]
+    state, events = run(LEVEL, hugging + [bar(5, 99.7, 101.5, 99.6, 101.2)])
+    assert events[-1] == EVENT_NAKED_BREAKOUT
+    assert state["phase"] == PHASE_CAMPAIGN_ACTIVE
+
+
+def test_atr_tolerance_zone_counts_a_near_miss_and_mirrors():
+    near_miss = bar(2, 102.0, 102.5, 100.3, 101.0)  # 0.3 above the level
+    boundary, candles, _, _ = SCENARIOS["horizontal_naked_then_retest"]
+    state, _ = run(boundary, candles[:2])
+    tolerance = atr_tolerance(atr=0.5, multiplier=1.0)  # test values, not a policy
+    _, exact = process_closed_candle(boundary, state, near_miss)
+    zoned, event = process_closed_candle(boundary, state, near_miss, retest_tolerance=tolerance)
+    assert (exact, event) == (EVENT_NO_TRANSITION, EVENT_RETEST_PROVEN)
+    assert zoned["retest"]["tolerance"] == tolerance
+
+    twin_boundary = mirror_boundary(boundary)
+    twin_state, _ = run(twin_boundary, [mirror_bar(c) for c in candles[:2]])
+    _, twin_event = process_closed_candle(
+        twin_boundary, twin_state, mirror_bar(near_miss), retest_tolerance=tolerance)
+    assert twin_event == EVENT_RETEST_PROVEN
+
+
+def test_tolerance_never_relaxes_the_naked_breakout_itself():
+    state, _ = initialize_state(LEVEL)
+    _, event = process_closed_candle(
+        LEVEL, state, bar(0, 100.0, 102.0, 99.5, 101.5), retest_tolerance=5.0)
+    assert event == EVENT_NO_TRANSITION
+
+
+def test_replay_uses_per_candle_dynamic_tolerance():
+    boundary, candles, _, _ = SCENARIOS["no_retest_yet"]  # low 100.1 after breakout
+    atr_by_open = {0: 1.0, MINUTE: 0.2}
+    _, events = run(boundary, candles)
+    assert events[-1] == EVENT_NO_TRANSITION
+    state, _ = initialize_state(boundary)
+    state, events = replay_closed_candles(
+        boundary, state, candles,
+        retest_tolerance_for=lambda c: atr_tolerance(atr_by_open[c["open_time_ms"]], 1.0))
+    assert (events[-1], state["retest"]["tolerance"]) == (EVENT_RETEST_PROVEN, 0.2)
+
+
+@pytest.mark.parametrize("atr,multiplier", [(-1.0, 1.0), (1.0, -0.1), (float("nan"), 1.0), (None, 1.0)])
+def test_atr_tolerance_rejects_untrusted_inputs(atr, multiplier):
+    with pytest.raises(NakedRetestError):
+        atr_tolerance(atr, multiplier)
+
+
+def test_negative_tolerance_is_rejected():
+    with pytest.raises(NakedRetestError):
+        retest_contact(LEVEL, BREAKOUT_UP, bar(1, 102.0, 102.5, 101.0, 102.2), -0.1)
+
+
+def test_campaign_has_no_fixed_horizon():
+    quiet = [bar(i, 103.0, 103.5, 102.5, 103.2) for i in range(1, 2001)]
+    state, events = run(LEVEL, [bar(0, 99.0, 103.0, 98.9, 102.5)] + quiet)
+    assert state["phase"] == PHASE_CAMPAIGN_ACTIVE
+    assert set(events[1:]) == {EVENT_NO_TRANSITION}
+
+
+def test_proven_loss_of_level_relevance_is_terminal_and_not_retroactive():
+    state, _ = run(LEVEL, [bar(0, 99.0, 103.0, 98.9, 102.5), bar(1, 102.5, 104.0, 101.0, 103.0)])
+    with pytest.raises(NakedRetestError):
+        mark_level_invalidated(LEVEL, state, reason="x", evidence_close_time_ms=MINUTE)
+    with pytest.raises(NakedRetestError):
+        mark_level_invalidated(LEVEL, state, reason=" ", evidence_close_time_ms=2 * MINUTE)
+    ended, event = mark_level_invalidated(
+        LEVEL, state, reason="caller_proof", evidence_close_time_ms=2 * MINUTE)
+    assert (event, ended["phase"]) == (EVENT_LEVEL_INVALIDATED, PHASE_LEVEL_INVALIDATED)
+    assert process_closed_candle(LEVEL, ended, bar(2, 103.0, 103.0, 99.0, 99.5))[1] == EVENT_TERMINAL
+
+
+def test_only_an_active_campaign_can_be_invalidated():
+    waiting, _ = initialize_state(LEVEL)
+    with pytest.raises(NakedRetestError):
+        mark_level_invalidated(LEVEL, waiting, reason="x", evidence_close_time_ms=0)
+    boundary, candles, _, _ = SCENARIOS["horizontal_naked_then_retest"]
+    retested, _ = run(boundary, candles)
+    assert mark_level_invalidated(
+        boundary, retested, reason="x", evidence_close_time_ms=10 * MINUTE) == (retested, EVENT_TERMINAL)
