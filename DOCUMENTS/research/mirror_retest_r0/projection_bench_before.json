@@ -1,0 +1,82 @@
+{
+ "label": "before",
+ "module": "mirror_retest_projection.py",
+ "sizes": [
+  {
+   "records": 60,
+   "bytes": 42182,
+   "after_0_limit_100": {
+    "cpu_ms": 0.0,
+    "wall_ms": 5.75,
+    "peak_mb": 0.09
+   },
+   "after_end": {
+    "cpu_ms": 0.0,
+    "wall_ms": 6.07,
+    "peak_mb": 0.09
+   },
+   "poll_no_new_avg": {
+    "cpu_ms": 7.81,
+    "wall_ms": 7.36,
+    "polls": 20
+   }
+  },
+  {
+   "records": 600,
+   "bytes": 421820,
+   "after_0_limit_100": {
+    "cpu_ms": 46.88,
+    "wall_ms": 45.05,
+    "peak_mb": 0.21
+   },
+   "after_end": {
+    "cpu_ms": 46.88,
+    "wall_ms": 60.85,
+    "peak_mb": 0.21
+   },
+   "poll_no_new_avg": {
+    "cpu_ms": 46.88,
+    "wall_ms": 60.23,
+    "polls": 20
+   }
+  },
+  {
+   "records": 3000,
+   "bytes": 2111500,
+   "after_0_limit_100": {
+    "cpu_ms": 203.12,
+    "wall_ms": 222.58,
+    "peak_mb": 0.49
+   },
+   "after_end": {
+    "cpu_ms": 203.12,
+    "wall_ms": 215.85,
+    "peak_mb": 0.49
+   },
+   "poll_no_new_avg": {
+    "cpu_ms": 239.84,
+    "wall_ms": 327.22,
+    "polls": 20
+   }
+  },
+  {
+   "records": 11000,
+   "bytes": 7748708,
+   "after_0_limit_100": {
+    "cpu_ms": 812.5,
+    "wall_ms": 1216.04,
+    "peak_mb": 1.5
+   },
+   "after_end": {
+    "cpu_ms": 937.5,
+    "wall_ms": 1431.84,
+    "peak_mb": 1.5
+   },
+   "poll_no_new_avg": {
+    "cpu_ms": 856.25,
+    "wall_ms": 1677.41,
+    "polls": 20
+   }
+  }
+ ]
+}
