@@ -23,6 +23,6 @@ def request_owner_workspace_open(mode: str, symbol: str, timeframe: str) -> None
     subprocess.Popen(
         ["powershell.exe", "-NoProfile", "-File", str(script),
          "-Mode", mode, "-Symbol", symbol, "-Timeframe", timeframe],
-        cwd=str(REPO), creationflags=subprocess.CREATE_NEW_CONSOLE,
+        cwd=str(REPO), creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
         close_fds=True,
     )
