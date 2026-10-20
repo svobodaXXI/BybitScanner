@@ -16,7 +16,7 @@ $frontend = Join-Path $repoRoot "terminal\frontend"
 if (!(Test-Path (Join-Path $frontend "package.json"))) {
     throw "Frontend package.json missing: $frontend"
 }
-if (!(Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
+if (!(Get-Command npm.cmd -ErrorAction SilentlyContinue) -or !(Get-Command node.exe -ErrorAction SilentlyContinue)) {
     throw "npm.cmd unavailable. Install Node.js before launching the web UI."
 }
 if ($Port -lt 1024 -or $Port -gt 65535) {
@@ -28,7 +28,7 @@ if ($NamedTunnel -and !$AccessPolicyVerified) {
 if ($NamedTunnel -and !(Get-Command cloudflared.exe -ErrorAction SilentlyContinue)) {
     throw "Named HTTPS tunnel requested but cloudflared.exe was not found."
 }
-if (!(Test-Path (Join-Path $frontend "node_modules"))) {
+if (!(Test-Path (Join-Path $frontend "node_modules\\vite\\bin\\vite.js"))) {
     throw "Frontend dependencies absent; install with npm ci separately."
 }
 if ($Build) {
@@ -45,7 +45,8 @@ $portBusy = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Sil
 if ($portBusy) { throw "Port $Port already has a listener; refusing a second server." }
 Write-Host "Starting frontend ONLY on http://127.0.0.1:$Port/"
 Write-Host "No trading runtime or PAPER backend is started."
-$proc = Start-Process -FilePath "npm.cmd" -ArgumentList @("exec","--","vite","preview","--host","127.0.0.1","--port",$Port,"--strictPort") -WorkingDirectory $frontend -PassThru
+$viteCli = Join-Path $frontend "node_modules\\vite\\bin\\vite.js"
+$proc = Start-Process -FilePath (Get-Command node.exe).Source -ArgumentList @($viteCli, "preview", "--host", "127.0.0.1", "--port", "$Port", "--strictPort") -WorkingDirectory $frontend -PassThru
 if (!$NamedTunnel) {
     Write-Host "Web UI PID $($proc.Id). Remote access not enabled."
     Write-Host "For HTTPS configure a protected gateway; never publicly expose /api without authentication."
