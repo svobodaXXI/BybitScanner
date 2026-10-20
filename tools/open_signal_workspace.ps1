@@ -30,5 +30,21 @@ if (!$response -or $response.StatusCode -ne 200) {
 }
 Write-Host "READY: $localUrl"
 Start-Process $localUrl
-Write-Host "Browser opened. HTTPS/QR pending secured gateway verification."
+Write-Host "Browser opened."
+$remoteBase = [Environment]::GetEnvironmentVariable("BYBITSCANNER_TERMINAL_HTTPS_URL")
+if ($remoteBase) {
+  try {
+    $uri = [Uri]$remoteBase
+    if ($uri.Scheme -ne "https" -or !$uri.Host -or $uri.UserInfo -or $uri.Query -or $uri.Fragment -or $uri.Port -ne 443) {
+      throw "Unsafe HTTPS origin"
+    }
+    $remoteUrl = "$($uri.GetLeftPart([System.UriPartial]::Path).TrimEnd('/'))/?mode=$Mode&symbol=$Symbol&timeframe=$Timeframe"
+    Write-Host "Smartphone URL (NOT VERIFIED): $remoteUrl"
+    Write-Warning "HTTPS auth and reachability must be verified before publishing a QR or READY message."
+  } catch {
+    Write-Warning "Invalid smartphone HTTPS URL."
+  }
+} else {
+  Write-Host "Smartphone: HTTPS not configured. PC localhost only."
+}
 Read-Host "Press Enter to close this status window"
