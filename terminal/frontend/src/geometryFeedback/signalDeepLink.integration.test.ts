@@ -42,7 +42,6 @@ describe("Telegram workspace link mocked activation integration", () => {
       if (ack.ok) setSymbol(ack.symbol, ack.generation);
       expect(ack.ok).toBe(false);
     }
-    setSymbol.mock.calls.length === 0 || (() => { throw new Error("Unconfirmed symbol activated"); })();
     expect(setSymbol).not.toHaveBeenCalled();
   });
 });
