@@ -1,0 +1,39 @@
+name: AUTOPILOT frontend verification
+
+on:
+  pull_request:
+    paths:
+      - "terminal/frontend/**"
+      - ".github/workflows/autopilot-frontend-verification.yml"
+  push:
+    branches:
+      - "ci/autopilot-ui-9-frontend-verification"
+    paths:
+      - "terminal/frontend/**"
+      - ".github/workflows/autopilot-frontend-verification.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terminal/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: terminal/frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci --ignore-scripts
+      - name: Baseline-wide formatting and lint (informational)
+        continue-on-error: true
+        run: npm run check
+      - name: AUTOPILOT and Geometry Feedback focused regression
+        run: npm test -- src/autopilot/autopilotFirstScreenData.test.ts src/components/AutopilotFirstScreen.test.tsx src/geometryFeedback/geometryReviewDraft.test.ts src/geometryFeedback/rayCorrectionComparison.test.ts src/geometryFeedback/patternBoundaryComparison.test.ts
+      - name: Build frontend
+        run: npm run build
