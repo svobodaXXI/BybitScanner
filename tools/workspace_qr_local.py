@@ -5,6 +5,8 @@ Telegram notifications. Public delivery remains gated by a real Access check.
 """
 import argparse
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from workspace_ready_link import workspace_link, write_workspace_qr
 
 
