@@ -4,7 +4,7 @@ A public URL returning HTTP 200 without credentials is NOT considered safe.
 Deployment must provide a restricted Cloudflare Access service token; never
 include these values in a link, QR, console output or Telegram messages.
 """
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urljoin
 import requests
 
 
@@ -23,8 +23,8 @@ def verify_workspace_gateway(url: str, *, client_id: str, client_secret: str,
         if anonymous.status_code in (302, 303, 307, 308):
             target = anonymous.headers.get("Location", "")
             # Authenticate only if the redirect is a Cloudflare Access login.
-            if not (target.startswith("/") and "/cdn-cgi/access/login" in target or
-                    target.startswith("https://") and "/cdn-cgi/access/login" in target):
+            login = urlsplit(urljoin(base, target))
+            if login.scheme != "https" or login.hostname != parts.hostname or not login.path.startswith("/cdn-cgi/access/login"):
                 return False
         authorized = requests.get(
             base,
