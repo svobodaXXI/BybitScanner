@@ -660,7 +660,7 @@ def _process_callback(
         # User-id equality alone is insufficient when a bot message is reused
         # in another chat. Never launch a PC process from a group callback.
         callback_chat = (callback_query.get("message") or {}).get("chat") or {}
-        if (str(callback_chat.get("id", "")).strip() != owner_id or callback_chat.get("type") != "private":
+        if (str(callback_chat.get("id", "")).strip() != owner_id or callback_chat.get("type") != "private"):
             _answer_callback(callback_query.get("id"), "Открытие разрешено только в личном чате")
             return
         _run_workspace_callback(callback_query, parsed)
