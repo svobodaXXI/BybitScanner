@@ -138,7 +138,7 @@ def evaluate_auto_admission(
         if not isinstance(gate, dict) or not isinstance(gate.get("enabled"), bool):
             return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_DAILY_EQUITY_UNAVAILABLE)
         if gate["enabled"]:
-            if gate.get("latched") is None:
+            if gate.get("latched") is None and not _opening_baseline_exception(gate):
                 return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_DAILY_EQUITY_UNAVAILABLE)
             if gate["latched"]:
                 return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_DAILY_LOSS_LIMIT)
@@ -151,6 +151,17 @@ def evaluate_auto_admission(
     if occupied + 1 > 19:
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PORTFOLIO_AGGREGATE_CAP)
     return RobotAutoAdmissionResult(OUTCOME_ALLOW, REASON_ELIGIBLE)
+
+
+def _opening_baseline_exception(gate: Mapping[str, Any]) -> bool:
+    """Owner-approved PAPER trial exception; unknown equity is never a proven loss."""
+    return (
+        gate.get("enabled") is True
+        and gate.get("data_available") is False
+        and gate.get("unavailability_reason") == "POSITION_OPEN_AT_DAY_START"
+        and gate.get("latched") is None
+        and (gate.get("previous_latched") is None or gate.get("previous_latched") is False)
+    )
 
 
 def daily_loss_gate_enabled(environ: Mapping[str, str]) -> bool:
@@ -205,7 +216,7 @@ def daily_loss_gate_facts(
     def text(value):
         return None if value is None else str(value)
 
-    return {
+    facts = {
         "enabled": bool(enabled),
         "business_date_msk": equity.business_date_msk,
         "day_start_ms": equity.day_start_ms,
@@ -223,6 +234,8 @@ def daily_loss_gate_facts(
         "latched": latched,
         "transition": transition,
     }
+    facts["opening_baseline_exception"] = _opening_baseline_exception(facts)
+    return facts
 
 
 def record_auto_decision(
