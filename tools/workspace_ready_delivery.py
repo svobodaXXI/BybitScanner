@@ -1,0 +1,57 @@
+"""Send owner a workspace mobile link + QR only after local and protected HTTPS checks.
+
+Called by the owner PC launcher, never by a public HTTP endpoint. Unconfigured
+remote access is an ordinary skip, not an opportunity to announce READY.
+"""
+import argparse
+import os
+from pathlib import Path
+from urllib.request import urlopen
+
+from workspace_ready_telegram import send_ready_workspace_checked
+
+
+def deliver_if_verified(mode: str, symbol: str, timeframe: str,
+                        local_url: str = "http://127.0.0.1:4173/") -> bool:
+    required = (
+        "BYBITSCANNER_TERMINAL_HTTPS_URL",
+        "BYBITSCANNER_ACCESS_CLIENT_ID",
+        "BYBITSCANNER_ACCESS_CLIENT_SECRET",
+        "BYBITSCANNER_TELEGRAM_OWNER_ID",
+        "BYBITSCANNER_TELEGRAM_BOT_TOKEN",
+    )
+    if any(not os.environ.get(key) for key in required):
+        return False
+    # The already-running UI must respond locally, even if the tunnel is healthy.
+    try:
+        with urlopen(local_url, timeout=3) as response:
+            if response.status != 200:
+                return False
+    except (OSError, ValueError):
+        return False
+    send_ready_workspace_checked(
+        os.environ["BYBITSCANNER_TELEGRAM_BOT_TOKEN"],
+        os.environ["BYBITSCANNER_TELEGRAM_OWNER_ID"],
+        access_client_id=os.environ["BYBITSCANNER_ACCESS_CLIENT_ID"],
+        access_client_secret=os.environ["BYBITSCANNER_ACCESS_CLIENT_SECRET"],
+        base_url=os.environ["BYBITSCANNER_TERMINAL_HTTPS_URL"],
+        mode=mode, symbol=symbol, timeframe=timeframe, signal_id=None,
+        qr_directory=Path(os.environ.get("TEMP", ".")) / "BybitScanner-workspace-qr",
+    )
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=("EDITOR", "TERMINAL"), required=True)
+    parser.add_argument("--symbol", required=True)
+    parser.add_argument("--timeframe", required=True)
+    args = parser.parse_args()
+    if deliver_if_verified(args.mode, args.symbol, args.timeframe):
+        print("Mobile QR delivered to owner after authenticated HTTPS verification.")
+    else:
+        print("Mobile QR not sent: gateway configuration or local readiness unavailable.")
+
+
+if __name__ == "__main__":
+    main()
