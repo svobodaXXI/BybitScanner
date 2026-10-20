@@ -7,6 +7,7 @@ on:
       - "terminal/frontend/src/components/ModePanelLegacy.tsx"
       - "terminal/frontend/src/geometryFeedback/signalDeepLink.ts"
       - "terminal/frontend/src/geometryFeedback/signalDeepLink.test.ts"
+      - "terminal/frontend/src/geometryFeedback/signalDeepLink.integration.test.ts"
       - ".github/workflows/workspace-deeplink-ci.yml"
   workflow_dispatch:
 
@@ -32,4 +33,4 @@ jobs:
       - name: Compile and build frontend
         run: npm run build
       - name: Deep-link parser regressions
-        run: npx vitest run src/geometryFeedback/signalDeepLink.test.ts
+        run: npx vitest run src/geometryFeedback/signalDeepLink.test.ts src/geometryFeedback/signalDeepLink.integration.test.ts
