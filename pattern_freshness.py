@@ -10,8 +10,9 @@ unreadable term or a signal too old to cover fails closed (an exception here,
 ``None`` for the policy, which turns it into WAIT).
 
 * IKIGAI_BOX (``DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md``, owner correction
-  2026-09-29): stale/completed once a closed candle after the frozen decision
-  time printed ``high >= take`` (LONG) / ``low <= take`` (SHORT).
+  2026-09-29): stale/completed once a closed candle opening after the decision
+  candle (``decision_time_ms`` is that candle's open time) printed
+  ``high >= take`` (LONG) / ``low <= take`` (SHORT).
 * L-shape (``robot_l_shape.invalidation_event``): stale once a closed candle
   after the breakout candle touched the frozen target or stop.
 """
@@ -104,7 +105,12 @@ def _box_terms(snapshot: Mapping[str, Any]) -> _Terms:
     if decision_time % interval:
         raise PatternFreshnessError("Box decision time is not aligned to its candle grid")
     take = _decimal(plan.get("take_price"), "plan.take_price")
-    return _Terms(KIND_BOX, timeframe, interval, decision_time, direction, (take,))
+    # decision_time_ms is the OPEN time of the last closed candle the Scanner used
+    # (ikigai_box_scanner.box_robot_formation: closed.iloc[as_of_index]["time"]); that
+    # candle was already vetted by box_first_grid_already_completed, and the plan is
+    # created while the next candle is forming. Only candles opening after it are
+    # post-signal evidence, so the decision candle itself is never re-judged.
+    return _Terms(KIND_BOX, timeframe, interval, decision_time + interval, direction, (take,))
 
 
 def _l_shape_terms(snapshot: Mapping[str, Any]) -> _Terms:
