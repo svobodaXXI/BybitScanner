@@ -135,6 +135,8 @@ export function ChartPanel({
   onTakeDelete,
   averageEntryPrice = null,
   workspaceControls,
+  editorMode = false,
+  referenceDrawings = [],
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
@@ -170,6 +172,9 @@ export function ChartPanel({
   onTakeDelete?: () => void | Promise<void>;
   averageEntryPrice?: string | null;
   workspaceControls?: ReactNode;
+  editorMode?: boolean;
+  /** Read-only source geometry; only supplied from a verified signal snapshot. */
+  referenceDrawings?: readonly DrawingObject[];
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -188,12 +193,12 @@ export function ChartPanel({
   const panBatcherRef = useRef<ReturnType<typeof createFrameBatcher> | null>(null);
   const [renderTick, setRenderTick] = useState(0),
     [tool, setTool] = useState<DrawingTool>("select"),
-    [magnet, setMagnet] = useState(false),
+    [magnet, setMagnet] = useState(editorMode),
     [selectedId, setSelectedId] = useState<string | null>(null),
     [clearConfirmationOpen, setClearConfirmationOpen] = useState(false),
     [confirmAllPendingOpen, setConfirmAllPendingOpen] = useState(false),
     [dismissAllPendingOpen, setDismissAllPendingOpen] = useState(false);
-  const storageKey = `bybitscanner:drawings:v1:${symbol}:${timeframe}`;
+  const storageKey = `bybitscanner:${editorMode ? "editor-drawings" : "drawings"}:v1:${symbol}:${timeframe}`;
   const historyRef = useRef(
     new DrawingHistory(
       deserializeDrawings(globalThis.localStorage?.getItem(storageKey) ?? null),
@@ -777,6 +782,7 @@ export function ChartPanel({
         <div ref={hostRef} className="chart-engine" />
         <DrawingOverlay
           drawings={drawings}
+          referenceDrawings={editorMode ? referenceDrawings : []}
           selectedId={selectedId}
           tool={tool}
           magnet={magnet}

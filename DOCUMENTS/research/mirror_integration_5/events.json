@@ -1,0 +1,633 @@
+[
+ {
+  "boundary_id": "552fad51f2b750e129649fa8:upper",
+  "candle_close_time_ms": 1792412400000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "552fad51f2b750e129649fa8:upper",
+  "candle_close_time_ms": 1792412700000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "552fad51f2b750e129649fa8:lower",
+  "candle_close_time_ms": 1792425900000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "552fad51f2b750e129649fa8:lower",
+  "candle_close_time_ms": 1792426200000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "dbfcee264fc8da25e854f808:upper",
+  "candle_close_time_ms": 1792412400000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "dbfcee264fc8da25e854f808:upper",
+  "candle_close_time_ms": 1792412700000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "dbfcee264fc8da25e854f808:lower",
+  "candle_close_time_ms": 1792415400000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "dbfcee264fc8da25e854f808:lower",
+  "candle_close_time_ms": 1792415700000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "5abefb330480fd41b3da74b3:lower",
+  "candle_close_time_ms": 1792412700000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "5abefb330480fd41b3da74b3:lower",
+  "candle_close_time_ms": 1792413000000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "5abefb330480fd41b3da74b3:upper",
+  "candle_close_time_ms": 1792416000000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "5abefb330480fd41b3da74b3:upper",
+  "candle_close_time_ms": 1792416600000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "640d61d9317f4e0a3522da62:lower",
+  "candle_close_time_ms": 1792417200000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "640d61d9317f4e0a3522da62:lower",
+  "candle_close_time_ms": 1792417500000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "640d61d9317f4e0a3522da62:upper",
+  "candle_close_time_ms": 1792441200000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "640d61d9317f4e0a3522da62:upper",
+  "candle_close_time_ms": 1792441800000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "3d8c03d12051d4ef86188d99:upper",
+  "candle_close_time_ms": 1792413300000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "3d8c03d12051d4ef86188d99:upper",
+  "candle_close_time_ms": 1792413900000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "3d8c03d12051d4ef86188d99:lower",
+  "candle_close_time_ms": 1792418700000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "3d8c03d12051d4ef86188d99:lower",
+  "candle_close_time_ms": 1792423500000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "443126291072b39fdf6398ff:upper",
+  "candle_close_time_ms": 1792413900000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "443126291072b39fdf6398ff:upper",
+  "candle_close_time_ms": 1792414500000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "e66e5398126c27433c9ebaae:upper",
+  "candle_close_time_ms": 1792413600000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "e66e5398126c27433c9ebaae:upper",
+  "candle_close_time_ms": 1792413900000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "3221fd48d39c95a4b517f0d5:lower",
+  "candle_close_time_ms": 1792416000000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "3221fd48d39c95a4b517f0d5:lower",
+  "candle_close_time_ms": 1792416300000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "3221fd48d39c95a4b517f0d5:upper",
+  "candle_close_time_ms": 1792417200000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "3221fd48d39c95a4b517f0d5:upper",
+  "candle_close_time_ms": 1792417500000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "20bbb95e2d8be224b7800946:upper",
+  "candle_close_time_ms": 1792413900000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "20bbb95e2d8be224b7800946:upper",
+  "candle_close_time_ms": 1792417200000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "20bbb95e2d8be224b7800946:lower",
+  "candle_close_time_ms": 1792420500000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "20bbb95e2d8be224b7800946:lower",
+  "candle_close_time_ms": 1792421100000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "41395a061d3c54044a84d329:upper",
+  "candle_close_time_ms": 1792415700000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "41395a061d3c54044a84d329:upper",
+  "candle_close_time_ms": 1792416300000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "41395a061d3c54044a84d329:lower",
+  "candle_close_time_ms": 1792421100000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "e1aa850faf0f9d494ea7ca02:upper",
+  "candle_close_time_ms": 1792413900000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "e1aa850faf0f9d494ea7ca02:upper",
+  "candle_close_time_ms": 1792417200000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "139ff9e941f3131665d36ca0:upper",
+  "candle_close_time_ms": 1792422000000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "139ff9e941f3131665d36ca0:upper",
+  "candle_close_time_ms": 1792422900000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "28fc09ea1c0477db4adda792:upper",
+  "candle_close_time_ms": 1792414800000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "28fc09ea1c0477db4adda792:upper",
+  "candle_close_time_ms": 1792415100000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "28fc09ea1c0477db4adda792:lower",
+  "candle_close_time_ms": 1792418400000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "28fc09ea1c0477db4adda792:lower",
+  "candle_close_time_ms": 1792418700000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "0d9c3a120791fb5edfeb8414:lower",
+  "candle_close_time_ms": 1792416900000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "0d9c3a120791fb5edfeb8414:lower",
+  "candle_close_time_ms": 1792418100000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "8249f9ca635227709c5f19e7:lower",
+  "candle_close_time_ms": 1792414500000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "8249f9ca635227709c5f19e7:lower",
+  "candle_close_time_ms": 1792414800000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "8249f9ca635227709c5f19e7:upper",
+  "candle_close_time_ms": 1792439100000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "8249f9ca635227709c5f19e7:upper",
+  "candle_close_time_ms": 1792439700000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "b9b223f3222b2fabfcc9a7d7:upper",
+  "candle_close_time_ms": 1792416900000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "b9b223f3222b2fabfcc9a7d7:upper",
+  "candle_close_time_ms": 1792417500000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "b9b223f3222b2fabfcc9a7d7:lower",
+  "candle_close_time_ms": 1792419900000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "b9b223f3222b2fabfcc9a7d7:lower",
+  "candle_close_time_ms": 1792420500000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "1989d32d3cf89d872125b59b:upper",
+  "candle_close_time_ms": 1792415100000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "1989d32d3cf89d872125b59b:upper",
+  "candle_close_time_ms": 1792415400000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "1989d32d3cf89d872125b59b:lower",
+  "candle_close_time_ms": 1792418400000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "1989d32d3cf89d872125b59b:lower",
+  "candle_close_time_ms": 1792418700000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "a77fdc72da588e93d30c2ddb:upper",
+  "candle_close_time_ms": 1792415100000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "a77fdc72da588e93d30c2ddb:upper",
+  "candle_close_time_ms": 1792416000000,
+  "decision": "BLOCK",
+  "event": "RETEST_PROVEN",
+  "reasons": [
+   "campaign_not_active:RETEST_PROVEN",
+   "observe_only"
+  ]
+ },
+ {
+  "boundary_id": "e74dae4d42c77d2691e93d2e:upper",
+  "candle_close_time_ms": 1792416000000,
+  "decision": "WAIT",
+  "event": "NAKED_BREAKOUT",
+  "reasons": [
+   "r0_wait:daily_gate_data_unavailable",
+   "policy_wait:robot_execution_not_authorized",
+   "observe_only"
+  ]
+ }
+]

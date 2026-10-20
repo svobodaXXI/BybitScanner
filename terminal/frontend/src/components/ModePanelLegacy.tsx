@@ -48,8 +48,8 @@ const runMutationDirectly: PaperMutationRunner = (_key, operation) => operation(
 
 const descriptions: Record<WorkspaceMode, string> = {
   TERMINAL: "Manual PAPER execution is available for the development instrument.",
-  AUTOPILOT: "Robot observation and control are intentionally not implemented.",
-  EDITOR: "Editor tools are reserved for a later authorized slice.",
+  AUTOPILOT: "Robot observation is read-only; Robot control is not implemented yet.",
+  EDITOR: "Локальная разметка графика. Торговые действия отключены; отправка исправлений и изменение позиции пока недоступны.",
 };
 
 export function ModePanel({
@@ -100,6 +100,7 @@ export function ModePanel({
   liveMarketAllowed = false,
   liveLimitAllowed = false,
   liveProtectionAllowed = false,
+  openPositionsRequest = 0,
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
@@ -150,6 +151,7 @@ export function ModePanel({
   liveMarketAllowed?: boolean;
   liveLimitAllowed?: boolean;
   liveProtectionAllowed?: boolean;
+  openPositionsRequest?: number;
 }) {
   const tradingInputFocus = useTradingNumericInputFocusPolicy();
   const [executionStatus, setExecutionStatus] = useState("");
@@ -157,6 +159,13 @@ export function ModePanel({
   const [openPositionsVisible, setOpenPositionsVisible] = useState(
     () => new URLSearchParams(window.location.search).get("view") === "positions",
   );
+  // Reuse the existing Terminal positions overlay; a request is navigation only.
+  const lastOpenPositionsRequest = useRef(openPositionsRequest);
+  useEffect(() => {
+    if (openPositionsRequest === lastOpenPositionsRequest.current) return;
+    lastOpenPositionsRequest.current = openPositionsRequest;
+    setOpenPositionsVisible(true);
+  }, [openPositionsRequest]);
   const [diaryVisible, setDiaryVisible] = useState(false);
   const [activeAccountLabel, setActiveAccountLabel] = useState<{ id: string; name: string } | null>(null);
   const [limitPresentationSide, setLimitPresentationSide] =
@@ -308,7 +317,7 @@ export function ModePanel({
     previousPopupLimitDraftCount.current = popupLimitDrafts.length;
   }, [limitPresentationSide, popupLimitDrafts.length]);
 
-  const alternatives = (["TERMINAL", "AUTOPILOT"] as const).filter(
+  const alternatives = (["TERMINAL", "AUTOPILOT", "EDITOR"] as const).filter(
     (candidate) => candidate !== mode,
   );
   const pnlPercent = positionPnlPercent(
@@ -736,6 +745,10 @@ export function ModePanel({
           </button>
         ))}
       </nav>
+
+      {mode === "EDITOR" ? (
+        <p role="status">Редактор: разметка сохраняется отдельно от торговых рисунков. Исправления Scanner и STOP/TAKE пока не отправляются.</p>
+      ) : null}
 
       {mode === "TERMINAL" ? (
         <>
