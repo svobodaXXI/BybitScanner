@@ -19,6 +19,7 @@ notification.py
 """
 
 import os
+import re
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from telegram_bot import (
@@ -404,9 +405,21 @@ def build_tradingview_keyboard(
     if include_review_actions:
         tf = timeframe if timeframe.endswith(("s", "m", "h", "d")) else f"{timeframe}m"
         if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
+            def workspace_callback(mode):
+                base = f"workspace:{mode}:{symbol}:{tf}"
+                # The signal id lets the editor load the frozen Scanner geometry. Telegram
+                # limits callback_data to 64 bytes: an id that does not fit (or would break
+                # the colon-separated format) is omitted rather than truncated.
+                signal_id = str(robot_candidate_id or "")
+                extended = f"{base}:{signal_id}"
+                if (signal_id and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", signal_id)
+                        and len(extended.encode("utf-8")) <= 64):
+                    return extended
+                return base
+
             keyboard.append([
-                {"text": "✏️ Редактор", "callback_data": f"workspace:EDITOR:{symbol}:{tf}"},
-                {"text": "🖥 Терминал", "callback_data": f"workspace:TERMINAL:{symbol}:{tf}"},
+                {"text": "✏️ Редактор", "callback_data": workspace_callback("EDITOR")},
+                {"text": "🖥 Терминал", "callback_data": workspace_callback("TERMINAL")},
             ])
 
     return {

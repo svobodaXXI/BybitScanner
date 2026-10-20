@@ -28,6 +28,12 @@ import requests
 import socks
 import websocket
 
+from signal_geometry_view import (
+    SIGNAL_ID_PATTERN,
+    SignalGeometryUnavailable,
+    build_signal_geometry,
+)
+
 from terminal.api.models import (
     CloseAllCommandRequest,
     AmendCommandRequest,
@@ -2842,6 +2848,34 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 self._json_response(503, {"ok": False, "error": "scanner_control_unavailable"})
                 return
             self._json_response(200, {"ok": True, **to_primitive(result)})
+            return
+
+        if parsed.path == "/api/scanner/signal-geometry":
+            # Read-only frozen Scanner snapshot of one signal; never a trading action.
+            ids = parse_qs(parsed.query).get("signal_id", [])
+            if len(ids) != 1 or not SIGNAL_ID_PATTERN.fullmatch(ids[0]):
+                self._json_response(400, {"ok": False, "error": "signal_id_invalid"})
+                return
+            signal_id = ids[0]
+            try:
+                record = self.server.runtime.call(
+                    lambda runtime: runtime.store.get_robot_candidate(signal_id)
+                )
+            except Exception:
+                LOGGER.exception("Signal geometry snapshot read failed")
+                self._json_response(503, {"ok": False, "error": "signal_geometry_unavailable"})
+                return
+            if record is None:
+                self._json_response(404, {"ok": False, "error": "signal_not_found"})
+                return
+            try:
+                geometry = build_signal_geometry(
+                    signal_id, record.signal_snapshot, record.snapshot_sha256,
+                )
+            except SignalGeometryUnavailable as exc:
+                self._json_response(422, {"ok": False, "error": "geometry_unavailable", "reason": exc.reason})
+                return
+            self._json_response(200, {"ok": True, **geometry})
             return
 
         if parsed.path == "/api/instruments":
