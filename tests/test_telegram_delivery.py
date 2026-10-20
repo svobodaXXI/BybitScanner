@@ -259,12 +259,14 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             .kwargs["reply_markup"]["inline_keyboard"]
         )
 
-        self.assertEqual(len(owner_keyboard), 1)  # HTTPS not configured in this fixture
+        self.assertEqual(len(owner_keyboard), 2)
         self.assertEqual(
             [button["text"] for row in owner_keyboard for button in row],
             [
                 "📈 TradingView",
                 "📊 MetaScalp",
+                "✏️ Редактор",
+                "🖥 Терминал",
             ],
         )
         self.assertEqual(len(friend_keyboard), 1)
@@ -273,20 +275,11 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             ["📈 TradingView"],
         )
 
-    def test_configured_https_workspace_produces_editor_and_terminal_links(self):
-        with patch.dict("os.environ", {"BYBITSCANNER_TERMINAL_HTTPS_URL": "https://terminal.example.org/workspace"}):
-            keyboard = notification.build_tradingview_keyboard("XDPUSDT", "5m")["inline_keyboard"]
+    def test_owner_workspace_buttons_request_pc_launch(self):
+        keyboard = notification.build_tradingview_keyboard("XDPUSDT", "5m")["inline_keyboard"]
         self.assertEqual([item["text"] for item in keyboard[-1]], ["✏️ Редактор", "🖥 Терминал"])
-        self.assertIn("mode=EDITOR", keyboard[-1][0]["url"])
-        self.assertIn("mode=TERMINAL", keyboard[-1][1]["url"])
-        self.assertIn("symbol=XDPUSDT", keyboard[-1][0]["url"])
-        self.assertIn("timeframe=5m", keyboard[-1][0]["url"])
-
-    def test_missing_or_http_workspace_has_no_broken_navigation_buttons(self):
-        for base in ("", "http://terminal.example.org", "https://user:secret@terminal.example.org"):
-            with patch.dict("os.environ", {"BYBITSCANNER_TERMINAL_HTTPS_URL": base}):
-                keyboard = notification.build_tradingview_keyboard("XDPUSDT", "5m")["inline_keyboard"]
-            self.assertFalse(any(button["text"] == "✏️ Редактор" for row in keyboard for button in row))
+        self.assertEqual(keyboard[-1][0]["callback_data"], "workspace:EDITOR:XDPUSDT:5m")
+        self.assertEqual(keyboard[-1][1]["callback_data"], "workspace:TERMINAL:XDPUSDT:5m")
 
     def test_triangle_compression_owner_card_has_metascalp_button(self):
         # TG-METASCALP-2: every send_signal pattern shares the common card builder.
