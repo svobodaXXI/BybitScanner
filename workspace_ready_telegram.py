@@ -4,6 +4,7 @@ The caller must provide a fresh readiness attestation from its authenticated
 HTTPS gateway probe. This adapter neither starts processes nor proves readiness.
 """
 from pathlib import Path
+import uuid
 from telegram_bot import send_photo
 from workspace_ready_link import workspace_link, write_workspace_qr
 from workspace_gateway_probe import verify_workspace_gateway
@@ -19,7 +20,7 @@ def send_ready_workspace(token: str, owner_chat_id: str, *,
     if not token or not owner_chat_id:
         raise ValueError("Owner Telegram identity and bot token are required")
     url = workspace_link(base_url, mode, symbol, timeframe, signal_id)
-    qr_path = write_workspace_qr(url, Path(qr_directory) / "workspace-ready.png")
+    qr_path = write_workspace_qr(url, Path(qr_directory) / f"workspace-{uuid.uuid4().hex}.png")
     label = "Редактор" if mode == "EDITOR" else "Терминал"
     markup = {"inline_keyboard": [[{"text": f"📱 Открыть {label.lower()}", "url": url}]]}
     result = send_photo(token, owner_chat_id, qr_path,
