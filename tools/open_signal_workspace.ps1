@@ -40,21 +40,7 @@ if ($remoteBase) {
     }
     $remoteUrl = "$($uri.GetLeftPart([System.UriPartial]::Path).TrimEnd('/'))/?mode=$Mode&symbol=$Symbol&timeframe=$Timeframe"
     Write-Host "Smartphone URL (NOT VERIFIED): $remoteUrl"
-    $python = Join-Path $root "venv\Scripts\python.exe"
-    $qrTool = Join-Path $PSScriptRoot "workspace_qr_local.py"
-    if ((Test-Path $python) -and (Test-Path $qrTool)) {
-      $qrFile = Join-Path $env:TEMP "BybitScanner-workspace-$Mode-$Symbol-$Timeframe.png"
-      & $python $qrTool --origin $remoteBase --mode $Mode --symbol $Symbol --timeframe $Timeframe --destination $qrFile
-      if ($LASTEXITCODE -eq 0 -and (Test-Path $qrFile)) {
-        Write-Host "QR file (REMOTE ACCESS NOT VERIFIED): $qrFile"
-        Start-Process -FilePath $qrFile
-      } else {
-        Write-Warning "QR generation failed; verify Python QR dependency."
-      }
-    } else {
-      Write-Warning "QR generator or project Python unavailable."
-    }
-    Write-Warning "HTTPS auth and reachability must be verified before Telegram READY delivery."
+    Write-Warning "No mobile QR until HTTPS authentication and gateway readiness are verified."
   } catch {
     Write-Warning "Invalid smartphone HTTPS URL."
   }
