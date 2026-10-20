@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from urllib.request import urlopen
 
 from workspace_ready_telegram import send_ready_workspace_checked
+from workspace_ready_link import workspace_link, write_workspace_qr
 
 
 def deliver_if_verified(mode: str, symbol: str, timeframe: str,
@@ -40,6 +41,14 @@ def deliver_if_verified(mode: str, symbol: str, timeframe: str,
         mode=mode, symbol=symbol, timeframe=timeframe, signal_id=None,
         qr_directory=Path(os.environ.get("TEMP", ".")) / "BybitScanner-workspace-qr",
     )
+    url = workspace_link(
+        os.environ["BYBITSCANNER_TERMINAL_HTTPS_URL"], mode, symbol, timeframe
+    )
+    qr_path = Path(os.environ.get("TEMP", ".")) / "BybitScanner-workspace-qr" / (
+        f"owner-{mode}-{symbol}-{timeframe}.png"
+    )
+    write_workspace_qr(url, qr_path)
+    print("QR_FILE=" + str(qr_path))
     return True
 
 
