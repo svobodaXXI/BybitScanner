@@ -8,6 +8,7 @@ on:
       - "terminal/frontend/src/geometryFeedback/signalDeepLink.ts"
       - "terminal/frontend/src/geometryFeedback/signalDeepLink.test.ts"
       - "terminal/frontend/src/geometryFeedback/signalDeepLink.integration.test.ts"
+      - "terminal/frontend/e2e/workspace-deeplink-mock.spec.ts"
       - ".github/workflows/workspace-deeplink-ci.yml"
   workflow_dispatch:
 
@@ -34,3 +35,18 @@ jobs:
         run: npm run build
       - name: Deep-link parser regressions
         run: npx vitest run src/geometryFeedback/signalDeepLink.test.ts src/geometryFeedback/signalDeepLink.integration.test.ts
+      - name: Install Chromium for isolated browser check
+        run: npx playwright install --with-deps chromium
+      - name: Start isolated preview and run mocked browser test
+        env:
+          PAPER_FRONTEND_URL: http://127.0.0.1:4173
+        run: |
+          npm exec vite preview -- --host 127.0.0.1 --port 4173 --strictPort > /tmp/workspace-preview.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
+          npx playwright test e2e/workspace-deeplink-mock.spec.ts
