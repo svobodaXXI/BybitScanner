@@ -30,7 +30,7 @@ permission: every decision stays WAIT/BLOCK, ``executable=False``,
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 import json
@@ -72,6 +72,7 @@ class TrackedCandidate:
     symbol: str
     formation_key: tuple[str, str]
     boundaries: tuple[Boundary, Boundary]
+    pattern: str | None = None
 
 
 @dataclass
@@ -267,7 +268,9 @@ class MirrorSidecar:
             self.metrics.candidates_unusable += 1
             return
         self.formations.add(key)
-        self.tracked[ref] = TrackedCandidate(ref, str(envelope["symbol"]), key, boundaries)
+        pattern = snapshot.get("pattern")
+        self.tracked[ref] = TrackedCandidate(
+            ref, str(envelope["symbol"]), key, boundaries, str(pattern) if pattern else None)
         # Start at the 5m boundary at/before the candidate was known: nothing earlier is ever read.
         self.candle_cursor.setdefault(ref, created - created % COARSE_MS)
         self.metrics.candidates_tracked += 1
@@ -296,6 +299,9 @@ class MirrorSidecar:
                     boundary, state, candle, symbol=candidate.symbol, account=account, fine_candles=fine)
                 self.states[boundary.boundary_id] = state
                 if record is not None and record.observation_id not in self.emitted:
+                    record = replace(
+                        record, candidate_ref=candidate.candidate_id, pattern=candidate.pattern, timeframe="5",
+                        account_id=self.account.value, recorded_at_ms=int(self.clock_ms()))
                     self.emitted.add(record.observation_id)
                     produced.append(record)
                     self._submit(record)
