@@ -27,14 +27,16 @@ class WorkspaceReadyDeliveryTests(unittest.TestCase):
 
     @patch.dict(worker.os.environ, ENV, clear=True)
     @patch.object(worker, "urlopen")
+    @patch.object(worker, "write_workspace_qr")
     @patch.object(worker, "send_ready_workspace_checked")
-    def test_only_authenticated_gateway_sender_receives_request(self, send, probe):
+    def test_only_authenticated_gateway_sender_receives_request(self, send, qr, probe):
         response = probe.return_value.__enter__.return_value
         response.status = 200
         self.assertTrue(worker.deliver_if_verified("EDITOR", "BTCUSDT", "5m"))
         send.assert_called_once()
         self.assertEqual(send.call_args.kwargs["symbol"], "BTCUSDT")
         self.assertEqual(send.call_args.kwargs["access_client_secret"], "secret")
+        qr.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()
