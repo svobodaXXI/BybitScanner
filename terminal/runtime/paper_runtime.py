@@ -83,6 +83,7 @@ from terminal.application.robot_recovery import (
 )
 from robot_flat_closure import CandidateOwnership, prove_flat_closure
 from robot_failure_diagnostics import record_robot_incident
+import pattern_freshness
 from scanner_geometry_cursor import (
     default_scanner_geometry_cursor_provider, latest_scanner_closed_candle,
     load_scanner_catchup_closed_candles, project_latest_geometry_index,
@@ -915,8 +916,12 @@ class PaperRuntime:
         # Owner-thread one-shot monitors never call the kline loader above:
         # they read only evidence prepared off the owner (see
         # SerializedPaperRuntime.warm_robot_closed_candles).
+        # Box and L-shape have no cursor/apex: their freshness evidence is their own
+        # closed-candle range (pattern_freshness); Wedge keeps the existing fetch.
         self.robot_catchup_evidence = (
-            PreparedCatchupEvidence(self._robot_admission_catchup_candles)
+            PreparedCatchupEvidence(
+                pattern_freshness.freshness_fetch(self._robot_admission_catchup_candles)
+            )
             if self._robot_admission_catchup_candles is not None
             else None
         )
@@ -1173,6 +1178,13 @@ class PaperRuntime:
             candles = tuple(evidence(symbol, dict(signal_snapshot)))
         except Exception:
             return None
+        if pattern_freshness.freshness_kind(signal_snapshot) is not None:
+            # IKIGAI_BOX / L-shape: no apex lifecycle; stale once the frozen TAKE
+            # (Box) or target/stop (L-shape) was reached by a closed candle.
+            try:
+                return pattern_freshness.pattern_candidate_fresh(signal_snapshot, candles)
+            except Exception:
+                return None
         try:
             state, _event = robot_state_machine.initialize_state({
                 "status": "APPROVED",
