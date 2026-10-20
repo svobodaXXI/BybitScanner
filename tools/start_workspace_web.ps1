@@ -6,7 +6,8 @@
 param(
     [int]$Port = 4173,
     [switch]$Build,
-    [string]$NamedTunnel = ""
+    [string]$NamedTunnel = "",
+    [switch]$AccessPolicyVerified
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,6 +21,9 @@ if (!(Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
 }
 if ($Port -lt 1024 -or $Port -gt 65535) {
     throw "Port must be 1024..65535"
+}
+if ($NamedTunnel -and !$AccessPolicyVerified) {
+    throw "Refusing HTTPS tunnel without explicit -AccessPolicyVerified (Cloudflare Access enforced)."
 }
 if ($NamedTunnel -and !(Get-Command cloudflared.exe -ErrorAction SilentlyContinue)) {
     throw "Named HTTPS tunnel requested but cloudflared.exe was not found."
