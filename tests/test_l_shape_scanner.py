@@ -208,7 +208,7 @@ class LShapeTelegramTests(unittest.TestCase):
         self.assertIn("l_shape:TESTUSDT:5:LONG:1700000300000:1700000600000", memory)
         owner_buttons = [b["text"] for row in owner.kwargs["reply_markup"]["inline_keyboard"] for b in row]
         self.assertNotIn("✅ Хороший", owner_buttons)
-        self.assertIn("❌ Геометрия", owner_buttons)
+        self.assertNotIn("❌ Геометрия", owner_buttons)
         self.assertIn("🤖 Робот", owner_buttons)
         self.assertEqual(len(friend.kwargs["reply_markup"]["inline_keyboard"]), 1)
         self.assertEqual(
