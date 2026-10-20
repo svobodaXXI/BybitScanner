@@ -399,28 +399,15 @@ def build_tradingview_keyboard(
             ]
         )
 
-    # Browser workspace URL is supplied by the owner-managed HTTPS service,
-    # never inferred from Telegram or from a local-only 127.0.0.1 address.
+    # Owner callback targets the listener on the PC, not the phone browser.
+    # The listener prepares the local UI; HTTPS/QR are delivered separately.
     if include_review_actions:
-        workspace_base = os.environ.get("BYBITSCANNER_TERMINAL_HTTPS_URL", "").strip()
-        workspace_url = urlsplit(workspace_base)
-        if (workspace_url.scheme == "https" and workspace_url.netloc
-                and not workspace_url.username and not workspace_url.password
-                and not workspace_url.fragment):
-            links = []
-            for mode, title in (("EDITOR", "✏️ Редактор"), ("TERMINAL", "🖥 Терминал")):
-                query = urlencode({"mode": mode, "symbol": symbol, "timeframe": (
-                    timeframe if timeframe.endswith(("m", "h", "d", "s")) else f"{timeframe}m"
-                )})
-                links.append({"text": title, "url": urlunsplit((
-                    workspace_url.scheme, workspace_url.netloc, workspace_url.path,
-                    query, ""
-                ))})
-            keyboard.append(links)
-        else:
-            # Do not advertise broken links or expose an untrusted HTTP endpoint.
-            # Missing HTTPS configuration must be surfaced by deployment checks.
-            pass
+        tf = timeframe if timeframe.endswith(("s", "m", "h", "d")) else f"{timeframe}m"
+        if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
+            keyboard.append([
+                {"text": "✏️ Редактор", "callback_data": f"workspace:EDITOR:{symbol}:{tf}"},
+                {"text": "🖥 Терминал", "callback_data": f"workspace:TERMINAL:{symbol}:{tf}"},
+            ])
 
     return {
         "inline_keyboard": keyboard
