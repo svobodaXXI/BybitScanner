@@ -19,6 +19,7 @@ notification.py
 """
 
 import os
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from telegram_bot import (
     send_message,
@@ -353,7 +354,7 @@ def build_tradingview_keyboard(
         [
             {
                 "text":
-                    "\U0001F4C8 Open TradingView",
+                    "\U0001F4C8 TradingView",
 
                 "url":
                     tradingview_url
@@ -398,43 +399,15 @@ def build_tradingview_keyboard(
             ]
         )
 
+    # Owner callback targets the listener on the PC, not the phone browser.
+    # The listener prepares the local UI; HTTPS/QR are delivered separately.
     if include_review_actions:
-        keyboard.extend(
-            [
-            [
-                {
-                    "text":
-                        "\U0001F4CC \u0412 \u0440\u0430\u0437\u0431\u043e\u0440",
-
-                    "callback_data":
-                        f"review:queue:{symbol}:{timeframe}"
-                },
-                {
-                    "text":
-                        "\u2705 \u0425\u043e\u0440\u043e\u0448\u0438\u0439",
-
-                    "callback_data":
-                        f"review:good:{symbol}:{timeframe}"
-                }
-            ],
-            [
-                {
-                    "text":
-                        "\u274C \u0413\u0435\u043e\u043c\u0435\u0442\u0440\u0438\u044f",
-
-                    "callback_data":
-                        f"review:geometry:{symbol}:{timeframe}"
-                },
-                {
-                    "text":
-                        "\u2693 Anchor/START",
-
-                    "callback_data":
-                        f"review:anchor:{symbol}:{timeframe}"
-                }
-            ]
-            ]
-        )
+        tf = timeframe if timeframe.endswith(("s", "m", "h", "d")) else f"{timeframe}m"
+        if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
+            keyboard.append([
+                {"text": "✏️ Редактор", "callback_data": f"workspace:EDITOR:{symbol}:{tf}"},
+                {"text": "🖥 Терминал", "callback_data": f"workspace:TERMINAL:{symbol}:{tf}"},
+            ])
 
     return {
         "inline_keyboard": keyboard

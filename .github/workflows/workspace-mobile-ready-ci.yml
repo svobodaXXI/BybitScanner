@@ -1,0 +1,66 @@
+name: Workspace mobile readiness
+
+on:
+  pull_request:
+    paths:
+      - "workspace_ready_link.py"
+      - "workspace_gateway_probe.py"
+      - "workspace_ready_telegram.py"
+      - "workspace_owner_launcher.py"
+      - "telegram_review.py"
+      - "tests/test_telegram_review_authorization.py"
+      - "tools/open_signal_workspace.ps1"
+      - "tools/start_workspace_web.ps1"
+      - "tools/workspace_ready_delivery.py"
+      - "tools/workspace_qr_local.py"
+      - "tests/test_workspace_ready_delivery.py"
+      - "tests/test_workspace_gateway_probe.py"
+      - "tests/test_workspace_owner_launcher.py"
+      - "tests/test_workspace_ready_link.py"
+      - "tests/test_workspace_ready_telegram.py"
+      - ".github/workflows/workspace-mobile-ready-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  workspace-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install isolated dependencies
+        run: python -m pip install requests==2.34.2 qrcode==8.2 pillow==12.3.0
+      - name: Compile workspace code
+        run: python -m py_compile workspace_ready_link.py workspace_gateway_probe.py workspace_ready_telegram.py workspace_owner_launcher.py telegram_review.py tools/workspace_ready_delivery.py
+      - name: Workspace readiness unit tests
+        run: python -m unittest -v tests.test_workspace_ready_delivery tests.test_workspace_gateway_probe tests.test_workspace_owner_launcher tests.test_workspace_ready_link tests.test_workspace_ready_telegram
+
+  windows-launcher-validation:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Parse Windows launch scripts without executing them
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($path in @("tools/open_signal_workspace.ps1", "tools/start_workspace_web.ps1")) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_.Message }
+              throw "PowerShell parsing failed: $path"
+            }
+            Write-Host "PASS PowerShell parsing: $path"
+          }
+      - name: Test Windows owner launcher without starting runtime
+        run: python -m unittest -v tests.test_workspace_owner_launcher

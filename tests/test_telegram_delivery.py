@@ -259,23 +259,27 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             .kwargs["reply_markup"]["inline_keyboard"]
         )
 
-        self.assertEqual(len(owner_keyboard), 3)
+        self.assertEqual(len(owner_keyboard), 2)
         self.assertEqual(
             [button["text"] for row in owner_keyboard for button in row],
             [
-                "📈 Open TradingView",
+                "📈 TradingView",
                 "📊 MetaScalp",
-                "📌 В разбор",
-                "✅ Хороший",
-                "❌ Геометрия",
-                "⚓ Anchor/START",
+                "✏️ Редактор",
+                "🖥 Терминал",
             ],
         )
         self.assertEqual(len(friend_keyboard), 1)
         self.assertEqual(
             [button["text"] for button in friend_keyboard[0]],
-            ["📈 Open TradingView"],
+            ["📈 TradingView"],
         )
+
+    def test_owner_workspace_buttons_request_pc_launch(self):
+        keyboard = notification.build_tradingview_keyboard("XDPUSDT", "5m")["inline_keyboard"]
+        self.assertEqual([item["text"] for item in keyboard[-1]], ["✏️ Редактор", "🖥 Терминал"])
+        self.assertEqual(keyboard[-1][0]["callback_data"], "workspace:EDITOR:XDPUSDT:5m")
+        self.assertEqual(keyboard[-1][1]["callback_data"], "workspace:TERMINAL:XDPUSDT:5m")
 
     def test_triangle_compression_owner_card_has_metascalp_button(self):
         # TG-METASCALP-2: every send_signal pattern shares the common card builder.
@@ -451,7 +455,7 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             self.assertEqual(len(keyboard), 1)
             self.assertEqual(
                 [button["text"] for button in keyboard[0]],
-                ["📈 Open TradingView"],
+                ["📈 TradingView"],
             )
 
     def test_first_recipient_failure_does_not_block_second(self):

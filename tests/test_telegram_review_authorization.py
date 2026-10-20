@@ -12,7 +12,43 @@ class TelegramReviewAuthorizationTests(unittest.TestCase):
                 "id": user_id,
             },
             "data": "review:good:BTCUSDT:5",
+            "message": {"chat": {"id": "owner", "type": "private"}},
         }
+
+    def test_workspace_callback_owner_only_and_no_trade_commands(self):
+        for user_id, expected in (("owner", True), ("other-user", False)):
+            callback = self.callback(user_id)
+            callback["data"] = "workspace:EDITOR:BTCUSDT:5m"
+            with patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "owner"), \
+                 patch.object(telegram_review, "_run_workspace_callback") as open_mock, \
+                 patch.object(telegram_review, "_answer_callback") as answer_mock, \
+                 patch.object(telegram_review, "_save_review") as review_mock, \
+                 patch.object(telegram_review, "_approve_robot_candidate") as robot_mock:
+                telegram_review._process_callback(callback)
+            self.assertEqual(open_mock.called, expected)
+            review_mock.assert_not_called()
+            robot_mock.assert_not_called()
+            if not expected:
+                answer_mock.assert_called_once_with("callback-id", "Недостаточно прав")
+
+    def test_workspace_callback_in_group_is_denied(self):
+        callback = self.callback("owner")
+        callback["data"] = "workspace:EDITOR:BTCUSDT:5m"
+        callback["message"]["chat"] = {"id": "-1001234", "type": "supergroup"}
+        with patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "owner"), \
+             patch.object(telegram_review, "_run_workspace_callback") as launcher, \
+             patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._process_callback(callback)
+        launcher.assert_not_called()
+        answer.assert_called_once_with("callback-id", "Открытие разрешено только в личном чате")
+
+    def test_invalid_workspace_callback_does_not_launch(self):
+        with patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "owner"), \
+             patch.object(telegram_review, "_run_workspace_callback") as open_mock:
+            callback = self.callback("owner")
+            callback["data"] = "workspace:EDITOR:BTC;rm:5m"
+            telegram_review._process_callback(callback)
+        open_mock.assert_not_called()
 
     def test_owner_review_callback_is_accepted(self):
         with patch.object(

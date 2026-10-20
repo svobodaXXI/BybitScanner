@@ -188,6 +188,34 @@ def _parse_callback(data):
     }
 
 
+def _parse_workspace_callback(data):
+    """Only a verified owner callback may request local UI opening."""
+    import re
+    parts = str(data).split(":")
+    if len(parts) != 4 or parts[0] != "workspace":
+        return None
+    _, mode, symbol, timeframe = parts
+    if mode not in ("EDITOR", "TERMINAL"):
+        return None
+    if not re.fullmatch(r"[A-Z0-9]{2,32}USDT", symbol):
+        return None
+    if timeframe not in ("15s", "1m", "5m", "15m", "1h", "1d"):
+        return None
+    return {"kind": "workspace", "mode": mode, "symbol": symbol, "timeframe": timeframe}
+
+
+def _run_workspace_callback(callback_query, parsed):
+    """Queue-only boundary: no shell execution or robot startup in listener."""
+    from workspace_owner_launcher import request_owner_workspace_open
+    try:
+        request_owner_workspace_open(parsed["mode"], parsed["symbol"], parsed["timeframe"])
+    except Exception as exc:
+        print("[WORKSPACE OPEN FAILED]", type(exc).__name__)
+        _answer_callback(callback_query.get("id"), "Редактор/Терминал недоступен на ПК")
+        return
+    _answer_callback(callback_query.get("id"), "Команда открытия передана на ПК")
+
+
 def _parse_robot_callback(data):
     parts = str(data).split(":")
 
@@ -598,6 +626,8 @@ def _process_callback(
 
     parsed = _parse_callback(data)
     if parsed is None:
+        parsed = _parse_workspace_callback(data)
+    if parsed is None:
         parsed = _parse_robot_callback(data)
     if parsed is None:
         control_command = parse_robot_control_callback(data)
@@ -623,6 +653,17 @@ def _process_callback(
             callback_query.get("id"),
             "Недостаточно прав"
         )
+        return
+
+    if parsed["kind"] == "workspace":
+        # Accept workspace launch requests only from the owner's private chat.
+        # User-id equality alone is insufficient when a bot message is reused
+        # in another chat. Never launch a PC process from a group callback.
+        callback_chat = (callback_query.get("message") or {}).get("chat") or {}
+        if (str(callback_chat.get("id", "")).strip() != owner_id or callback_chat.get("type") != "private"):
+            _answer_callback(callback_query.get("id"), "Открытие разрешено только в личном чате")
+            return
+        _run_workspace_callback(callback_query, parsed)
         return
 
     if parsed["kind"] == "robot_control":
