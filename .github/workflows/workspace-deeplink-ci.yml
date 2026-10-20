@@ -1,0 +1,35 @@
+name: Workspace deep-link safety
+
+on:
+  pull_request:
+    paths:
+      - "terminal/frontend/src/app/App.tsx"
+      - "terminal/frontend/src/components/ModePanelLegacy.tsx"
+      - "terminal/frontend/src/geometryFeedback/signalDeepLink.ts"
+      - "terminal/frontend/src/geometryFeedback/signalDeepLink.test.ts"
+      - ".github/workflows/workspace-deeplink-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-deeplink:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: terminal/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: terminal/frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Compile and build frontend
+        run: npm run build
+      - name: Deep-link parser regressions
+        run: npx vitest run src/geometryFeedback/signalDeepLink.test.ts
