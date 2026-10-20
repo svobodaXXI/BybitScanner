@@ -19,6 +19,7 @@ notification.py
 """
 
 import os
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from telegram_bot import (
     send_message,
@@ -398,43 +399,28 @@ def build_tradingview_keyboard(
             ]
         )
 
+    # Browser workspace URL is supplied by the owner-managed HTTPS service,
+    # never inferred from Telegram or from a local-only 127.0.0.1 address.
     if include_review_actions:
-        keyboard.extend(
-            [
-            [
-                {
-                    "text":
-                        "\U0001F4CC \u0412 \u0440\u0430\u0437\u0431\u043e\u0440",
-
-                    "callback_data":
-                        f"review:queue:{symbol}:{timeframe}"
-                },
-                {
-                    "text":
-                        "\u2705 \u0425\u043e\u0440\u043e\u0448\u0438\u0439",
-
-                    "callback_data":
-                        f"review:good:{symbol}:{timeframe}"
-                }
-            ],
-            [
-                {
-                    "text":
-                        "\u274C \u0413\u0435\u043e\u043c\u0435\u0442\u0440\u0438\u044f",
-
-                    "callback_data":
-                        f"review:geometry:{symbol}:{timeframe}"
-                },
-                {
-                    "text":
-                        "\u2693 Anchor/START",
-
-                    "callback_data":
-                        f"review:anchor:{symbol}:{timeframe}"
-                }
-            ]
-            ]
-        )
+        workspace_base = os.environ.get("BYBITSCANNER_TERMINAL_HTTPS_URL", "").strip()
+        workspace_url = urlsplit(workspace_base)
+        if (workspace_url.scheme == "https" and workspace_url.netloc
+                and not workspace_url.username and not workspace_url.password
+                and not workspace_url.fragment):
+            links = []
+            for mode, title in (("EDITOR", "✏️ Редактор"), ("TERMINAL", "🖥 Терминал")):
+                query = urlencode({"mode": mode, "symbol": symbol, "timeframe": (
+                    timeframe if timeframe.endswith(("m", "h", "d", "s")) else f"{timeframe}m"
+                )})
+                links.append({"text": title, "url": urlunsplit((
+                    workspace_url.scheme, workspace_url.netloc, workspace_url.path,
+                    query, ""
+                ))})
+            keyboard.append(links)
+        else:
+            # Do not advertise broken links or expose an untrusted HTTP endpoint.
+            # Missing HTTPS configuration must be surfaced by deployment checks.
+            pass
 
     return {
         "inline_keyboard": keyboard
