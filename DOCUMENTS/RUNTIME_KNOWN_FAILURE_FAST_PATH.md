@@ -64,6 +64,74 @@ For Scanner / Robot / Telegram / backend incidents, classify in this order:
    - Do not diagnose Scanner control from window presence alone.
    - Final Scanner visual acceptance remains one complete owner-manual universe pass with ordinary Telegram delivery.
 
+## Historical PAPER exposure → recovery → acceptance — 2026-10-20
+
+**Trigger only:** owner wants to resume a PAPER acceptance run and earlier
+Robot positions remain open after runtime downtime. Do not automatically
+perform this entire procedure for a clean start. Case study:
+LSKUSDT LONG and SAMSUNGUSDT SHORT, entered 2026-10-19; runtime stopped
+after ~20:40 UTC. A historical minute-kline STOP touch on LSK and TAKE
+touch on SAMSUNG on 2026-10-20 did **not** mean PAPER orders had executed.
+The two trade exits were absent in the working SQLite/WAL. The initial LSK
+loss estimate had a factor-of-ten error; use quantity × actual price delta
+and separately account for entry/exit fees rather than copying old figures.
+
+**One bounded end-to-end recovery brief, not serial investigations:**
+
+1. **One host snapshot:** prove canonical PAPER DB identity (including WAL),
+   runtime/process and listener ownership, durable Robot admission status,
+   open trade/position/protection/obligation/limit/candidate records, and a
+   verified SQLite Backup API snapshot. Reuse fresh evidence; do not change
+   unrelated user files or LIVE.
+2. **Separate facts:** last healthy live-protection observation, true durable
+   executions and current open exposure. Historical public *last* and *mark*
+   candles may establish probable STOP/TAKE contact and order, but not bid/ask
+   fills during downtime. Label any trigger-price PnL hypothetical; do not
+   invent executions or merge scenario outcomes with realized PnL.
+3. **Pick recovery route once:** existing Robot restart + protection-crossing
+   evaluated on a **fresh real book** gives a current-market PAPER close when
+   gates allow. Historical backfill is a different, explicitly authorized
+   durable-data modification requiring its own proof and provenance; it is not
+   the default. PR #545 ONGUSDT owner attestation applies to LIVE *commands*,
+   not PAPER trades or positions; do not repeat that search for this class.
+4. **No new-entry window:** before any backend start, prove *every relevant*
+   admission and order-entry path is fenced; `READY` with APPROVED retest
+   candidates can open fresh exposure. In the 2026-10-20 case,
+   `pause_robot_fallback.py` while backend was down moved durable state to
+   `RECONCILIATION_REQUIRED`; the normal `RobotBreakoutMonitor` admission
+   gate rejected entry in that state, while protection processing was coded
+   independently. This was proven by source inspection and state probe,
+   **not** yet by a running-paper result. Do not generalize to uninspected
+   alternative entry routes, and do not mark safe from source inspection
+   alone. No direct SQLite edit to force READY/STOPPED.
+5. **Owner runtime boundary:** Scanner starts remain exclusively owner-manual;
+   owner-only launch/approval constraints from ASSISTANT_PROTOCOL apply to
+   backend/Robot as well where prescribed. The agent prepares the single
+   verified launch surface and separately observes the outcome; never claim
+   a prompt itself authorized a prohibited launch. Do not start Scanner or
+   open PAPER_AUTO during position recovery.
+6. **Observe closure and continue:** require actual exit executions and
+   `robot_trades` exit reason/time, FLAT position projection, coherent
+   protection/candidate/ledger/obligations, no unexpected new fills, and
+   actual fees/net PnL. If not flat, name the one evidenced blocker and stop
+   unsafe progression. If flat, use canonical reconciliation (may land PAUSED),
+   then advance to the **already-requested** single owner-controlled Scanner
+   + PAPER Robot + integrated feature acceptance run; no extra generic
+   regression campaign.
+
+**Evidence checkpoint (2026-10-20):** backup created at
+`C:\BybitScanner_pc_backup_20261020_preclose\paper_runtime.sqlite3`
+and integrity checked, durable admission moved to
+`ROBOT_RUNNING/RECONCILIATION_REQUIRED`, zero outstanding entry limits
+reported. **Backend launch and both position closures were not observed
+at this checkpoint.** Do not report recovery PASS or E2E READY.
+
+**Time-saving stop rule:** after one bounded confirmation of the known
+signature, take the canonical authorized transition. Further research is
+justified only by a proven mandatory safety unknown or contradictory
+evidence; return to the same original trading acceptance goal immediately
+after that blocker is resolved.
+
 ## 2026-09-27 incident — closed path
 
 Observed sequence after abrupt power loss and local migration to canonical desktop wrappers:
