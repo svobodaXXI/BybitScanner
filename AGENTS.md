@@ -7,6 +7,25 @@ at `DOCUMENTS/AGENT_GUIDE_FULL.md`, authoritative for its applicable contracts.
 Current owner instruction and actual repository/host evidence outrank dated
 historical task snapshots; normative safety and approval contracts still apply.
 
+## Owner time and trust — mandatory at every new task
+
+**Owner escalation (2026-10-20):** Repeated decomposition of one end-to-end
+PAPER goal into serial investigations, repeated prompts, and avoidable owner
+approvals caused substantial lost time and damaged trust. The owner explicitly
+warned that continuing this behavior may lead them to stop using ChatGPT.
+Treat this as a concrete cost of non-delivery, not as a request for more
+process documentation.
+
+**Operational rule:** Start with the owner's measurable end result; delegate
+or complete the whole authorized bounded workflow in one pass, including
+necessary inspection, minimal fix, targeted proof and the next operational
+handoff. Reuse existing findings; do not create new diagnostic quests or ask
+the owner to shuttle intermediate reports. Escalate only a genuinely required
+owner-only runtime/merge/trading authorization or proven critical safety
+blocker, explaining the single needed decision. Never suppress safety gates,
+assume authorization, or claim success without observed evidence. After the
+blocker is resolved, return directly to the original end result.
+
 ## Fast task entry
 
 1. Identify the owner's actual outcome, intended GitHub ref or local worktree,
