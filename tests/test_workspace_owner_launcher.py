@@ -1,10 +1,11 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 import workspace_owner_launcher as launcher
 
 
 class WorkspaceOwnerLauncherTests(unittest.TestCase):
-    @patch.object(launcher.os, "name", "nt")
+    @patch.object(launcher, "os", SimpleNamespace(name="nt"))
     @patch.object(launcher.subprocess, "Popen")
     @patch.object(launcher.Path, "is_file", return_value=True)
     def test_only_valid_target_reaches_launcher(self, file, popen):
