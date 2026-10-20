@@ -25,10 +25,11 @@ from __future__ import annotations
 import hashlib
 from contextlib import contextmanager
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Callable, Mapping, Protocol
 
+import mirror_retest_robot as mirror
 import robot_entry_limit
 import robot_l_shape
 import robot_protection
@@ -41,7 +42,10 @@ from scanner_geometry_cursor import (
     load_scanner_catchup_closed_candles,
     project_latest_geometry_index,
 )
-from terminal.api.models import ClientActionId, CommandResultStatus, MarketCommandRequest, PaperLimitCancelRequest
+from terminal.api.models import (
+    ClientActionId, CommandResultStatus, MarketCommandRequest, PaperLimitCancelRequest,
+    PaperStopMutationRequest,
+)
 from terminal.application.command_identity import CommandIdentityCandidate
 from terminal.application.ikigai_box_first_grid import build_box_first_grid_specs
 from terminal.application.ikigai_box_catchup import (
@@ -198,8 +202,11 @@ class RobotBreakoutMonitor:
         release_entry_coverage: Callable[[str], None] | None = None,
         incident_dir=None,
         emergency_close_path: EmergencyClosePath | None = None,
+        mirror_policy: "mirror.MirrorRobotPolicy | None" = None,
     ) -> None:
         self._emergency_close_path = emergency_close_path
+        # MIRROR RETEST overlay for Box attempts (OFF unless a policy is bound; see mirror_retest_robot).
+        self._mirror_policy = mirror_policy
         # Resting entry LIMITs become fill-capable the moment they are durable, so
         # protection coverage for the symbol must already be listening. Without a
         # bound arm this monitor never creates a resting entry LIMIT (fail closed).
@@ -296,8 +303,11 @@ class RobotBreakoutMonitor:
                         record.robot_state is not None
                         and record.signal_snapshot.get("pattern") == "IKIGAI_BOX"
                         and record.robot_state.get("phase") == "BOX_ENTRY_READY"
-                        and self._sync_box_trade(
-                            record, record.robot_state.get("execution") or {},
+                        and (
+                            self._advance_mirror_box(record)
+                            or self._sync_box_trade(
+                                record, record.robot_state.get("execution") or {},
+                            )
                         )
                     ):
                         advanced.append(record.candidate_id)
@@ -635,6 +645,8 @@ class RobotBreakoutMonitor:
         execution = dict(record.robot_state.get("execution") or {})
         source = self._box_source(record, execution)
         catchup = execution.get("box_catchup")
+        if isinstance(catchup, Mapping) and self._advance_mirror_box(record):
+            return True
 
         new_entry_admitted, terminal_stop = self._read_admission_gate()
         existing_ownership = (
@@ -692,6 +704,18 @@ class RobotBreakoutMonitor:
             block_reason = self._pre_entry_block_reason(record)
             if block_reason is not None:
                 self._invalidate_pre_entry_candidate(record, reason=block_reason)
+                return True
+            if self._mirror_policy is not None and mirror.mirror_record(execution) is None:
+                # Decide MIRROR membership once, before any Box order or ownership exists.
+                execution["mirror"] = self._mirror_attachment(record)
+                if execution["mirror"].get("decision") == mirror.BLOCKED:
+                    # An explicit MIRROR attempt whose R0/gate/terms failed never trades as a plain Box.
+                    self._invalidate_pre_entry_candidate(
+                        replace(record, robot_state={**record.robot_state, "execution": execution}),
+                        reason=f"MIRROR {execution['mirror'].get('reason')}",
+                    )
+                    return True
+                self._save_execution_keep_status(record, execution)
                 return True
             # Prove the immutable FLAT/journal baseline before deriving any
             # executable catch-up plan. This is not order ownership and does
@@ -909,6 +933,7 @@ class RobotBreakoutMonitor:
                 existing_stop=existing_stop,
             )
             current_stop = projection.stop_loss if projection is not None else None
+            plan = self._mirror_adjust_stop(record, source, plan, proof, current_stop)
             if current_stop is None:
                 stop_result = robot_protection.submit_box_stop_only(
                     self._action_executor, plan,
@@ -1005,11 +1030,21 @@ class RobotBreakoutMonitor:
             )
         self._record_box_first_fill_protection(record, plan, proof, now_ms)
 
-        for spec in build_box_exit_specs(
-            source,
-            slots=ready_box_exit_slots(source, proof),
-            created_at_ms=now_ms,
-        ):
+        mirror_execution = record.robot_state.get("execution") or {}
+        if mirror.retest_exit_requested(mirror_execution):
+            exit_specs = ()                         # the MIRROR remainder close owns the exit now
+        elif mirror.is_attached(mirror_execution):
+            exit_specs = mirror.partial_exit_specs(
+                source, mirror.mirror_record(mirror_execution),
+                slots=ready_box_exit_slots(source, proof), created_at_ms=now_ms,
+            )
+        else:
+            exit_specs = build_box_exit_specs(
+                source,
+                slots=ready_box_exit_slots(source, proof),
+                created_at_ms=now_ms,
+            )
+        for spec in exit_specs:
             self._store().create_box_owned_paper_limit(
                 source.candidate_id,
                 role="EXIT",
@@ -1140,6 +1175,8 @@ class RobotBreakoutMonitor:
             trade.trade_id,
             exit_time_ms=proof.last_execution_at_ms,
             exit_price=proof.average_exit,
+            # A MIRROR remainder closed at the retest is the campaign TAKE (owner rule 6); its
+            # MIRROR identity stays in robot_state.execution["mirror"]["exit"].
             exit_reason="TAKE",
             realized_pnl_usdt=proof.realized_pnl,
             realized_pnl_pct=realized_pct,
@@ -2579,6 +2616,253 @@ class RobotBreakoutMonitor:
             )
         except ConcurrentUpdate:
             pass
+
+    # --- MIRROR RETEST overlay (mirror_retest_robot) -------------------------------------------------
+
+    def _save_execution_keep_status(
+        self, record: RobotCandidateRecord, execution: Mapping[str, object],
+    ) -> bool:
+        """Persist only ``execution["mirror"]`` on the freshest revision; status and every other key stay."""
+        fresh = self._store().get_robot_candidate(record.candidate_id)
+        if fresh is None or fresh.status not in {"APPROVED", "OPEN"}:
+            return False
+        state = dict(fresh.robot_state or {})
+        merged = dict(state.get("execution") or {})
+        merged["mirror"] = execution["mirror"]
+        state["execution"] = merged
+        try:
+            self._store().save_robot_candidate_state(
+                fresh.candidate_id,
+                status=fresh.status,
+                robot_state=state,
+                expected_revision=fresh.state_revision,
+                updated_at_ms=self._now_ms(),
+            )
+        except ConcurrentUpdate:
+            return False
+        return True
+
+    def _mirror_attachment(self, record: RobotCandidateRecord) -> dict[str, object]:
+        """Durable MIRROR decision for a Box attempt; any failure leaves a plain Box attempt."""
+        now_ms = self._now_ms()
+        try:
+            siblings = self._store().load_robot_candidates_for_symbol(
+                self._account_id, record.symbol,
+            )
+            campaign = mirror.find_active_campaign(
+                self._mirror_policy,
+                [item for item in siblings
+                 if (item.signal_snapshot or {}).get("pattern") in mirror.WEDGE_PATTERNS],
+                symbol=record.symbol.value,
+                direction=str(record.robot_state.get("direction", "")).upper(),
+                now_ms=now_ms,
+            )
+            prior = []
+            if campaign is not None:
+                for item in siblings:
+                    other = mirror.mirror_record((item.robot_state or {}).get("execution"))
+                    if (
+                        item.candidate_id == record.candidate_id
+                        or other is None
+                        or other.get("decision") != mirror.ATTACHED
+                        or other.get("campaign_id") != campaign["campaign_id"]
+                    ):
+                        continue
+                    closed = item.status not in {"APPROVED", "OPEN"}
+                    net = None
+                    if closed:
+                        trade = self._store().get_robot_trade(f"robot-trade-{item.candidate_id}")
+                        if trade is None:
+                            net = Decimal("0")       # ended before any fill
+                        elif trade.realized_pnl_usdt is not None and trade.fees_costs_usdt is not None:
+                            net = trade.realized_pnl_usdt - trade.fees_costs_usdt
+                    prior.append({"mirror": other, "closed": closed, "net_pnl_usdt": net})
+            return mirror.plan_attachment(
+                self._mirror_policy,
+                box_snapshot=self._box_source(record, record.robot_state.get("execution") or {}).signal_snapshot,
+                symbol=record.symbol.value,
+                campaign=campaign,
+                prior_attempts=prior,
+                now_ms=now_ms,
+            )
+        except Exception as error:
+            return {
+                "strategy_id": mirror.STRATEGY_ID,
+                "decision": mirror.NOT_ATTACHED,
+                "reason": f"mirror_error:{type(error).__name__}",
+                "decided_at_ms": now_ms,
+            }
+
+    def _advance_mirror_box(self, record: RobotCandidateRecord) -> bool:
+        """Advance the attached campaign by closed candles; close the remainder after a proven retest."""
+        execution = dict((record.robot_state or {}).get("execution") or {})
+        if not mirror.is_attached(execution):
+            return False
+        if mirror.retest_exit_requested(execution):
+            return self._mirror_close_remainder(record, execution)
+        if self._mirror_policy is None:
+            return False
+        record_mirror = dict(mirror.mirror_record(execution))
+        boundary = mirror.boundary_from_dict(record_mirror["boundary"])
+        state, blocked = mirror.advance_boundary(
+            self._mirror_policy,
+            boundary.boundary_id.split(":", 1)[0],
+            record.symbol.value,
+            boundary,
+            record_mirror["state"],
+            now_ms=self._now_ms(),
+        )
+        if state == record_mirror["state"] and blocked == bool(record_mirror.get("data_blocked")):
+            return False
+        record_mirror["state"] = state
+        record_mirror["data_blocked"] = blocked
+        if state.get("phase") == mirror.PHASE_RETEST_PROVEN:
+            record_mirror["exit"] = {
+                "reason": mirror.EXIT_REASON_RETEST,
+                "requested_at_ms": self._now_ms(),
+                "retest": state.get("retest"),
+            }
+        execution["mirror"] = record_mirror
+        return self._save_execution_keep_status(record, execution)
+
+    def _mirror_close_remainder(
+        self, record: RobotCandidateRecord, execution: dict[str, object],
+    ) -> bool:
+        """Close what is left with the existing Box-owned EXIT MARKET (slot 0); finalization is shared."""
+        source = self._box_source(record, execution)
+        try:
+            proof = self._store().prove_box_owned_position(source.candidate_id)
+        except Exception as error:
+            self._escalate_reconciliation(
+                "ROBOT_MIRROR_OWNERSHIP_MISMATCH "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id} reason={error}"
+            )
+            return False
+        if proof.remaining_quantity == 0:
+            if proof.entry_quantity == 0:
+                # The campaign ended before any fill: no further attempt may start (owner rule 7).
+                self._mirror_cancel_owned_limits(record, source, roles={"ENTRY", "EXIT"})
+                self._invalidate_pre_entry_candidate(
+                    record, reason="MIRROR campaign retest before Box entry",
+                )
+                return True
+            return self._sync_box_trade(record, execution, create_trade=False)
+
+        record_mirror = dict(mirror.mirror_record(execution))
+        raw_intent = record_mirror.get("close_intent")
+        if isinstance(raw_intent, Mapping):
+            plan = restore_box_market_plan(raw_intent)
+            if plan.slot != 0 or plan.quantity != proof.remaining_quantity:
+                self._escalate_reconciliation(
+                    "ROBOT_MIRROR_CLOSE_INTENT_CONFLICT "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+                )
+                return False
+        else:
+            close = self._emergency_close_path
+            owner_path = self._get_market_book is None and close is not None
+            get_book = close.get_market_book if owner_path else self._get_market_book
+            preflight = close.market_preflight if owner_path else self._market_preflight
+            if get_book is None or preflight is None:
+                return False
+            book = get_book(record.symbol.value)
+            if book is None:
+                return False
+            plan = mirror.retest_close_market_plan(source, book, quantity=proof.remaining_quantity)
+            admitted = preflight(plan.request, plan.identity)
+            if (
+                not getattr(admitted, "admitted", False)
+                or getattr(admitted, "normalized_quantity", None) != plan.quantity
+            ):
+                return False
+            record_mirror["close_intent"] = durable_box_market_intent(plan)
+            execution["mirror"] = record_mirror
+            if not self._save_execution_keep_status(record, execution):
+                return False
+
+        self._store().reserve_box_order_identity(
+            source.candidate_id, order_id=plan.order_id, role="EXIT", slot=0,
+        )
+        # Nothing owned may rest after the close: no re-entry, no stray partial EXIT.
+        self._mirror_cancel_owned_limits(record, source, roles={"ENTRY", "EXIT"}, keep=plan.order_id)
+        close = self._emergency_close_path
+        owner_path = self._get_market_book is None and close is not None
+        submit = close.submit_market if owner_path else self._submit_market
+        if submit is None:
+            return False
+        result = submit(plan.request, plan.identity)
+        if getattr(result, "status", None) != CommandResultStatus.COMPLETED:
+            return True
+        return self._sync_box_trade(record, execution, create_trade=False) or True
+
+    def _mirror_cancel_owned_limits(
+        self, record: RobotCandidateRecord, source: RobotCandidateRecord, *,
+        roles: set[str], keep: OrderId | None = None,
+    ) -> None:
+        now_ms = self._now_ms()
+        for owner in self._store().load_box_order_ownership(source.candidate_id):
+            if owner.role not in roles or owner.order_id == keep:
+                continue
+            limit = self._store().get_paper_limit(owner.order_id.value, self._account_id)
+            if limit is None or limit.status in INACTIVE_LIMIT_STATUSES:
+                continue
+            digest = hashlib.sha256(
+                f"{source.candidate_id}\0mirror-cancel\0{owner.order_id.value}".encode("utf-8")
+            ).hexdigest()[:32]
+            self._store().cancel_paper_limit(
+                client_action_id=f"box-mirror-cancel-{digest}",
+                request_fingerprint=hashlib.sha256(
+                    f"{record.symbol.value}\0{owner.order_id.value}".encode("utf-8")
+                ).hexdigest(),
+                order_id=owner.order_id,
+                trading_account_id=self._account_id,
+                updated_at_ms=now_ms,
+            )
+
+    def _mirror_adjust_stop(self, record, source, plan, proof, current_stop):
+        """After a proven partial TAKE: stop new entries and tighten the remainder STOP to net break-even."""
+        execution = dict((record.robot_state or {}).get("execution") or {})
+        if (
+            not mirror.is_attached(execution)
+            or proof.exit_quantity <= 0
+            or proof.remaining_quantity <= 0
+        ):
+            return plan
+        # The setup's TAKE is realized: untouched entries must not add exposure (as plain Box at flat).
+        self._mirror_cancel_owned_limits(record, source, roles={"ENTRY"})
+        record_mirror = dict(mirror.mirror_record(execution))
+        be_stop = record_mirror.get("be_stop")
+        if be_stop is None and self._get_market_book is not None:
+            book = self._get_market_book(record.symbol.value)
+            levels = None if book is None else (book.bids if plan.direction == "LONG" else book.asks)
+            if levels:
+                policy = self._mirror_policy
+                computed = mirror.break_even_stop(
+                    policy.fee_rate if policy else mirror.PAPER_FEE_RATE,
+                    policy.stop_slippage_fraction if policy else mirror.STOP_SLIPPAGE_FRACTION,
+                    direction=plan.direction,
+                    proof=proof,
+                    current_stop=current_stop,
+                    mark=Decimal(str(levels[0].price.value)),
+                    tick=Decimal(str((source.signal_snapshot.get("inputs") or {})["tick_size"])),
+                )
+                if computed is not None:
+                    record_mirror["be_stop"] = str(computed)
+                    execution["mirror"] = record_mirror
+                    if self._save_execution_keep_status(record, execution):
+                        be_stop = record_mirror["be_stop"]
+        if be_stop is None:
+            return plan
+        stop = mirror.tighter_stop(plan.direction, Decimal(str(be_stop)), plan.stop_price)
+        if stop == plan.stop_price:
+            return plan
+        return replace(
+            plan,
+            stop_price=stop,
+            stop_request=PaperStopMutationRequest(
+                robot_protection._action_id(plan.candidate_id, "stop", stop), plan.symbol, stop,
+            ),
+        )
 
     def _persist_execution(
         self, record: RobotCandidateRecord, execution: Mapping[str, object],

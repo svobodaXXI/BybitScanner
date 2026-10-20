@@ -36,6 +36,7 @@ from terminal.application.robot_autopilot_shadow import (
     owner_autopilot_mode, resolve_autopilot_evidence_target,
 )
 from terminal.application.wedge_source_terminal_producer import WedgeTerminalProducerWorker
+from mirror_retest_robot import build_runtime_policy as build_mirror_robot_policy
 from terminal.application.robot_breakout_monitor import (
     DEFAULT_TICK_INTERVAL_S, EmergencyClosePath, INACTIVE_LIMIT_STATUSES, RobotBreakoutMonitor,
 )
@@ -935,6 +936,13 @@ class PaperRuntime:
             arm_entry_coverage=self._arm_robot_entry_coverage,
             release_entry_coverage=self._release_robot_entry_coverage,
             incident_dir=self._robot_incident_dir,
+            # MIRROR RETEST overlay: None (off) unless BYBITSCANNER_MIRROR_RETEST_ROBOT=1.
+            mirror_policy=build_mirror_robot_policy(
+                database_path=database_path,
+                account_id=self._paper_account_id,
+                quantity_step=lambda symbol: self._instrument_provider(symbol).quantity_step,
+                daily_marks=self._prepare_autopilot_daily_marks,
+            ),
         )
         if self._robot_command_dispatcher is not None:
             self._robot_breakout_monitor.start()
