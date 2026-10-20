@@ -6,12 +6,15 @@ for (const [mode, symbol, timeframe] of [
 ] as const) {
   test(`deep-link ${mode}/${symbol} requires mock activation ACK`, async ({ page }) => {
     const posts: string[] = [];
+    const streamRequests: string[] = [];
     await page.routeWebSocket("**/api/workspace/stream?*", (ws) => {
       const url = new URL(ws.url());
       const streamSymbol = url.searchParams.get("symbol");
       const interval = url.searchParams.get("interval");
       if (streamSymbol !== symbol) return;
-      ws.send(JSON.stringify({
+      streamRequests.push(streamSymbol);
+      // Wait for the browser to install onmessage after WebSocket opens.
+      setTimeout(() => ws.send(JSON.stringify({
         stream_id: "mock-stream-101", event_sequence: 1, event_timestamp: Date.now(),
         symbol, workspace_generation: 101, kind: "workspace_snapshot", state: "READY",
         instrument: { symbol, tick_size: "0.5", quantity_step: "0.001" },
@@ -26,7 +29,7 @@ for (const [mode, symbol, timeframe] of [
           projection_version: 1,
           candles: [{ startTime: Date.now() - 60000, open: "100", high: "101", low: "99", close: "100" }],
         },
-      }));
+      })), 200);
     });
     await page.route("**/api/**", async (route) => {
       const request = route.request();
@@ -49,6 +52,7 @@ for (const [mode, symbol, timeframe] of [
     await expect(page.getByText("Active mode", { exact: false })).toBeVisible();
     await expect(page.getByRole("heading", { name: mode })).toBeVisible();
     await expect.poll(() => posts).toContain(symbol);
+    await expect.poll(() => streamRequests).toContain(symbol);
     await expect(page.getByText(symbol, { exact: true }).first()).toBeVisible();
     await expect(page.getByRole("button", { name: "BUY", exact: true })).toBeDisabled().catch(() => {
       // In EDITOR the trading controls are intentionally absent.
