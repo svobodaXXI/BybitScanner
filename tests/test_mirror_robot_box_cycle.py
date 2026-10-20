@@ -62,7 +62,9 @@ def wedge_snapshot(level=110.0):
 class Candles:
     """``BybitClosedKlineSource``-like: closed 5m candles up to ``now`` and complete 1m proof on request."""
 
-    def __init__(self):
+    def __init__(self, on_time=None):
+        self.on_time = on_time or (lambda now: None)
+        self.calls = 0
         self.coarse = [candle(1_200_000, 112, 113, 111, 112),
                        candle(BREAKOUT_OPEN, 111, 111.5, 104, 105)]          # naked DOWN through 110
         t = BREAKOUT_OPEN + FIVE
@@ -73,6 +75,7 @@ class Candles:
         self.fine_calls = 0
 
     def closed_candles(self, candidate_id, symbol, after_close_ms):
+        self.calls += 1
         return [c for c in self.coarse if c["close_time_ms"] > after_close_ms and c["close_time_ms"] <= self.now]
 
     def fine_candles(self, symbol, coarse):
@@ -81,10 +84,11 @@ class Candles:
                        coarse["close"]) | {"close_time_ms": coarse["open_time_ms"] + (i + 1) * ONE}
                 for i in range(5)]
 
-    def add(self, o, h, low, c):
-        t = self.coarse[-1]["close_time_ms"]
+    def add(self, o, h, low, c, *, skip=0):
+        t = self.coarse[-1]["close_time_ms"] + skip * FIVE
         self.coarse.append(candle(t, o, h, low, c))
         self.now = t + FIVE
+        self.on_time(self.now + 1_000)
 
 
 class MirrorBoxCycleTests(unittest.TestCase):
@@ -99,7 +103,7 @@ class MirrorBoxCycleTests(unittest.TestCase):
                                               reason=None, expected_version=1, updated_at_ms=1)
         self.clock = _Clock(NOW)
         self.executor = _FakeActionExecutor(self.store, ACCOUNT_ID, self.clock)
-        self.candles = Candles()
+        self.candles = Candles(on_time=lambda now: setattr(self.clock, "value", now))
         self.risk_limit = Decimal("1000")
         self.book = book("93.5")
         self.market_submissions = []
@@ -326,12 +330,79 @@ class MirrorBoxCycleTests(unittest.TestCase):
         order = self.store.get_paper_limit(self.owned(source, "EXIT", 1).order_id.value, ACCOUNT_ID)
         self.assertEqual(order.quantity, Decimal("2"))
 
-    def test_unknown_account_risk_or_exhausted_budget_never_attaches(self):
+    def test_unknown_r0_blocks_the_mirror_attempt_instead_of_trading_a_plain_box(self):
         self.add_wedge()
         self.risk_limit = None
         source, candidate = self.add_box()
+        monitor = self.monitor()
+        self.assertEqual(monitor.tick(), (candidate.candidate_id,))
+        record = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(record.status, "INVALIDATED")
+        mirror_record = record.robot_state["execution"]["mirror"]
+        self.assertEqual((mirror_record["decision"], mirror_record["reason"]), (mirror.BLOCKED, "r0_unavailable"))
+        self.assertIn("MIRROR r0_unavailable", record.robot_state["execution"]["stopped_without_entry_reason"])
+        for _ in range(3):
+            monitor.tick()
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())   # no order ever
+        self.assertEqual(self.market_submissions, [])
+
+    def test_exhausted_campaign_budget_blocks_the_next_attempt(self):
+        self.add_wedge()
+        self.risk_limit = Decimal("20")                                       # R0 20 < worst case 25.6
+        source, candidate = self.add_box()
         self.monitor().tick()
-        self.assertEqual(self.execution(candidate)["mirror"]["reason"], "r0_unavailable")
+        record = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertEqual(record.robot_state["execution"]["mirror"]["decision"], mirror.BLOCKED)
+        self.assertIn("campaign_budget_exceeded", record.robot_state["execution"]["mirror"]["reason"])
+
+    def test_plain_box_reasons_are_never_blocked(self):
+        for reason in sorted(mirror.PLAIN_BOX_REASONS):
+            self.assertIn(reason, {"no_active_campaign", "direction_mismatch", "boundary_not_beyond_box_take"})
+
+    # Fix 3: network only when a new closed candle can exist; replays are cached.
+    def test_open_mirror_trade_makes_no_request_until_a_new_candle_closes(self):
+        self.add_wedge()
+        source, candidate = self.add_box()
+        monitor = self.monitor()
+        self.open_first_slot(monitor, candidate)
+        before = self.candles.calls
+        for _ in range(5):                                                     # same 5m interval: nothing new
+            self.clock.value += 10_000
+            monitor.tick()
+        self.assertEqual(self.candles.calls, before)
+        self.candles.add(100, 104, 99, 103)                                    # one candle closes
+        monitor.tick()
+        self.assertEqual(self.candles.calls, before + 1)
+        monitor.tick()
+        self.assertEqual(self.candles.calls, before + 1)
+
+    def test_campaign_replay_is_cached_across_attachments_on_the_same_symbol(self):
+        self.add_wedge()
+        policy = self.policy()
+        wedge = self.store.get_robot_candidate("wedge-1")
+        first = mirror.find_active_campaign(policy, [wedge], symbol=SYMBOL, direction="LONG", now_ms=NOW + 1_000)
+        calls = self.candles.calls
+        again = mirror.find_active_campaign(policy, [wedge], symbol=SYMBOL, direction="LONG", now_ms=NOW + 2_000)
+        self.assertEqual(self.candles.calls, calls)                             # no request: no new closed candle
+        self.assertEqual(again["campaign_id"], first["campaign_id"])
+        self.candles.add(100, 101, 99, 100)
+        later = mirror.find_active_campaign(policy, [wedge], symbol=SYMBOL, direction="LONG", now_ms=self.candles.now + 1)
+        self.assertEqual(self.candles.calls, calls + 2)                         # one short call per boundary
+        self.assertEqual(later["state"]["cursor_close_time_ms"], self.candles.now)
+
+    def test_a_finished_campaign_is_never_replayed_again(self):
+        self.add_wedge()
+        policy = self.policy()
+        wedge = self.store.get_robot_candidate("wedge-1")
+        self.candles.add(104, 110.5, 103, 109)                                  # retest: campaign terminal
+        self.assertIsNone(mirror.find_active_campaign(policy, [wedge], symbol=SYMBOL, direction="LONG",
+                                                      now_ms=self.candles.now + 1))
+        calls = self.candles.calls
+        self.candles.add(100, 101, 99, 100)
+        self.assertIsNone(mirror.find_active_campaign(policy, [wedge], symbol=SYMBOL, direction="LONG",
+                                                      now_ms=self.candles.now + 1))
+        self.assertEqual(self.candles.calls, calls + 1)                         # only the still-waiting upper line
 
     def test_boundary_not_beyond_the_box_take_never_attaches(self):
         self.add_wedge(level=98.0)                                             # line below the Box TAKE 99.2
@@ -347,9 +418,7 @@ class MirrorBoxCycleTests(unittest.TestCase):
         source, candidate = self.add_box()
         monitor = self.monitor()
         self.open_first_slot(monitor, candidate)
-        t = self.candles.coarse[-1]["close_time_ms"] + FIVE                    # one 5m candle missing
-        self.candles.coarse.append(candle(t, 104, 110.5, 103, 109))
-        self.candles.now = t + FIVE
+        self.candles.add(104, 110.5, 103, 109, skip=1)                          # one 5m candle missing
         monitor.tick()
         record = self.execution(candidate)["mirror"]
         self.assertTrue(record["data_blocked"])
@@ -394,7 +463,7 @@ class MirrorPolicyUnitTests(unittest.TestCase):
                   "net_pnl_usdt": Decimal("-40")}]
         decision = mirror.plan_attachment(policy, box_snapshot=box_snapshot(), symbol=SYMBOL, campaign=campaign,
                                           prior_attempts=prior, now_ms=NOW)
-        self.assertEqual(decision["decision"], mirror.NOT_ATTACHED)            # 40 realized + 25.6 > 57.52
+        self.assertEqual(decision["decision"], mirror.BLOCKED)                 # 40 realized + 25.6 > 57.52
         self.assertIn("campaign_budget_exceeded", decision["reason"])
         profit = [{"mirror": {"r0_usdt": "57.52", "worst_case_usdt": "25.6"}, "closed": True,
                    "net_pnl_usdt": Decimal("500")}]
@@ -413,7 +482,7 @@ class MirrorPolicyUnitTests(unittest.TestCase):
         live = [{"mirror": {"r0_usdt": "57.52", "worst_case_usdt": "25.6"}, "closed": False}] * 2
         decision = mirror.plan_attachment(policy, box_snapshot=box_snapshot(), symbol=SYMBOL, campaign=campaign,
                                           prior_attempts=live, now_ms=NOW)
-        self.assertEqual(decision["decision"], mirror.NOT_ATTACHED)            # 3 x 25.6 > 57.52
+        self.assertEqual(decision["decision"], mirror.BLOCKED)                 # 3 x 25.6 > 57.52
 
 
 if __name__ == "__main__":
@@ -455,3 +524,74 @@ class MirrorFineProofTests(unittest.TestCase):
         source.fine_ok = True
         proven, _ = mirror.advance_boundary(policy, "w", SYMBOL, boundary, held)
         self.assertEqual(proven["phase"], PHASE_RETEST_PROVEN)
+
+
+class MirrorR0SourceTests(unittest.TestCase):
+    """R0 reuses Autopilot's marks-aware daily gate and counts open positions and pending Box entries."""
+
+    def test_account_facts_use_the_autopilot_daily_gate_with_the_runtime_marks(self):
+        import mirror_retest_sidecar
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "paper.sqlite3"
+            with SQLiteStore.open(db):
+                pass
+            reader = SQLiteStore.open_reader(db)
+            marks = lambda: ({"BTCUSDT": object()}, 5000)
+            seen = {}
+
+            def fake_gate(store, account, *, now_ms, decisions, enabled, daily_marks):
+                seen.update(account=account, now_ms=now_ms, daily_marks=daily_marks)
+                return {"latched": False}
+
+            with patch("terminal.application.robot_autopilot_shadow._daily_loss_gate", fake_gate):
+                with reader.read_snapshot():
+                    facts = mirror_retest_sidecar.read_account_facts(reader, ACCOUNT_ID, now_ms=NOW, daily_marks=marks)
+            reader.close()
+        self.assertIs(seen["daily_marks"], marks)                               # the same provider, not a copy
+        self.assertEqual(facts.daily_gate, {"latched": False})
+
+    def test_runtime_policy_passes_the_runtime_marks_to_the_r0_read(self):
+        import mirror_retest_sidecar
+        from unittest.mock import patch
+        marks = lambda: ({}, 5000)
+        captured = {}
+
+        def fake_read(reader, account, *, now_ms, daily_marks=None, environ=None):
+            captured["daily_marks"] = daily_marks
+            return mirror_retest_sidecar.AccountFacts()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "paper.sqlite3"
+            with SQLiteStore.open(db):
+                pass
+            policy = mirror.build_runtime_policy(database_path=db, account_id=ACCOUNT_ID,
+                                                 quantity_step=lambda s: Decimal("1"), daily_marks=marks,
+                                                 environ={mirror.ENV_FLAG: "1"})
+            with patch("mirror_retest_sidecar.read_account_facts", fake_read):
+                self.assertIsNone(policy.account_risk_limit_usdt(NOW))         # gate unknown -> no R0
+        self.assertIs(captured["daily_marks"], marks)
+
+    def test_pending_box_entries_and_open_positions_are_committed_worst_cases(self):
+        harness = MirrorBoxCycleTests("test_full_mirror_cycle_partial_take_break_even_retest_close_and_net_pnl")
+        harness.setUp()
+        try:
+            harness.add_wedge()
+            source, candidate = harness.add_box()
+            harness.open_first_slot(harness.monitor(), candidate)              # P1 filled, P2..P4 resting
+            import mirror_retest_sidecar
+            from unittest.mock import patch
+            reader = SQLiteStore.open_reader(harness.db)
+            try:
+                with patch("terminal.application.robot_autopilot_shadow._daily_loss_gate",
+                           lambda *a, **k: {"latched": False}):
+                    with reader.read_snapshot():
+                        facts = mirror_retest_sidecar.read_account_facts(reader, ACCOUNT_ID, now_ms=NOW)
+            finally:
+                reader.close()
+            committed = facts.committed_worst_case_usdt
+            self.assertEqual(len(committed), 2)
+            self.assertIn(Decimal("25.6"), committed)                           # the Box grid's frozen net loss
+            self.assertTrue(all(item is not None and item > 0 for item in committed))
+        finally:
+            harness.doCleanups()

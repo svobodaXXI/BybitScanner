@@ -708,6 +708,13 @@ class RobotBreakoutMonitor:
             if self._mirror_policy is not None and mirror.mirror_record(execution) is None:
                 # Decide MIRROR membership once, before any Box order or ownership exists.
                 execution["mirror"] = self._mirror_attachment(record)
+                if execution["mirror"].get("decision") == mirror.BLOCKED:
+                    # An explicit MIRROR attempt whose R0/gate/terms failed never trades as a plain Box.
+                    self._invalidate_pre_entry_candidate(
+                        replace(record, robot_state={**record.robot_state, "execution": execution}),
+                        reason=f"MIRROR {execution['mirror'].get('reason')}",
+                    )
+                    return True
                 self._save_execution_keep_status(record, execution)
                 return True
             # Prove the immutable FLAT/journal baseline before deriving any
@@ -2703,6 +2710,7 @@ class RobotBreakoutMonitor:
             record.symbol.value,
             boundary,
             record_mirror["state"],
+            now_ms=self._now_ms(),
         )
         if state == record_mirror["state"] and blocked == bool(record_mirror.get("data_blocked")):
             return False

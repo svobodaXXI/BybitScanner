@@ -146,16 +146,25 @@ def read_new_wedge_arrivals(
 def read_account_facts(
     reader: SQLiteStore, account: TradingAccountId, *, now_ms: int,
     environ: Mapping[str, str] | None = None,
+    daily_marks: Callable[[], tuple[Mapping[str, Any], int]] | None = None,
 ) -> AccountFacts:
-    """Daily-loss gate facts and committed worst-case losses; unknown parts stay None (-> WAIT)."""
+    """Daily-loss gate facts and committed worst-case losses; unknown parts stay None (-> WAIT).
 
-    equity = paper_daily_equity_facts_in_transaction(
-        reader, account, as_of_ms=now_ms, marks={}, max_mark_age_ms=0)
+    The gate is the PAPER_AUTO one (``robot_autopilot_shadow._daily_loss_gate``): with ``daily_marks`` (the
+    runtime's fresh mark snapshot, ``PaperRuntime._prepare_autopilot_daily_marks``) open positions are valued
+    exactly as Autopilot values them; without it they make the gate unavailable (-> WAIT).
+    """
+
+    from terminal.application.robot_autopilot_shadow import _daily_loss_gate
+
+    business_date = paper_daily_equity_facts_in_transaction(
+        reader, account, as_of_ms=now_ms, marks={}, max_mark_age_ms=0).business_date_msk
     decisions = reader.load_robot_auto_decisions_for_admission(
         account, candidate_ref="", source_identity="", policy_version="",
-        business_date_msk=str(equity.business_date_msk))
-    gate = daily_loss_gate_facts(
-        equity, decisions, enabled=daily_loss_gate_enabled(os.environ if environ is None else environ))
+        business_date_msk=str(business_date))
+    gate = _daily_loss_gate(
+        reader, account, now_ms=now_ms, decisions=decisions,
+        enabled=daily_loss_gate_enabled(os.environ if environ is None else environ), daily_marks=daily_marks)
 
     committed: list[Any] = []
     trades = {trade.symbol.value: trade for trade in reader.load_open_robot_trades(account)}
@@ -169,7 +178,12 @@ def read_account_facts(
             stop_price=trade.stop_price, fee_rate=PAPER_FEE_RATE))
     for candidate in reader.load_robot_candidates_by_status(account, ("APPROVED", "OPEN")):
         if reader.load_active_paper_limits(account, Symbol(candidate.symbol.value)):
-            committed.append(None)          # pending entry: worst case not proven from the record
+            # Pending entry: a Box grid's frozen whole-grid net STOP loss bounds it (counted on top of any
+            # filled part: conservative); any other pending entry is unproven (-> WAIT).
+            snapshot = candidate.signal_snapshot or {}
+            plan = snapshot.get("plan") if snapshot.get("pattern") == "IKIGAI_BOX" else None
+            loss = ((plan or {}).get("full_position") or {}).get("net_stop_loss")
+            committed.append(Decimal(str(loss)) if loss is not None else None)
     return AccountFacts(daily_gate=gate, committed_worst_case_usdt=committed)
 
 

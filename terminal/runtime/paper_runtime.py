@@ -941,6 +941,7 @@ class PaperRuntime:
                 database_path=database_path,
                 account_id=self._paper_account_id,
                 quantity_step=lambda symbol: self._instrument_provider(symbol).quantity_step,
+                daily_marks=self._prepare_autopilot_daily_marks,
             ),
         )
         if self._robot_command_dispatcher is not None:

@@ -19,7 +19,7 @@ Enable: ``BYBITSCANNER_MIRROR_RETEST_ROBOT=1`` (anything else = off, the Box Rob
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import ROUND_FLOOR, Decimal
 import hashlib
 import os
@@ -64,7 +64,10 @@ MAX_SOURCE_CALLS = 3                  # bounded catch-up per boundary (each call
 MAX_WEDGES = 5                        # most recent Wedge candidates of the symbol examined per attachment
 
 ATTACHED = "ATTACHED"
-NOT_ATTACHED = "NOT_ATTACHED"
+NOT_ATTACHED = "NOT_ATTACHED"        # not a MIRROR attempt: the plain Box proceeds unchanged
+BLOCKED = "BLOCKED"                  # a MIRROR attempt that failed R0 / its gate / its terms: it must not trade
+# Only these mean "this Box attempt is not a MIRROR attempt"; any other refusal after a campaign was found blocks.
+PLAIN_BOX_REASONS = frozenset({"no_active_campaign", "direction_mismatch", "boundary_not_beyond_box_take"})
 EXIT_REASON_RETEST = "MIRROR_RETEST"
 PAPER_FEE_RATE = Decimal("0.0006")    # documented PAPER per-side fee (robot_l_shape.PAPER_ROBOT_FEE_RATE)
 STOP_SLIPPAGE_FRACTION = Decimal("0.005")   # documented 0.5 % adverse-move ceiling (robot_late_admission)
@@ -92,6 +95,9 @@ class MirrorRobotPolicy:
     quantity_step: Callable[[str], Decimal]
     fee_rate: Decimal = PAPER_FEE_RATE
     stop_slippage_fraction: Decimal = STOP_SLIPPAGE_FRACTION
+    # In-process replay cache: boundary_id -> (state proven so far, data_blocked). Closed candles never change, so a
+    # cached state is only extended by newer closed candles; a restart simply replays again.
+    boundary_states: dict = field(default_factory=dict)
 
 
 # --- durable values -------------------------------------------------------------------------------------
@@ -148,12 +154,17 @@ def _resolver(policy: MirrorRobotPolicy, symbol: str, boundary: Boundary, breako
 
 
 def advance_boundary(policy: MirrorRobotPolicy, candidate_ref: str, symbol: str, boundary: Boundary,
-                     state: Mapping[str, Any] | None) -> tuple[dict[str, Any], bool]:
-    """Feed every new closed 5m candle into ``geometry.naked_retest``. Returns ``(state, data_blocked)``."""
+                     state: Mapping[str, Any] | None, *, now_ms: int | None = None) -> tuple[dict[str, Any], bool]:
+    """Feed every new closed 5m candle into ``geometry.naked_retest``. Returns ``(state, data_blocked)``.
+
+    With ``now_ms`` no request is made while the next 5m candle after the cursor cannot have closed yet.
+    """
 
     current = dict(state) if state is not None else initialize_state(boundary)[0]
     for _ in range(MAX_SOURCE_CALLS):
         cursor = current.get("cursor_close_time_ms")
+        if cursor is not None and now_ms is not None and now_ms < int(cursor) + COARSE_MS:
+            break                                        # nothing new can be closed yet: no network call
         if cursor is None:
             cursor = boundary.as_of_time_ms - boundary.as_of_time_ms % COARSE_MS
         candles = policy.candles.closed_candles(candidate_ref, symbol, int(cursor))
@@ -194,7 +205,12 @@ def find_active_campaign(policy: MirrorRobotPolicy, wedge_records: Iterable[Any]
         boundaries = boundaries_from_candidate_snapshot(
             candidate_id=record.candidate_id, created_at_ms=approved, signal_snapshot=snapshot)
         for boundary in boundaries or ():
-            state, blocked = advance_boundary(policy, record.candidate_id, symbol, boundary, None)
+            cached = policy.boundary_states.get(boundary.boundary_id)
+            if cached is not None and cached[0].get("phase") in TERMINAL_PHASES:
+                continue                                 # a finished campaign never reopens (rule 5)
+            state, blocked = advance_boundary(policy, record.candidate_id, symbol, boundary,
+                                              None if cached is None else cached[0], now_ms=now_ms)
+            policy.boundary_states[boundary.boundary_id] = (state, blocked)
             if blocked or state.get("phase") != PHASE_CAMPAIGN_ACTIVE:
                 continue
             if state["breakout"]["campaign_direction"] != direction:
@@ -224,7 +240,12 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
     """
 
     def no(reason: str) -> dict[str, Any]:
-        return {"strategy_id": STRATEGY_ID, "decision": NOT_ATTACHED, "reason": reason, "decided_at_ms": now_ms}
+        plain = campaign is None or reason in PLAIN_BOX_REASONS
+        out = {"strategy_id": STRATEGY_ID, "decision": NOT_ATTACHED if plain else BLOCKED, "reason": reason,
+               "decided_at_ms": now_ms}
+        if campaign is not None:
+            out["campaign_id"] = campaign["campaign_id"]
+        return out
 
     if campaign is None:
         return no("no_active_campaign")
@@ -370,12 +391,13 @@ def tighter_stop(direction: str, a: Decimal, b: Decimal | None) -> Decimal:
 
 def build_runtime_policy(*, database_path: Any, account_id: Any,
                          quantity_step: Callable[[str], Decimal],
+                         daily_marks: Callable[[], tuple[Mapping[str, Any], int]] | None = None,
                          environ: Mapping[str, str] | None = None) -> MirrorRobotPolicy | None:
     """The production policy, or None (the default) unless ``BYBITSCANNER_MIRROR_RETEST_ROBOT=1``.
 
-    Candles: public closed klines (read-only). Account risk limit: the existing daily-loss headroom minus committed
-    worst cases, read off-owner from the PAPER DB (``retest_account_risk.account_risk_limit``); anything but OK means
-    no R0, hence no MIRROR attempt.
+    Candles: public closed klines (read-only). Account risk limit: the PAPER_AUTO daily-loss gate valued with the
+    runtime's fresh marks (``daily_marks``, the provider Autopilot uses) minus committed worst cases
+    (``retest_account_risk.account_risk_limit``); anything but OK means no R0 -> the MIRROR attempt is BLOCKED.
     """
 
     if not mirror_robot_enabled(environ):
@@ -390,7 +412,7 @@ def build_runtime_policy(*, database_path: Any, account_id: Any,
         reader = SQLiteStore.open_reader(database_path)
         try:
             with reader.read_snapshot():
-                facts = read_account_facts(reader, account_id, now_ms=now_ms)
+                facts = read_account_facts(reader, account_id, now_ms=now_ms, daily_marks=daily_marks)
         finally:
             reader.close()
         limit = account_risk_limit(daily_gate=facts.daily_gate,

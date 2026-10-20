@@ -38,16 +38,25 @@ honours the durable MIRROR exits/STOP, because all behaviour is read from `execu
 - `tests/test_mirror_robot_box_cycle.py`: full cycle, restart, owner-path monitor, flag off, no campaign, R0 unknown,
   boundary not beyond TAKE, data gap, retest before fill, budget/R0 rules, 1m-proof hold.
 
+## TRADING-2 fixes (2026-10-20)
+
+- **R0 is marks-aware:** the account limit now uses Autopilot's own daily-loss gate (`robot_autopilot_shadow._daily_loss_gate`)
+  with the runtime's fresh mark snapshot (`PaperRuntime._prepare_autopilot_daily_marks`, passed by the runtime wiring), minus
+  committed worst cases of open positions (Robot STOP terms) and pending Box grids (frozen whole-grid net STOP loss).
+  No second risk calculation.
+- **Explicit MIRROR attempts block:** once an active campaign in the Box direction exists, any refusal except
+  `no_active_campaign` / `direction_mismatch` / `boundary_not_beyond_box_take` is `BLOCKED` and the Box candidate is
+  `INVALIDATED` before any order (unknown R0, campaign gate, bad terms). A Box with no campaign is unchanged.
+- **Bounded network:** no kline request while the next 5m candle after the cursor cannot have closed; campaign replays are
+  cached per boundary in-process (only new closed candles are fetched; terminal campaigns are never replayed).
+
 ## Remaining obstacles before PAPER acceptance
 
 1. **Owner permission** to set `BYBITSCANNER_MIRROR_RETEST_ROBOT=1` on a PAPER runtime.
 2. **L-shape attempts** are not wired (only IKIGAI_BOX). L-shape uses position-level TAKE protection, not owned EXIT limits.
-3. **Account risk limit** comes from `read_account_facts` without runtime marks: with any open position the daily gate is
-   unavailable → no R0 → MIRROR never attaches. A marks-aware read (as Autopilot has) is needed for real use.
-4. **Network in the monitor thread:** attachment replays ≤ 5 Wedges × ≤ 3 kline calls; each open MIRROR trade costs one
-   kline call per tick. Acceptable for a bounded PAPER test; a background evaluator would be better.
-5. **`RETEST_UNPROVEN`** (1m data present but still ambiguous) ends the campaign without an exit: the remainder stays under
+3. **Pending non-Box entries** (Wedge/L-shape limits of other candidates) still have no provable worst case -> R0 unknown
+   -> MIRROR attempts are blocked while such an entry rests.
+4. **`RETEST_UNPROVEN`** (1m data present but still ambiguous) ends the campaign without an exit: the remainder stays under
    STOP; the owner has not defined this case.
-6. Partial TAKE per slot is floored to the quantity step; a slot whose 25 % is below one step is held whole to the retest.
-7. Exit at the retest is a MARKET after the closed 5m candle proves the touch (not a resting LIMIT at the line), so the
-   price can be worse than the line by the post-candle move.
+5. Partial TAKE per slot is floored to the quantity step; a slot whose 25 % is below one step is held whole to the retest.
+6. Exit at the retest is a MARKET after the closed 5m candle proves the touch, so the price can be worse than the line.
