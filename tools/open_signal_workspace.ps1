@@ -61,4 +61,13 @@ if ($remoteBase) {
 } else {
   Write-Host "Smartphone: HTTPS not configured. PC localhost only."
 }
+$delivery = Join-Path $PSScriptRoot "workspace_ready_delivery.py"
+$python = Join-Path $root "venv\Scripts\python.exe"
+if ((Test-Path $delivery) -and (Test-Path $python)) {
+  Write-Host "Checking local UI and authenticated mobile HTTPS before Telegram QR delivery..."
+  & $python $delivery --mode $Mode --symbol $Symbol --timeframe $Timeframe
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Verified Telegram QR delivery failed. The local PC browser remains open."
+  }
+}
 Read-Host "Press Enter to close this status window"
