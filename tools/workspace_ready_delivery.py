@@ -4,6 +4,7 @@ Called by the owner PC launcher, never by a public HTTP endpoint. Unconfigured
 remote access is an ordinary skip, not an opportunity to announce READY.
 """
 import argparse
+import json
 import os
 from pathlib import Path
 import sys
@@ -29,6 +30,17 @@ def deliver_if_verified(mode: str, symbol: str, timeframe: str,
     try:
         with urlopen(local_url, timeout=3) as response:
             if response.status != 200:
+                return False
+    except (OSError, ValueError):
+        return False
+    # A Vite preview HTML 200 does not guarantee a working terminal backend.
+    # Do not announce a usable signal view while the proxied API is unavailable.
+    try:
+        with urlopen("http://127.0.0.1:4173/api/health", timeout=3) as api_response:
+            if api_response.status != 200:
+                return False
+            health = json.load(api_response)
+            if not isinstance(health, dict) or health.get("ok") is not True:
                 return False
     except (OSError, ValueError):
         return False
