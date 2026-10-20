@@ -71,6 +71,13 @@ class Observation:
     admission_allowed: bool = False
     mode: str = MODE_OBSERVE_ONLY
     facts: dict = field(default_factory=dict)
+    # Identity and time for read-only consumers (MIRROR-OBSERVATION-PROJECTION). All optional so
+    # journals written before these fields existed stay valid; none enters ``observation_id``.
+    candidate_ref: str | None = None      # Robot candidate id (exact key)
+    pattern: str | None = None            # e.g. "Rising Wedge"
+    timeframe: str | None = None          # candle timeframe of the candidate ("5")
+    account_id: str | None = None         # PAPER account scope of the candidate
+    recorded_at_ms: int | None = None     # wall clock when the sidecar produced the record
 
 
 GEOMETRY_TIMEFRAME_MS = 60_000   # Scanner->Robot geometry is indexed on 1m candles (robot_coordinate_timeframe "1")

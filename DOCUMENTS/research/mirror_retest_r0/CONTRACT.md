@@ -180,3 +180,42 @@ Created or changed only when the contract is agreed:
 Robot/PAPER_AUTO owner decision on the single shared edit in `paper_http_server.py` (one GET branch + one attribute).
 In parallel MIRROR may implement its own side without touching shared files: `mirror_retest_projection.py`, the optional
 `Observation` fields, and tests. Until the route exists, the UI keeps showing the explicit missing-source state.
+
+## MIRROR side implemented (2026-10-20, branch `research/mirror-observation-projection`)
+
+`mirror_retest_projection.py` is the pure read half of the contract above; **the shared backend edit is still not made**.
+`Observation` now also carries optional `candidate_ref`, `pattern`, `timeframe`, `account_id`, `recorded_at_ms`
+(filled by the sidecar; they are not part of `observation_id`; old journals stay valid and show `null` for what they never had).
+
+Minimal call for the future backend adapter (one GET branch beside `/api/robot/protection-health`, no `runtime.call`):
+
+```python
+from mirror_retest_projection import ProjectionUnavailable, project_observations
+
+try:
+    body = project_observations(
+        server.mirror_observation_journal_path,
+        after=int(query.get("after", ["0"])[0]), limit=int(query.get("limit", ["100"])[0]),
+        journal_id=query.get("journal_id", [None])[0], account_scope="paper")
+except ValueError:                       # bad after/limit
+    status, body = 400, {"ok": False, "error": "invalid_mirror_observation_query"}
+except ProjectionUnavailable:            # unreadable, too large, or ANY line granting trading permission
+    status, body = 503, {"ok": False, "error": "mirror_observations_unavailable"}
+else:
+    status = 200
+```
+
+Behaviour beyond the table above (all covered by `tests/test_mirror_retest_projection.py`):
+
+- `seq` = 1-based number of a complete non-empty line; gaps left by skipped lines stay visible. A last line without a newline
+  is an append in flight: ignored, `partial_tail:true`, not malformed.
+- The **whole file** is validated on every call (limit `MAX_SCAN_BYTES` = 8 MiB, over it → unavailable): one line with
+  `mode != OBSERVE_ONLY`, `executable`/`admission_allowed` not exactly `false`, or a decision other than `WAIT`/`BLOCK`
+  refuses the whole answer (`ProjectionViolation`), also when that line is outside the requested page.
+- Malformed lines, repeated `observation_id` and lines of another `account_id` are skipped and counted
+  (`malformed_lines`, `duplicate_lines`, `foreign_account_lines`); never repaired.
+- Truncation/replacement: `cursor_reset:true` and the page restarts at seq 1 when the file is shorter than the cursor or
+  the caller's `journal_id` (hash of the first line, returned in every answer) no longer matches.
+- Never emitted: `facts`, `r0_*`, any account number. Unknown legacy fields are `null`, not guessed (so `timeframe` is `null`
+  for records written before this change).
+- Verified on the 60 saved INTEGRATION-5 observations (31 `NAKED_BREAKOUT`, 29 `RETEST_PROVEN`; ~31 KB).
