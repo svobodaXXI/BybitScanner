@@ -6,6 +6,28 @@ for (const [mode, symbol, timeframe] of [
 ] as const) {
   test(`deep-link ${mode}/${symbol} requires mock activation ACK`, async ({ page }) => {
     const posts: string[] = [];
+    await page.routeWebSocket("**/api/workspace/stream?*", (ws) => {
+      const url = new URL(ws.url());
+      const streamSymbol = url.searchParams.get("symbol");
+      const interval = url.searchParams.get("interval");
+      if (streamSymbol !== symbol) return;
+      ws.send(JSON.stringify({
+        stream_id: "mock-stream-101", event_sequence: 1, event_timestamp: Date.now(),
+        symbol, workspace_generation: 101, kind: "workspace_snapshot", state: "READY",
+        instrument: { symbol, tick_size: "0.5", quantity_step: "0.001" },
+        book: {
+          kind: "book_snapshot", state: "READY", projection_version: 3,
+          source_timestamp: Date.now(), upstream_update_id: 10, upstream_sequence: 20,
+          bids: [{ price: "100", size: "2" }], asks: [{ price: "101", size: "3" }],
+        },
+        trades: { kind: "trade_bootstrap", state: "READY", projection_version: 1, trades: [] },
+        candles: {
+          kind: "candle_bootstrap", state: "READY", interval,
+          projection_version: 1,
+          candles: [{ startTime: Date.now() - 60000, open: "100", high: "101", low: "99", close: "100" }],
+        },
+      }));
+    });
     await page.route("**/api/**", async (route) => {
       const request = route.request();
       const pathname = new URL(request.url()).pathname;
