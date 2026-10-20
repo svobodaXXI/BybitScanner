@@ -51,7 +51,18 @@ $delivery = Join-Path $PSScriptRoot "workspace_ready_delivery.py"
 $python = Join-Path $root "venv\Scripts\python.exe"
 if ((Test-Path $delivery) -and (Test-Path $python)) {
   Write-Host "Checking local UI and authenticated mobile HTTPS before Telegram QR delivery..."
-  & $python $delivery --mode $Mode --symbol $Symbol --timeframe $Timeframe
+  $deliveryOutput = @(& $python $delivery --mode $Mode --symbol $Symbol --timeframe $Timeframe)
+  $deliveryOutput | ForEach-Object { Write-Host $_ }
+  if ($LASTEXITCODE -eq 0) {
+    $qrLine = $deliveryOutput | Where-Object { $_ -like "QR_FILE=*" } | Select-Object -First 1
+    if ($qrLine) {
+      $verifiedQr = [string]$qrLine.Substring(8)
+      if (Test-Path -LiteralPath $verifiedQr) {
+        Write-Host "Verified mobile QR: $verifiedQr"
+        Start-Process -FilePath $verifiedQr
+      }
+    }
+  }
   if ($LASTEXITCODE -ne 0) {
     Write-Warning "Verified Telegram QR delivery failed. The local PC browser remains open."
   }
