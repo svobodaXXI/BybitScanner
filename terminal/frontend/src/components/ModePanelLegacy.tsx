@@ -1252,6 +1252,7 @@ export function ModePanel({
                       aria-expanded={
                         limitPresentationSide === side || limitsInventorySide === side
                       }
+                      disabled={!mutationsAllowed && !liveLimitAllowed}
                       onTap={() => openLimitPresentation(side)}
                       onHoldStart={() => openLimitsInventory(side)}
                       holdMs={500}
