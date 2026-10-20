@@ -53,7 +53,7 @@ for (const [mode, symbol, timeframe] of [
     await expect(page.getByRole("heading", { name: mode })).toBeVisible();
     await expect.poll(() => posts).toContain(symbol);
     await expect.poll(() => streamRequests).toContain(symbol);
-    await expect(page.getByText(symbol, { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: `Select symbol ${symbol}` })).toBeVisible();
     await expect(page.getByRole("button", { name: "BUY", exact: true })).toBeDisabled().catch(() => {
       // In EDITOR the trading controls are intentionally absent.
       if (mode !== "EDITOR") throw new Error("BUY unexpectedly enabled");
