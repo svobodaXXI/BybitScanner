@@ -39,6 +39,7 @@ blocker is resolved, return directly to the original end result.
 
 | When | Canonical destination (selective section read) |
 | --- | --- |
+| Strategic end-to-end execution / avoiding owner intervention | `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `STRATEGIC EXECUTION / OWNER-TIME CONTRACT` (inside Result-First; no new workflow) |
 | Choosing any next task, prompt or post-CI action | `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `RESULT-FIRST NEXT-ACTION GATE`; `3.2.1 BOUNDED_SLICE_AND_NO_REPEAT_RULE` |
 | Determining owner priority and current facts | `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `1. ROLE AND AUTHORITY`; current owner task, target Git ref or host state; only relevant top of `DOCUMENTS/BACKLOG.md` / `DOCUMENTS/QUEST_STATE.md` |
 | Any edit or handling existing user files | `DOCUMENTS/AGENT_GUIDE_FULL.md` → `Change safety`; `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `4. LOCAL REALITY AND USER-OWNED WORK` |
@@ -58,6 +59,7 @@ blocker is resolved, return directly to the original end result.
 
 | When | Canonical destination |
 | --- | --- |
+| Old PAPER exposure / missing STOP/TAKE during downtime / pre-run recovery | `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` → `Historical PAPER exposure → recovery → acceptance` |
 | Scanner/Robot/PAPER_AUTO, position, protection, LIVE or financial risk | `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `Scanner runtime is owner-manual`, `2.2.3 OPERATIONAL ENTRYPOINT TRACE`, `2.2.4 MULTI-COMPONENT READINESS CLAIM GATE`; `DOCUMENTS/AGENT_GUIDE_FULL.md` → `Trading / durable scope`, `Scanner runtime ownership` |
 | Runtime shortcuts, start/stop ownership | `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `Owner desktop launch surface`; `DOCUMENTS/AGENT_GUIDE_FULL.md` → `Owner desktop launch surface` |
 | PAPER robot lifecycle, shared candidate/admission, Telegram Robot UX | `DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md`; for Box `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`; for Autopilot `DOCUMENTS/ROBOT_AUTOPILOT_IMPLEMENTATION_PLAN.md` |
