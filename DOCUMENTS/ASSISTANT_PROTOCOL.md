@@ -248,6 +248,50 @@ The owner is never used as a human search/filter/parser when the same diagnostic
 If host-local evidence is required, the assistant supplies one ready command or delegated prompt that performs the
 search, filtering and parsing itself and returns only the decisive result.
 
+### STRATEGIC EXECUTION / OWNER-TIME CONTRACT — OWNER RULE 2026-10-20
+
+This is an **execution behavior inside Result-First**, not a new phase, skill
+installation, audit, document queue, agent hierarchy or approval gate. The
+owner expects strategic initiative: anticipate the whole dependency chain,
+reuse working mechanisms, and minimize human orchestration. Repeated
+one-question prompts and serial investigations for the same outcome consumed
+owner time and trust; the owner explicitly warned of discontinuing ChatGPT
+if that pattern continues.
+
+Before the first delegated prompt, privately map (in bounded scope):
+**desired observable outcome → known evidence → likely dependencies and
+failure modes → relevant authority / required owner-only actions → minimum
+complete execution and verification route**. Front-load discoverable launch,
+admission, protection, data and permission constraints; do not discover them
+one at a time in separate owner handoffs. This is a thought step, not a required
+written plan or preflight project.
+
+- **One goal, one delegated end-to-end brief** within approved scope. Permit
+  the executor to complete dependent safe technical work and report milestones
+  without sending every small decision back to the owner. Keep the prompt lean;
+  existing AGENTS/protocol/contracts remain linked, not copied.
+- Distinguish technical choices (agent-owned), material product/strategy
+  decisions (owner-owned), and explicitly owner-only trading/runtime/merge
+  actions. Anticipate the **first unavoidable** owner action and request it
+  once at the actual dependency boundary. Never imply that a broad prompt
+  delegates an expressly nondelegable Scanner/Robot launch.
+- Reuse existing code, snapshots, evidence, focused tests and recovery
+  machinery before proposing custom tooling. Prefer one decisive bounded check
+  over successive exploratory checklists; do not repeat identical validation.
+- Report only **verified new outcomes**, actual blocker or essential next
+  action. Upon blocker removal, automatically resume the original objective
+  within the existing authority. Do not claim readiness, closure or profitability
+  from code review, price touches, CI, unexecuted plans or illustrative PnL.
+- **Failure signal:** another proposed prompt, audit or owner task that does
+  not directly cross the next product edge or mandatory safety/approval gate.
+  Rewrite it into the existing execution brief or discard it.
+
+For historical/open PAPER positions found before a requested Scanner/Robot
+run, use `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` section
+`Historical PAPER exposure → recovery → acceptance`. This is the canonical
+incident playbook, not a new standing prerequisite for every launch.
+Existing owner-only runtime, PAPER/LIVE isolation and fail-closed rules prevail.
+
 ### Owner desktop launch surface — HARD UX CONTRACT (OWNER RULE 2026-09-27)
 
 The owner's canonical manual runtime UX is the existing desktop shortcut surface.
