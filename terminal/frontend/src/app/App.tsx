@@ -24,6 +24,11 @@ import {
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
 import {
+  loadSignalGeometry,
+  projectBoundaries,
+  type SignalGeometryResult,
+} from "../geometryFeedback/signalGeometryClient";
+import {
   createLimitDraft,
   EMPTY_LIMIT_DRAFT_STATE,
   limitDraftReducer,
@@ -137,6 +142,37 @@ export function App() {
     null,
   );
   const market = useMarketData();
+  const [signalGeometry, setSignalGeometry] = useState<SignalGeometryResult | null>(null);
+  useEffect(() => {
+    if (!launchLink || launchLink.mode !== "EDITOR" || !launchLink.signalId) return;
+    let cancelled = false;
+    void loadSignalGeometry(launchLink.signalId, launchLink.symbol).then((result) => {
+      if (!cancelled) setSignalGeometry(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [launchLink]);
+  // Frozen Scanner boundaries only: shown when the proven anchor candles are in the
+  // chart window, otherwise an explicit message. Never approximated or user-drawn.
+  const signalLines = useMemo(() => {
+    if (!launchLink || launchLink.mode !== "EDITOR") return { drawings: [], notice: null };
+    if (!launchLink.signalId) {
+      return {
+        drawings: [],
+        notice: "Линии сигнала недоступны: ссылка не содержит идентификатор сигнала.",
+      };
+    }
+    if (signalGeometry === null) return { drawings: [], notice: null };
+    if (signalGeometry.status === "unavailable") {
+      return { drawings: [], notice: signalGeometry.message };
+    }
+    if (market.book.symbol !== launchLink.symbol || !market.candles.length) {
+      return { drawings: [], notice: null };
+    }
+    const projected = projectBoundaries(signalGeometry.boundaries, market.candles);
+    return { drawings: projected.drawings, notice: projected.error };
+  }, [launchLink, signalGeometry, market.book.symbol, market.candles]);
   const tradingSymbol = market.book.symbol;
   const { paperState, pendingActions } = usePaperTrading(tradingSymbol);
   const accountWorkspace = useAccountWorkspace(tradingSymbol);
@@ -1168,6 +1204,11 @@ export function App() {
           {limitSubmissionFeedback}
         </output>
       )}
+      {signalLines.notice && (
+        <output aria-live="polite" data-signal-geometry-notice role="status">
+          {signalLines.notice}
+        </output>
+      )}
       <TelegramMiniAppBridge />
       <section className="workspace-grid" aria-label="Trading workspace">
         <div
@@ -1177,6 +1218,7 @@ export function App() {
           key={`${market.book.symbol}:${timeframe}:${mode}`}
           candles={market.candles}
           editorMode={mode === "EDITOR"}
+          referenceDrawings={signalLines.drawings}
           tickSize={market.tickSize}
           symbol={market.book.symbol}
           timeframe={timeframe}
