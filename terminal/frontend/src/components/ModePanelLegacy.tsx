@@ -759,7 +759,7 @@ export function ModePanel({
                 onCancel={() => onFastLimitHoldChange(null)}
                 holdMs={200}
                 className="paper-market-buy"
-                disabled={pendingActions.has("MARKET:Buy")}
+                disabled={(!mutationsAllowed && !liveMarketAllowed) || pendingActions.has("MARKET:Buy")}
                 type="button"
               >
                 {pendingActions.has("MARKET:Buy") ? "..." : "BUY"}
@@ -791,7 +791,7 @@ export function ModePanel({
                 onCancel={() => onFastLimitHoldChange(null)}
                 holdMs={200}
                 className="paper-market-sell"
-                disabled={pendingActions.has("MARKET:Sell")}
+                disabled={(!mutationsAllowed && !liveMarketAllowed) || pendingActions.has("MARKET:Sell")}
                 type="button"
               >
                 {pendingActions.has("MARKET:Sell") ? "..." : "SELL"}
