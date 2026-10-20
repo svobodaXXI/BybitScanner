@@ -7,6 +7,8 @@ on:
       - "workspace_gateway_probe.py"
       - "workspace_ready_telegram.py"
       - "workspace_owner_launcher.py"
+      - "telegram_review.py"
+      - "tests/test_telegram_review_authorization.py"
       - "tools/open_signal_workspace.ps1"
       - "tools/start_workspace_web.ps1"
       - "tools/workspace_ready_delivery.py"
@@ -36,7 +38,7 @@ jobs:
       - name: Compile workspace code
         run: python -m py_compile workspace_ready_link.py workspace_gateway_probe.py workspace_ready_telegram.py workspace_owner_launcher.py tools/workspace_ready_delivery.py
       - name: Workspace readiness unit tests
-        run: python -m unittest -v tests.test_workspace_ready_delivery tests.test_workspace_gateway_probe tests.test_workspace_owner_launcher tests.test_workspace_ready_link tests.test_workspace_ready_telegram
+        run: python -m unittest -v tests.test_workspace_ready_delivery tests.test_workspace_gateway_probe tests.test_workspace_owner_launcher tests.test_workspace_ready_link tests.test_workspace_ready_telegram tests.test_telegram_review_authorization
 
   windows-launcher-validation:
     runs-on: windows-latest
