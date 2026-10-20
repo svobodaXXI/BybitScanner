@@ -6,6 +6,8 @@ remote access is an ordinary skip, not an opportunity to announce READY.
 import argparse
 import os
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from urllib.request import urlopen
 
 from workspace_ready_telegram import send_ready_workspace_checked
