@@ -22,6 +22,7 @@ import {
   type WorkspaceSemanticFailure,
 } from "../marketData/workspaceSwitch";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
+import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
 import {
   createLimitDraft,
   EMPTY_LIMIT_DRAFT_STATE,
@@ -91,7 +92,8 @@ const sameProtectionPrice = (left: string | null, right: string | null) => {
 };
 
 export function App() {
-  const [mode, setMode] = useState<WorkspaceMode>("TERMINAL");
+  const launchLink = useMemo(() => parseSignalWorkspaceLink(window.location.search), []);
+  const [mode, setMode] = useState<WorkspaceMode>(launchLink?.mode ?? "TERMINAL");
   const [accountOpen, setAccountOpen] = useState(false);
   const [marketSidePanelOpen, setMarketSidePanelOpen] = useState(true);
   const [domCompression, setDomCompression] = useState(3);
@@ -100,7 +102,7 @@ export function App() {
     rowHeightPx: DOM_ROW_HEIGHT_REM * 16,
     viewportHeightPx: DOM_ROW_HEIGHT_REM * 16 * DOM_VISIBLE_ROWS,
   });
-  const [timeframe, setTimeframe] = useState<ChartTimeframe>("5m");
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>(launchLink?.timeframe ?? "5m");
   const [instruments, setInstruments] = useState<string[]>([]);
   const [workspaceSwitchError, setWorkspaceSwitchError] = useState<WorkspaceSemanticFailure | null>(null);
   const workspaceSwitchAttempt = useRef(0);
@@ -271,6 +273,13 @@ export function App() {
     setPositionAverageEntry(null);
     setMarketSymbol(result.symbol, result.generation);
   }, [tradingSymbol]);
+  const initialLinkConsumed = useRef(false);
+  useEffect(() => {
+    if (initialLinkConsumed.current || !launchLink) return;
+    initialLinkConsumed.current = true;
+    setMarketTimeframe(launchLink.timeframe);
+    void switchWorkspaceSymbol(launchLink.symbol);
+  }, [launchLink, switchWorkspaceSymbol]);
   useEffect(() => {
     const oneWvUsdt = accountProjection?.one_wv_usdt ?? currentPaperState?.one_wv_usdt ?? null;
     if (!accountProjection || !oneWvUsdt || !isValidSelectedVolume(oneWvUsdt)) return;
