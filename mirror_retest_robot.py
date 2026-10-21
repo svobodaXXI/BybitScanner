@@ -179,7 +179,7 @@ def advance_boundary(policy: MirrorRobotPolicy, candidate_ref: str, symbol: str,
             try:
                 new_state, event = process_closed_candle(boundary, current, candle, ambiguity_resolver=resolver)
             except _FineUnavailable:
-                return current, bool(current.get("data_blocked"))      # cursor held before this candle
+                return current, True        # unproven 1m candle: hold cursor and defer new attachment
             if event == EVENT_DATA_GAP:
                 return new_state, True
             progressed = progressed or new_state.get("cursor_close_time_ms") != current.get("cursor_close_time_ms")
