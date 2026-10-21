@@ -52,10 +52,25 @@ def _pass_imports_analyzer_signal_package(*, box_plan_preparer, control_checkpoi
 
 
 def _pass_never_checkpoints(**_callbacks):
-    # A long analysis: never reaches a checkpoint, so only the OS can end it.
-    Path(os.environ["SCANNER_CHILD_PID_FILE"]).write_text(str(os.getpid()))
+    # A long analysis: never reaches a checkpoint, so only the parent supervisor can end it.
+    pid_file = os.environ.get("SCANNER_CHILD_PID_FILE")
+    if pid_file:
+        Path(pid_file).write_text(str(os.getpid()))
     while True:
         time.sleep(0.05)
+
+
+def _pass_reports_progress(*, progress_observer, **_callbacks):
+    progress_observer({"symbols_done": 1, "symbols_total": 1, "symbol": "BTCUSDT"})
+
+
+def _pass_hangs_once(*, progress_observer, **_callbacks):
+    marker = Path(os.environ["SCANNER_HANG_ONCE_FILE"])
+    if not marker.exists():
+        marker.write_text(str(os.getpid()))
+        while True:
+            time.sleep(0.05)
+    progress_observer({"symbols_done": 1, "symbols_total": 1, "symbol": "BTCUSDT"})
 
 
 def _pass_crashes(**_callbacks):
@@ -173,8 +188,8 @@ class ChildProcessBoundaryTests(unittest.TestCase):
         parent_end.close()
         recorded = importlib.import_module(ME)._LOCAL_CHECKPOINTS  # the module _child_main runs
         recorded.clear()
-        _child_main(child_end, f"{ME}:_pass_records_checkpoint_locally", (False, True, False))
-        self.assertEqual(recorded, [False])
+        _child_main(child_end, f"{ME}:_pass_records_checkpoint_locally", (False, True, False, False))
+        self.assertEqual(recorded, [])
 
 
 _BACKEND_STAND_IN = """
@@ -264,11 +279,15 @@ class CoordinatorIntegrationTests(unittest.TestCase):
         self.addCleanup(self.temp_dir.cleanup)
         self.db_path = Path(self.temp_dir.name) / "paper.sqlite3"
 
-    def coordinator(self, target):
+    def coordinator(self, target, *, require_progress=False, first_progress_timeout_s=1.0):
         runtime = ScannerControlRuntime(
             lambda: SQLiteStore.open(self.db_path), ACCOUNT_ID,
-            scan_pass=lambda checkpoint: run_scan_pass_in_child_process(
-                control_checkpoint=checkpoint, target=f"{ME}:{target}"),
+            scan_pass=lambda **callbacks: run_scan_pass_in_child_process(
+                **callbacks,
+                require_progress=require_progress,
+                first_progress_timeout_s=first_progress_timeout_s,
+                target=f"{ME}:{target}",
+            ),
             clock_ms=lambda: int(time.time() * 1000), scan_interval_s=0.05)
         self.addCleanup(runtime.close)
         return runtime
@@ -295,6 +314,53 @@ class CoordinatorIntegrationTests(unittest.TestCase):
             time.sleep(0.02)
         self.assertEqual(multiprocessing.active_children(), [])
 
+    def test_stop_releases_a_hung_child_and_allows_a_repeated_start(self):
+        marker = Path(self.temp_dir.name) / "hung-once.pid"
+        with patch.dict(os.environ, {"SCANNER_HANG_ONCE_FILE": str(marker)}):
+            runtime = self.coordinator("_pass_hangs_once", require_progress=True)
+            runtime.start()
+            self.assertEqual(runtime.start_scanner().mode, SCANNER_RUNNING)
+            deadline = time.monotonic() + 20
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(marker.exists(), "hung Scanner child did not start")
+
+            runtime.stop_scanner()
+            deadline = time.monotonic() + 20
+            while scanner_process._active_lock.locked() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertFalse(scanner_process._active_lock.locked())
+            self.assertEqual(multiprocessing.active_children(), [])
+
+            self.assertEqual(runtime.start_scanner().mode, SCANNER_RUNNING)
+            self.wait_for(runtime, SCANNER_STOPPED)
+            self.assertEqual(multiprocessing.active_children(), [])
+
+    def test_missing_first_progress_stops_with_a_diagnostic_reason(self):
+        runtime = self.coordinator(
+            "_pass_never_checkpoints",
+            require_progress=True,
+            first_progress_timeout_s=0.2,
+        )
+        runtime.start()
+        self.assertEqual(runtime.start_scanner().mode, SCANNER_RUNNING)
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            state = runtime.status()
+            if state.mode == SCANNER_STOPPED and state.reason == "first_progress_timeout":
+                break
+            time.sleep(0.02)
+        self.assertEqual((state.mode, state.reason),
+                         (SCANNER_STOPPED, "first_progress_timeout"))
+
+    def test_normal_pass_reports_progress_and_releases_the_child(self):
+        runtime = self.coordinator("_pass_reports_progress", require_progress=True)
+        runtime.start()
+        self.assertEqual(runtime.start_scanner().mode, SCANNER_RUNNING)
+        self.wait_for(runtime, SCANNER_STOPPED)
+        self.assertFalse(scanner_process._active_lock.locked())
+        self.assertEqual(multiprocessing.active_children(), [])
+
     def test_child_crash_returns_the_scanner_to_stopped_without_raising(self):
         runtime = self.coordinator("_pass_crashes")
         runtime.start()
@@ -309,7 +375,12 @@ class WiringTests(unittest.TestCase):
                          robot_candidate_observer=object())
         with patch.object(scanner_process, "run_scan_pass_in_child_process") as child:
             paper_runtime._run_scanner_scan_pass(**callbacks)
-        child.assert_called_once_with(**callbacks)
+        child.assert_called_once_with(
+            **callbacks,
+            child_started=None,
+            stop_requested=None,
+            require_progress=True,
+        )
 
     def test_the_child_entry_never_opens_the_paper_database(self):
         source = Path(scanner_process.__file__).read_text(encoding="utf-8")
