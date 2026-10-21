@@ -351,26 +351,31 @@ SCANNER_RUNNING = "SCANNER_RUNNING"
 SCANNER_PAUSED = "SCANNER_PAUSED"
 
 DEFAULT_SCANNER_SCAN_INTERVAL_S = 5.0
+DEFAULT_SCANNER_START_TIMEOUT_S = 15.0
 
 
 def _run_scanner_scan_pass(
-    *, box_plan_preparer=None, control_checkpoint=None, robot_candidate_observer=None,
+    *,
+    box_plan_preparer=None,
+    control_checkpoint=None,
+    robot_candidate_observer=None,
+    child_started=None,
+    stop_requested=None,
 ) -> None:
-    """Run one Scanner pass in its own child process (PROCESS-ISOLATION-1).
-
-    The CPU-heavy analysis leaves this interpreter, so it no longer competes with
-    the PAPER owner thread. The three callbacks still run here, unchanged.
-    """
+    """Run one Scanner pass in its own child process (PROCESS-ISOLATION-1)."""
     from terminal.runtime.scanner_process import run_scan_pass_in_child_process
 
     run_scan_pass_in_child_process(
         box_plan_preparer=box_plan_preparer,
         control_checkpoint=control_checkpoint,
         robot_candidate_observer=robot_candidate_observer,
+        child_started=child_started,
+        stop_requested=stop_requested,
+        require_progress=True,
     )
 
+
 _SCANNER_VALID_TRANSITIONS = {
-    "start_scanner": ({SCANNER_STOPPED}, SCANNER_RUNNING),
     "pause_scanner": ({SCANNER_RUNNING}, SCANNER_PAUSED),
     "resume_scanner": ({SCANNER_PAUSED}, SCANNER_RUNNING),
     "stop_scanner": ({SCANNER_RUNNING, SCANNER_PAUSED}, SCANNER_STOPPED),
@@ -384,21 +389,9 @@ class ScannerControlRuntimeError(RuntimeError):
 class ScannerControlRuntime:
     """Authoritative Scanner lifecycle coordinator (CR-SCANNER-CONTROL-RUNTIME-001).
 
-    Structurally mirrors terminal.application.robot_recovery.RobotRecoveryCoordinator
-    and terminal.application.robot_breakout_monitor.RobotBreakoutMonitor, but lives
-    directly inside this module rather than under terminal/application/, because the
-    Scanner scan-pass adapter belongs at the runtime composition boundary and
-    terminal/application/*.py is forbidden from importing scanner/main/config (see
-    tests/test_terminal_execution_engine.py:test_no_mutation_or_network_api_is_exposed).
-
-    Lesson applied from CR-ROBOT-BREAKOUT-MONITOR-001's post-closure fix (see
-    DOCUMENTS/ROBOT_RUN_INDEX.md): SQLiteStore binds to its opening thread and
-    rejects every call from any other thread. This coordinator never accepts a
-    pre-opened SQLiteStore -- it takes a store_factory and opens its own connection
-    lazily, from whichever thread first calls into it, cached per-thread
-    (threading.local()). The real background thread opens and owns its own
-    connection; a synchronous caller (e.g. tests, or the HTTP server's single
-    owner thread) gets its own separate connection on its own calling thread.
+    Durable RUNNING is committed only after the spawned child confirms its PID.
+    STOP is polled by the parent-side child supervisor, so it remains effective
+    even while Scanner code is stuck before its next cooperative checkpoint.
     """
 
     def __init__(
@@ -406,9 +399,10 @@ class ScannerControlRuntime:
         store_factory: Callable[[], SQLiteStore],
         trading_account_id: TradingAccountId,
         *,
-        scan_pass: Callable[[Callable[[], bool]], None],
+        scan_pass: Callable[..., None],
         clock_ms: Callable[[], int],
         scan_interval_s: float = DEFAULT_SCANNER_SCAN_INTERVAL_S,
+        start_timeout_s: float = DEFAULT_SCANNER_START_TIMEOUT_S,
     ) -> None:
         self._store_factory = store_factory
         self._local = threading.local()
@@ -416,7 +410,17 @@ class ScannerControlRuntime:
         self._scan_pass = scan_pass
         self._clock_ms = clock_ms
         self._scan_interval_s = scan_interval_s
+        self._start_timeout_s = start_timeout_s
         self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._start_requested = threading.Event()
+        self._start_inflight = threading.Event()
+        self._start_cancelled = threading.Event()
+        self._start_confirmed = threading.Event()
+        self._start_result_lock = threading.Lock()
+        self._start_state = None
+        self._start_error = None
+        self._command_lock = threading.Lock()
         self._thread = threading.Thread(
             target=self._run, name="scanner-control-runtime", daemon=True,
         )
@@ -433,15 +437,9 @@ class ScannerControlRuntime:
         if self._started:
             return
         self._started = True
-        # Ensure the durable row exists (defaults to SCANNER_STOPPED -- never
-        # autostart) using whichever thread calls start(), typically the
-        # constructing thread.
         state = self._store().initialize_scanner_runtime_state(
             self._account_id, updated_at_ms=self._now_ms(),
         )
-        # The pause cursor lives only in this process's pass. A persisted
-        # RUNNING/PAUSED left by a previous process cannot be continued, so a
-        # fresh coordinator recovers it to STOPPED before accepting commands.
         if state.mode in (SCANNER_RUNNING, SCANNER_PAUSED):
             self._store().update_scanner_runtime_state(
                 self._account_id, mode=SCANNER_STOPPED, reason="restart_recovery",
@@ -452,8 +450,11 @@ class ScannerControlRuntime:
 
     def close(self) -> None:
         self._stop.set()
+        self._start_cancelled.set()
+        self._publish_start_result(error="scanner_runtime_closed")
+        self._wake.set()
         if self._started and self._thread is not threading.current_thread():
-            self._thread.join(timeout=5)
+            self._thread.join(timeout=12)
         self._close_local_store()
 
     def _close_local_store(self) -> None:
@@ -464,28 +465,31 @@ class ScannerControlRuntime:
 
     def _run(self) -> None:
         try:
-            # Wait a full interval BEFORE the first check (never touch the
-            # store immediately on start): a short-lived caller that starts
-            # and closes this coordinator well within one interval -- as
-            # every existing PaperRuntime-constructing test does -- never
-            # reaches a real scan_pass() call. Mirrors RobotBreakoutMonitor's
-            # same safety pattern.
-            while not self._stop.wait(self._scan_interval_s):
-                state = self._store().get_scanner_runtime_state(self._account_id)
-                if state is None or state.mode != SCANNER_RUNNING:
+            while not self._stop.is_set():
+                self._wake.wait(self._scan_interval_s)
+                self._wake.clear()
+                if self._stop.is_set():
+                    break
+                if not self._start_requested.is_set():
                     continue
+                self._start_requested.clear()
+                self._start_inflight.set()
+                failure_reason = None
                 try:
-                    self._scan_pass(self._control_checkpoint)
-                except Exception as error:
-                    print(
-                        "[SCANNER CONTROL RUNTIME ERROR] "
-                        f"error={error}"
+                    self._scan_pass(
+                        control_checkpoint=self._control_checkpoint,
+                        child_started=self._child_started,
+                        stop_requested=self._child_stop_requested,
                     )
+                except Exception as error:
+                    failure_reason = self._process_failure_reason(error)
+                    print(f"[SCANNER CONTROL RUNTIME ERROR] error={error}")
                 finally:
-                    # A manual start authorizes one pass. Natural completion
-                    # returns to STOPPED. An explicit stop may already have
-                    # committed STOPPED while the pass was between checkpoints.
                     try:
+                        if not self._start_confirmed.is_set():
+                            reason = failure_reason or "child_ended_before_start"
+                            self._record_stopped_reason(reason)
+                            self._publish_start_result(error=reason)
                         current = self._store().get_scanner_runtime_state(
                             self._account_id
                         )
@@ -493,16 +497,86 @@ class ScannerControlRuntime:
                             self._store().update_scanner_runtime_state(
                                 self._account_id,
                                 mode=SCANNER_STOPPED,
+                                reason=failure_reason,
                                 expected_version=current.version,
                                 updated_at_ms=self._now_ms(),
                             )
                     except Exception as stop_error:
+                        self._publish_start_result(
+                            error=f"scanner_state_error:{type(stop_error).__name__}"
+                        )
                         print(
                             "[SCANNER CONTROL RUNTIME STOP ERROR] "
                             f"error={stop_error}"
                         )
+                    finally:
+                        self._start_inflight.clear()
         finally:
             self._close_local_store()
+
+    def _child_started(self, pid: int) -> bool:
+        if self._stop.is_set() or self._start_cancelled.is_set():
+            self._publish_start_result(error="scanner_start_cancelled")
+            return False
+        try:
+            current = self._store().get_scanner_runtime_state(self._account_id)
+            if current is None or current.mode != SCANNER_STOPPED:
+                raise ScannerControlRuntimeError(
+                    "Scanner child started from a non-stopped durable state"
+                )
+            state = self._store().update_scanner_runtime_state(
+                self._account_id,
+                mode=SCANNER_RUNNING,
+                reason=f"child_pid={pid}",
+                expected_version=current.version,
+                updated_at_ms=self._now_ms(),
+            )
+        except Exception as error:
+            self._publish_start_result(
+                error=f"scanner_start_state_error:{type(error).__name__}"
+            )
+            return False
+        self._publish_start_result(state=state)
+        return True
+
+    def _child_stop_requested(self) -> bool:
+        if self._stop.is_set() or self._start_cancelled.is_set():
+            return True
+        if not self._start_confirmed.is_set():
+            return False
+        state = self._store().get_scanner_runtime_state(self._account_id)
+        return state is None or state.mode == SCANNER_STOPPED
+
+    def _publish_start_result(self, *, state=None, error: str | None = None) -> None:
+        with self._start_result_lock:
+            if self._start_confirmed.is_set():
+                return
+            self._start_state = state
+            self._start_error = error
+            self._start_confirmed.set()
+
+    def _record_stopped_reason(self, reason: str) -> None:
+        current = self._store().get_scanner_runtime_state(self._account_id)
+        if current is None or current.mode != SCANNER_STOPPED:
+            return
+        self._store().update_scanner_runtime_state(
+            self._account_id,
+            mode=SCANNER_STOPPED,
+            reason=reason,
+            expected_version=current.version,
+            updated_at_ms=self._now_ms(),
+        )
+
+    @staticmethod
+    def _process_failure_reason(error: Exception) -> str:
+        text = str(error).strip()
+        if text in {
+            "first_progress_timeout",
+            "scanner_start_cancelled",
+            "scanner_stop_requested",
+        }:
+            return text
+        return f"scanner_process_error:{type(error).__name__}"
 
     def _control_checkpoint(self) -> bool:
         """Block a live pass while PAUSED; return False when it must stop."""
@@ -512,8 +586,6 @@ class ScannerControlRuntime:
                 return False
             if state.mode == SCANNER_RUNNING:
                 return True
-            # PAUSED preserves the current Python loop/cursor. Resume changes
-            # durable state and the same pass continues from this checkpoint.
             self._stop.wait(0.2)
         return False
 
@@ -527,7 +599,32 @@ class ScannerControlRuntime:
         return state
 
     def start_scanner(self) -> ScannerRuntimeStateRecord:
-        return self._transition("start_scanner")
+        with self._command_lock:
+            current = self.status()
+            if current.mode != SCANNER_STOPPED:
+                raise ScannerControlRuntimeError(
+                    f"start_scanner is invalid from Scanner mode {current.mode}"
+                )
+            if self._start_inflight.is_set() or self._start_requested.is_set():
+                raise ScannerControlRuntimeError("Scanner control worker is still releasing its child")
+            if not self._started or not self._thread.is_alive():
+                raise ScannerControlRuntimeError("Scanner control worker is not available")
+            with self._start_result_lock:
+                self._start_state = None
+                self._start_error = None
+                self._start_confirmed.clear()
+            self._start_cancelled.clear()
+            self._start_requested.set()
+            self._wake.set()
+            if not self._start_confirmed.wait(self._start_timeout_s):
+                self._start_cancelled.set()
+                self._record_stopped_reason("scanner_start_timeout")
+                raise ScannerControlRuntimeError("scanner_start_timeout")
+            with self._start_result_lock:
+                state, error = self._start_state, self._start_error
+            if state is None:
+                raise ScannerControlRuntimeError(error or "scanner_start_failed")
+            return state
 
     def pause_scanner(self) -> ScannerRuntimeStateRecord:
         return self._transition("pause_scanner")
@@ -538,6 +635,9 @@ class ScannerControlRuntime:
     def stop_scanner(self) -> ScannerRuntimeStateRecord:
         current = self.status()
         if current.mode == SCANNER_STOPPED:
+            if self._start_inflight.is_set() or self._start_requested.is_set():
+                self._start_cancelled.set()
+                self._wake.set()
             return current
         return self._transition("stop_scanner")
 
@@ -548,10 +648,13 @@ class ScannerControlRuntime:
             raise ScannerControlRuntimeError(
                 f"{command} is invalid from Scanner mode {current.mode}"
             )
-        return self._store().update_scanner_runtime_state(
+        state = self._store().update_scanner_runtime_state(
             self._account_id, mode=new_mode,
             expected_version=current.version, updated_at_ms=self._now_ms(),
         )
+        if new_mode == SCANNER_STOPPED:
+            self._wake.set()
+        return state
 
     def _now_ms(self) -> int:
         value = self._clock_ms()
@@ -954,10 +1057,10 @@ class PaperRuntime:
         self._scanner_control = ScannerControlRuntime(
             lambda: SQLiteStore.open(database_path),
             self._paper_account_id,
-            scan_pass=lambda checkpoint: _run_scanner_scan_pass(
+            scan_pass=lambda **callbacks: _run_scanner_scan_pass(
                 box_plan_preparer=self._dispatch_ikigai_box_plan_preparation,
-                control_checkpoint=checkpoint,
                 robot_candidate_observer=self._dispatch_autopilot_shadow_scanner_candidate,
+                **callbacks,
             ),
             clock_ms=lambda: int(time.time() * 1000),
         )
