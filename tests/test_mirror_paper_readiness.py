@@ -85,7 +85,7 @@ class MirrorUnknownObligationTests(unittest.TestCase):
             monitor.tick()
         record = self.h.store.get_robot_candidate(candidate.candidate_id)
         self.assertEqual(record.status, "APPROVED")
-        self.assertNotIn("mirror", record.robot_state["execution"])
+        self.assertNotIn("mirror", record.robot_state.get("execution") or {})
         self.assertEqual(self.h.store.load_box_order_ownership(source.candidate_id), ())
         self.assertEqual(self.h.market_submissions, [])
 
@@ -100,7 +100,7 @@ class MirrorUnknownObligationTests(unittest.TestCase):
                 self.assertEqual(monitor.tick(), ())
             record = self.h.store.get_robot_candidate(candidate.candidate_id)
             self.assertEqual(record.status, "APPROVED")
-            self.assertNotIn("mirror", record.robot_state["execution"])
+            self.assertNotIn("mirror", record.robot_state.get("execution") or {})
             self.assertEqual(self.h.store.load_box_order_ownership(source.candidate_id), ())
 
             gate.update(OK_GATE)
