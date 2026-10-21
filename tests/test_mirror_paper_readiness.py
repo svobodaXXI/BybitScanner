@@ -106,9 +106,11 @@ class MirrorEnablementTests(unittest.TestCase):
         for env in ({}, {mirror.ENV_FLAG: ""}, {mirror.ENV_FLAG: "true"}, {mirror.ENV_FLAG: "1 "[:1] + "x"}):
             self.assertIsNone(mirror.build_runtime_policy(database_path="x", account_id=ACCOUNT_ID,
                                                           quantity_step=lambda s: Decimal("1"), environ=env))
-        self.assertIsNotNone(mirror.build_runtime_policy(database_path="x", account_id=ACCOUNT_ID,
-                                                         quantity_step=lambda s: Decimal("1"),
-                                                         environ={mirror.ENV_FLAG: "1"}))
+        enabled_policy = mirror.build_runtime_policy(database_path="x", account_id=ACCOUNT_ID,
+                                                     quantity_step=lambda s: Decimal("1"),
+                                                     environ={mirror.ENV_FLAG: "1"})
+        self.assertIsNotNone(enabled_policy)
+        self.assertTrue(enabled_policy.candles._strict_availability)
 
     def test_runtime_reads_the_flag_from_its_own_environment(self):
         source = (Path(__file__).resolve().parents[1] / "terminal" / "runtime" / "paper_runtime.py").read_text(
