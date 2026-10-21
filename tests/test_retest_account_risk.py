@@ -47,7 +47,7 @@ def test_headroom_shrinks_with_losses_and_grows_with_gains_of_the_day():
         ({"enabled": None}, DECISION_WAIT, "daily_gate_disabled"),
         ({"data_available": False}, DECISION_WAIT, "daily_gate_data_unavailable"),
         ({"latched": True}, DECISION_DENY, "daily_loss_latched"),
-        ({"latched": None}, DECISION_DENY, "daily_loss_latched"),
+        ({"latched": None}, DECISION_WAIT, "daily_loss_latch_unknown"),
         ({"baseline_equity_usdt": None}, DECISION_WAIT, "daily_gate_values_unknown"),
         ({"current_adjusted_equity_usdt": "NaN"}, DECISION_WAIT, "daily_gate_values_unknown"),
         ({"block_pct": 10.0}, DECISION_WAIT, "daily_gate_values_unknown"),
@@ -62,6 +62,11 @@ def test_unknown_or_blocking_gate_state_never_yields_a_limit(overrides, decision
 
 
 @pytest.mark.parametrize("missing", [None, "gate", [], 7])
+def test_proven_daily_loss_latch_denies_even_if_equity_is_unavailable():
+    verdict = daily_loss_headroom_usdt(gate(data_available=False, latched=True))
+    assert verdict[:2] == (DECISION_DENY, "daily_loss_latched")
+
+
 def test_missing_gate_waits(missing):
     assert daily_loss_headroom_usdt(missing)[:2] == (DECISION_WAIT, "daily_gate_unavailable")
 
