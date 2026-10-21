@@ -4,6 +4,12 @@ on:
   pull_request:
     paths:
       - "robot_candidate_store.py"
+      - "mirror_retest_robot.py"
+      - "mirror_retest_live_sources.py"
+      - "terminal/application/robot_breakout_monitor.py"
+      - "tests/test_mirror_robot_box_cycle.py"
+      - "tests/test_mirror_paper_readiness.py"
+      - "tests/test_mirror_retest_live_sources.py"
       - "pattern_robot_integration.py"
       - "robot_l_shape.py"
       - "l_shape_scanner.py"
@@ -141,6 +147,12 @@ jobs:
           terminal/api/rest.py
           terminal/runtime/paper_runtime.py
           terminal/runtime/paper_http_server.py
+      - name: Run MIRROR PAPER attachment and candle-source acceptance
+        run: >-
+          python -m pytest -q
+          tests/test_mirror_retest_live_sources.py
+          tests/test_mirror_robot_box_cycle.py
+          tests/test_mirror_paper_readiness.py
       - name: Run Runtime Replay contract
         run: python -m unittest -v tests.test_runtime_replay
       - name: Run deterministic Robot PAPER acceptance
