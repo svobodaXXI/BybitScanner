@@ -61,12 +61,12 @@ def test_unknown_or_blocking_gate_state_never_yields_a_limit(overrides, decision
     assert daily_loss_headroom_usdt(gate(**overrides))[:2] == (decision, reason)
 
 
-@pytest.mark.parametrize("missing", [None, "gate", [], 7])
 def test_proven_daily_loss_latch_denies_even_if_equity_is_unavailable():
     verdict = daily_loss_headroom_usdt(gate(data_available=False, latched=True))
     assert verdict[:2] == (DECISION_DENY, "daily_loss_latched")
 
 
+@pytest.mark.parametrize("missing", [None, "gate", [], 7])
 def test_missing_gate_waits(missing):
     assert daily_loss_headroom_usdt(missing)[:2] == (DECISION_WAIT, "daily_gate_unavailable")
 
