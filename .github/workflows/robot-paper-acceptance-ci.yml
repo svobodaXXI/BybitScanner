@@ -5,6 +5,8 @@ on:
     paths:
       - "robot_candidate_store.py"
       - "mirror_retest_robot.py"
+      - "retest_account_risk.py"
+      - "tests/test_retest_account_risk.py"
       - "mirror_retest_live_sources.py"
       - "terminal/application/robot_breakout_monitor.py"
       - "tests/test_mirror_robot_box_cycle.py"
@@ -153,6 +155,7 @@ jobs:
           tests/test_mirror_retest_live_sources.py
           tests/test_mirror_robot_box_cycle.py
           tests/test_mirror_paper_readiness.py
+          tests/test_retest_account_risk.py
       - name: Run Runtime Replay contract
         run: python -m unittest -v tests.test_runtime_replay
       - name: Run deterministic Robot PAPER acceptance
