@@ -661,7 +661,7 @@ class MirrorR0SourceTests(unittest.TestCase):
             with patch("mirror_retest_sidecar.read_account_facts", fake_read):
                 verdict = policy.account_risk_limit_usdt(NOW)
                 self.assertEqual((verdict.decision, verdict.reason, verdict.limit_usdt),
-                                 ("WAIT", "daily_gate_unavailable", None)
+                                 ("WAIT", "daily_gate_unavailable", None))
         self.assertIs(captured["daily_marks"], marks)
 
     def test_pending_box_entries_and_open_positions_are_committed_worst_cases(self):
