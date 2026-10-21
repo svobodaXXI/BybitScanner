@@ -39,6 +39,7 @@ from geometry.naked_retest import (
 )
 from mirror_retest_observer import boundaries_from_candidate_snapshot
 from retest_calibration import fine_resolver
+from retest_account_risk import AccountRiskLimit, DECISION_DENY as RISK_DENY, DECISION_OK as RISK_OK, DECISION_WAIT as RISK_WAIT
 from retest_campaign import (
     DECISION_ALLOW,
     PARTIAL_TAKE_FRACTION,
@@ -92,7 +93,7 @@ class MirrorRobotPolicy:
     (``closed_candles(candidate_id, symbol, after_close_ms)`` and ``fine_candles(symbol, coarse)``)."""
 
     candles: Any
-    account_risk_limit_usdt: Callable[[int], Decimal | None]
+    account_risk_limit_usdt: Callable[[int], Decimal | AccountRiskLimit | None]
     quantity_step: Callable[[str], Decimal]
     fee_rate: Decimal = PAPER_FEE_RATE
     stop_slippage_fraction: Decimal = STOP_SLIPPAGE_FRACTION
@@ -244,7 +245,7 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
     """Decide once, before any Box order exists, whether this Box attempt is a MIRROR attempt.
 
     ``prior_attempts``: ``{"mirror": <durable record>, "closed": bool, "net_pnl_usdt": Decimal | None}`` of earlier
-    attempts of the same campaign. No proven campaign leaves a plain Box; a failed MIRROR gate BLOCKS.
+    attempts of the same campaign. Unknown R0/gate evidence defers without orders; proven denial blocks.
     """
 
     def no(reason: str) -> dict[str, Any]:
@@ -254,6 +255,10 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
         if campaign is not None:
             out["campaign_id"] = campaign["campaign_id"]
         return out
+
+    def defer(reason: str) -> dict[str, Any]:
+        return {"strategy_id": STRATEGY_ID, "decision": DEFERRED, "reason": reason,
+                "decided_at_ms": now_ms, "campaign_id": campaign["campaign_id"]}
 
     if campaign is None:
         return no("no_active_campaign")
@@ -288,13 +293,30 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
     fees = policy.fee_rate * (total * average + partial_total * take + remainder * target)
     potential = gross - fees
 
+    if potential <= 0:
+        return no("net_potential_nonpositive")
     r0 = next((Decimal(str(a["mirror"]["r0_usdt"])) for a in prior_attempts
                if isinstance(a.get("mirror"), Mapping) and a["mirror"].get("r0_usdt") is not None), None)
     if r0 is None:
+        # The PAPER runtime supplies a structured account-risk verdict. Keep WAIT retriable,
+        # but reject a proven daily-loss latch or exhausted risk headroom.
+        account_risk = policy.account_risk_limit_usdt(now_ms)
+        if isinstance(account_risk, AccountRiskLimit):
+            if account_risk.decision == RISK_WAIT:
+                return defer(f"r0_wait:{account_risk.reason}")
+            if account_risk.decision == RISK_DENY:
+                return no(f"r0_denied:{account_risk.reason}")
+            if account_risk.decision != RISK_OK:
+                return defer("r0_unavailable")
+            account_limit = account_risk.limit_usdt
+        else:
+            account_limit = account_risk               # injected test/legacy policy
+        if account_limit is None:
+            return defer("r0_unavailable")
         frozen = freeze_campaign_r0(idea_potential_net_usdt=potential,
-                                    account_risk_limit_usdt=policy.account_risk_limit_usdt(now_ms))
+                                    account_risk_limit_usdt=account_limit)
         if frozen is None:
-            return no("r0_unavailable")
+            return no("r0_invalid")
         r0 = Decimal(str(frozen))
     realized_losses = Decimal(0)
     live_worst = Decimal(0)
@@ -302,13 +324,15 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
         if attempt.get("closed"):
             net = attempt.get("net_pnl_usdt")
             if net is None:
-                return no("prior_attempt_result_unknown")
+                return defer("prior_attempt_result_unknown")
             realized_losses += max(Decimal(0), -Decimal(str(net)))
         else:
             live_worst += Decimal(str(attempt["mirror"]["worst_case_usdt"]))
     gate = entry_gate(open_campaign_budget(r0), campaign_phase=campaign["state"]["phase"], data_reliable=True,
                       realized_loss_costs_usdt=realized_losses, live_pending_worst_case_usdt=live_worst,
                       new_attempt_worst_case_usdt=worst_case, remaining_net_reward_usdt=potential)
+    if gate.decision == RISK_WAIT:
+        return defer(f"campaign_gate_wait:{gate.reason}")
     if gate.decision != DECISION_ALLOW:
         return no(f"campaign_gate_{gate.decision.lower()}:{gate.reason}")
     return {
@@ -412,7 +436,7 @@ def build_runtime_policy(*, database_path: Any, account_id: Any,
         return None
     from mirror_retest_live_sources import BybitClosedKlineSource
 
-    def risk_limit(now_ms: int) -> Decimal | None:
+    def risk_limit(now_ms: int) -> AccountRiskLimit:
         from mirror_retest_sidecar import read_account_facts
         from retest_account_risk import DECISION_OK, account_risk_limit
         from terminal.persistence.sqlite_store import SQLiteStore
@@ -425,7 +449,7 @@ def build_runtime_policy(*, database_path: Any, account_id: Any,
             reader.close()
         limit = account_risk_limit(daily_gate=facts.daily_gate,
                                    committed_worst_case_usdt=facts.committed_worst_case_usdt)
-        return limit.limit_usdt if limit.decision == DECISION_OK else None
+        return limit   # Preserve WAIT vs DENY and source reason for attachment decision.
 
     return MirrorRobotPolicy(candles=BybitClosedKlineSource(strict_availability=True),
                              account_risk_limit_usdt=risk_limit,
