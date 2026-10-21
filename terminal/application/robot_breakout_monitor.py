@@ -708,6 +708,10 @@ class RobotBreakoutMonitor:
             if self._mirror_policy is not None and mirror.mirror_record(execution) is None:
                 # Decide MIRROR membership once, before any Box order or ownership exists.
                 execution["mirror"] = self._mirror_attachment(record)
+                if execution["mirror"].get("decision") == mirror.DEFERRED:
+                    # Temporary discovery/risk failures must neither create Box orders nor
+                    # make a permanent decision. Retry from unchanged durable state next tick.
+                    return False
                 if execution["mirror"].get("decision") == mirror.BLOCKED:
                     # An explicit MIRROR attempt whose R0/gate/terms failed never trades as a plain Box.
                     self._invalidate_pre_entry_candidate(
@@ -2643,7 +2647,7 @@ class RobotBreakoutMonitor:
         return True
 
     def _mirror_attachment(self, record: RobotCandidateRecord) -> dict[str, object]:
-        """Durable MIRROR decision for a Box attempt; any failure leaves a plain Box attempt."""
+        """Durable MIRROR decision, except transient failures which retry without orders."""
         now_ms = self._now_ms()
         try:
             siblings = self._store().load_robot_candidates_for_symbol(
@@ -2688,7 +2692,7 @@ class RobotBreakoutMonitor:
         except Exception as error:
             return {
                 "strategy_id": mirror.STRATEGY_ID,
-                "decision": mirror.NOT_ATTACHED,
+                "decision": mirror.DEFERRED,
                 "reason": f"mirror_error:{type(error).__name__}",
                 "decided_at_ms": now_ms,
             }
