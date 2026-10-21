@@ -347,6 +347,39 @@ class MirrorBoxCycleTests(unittest.TestCase):
         self.assertEqual(monitor.tick(), (candidate.candidate_id,))
         self.assertEqual(self.execution(candidate)["mirror"]["decision"], mirror.ATTACHED)
 
+    def test_real_candle_source_http_failure_does_not_turn_into_plain_box(self):
+        from mirror_retest_live_sources import BybitClosedKlineSource
+        self.add_wedge()
+        source, candidate = self.add_box()
+        monitor = self.monitor()
+        def offline(*args, **kwargs):
+            raise ConnectionError("public candle source unavailable")
+        monitor._mirror_policy = mirror.MirrorRobotPolicy(
+            candles=BybitClosedKlineSource(http_get=offline, clock_ms=self.clock,
+                                          strict_availability=True),
+            account_risk_limit_usdt=lambda now: self.risk_limit,
+            quantity_step=lambda symbol: Decimal("0.1"),
+        )
+        self.assertEqual(monitor.tick(), ())
+        self.assertNotIn("mirror", self.execution(candidate))
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
+        self.assertEqual(self.market_submissions, [])
+
+        monitor._mirror_policy = self.policy()
+        self.assertEqual(monitor.tick(), (candidate.candidate_id,))
+        self.assertEqual(self.execution(candidate)["mirror"]["decision"], mirror.ATTACHED)
+
+    def test_history_gap_is_not_a_proven_absence_of_mirror_campaign(self):
+        self.add_wedge()
+        source, candidate = self.add_box()
+        self.candles.coarse.pop(1)    # lose the breakout 5m candle: historical continuity unproven
+        monitor = self.monitor()
+        self.assertEqual(monitor.tick(), ())
+        self.assertEqual(self.store.get_robot_candidate(candidate.candidate_id).status, "APPROVED")
+        self.assertNotIn("mirror", self.execution(candidate))
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
+        self.assertEqual(self.market_submissions, [])
+
     def test_risk_provider_failure_defers_and_retries_without_orders(self):
         self.add_wedge()
         source, candidate = self.add_box()
