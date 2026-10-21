@@ -66,6 +66,7 @@ MAX_WEDGES = 5                        # most recent Wedge candidates of the symb
 ATTACHED = "ATTACHED"
 NOT_ATTACHED = "NOT_ATTACHED"        # not a MIRROR attempt: the plain Box proceeds unchanged
 BLOCKED = "BLOCKED"                  # a MIRROR attempt that failed R0 / its gate / its terms: it must not trade
+DEFERRED = "DEFERRED"                # transient attachment uncertainty: do not persist, retry without any order
 # Only these mean "this Box attempt is not a MIRROR attempt"; any other refusal after a campaign was found blocks.
 PLAIN_BOX_REASONS = frozenset({"no_active_campaign", "direction_mismatch", "boundary_not_beyond_box_take"})
 EXIT_REASON_RETEST = "MIRROR_RETEST"
