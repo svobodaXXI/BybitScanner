@@ -60,21 +60,23 @@ class MirrorUnknownObligationTests(unittest.TestCase):
         self.assertEqual(decision["decision"], mirror.ATTACHED, decision)
         self.assertEqual(Decimal(decision["r0_usdt"]), Decimal("57.51976"))   # min(500, 0.5 x potential)
 
-    def test_pending_wedge_entry_makes_r0_unknown_and_blocks_mirror(self):
+    def test_pending_wedge_entry_defers_until_account_risk_is_known(self):
         self.h.add_wedge()
         self.pending_entry("Falling Wedge")
         source, candidate = self.h.add_box()
         decision = self.decide(candidate)
-        self.assertEqual((decision["decision"], decision["reason"]), (mirror.BLOCKED, "r0_unavailable"))
+        self.assertEqual((decision["decision"], decision["reason"]),
+                         (mirror.DEFERRED, "r0_wait:obligation_unknown"))
 
-    def test_pending_l_shape_entry_makes_r0_unknown_and_blocks_mirror(self):
+    def test_pending_l_shape_entry_defers_until_account_risk_is_known(self):
         self.h.add_wedge()
         self.pending_entry("L-shape")
         source, candidate = self.h.add_box()
         decision = self.decide(candidate)
-        self.assertEqual((decision["decision"], decision["reason"]), (mirror.BLOCKED, "r0_unavailable"))
+        self.assertEqual((decision["decision"], decision["reason"]),
+                         (mirror.DEFERRED, "r0_wait:obligation_unknown"))
 
-    def test_blocked_mirror_attempt_never_places_an_order(self):
+    def test_unknown_obligation_never_creates_a_plain_box_order(self):
         self.h.add_wedge()
         self.pending_entry("Falling Wedge")
         source, candidate = self.h.add_box()
@@ -82,10 +84,56 @@ class MirrorUnknownObligationTests(unittest.TestCase):
         for _ in range(4):
             monitor.tick()
         record = self.h.store.get_robot_candidate(candidate.candidate_id)
-        self.assertEqual(record.status, "INVALIDATED")
-        self.assertEqual(record.robot_state["execution"]["mirror"]["decision"], mirror.BLOCKED)
+        self.assertEqual(record.status, "APPROVED")
+        self.assertNotIn("mirror", record.robot_state["execution"])
         self.assertEqual(self.h.store.load_box_order_ownership(source.candidate_id), ())
         self.assertEqual(self.h.market_submissions, [])
+
+    def test_r0_retries_after_00_msk_equity_baseline_becomes_provable(self):
+        self.h.add_wedge()
+        source, candidate = self.h.add_box()
+        gate = {**OK_GATE, "data_available": False, "latched": None,
+                "baseline_equity_usdt": None, "current_adjusted_equity_usdt": None}
+        with patch("terminal.application.robot_autopilot_shadow._daily_loss_gate", lambda *a, **k: dict(gate)):
+            monitor = self.h.monitor()
+            for _ in range(3):
+                self.assertEqual(monitor.tick(), ())
+            record = self.h.store.get_robot_candidate(candidate.candidate_id)
+            self.assertEqual(record.status, "APPROVED")
+            self.assertNotIn("mirror", record.robot_state["execution"])
+            self.assertEqual(self.h.store.load_box_order_ownership(source.candidate_id), ())
+
+            gate.update(OK_GATE)
+            self.assertEqual(monitor.tick(), (candidate.candidate_id,))
+            mirror_record = self.h.store.get_robot_candidate(candidate.candidate_id).robot_state["execution"]["mirror"]
+            self.assertEqual(mirror_record["decision"], mirror.ATTACHED)
+            self.assertEqual(Decimal(mirror_record["r0_usdt"]), Decimal("57.51976"))
+
+    def test_known_daily_loss_latch_blocks_instead_of_waiting(self):
+        self.h.add_wedge()
+        source, candidate = self.h.add_box()
+        gate = {**OK_GATE, "latched": True}
+        with patch("terminal.application.robot_autopilot_shadow._daily_loss_gate", lambda *a, **k: dict(gate)):
+            monitor = self.h.monitor()
+            self.assertEqual(monitor.tick(), (candidate.candidate_id,))
+        record = self.h.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertEqual(record.robot_state["execution"]["mirror"]["decision"], mirror.BLOCKED)
+        self.assertEqual(record.robot_state["execution"]["mirror"]["reason"], "r0_denied:daily_loss_latched")
+        self.assertEqual(self.h.store.load_box_order_ownership(source.candidate_id), ())
+
+    def test_proven_account_headroom_exhaustion_still_blocks(self):
+        self.h.add_wedge()
+        source, candidate = self.h.add_box()
+        gate = {**OK_GATE, "current_adjusted_equity_usdt": "4500"}
+        with patch("terminal.application.robot_autopilot_shadow._daily_loss_gate", lambda *a, **k: dict(gate)):
+            monitor = self.h.monitor()
+            self.assertEqual(monitor.tick(), (candidate.candidate_id,))
+        record = self.h.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertEqual(record.robot_state["execution"]["mirror"]["reason"],
+                         "r0_denied:daily_loss_headroom_exhausted")
+        self.assertEqual(self.h.store.load_box_order_ownership(source.candidate_id), ())
 
     def test_plain_box_with_unknown_obligations_and_no_campaign_trades_unchanged(self):
         self.pending_entry("Falling Wedge")                                   # no MIRROR Wedge on the Box symbol
