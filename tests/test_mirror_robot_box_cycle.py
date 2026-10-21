@@ -330,6 +330,43 @@ class MirrorBoxCycleTests(unittest.TestCase):
         order = self.store.get_paper_limit(self.owned(source, "EXIT", 1).order_id.value, ACCOUNT_ID)
         self.assertEqual(order.quantity, Decimal("2"))
 
+    def test_candle_source_failure_defers_attachment_without_plain_box_order(self):
+        self.add_wedge()
+        source, candidate = self.add_box()
+        monitor = self.monitor()
+        working_source = self.candles.closed_candles
+        self.candles.closed_candles = lambda *args: (_ for _ in ()).throw(OSError("source unavailable"))
+
+        self.assertEqual(monitor.tick(), ())
+        self.assertEqual(self.store.get_robot_candidate(candidate.candidate_id).status, "APPROVED")
+        self.assertNotIn("mirror", self.execution(candidate))  # no durable decision while uncertain
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
+        self.assertEqual(self.market_submissions, [])
+
+        self.candles.closed_candles = working_source
+        self.assertEqual(monitor.tick(), (candidate.candidate_id,))
+        self.assertEqual(self.execution(candidate)["mirror"]["decision"], mirror.ATTACHED)
+
+    def test_risk_provider_failure_defers_and_retries_without_orders(self):
+        self.add_wedge()
+        source, candidate = self.add_box()
+        monitor = self.monitor()
+        good_policy = monitor._mirror_policy
+        monitor._mirror_policy = mirror.MirrorRobotPolicy(
+            candles=self.candles,
+            account_risk_limit_usdt=lambda now: 1 / 0,
+            quantity_step=lambda symbol: Decimal("0.1"),
+        )
+
+        self.assertEqual(monitor.tick(), ())
+        self.assertEqual(self.store.get_robot_candidate(candidate.candidate_id).status, "APPROVED")
+        self.assertNotIn("mirror", self.execution(candidate))
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
+
+        monitor._mirror_policy = good_policy
+        self.assertEqual(monitor.tick(), (candidate.candidate_id,))
+        self.assertEqual(self.execution(candidate)["mirror"]["decision"], mirror.ATTACHED)
+
     def test_unknown_r0_blocks_the_mirror_attempt_instead_of_trading_a_plain_box(self):
         self.add_wedge()
         self.risk_limit = None
