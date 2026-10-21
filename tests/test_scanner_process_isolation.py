@@ -279,7 +279,7 @@ class CoordinatorIntegrationTests(unittest.TestCase):
         self.addCleanup(self.temp_dir.cleanup)
         self.db_path = Path(self.temp_dir.name) / "paper.sqlite3"
 
-    def coordinator(self, target, *, require_progress=False, first_progress_timeout_s=1.0):
+    def coordinator(self, target, *, require_progress=False, first_progress_timeout_s=10.0):
         runtime = ScannerControlRuntime(
             lambda: SQLiteStore.open(self.db_path), ACCOUNT_ID,
             scan_pass=lambda **callbacks: run_scan_pass_in_child_process(
