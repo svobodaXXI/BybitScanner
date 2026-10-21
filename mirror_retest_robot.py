@@ -196,6 +196,7 @@ def find_active_campaign(policy: MirrorRobotPolicy, wedge_records: Iterable[Any]
     """The most recent ACTIVE campaign in ``direction`` on ``symbol``, replayed only from durable inputs."""
 
     best: dict[str, Any] | None = None
+    unresolved = False
     eligible = [record for record in wedge_records
                 if isinstance(getattr(record, "signal_snapshot", None), Mapping)
                 and record.signal_snapshot.get("pattern") in WEDGE_PATTERNS
@@ -212,16 +213,22 @@ def find_active_campaign(policy: MirrorRobotPolicy, wedge_records: Iterable[Any]
             state, blocked = advance_boundary(policy, record.candidate_id, symbol, boundary,
                                               None if cached is None else cached[0], now_ms=now_ms)
             policy.boundary_states[boundary.boundary_id] = (state, blocked)
-            if blocked or state.get("phase") != PHASE_CAMPAIGN_ACTIVE:
+            if blocked:
+                unresolved = True                          # incomplete candle or 1m proof is not "no campaign"
+                continue
+            if state.get("phase") != PHASE_CAMPAIGN_ACTIVE:
                 continue
             if state["breakout"]["campaign_direction"] != direction:
                 continue
             if int(state.get("cursor_close_time_ms") or 0) < now_ms - now_ms % COARSE_MS - FRESH_LAG_MS:
-                continue                                 # not proven up to now: unreliable data, no campaign
+                unresolved = True                          # cannot prove active status from stale replay
+                continue
             breakout_close = int(state["breakout"]["close_time_ms"])
             if best is None or breakout_close > best["breakout_close_ms"]:
                 best = {"campaign_id": f"{boundary.boundary_id}@{breakout_close}", "boundary": boundary,
                         "state": state, "breakout_close_ms": breakout_close, "campaign_direction": direction}
+    if best is None and unresolved:
+        raise MirrorRobotError("MIRROR campaign evidence is incomplete")
     return best
 
 
@@ -237,7 +244,7 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
     """Decide once, before any Box order exists, whether this Box attempt is a MIRROR attempt.
 
     ``prior_attempts``: ``{"mirror": <durable record>, "closed": bool, "net_pnl_usdt": Decimal | None}`` of earlier
-    attempts of the same campaign. Anything unknown or failing a gate returns NOT_ATTACHED (plain Box, unchanged).
+    attempts of the same campaign. No proven campaign leaves a plain Box; a failed MIRROR gate BLOCKS.
     """
 
     def no(reason: str) -> dict[str, Any]:
@@ -420,5 +427,6 @@ def build_runtime_policy(*, database_path: Any, account_id: Any,
                                    committed_worst_case_usdt=facts.committed_worst_case_usdt)
         return limit.limit_usdt if limit.decision == DECISION_OK else None
 
-    return MirrorRobotPolicy(candles=BybitClosedKlineSource(), account_risk_limit_usdt=risk_limit,
+    return MirrorRobotPolicy(candles=BybitClosedKlineSource(strict_availability=True),
+                             account_risk_limit_usdt=risk_limit,
                              quantity_step=quantity_step)
