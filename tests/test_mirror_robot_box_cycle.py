@@ -659,7 +659,9 @@ class MirrorR0SourceTests(unittest.TestCase):
                                                  quantity_step=lambda s: Decimal("1"), daily_marks=marks,
                                                  environ={mirror.ENV_FLAG: "1"})
             with patch("mirror_retest_sidecar.read_account_facts", fake_read):
-                self.assertIsNone(policy.account_risk_limit_usdt(NOW))         # gate unknown -> no R0
+                verdict = policy.account_risk_limit_usdt(NOW)
+                self.assertEqual((verdict.decision, verdict.reason, verdict.limit_usdt),
+                                 ("WAIT", "daily_gate_unavailable", None)
         self.assertIs(captured["daily_marks"], marks)
 
     def test_pending_box_entries_and_open_positions_are_committed_worst_cases(self):
