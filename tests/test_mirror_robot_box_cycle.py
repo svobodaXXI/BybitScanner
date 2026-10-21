@@ -330,21 +330,93 @@ class MirrorBoxCycleTests(unittest.TestCase):
         order = self.store.get_paper_limit(self.owned(source, "EXIT", 1).order_id.value, ACCOUNT_ID)
         self.assertEqual(order.quantity, Decimal("2"))
 
-    def test_unknown_r0_blocks_the_mirror_attempt_instead_of_trading_a_plain_box(self):
+    def test_candle_source_failure_defers_attachment_without_plain_box_order(self):
+        self.add_wedge()
+        source, candidate = self.add_box()
+        monitor = self.monitor()
+        working_source = self.candles.closed_candles
+        self.candles.closed_candles = lambda *args: (_ for _ in ()).throw(OSError("source unavailable"))
+
+        self.assertEqual(monitor.tick(), ())
+        self.assertEqual(self.store.get_robot_candidate(candidate.candidate_id).status, "APPROVED")
+        self.assertNotIn("mirror", self.execution(candidate))  # no durable decision while uncertain
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
+        self.assertEqual(self.market_submissions, [])
+
+        self.candles.closed_candles = working_source
+        self.assertEqual(monitor.tick(), (candidate.candidate_id,))
+        self.assertEqual(self.execution(candidate)["mirror"]["decision"], mirror.ATTACHED)
+
+    def test_real_candle_source_http_failure_does_not_turn_into_plain_box(self):
+        from mirror_retest_live_sources import BybitClosedKlineSource
+        self.add_wedge()
+        source, candidate = self.add_box()
+        monitor = self.monitor()
+        def offline(*args, **kwargs):
+            raise ConnectionError("public candle source unavailable")
+        monitor._mirror_policy = mirror.MirrorRobotPolicy(
+            candles=BybitClosedKlineSource(http_get=offline, clock_ms=self.clock,
+                                          strict_availability=True),
+            account_risk_limit_usdt=lambda now: self.risk_limit,
+            quantity_step=lambda symbol: Decimal("0.1"),
+        )
+        self.assertEqual(monitor.tick(), ())
+        self.assertNotIn("mirror", self.execution(candidate))
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
+        self.assertEqual(self.market_submissions, [])
+
+        monitor._mirror_policy = self.policy()
+        self.assertEqual(monitor.tick(), (candidate.candidate_id,))
+        self.assertEqual(self.execution(candidate)["mirror"]["decision"], mirror.ATTACHED)
+
+    def test_history_gap_is_not_a_proven_absence_of_mirror_campaign(self):
+        self.add_wedge()
+        source, candidate = self.add_box()
+        self.candles.coarse.pop(1)    # lose the breakout 5m candle: historical continuity unproven
+        monitor = self.monitor()
+        self.assertEqual(monitor.tick(), ())
+        self.assertEqual(self.store.get_robot_candidate(candidate.candidate_id).status, "APPROVED")
+        self.assertNotIn("mirror", self.execution(candidate))
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
+        self.assertEqual(self.market_submissions, [])
+
+    def test_risk_provider_failure_defers_and_retries_without_orders(self):
+        self.add_wedge()
+        source, candidate = self.add_box()
+        monitor = self.monitor()
+        good_policy = monitor._mirror_policy
+        monitor._mirror_policy = mirror.MirrorRobotPolicy(
+            candles=self.candles,
+            account_risk_limit_usdt=lambda now: 1 / 0,
+            quantity_step=lambda symbol: Decimal("0.1"),
+        )
+
+        self.assertEqual(monitor.tick(), ())
+        self.assertEqual(self.store.get_robot_candidate(candidate.candidate_id).status, "APPROVED")
+        self.assertNotIn("mirror", self.execution(candidate))
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
+
+        monitor._mirror_policy = good_policy
+        self.assertEqual(monitor.tick(), (candidate.candidate_id,))
+        self.assertEqual(self.execution(candidate)["mirror"]["decision"], mirror.ATTACHED)
+
+    def test_unknown_r0_defers_the_mirror_attempt_until_budget_is_proven(self):
         self.add_wedge()
         self.risk_limit = None
         source, candidate = self.add_box()
         monitor = self.monitor()
-        self.assertEqual(monitor.tick(), (candidate.candidate_id,))
-        record = self.store.get_robot_candidate(candidate.candidate_id)
-        self.assertEqual(record.status, "INVALIDATED")
-        mirror_record = record.robot_state["execution"]["mirror"]
-        self.assertEqual((mirror_record["decision"], mirror_record["reason"]), (mirror.BLOCKED, "r0_unavailable"))
-        self.assertIn("MIRROR r0_unavailable", record.robot_state["execution"]["stopped_without_entry_reason"])
         for _ in range(3):
-            monitor.tick()
-        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())   # no order ever
+            self.assertEqual(monitor.tick(), ())
+        record = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(record.status, "APPROVED")
+        self.assertNotIn("mirror", self.execution(candidate))   # no durable decision or ownership
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
         self.assertEqual(self.market_submissions, [])
+
+        self.risk_limit = Decimal("1000")                       # authoritative R0 becomes available
+        self.assertEqual(monitor.tick(), (candidate.candidate_id,))
+        self.assertEqual(self.execution(candidate)["mirror"]["decision"], mirror.ATTACHED)
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
 
     def test_exhausted_campaign_budget_blocks_the_next_attempt(self):
         self.add_wedge()
@@ -472,6 +544,24 @@ class MirrorPolicyUnitTests(unittest.TestCase):
         self.assertEqual(allowed["decision"], mirror.ATTACHED)
         self.assertEqual(allowed["r0_usdt"], "57.52")                          # frozen at the first attempt
 
+    def test_prior_attempt_unknown_net_result_waits_without_ownership(self):
+        boundary = mirror.boundary_from_dict({"boundary_id": "w:lower", "anchor_time_ms": 0,
+                                               "anchor_price": 110.0, "slope_per_ms": 0.0, "as_of_time_ms": 0})
+        campaign = {"campaign_id": "w:lower@1", "boundary": boundary, "campaign_direction": "LONG",
+                    "state": {"phase": PHASE_CAMPAIGN_ACTIVE}, "breakout_close_ms": 1}
+        policy = mirror.MirrorRobotPolicy(candles=None, account_risk_limit_usdt=lambda now: Decimal("1000"),
+                                          quantity_step=lambda s: Decimal("0.1"))
+        attempt = {"mirror": {"r0_usdt": "57.52", "worst_case_usdt": "25.6"}, "closed": True,
+                   "net_pnl_usdt": None}
+        waiting = mirror.plan_attachment(policy, box_snapshot=box_snapshot(), symbol=SYMBOL, campaign=campaign,
+                                         prior_attempts=[attempt], now_ms=NOW)
+        self.assertEqual((waiting["decision"], waiting["reason"]),
+                         (mirror.DEFERRED, "prior_attempt_result_unknown"))
+        attempt["net_pnl_usdt"] = Decimal("-2")
+        ready = mirror.plan_attachment(policy, box_snapshot=box_snapshot(), symbol=SYMBOL, campaign=campaign,
+                                       prior_attempts=[attempt], now_ms=NOW)
+        self.assertEqual(ready["decision"], mirror.ATTACHED)
+
     def test_profit_never_restores_budget_and_live_attempts_count_at_worst_case(self):
         boundary = mirror.boundary_from_dict({"boundary_id": "w:lower", "anchor_time_ms": 0, "anchor_price": 110.0,
                                               "slope_per_ms": 0.0, "as_of_time_ms": 0})
@@ -569,7 +659,9 @@ class MirrorR0SourceTests(unittest.TestCase):
                                                  quantity_step=lambda s: Decimal("1"), daily_marks=marks,
                                                  environ={mirror.ENV_FLAG: "1"})
             with patch("mirror_retest_sidecar.read_account_facts", fake_read):
-                self.assertIsNone(policy.account_risk_limit_usdt(NOW))         # gate unknown -> no R0
+                verdict = policy.account_risk_limit_usdt(NOW)
+                self.assertEqual((verdict.decision, verdict.reason, verdict.limit_usdt),
+                                 ("WAIT", "daily_gate_unavailable", None))
         self.assertIs(captured["daily_marks"], marks)
 
     def test_pending_box_entries_and_open_positions_are_committed_worst_cases(self):

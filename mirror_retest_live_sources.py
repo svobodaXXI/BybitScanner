@@ -100,9 +100,12 @@ class BybitClosedKlineSource:
     def __init__(
         self, *, http_get: Callable[..., Any] | None = None,
         clock_ms: Callable[[], int] | None = None,
+        strict_availability: bool = False,
     ) -> None:
         self._get = http_get
         self._clock = clock_ms if clock_ms is not None else (lambda: int(time.time() * 1000))
+        # OBSERVE_ONLY preserves [] on outages; executable MIRROR cannot mistake it for no campaign.
+        self._strict_availability = strict_availability
         self.unavailable = 0
         self.stale = 0
 
@@ -140,7 +143,7 @@ class BybitClosedKlineSource:
         return out
 
     def closed_candles(self, candidate_id: str, symbol: str, after_close_ms: int | None) -> list[dict]:
-        """5m closed candles after ``after_close_ms``; [] when stale or unavailable (cursor holds)."""
+        """5m closed candles; strict trading consumers raise on unproven availability."""
 
         if after_close_ms is None:
             raise CandleSourceUnavailable("a start cursor is required for the live source")
@@ -150,11 +153,18 @@ class BybitClosedKlineSource:
             candles = self._range(symbol, "5", after_close_ms, now)
         except CandleSourceUnavailable:
             self.unavailable += 1
+            if self._strict_availability:
+                raise
             return []
         if candles and candles[-1]["close_time_ms"] < latest_close - INTERVAL_MS["5"]:
             # The newest closed candle should end at or one interval before ``latest_close``.
             self.stale += 1
+            if self._strict_availability:
+                raise CandleSourceUnavailable("5m history is stale")
             return []
+        if not candles and self._strict_availability and after_close_ms + INTERVAL_MS["5"] <= latest_close:
+            self.unavailable += 1
+            raise CandleSourceUnavailable("expected closed 5m candle is missing")
         return candles
 
     def fine_candles(self, symbol: str, coarse: Mapping[str, Any]) -> list[dict]:

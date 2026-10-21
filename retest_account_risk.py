@@ -88,10 +88,12 @@ def daily_loss_headroom_usdt(daily_gate: Any) -> tuple[str, str, Decimal | None]
         return DECISION_WAIT, "daily_gate_unavailable", None
     if daily_gate.get("enabled") is not True:
         return DECISION_WAIT, "daily_gate_disabled", None
+    if daily_gate.get("latched") is True:
+        return DECISION_DENY, "daily_loss_latched", None
     if daily_gate.get("data_available") is not True:
         return DECISION_WAIT, "daily_gate_data_unavailable", None
     if daily_gate.get("latched") is not False:
-        return DECISION_DENY, "daily_loss_latched", None
+        return DECISION_WAIT, "daily_loss_latch_unknown", None
     baseline = _decimal(daily_gate.get("baseline_equity_usdt"))
     equity = _decimal(daily_gate.get("current_adjusted_equity_usdt"))
     block_pct = _decimal(daily_gate.get("block_pct"))
