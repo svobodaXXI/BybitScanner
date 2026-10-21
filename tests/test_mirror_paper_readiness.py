@@ -89,6 +89,28 @@ class MirrorUnknownObligationTests(unittest.TestCase):
         self.assertEqual(self.h.store.load_box_order_ownership(source.candidate_id), ())
         self.assertEqual(self.h.market_submissions, [])
 
+    def test_pending_nonbox_limit_cancellation_allows_same_candidate_to_attach(self):
+        self.h.add_wedge()
+        self.pending_entry("Falling Wedge")
+        source, candidate = self.h.add_box()
+        monitor = self.h.monitor()
+        self.assertEqual(monitor.tick(), ())
+        self.assertNotIn("mirror", self.h.execution(candidate))
+        self.assertEqual(self.h.store.load_box_order_ownership(source.candidate_id), ())
+
+        limit, cancelled = self.h.store.cancel_paper_limit(
+            client_action_id="cancel-pending-wedge", request_fingerprint="cancel-pending-wedge",
+            order_id=OrderId("pending-Falling Wedge-order"),
+            trading_account_id=ACCOUNT_ID, updated_at_ms=NOW,
+        )
+        self.assertTrue(cancelled)
+        self.assertEqual(limit.status, "cancelled")
+        self.assertEqual(monitor.tick(), (candidate.candidate_id,))
+        record = self.h.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(record.status, "APPROVED")
+        self.assertEqual(record.robot_state["execution"]["mirror"]["decision"], mirror.ATTACHED)
+        self.assertEqual(self.h.store.load_box_order_ownership(source.candidate_id), ())
+
     def test_r0_retries_after_00_msk_equity_baseline_becomes_provable(self):
         self.h.add_wedge()
         source, candidate = self.h.add_box()
