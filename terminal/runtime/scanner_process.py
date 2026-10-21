@@ -349,12 +349,14 @@ def _child_main(connection, target: str, enabled: tuple[bool, bool, bool, bool])
         return
     try:
         scan_pass = getattr(importlib.import_module(module_name), function_name)
-        scan_pass(
-            box_plan_preparer=box_plan if enabled[0] else None,
-            control_checkpoint=checkpoint if enabled[1] else None,
-            robot_candidate_observer=observe if enabled[2] else None,
-            progress_observer=progress if enabled[3] else None,
-        )
+        callbacks = {
+            "box_plan_preparer": box_plan if enabled[0] else None,
+            "control_checkpoint": checkpoint if enabled[1] else None,
+            "robot_candidate_observer": observe if enabled[2] else None,
+        }
+        if enabled[3]:
+            callbacks["progress_observer"] = progress
+        scan_pass(**callbacks)
     except BaseException as error:
         try:
             connection.send(("error", f"{type(error).__name__}: {error}"))
