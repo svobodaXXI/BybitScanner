@@ -67,6 +67,25 @@ class PaperMarketExecutor:
         if self.max_book_age_ms < 0:
             raise ValueError("max_book_age_ms must not be negative")
 
+    def validate_book(self, symbol: Symbol, book: NormalizedOrderBook | None) -> int:
+        """Fail closed unless ``book`` is fresh execution evidence for ``symbol``.
+
+        Returns the validation clock. Never reads the provider.
+        """
+        if book is None:
+            raise RuntimeError("normalized book is unavailable")
+        if book.symbol != symbol:
+            raise ValueError("normalized book symbol does not match request")
+        now_ms = self.clock_ms()
+        age_ms = now_ms - book.received_at_ms
+        if age_ms < 0:
+            raise PaperBookStale("normalized book timestamp is in the future")
+        if age_ms > self.max_book_age_ms:
+            raise PaperBookStale(
+                f"normalized book is stale: age={age_ms}ms max={self.max_book_age_ms}ms"
+            )
+        return now_ms
+
     def execute(
         self,
         *,
@@ -84,19 +103,7 @@ class PaperMarketExecutor:
         # it is held to the same symbol and freshness checks as a provider book.
         if book is None:
             book = self.book_provider.get_book(symbol)
-        if book is None:
-            raise RuntimeError("normalized book is unavailable")
-        if book.symbol != symbol:
-            raise ValueError("normalized book symbol does not match request")
-
-        now_ms = self.clock_ms()
-        age_ms = now_ms - book.received_at_ms
-        if age_ms < 0:
-            raise PaperBookStale("normalized book timestamp is in the future")
-        if age_ms > self.max_book_age_ms:
-            raise PaperBookStale(
-                f"normalized book is stale: age={age_ms}ms max={self.max_book_age_ms}ms"
-            )
+        now_ms = self.validate_book(symbol, book)
 
         match = match_market_order(
             book,

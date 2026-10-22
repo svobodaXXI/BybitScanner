@@ -31,6 +31,7 @@ from terminal.exchange.events import InstrumentSnapshot, OrderEvent
 from terminal.persistence.sqlite_store import CommandRecord, SQLiteStore
 from terminal.persistence.sqlite_store import ProtectionIntentRecord, ProtectionProjectionRecord
 from terminal.application.models import ProtectionState
+from terminal.market_data.models import NormalizedOrderBook
 from terminal.paper.executor import PaperMarketExecutor
 from terminal.application.protection import (
     ManualProtectionIntent, ProtectionApplicationResult, validate_manual_protection,
@@ -39,6 +40,12 @@ from terminal.application.protection import (
 
 class ApplicationMutationsDisabled(RuntimeError):
     pass
+
+
+# Default for ``market_book``: the PAPER Market executor reads its own book
+# provider (manual Workspace orders). Robot callers instead pass explicit
+# evidence -- possibly None -- and the provider is never consulted.
+PROVIDER_BOOK = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +109,7 @@ class TradingApplication:
     def submit(
         self, intent: PreTradeIntent, context: PreTradeContext,
         *, identity: CommandIdentityCandidate | None = None,
+        market_book: NormalizedOrderBook | None | object = PROVIDER_BOOK,
     ) -> ApplicationResult:
         decision, prepared = self.prepare(intent, context, identity=identity)
         if not decision.admitted:
@@ -118,6 +126,21 @@ class TradingApplication:
         existing = self.store.get_command(prepared.command_id) if identity is not None else None
         if existing is not None:
             self._validate_stable_market_replay(existing, prepared)
+            if existing.current_state not in (CommandState.ADMITTED, CommandState.SUBMITTING):
+                # FILLED is an idempotent completed replay. Any other state is
+                # intentionally not re-dispatched: ACKNOWLEDGED/UNKNOWN/etc.
+                # already represent durable post-dispatch or ambiguous evidence
+                # and must be reconciled rather than guessed into a second fill.
+                return ApplicationResult(decision, existing, None)
+        paper_market = (
+            self.paper_market_executor is not None and request.order_kind is OrderKind.MARKET
+        )
+        if paper_market and market_book is not PROVIDER_BOOK:
+            # Caller-supplied execution evidence is proven before anything is
+            # made durable: missing/stale/mismatched evidence leaves no
+            # SUBMITTING command behind and can never become a fill.
+            self.paper_market_executor.validate_book(Symbol(request.symbol), market_book)
+        if existing is not None:
             if existing.current_state is CommandState.ADMITTED:
                 command = self.store.transition_command_state(
                     existing.command_id,
@@ -127,18 +150,12 @@ class TradingApplication:
                     reason="stable PAPER Market mutation attempt durably resumed",
                     occurred_at_ms=self.clock_ms(),
                 )
-            elif existing.current_state is CommandState.SUBMITTING:
-                command = existing
             else:
-                # FILLED is an idempotent completed replay. Any other state is
-                # intentionally not re-dispatched: ACKNOWLEDGED/UNKNOWN/etc.
-                # already represent durable post-dispatch or ambiguous evidence
-                # and must be reconciled rather than guessed into a second fill.
-                return ApplicationResult(decision, existing, None)
+                command = existing
         else:
             command = self._persist_submitting(prepared)
 
-        if self.paper_market_executor is not None and request.order_kind is OrderKind.MARKET:
+        if paper_market:
             paper = self.paper_market_executor.execute(
                 trading_account_id=request.trading_account_id,
                 symbol=Symbol(request.symbol),
@@ -147,6 +164,7 @@ class TradingApplication:
                 order_link_id=request.identity.order_link_id,
                 order_id=OrderId(f"paper-order-{request.identity.order_link_id}"),
                 exec_id=ExecutionId(f"paper-exec-{request.identity.order_link_id}"),
+                **({} if market_book is PROVIDER_BOOK else {"book": market_book}),
             )
             outcome = MutationOutcome(
                 MutationKind.CREATE,
