@@ -50,7 +50,7 @@ from telegram_labels import SCANNER_EMOJI
 PATTERN_LABELS_RU = {
     "Falling Wedge": "Клин",
     "Rising Wedge": "Клин",
-    "Triangle Compression": "Сжимающийся треугольник",
+    "Triangle Compression": "Треугольник",
     "No wedge": "Клин не найден",
     "Unknown": "Неизвестная структура",
 }
