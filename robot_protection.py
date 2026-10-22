@@ -23,6 +23,10 @@ from terminal.api.models import (
 )
 
 MAX_STOP_DISTANCE = Decimal("0.02")
+# Wedge LONG only (RM-STRUCT-1, owner 2026-10-17): the fallback STOP placed when
+# the structural candidate is invalid or farther than MAX_STOP_DISTANCE.
+# SHORT keeps MAX_STOP_DISTANCE as its fallback.
+WEDGE_LONG_FALLBACK_STOP_DISTANCE = Decimal("0.015")
 TAKE_REALIZATION = Decimal("0.90")
 PROTECTION_DEADLINE_MS = 5_000
 # Minimum planned take/stop ratio for a new entry (retest LIMIT and late Market entry).
@@ -126,11 +130,12 @@ def structural_stop(
     structural_extreme: Decimal,
     tick_size: Decimal,
 ) -> Decimal:
-    """Return structural STOP with a hard 2% distance fallback.
+    """Return structural STOP with a distance fallback.
 
     LONG structural stop is one tick below the relevant low. SHORT is one tick
     above the relevant high. If that stop is farther than 2% from authoritative
-    average entry, use exactly the 2% fallback instead.
+    average entry, use the fallback instead: 1.5% below entry for LONG
+    (``WEDGE_LONG_FALLBACK_STOP_DISTANCE``), 2% above entry for SHORT.
 
     A filled Robot position must never end up with no STOP at all. The
     structural candidate is derived from the frozen signal geometry, but
@@ -139,7 +144,7 @@ def structural_stop(
     leave the structural extreme on the wrong side of, or equal to, the
     actual entry. Rather than fail closed and leave a filled position with no
     protection at all (CR-PAPER-PROTECTION-LIFECYCLE-001 post-BATUSDT-defect
-    fix), an invalid structural candidate falls back to the same 2% distance
+    fix), an invalid structural candidate falls back to the same fallback distance
     already used for a too-far structural stop, always on the safe side of
     entry.
     """
@@ -150,10 +155,11 @@ def structural_stop(
     normalized_direction = str(direction).strip().upper()
     if normalized_direction == DIRECTION_LONG:
         candidate = extreme - tick
+        fallback = entry * (Decimal("1") - WEDGE_LONG_FALLBACK_STOP_DISTANCE)
         if candidate <= 0 or candidate >= entry:
-            return entry * (Decimal("1") - MAX_STOP_DISTANCE)
+            return fallback
         distance = (entry - candidate) / entry
-        return entry * (Decimal("1") - MAX_STOP_DISTANCE) if distance > MAX_STOP_DISTANCE else candidate
+        return fallback if distance > MAX_STOP_DISTANCE else candidate
     if normalized_direction == DIRECTION_SHORT:
         candidate = extreme + tick
         if candidate <= entry:

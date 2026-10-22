@@ -1622,7 +1622,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         structural extreme (lower_touch_points) can end up on the wrong side
         of -- or equal to -- the actual fill's average_entry by the time the
         LIMIT fills (retest slippage, later touches). structural_stop() must
-        fall back to the 2% distance rather than raise, so the filled
+        fall back to the Wedge LONG 1.5% distance rather than raise, so the filled
         position still gets a valid STOP/TAKE and a robot_trade, instead of
         being left open and unprotected."""
         # lower_touch_points min = 85.0 -- above the 81 fill price used below,
@@ -1640,9 +1640,9 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(record.status, "OPEN")
         trade = self.store.get_robot_trade("robot-trade-candidate-1")
         self.assertIsNotNone(trade)
-        # Fallback: entry * (1 - 2%) = 81 * 0.98 = 79.38, not the (invalid,
-        # above-entry) structural candidate 85.0 - 0.1 = 84.9.
-        self.assertEqual(trade.stop_price, Decimal("79.38"))
+        # Wedge LONG fallback: entry * (1 - 1.5%) = 81 * 0.985 = 79.785, not
+        # the (invalid, above-entry) structural candidate 85.0 - 0.1 = 84.9.
+        self.assertEqual(trade.stop_price, Decimal("79.785"))
         self.assertLess(trade.stop_price, trade.average_entry)
         self.assertEqual(trade.take_price, Decimal("118"))
         self.assertEqual(
