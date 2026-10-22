@@ -707,6 +707,37 @@ def calculate_pair_metrics(
                     opposite_points
                 )
 
+        # TRI-WAVE-1: a triangle's first wave A->B is one swing -- A and B
+        # are adjacent opposite-type confirmed pivots, so no confirmed pivot
+        # on A's side lies strictly between them (owner case KERNELUSDT 5m:
+        # LOW152 splits LOW108 -> HIGH164). Confirmed pivots only, no
+        # threshold. Wedges are unchanged.
+
+        first_wave_split_index = None
+        first_wave_single = True
+
+        if anchor_family == "triangle":
+
+            first_wave_single = False
+
+            if (
+                primary_anchor is not None
+                and secondary_anchor is not None
+            ):
+
+                split = sorted(
+                    point["index"]
+                    for point in (same_points or [])
+                    if (
+                        isinstance(point, dict)
+                        and point.get("index") is not None
+                        and primary_anchor < point["index"] < secondary_anchor
+                    )
+                )
+
+                first_wave_split_index = split[0] if split else None
+                first_wave_single = not split
+
         sequence_valid = (
             secondary_anchor is not None
             and secondary_anchor
@@ -714,6 +745,7 @@ def calculate_pair_metrics(
             and first_anchor_terminal
             and swing_contraction_valid
             and impulse_leg_valid
+            and first_wave_single
         )
 
     else:
@@ -724,6 +756,8 @@ def calculate_pair_metrics(
         swing_contraction_valid = None
         impulse_leg_origin_index = None
         impulse_leg_valid = None
+        first_wave_split_index = None
+        first_wave_single = None
 
     anchor_sequence = {
         "family":
@@ -755,6 +789,12 @@ def calculate_pair_metrics(
 
         "impulse_leg_valid":
             impulse_leg_valid,
+
+        "first_wave_split_index":
+            first_wave_split_index,
+
+        "first_wave_single":
+            first_wave_single,
 
         "valid":
             sequence_valid
