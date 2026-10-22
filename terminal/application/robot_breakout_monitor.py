@@ -645,6 +645,23 @@ class RobotBreakoutMonitor:
         execution = dict(record.robot_state.get("execution") or {})
         source = self._box_source(record, execution)
         catchup = execution.get("box_catchup")
+        if (
+            record.robot_state.get("mirror_parent_candidate_id") is not None
+            and self._linked_mirror_parent(record) is None
+        ):
+            # The linked admission is valid only while the exact parent Wedge
+            # remains the sole same-direction exposure owner.  Cancel any
+            # resting entry remnants before terminalising an unfilled child.
+            self._mirror_cancel_owned_limits(record, source, roles={"ENTRY"})
+            ownership = self._store().load_box_order_ownership(source.candidate_id)
+            if ownership:
+                proof = self._store().prove_box_owned_position(source.candidate_id)
+                if proof.entry_quantity > 0:
+                    return self._sync_box_trade(record, execution, create_trade=True)
+            self._invalidate_pre_entry_candidate(
+                record, reason="MIRROR linked parent is no longer active or compatible",
+            )
+            return True
         if isinstance(catchup, Mapping) and self._advance_mirror_box(record):
             return True
 
@@ -714,6 +731,17 @@ class RobotBreakoutMonitor:
                     return False
                 if execution["mirror"].get("decision") == mirror.BLOCKED:
                     # An explicit MIRROR attempt whose R0/gate/terms failed never trades as a plain Box.
+                    self._invalidate_pre_entry_candidate(
+                        replace(record, robot_state={**record.robot_state, "execution": execution}),
+                        reason=f"MIRROR {execution['mirror'].get('reason')}",
+                    )
+                    return True
+                if (
+                    record.robot_state.get("mirror_parent_candidate_id") is not None
+                    and execution["mirror"].get("decision") == mirror.NOT_ATTACHED
+                ):
+                    # A Box admitted only as a subordinate MIRROR attempt may
+                    # never fall back to an independent plain-Box position.
                     self._invalidate_pre_entry_candidate(
                         replace(record, robot_state={**record.robot_state, "execution": execution}),
                         reason=f"MIRROR {execution['mirror'].get('reason')}",
@@ -1850,10 +1878,65 @@ class RobotBreakoutMonitor:
     def _active_other_owner_candidate_ids(
         self, record: RobotCandidateRecord,
     ) -> tuple[str, ...]:
-        return active_robot_owner_candidate_ids(
+        owners = active_robot_owner_candidate_ids(
             self._store(), self._account_id, record.symbol,
             excluding_candidate_id=record.candidate_id,
         )
+        parent = self._linked_mirror_parent(record)
+        if parent is not None and owners == (parent.candidate_id,):
+            return ()
+        return owners
+
+    def _linked_mirror_parent(
+        self, record: RobotCandidateRecord,
+    ) -> RobotCandidateRecord | None:
+        state = record.robot_state or {}
+        parent_id = state.get("mirror_parent_candidate_id")
+        parent_sha = state.get("mirror_parent_snapshot_sha256")
+        linked_direction = str(state.get("mirror_parent_direction", "")).strip().upper()
+        if not isinstance(parent_id, str) or not parent_id.strip():
+            return None
+        parent = self._store().get_robot_candidate(parent_id)
+        if (
+            parent is None
+            or parent.trading_account_id != self._account_id
+            or parent.symbol != record.symbol
+            or parent.status != "APPROVED"
+            or parent.snapshot_sha256 != parent_sha
+            or parent.signal_snapshot.get("pattern") not in mirror.WEDGE_PATTERNS
+            or not isinstance(parent.robot_state, Mapping)
+            or str(parent.robot_state.get("direction", "")).strip().upper() != linked_direction
+            or str(state.get("direction", "")).strip().upper() != linked_direction
+        ):
+            return None
+        parent_execution = parent.robot_state.get("execution")
+        if isinstance(parent_execution, Mapping):
+            order_id = parent_execution.get("limit_order_id")
+            if isinstance(order_id, str) and order_id.strip():
+                order = self._store().get_paper_limit(order_id, self._account_id)
+                if order is not None and order.status not in INACTIVE_LIMIT_STATUSES:
+                    return None
+            if isinstance(parent_execution.get("late_market_intent"), Mapping):
+                return None
+        position = self._store().get_position_projection(
+            PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+        )
+        if (
+            position is not None
+            and position.side is not PositionSide.FLAT
+            and position.quantity.value > 0
+        ):
+            return None
+        owners = active_robot_owner_candidate_ids(
+            self._store(), self._account_id, record.symbol,
+            excluding_candidate_id=record.candidate_id,
+        )
+        active = [
+            item for item in self._store().load_active_robot_candidate_states(self._account_id)
+            if item.symbol == record.symbol and item.candidate_id != record.candidate_id
+            and item.status in {"APPROVED", "OPEN"}
+        ]
+        return parent if not owners and [item.candidate_id for item in active] == [parent.candidate_id] else None
 
     def _escalate_duplicate_ownership(
         self, record: RobotCandidateRecord, owner_candidate_ids: tuple[str, ...],
@@ -2653,14 +2736,25 @@ class RobotBreakoutMonitor:
             siblings = self._store().load_robot_candidates_for_symbol(
                 self._account_id, record.symbol,
             )
+            parent_id = (record.robot_state or {}).get("mirror_parent_candidate_id")
+            wedge_siblings = [
+                item for item in siblings
+                if (item.signal_snapshot or {}).get("pattern") in mirror.WEDGE_PATTERNS
+                and (parent_id is None or item.candidate_id == parent_id)
+            ]
             campaign = mirror.find_active_campaign(
                 self._mirror_policy,
-                [item for item in siblings
-                 if (item.signal_snapshot or {}).get("pattern") in mirror.WEDGE_PATTERNS],
+                wedge_siblings,
                 symbol=record.symbol.value,
                 direction=str(record.robot_state.get("direction", "")).upper(),
                 now_ms=now_ms,
             )
+            if (
+                parent_id is not None
+                and campaign is not None
+                and campaign.get("parent_candidate_id") != parent_id
+            ):
+                raise mirror.MirrorRobotError("linked MIRROR parent campaign changed")
             prior = []
             if campaign is not None:
                 for item in siblings:

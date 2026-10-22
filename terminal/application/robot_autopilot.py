@@ -19,7 +19,7 @@ from terminal.persistence.sqlite_store import (
 )
 
 
-POLICY_VERSION = "robot-autopilot-shadow-v0.4"
+POLICY_VERSION = "robot-autopilot-shadow-v0.5"
 
 OUTCOME_ALLOW = "ALLOW"
 OUTCOME_WAIT = "WAIT"
@@ -80,6 +80,10 @@ class RobotAutoAdmissionFacts:
     # PAPER_AUTO only: daily-loss gate facts computed in the admission transaction
     # (see ``daily_loss_gate_facts``). None in PAPER_AUTO -> WAIT, never ALLOW.
     daily_loss_gate: dict | None = None
+    # A Box may be a non-owning MIRROR child of one already-funded Wedge owner.
+    # The concrete parent identity is revalidated by the canonical admission
+    # boundary and by the Robot monitor before any Box order can exist.
+    linked_mirror_parent_candidate_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,9 +150,11 @@ def evaluate_auto_admission(
     if not portfolio or portfolio.get("available") is not True:
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PORTFOLIO_DATA_UNAVAILABLE)
     occupied = portfolio.get("occupied_ro")
-    if type(occupied) is not int or occupied < 0:
+    new_reserve = portfolio.get("new_reserve_ro", 1)
+    if (type(occupied) is not int or occupied < 0
+            or type(new_reserve) is not int or new_reserve not in {0, 1}):
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PORTFOLIO_DATA_UNAVAILABLE)
-    if occupied + 1 > 19:
+    if occupied + new_reserve > 19:
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PORTFOLIO_AGGREGATE_CAP)
     return RobotAutoAdmissionResult(OUTCOME_ALLOW, REASON_ELIGIBLE)
 

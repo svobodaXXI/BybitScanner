@@ -4962,6 +4962,8 @@ class SQLiteStore:
     def handoff_box_plan_to_robot(
         self, source_candidate_id: str, *, symbol: Symbol,
         expected_snapshot_sha256: str, approved_at_ms: int,
+        linked_mirror_parent_candidate_id: str | None = None,
+        linked_mirror_parent_snapshot_sha256: str | None = None,
     ) -> tuple[RobotCandidateRecord, bool]:
         """Atomically persist a linked waiting candidate; never authorize execution."""
         self._assert_owner()
@@ -4994,6 +4996,18 @@ class SQLiteStore:
                 "source_box_candidate_id": source_candidate_id,
                 "execution_authorized": False,
             }
+            if linked_mirror_parent_candidate_id is not None:
+                if (
+                    not linked_mirror_parent_candidate_id.strip()
+                    or not isinstance(linked_mirror_parent_snapshot_sha256, str)
+                    or len(linked_mirror_parent_snapshot_sha256) != 64
+                ):
+                    raise ValueError("invalid linked MIRROR parent identity")
+                state.update({
+                    "mirror_parent_candidate_id": linked_mirror_parent_candidate_id,
+                    "mirror_parent_snapshot_sha256": linked_mirror_parent_snapshot_sha256,
+                    "mirror_parent_direction": snapshot["identity"]["direction"],
+                })
             try:
                 self._connection.execute(
                     "INSERT INTO robot_candidates VALUES (?, 'paper', ?, 'APPROVED', ?, ?, ?, 1, ?, ?)",

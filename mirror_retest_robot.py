@@ -226,7 +226,8 @@ def find_active_campaign(policy: MirrorRobotPolicy, wedge_records: Iterable[Any]
                 continue
             breakout_close = int(state["breakout"]["close_time_ms"])
             if best is None or breakout_close > best["breakout_close_ms"]:
-                best = {"campaign_id": f"{boundary.boundary_id}@{breakout_close}", "boundary": boundary,
+                best = {"campaign_id": f"{boundary.boundary_id}@{breakout_close}",
+                        "parent_candidate_id": record.candidate_id, "boundary": boundary,
                         "state": state, "breakout_close_ms": breakout_close, "campaign_direction": direction}
     if best is None and unresolved:
         raise MirrorRobotError("MIRROR campaign evidence is incomplete")
@@ -254,11 +255,16 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
                "decided_at_ms": now_ms}
         if campaign is not None:
             out["campaign_id"] = campaign["campaign_id"]
+            if campaign.get("parent_candidate_id") is not None:
+                out["parent_candidate_id"] = campaign["parent_candidate_id"]
         return out
 
     def defer(reason: str) -> dict[str, Any]:
-        return {"strategy_id": STRATEGY_ID, "decision": DEFERRED, "reason": reason,
-                "decided_at_ms": now_ms, "campaign_id": campaign["campaign_id"]}
+        out = {"strategy_id": STRATEGY_ID, "decision": DEFERRED, "reason": reason,
+               "decided_at_ms": now_ms, "campaign_id": campaign["campaign_id"]}
+        if campaign.get("parent_candidate_id") is not None:
+            out["parent_candidate_id"] = campaign["parent_candidate_id"]
+        return out
 
     if campaign is None:
         return no("no_active_campaign")
@@ -342,6 +348,8 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
         "partial_quantities": [str(p) for p in partial], "target_at_attach": str(target),
         "r0_usdt": str(r0), "worst_case_usdt": str(worst_case), "remaining_net_reward_usdt": str(potential),
         "budget_cap_usdt": str(gate.budget.cap_usdt),
+        **({"parent_candidate_id": campaign["parent_candidate_id"]}
+           if campaign.get("parent_candidate_id") is not None else {}),
     }
 
 
