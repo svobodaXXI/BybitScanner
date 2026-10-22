@@ -40,6 +40,7 @@ from terminal.application.robot_admission import (
     box_plan_source_admission_error,
     box_plan_admission_handle,
     candidate_snapshot_sha256,
+    linked_mirror_parent_candidate,
     scanner_candidate_admission_error,
 )
 from terminal.application.robot_autopilot import (
@@ -460,6 +461,25 @@ def _fresh_facts(
         daily_gate = _daily_loss_gate(
             store, account, now_ms=now_ms, decisions=decisions,
             enabled=daily_loss_gate_enabled, daily_marks=daily_marks)
+    linked_parent = None
+    if mode == PAPER_AUTO_MODE and candidate.pattern == "IKIGAI_BOX":
+        identity = candidate.snapshot.get("identity") or {}
+        direction = str(identity.get("direction", "")) if isinstance(identity, Mapping) else ""
+        linked_parent = linked_mirror_parent_candidate(
+            store,
+            account,
+            candidate.symbol,
+            direction,
+            excluded_candidate_ids=candidate.own_ids,
+        )
+        if linked_parent is not None:
+            # The Box is a subordinate attempt of the already-reserved Wedge
+            # campaign, not a second independent Robot idea.
+            portfolio["new_reserve_ro"] = 0
+    symbol_owned = (
+        _symbol_owned(store, account, candidate)
+        or candidate.symbol.value in portfolio.get("owned_symbols", [])
+    )
     return RobotAutoAdmissionFacts(
         autopilot_mode=mode,
         environment="PAPER",
@@ -475,13 +495,15 @@ def _fresh_facts(
         reconciliation_clear=(
             runtime is not None and runtime.recovery_status != "RECONCILIATION_REQUIRED"
         ),
-        symbol_owned=(_symbol_owned(store, account, candidate)
-                      or candidate.symbol.value in portfolio.get("owned_symbols", [])),
+        symbol_owned=symbol_owned and linked_parent is None,
         protection_healthy=healthy,
         portfolio_policy_ready=True,
         portfolio_facts=portfolio,
         candidate_fresh=fresh,
         daily_loss_gate=daily_gate,
+        linked_mirror_parent_candidate_id=(
+            linked_parent.candidate_id if linked_parent is not None else None
+        ),
     )
 
 
@@ -638,6 +660,9 @@ def admit_paper_auto_candidate(
                     transaction_store=store,
                     expected_snapshot_sha256=candidate.snapshot_sha256,
                     mark_legacy_approved=False,
+                    linked_mirror_parent_candidate_id=(
+                        facts.linked_mirror_parent_candidate_id
+                    ),
                 )
             decision, decision_created = record_auto_decision(
                 store,
@@ -743,6 +768,9 @@ def admit_arrived_auto_candidate(
                 transaction_store=store,
                 expected_snapshot_sha256=candidate.snapshot_sha256,
                 mark_legacy_approved=False,
+                linked_mirror_parent_candidate_id=(
+                    facts.linked_mirror_parent_candidate_id
+                ),
             )
         decision, decision_created = record_auto_decision(
             store,
