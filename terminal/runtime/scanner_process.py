@@ -98,7 +98,7 @@ def run_scan_pass_in_child_process(
                 robot_candidate_observer,
                 child_started=child_started,
                 stop_requested=stop_requested,
-                first_progress_timeout_s=first_progress_timeout_s,
+                first_progress_timeout_s=(first_progress_timeout_s if require_progress else None),
             )
         finally:
             _end_child(process)
