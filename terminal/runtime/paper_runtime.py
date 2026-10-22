@@ -1143,10 +1143,16 @@ class PaperRuntime:
         if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
             return
         prepared_marks = self._prepare_autopilot_daily_marks()
-        self._dispatch_robot_command(
-            lambda runtime: runtime.observe_autopilot_candidate(
-                source, candidate_ref, handover=True, daily_marks=prepared_marks)
-        )
+        try:
+            self._dispatch_robot_command(
+                lambda runtime: runtime.observe_autopilot_candidate(
+                    source, candidate_ref, handover=True, daily_marks=prepared_marks)
+            )
+        except TimeoutError:
+            print(
+                "[AUTOPILOT OBSERVATION TIMEOUT] "
+                f"source={source} candidate_ref={candidate_ref}"
+            )
 
     def _autopilot_open_position_symbols(self) -> tuple[str, ...]:
         """Owner-only read of the complete PAPER position set."""
