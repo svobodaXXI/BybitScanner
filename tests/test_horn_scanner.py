@@ -1,4 +1,4 @@
-"""HORN-4: observation-only Broadening («Рупор») Scanner integration.
+"""HORN-4/HORN-5: observation-only Broadening («Рупор») Scanner integration.
 
 Detection on the closed prefix, chart rendering, Telegram delivery and
 deduplication, incremental evidence, visible progress, coexistence with Wedge
@@ -19,6 +19,7 @@ import pandas as pd
 import tests.test_telegram_delivery  # noqa: F401  offline config/API stubs
 import horn_scanner
 import main
+import notification
 from tests.test_broadening_detector import FIVE, FOUR, zigzag
 
 
@@ -107,6 +108,10 @@ class ObserveTest(unittest.TestCase):
 
 
 class DeliveryTest(unittest.TestCase):
+    """HORN-5 (#509): canonical short text, then the chart with the shared keyboard."""
+
+    OK = {"ok": True, "result": {"message_id": 7}}
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = os.path.join(self.tmp.name, "evidence")
@@ -122,67 +127,142 @@ class DeliveryTest(unittest.TestCase):
                 "TESTUSDT", snapshot(points, length), timeframe="5", chart_dir=self.charts, root=self.root,
             )
 
-    def send(self, observation, responses, test_mode=False):
+    def mature(self, preliminary):
+        return dict(preliminary, stage="MATURE",
+                    formation=SimpleNamespace(**{**vars(preliminary["formation"]), "stage": "MATURE"}))
+
+    def send(self, observation, texts=(), photos=(), test_mode=False):
+        """One delivery; returns (result, ordered [(kind, chat_id, args, kwargs)])."""
+        calls = []
+
+        def responder(responses, kind):
+            responses = iter(responses)
+
+            def call(token, chat_id, *args, **kwargs):
+                calls.append((kind, chat_id, args, kwargs))
+                response = next(responses)
+                if isinstance(response, Exception):
+                    raise response
+                return response
+            return call
+
         with patch.object(horn_scanner.config, "TELEGRAM_ENABLED", True), \
                 patch.object(horn_scanner, "get_telegram_chat_ids", return_value=("owner", "friend")), \
+                patch.object(horn_scanner, "get_telegram_owner_chat_id", return_value="owner"), \
                 patch.object(horn_scanner, "load_memory", side_effect=lambda: self.memory), \
                 patch.object(horn_scanner, "save_memory", side_effect=lambda m: self.memory.update(m)), \
-                patch.object(horn_scanner, "send_photo", side_effect=responses) as photo:
+                patch.object(horn_scanner, "send_message", side_effect=responder(texts, "text")), \
+                patch.object(horn_scanner, "send_photo", side_effect=responder(photos, "photo")):
             result = horn_scanner.send_broadening_observation(
                 "TESTUSDT", observation, timeframe="5", test_mode=test_mode, root=self.root,
             )
-        return result, photo
+        return result, calls
 
-    def test_card_is_observation_only_and_deduplicated(self):
+    @staticmethod
+    def order(calls):
+        return [(kind, chat_id) for kind, chat_id, _, _ in calls]
+
+    @staticmethod
+    def buttons(call):
+        return [button for row in call[3]["reply_markup"]["inline_keyboard"] for button in row]
+
+    def test_text_then_chart_with_canonical_buttons(self):
         observation = self.observation()
-        ok = {"ok": True, "result": {"message_id": 7}}
-        result, photo = self.send(observation, [ok, ok])
+        result, calls = self.send(observation, [self.OK] * 2, [self.OK] * 2)
         self.assertTrue(result)
-        self.assertEqual(photo.call_count, 2)
-        caption = photo.call_args.kwargs["caption"]
-        self.assertIn("Рупор", caption)
-        self.assertIn("PRELIMINARY", caption)
-        self.assertNotIn("LONG", caption)
-        self.assertNotIn("SHORT", caption)
-        markup = photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
-        buttons = [button for row in markup for button in row]
-        self.assertTrue(all("url" in b and "callback_data" not in b for b in buttons), buttons)
-        deliveries = [e for e in read_events(self.root) if e["event"] == "horn_delivery"]
-        self.assertEqual({(e["chat_id"], e["ok"], e["message_id"]) for e in deliveries},
-                         {("owner", True, 7), ("friend", True, 7)})
+        self.assertEqual(self.order(calls),
+                         [("text", "owner"), ("photo", "owner"), ("text", "friend"), ("photo", "friend")])
+        text = calls[0][2][0]
+        self.assertEqual(text.splitlines(), [
+            "📡 Сканер: TESTUSDT",
+            "Рупор · PRELIMINARY — предварительная геометрия",
+            notification.format_timeframe_ru("5"),
+            "Наблюдение: без сделки",
+        ])
+        for word in ("LONG", "SHORT", "Баллы", "↑", "↓"):
+            self.assertNotIn(word, text)
+        self.assertEqual(calls[1][2][0], observation["chart_path"])
+        self.assertEqual(calls[1][3]["caption"], "")
+        # Exactly the shared builder's keyboards: owner review set, friend TradingView only.
+        self.assertEqual(calls[1][3]["reply_markup"],
+                         notification.build_tradingview_keyboard("TESTUSDT", "5", include_review_actions=True))
+        self.assertEqual(calls[3][3]["reply_markup"],
+                         notification.build_tradingview_keyboard("TESTUSDT", "5", include_review_actions=False))
+        owner = {b["callback_data"] for b in self.buttons(calls[1]) if "callback_data" in b}
+        self.assertLessEqual({f"review:{a}:TESTUSDT:5" for a in ("queue", "good", "geometry", "anchor")}, owner)
+        self.assertIn("url", self.buttons(calls[1])[0])
+        friend = self.buttons(calls[3])
+        self.assertTrue(all("url" in b and "callback_data" not in b for b in friend), friend)
+        events = [(e["event"], e["chat_id"], e["ok"], e["message_id"])
+                  for e in read_events(self.root) if e["event"] != "horn_detected"]
+        self.assertEqual(events, [
+            ("horn_text_delivery", "owner", True, 7), ("horn_delivery", "owner", True, 7),
+            ("horn_text_delivery", "friend", True, 7), ("horn_delivery", "friend", True, 7),
+        ])
         # Same formation and stage on the next pass: nothing is sent again.
-        result, photo = self.send(observation, [])
+        result, calls = self.send(observation)
         self.assertFalse(result)
-        photo.assert_not_called()
+        self.assertEqual(calls, [])
+
+    def test_review_callbacks_are_accepted_by_the_existing_handler(self):
+        import telegram_review
+        _, calls = self.send(self.observation(), [self.OK] * 2, [self.OK] * 2)
+        reviews = [b["callback_data"] for b in self.buttons(calls[1])
+                   if str(b.get("callback_data", "")).startswith("review:")]
+        self.assertEqual(len(reviews), 4)
+        for data in reviews:
+            parsed = telegram_review._parse_callback(data)
+            self.assertEqual((parsed["kind"], parsed["symbol"], parsed["timeframe"]), ("review", "TESTUSDT", "5"))
+
+    def test_no_robot_button_or_handoff_for_any_stage(self):
+        preliminary = self.observation()
+        with patch("pattern_robot_integration.prepare_robot_handoff") as handoff, \
+                patch("notification.prepare_robot_handoff") as notification_handoff:
+            _, first = self.send(preliminary, [self.OK] * 2, [self.OK] * 2)
+            _, second = self.send(self.mature(preliminary), [self.OK] * 2, [self.OK] * 2)
+        handoff.assert_not_called()
+        notification_handoff.assert_not_called()
+        photos = [call for call in first + second if call[0] == "photo"]
+        self.assertEqual(len(photos), 4)
+        for call in photos:
+            for button in self.buttons(call):
+                self.assertFalse(str(button.get("callback_data", "")).startswith("robot:"), button)
+                self.assertNotIn("Робот", button["text"])
 
     def test_upgrade_to_mature_is_delivered_once_more(self):
         preliminary = self.observation()
-        mature = dict(preliminary, stage="MATURE",
-                      formation=SimpleNamespace(**{**vars(preliminary["formation"]), "stage": "MATURE"}))
-        ok = {"ok": True, "result": {"message_id": 1}}
-        self.send(preliminary, [ok, ok])
-        result, photo = self.send(mature, [ok, ok])
+        mature = self.mature(preliminary)
+        self.send(preliminary, [self.OK] * 2, [self.OK] * 2)
+        result, calls = self.send(mature, [self.OK] * 2, [self.OK] * 2)
         self.assertTrue(result)
-        self.assertEqual(photo.call_count, 2)
-        self.assertIn("MATURE", photo.call_args.kwargs["caption"])
-        result, photo = self.send(mature, [])
-        photo.assert_not_called()
+        self.assertEqual(len(calls), 4)
+        self.assertIn("Рупор · MATURE", calls[0][2][0])
+        result, calls = self.send(mature)
+        self.assertEqual(calls, [])
 
-    def test_failed_recipient_stays_retryable(self):
+    def test_failed_chart_is_retried_without_repeating_the_text(self):
         observation = self.observation()
-        result, _ = self.send(observation, [{"ok": True, "result": {"message_id": 3}}, RuntimeError("timeout")])
+        result, _ = self.send(observation, [self.OK] * 2, [self.OK, RuntimeError("timeout")])
         self.assertFalse(result)
         failed = [e for e in read_events(self.root) if e["event"] == "horn_delivery" and not e["ok"]]
         self.assertEqual(failed[0]["chat_id"], "friend")
         self.assertIn("timeout", failed[0]["error"])
-        result, photo = self.send(observation, [{"ok": True, "result": {"message_id": 4}}])
+        result, calls = self.send(observation, [], [self.OK])
         self.assertTrue(result)
-        self.assertEqual(photo.call_args.args[1], "friend")
+        self.assertEqual(self.order(calls), [("photo", "friend")])
+
+    def test_failed_text_sends_no_chart_and_stays_retryable(self):
+        observation = self.observation()
+        result, calls = self.send(observation, [self.OK, {"ok": False}], [self.OK])
+        self.assertFalse(result)
+        self.assertEqual(self.order(calls), [("text", "owner"), ("photo", "owner"), ("text", "friend")])
+        result, calls = self.send(observation, [self.OK], [self.OK])
+        self.assertTrue(result)
+        self.assertEqual(self.order(calls), [("text", "friend"), ("photo", "friend")])
 
     def test_test_mode_does_not_persist_memory(self):
-        observation = self.observation()
-        ok = {"ok": True, "result": {"message_id": 9}}
-        self.send(observation, [ok, ok], test_mode=True)
+        _, calls = self.send(self.observation(), [self.OK] * 2, [self.OK] * 2, test_mode=True)
+        self.assertTrue(calls[0][2][0].endswith("🧪 TEST MODE"))
         self.assertEqual(self.memory, {})
 
 
