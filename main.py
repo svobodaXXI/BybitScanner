@@ -74,17 +74,25 @@ def build_scan_finished_message(
     )
 
 
-def run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, robot_candidate_observer=None):
-    """Run one Scanner pass; ``robot_candidate_observer`` sees persisted Robot candidates."""
+def run_scan_pass(
+    *,
+    box_plan_preparer=None,
+    control_checkpoint=None,
+    robot_candidate_observer=None,
+    progress_observer=None,
+):
+    """Run one Scanner pass; observers receive persisted candidates and progress."""
     from pattern_robot_integration import robot_candidate_observer as observe
 
     with observe(robot_candidate_observer):
         return _run_scan_pass(
-            box_plan_preparer=box_plan_preparer, control_checkpoint=control_checkpoint,
+            box_plan_preparer=box_plan_preparer,
+            control_checkpoint=control_checkpoint,
+            progress_observer=progress_observer,
         )
 
 
-def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
+def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_observer=None):
     """Run exactly one Scanner scan pass over all discovered symbols.
 
     Extracted from main() as a reusable, throttled-repeatable unit (mirroring
@@ -138,6 +146,8 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
             write_progress(progress)
         except Exception as progress_error:
             print(f"[SCAN PROGRESS WRITE ERROR] {progress_error}", flush=True)
+        if progress_observer is not None:
+            progress_observer(progress)
 
     print("=" * 60)
     print("BybitScanner")

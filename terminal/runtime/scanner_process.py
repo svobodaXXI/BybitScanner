@@ -4,8 +4,8 @@ The Scanner's CPU-heavy analysis must not share the backend interpreter with the
 PAPER owner thread (protection callbacks, ingress queue). The pass therefore runs
 in a spawned child process, while every effect that touches the PAPER database
 stays in the backend: the child never opens the PAPER DB, it only asks the parent
-to run the three existing callbacks (control checkpoint, Box plan preparation,
-Robot candidate observer) and waits for their answer. The backend keeps them on
+to run the existing callbacks (control checkpoint, Box plan preparation,
+Robot candidate observer, and progress heartbeat) and waits for their answer. The backend keeps them on
 the same dispatch path to its single owner as before.
 
 Lifecycle and fail-closed rules:
@@ -28,12 +28,14 @@ import multiprocessing
 import multiprocessing.util  # registers its exit hook before ours, so ours runs first
 import sys
 import threading
+import time
 from typing import Callable
 
 SCANNER_PASS_TARGET = "main:run_scan_pass"
 CHILD_POLL_S = 0.2
 CHILD_EXIT_GRACE_S = 5.0
 CHILD_TERMINATE_WAIT_S = 5.0
+DEFAULT_FIRST_PROGRESS_TIMEOUT_S = 60.0
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 
@@ -54,6 +56,10 @@ def run_scan_pass_in_child_process(
     box_plan_preparer: Callable | None = None,
     control_checkpoint: Callable[[], bool] | None = None,
     robot_candidate_observer: Callable[[str], None] | None = None,
+    child_started: Callable[[int], bool] | None = None,
+    stop_requested: Callable[[], bool] | None = None,
+    first_progress_timeout_s: float = DEFAULT_FIRST_PROGRESS_TIMEOUT_S,
+    require_progress: bool = False,
     target: str = SCANNER_PASS_TARGET,
 ) -> None:
     """Run ``target`` (``module:function``) once in a child and serve its callbacks here."""
@@ -63,8 +69,12 @@ def run_scan_pass_in_child_process(
     try:
         context = multiprocessing.get_context("spawn")
         parent_end, child_end = context.Pipe()
-        enabled = (box_plan_preparer is not None, control_checkpoint is not None,
-                   robot_candidate_observer is not None)
+        enabled = (
+            box_plan_preparer is not None,
+            control_checkpoint is not None,
+            robot_candidate_observer is not None,
+            require_progress,
+        )
         process = context.Process(
             target=_child_main, args=(child_end, target, enabled),
             name="bybitscanner-scanner-pass", daemon=True,
@@ -80,8 +90,16 @@ def run_scan_pass_in_child_process(
                 except OSError as error:
                     raise ScannerProcessError(
                         f"Scanner child cannot be bound to the backend lifetime: {error}") from error
-            _serve(parent_end, process, box_plan_preparer, control_checkpoint,
-                   robot_candidate_observer)
+            _serve(
+                parent_end,
+                process,
+                box_plan_preparer,
+                control_checkpoint,
+                robot_candidate_observer,
+                child_started=child_started,
+                stop_requested=stop_requested,
+                first_progress_timeout_s=(first_progress_timeout_s if require_progress else None),
+            )
         finally:
             _end_child(process)
             _active_process = None
@@ -184,8 +202,29 @@ def _hard_stop(process) -> None:
     process.join(CHILD_TERMINATE_WAIT_S)
 
 
-def _serve(connection, process, box_plan_preparer, control_checkpoint, observer) -> None:
+def _serve(
+    connection,
+    process,
+    box_plan_preparer,
+    control_checkpoint,
+    observer,
+    *,
+    child_started=None,
+    stop_requested=None,
+    first_progress_timeout_s=DEFAULT_FIRST_PROGRESS_TIMEOUT_S,
+) -> None:
+    started = False
+    first_progress = False
+    progress_deadline = None
     while True:
+        if stop_requested is not None and stop_requested():
+            raise ScannerProcessError("scanner_stop_requested")
+        if (
+            progress_deadline is not None
+            and not first_progress
+            and time.monotonic() >= progress_deadline
+        ):
+            raise ScannerProcessError("first_progress_timeout")
         if not connection.poll(CHILD_POLL_S):
             if process.is_alive():
                 continue
@@ -199,6 +238,27 @@ def _serve(connection, process, box_plan_preparer, control_checkpoint, observer)
             return
         if kind == "error":
             raise ScannerProcessError(f"Scanner pass process failed: {payload}")
+        if kind == "started":
+            accepted = child_started is None or bool(child_started(int(payload)))
+            try:
+                connection.send(accepted)
+            except (EOFError, OSError):
+                break
+            if not accepted:
+                raise ScannerProcessError("scanner_start_cancelled")
+            started = True
+            if first_progress_timeout_s is not None:
+                progress_deadline = time.monotonic() + max(0.0, first_progress_timeout_s)
+            continue
+        if kind == "progress":
+            if not started:
+                raise ScannerProcessError("Scanner child reported progress before start")
+            first_progress = True
+            try:
+                connection.send(True)
+            except (EOFError, OSError):
+                break
+            continue
         try:
             connection.send(_answer(kind, payload, box_plan_preparer, control_checkpoint, observer))
         except (EOFError, OSError):
@@ -248,7 +308,7 @@ def _use_project_signal_package() -> None:
         del sys.modules["signal"]
 
 
-def _child_main(connection, target: str, enabled: tuple[bool, bool, bool]) -> None:
+def _child_main(connection, target: str, enabled: tuple[bool, bool, bool, bool]) -> None:
     """Child process entry: never opens the PAPER DB; every effect goes to the parent."""
     _use_project_signal_package()
 
@@ -277,14 +337,26 @@ def _child_main(connection, target: str, enabled: tuple[bool, bool, bool]) -> No
         if status != "ok":
             raise ScannerProcessError(value)
 
+    def progress(value) -> None:
+        if not call("progress", value):
+            raise ScannerProcessError("Scanner progress was not accepted")
+
     module_name, function_name = target.split(":", 1)
     try:
+        if not call("started", multiprocessing.current_process().pid):
+            return
+    except (EOFError, OSError):
+        return
+    try:
         scan_pass = getattr(importlib.import_module(module_name), function_name)
-        scan_pass(
-            box_plan_preparer=box_plan if enabled[0] else None,
-            control_checkpoint=checkpoint if enabled[1] else None,
-            robot_candidate_observer=observe if enabled[2] else None,
-        )
+        callbacks = {
+            "box_plan_preparer": box_plan if enabled[0] else None,
+            "control_checkpoint": checkpoint if enabled[1] else None,
+            "robot_candidate_observer": observe if enabled[2] else None,
+        }
+        if enabled[3]:
+            callbacks["progress_observer"] = progress
+        scan_pass(**callbacks)
     except BaseException as error:
         try:
             connection.send(("error", f"{type(error).__name__}: {error}"))
