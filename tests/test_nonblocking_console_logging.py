@@ -6,6 +6,7 @@ The console stream below is a stub whose write() blocks until released.
 """
 import io
 import logging
+import sys
 import threading
 import time
 import unittest
@@ -13,6 +14,7 @@ import unittest
 from terminal.runtime import paper_http_server
 from terminal.runtime.paper_http_server import (
     SLOW_OWNER_TASK_WARNING_MS, SerializedPaperRuntime, _install_console_log_queue,
+    _route_console_text_to_log_queue,
 )
 
 FORMAT = "%(levelname)s %(name)s %(message)s"
@@ -117,6 +119,52 @@ class ConsoleLogQueueTests(unittest.TestCase):
         source = inspect.getsource(paper_http_server.main)
         self.assertIn("_install_console_log_queue(", source)
         self.assertNotIn("logging.basicConfig", source)
+        self.assertLess(source.index("_install_console_log_queue("),
+                        source.index("_route_console_text_to_log_queue()"))
+        self.assertLess(source.index("_route_console_text_to_log_queue()"),
+                        source.index("ThreadingHTTPServer("))
+
+
+class ConsoleTextRoutingTests(unittest.TestCase):
+    def setUp(self):
+        root = logging.getLogger()
+        saved = (root.handlers[:], root.level, sys.stdout, sys.stderr)
+
+        def restore():
+            sys.stdout, sys.stderr = saved[2], saved[3]
+            root.handlers[:] = saved[0]
+            root.setLevel(saved[1])
+        self.addCleanup(restore)
+
+    def test_print_does_not_block_while_the_console_writer_hangs(self):
+        console = _HungConsole()
+        listener = _install_console_log_queue("WARNING", FORMAT, stream=console)
+        self.addCleanup(listener.stop)
+        self.addCleanup(console.release.set)
+        _route_console_text_to_log_queue()
+        print("occupies the console writer")
+        self.assertTrue(console.entered.wait(2))
+        started = time.perf_counter()
+        for i in range(200):
+            print(f"PAPER HTTP runtime listening {i}")
+            print("traceback line", file=sys.stderr)
+        self.assertLess(time.perf_counter() - started, 1.0)
+
+    def test_printed_lines_reach_the_console_in_order_despite_log_level(self):
+        stream = io.StringIO()
+        listener = _install_console_log_queue("WARNING", FORMAT, stream=stream)
+        _route_console_text_to_log_queue()
+        print("first")
+        print("second\r\nthird", end="")
+        sys.stdout.flush()
+        print("problem", file=sys.stderr)
+        listener.stop()
+        self.assertEqual(stream.getvalue().splitlines(), [
+            "INFO console.stdout first",
+            "INFO console.stdout second",
+            "INFO console.stdout third",
+            "WARNING console.stderr problem",
+        ])
 
 
 if __name__ == "__main__":
