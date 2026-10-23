@@ -36,6 +36,21 @@ class GeometryProducerTests(unittest.TestCase):
     def test_open_candle_rejected(self):
         self.assertIsNone(self.build(now=600999))
 
+    def test_forming_last_candle_dropped_when_anchors_are_closed(self):
+        class Forming(Candles):
+            def itertuples(self, index=False):
+                return iter([
+                    SimpleNamespace(time=1000, open=10, high=12, low=8, close=11),
+                    SimpleNamespace(time=301000, open=11, high=14, low=9, close=13),
+                    SimpleNamespace(time=601000, open=13, high=15, low=12, close=14),
+                ])
+        value = build_wedge_geometry_snapshot(
+            "id-1", "BTCUSDT", "5", GEOMETRY, Forming(), now_ms=700000)
+        self.assertIsNotNone(value)
+        self.assertEqual([b["open_time_ms"] for b in value["bars"]], [1000, 301000])
+        self.assertEqual(value["boundaries"][0]["anchors"][1],
+                         {"bar_open_time_ms": 301000, "price": 14})
+
     def test_regression_line_without_explicit_anchors_rejected(self):
         self.assertIsNone(self.build({"upper_line": {"slope": 1}, "lower_line": GEOMETRY["lower_line"]}))
 

@@ -22,8 +22,12 @@ def build_wedge_geometry_snapshot(signal_id, symbol, timeframe, geometry, candle
                 "open": float(row.open), "high": float(row.high),
                 "low": float(row.low), "close": float(row.close),
             })
-        if not rows or rows[-1]["open_time_ms"] + tf_ms > now:
-            return None  # No incomplete candle in immutable detector replay.
+        # Bybit kline returns the still-forming candle last. Keep closed candles
+        # only; an anchor on a dropped candle fails the index check below.
+        while rows and rows[-1]["open_time_ms"] + tf_ms > now:
+            rows.pop()
+        if not rows:
+            return None
         boundaries = []
         for kind in ("upper", "lower"):
             line = geometry.get(kind + "_line")
