@@ -1296,8 +1296,9 @@ export function App() {
               onTimeframeChange={changeTimeframe}
             />
 
-          )}          )}
+          )}
           />
+          )}
           <button
             aria-expanded={marketSidePanelOpen}
             aria-label={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
