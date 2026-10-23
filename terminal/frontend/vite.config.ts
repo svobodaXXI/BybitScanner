@@ -32,11 +32,13 @@ const frozenGeometryProxy = {
   target: paperBackendUrl ?? "http://127.0.0.1:8765",
   changeOrigin: true,
   rewrite: (path: string) => path,
-  configure(proxy: DiagnosticProxy & { on(event: "proxyReq", listener: (proxyReq: DiagnosticRequest & { setHeader(name: string, value: string): void }, req: DiagnosticRequest) => void): void }) {
-    proxy.on("proxyReq", (proxyReq, req) => {
+  configure(proxy: unknown) {
+    const scopedProxy = proxy as DiagnosticProxy;
+    scopedProxy.on("proxyReq", (proxyReq, req) => {
       const url = req.url ?? "";
       if (url.split("?")[0] === "/api/workspace/signal-geometry" && operatorToken.length >= 32) {
-        proxyReq.setHeader("X-BybitScanner-Operator-Token", operatorToken);
+        (proxyReq as DiagnosticRequest & { setHeader(name: string, value: string): void })
+          .setHeader("X-BybitScanner-Operator-Token", operatorToken);
       }
     });
   },
