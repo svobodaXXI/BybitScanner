@@ -1218,6 +1218,11 @@ export function App() {
         <div
           className={`workspace-market-row ${marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
         >
+          {mode === "EDITOR" && launchLink?.signalId && !frozenSignal ? (
+            <div role="status" aria-live="polite">
+              Исходная геометрия сигнала недоступна. Текущие свечи не заменяют сохранённый сигнал.
+            </div>
+          ) : (
           <ChartPanel
           key={`${market.book.symbol}:${timeframe}:${mode}:${frozenSignal?.signalId ?? ""}`}
           candles={mode === "EDITOR" && frozenSignal && launchLink?.symbol === market.book.symbol && launchLink.timeframe === timeframe ? frozenSignal.candles : market.candles}
@@ -1290,7 +1295,8 @@ export function App() {
               timeframe={timeframe}
               onTimeframeChange={changeTimeframe}
             />
-          )}
+
+          )}          )}
           />
           <button
             aria-expanded={marketSidePanelOpen}
