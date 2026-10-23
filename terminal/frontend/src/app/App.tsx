@@ -118,7 +118,7 @@ export function App() {
         const payload = await response.json();
         const snapshot = payload.snapshot;
         if (!payload.ok || !snapshot || snapshot.signal_id !== link.signalId
-            || snapshot.symbol !== link.symbol || String(snapshot.timeframe) !== link.timeframe.replace(/m$/, "")) return;
+            || snapshot.symbol !== link.symbol || String(snapshot.timeframe) !== ({ "15s": "15s", "1m": "1", "5m": "5", "15m": "15", "1h": "60", "1d": "D" } as Record<string, string>)[link.timeframe]) return;
         const candles: Candle[] = snapshot.bars.map((bar: {
           open_time_ms: number; open: number; high: number; low: number; close: number;
         }) => ({
@@ -1222,8 +1222,8 @@ export function App() {
           key={`${market.book.symbol}:${timeframe}:${mode}:${frozenSignal?.signalId ?? ""}`}
           candles={mode === "EDITOR" && frozenSignal && launchLink?.symbol === market.book.symbol && launchLink.timeframe === timeframe ? frozenSignal.candles : market.candles}
           editorMode={mode === "EDITOR"}
-          referenceDrawings={mode === "EDITOR" ? frozenSignal?.referenceDrawings ?? [] : []}
-          editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
+          referenceDrawings={mode === "EDITOR" && launchLink?.symbol === market.book.symbol && launchLink.timeframe === timeframe ? frozenSignal?.referenceDrawings ?? [] : []}
+          editableSeedDrawings={mode === "EDITOR" && launchLink?.symbol === market.book.symbol && launchLink.timeframe === timeframe ? frozenSignal?.editableDrawings ?? [] : []}
           signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
           tickSize={market.tickSize}
           symbol={market.book.symbol}
