@@ -2940,6 +2940,9 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/workspace/signal-geometry":
+            if not self._operator_authorized():
+                self._json_response(403, {"ok": False, "error": "operator_unauthorized"})
+                return
             # Exact immutable historical lookup; never invoke Scanner or trading state.
             import re
             from signal_archive import load_frozen_signal_geometry
