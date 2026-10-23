@@ -128,7 +128,7 @@ def build_chart_title(symbol, result):
             'Восходящий клин',
 
         "Triangle Compression":
-            'Сжимающийся треугольник',
+            'Треугольник',
 
         "No wedge":
             'Клин не найден',
