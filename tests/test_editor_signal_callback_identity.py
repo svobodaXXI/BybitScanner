@@ -1,4 +1,5 @@
 """Exact archive identity in owner-only Telegram EDITOR callback."""
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -39,6 +40,23 @@ class EditorSignalCallbackIdentityTests(unittest.TestCase):
         first = signal_archive.signal_callback_token("candidate-first")
         second = signal_archive.signal_callback_token("candidate-second")
         self.assertNotEqual(first, second)
+
+    def test_tampered_archive_metadata_does_not_resolve(self):
+        signal_id = "candidate-original"
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertTrue(signal_archive.record_original_signal(
+                signal_id, symbol="UMAUSDT", timeframe="5",
+                pattern="Falling Wedge", text="signal", image_bytes=b"png",
+                directory=temp,
+            ))
+            token = signal_archive.signal_callback_token(signal_id)
+            meta_path = Path(temp) / f"{token}.json"
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["candidate_id"] = "candidate-forged"
+            meta_path.write_text(json.dumps(meta), encoding="utf-8")
+            self.assertIsNone(signal_archive.resolve_signal_callback_token(
+                token, directory=temp,
+            ))
 
     def test_legacy_callback_stays_supported(self):
         parsed = telegram_review._parse_workspace_callback(
