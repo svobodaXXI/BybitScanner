@@ -21,6 +21,8 @@ describe("GFL frozen signal-to-chart bridge", () => {
     expect(referenceDrawings.map((d) => d.anchors.map((a) => a.logical))).toEqual([[0, 2], [0, 2]]);
     expect(referenceDrawings.every((d) => d.locked)).toBe(true);
     expect(editableDrawings.every((d) => !d.locked)).toBe(true);
+    expect(editableDrawings.map((d) => d.id)).toEqual(["editable:upper", "editable:lower"]);
+    expect(referenceDrawings.map((d) => d.id)).toEqual(["upper", "lower"]);
     editableDrawings[0].anchors[0].price = 11.5;
     expect(referenceDrawings[0].anchors[0].price).toBe(12);
     expect(serializeReviewDrawings(referenceDrawings, candles)[0].anchors).toEqual(source[0].anchors);
