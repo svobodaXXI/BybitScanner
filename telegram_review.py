@@ -192,16 +192,19 @@ def _parse_workspace_callback(data):
     """Only a verified owner callback may request local UI opening."""
     import re
     parts = str(data).split(":")
-    if len(parts) not in (4, 5) or parts[0] != "workspace":
+    if len(parts) == 5 and parts[0] == "ws" and parts[1] == "E":
+        mode, symbol, timeframe, signal_id = "EDITOR", parts[2], parts[3], parts[4]
+    elif len(parts) in (4, 5) and parts[0] == "workspace":
+        _, mode, symbol, timeframe = parts[:4]
+        signal_id = parts[4] if len(parts) == 5 else None
+    else:
         return None
-    _, mode, symbol, timeframe = parts[:4]
     if mode not in ("EDITOR", "TERMINAL"):
         return None
     if not re.fullmatch(r"[A-Z0-9]{2,32}USDT", symbol):
         return None
     if timeframe not in ("15s", "1m", "5m", "15m", "1h", "1d"):
         return None
-    signal_id = parts[4] if len(parts) == 5 else None
     if signal_id is not None:
         if mode != "EDITOR" or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", signal_id):
             return None
