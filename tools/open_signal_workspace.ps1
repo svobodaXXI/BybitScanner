@@ -54,6 +54,20 @@ if (!$response -or $response.StatusCode -ne 200) {
   } while ((Get-Date) -lt $deadline)
   if (!$ready) { throw "Local frontend did not become ready; browser not opened" }
 }
+# The existing preview process may predate the scoped proxy or have an old
+# environment. Verify the exact browser-facing route, not just backend health.
+if ($Mode -eq "EDITOR" -and $SignalId) {
+  $browserArchiveUrl = "http://127.0.0.1:$port/api/workspace/signal-geometry?signal_id=$([uri]::EscapeDataString($SignalId))"
+  try {
+    $browserArchive = Invoke-RestMethod -Uri $browserArchiveUrl -Method Get -TimeoutSec 5
+    if (!$browserArchive.ok -or $browserArchive.snapshot.signal_id -ne $SignalId -or
+        $browserArchive.snapshot.symbol -ne $Symbol) {
+      throw "Browser-facing signal archive identity mismatch"
+    }
+  } catch {
+    throw "Historical signal EDITOR unavailable: running frontend cannot serve the authorized frozen archive. Restart the frontend with correct server-side authorization. No browser opened."
+  }
+}
 Write-Host "READY: $localUrl"
 Start-Process $localUrl
 Write-Host "Browser opened."
