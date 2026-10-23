@@ -11,6 +11,7 @@ import ikigai_box_scanner as box
 import l_shape_scanner as observer
 import notification
 import signal_archive
+from tests.test_signal_geometry_snapshot import snapshot as frozen_snapshot
 from tests.test_ikigai_box_scanner_delivery import SOURCE_ID, _candles
 import tests.test_l_shape_scanner as l_shape_tests
 
@@ -28,7 +29,7 @@ class _ArchiveDir(unittest.TestCase):
 
 
 class WedgeSenderArchiveTests(_ArchiveDir):
-    def _send(self, *, candidate_id="cand-wedge", photo_response=PHOTO_OK, recipients=("owner", "friend")):
+    def _send(self, *, candidate_id="cand-wedge", photo_response=PHOTO_OK, recipients=("owner", "friend"), geometry_snapshot=None):
         with tempfile.TemporaryDirectory() as charts, ExitStack() as stack:
             (Path(charts) / "BTCUSDT_analysis.png").write_bytes(b"ORIGINAL-CHART-BYTES")
             stack.enter_context(patch.object(notification.config, "TELEGRAM_CHAT_IDS", recipients))
@@ -43,7 +44,8 @@ class WedgeSenderArchiveTests(_ArchiveDir):
                 return_value=types.SimpleNamespace(candidate_id=candidate_id, persistence_failed=False)))
             return notification.send_signal({
                 "symbol": "BTCUSDT", "pattern": "Falling Wedge", "final_score": 80, "timeframe": "5",
-                "robot_handoff_ready": True, "confirmation": {"direction": "LONG", "confirmed": True}})
+                "robot_handoff_ready": True, "confirmation": {"direction": "LONG", "confirmed": True},
+                "geometry_snapshot": geometry_snapshot})
 
     def test_owner_delivery_archives_exact_image_text_and_file_id(self):
         self.assertTrue(self._send())
@@ -52,6 +54,17 @@ class WedgeSenderArchiveTests(_ArchiveDir):
         self.assertIn("BTCUSDT", original["text"])
         self.assertEqual(original["photo_file_id"], "FID-1")
         self.assertEqual((original["symbol"], original["timeframe"]), ("BTCUSDT", "5"))
+
+    def test_owner_wedge_delivery_archives_typed_frozen_geometry_when_supplied(self):
+        source = frozen_snapshot("cand-geometry")
+        self.assertTrue(self._send(candidate_id="cand-geometry", geometry_snapshot=source))
+        self.assertEqual(signal_archive.load_frozen_signal_geometry("cand-geometry"), source)
+
+    def test_mismatched_geometry_is_rejected_without_blocking_telegram(self):
+        source = frozen_snapshot("wrong-id")
+        self.assertTrue(self._send(candidate_id="cand-geometry", geometry_snapshot=source))
+        self.assertIsNone(signal_archive.load_frozen_signal_geometry("cand-geometry"))
+        self.assertIsNotNone(signal_archive.load_original_signal(["cand-geometry"]))
 
     def test_next_signal_for_the_same_ticker_does_not_replace_an_older_original(self):
         self._send(candidate_id="cand-1")
