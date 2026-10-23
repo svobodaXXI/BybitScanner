@@ -19,6 +19,29 @@ const paperBackendUrl = (
   globalThis as { process?: { env?: Record<string, string | undefined> } }
 ).process?.env?.PAPER_BACKEND_URL;
 
+
+/**
+ * Server-side only credential bridge for ONE read-only endpoint.
+ * Never inject the operator token into other /api paths or browser bundles.
+ * Production remote access still requires the separately verified Access policy.
+ */
+const operatorToken = (
+  globalThis as { process?: { env?: Record<string, string | undefined> } }
+).process?.env?.BYBITSCANNER_OPERATOR_TOKEN?.trim() ?? "";
+const frozenGeometryProxy = {
+  target: paperBackendUrl ?? "http://127.0.0.1:8765",
+  changeOrigin: true,
+  rewrite: (path: string) => path,
+  configure(proxy: DiagnosticProxy & { on(event: "proxyReq", listener: (proxyReq: DiagnosticRequest & { setHeader(name: string, value: string): void }, req: DiagnosticRequest) => void): void }) {
+    proxy.on("proxyReq", (proxyReq, req) => {
+      const url = req.url ?? "";
+      if (url.split("?")[0] === "/api/workspace/signal-geometry" && operatorToken.length >= 32) {
+        proxyReq.setHeader("X-BybitScanner-Operator-Token", operatorToken);
+      }
+    });
+  },
+};
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
@@ -30,6 +53,7 @@ export default defineConfig({
       ".lhr.life",
     ],
     proxy: {
+      "/api/workspace/signal-geometry": frozenGeometryProxy,
       "/api": {
         target: paperBackendUrl ?? "http://127.0.0.1:8765",
         changeOrigin: true,
