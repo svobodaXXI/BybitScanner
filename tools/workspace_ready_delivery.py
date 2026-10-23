@@ -15,16 +15,42 @@ from workspace_ready_telegram import send_ready_workspace_checked
 from workspace_ready_link import workspace_link, write_workspace_qr
 
 
+def _telegram_identity() -> tuple[str, str]:
+    """Owner bot token and chat id; never logged.
+
+    The dedicated BYBITSCANNER_TELEGRAM_* variables win. Otherwise the already
+    configured Scanner/Robot Telegram identity is reused (config.TELEGRAM_TOKEN
+    and the single owner chat config.TELEGRAM_CHAT_ID, same as
+    notification.get_telegram_owner_chat_id); the broadcast list
+    TELEGRAM_CHAT_IDS is deliberately not used. Missing config means no
+    delivery, never a guess. Each value falls back independently.
+    """
+    token = (os.environ.get("BYBITSCANNER_TELEGRAM_BOT_TOKEN") or "").strip()
+    owner = (os.environ.get("BYBITSCANNER_TELEGRAM_OWNER_ID") or "").strip()
+    if token and owner:
+        return token, owner
+    try:
+        import config
+    except Exception:
+        return token, owner
+    if not token:
+        token = str(getattr(config, "TELEGRAM_TOKEN", "") or "").strip()
+    if not owner:
+        owner = str(getattr(config, "TELEGRAM_CHAT_ID", "") or "").strip()
+    return token, owner
+
+
 def deliver_if_verified(mode: str, symbol: str, timeframe: str,
                         local_url: str = "http://127.0.0.1:4173/") -> bool:
     required = (
         "BYBITSCANNER_TERMINAL_HTTPS_URL",
         "BYBITSCANNER_ACCESS_CLIENT_ID",
         "BYBITSCANNER_ACCESS_CLIENT_SECRET",
-        "BYBITSCANNER_TELEGRAM_OWNER_ID",
-        "BYBITSCANNER_TELEGRAM_BOT_TOKEN",
     )
     if any(not os.environ.get(key) for key in required):
+        return False
+    bot_token, owner_chat_id = _telegram_identity()
+    if not bot_token or not owner_chat_id:
         return False
     # The already-running UI must respond locally, even if the tunnel is healthy.
     try:
@@ -45,8 +71,8 @@ def deliver_if_verified(mode: str, symbol: str, timeframe: str,
     except (OSError, ValueError):
         return False
     send_ready_workspace_checked(
-        os.environ["BYBITSCANNER_TELEGRAM_BOT_TOKEN"],
-        os.environ["BYBITSCANNER_TELEGRAM_OWNER_ID"],
+        bot_token,
+        owner_chat_id,
         access_client_id=os.environ["BYBITSCANNER_ACCESS_CLIENT_ID"],
         access_client_secret=os.environ["BYBITSCANNER_ACCESS_CLIENT_SECRET"],
         base_url=os.environ["BYBITSCANNER_TERMINAL_HTTPS_URL"],
