@@ -338,6 +338,7 @@ def build_tradingview_keyboard(
     include_review_actions=True,
     robot_candidate_id=None,
     robot_status_button=False,
+    signal_id=None,
 ):
     """Telegram inline keyboard for TradingView, review, and Robot admission."""
 
@@ -405,8 +406,14 @@ def build_tradingview_keyboard(
     if include_review_actions:
         tf = timeframe if timeframe.endswith(("s", "m", "h", "d")) else f"{timeframe}m"
         if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
+            import re
+            editor_callback = f"workspace:EDITOR:{symbol}:{tf}"
+            if signal_id is not None and re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", str(signal_id)):
+                exact_callback = f"{editor_callback}:{signal_id}"
+                if len(exact_callback.encode("utf-8")) <= 64:
+                    editor_callback = exact_callback
             keyboard.append([
-                {"text": "✏️ Редактор", "callback_data": f"workspace:EDITOR:{symbol}:{tf}"},
+                {"text": "✏️ Редактор", "callback_data": editor_callback},
                 {"text": "🖥 Терминал", "callback_data": f"workspace:TERMINAL:{symbol}:{tf}"},
             ])
 
@@ -513,6 +520,7 @@ def send_signal(
                         if is_owner
                         else None
                     ),
+                    signal_id=robot_candidate_id if is_owner else None,
                 )
             )
 
