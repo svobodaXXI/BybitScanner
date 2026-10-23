@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import tests.test_telegram_delivery  # installs the established offline config/API stubs
 from notification import build_tradingview_keyboard
 import signal_archive
 import telegram_review
