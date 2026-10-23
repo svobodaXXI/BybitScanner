@@ -22,7 +22,13 @@ def request_owner_workspace_open(mode: str, symbol: str, timeframe: str, signal_
     if not script.is_file():
         raise RuntimeError("Workspace launcher missing")
     # Starting a new console is intentional: owner sees URL and preparation result.
-    args = ["powershell.exe", "-NoProfile", "-File", str(script),
+    # Use the OS executable directly: untrusted worktree files named powershell.exe
+    # must not shadow the Windows system PowerShell during CreateProcess lookup.
+    system_root = Path(os.environ.get("SystemRoot", r"C:\\Windows"))
+    powershell = system_root / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    if not powershell.is_file():
+        raise RuntimeError("System PowerShell executable missing")
+    args = [str(powershell), "-NoProfile", "-File", str(script),
             "-Mode", mode, "-Symbol", symbol, "-Timeframe", timeframe]
     if signal_id is not None:
         args.extend(["-SignalId", signal_id])
