@@ -2940,8 +2940,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/workspace/signal-geometry":
-            if not self._operator_authorized():
-                self._json_response(403, {"ok": False, "error": "operator_unauthorized"})
+            expected = os.environ.get("BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN", "").strip()
+            supplied = self.headers.get("X-BybitScanner-Signal-Geometry-Token", "")
+            if len(expected) < 32 or not supplied or not hmac.compare_digest(expected, supplied):
+                self._json_response(403, {"ok": False, "error": "signal_geometry_unauthorized"})
                 return
             # Exact immutable historical lookup; never invoke Scanner or trading state.
             import re
