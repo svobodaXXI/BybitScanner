@@ -28,9 +28,8 @@ from dataclasses import dataclass
 import json
 import sqlite3
 import time
-import threading
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable
 
 from pattern_robot_integration import is_robot_executable_signal
 from robot_candidate_store import approve_candidate, load_candidate
@@ -40,7 +39,6 @@ from terminal.application.robot_admission import (
     box_plan_source_admission_error,
     box_plan_admission_handle,
     candidate_snapshot_sha256,
-    linked_mirror_parent_candidate,
     scanner_candidate_admission_error,
 )
 from terminal.application.robot_autopilot import (
@@ -50,24 +48,16 @@ from terminal.application.robot_autopilot import (
     REASON_ALREADY_ADMITTED,
     RobotAutoAdmissionFacts,
     RobotAutoAdmissionResult,
-    daily_loss_gate_facts,
     evaluate_auto_admission,
     record_auto_decision,
 )
-from terminal.application.paper_daily_equity import (
-    MarkPrice, msk_day_start_ms, paper_daily_equity_facts_in_transaction,
-)
-from terminal.application.robot_portfolio import _source_terminal_identities, collect_portfolio_facts
+from terminal.application.robot_portfolio import collect_portfolio_facts
 from terminal.domain.models import Category, PositionKey, PositionSide, Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import (
-    DuplicateIdentity,
     PersistenceError,
     RobotAutoDecisionRecord,
     RobotCandidateRecord,
-    ShadowCommitBusy,
-    ShadowCommitStale,
     SQLiteStore,
-    SHADOW_COMMIT_MAX_ROWS,
 )
 
 
@@ -82,28 +72,6 @@ _ACTIVE_STATUSES = ("APPROVED", "OPEN")
 A6_DUE_WAIT_BATCH_LIMIT = 8
 A6_DUE_WAIT_BATCH_BUDGET_S = 2.0
 _monotonic = time.monotonic
-# Fresh runtime mark prices for the daily-loss gate: (marks by symbol, maximum age ms).
-DailyMarkProvider = Callable[[], tuple[Mapping[str, MarkPrice], int]]
-
-
-def _daily_loss_gate(
-    store: SQLiteStore, account: TradingAccountId, *, now_ms: int,
-    decisions: tuple[RobotAutoDecisionRecord, ...], enabled: bool,
-    daily_marks: DailyMarkProvider | None,
-) -> dict:
-    """PAPER_AUTO daily-loss facts from the caller's admission transaction."""
-    marks: Mapping[str, MarkPrice] = {}
-    max_age_ms = 0
-    if daily_marks is not None:
-        try:
-            supplied, supplied_age = daily_marks()
-            if type(supplied_age) is int and supplied_age >= 0:
-                marks, max_age_ms = dict(supplied), supplied_age
-        except Exception:
-            marks, max_age_ms = {}, 0  # no proven mark -> unavailable for open positions
-    equity = paper_daily_equity_facts_in_transaction(
-        store, account, as_of_ms=now_ms, marks=marks, max_mark_age_ms=max_age_ms)
-    return daily_loss_gate_facts(equity, decisions, enabled=enabled)
 
 @dataclass(frozen=True, slots=True)
 class ShadowObservation:
@@ -211,7 +179,7 @@ def _box_plan_candidate(
         raise LookupError(f"Box plan source not found: {ref}")
     identity = source.signal_snapshot.get("identity") or {}
     if robot_candidates is None:
-        robot_candidates = store.load_robot_candidates_for_box_source(account, source.candidate_id)
+        robot_candidates = store.load_robot_candidates(account)
     linked = [
         item for item in robot_candidates
         if item.status != "BOX_PLAN_ONLY"
@@ -340,27 +308,17 @@ class _BatchSnapshot:
     so candidates and PAPER rows cannot change under the batch. The audit list and
     the virtual SHADOW reservations are advanced in memory after each append, exactly
     as a fresh ``collect_portfolio_facts`` would see them. Never kept across batches.
-
-    P0 (RUN #3): only the semantically needed history is read, never the whole audit
-    or candidate tables. ``decisions`` holds the first and latest decision of every
-    idea plus every SHADOW ALLOW (latest lookups, due-WAIT order and reservations are
-    unchanged); ``decision_count`` is the real audit size for ``audit_sequence``.
-    Candidates exclude only frozen Box plans that nothing refers to, and are portfolio
-    views: a full snapshot only across a handoff, which is all the batch reads.
     """
 
     def __init__(self, store: SQLiteStore, account: TradingAccountId):
         self._store, self._account = store, account
-        self.decisions = list(store.load_robot_auto_decision_heads(
-            account, keep_mode=SHADOW_MODE, keep_outcome=OUTCOME_ALLOW))
-        self.decision_count = store.count_robot_auto_decisions(account)
+        self.decisions = list(store.load_robot_auto_decisions(account))
         self._candidates: tuple[RobotCandidateRecord, ...] | None = None
         self._portfolio: dict | None = None
 
     def robot_candidates(self) -> tuple[RobotCandidateRecord, ...]:
         if self._candidates is None:
-            self._candidates = self._store.load_robot_candidates_for_portfolio(
-                self._account, plan_only_status="BOX_PLAN_ONLY")
+            self._candidates = self._store.load_robot_candidates(self._account)
         return self._candidates
 
     def portfolio(self) -> dict:
@@ -375,7 +333,6 @@ class _BatchSnapshot:
         if not created:
             return
         self.decisions.append(decision)
-        self.decision_count += 1
         if (self._portfolio is not None and decision.mode == SHADOW_MODE
                 and decision.outcome == OUTCOME_ALLOW):
             self._portfolio = self._with_shadow_reservation(self._portfolio, decision)
@@ -411,13 +368,6 @@ class _BatchSnapshot:
         return updated
 
 
-def _proven_source_terminal(store: SQLiteStore, account: TradingAccountId, candidate: _Candidate) -> bool:
-    if candidate.snapshot_sha256 is None:
-        return False
-    identities, _status = _source_terminal_identities(store, account)
-    return (candidate.ref, candidate.snapshot_sha256) in identities
-
-
 def _fresh_facts(
     store: SQLiteStore, account: TradingAccountId, *, mode: str, candidate: _Candidate,
     decisions: tuple[RobotAutoDecisionRecord, ...],
@@ -425,24 +375,14 @@ def _fresh_facts(
     candidate_fresh: FreshnessProver | None = None,
     prior_shadow_allow: RobotAutoDecisionRecord | None = None,
     batch: _BatchSnapshot | None = None,
-    now_ms: int | None = None,
-    decision_count: int | None = None,
-    daily_loss_gate_enabled: bool = True,
-    daily_marks: DailyMarkProvider | None = None,
 ) -> RobotAutoAdmissionFacts:
-    portfolio = (collect_portfolio_facts(
-        store, account, auto_decisions=decisions,
-        robot_candidates=store.load_robot_candidates_for_portfolio(
-            account, plan_only_status="BOX_PLAN_ONLY"),
-    ) if batch is None
+    portfolio = (collect_portfolio_facts(store, account) if batch is None
                  else dict(batch.portfolio()))  # the batch copy is never mutated here
     # S3 conversion first: it keeps its fail-closed "exactly one matching reservation" proof.
     portfolio = _without_own_shadow_reservation(portfolio, candidate, prior_shadow_allow)
     if mode == PAPER_AUTO_MODE:
         portfolio = _physical_capital_only(portfolio)
-    # A batch holds a reduced decision read set; its count is the real audit size.
-    count = (len(decisions) if decision_count is None else decision_count)
-    portfolio["audit_sequence"] = (count if batch is None else batch.decision_count) + 1
+    portfolio["audit_sequence"] = len(decisions) + 1
     runtime = store.get_robot_runtime_state(account)
     try:
         healthy = None if protection_healthy is None else protection_healthy()
@@ -456,30 +396,6 @@ def _fresh_facts(
         except Exception:
             proven = None  # unprovable freshness is never an implicit ALLOW
         fresh = None if proven is None else bool(proven)
-    daily_gate = None
-    if mode == PAPER_AUTO_MODE and now_ms is not None:
-        daily_gate = _daily_loss_gate(
-            store, account, now_ms=now_ms, decisions=decisions,
-            enabled=daily_loss_gate_enabled, daily_marks=daily_marks)
-    linked_parent = None
-    if mode == PAPER_AUTO_MODE and candidate.pattern == "IKIGAI_BOX":
-        identity = candidate.snapshot.get("identity") or {}
-        direction = str(identity.get("direction", "")) if isinstance(identity, Mapping) else ""
-        linked_parent = linked_mirror_parent_candidate(
-            store,
-            account,
-            candidate.symbol,
-            direction,
-            excluded_candidate_ids=candidate.own_ids,
-        )
-        if linked_parent is not None:
-            # The Box is a subordinate attempt of the already-reserved Wedge
-            # campaign, not a second independent Robot idea.
-            portfolio["new_reserve_ro"] = 0
-    symbol_owned = (
-        _symbol_owned(store, account, candidate)
-        or candidate.symbol.value in portfolio.get("owned_symbols", [])
-    )
     return RobotAutoAdmissionFacts(
         autopilot_mode=mode,
         environment="PAPER",
@@ -487,23 +403,18 @@ def _fresh_facts(
         robot_recovery_status=runtime.recovery_status if runtime is not None else None,
         candidate_valid=candidate.valid,
         candidate_executable=candidate.executable,
-        # No age-based expiry: only a durable source-terminal event for this exact
-        # (ref, snapshot) identity proves the snapshot ended; other gates still apply.
-        candidate_stale=_proven_source_terminal(store, account, candidate),
+        candidate_stale=False,  # no age-based expiry; other admission gates still apply
         candidate_invalidated=candidate.invalidated,
         already_admitted=candidate.already_admitted,
         reconciliation_clear=(
             runtime is not None and runtime.recovery_status != "RECONCILIATION_REQUIRED"
         ),
-        symbol_owned=symbol_owned and linked_parent is None,
+        symbol_owned=(_symbol_owned(store, account, candidate)
+                      or candidate.symbol.value in portfolio.get("owned_symbols", [])),
         protection_healthy=healthy,
         portfolio_policy_ready=True,
         portfolio_facts=portfolio,
         candidate_fresh=fresh,
-        daily_loss_gate=daily_gate,
-        linked_mirror_parent_candidate_id=(
-            linked_parent.candidate_id if linked_parent is not None else None
-        ),
     )
 
 
@@ -574,8 +485,6 @@ def admit_paper_auto_candidate(
     candidate_fresh: FreshnessProver | None = None,
     candidate_store_dir: Path | str | None = None,
     clock_ms: Callable[[], int] | None = None,
-    daily_loss_gate_enabled: bool = True,
-    daily_marks: DailyMarkProvider | None = None,
 ) -> PaperAutoAdmission | None:
     """Recheck one immutable SHADOW ALLOW and use canonical Robot admission.
 
@@ -614,10 +523,7 @@ def admit_paper_auto_candidate(
             raise PersistenceError("SHADOW ALLOW immutable candidate identity changed")
 
         now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
-        decisions = store.load_robot_auto_decisions_for_admission(
-            account, candidate_ref=candidate.ref, source_identity=candidate.source_identity,
-            policy_version=POLICY_VERSION, business_date_msk=msk_day_start_ms(now)[0])
-        decision_count = store.count_robot_auto_decisions(account)
+        decisions = store.load_robot_auto_decisions(account)
         existing = _latest_decision(
             decisions, candidate.ref, candidate.source_identity, PAPER_AUTO_MODE,
         )
@@ -641,9 +547,6 @@ def admit_paper_auto_candidate(
                 store, account, mode=PAPER_AUTO_MODE, candidate=candidate,
                 decisions=decisions, protection_healthy=protection_healthy,
                 candidate_fresh=candidate_fresh, prior_shadow_allow=prior,
-                now_ms=now, decision_count=decision_count,
-                daily_loss_gate_enabled=daily_loss_gate_enabled,
-                daily_marks=daily_marks,
             )
             result = evaluate_auto_admission(facts)
             robot_candidate = None
@@ -660,9 +563,6 @@ def admit_paper_auto_candidate(
                     transaction_store=store,
                     expected_snapshot_sha256=candidate.snapshot_sha256,
                     mark_legacy_approved=False,
-                    linked_mirror_parent_candidate_id=(
-                        facts.linked_mirror_parent_candidate_id
-                    ),
                 )
             decision, decision_created = record_auto_decision(
                 store,
@@ -702,8 +602,6 @@ def admit_arrived_auto_candidate(
     candidate_fresh: FreshnessProver | None = None,
     candidate_store_dir: Path | str | None = None,
     clock_ms: Callable[[], int] | None = None,
-    daily_loss_gate_enabled: bool = True,
-    daily_marks: DailyMarkProvider | None = None,
 ) -> PaperAutoAdmission | None:
     """A7: evaluate one arrived candidate in PAPER_AUTO and admit it canonically.
 
@@ -726,10 +624,7 @@ def admit_arrived_auto_candidate(
             candidate_store_dir=candidate_store_dir,
         )
         now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
-        decisions = store.load_robot_auto_decisions_for_admission(
-            account, candidate_ref=candidate.ref, source_identity=candidate.source_identity,
-            policy_version=POLICY_VERSION, business_date_msk=msk_day_start_ms(now)[0])
-        decision_count = store.count_robot_auto_decisions(account)
+        decisions = store.load_robot_auto_decisions(account)
         existing = _latest_decision(
             decisions, candidate.ref, candidate.source_identity, PAPER_AUTO_MODE,
         )
@@ -750,8 +645,7 @@ def admit_arrived_auto_candidate(
         facts = _fresh_facts(
             store, account, mode=PAPER_AUTO_MODE, candidate=candidate,
             decisions=decisions, protection_healthy=protection_healthy,
-            candidate_fresh=candidate_fresh, now_ms=now, decision_count=decision_count,
-            daily_loss_gate_enabled=daily_loss_gate_enabled, daily_marks=daily_marks,
+            candidate_fresh=candidate_fresh,
         )
         result = evaluate_auto_admission(facts)
         robot_candidate = None
@@ -768,9 +662,6 @@ def admit_arrived_auto_candidate(
                 transaction_store=store,
                 expected_snapshot_sha256=candidate.snapshot_sha256,
                 mark_legacy_approved=False,
-                linked_mirror_parent_candidate_id=(
-                    facts.linked_mirror_parent_candidate_id
-                ),
             )
         decision, decision_created = record_auto_decision(
             store,
@@ -828,25 +719,39 @@ def observe_shadow_candidate(
     # arrival from one consistent read set; the rest stay due for the next arrival.
     # Protection/owner work waits at most one batch, never the whole WAIT backlog.
     arrival_error: Exception | None = None
-    began = in_arrival = False
+    in_arrival = False
     try:
         with store.autopilot_decision_transaction():
-            began = True
             state = store.get_robot_autopilot_state(account)
             if state is None or state.mode != SHADOW_MODE:
                 return None
-            def mark_arrival() -> None:
-                nonlocal in_arrival
-                in_arrival = True
-
-            result, arrival_error = _run_a6_batch(
-                store, account, state, now, arrival, observe, started=_monotonic(),
-                on_arrival=mark_arrival)
-            if arrival_error is None:
-                return result
+            started = _monotonic()
+            batch = _BatchSnapshot(store, account)
+            due = [ref for ref in _due_wait_refs(
+                batch.decisions, state, store.get_robot_runtime_state(account), now)
+                if ref != arrival]
+            for index, ref in enumerate(due[:A6_DUE_WAIT_BATCH_LIMIT]):
+                if index and _monotonic() - started >= A6_DUE_WAIT_BATCH_BUDGET_S:
+                    break  # candidate boundary: every written audit row is complete
+                try:
+                    observe(*ref, batch)
+                except sqlite3.Error:
+                    raise
+                except Exception as error:  # an old WAIT must never block the arrival
+                    print(
+                        "[AUTOPILOT SHADOW WAIT REEVALUATION ERROR] "
+                        f"candidate_ref={ref[0]} error_class={type(error).__name__}"
+                    )
+            in_arrival = True
+            try:
+                return observe(*arrival, batch)
+            except sqlite3.Error:
+                raise
+            except Exception as error:  # keep the completed batch, then report
+                arrival_error = error
     except sqlite3.Error as error:
-        if in_arrival or not began:
-            raise  # busy BEGIN IMMEDIATE: one timeout, nothing written, WAITs stay due
+        if in_arrival:
+            raise
         # The whole batch rolled back; nothing is lost, those WAITs stay due.
         print(
             "[AUTOPILOT SHADOW WAIT BATCH ERROR] "
@@ -855,286 +760,6 @@ def observe_shadow_candidate(
         with store.autopilot_decision_transaction():
             return observe(*arrival, None)
     raise arrival_error
-
-
-def _run_a6_batch(
-    store: Any, account: TradingAccountId, state: Any, now: int, arrival: tuple[str, str],
-    observe: Callable[..., ShadowObservation | None], *, started: float,
-    on_arrival: Callable[[], None] | None = None,
-) -> tuple[ShadowObservation | None, Exception | None]:
-    """The A6 batch in audit order: due WAITs first, then the arrival. Shared by the owner
-    path (inside one decision transaction) and the off-owner snapshot plan."""
-    batch = _BatchSnapshot(store, account)
-    due = [ref for ref in _due_wait_refs(
-        batch.decisions, state, store.get_robot_runtime_state(account), now)
-        if ref != arrival]
-    for ref in due[:A6_DUE_WAIT_BATCH_LIMIT]:
-        # The budget includes the batch reads above; an exhausted budget starts
-        # no further WAIT evaluation (candidate boundary: written rows are complete).
-        if _monotonic() - started >= A6_DUE_WAIT_BATCH_BUDGET_S:
-            break
-        try:
-            observe(*ref, batch)
-        except sqlite3.Error:
-            raise
-        except Exception as error:  # an old WAIT must never block the arrival
-            print(
-                "[AUTOPILOT SHADOW WAIT REEVALUATION ERROR] "
-                f"candidate_ref={ref[0]} error_class={type(error).__name__}"
-            )
-    if on_arrival is not None:
-        on_arrival()
-    try:
-        return observe(*arrival, batch), None
-    except sqlite3.Error:
-        raise
-    except Exception as error:  # keep the completed batch, then report
-        return None, error
-
-
-# ---- Variant B (P0 RUN #3): SHADOW is evaluated OFF the owner thread ---------------------
-#
-# The calling thread (Scanner pass / Box preparation) reads one WAL snapshot on its own
-# read-only connection (no write lock), runs the unchanged A6 evaluation there and builds
-# the audit rows. The owner only checks Autopilot/Robot-runtime versions and the audit tail
-# and writes at most SHADOW_COMMIT_MAX_ROWS rows per call with a short lock wait. Every
-# conflict (OFF, STOP, a version or tail change, lock, expiry, protection change) writes
-# nothing and the attempt is recomputed or dropped; the owner never evaluates.
-
-SHADOW_COMMIT_LOCK_WAIT_MS = 100
-SHADOW_DEFERRED_ATTEMPTS = 3
-SHADOW_SNAPSHOT_MAX_AGE_S = 30.0  # a plan older than this (from the snapshot start) is never committed
-SHADOW_COMMIT_EXPIRY_S = 1.0  # an owner call dequeued later than this after it was sent does nothing
-DEFERRED_COMMITTED = "COMMITTED"
-DEFERRED_HANDOVER = "HANDOVER"  # Autopilot is not SHADOW: the existing owner entry decides
-DEFERRED_DROPPED = "DROPPED"  # nothing (more) was committed; the arrival has no SHADOW decision
-_MIXED = object()
-
-
-@dataclass(frozen=True, slots=True)
-class ShadowChunk:
-    """One bounded owner commit: <= SHADOW_COMMIT_MAX_ROWS rows and what they were computed from."""
-
-    account: TradingAccountId
-    records: tuple[RobotAutoDecisionRecord, ...]
-    expected: tuple  # Autopilot state, Robot runtime state, audit tail at the snapshot
-    expires_at: float  # monotonic; an owner that dequeues the call later writes nothing
-    protection: Any  # the protection-health value the facts used (re-read on the owner)
-
-
-@dataclass(frozen=True, slots=True)
-class ShadowPlan:
-    records: tuple[RobotAutoDecisionRecord, ...]
-    expected: tuple
-    full: tuple
-    protection: Any
-    arrival_error: Exception | None
-
-
-class _RecordingStore:
-    """Evaluation store for a snapshot plan: reads pass through, audit appends are recorded."""
-
-    def __init__(self, reader: SQLiteStore, records: list[RobotAutoDecisionRecord]):
-        self._reader, self._records = reader, records
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._reader, name)
-
-    def append_robot_auto_decision(self, record: RobotAutoDecisionRecord):
-        self._records.append(record)
-        return record, True
-
-
-def _normalized_health(provider: Callable[[], bool] | None) -> Any:
-    try:
-        healthy = None if provider is None else provider()
-        return None if healthy is None else bool(healthy)
-    except Exception:
-        return None
-
-
-def plan_shadow_observation(
-    reader: SQLiteStore, account: TradingAccountId, *, source: str, candidate_ref: str,
-    protection_healthy: Callable[[], bool] | None, candidate_store_dir: Path | str | None,
-    now_ms: Callable[[], int],
-) -> ShadowPlan | None:
-    """Evaluate one arrival (and its due WAITs) in a read snapshot; ``None`` unless SHADOW."""
-    arrival = (str(candidate_ref), source)
-    with reader.read_snapshot():
-        state = reader.get_robot_autopilot_state(account)
-        if state is None or state.mode != SHADOW_MODE:
-            return None
-        full = reader.shadow_full_markers(account)
-        expected = full[:3]
-        # Never earlier than the audit tail: the audit order is (evaluated_at_ms, decision_id).
-        now = max(int(now_ms()), int(json.loads(expected[2])[1]))
-        records: list[RobotAutoDecisionRecord] = []
-        recorder = _RecordingStore(reader, records)
-
-        def observe(ref: str, ref_source: str, batch: _BatchSnapshot | None):
-            return _observe_shadow_candidate_locked(
-                recorder, account, source=ref_source, candidate_ref=ref,
-                protection_healthy=protection_healthy,
-                candidate_store_dir=candidate_store_dir, clock_ms=lambda: now, batch=batch,
-            )
-
-        _result, arrival_error = _run_a6_batch(
-            recorder, account, state, now, arrival, observe, started=_monotonic())
-    values = {json.loads(record.facts_json)["protection_healthy"] for record in records}
-    protection = (next(iter(values)) if len(values) == 1 else (None if not values else _MIXED))
-    return ShadowPlan(tuple(records), tuple(expected), tuple(full), protection, arrival_error)
-
-
-def commit_shadow_chunk(
-    store: SQLiteStore, chunk: ShadowChunk, *, protection_healthy: Callable[[], bool] | None,
-    monotonic: Callable[[], float] = time.monotonic, lock_wait_ms: int = SHADOW_COMMIT_LOCK_WAIT_MS,
-) -> str:
-    """Owner thread: bounded freshness check and audit commit of one chunk. Never evaluates.
-
-    Returns COMMITTED, EXPIRED, STALE, BUSY, CONFLICT or NOT_SHADOW; anything but
-    COMMITTED wrote nothing.
-    """
-    if monotonic() > chunk.expires_at:
-        return "EXPIRED"
-    if chunk.protection is _MIXED or _normalized_health(protection_healthy) != chunk.protection:
-        return "STALE"
-    try:
-        inserted = store.append_robot_auto_decisions_committed(
-            chunk.records, expected=chunk.expected, lock_wait_ms=lock_wait_ms)
-    except ShadowCommitBusy:
-        return "BUSY"
-    except ShadowCommitStale:
-        state = store.get_robot_autopilot_state(chunk.account)
-        return "NOT_SHADOW" if state is None or state.mode != SHADOW_MODE else "STALE"
-    except DuplicateIdentity:
-        return "CONFLICT"
-    return "COMMITTED" if inserted == len(chunk.records) else "CONFLICT"
-
-
-class ShadowDeferredObserver:
-    """Variant B entry for one runtime: evaluate on the calling thread, commit via the owner.
-
-    One lock serializes evaluations (arrivals keep their order; a second caller waits just as
-    it waited in the owner queue). No thread is started. After ``attempts`` failed attempts
-    the arrival is dropped with a log line: the owner never runs the evaluation instead.
-    """
-
-    def __init__(
-        self, database_path: Path | str, account: TradingAccountId,
-        commit: Callable[[ShadowChunk], str], *,
-        protection_healthy: Callable[[], bool] | None = None,
-        candidate_store_dir: Path | str | None = None,
-        clock_ms: Callable[[], int] | None = None,
-        monotonic: Callable[[], float] = time.monotonic,
-        attempts: int = SHADOW_DEFERRED_ATTEMPTS,
-        snapshot_max_age_s: float = SHADOW_SNAPSHOT_MAX_AGE_S,
-        expiry_s: float = SHADOW_COMMIT_EXPIRY_S,
-    ) -> None:
-        self._path, self._account, self._commit = database_path, account, commit
-        self._health, self._dir = protection_healthy, candidate_store_dir
-        self._clock = clock_ms if clock_ms is not None else (lambda: int(time.time() * 1000))
-        self._monotonic, self._attempts = monotonic, attempts
-        self._max_age, self._expiry = snapshot_max_age_s, expiry_s
-        self._lock = threading.Lock()
-        # Per-process counters (a new process starts at zero): every arrival this observer
-        # did not commit is counted as dropped, so a SHADOW run with dropped > 0 is incomplete.
-        self._metrics_lock = threading.Lock()
-        self._started_at_ms = int(time.time() * 1000)
-        self._committed = 0
-        self._dropped = 0
-        self._last_drop: dict[str, Any] | None = None
-
-    def observe(self, source: str, candidate_ref: str) -> str:
-        with self._lock:
-            outcome = "RETRY"
-            for _ in range(self._attempts):
-                try:
-                    outcome = self._attempt(source, str(candidate_ref))
-                except Exception as error:  # a SHADOW failure never reaches the caller
-                    print(
-                        "[AUTOPILOT SHADOW ERROR] "
-                        f"source={source} candidate_ref={candidate_ref} "
-                        f"error_class={type(error).__name__}"
-                    )
-                    self.record_drop(source, candidate_ref, f"ERROR_{type(error).__name__}")
-                    return DEFERRED_DROPPED
-                if outcome == DEFERRED_COMMITTED:
-                    with self._metrics_lock:
-                        self._committed += 1
-                    return outcome
-                if outcome == DEFERRED_HANDOVER:
-                    return outcome
-            self.record_drop(source, candidate_ref, f"ATTEMPTS_EXHAUSTED:{outcome}")
-            return DEFERRED_DROPPED
-
-    def record_drop(self, source: str, candidate_ref: str, reason: str) -> None:
-        """Count one arrival without a SHADOW decision (any thread) and log it."""
-        print(
-            "[AUTOPILOT SHADOW DEFERRED DROPPED] "
-            f"source={source} candidate_ref={candidate_ref} last={reason}"
-        )
-        with self._metrics_lock:
-            self._dropped += 1
-            self._last_drop = {
-                "reason": reason, "source": source, "candidate_ref": str(candidate_ref),
-                "at_ms": int(time.time() * 1000),
-            }
-
-    def metrics(self) -> dict[str, Any]:
-        """Thread-safe snapshot; never waits for an evaluation or the owner."""
-        with self._metrics_lock:
-            return {
-                "observer_started_at_ms": self._started_at_ms,
-                "committed": self._committed,
-                "dropped": self._dropped,
-                "last_drop": None if self._last_drop is None else dict(self._last_drop),
-            }
-
-    def _attempt(self, source: str, candidate_ref: str) -> str:
-        started = self._monotonic()
-        reader = SQLiteStore.open_reader(self._path)
-        try:
-            try:
-                plan = plan_shadow_observation(
-                    reader, self._account, source=source, candidate_ref=candidate_ref,
-                    protection_healthy=self._health, candidate_store_dir=self._dir,
-                    now_ms=self._clock)
-            except sqlite3.Error as error:
-                return f"READ_{type(error).__name__}"
-            if plan is None:
-                return DEFERRED_HANDOVER
-            # Everything the facts were computed from, unchanged since the snapshot (checked
-            # here, off the owner); the owner re-checks the O(1) subset and the expiry.
-            if (self._monotonic() - started > self._max_age
-                    or reader.shadow_full_markers(self._account) != plan.full):
-                return "STALE"
-        finally:
-            reader.close()
-        rows, done, expected = plan.records, 0, plan.expected
-        while done < len(rows):
-            chunk_rows = rows[done:done + SHADOW_COMMIT_MAX_ROWS]
-            chunk = ShadowChunk(
-                self._account, tuple(chunk_rows), expected, self._monotonic() + self._expiry, plan.protection)
-            try:
-                status = self._commit(chunk)
-            except Exception as error:  # e.g. the owner call timed out: its outcome is unknown
-                return f"COMMIT_{type(error).__name__}"
-            if status == "NOT_SHADOW":
-                return DEFERRED_HANDOVER
-            if status != "COMMITTED":
-                return status
-            done += len(chunk_rows)
-            count, tail = json.loads(expected[2])
-            expected = (expected[0], expected[1], json.dumps(
-                [count + len(chunk_rows), max(tail, *(r.evaluated_at_ms for r in chunk_rows))],
-                separators=(",", ":")))
-        if plan.arrival_error is not None:
-            print(
-                "[AUTOPILOT SHADOW ERROR] "
-                f"source={source} candidate_ref={candidate_ref} "
-                f"error_class={type(plan.arrival_error).__name__}"
-            )
-        return DEFERRED_COMMITTED
 
 
 def _due_wait_refs(
