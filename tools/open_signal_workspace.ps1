@@ -10,6 +10,15 @@ $port = 4173
 $root = Split-Path -Parent $PSScriptRoot
 $launcher = Join-Path $PSScriptRoot "start_workspace_web.ps1"
 if (!(Test-Path $launcher)) { throw "Workspace web launcher is missing; integrate PR #582" }
+# A frozen Scanner signal requires a server-side operator token. Never pass
+# this secret via URL, Telegram, browser JavaScript, or a command argument.
+if ($Mode -eq "EDITOR" -and $SignalId) {
+  $operatorToken = [Environment]::GetEnvironmentVariable("BYBITSCANNER_OPERATOR_TOKEN")
+  if ([string]::IsNullOrWhiteSpace($operatorToken) -or $operatorToken.Trim().Length -lt 32) {
+    throw "Historical signal EDITOR unavailable: Workspace process has no valid operator authorization. No browser opened."
+  }
+  Remove-Variable operatorToken -ErrorAction SilentlyContinue
+}
 $signalQuery = if ($SignalId) { "&signal_id=$([uri]::EscapeDataString($SignalId))" } else { "" }
 $localUrl = "http://127.0.0.1:$port/?mode=$Mode&symbol=$Symbol&timeframe=$Timeframe$signalQuery"
 Write-Host "BybitScanner Workspace: $Mode $Symbol $Timeframe"
