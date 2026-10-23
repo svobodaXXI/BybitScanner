@@ -409,7 +409,7 @@ def build_tradingview_keyboard(
             import re
             editor_callback = f"workspace:EDITOR:{symbol}:{tf}"
             if signal_id is not None and re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", str(signal_id)):
-                exact_callback = f"{editor_callback}:{signal_id}"
+                exact_callback = f"ws:E:{symbol}:{tf}:{signal_id}"
                 if len(exact_callback.encode("utf-8")) <= 64:
                     editor_callback = exact_callback
             keyboard.append([
