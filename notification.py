@@ -485,8 +485,16 @@ def send_signal(
         return all_delivered
 
     owner_chat_id = get_telegram_owner_chat_id()
+    # Frozen detector candles are a transient pandas DataFrame used only by
+    # the archive snapshot builder below.  Keep them out of the durable Robot
+    # candidate, whose payload must remain strictly JSON-serializable.
+    handoff_payload = {
+        key: value
+        for key, value in result.items()
+        if key != "_frozen_geometry_candles"
+    }
     handoff = prepare_robot_handoff(
-        result,
+        handoff_payload,
         timeframe=timeframe,
         enabled=bool(owner_chat_id) and not test_mode,
     )

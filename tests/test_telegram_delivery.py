@@ -1,9 +1,13 @@
 import sys
+import json
+import os
 import tempfile
 import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+import pandas as pd
 
 
 # config.py is intentionally local/ignored because it contains machine-specific
@@ -38,6 +42,9 @@ sys.modules["analyzer.charts"] = charts_stub
 
 import main
 import notification
+import robot_candidate_store
+import signal_archive
+from signal.filter import evaluate_signal
 
 
 class TelegramSignalFormattingTests(unittest.TestCase):
@@ -349,6 +356,85 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             robot_button["callback_data"],
             "robot:approve:candidate-ready",
         )
+
+    def test_hunter_wait_wedge_persists_candidate_and_frozen_geometry(self):
+        confirmation = {
+            "breakout": False,
+            "confirmed": False,
+            "direction": "WAIT",
+        }
+        decision = evaluate_signal(
+            {"quality": "B Setup"}, 95, confirmation, "hunter", 30,
+        )
+        self.assertTrue(decision["approved"])
+
+        candles = pd.DataFrame([
+            {"time": 1_000, "open": 148.0, "high": 149.0,
+             "low": 146.0, "close": 147.0},
+            {"time": 301_000, "open": 147.0, "high": 148.0,
+             "low": 145.0, "close": 146.0},
+        ])
+        geometry = {
+            "upper_line": {
+                "model": "anchor", "anchor_index": 0, "second_index": 1,
+                "anchor_price": 149.0, "second_price": 148.0,
+            },
+            "lower_line": {
+                "model": "anchor", "anchor_index": 0, "second_index": 1,
+                "anchor_price": 146.0, "second_price": 145.0,
+            },
+        }
+        signal = {
+            "symbol": "AAVEUSDT",
+            "pattern": "Falling Wedge",
+            "final_score": 95,
+            "timeframe": "5",
+            "confirmation": confirmation,
+            "quality": {"quality": "B Setup"},
+            "robot_handoff_ready": True,
+            "scanner_observational_only": False,
+            "geometry": geometry,
+            "_frozen_geometry_candles": candles,
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            chart_dir = root / "charts"
+            candidate_dir = root / "candidates"
+            archive_dir = root / "archive"
+            chart_dir.mkdir()
+            (chart_dir / "AAVEUSDT_analysis.png").write_bytes(b"png")
+
+            with patch.object(notification.config, "TELEGRAM_CHAT_IDS", ("owner",)), \
+                    patch.object(notification.config, "TELEGRAM_CHAT_ID", "owner"), \
+                    patch.object(notification, "CHARTS_DIR", str(chart_dir)), \
+                    patch.object(notification, "send_message", return_value={"ok": True}), \
+                    patch.object(notification, "send_photo", return_value={"ok": True}), \
+                    patch.object(robot_candidate_store, "DEFAULT_STORE_DIR", candidate_dir), \
+                    patch.dict(os.environ, {signal_archive.ARCHIVE_ENV: str(archive_dir)}):
+                self.assertTrue(notification.send_signal(signal))
+
+            candidate_files = list(candidate_dir.glob("*.json"))
+            self.assertEqual(len(candidate_files), 1)
+            candidate = json.loads(candidate_files[0].read_text(encoding="utf-8"))
+            signal_id = candidate["candidate_id"]
+            self.assertNotIn(
+                "_frozen_geometry_candles", candidate["signal_snapshot"],
+            )
+
+            archived = signal_archive.load_original_signal(
+                [signal_id], directory=archive_dir,
+            )
+            self.assertIsNotNone(archived)
+            self.assertEqual(archived["candidate_id"], signal_id)
+            geometry_files = list(archive_dir.glob("*.geometry.json"))
+            self.assertEqual(len(geometry_files), 1)
+            frozen = json.loads(geometry_files[0].read_text(encoding="utf-8"))
+            self.assertEqual(frozen["signal_id"], signal_id)
+            self.assertEqual(
+                [boundary["boundary_id"] for boundary in frozen["boundaries"]],
+                ["upper", "lower"],
+            )
 
     def test_unsupported_pattern_gets_no_robot_candidate_or_button(self):
         with tempfile.TemporaryDirectory() as directory:
