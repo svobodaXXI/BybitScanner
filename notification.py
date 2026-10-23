@@ -33,6 +33,7 @@ from tradingview_bridge import (
 from pattern_robot_integration import prepare_robot_handoff
 
 from signal_archive import record_original_signal
+from signal_geometry_producer import build_wedge_geometry_snapshot
 
 from timeframe_format import format_timeframe_ru
 
@@ -539,6 +540,11 @@ def send_signal(
             )
 
     if robot_candidate_id and archived_image and owner_photo_response is not None:
+        geometry_snapshot = result.get("geometry_snapshot")
+        if geometry_snapshot is None and result.get("_frozen_geometry_candles") is not None:
+            geometry_snapshot = build_wedge_geometry_snapshot(
+                robot_candidate_id, symbol, timeframe, result.get("geometry"),
+                result["_frozen_geometry_candles"])
         record_original_signal(
             robot_candidate_id, symbol=symbol, timeframe=timeframe,
             pattern=result.get("pattern", ""), text=message,
@@ -546,7 +552,7 @@ def send_signal(
             # Only a producer-supplied immutable, typed snapshot is acceptable.
             # The archive validator rejects mismatched IDs, anchors or candles;
             # never derive source rays from the PNG or current market window.
-            geometry_snapshot=result.get("geometry_snapshot"),
+            geometry_snapshot=geometry_snapshot,
         )
 
     # After the ordinary card/photo delivery, tell the owner (only) why the
