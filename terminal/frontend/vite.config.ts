@@ -27,7 +27,7 @@ const paperBackendUrl = (
  */
 const operatorToken = (
   globalThis as { process?: { env?: Record<string, string | undefined> } }
-).process?.env?.BYBITSCANNER_OPERATOR_TOKEN?.trim() ?? "";
+).process?.env?.BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN?.trim() ?? "";
 const frozenGeometryProxy = {
   target: paperBackendUrl ?? "http://127.0.0.1:8765",
   changeOrigin: true,
@@ -38,7 +38,7 @@ const frozenGeometryProxy = {
       const url = req.url ?? "";
       if (url.split("?")[0] === "/api/workspace/signal-geometry" && operatorToken.length >= 32) {
         (proxyReq as DiagnosticRequest & { setHeader(name: string, value: string): void })
-          .setHeader("X-BybitScanner-Operator-Token", operatorToken);
+          .setHeader("X-BybitScanner-Signal-Geometry-Token", operatorToken);
       }
     });
   },
