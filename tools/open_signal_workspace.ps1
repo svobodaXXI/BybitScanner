@@ -13,16 +13,16 @@ if (!(Test-Path $launcher)) { throw "Workspace web launcher is missing; integrat
 # A frozen Scanner signal requires a server-side operator token. Never pass
 # this secret via URL, Telegram, browser JavaScript, or a command argument.
 if ($Mode -eq "EDITOR" -and $SignalId) {
-  $operatorToken = [Environment]::GetEnvironmentVariable("BYBITSCANNER_OPERATOR_TOKEN")
-  if ([string]::IsNullOrWhiteSpace($operatorToken) -or $operatorToken.Trim().Length -lt 32) {
-    throw "Historical signal EDITOR unavailable: Workspace process has no valid operator authorization. No browser opened."
+  $geometryToken = [Environment]::GetEnvironmentVariable("BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN")
+  if ([string]::IsNullOrWhiteSpace($geometryToken) -or $geometryToken.Trim().Length -lt 32) {
+    throw "Historical signal EDITOR unavailable: Workspace process has no valid signal geometry authorization. No browser opened."
   }
   # Verify the backend actually accepts this token and has this exact archive.
   # A missing backend/snapshot must not silently open a live-candle chart.
   $archiveUrl = "http://127.0.0.1:8765/api/workspace/signal-geometry?signal_id=$([uri]::EscapeDataString($SignalId))"
   try {
     $archiveResponse = Invoke-RestMethod -Uri $archiveUrl -Method Get -TimeoutSec 5 -Headers @{
-      "X-BybitScanner-Operator-Token" = $operatorToken.Trim()
+      "X-BybitScanner-Signal-Geometry-Token" = $geometryToken.Trim()
     }
     if (!$archiveResponse.ok -or $archiveResponse.snapshot.signal_id -ne $SignalId -or
         $archiveResponse.snapshot.symbol -ne $Symbol) {
@@ -31,7 +31,7 @@ if ($Mode -eq "EDITOR" -and $SignalId) {
   } catch {
     throw "Historical signal EDITOR unavailable: backend authorization or frozen archive missing. No browser opened."
   } finally {
-    Remove-Variable operatorToken -ErrorAction SilentlyContinue
+    Remove-Variable geometryToken -ErrorAction SilentlyContinue
   }
 }
 $signalQuery = if ($SignalId) { "&signal_id=$([uri]::EscapeDataString($SignalId))" } else { "" }
