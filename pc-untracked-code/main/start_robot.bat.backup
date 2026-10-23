@@ -1,0 +1,14 @@
+@echo off
+cd /d C:\BybitScanner
+
+start "BybitScanner - PAPER Backend" powershell.exe -NoExit -Command "Set-Location 'C:\BybitScanner'; .\start_paper_backend.bat"
+
+timeout /t 6 /nobreak >nul
+
+start "BybitScanner - Telegram Review" powershell.exe -NoExit -Command "Set-Location 'C:\BybitScanner'; python telegram_monitoring.py"
+
+timeout /t 2 /nobreak >nul
+
+start "BybitScanner - Scanner" powershell.exe -NoExit -Command "Set-Location 'C:\BybitScanner'; python main.py"
+
+exit
