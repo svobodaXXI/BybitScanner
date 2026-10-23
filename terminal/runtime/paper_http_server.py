@@ -2939,6 +2939,26 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, "summary": summary})
             return
 
+        if parsed.path == "/api/workspace/signal-geometry":
+            # Exact immutable historical lookup; never invoke Scanner or trading state.
+            import re
+            from signal_archive import load_frozen_signal_geometry
+
+            query = parse_qs(parsed.query)
+            ids = query.get("signal_id", [])
+            if len(ids) != 1 or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", ids[0]):
+                self._json_response(400, {"ok": False, "error": "invalid_signal_id"})
+                return
+            try:
+                frozen = load_frozen_signal_geometry(ids[0])
+            except Exception:
+                frozen = None
+            if frozen is None:
+                self._json_response(404, {"ok": False, "error": "signal_geometry_not_found"})
+                return
+            self._json_response(200, {"ok": True, "snapshot": frozen})
+            return
+
         if parsed.path == "/api/workspace/state":
             self._json_response(200, {
                 "ok": True,
