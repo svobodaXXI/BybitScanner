@@ -543,6 +543,10 @@ def send_signal(
             robot_candidate_id, symbol=symbol, timeframe=timeframe,
             pattern=result.get("pattern", ""), text=message,
             image_bytes=archived_image, photo_response=owner_photo_response,
+            # Only a producer-supplied immutable, typed snapshot is acceptable.
+            # The archive validator rejects mismatched IDs, anchors or candles;
+            # never derive source rays from the PNG or current market window.
+            geometry_snapshot=result.get("geometry_snapshot"),
         )
 
     # After the ordinary card/photo delivery, tell the owner (only) why the
