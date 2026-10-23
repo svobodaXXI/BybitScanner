@@ -100,6 +100,7 @@ export default defineConfig({
   preview: {
     host: "0.0.0.0",
     proxy: {
+      "/api/workspace/signal-geometry": frozenGeometryProxy,
       "/api": {
         target: paperBackendUrl ?? "http://127.0.0.1:8765",
         changeOrigin: true,
