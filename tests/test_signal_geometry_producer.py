@@ -34,7 +34,7 @@ class GeometryProducerTests(unittest.TestCase):
         self.assertEqual(value["signal_id"], "id-1")
 
     def test_open_candle_rejected(self):
-        self.assertIsNone(self.build(now=601000))
+        self.assertIsNone(self.build(now=600999))
 
     def test_regression_line_without_explicit_anchors_rejected(self):
         self.assertIsNone(self.build({"upper_line": {"slope": 1}, "lower_line": GEOMETRY["lower_line"]}))
