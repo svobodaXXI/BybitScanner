@@ -24,7 +24,7 @@ def request_owner_workspace_open(mode: str, symbol: str, timeframe: str, signal_
     # Starting a new console is intentional: owner sees URL and preparation result.
     # Use the OS executable directly: untrusted worktree files named powershell.exe
     # must not shadow the Windows system PowerShell during CreateProcess lookup.
-    system_root = Path(os.environ.get("SystemRoot", r"C:\\Windows"))
+    system_root = Path(os.environ.get("SystemRoot", r"C:\Windows"))
     powershell = system_root / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
     if not powershell.is_file():
         raise RuntimeError("System PowerShell executable missing")
