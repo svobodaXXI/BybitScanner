@@ -30,6 +30,13 @@ class EditorSignalCallbackIdentityTests(unittest.TestCase):
         callback = keyboard["inline_keyboard"][-1][0]["callback_data"]
         self.assertLessEqual(len(callback.encode("utf-8")), 64)
 
+    def test_compact_callback_preserves_uuid_identity(self):
+        candidate = "12345678-1234-1234-1234-123456789abc"
+        keyboard = build_tradingview_keyboard("ZHIPUUSDT", "1", signal_id=candidate)
+        callback = keyboard["inline_keyboard"][-1][0]["callback_data"]
+        self.assertLessEqual(len(callback.encode("utf-8")), 64)
+        self.assertEqual(_parse_workspace_callback(callback)["signal_id"], candidate)
+
 
 if __name__ == "__main__":
     unittest.main()
