@@ -32,7 +32,7 @@ from tradingview_bridge import (
 
 from pattern_robot_integration import prepare_robot_handoff
 
-from signal_archive import record_original_signal
+from signal_archive import record_original_signal, signal_callback_token
 from signal_geometry_producer import build_wedge_geometry_snapshot
 
 from timeframe_format import format_timeframe_ru
@@ -409,9 +409,9 @@ def build_tradingview_keyboard(
             import re
             editor_callback = f"workspace:EDITOR:{symbol}:{tf}"
             if signal_id is not None and re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", str(signal_id)):
-                exact_callback = f"ws:E:{symbol}:{tf}:{signal_id}"
-                if len(exact_callback.encode("utf-8")) <= 64:
-                    editor_callback = exact_callback
+                # Telegram permits only 64 bytes. The archive-backed opaque token
+                # resolves locally to the full immutable signal identity.
+                editor_callback = f"ws:E:{signal_callback_token(str(signal_id))}"
             keyboard.append([
                 {"text": "✏️ Редактор", "callback_data": editor_callback},
                 {"text": "🖥 Терминал", "callback_data": f"workspace:TERMINAL:{symbol}:{tf}"},

@@ -16,7 +16,15 @@ if ([string]::IsNullOrWhiteSpace($key) -or $key.Trim().Length -lt 32) {
     Write-Host "FAIL: dedicated signal geometry key not present in this PowerShell environment"
     exit 1
 }
-Write-Host "PASS: dedicated geometry key present in caller environment (value hidden)"
+$operatorKey = [Environment]::GetEnvironmentVariable("BYBITSCANNER_OPERATOR_TOKEN")
+if (![string]::IsNullOrWhiteSpace($operatorKey) -and
+    $key.Trim() -ceq $operatorKey.Trim()) {
+    Write-Host "FAIL: signal geometry key must be distinct from the LIVE operator key"
+    Remove-Variable key, operatorKey -ErrorAction SilentlyContinue
+    exit 1
+}
+Remove-Variable operatorKey -ErrorAction SilentlyContinue
+Write-Host "PASS: dedicated geometry key present and separate (value hidden)"
 if (!$SignalId) {
     Write-Host "No SignalId supplied: remote authorization and archive lookup NOT checked"
     exit 0

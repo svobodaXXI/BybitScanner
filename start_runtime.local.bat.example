@@ -14,11 +14,11 @@ rem set "BYBITSCANNER_WORKSPACE_URL=https://example-tunnel.invalid"
 rem Optional backend URL override used by Telegram controls:
 rem set "BYBITSCANNER_PAPER_BACKEND_URL=http://127.0.0.1:8765"
 
-exit /b 0
-
 rem Optional: frozen Scanner signal geometry in EDITOR requires the same
 rem 32+ character dedicated BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN in backend and Workspace.
 rem Keep the actual token only in ignored machine-local configuration.
 rem This is NOT the LIVE operator token: it must not change PAPER_SAFE gates.
 rem NEVER put it in Git, browser URLs, Telegram messages or QR codes.
 rem set "BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN=<machine-local-secret-at-least-32-characters>"
+
+exit /b 0

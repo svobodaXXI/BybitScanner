@@ -21,6 +21,7 @@ from signal_geometry_snapshot import validate_snapshot
 
 ARCHIVE_VERSION = 1
 ARCHIVE_ENV = "BYBITSCANNER_SIGNAL_ARCHIVE_DIR"
+SIGNAL_CALLBACK_TOKEN_HEX_LENGTH = 40
 _DEFAULT_DIR = Path(__file__).resolve().parent / "review_queue" / "signal_archive"
 
 
@@ -33,6 +34,14 @@ def archive_dir(directory=None) -> Path:
 
 def _key(candidate_id: str) -> str:
     return hashlib.sha256(str(candidate_id).encode("utf-8")).hexdigest()[:40]
+
+
+def signal_callback_token(candidate_id: str) -> str:
+    """Bounded opaque handle for Telegram callback_data, never a ticker lookup."""
+    candidate_id = str(candidate_id or "").strip()
+    if not candidate_id:
+        raise ValueError("signal identity required")
+    return _key(candidate_id)
 
 
 def _largest_photo_file_id(response) -> str | None:
@@ -138,6 +147,30 @@ def load_original_signal(candidate_ids: Iterable, *, directory=None) -> dict | N
         except (OSError, ValueError, TypeError, KeyError):
             continue
     return None
+
+
+def resolve_signal_callback_token(token: str, *, directory=None) -> dict | None:
+    """Resolve one archive-backed callback handle to its exact immutable identity."""
+    token = str(token or "").strip()
+    if (len(token) != SIGNAL_CALLBACK_TOKEN_HEX_LENGTH
+            or any(char not in "0123456789abcdef" for char in token)):
+        return None
+    root = archive_dir(directory)
+    try:
+        meta = json.loads((root / f"{token}.json").read_text(encoding="utf-8"))
+        candidate_id = str(meta.get("candidate_id") or "").strip()
+        if not candidate_id or signal_callback_token(candidate_id) != token:
+            return None
+        original = load_original_signal([candidate_id], directory=root)
+        if original is None:
+            return None
+        return {
+            "signal_id": candidate_id,
+            "symbol": str(original.get("symbol") or ""),
+            "timeframe": str(original.get("timeframe") or ""),
+        }
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
 
 
 def load_frozen_signal_geometry(candidate_id: str, *, directory=None) -> dict | None:
