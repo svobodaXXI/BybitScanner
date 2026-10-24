@@ -57,6 +57,16 @@ on:
       - "tests/test_telegram_monitoring.py"
       - "analyzer/core.py"
       - "notification.py"
+      - "signal_archive.py"
+      - "signal_geometry_producer.py"
+      - "signal_geometry_snapshot.py"
+      - "telegram_review.py"
+      - "tests/test_editor_signal_callback_identity.py"
+      - "tests/test_signal_archive.py"
+      - "tests/test_signal_archive_hooks.py"
+      - "tests/test_signal_geometry_producer.py"
+      - "tests/test_signal_geometry_snapshot.py"
+      - "tests/test_runtime_intent_bootstrap.py"
       - "tests/test_robot_breakout_monitor_admission_catchup.py"
       - "tests/test_robot_breakout_monitor_late_admission.py"
       - "tests/test_robot_late_admission.py"
@@ -185,6 +195,16 @@ jobs:
           tests.test_signal_admission
           tests.test_telegram_delivery
           tests.test_l_shape_scanner.LShapeTelegramTests
+      - name: Run frozen signal geometry editor handoff
+        run: >-
+          python -m unittest -v
+          tests.test_editor_signal_callback_identity
+          tests.test_signal_archive
+          tests.test_signal_archive_hooks
+          tests.test_signal_geometry_producer
+          tests.test_signal_geometry_snapshot
+          tests.test_runtime_intent_bootstrap.PaperSafeBackendSpawnTests
+
       - name: Run Robot Autopilot shadow foundation
         run: >-
           python -m unittest -v

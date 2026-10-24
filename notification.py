@@ -32,7 +32,8 @@ from tradingview_bridge import (
 
 from pattern_robot_integration import prepare_robot_handoff
 
-from signal_archive import record_original_signal
+from signal_archive import record_original_signal, signal_callback_token
+from signal_geometry_producer import build_wedge_geometry_snapshot
 
 from timeframe_format import format_timeframe_ru
 
@@ -337,6 +338,7 @@ def build_tradingview_keyboard(
     include_review_actions=True,
     robot_candidate_id=None,
     robot_status_button=False,
+    signal_id=None,
 ):
     """Telegram inline keyboard for TradingView, review, and Robot admission."""
 
@@ -404,8 +406,14 @@ def build_tradingview_keyboard(
     if include_review_actions:
         tf = timeframe if timeframe.endswith(("s", "m", "h", "d")) else f"{timeframe}m"
         if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
+            import re
+            editor_callback = f"workspace:EDITOR:{symbol}:{tf}"
+            if signal_id is not None and re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", str(signal_id)):
+                # Telegram permits only 64 bytes. The archive-backed opaque token
+                # resolves locally to the full immutable signal identity.
+                editor_callback = f"ws:E:{signal_callback_token(str(signal_id))}"
             keyboard.append([
-                {"text": "✏️ Редактор", "callback_data": f"workspace:EDITOR:{symbol}:{tf}"},
+                {"text": "✏️ Редактор", "callback_data": editor_callback},
                 {"text": "🖥 Терминал", "callback_data": f"workspace:TERMINAL:{symbol}:{tf}"},
             ])
 
@@ -477,8 +485,16 @@ def send_signal(
         return all_delivered
 
     owner_chat_id = get_telegram_owner_chat_id()
+    # Frozen detector candles are a transient pandas DataFrame used only by
+    # the archive snapshot builder below.  Keep them out of the durable Robot
+    # candidate, whose payload must remain strictly JSON-serializable.
+    handoff_payload = {
+        key: value
+        for key, value in result.items()
+        if key != "_frozen_geometry_candles"
+    }
     handoff = prepare_robot_handoff(
-        result,
+        handoff_payload,
         timeframe=timeframe,
         enabled=bool(owner_chat_id) and not test_mode,
     )
@@ -512,6 +528,7 @@ def send_signal(
                         if is_owner
                         else None
                     ),
+                    signal_id=robot_candidate_id if is_owner else None,
                 )
             )
 
@@ -539,10 +556,19 @@ def send_signal(
             )
 
     if robot_candidate_id and archived_image and owner_photo_response is not None:
+        geometry_snapshot = result.get("geometry_snapshot")
+        if geometry_snapshot is None and result.get("_frozen_geometry_candles") is not None:
+            geometry_snapshot = build_wedge_geometry_snapshot(
+                robot_candidate_id, symbol, timeframe, result.get("geometry"),
+                result["_frozen_geometry_candles"])
         record_original_signal(
             robot_candidate_id, symbol=symbol, timeframe=timeframe,
             pattern=result.get("pattern", ""), text=message,
             image_bytes=archived_image, photo_response=owner_photo_response,
+            # Only a producer-supplied immutable, typed snapshot is acceptable.
+            # The archive validator rejects mismatched IDs, anchors or candles;
+            # never derive source rays from the PNG or current market window.
+            geometry_snapshot=geometry_snapshot,
         )
 
     # After the ordinary card/photo delivery, tell the owner (only) why the

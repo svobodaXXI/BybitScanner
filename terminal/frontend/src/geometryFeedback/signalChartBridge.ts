@@ -50,6 +50,7 @@ export function projectSignalGeometry(
   // Fresh objects and anchor arrays: editing must not modify reference geometry.
   const editableDrawings = referenceDrawings.map((drawing) => ({
     ...drawing,
+    id: `editable:${drawing.id}`,
     anchors: drawing.anchors.map((anchor) => ({ ...anchor })),
     style: { color: "#e0b45b", lineWidth: 1.5 },
     locked: false,

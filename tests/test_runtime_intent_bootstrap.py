@@ -89,6 +89,7 @@ class FakeWorld:
 
 UNSAFE_PARENT_ENV = {
     "BYBITSCANNER_OPERATOR_TOKEN": "t" * 64,
+    "BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN": "g" * 64,
     "LIVE_MARKET_MUTATIONS_ENABLED": "true",
     "LIVE_MAINNET_AUTHORIZED": "true",
     "LIVE_MARKET_ACCEPTANCE_SINGLE_FLIGHT": "true",
@@ -337,7 +338,8 @@ class PaperSafeBackendSpawnTests(unittest.TestCase):
         for key, value in EXPECTED_PAPER_SAFE_CHILD.items():
             self.assertEqual(child[key], value, key)
         for key in ("BYBITSCANNER_PAPER_DB", "BYBITSCANNER_PAPER_BACKEND_URL", "HTTPS_PROXY",
-                    "BYBITSCANNER_DEPLOYMENT_IDENTITY", "BYBITSCANNER_IKIGAI_BOX_SIGNALS"):
+                    "BYBITSCANNER_DEPLOYMENT_IDENTITY", "BYBITSCANNER_IKIGAI_BOX_SIGNALS",
+                    "BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN"):
             self.assertEqual(child[key], self.parent[key], key)
         self.assertEqual(len(self.world.posts), 1)
 

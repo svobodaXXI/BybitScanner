@@ -192,23 +192,66 @@ def _parse_workspace_callback(data):
     """Only a verified owner callback may request local UI opening."""
     import re
     parts = str(data).split(":")
-    if len(parts) != 4 or parts[0] != "workspace":
+    if len(parts) == 3 and parts[0] == "ws" and parts[1] == "E":
+        token = parts[2]
+        if not re.fullmatch(r"[0-9a-f]{40}", token):
+            return None
+        return {"kind": "workspace", "signal_token": token}
+    if len(parts) in (4, 5) and parts[0] == "workspace":
+        _, mode, symbol, timeframe = parts[:4]
+        signal_id = parts[4] if len(parts) == 5 else None
+    else:
         return None
-    _, mode, symbol, timeframe = parts
     if mode not in ("EDITOR", "TERMINAL"):
         return None
     if not re.fullmatch(r"[A-Z0-9]{2,32}USDT", symbol):
         return None
     if timeframe not in ("15s", "1m", "5m", "15m", "1h", "1d"):
         return None
-    return {"kind": "workspace", "mode": mode, "symbol": symbol, "timeframe": timeframe}
+    if signal_id is not None:
+        if mode != "EDITOR" or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", signal_id):
+            return None
+    if len(str(data).encode("utf-8")) > 64:
+        return None
+    return {"kind": "workspace", "mode": mode, "symbol": symbol,
+            "timeframe": timeframe, "signal_id": signal_id}
+
+
+WORKSPACE_UNAVAILABLE_TEXT = {
+    "signal_geometry_token_missing":
+        "Редактор недоступен: процесс Telegram на ПК запущен без "
+        "BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN. Браузер не открыт.",
+    "frozen_geometry_missing":
+        "Редактор недоступен: frozen geometry сигнала нет в архиве ПК. Браузер не открыт.",
+}
 
 
 def _run_workspace_callback(callback_query, parsed):
     """Queue-only boundary: no shell execution or robot startup in listener."""
-    from workspace_owner_launcher import request_owner_workspace_open
+    from workspace_owner_launcher import WorkspaceUnavailable, request_owner_workspace_open
     try:
-        request_owner_workspace_open(parsed["mode"], parsed["symbol"], parsed["timeframe"])
+        if parsed.get("signal_token") is not None:
+            from signal_archive import resolve_signal_callback_token
+            exact = resolve_signal_callback_token(parsed["signal_token"])
+            timeframe = {
+                "15s": "15s", "1": "1m", "5": "5m",
+                "15": "15m", "60": "1h", "D": "1d",
+            }.get(str(exact.get("timeframe"))) if exact is not None else None
+            if exact is None or timeframe is None:
+                raise LookupError("archived signal identity unavailable")
+            request_owner_workspace_open(
+                "EDITOR", exact["symbol"], timeframe, signal_id=exact["signal_id"])
+        elif parsed.get("signal_id") is not None:
+            request_owner_workspace_open(
+                parsed["mode"], parsed["symbol"], parsed["timeframe"],
+                signal_id=parsed["signal_id"])
+        else:
+            request_owner_workspace_open(parsed["mode"], parsed["symbol"], parsed["timeframe"])
+    except WorkspaceUnavailable as exc:
+        print("[WORKSPACE OPEN FAILED]", exc)
+        _answer_callback(callback_query.get("id"), WORKSPACE_UNAVAILABLE_TEXT.get(
+            str(exc), "Редактор/Терминал недоступен на ПК"))
+        return
     except Exception as exc:
         print("[WORKSPACE OPEN FAILED]", type(exc).__name__)
         _answer_callback(callback_query.get("id"), "Редактор/Терминал недоступен на ПК")
