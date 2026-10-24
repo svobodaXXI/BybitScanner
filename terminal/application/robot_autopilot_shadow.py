@@ -125,6 +125,17 @@ class PaperAutoAdmission:
 
 FreshnessProver = Callable[[str, dict], bool | None]
 
+FRESHNESS_UNPROVEN = "UNPROVEN"
+FRESHNESS_PROVER_ERROR = "PROVER_ERROR"
+
+
+class FreshnessUnknown(Exception):
+    """Raised by a FreshnessProver that cannot prove liveness; ``reason`` is a stable class."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
 
 @dataclass(frozen=True, slots=True)
 class _Candidate:
@@ -450,12 +461,18 @@ def _fresh_facts(
     except Exception:
         healthy = None
     fresh: bool | None = None
+    fresh_unknown_reason: str | None = None
     if mode == PAPER_AUTO_MODE and candidate_fresh is not None:
         try:
             proven = candidate_fresh(candidate.symbol.value, candidate.snapshot)
+        except FreshnessUnknown as unknown:
+            proven, fresh_unknown_reason = None, unknown.reason
         except Exception:
-            proven = None  # unprovable freshness is never an implicit ALLOW
+            # unprovable freshness is never an implicit ALLOW
+            proven, fresh_unknown_reason = None, FRESHNESS_PROVER_ERROR
         fresh = None if proven is None else bool(proven)
+        if fresh is None and fresh_unknown_reason is None:
+            fresh_unknown_reason = FRESHNESS_UNPROVEN
     daily_gate = None
     if mode == PAPER_AUTO_MODE and now_ms is not None:
         daily_gate = _daily_loss_gate(
@@ -500,6 +517,7 @@ def _fresh_facts(
         portfolio_policy_ready=True,
         portfolio_facts=portfolio,
         candidate_fresh=fresh,
+        candidate_fresh_unknown_reason=fresh_unknown_reason,
         daily_loss_gate=daily_gate,
         linked_mirror_parent_candidate_id=(
             linked_parent.candidate_id if linked_parent is not None else None

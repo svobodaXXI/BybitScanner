@@ -148,6 +148,21 @@ def _snapshot_key(symbol: str, signal_snapshot: Mapping[str, object]) -> tuple[s
     return symbol, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+EVIDENCE_NOT_PREPARED = "EVIDENCE_NOT_PREPARED"
+EVIDENCE_EXPIRED = "EVIDENCE_EXPIRED"
+EVIDENCE_FETCH_FAILED = "EVIDENCE_FETCH_FAILED"
+
+
+class CatchupEvidenceUnavailable(RuntimeError):
+    """No usable prepared evidence; ``reason`` is a stable class, never exception text."""
+
+    def __init__(self, symbol: str, reason: str) -> None:
+        super().__init__(
+            f"Robot catch-up evidence was not prepared off the owner thread: {symbol} ({reason})"
+        )
+        self.reason = reason
+
+
 class PreparedCatchupEvidence:
     """Admission catch-up candles prepared OFF the owner thread.
 
@@ -173,6 +188,8 @@ class PreparedCatchupEvidence:
         self._clock = clock
         self._lock = threading.Lock()
         self._entries: dict[tuple[str, str], tuple[float, tuple]] = {}
+        # Last prepare failure per key: lets a later miss say *why* (#608 diagnostics).
+        self._failed: set[tuple[str, str]] = set()
 
     @property
     def fetch(self) -> Callable[[str, Mapping[str, object]], tuple]:
@@ -181,23 +198,30 @@ class PreparedCatchupEvidence:
     def prepare(self, targets: Iterable[tuple[str, Mapping[str, object]]]) -> None:
         """Fetch on the calling (non-owner) thread. Errors leave no evidence."""
         for symbol, signal_snapshot in targets:
+            key = _snapshot_key(symbol, signal_snapshot)
             try:
                 candles = tuple(self._fetch(symbol, signal_snapshot))
             except Exception:
                 LOGGER.warning(
                     "Robot catch-up evidence unavailable symbol=%s", symbol, exc_info=True,
                 )
+                with self._lock:
+                    self._failed.add(key)
                 continue
             fetched_at = self._clock()
             with self._lock:
-                self._entries[_snapshot_key(symbol, signal_snapshot)] = (fetched_at, candles)
+                self._entries[key] = (fetched_at, candles)
+                self._failed.discard(key)
 
     def __call__(self, symbol: str, signal_snapshot: Mapping[str, object]) -> tuple:
         key = _snapshot_key(symbol, signal_snapshot)
         with self._lock:
             entry = self._entries.pop(key, None)
-        if entry is None or self._clock() - entry[0] > self._max_age_s:
-            raise RuntimeError(
-                f"Robot catch-up evidence was not prepared off the owner thread: {symbol}"
+            failed = key in self._failed
+        if entry is None:
+            raise CatchupEvidenceUnavailable(
+                symbol, EVIDENCE_FETCH_FAILED if failed else EVIDENCE_NOT_PREPARED,
             )
+        if self._clock() - entry[0] > self._max_age_s:
+            raise CatchupEvidenceUnavailable(symbol, EVIDENCE_EXPIRED)
         return entry[1]
