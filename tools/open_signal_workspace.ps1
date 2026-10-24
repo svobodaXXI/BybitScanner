@@ -6,6 +6,12 @@ param(
  [ValidatePattern('^[A-Za-z0-9_.:-]{1,128}$')][string]$SignalId
 )
 $ErrorActionPreference = "Stop"
+# This window is opened for the owner; never let a failure close it unseen.
+trap {
+  Write-Host "FAILED: $($_.Exception.Message)" -ForegroundColor Red
+  try { Read-Host "Press Enter to close this status window" | Out-Null } catch {}
+  exit 1
+}
 $port = 4173
 $root = Split-Path -Parent $PSScriptRoot
 $launcher = Join-Path $PSScriptRoot "start_workspace_web.ps1"

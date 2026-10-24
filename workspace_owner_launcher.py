@@ -5,6 +5,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent
 ALLOWED_TF = frozenset(("15s", "1m", "5m", "15m", "1h", "1d"))
+GEOMETRY_TOKEN_ENV = "BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN"
+
+
+class WorkspaceUnavailable(RuntimeError):
+    """Known fail-closed reason the owner must see in Telegram."""
 
 
 def request_owner_workspace_open(mode: str, symbol: str, timeframe: str, signal_id: str | None = None) -> None:
@@ -18,6 +23,15 @@ def request_owner_workspace_open(mode: str, symbol: str, timeframe: str, signal_
         raise ValueError("Invalid workspace signal identity")
     if os.name != "nt":
         raise RuntimeError("Windows owner workspace launcher only")
+    if mode == "EDITOR" and signal_id is not None:
+        # The launcher console closes as soon as its script fails, so a missing
+        # authorization or archive must be reported here, before Telegram is
+        # told that the open command was handed to the PC.
+        if len(os.environ.get(GEOMETRY_TOKEN_ENV, "").strip()) < 32:
+            raise WorkspaceUnavailable("signal_geometry_token_missing")
+        from signal_archive import load_frozen_signal_geometry
+        if load_frozen_signal_geometry(signal_id) is None:
+            raise WorkspaceUnavailable("frozen_geometry_missing")
     script = REPO / "tools" / "open_signal_workspace.ps1"
     if not script.is_file():
         raise RuntimeError("Workspace launcher missing")

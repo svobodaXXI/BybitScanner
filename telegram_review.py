@@ -217,9 +217,18 @@ def _parse_workspace_callback(data):
             "timeframe": timeframe, "signal_id": signal_id}
 
 
+WORKSPACE_UNAVAILABLE_TEXT = {
+    "signal_geometry_token_missing":
+        "Редактор недоступен: процесс Telegram на ПК запущен без "
+        "BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN. Браузер не открыт.",
+    "frozen_geometry_missing":
+        "Редактор недоступен: frozen geometry сигнала нет в архиве ПК. Браузер не открыт.",
+}
+
+
 def _run_workspace_callback(callback_query, parsed):
     """Queue-only boundary: no shell execution or robot startup in listener."""
-    from workspace_owner_launcher import request_owner_workspace_open
+    from workspace_owner_launcher import WorkspaceUnavailable, request_owner_workspace_open
     try:
         if parsed.get("signal_token") is not None:
             from signal_archive import resolve_signal_callback_token
@@ -238,6 +247,11 @@ def _run_workspace_callback(callback_query, parsed):
                 signal_id=parsed["signal_id"])
         else:
             request_owner_workspace_open(parsed["mode"], parsed["symbol"], parsed["timeframe"])
+    except WorkspaceUnavailable as exc:
+        print("[WORKSPACE OPEN FAILED]", exc)
+        _answer_callback(callback_query.get("id"), WORKSPACE_UNAVAILABLE_TEXT.get(
+            str(exc), "Редактор/Терминал недоступен на ПК"))
+        return
     except Exception as exc:
         print("[WORKSPACE OPEN FAILED]", type(exc).__name__)
         _answer_callback(callback_query.get("id"), "Редактор/Терминал недоступен на ПК")
