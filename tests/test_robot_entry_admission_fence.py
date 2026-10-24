@@ -12,8 +12,10 @@ import tempfile
 import time
 import unittest
 
+from terminal.application.robot_control import resume_robot_in_store
 from terminal.domain.models import (
-    Category, OrderId, OrderSide, PositionKey, Price, Quantity, Symbol, TradingAccountId,
+    Category, OrderId, OrderSide, PositionKey, PositionSide, Price, Quantity, Symbol,
+    TradingAccountId,
 )
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from tests.test_box_first_fill_frozen_stop import HimsOwnerThreadFillTests, _p1_book
@@ -92,6 +94,96 @@ class BoxEntryFenceTests(HimsOwnerThreadFillTests):
             self.runtime.store.load_executions_for_symbol(ACCOUNT, Symbol("HIMSUSDT")), ())
 
 
+class BoxRecoveryResumeTests(BoxEntryFenceTests):
+    """Invariants after the fence: reconciliation retires stale ENTRYs, protection keeps working."""
+
+    test_closed_admission_never_fills_box_entry_limits = None
+    test_the_fence_lifts_only_with_ready_admission = None
+    test_generic_robot_match_path_is_fenced_too = None
+
+    def _book(self, bid, ask, quantity="5", sequence=2):
+        return _book("HIMSUSDT", bid, ask, quantity=quantity, sequence=sequence)
+
+    def _run(self, book, event_id):
+        return self.runtime.process_robot_market_event(
+            "HIMSUSDT", book, event_id=event_id, received_at_ms=book.received_at_ms,
+        )
+
+    def test_reconcile_retires_stale_entries_and_resume_never_fills_them(self):
+        store = self.runtime.store
+        _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
+        self._process("HIMSUSDT:1")
+        self.assertEqual(store.load_executions_for_symbol(ACCOUNT, Symbol("HIMSUSDT")), ())
+
+        result = self.runtime.robot_reconcile()
+
+        self.assertTrue(result.success, result.reason)
+        self.assertEqual(result.recovery_status, "PAUSED")
+        self.assertEqual([order.status for order in self._entry_orders()], ["cancelled"] * 4)
+        resume_robot_in_store(store, clock_ms=lambda: int(time.time() * 1000))
+        state = store.get_robot_runtime_state(ACCOUNT)
+        self.assertEqual((state.mode, state.recovery_status), ("ROBOT_RUNNING", "READY"))
+
+        self._process("HIMSUSDT:2")
+
+        self.assertEqual(store.load_executions_for_symbol(ACCOUNT, Symbol("HIMSUSDT")), ())
+        self.assertIsNone(store.get_open_robot_trade_for_symbol(ACCOUNT, Symbol("HIMSUSDT")))
+
+    def test_closed_admission_blocks_remaining_entries_but_never_the_take_exit(self):
+        store = self.runtime.store
+        _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="READY")
+        key, take, remaining = self._open_position_with_take_and_remaining_entries()
+
+        _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
+        # Market dips through P2..P4: new exposure from the stale grid must not open.
+        self._run(self._book("28.05", "28.06", quantity="50", sequence=2), "HIMSUSDT:2")
+        self.assertEqual(store.get_position_projection(key).quantity.value, D("2.21"))
+        self.assertEqual(
+            [store.get_paper_limit(order_id, ACCOUNT).status for order_id in remaining],
+            ["open"] * len(remaining),
+        )
+
+        # TAKE at 28.64 reduces exposure and stays executable while admission is closed.
+        self._run(self._book("28.64", "28.65", sequence=3), "HIMSUSDT:3")
+        self.assertEqual(store.get_paper_limit(take.order_id.value, ACCOUNT).status, "filled")
+        self.assertEqual(store.get_position_projection(key).side, PositionSide.FLAT)
+
+    def test_closed_admission_never_blocks_the_protective_stop(self):
+        store = self.runtime.store
+        key, _take, remaining = self._open_position_with_take_and_remaining_entries()
+
+        _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
+        # Through the frozen STOP 27.98: protection closes the position; no stale ENTRY re-opens it.
+        self._run(self._book("27.96", "27.97", quantity="50", sequence=2), "HIMSUSDT:2")
+
+        self.assertEqual(store.get_position_projection(key).side, PositionSide.FLAT)
+        buys = [fill for fill in store.load_executions_for_symbol(ACCOUNT, Symbol("HIMSUSDT"))
+                if fill.side is OrderSide.BUY]
+        self.assertEqual([(fill.price.value, fill.quantity.value) for fill in buys],
+                         [(D("28.25"), D("2.21"))])
+        # The realized setup retires the untouched grid; none of it filled.
+        self.assertEqual(
+            [store.get_paper_limit(order_id, ACCOUNT).status for order_id in remaining],
+            ["cancelled"] * len(remaining),
+        )
+
+    def _open_position_with_take_and_remaining_entries(self):
+        store = self.runtime.store
+        _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="READY")
+        self._run(_p1_book(quantity="2.21"), "HIMSUSDT:1")  # P1 fills 2.21 @ 28.25, TAKE EXIT armed
+        key = PositionKey(ACCOUNT, Category.LINEAR, Symbol("HIMSUSDT"), 0)
+        self.assertEqual(store.get_position_projection(key).quantity.value, D("2.21"))
+        ownership = store.load_box_order_ownership(self.source.candidate_id)
+        take = next(item for item in ownership if item.role == "EXIT" and item.slot == 1)
+        remaining = [
+            item.order_id.value for item in ownership
+            if item.role == "ENTRY"
+            and store.get_paper_limit(item.order_id.value, ACCOUNT).status == "open"
+        ]
+        self.assertEqual(len(remaining), 3)
+        return key, take, remaining
+
+
 class WedgeEntryFenceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -109,6 +201,13 @@ class WedgeEntryFenceTests(unittest.TestCase):
             price=D("64000"), quantity=D("1"), created_at_ms=1000,
         )
 
+    def _limits_status(self):
+        store = self.runtime.store
+        return {
+            order_id: store.get_paper_limit(order_id, ACCOUNT).status
+            for order_id in ("wedge-entry-1", "manual-limit-1")
+        }
+
     def _limits(self):
         store = self.runtime.store
         return {
@@ -122,6 +221,28 @@ class WedgeEntryFenceTests(unittest.TestCase):
             Symbol("BTCUSDT"), _book("BTCUSDT", "63990", "63995"), "BTCUSDT:1",
         )
         self.assertEqual(applied, 1)
+        self.assertEqual(self._limits(), {"wedge-entry-1": D("0"), "manual-limit-1": D("1")})
+
+    def test_stopped_robot_never_fills_a_stale_entry_limit(self):
+        for recovery in ("ROBOT_STOPPED", "RECONCILIATION_REQUIRED"):
+            with self.subTest(recovery=recovery):
+                _set_admission(self.runtime, mode="ROBOT_STOPPED", recovery_status=recovery)
+                self.runtime._match_limits_only(
+                    Symbol("BTCUSDT"), _book("BTCUSDT", "63990", "63995"), "BTCUSDT:1",
+                )
+                self.assertEqual(self._limits()["wedge-entry-1"], D("0"))
+
+    def test_pause_sync_then_resume_never_fills_the_cancelled_entry(self):
+        _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="PAUSED")
+        self.runtime.robot_synchronize_pending_entries()
+        self.assertEqual(self._limits_status()["wedge-entry-1"], "cancelled")
+        resume_robot_in_store(self.runtime.store, clock_ms=lambda: int(time.time() * 1000))
+
+        applied = self.runtime._match_limits_only(
+            Symbol("BTCUSDT"), _book("BTCUSDT", "63990", "63995"), "BTCUSDT:1",
+        )
+
+        self.assertEqual(applied, 1)  # only the manual limit
         self.assertEqual(self._limits(), {"wedge-entry-1": D("0"), "manual-limit-1": D("1")})
 
     def test_ready_admission_keeps_the_existing_fill(self):
