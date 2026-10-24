@@ -84,6 +84,10 @@ class RobotAutoAdmissionFacts:
     # The concrete parent identity is revalidated by the canonical admission
     # boundary and by the Robot monitor before any Box order can exist.
     linked_mirror_parent_candidate_id: str | None = None
+    # Diagnostics only (#608): stable class of why ``candidate_fresh`` is None, so a
+    # CANDIDATE_FRESHNESS_UNKNOWN WAIT is explainable from the durable audit alone.
+    # Never read by the policy; never exception text, paths or secrets.
+    candidate_fresh_unknown_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
