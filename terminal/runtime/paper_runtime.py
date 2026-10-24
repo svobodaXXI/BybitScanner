@@ -2062,12 +2062,15 @@ class PaperRuntime:
             order.order_id.value for order in active_orders if self._is_robot_entry_origin(order)
         }
         linked = self._robot_linked_entry_limits(symbol)
+        now_ms = int(time.time() * 1000)
         fenced: set[str] = set()
         for order in active_orders:
             order_id = order.order_id.value
             if order_id in linked:
+                # "Placed in this epoch" is a time comparison, so an order stamped in
+                # the future (clock reset after a power loss) proves nothing.
                 if ready and (
-                    order.created_at_ms >= state.updated_at_ms
+                    state.updated_at_ms <= order.created_at_ms <= now_ms
                     or linked[order_id] == state.version
                 ):
                     continue

@@ -165,6 +165,17 @@ class WedgeOwnershipGateTests(unittest.TestCase):
         self.assertEqual((self._status("wedge-orphan"), self._status("manual-1")),
                          ("open", "filled"))
 
+    def test_entry_stamped_in_the_future_is_not_taken_for_a_current_epoch_order(self):
+        self.runtime.store.create_paper_limit(
+            client_action_id="robot-retest-limit-future", request_fingerprint="fp-future",
+            order_id=OrderId("wedge-future"), order_link_id="link-future",
+            trading_account_id=ACCOUNT, symbol=Symbol("BTCUSDT"), side=OrderSide.BUY,
+            price=D("64000"), quantity=D("1"), created_at_ms=_now() + 3_600_000,
+        )
+        self._candidate(limit_order_id="wedge-future")
+        self.assertEqual(self._match(), 0)
+        self.assertEqual(self._status("wedge-future"), "open")
+
     def test_owned_entry_placed_in_the_epoch_still_fills(self):
         self._limit("wedge-live", "robot-retest-limit-ghi")
         self._candidate(limit_order_id="wedge-live")
