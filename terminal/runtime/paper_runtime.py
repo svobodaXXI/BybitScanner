@@ -39,6 +39,7 @@ from terminal.application.wedge_source_terminal_producer import WedgeTerminalPro
 from mirror_retest_robot import build_runtime_policy as build_mirror_robot_policy
 from terminal.application.robot_breakout_monitor import (
     DEFAULT_TICK_INTERVAL_S, EmergencyClosePath, INACTIVE_LIMIT_STATUSES, RobotBreakoutMonitor,
+    RobotBreakoutMonitorError, robot_entry_order_ids,
 )
 from terminal.application.live_market_execution import LiveMarketMutationCoordinator, LiveMarketMutationGates
 from terminal.application.live_execution import LiveExecutionCoordinator, LiveParityMutationGates
@@ -3031,6 +3032,43 @@ class PaperRuntime:
             execution = self.store.get_execution(dedup_key)
         return self._finalize_paper_protection_obligation(obligation, trade, execution, now_ms=now_ms)
 
+    def _robot_entry_fees(self, trade: RobotTradeRecord) -> Decimal | None:
+        """Fees of the trade's own Robot entry executions, or None if unproven.
+
+        CR-PAPER-PROTECTION-LIFECYCLE-001 sections 21.2/22.6: correlate only the
+        candidate's own entry order identities -- never symbol-wide executions,
+        which may include manual or unrelated fills -- and require them to sum
+        to the attested entry quantity.
+        """
+        candidate = self.store.get_robot_candidate(trade.candidate_id)
+        if (
+            candidate is None
+            or candidate.robot_state is None
+            or trade.entry_path not in {"LIMIT", "MARKET"}
+            or trade.entry_quantity is None
+        ):
+            return None
+        try:
+            order_ids = robot_entry_order_ids(
+                self.store, trade.trading_account_id, candidate,
+                candidate.robot_state.get("execution") or {}, entry_path=trade.entry_path,
+            )
+        except RobotBreakoutMonitorError:
+            return None
+        entry_side = OrderSide.BUY if trade.direction == "LONG" else OrderSide.SELL
+        fills = tuple(
+            fill
+            for order_id in order_ids
+            for fill in self.store.load_executions_for_order(trade.trading_account_id, order_id)
+        )
+        if (
+            not fills
+            or any(fill.symbol != trade.symbol or fill.side is not entry_side for fill in fills)
+            or sum((fill.quantity.value for fill in fills), Decimal("0")) != trade.entry_quantity
+        ):
+            return None
+        return sum((fill.fee for fill in fills), Decimal("0"))
+
     def _finalize_paper_protection_obligation(
         self, obligation: PaperProtectionObligationRecord, trade: RobotTradeRecord,
         execution: Execution, *, now_ms: int,
@@ -3109,7 +3147,17 @@ class PaperRuntime:
             return obligation
         exit_price = execution.price.value
         exit_quantity = execution.quantity.value
-        fees_costs_usdt = execution.fee
+        entry_fees = self._robot_entry_fees(trade)
+        if entry_fees is None:
+            # Unproven entry correlation keeps the previous exit-only total
+            # rather than guessing; the close itself must still finalize.
+            LOGGER.error(
+                "Robot protection finalize cannot prove entry fees; recording exit fee only; "
+                "obligation=%s trade_id=%s",
+                obligation.obligation_id, trade.trade_id,
+            )
+            entry_fees = Decimal("0")
+        fees_costs_usdt = entry_fees + execution.fee
         expected_side = PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
         if expected_side is PositionSide.LONG:
             realized_pnl_usdt = exit_quantity * (exit_price - trade.average_entry)
