@@ -1952,8 +1952,13 @@ class PaperRuntime:
         PAPER protection close in ``_match_symbol``.
         """
         applied = 0
+        fenced_entry_ids: frozenset[str] | None = None
         for order in self.store.load_active_paper_limits(self._account_id, symbol):
             if allowed_order_ids is not None and order.order_id.value not in allowed_order_ids:
+                continue
+            if fenced_entry_ids is None:
+                fenced_entry_ids = self._robot_entry_limit_ids_fenced_by_admission(symbol)
+            if order.order_id.value in fenced_entry_ids:
                 continue
             result = self._limit_executor.execute(
                 order=order, book=book, match_event_id=match_event_id,
@@ -1961,6 +1966,58 @@ class PaperRuntime:
             if result is not None and result.apply_result is ExecutionApplyResult.APPLIED:
                 applied += 1
         return applied
+
+    def _robot_entry_limit_ids_fenced_by_admission(self, symbol: Symbol) -> frozenset[str]:
+        """Robot ENTRY LIMIT ids that must not fill while Robot admission is closed.
+
+        Restart recovery and every RECONCILIATION_REQUIRED / RECONCILING / PAUSED
+        fence close admission, yet entry LIMITs placed before the fence stay
+        ``open`` until the monitor or ``reconcile_robot`` cancels them. Matching
+        them against the first ordered book event after a restart would open new
+        exposure from a stale plan before reconciliation (#608 power outage:
+        four PRLUSDT Box ENTRY LIMITs below the market). EXIT/TAKE LIMITs and
+        STOP/TAKE protection of existing exposure are not affected.
+        """
+        state = self.store.get_robot_runtime_state(self._paper_account_id)
+        if state is not None and state.mode == ROBOT_RUNNING and state.recovery_status == READY:
+            return frozenset()
+        fenced: set[str] = set()
+        for candidate in self.store.load_robot_candidates_for_symbol(
+            self._paper_account_id, symbol,
+        ):
+            if candidate.status not in {"APPROVED", "OPEN"} or candidate.robot_state is None:
+                continue
+            phase = candidate.robot_state.get("phase")
+            execution = candidate.robot_state.get("execution") or {}
+            if candidate.status == "APPROVED" and phase == "RETEST_DETECTED":
+                order_id = execution.get("limit_order_id")
+                if isinstance(order_id, str) and order_id.strip():
+                    fenced.add(order_id.strip())
+                continue
+            if (
+                phase != "BOX_ENTRY_READY"
+                or candidate.signal_snapshot.get("pattern") != "IKIGAI_BOX"
+            ):
+                continue
+            source_id = execution.get("source_box_candidate_id")
+            if not isinstance(source_id, str) or not source_id.strip():
+                source_id = candidate.robot_state.get("source_box_candidate_id")
+            ownership = (
+                self.store.load_box_order_ownership(source_id.strip())
+                if isinstance(source_id, str) and source_id.strip()
+                else ()
+            )
+            if ownership:
+                fenced.update(
+                    owner.order_id.value for owner in ownership if owner.role == "ENTRY"
+                )
+                continue
+            # Pre-OFR-5 Box candidates linked their entry LIMIT ids directly
+            # (same fallback as robot_protection_coverage_roles()).
+            raw_order_ids = execution.get("limit_order_ids")
+            if isinstance(raw_order_ids, (tuple, list)):
+                fenced.update(item for item in raw_order_ids if isinstance(item, str))
+        return frozenset(fenced)
 
     def process_robot_market_event(
         self, symbol: str, book: NormalizedOrderBook, *, event_id: str, received_at_ms: int,
