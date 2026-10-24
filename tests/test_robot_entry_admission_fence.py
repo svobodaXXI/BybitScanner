@@ -75,12 +75,18 @@ class BoxEntryFenceTests(HimsOwnerThreadFillTests):
                 record = store.get_robot_candidate(self.candidate.candidate_id)
                 self.assertEqual(record.status, "APPROVED")
 
-    def test_the_fence_lifts_only_with_ready_admission(self):
+    def test_the_fence_lifts_only_with_ready_admission_and_a_monitor_confirmation(self):
         _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
         self._process("HIMSUSDT:1")
+        time.sleep(0.02)
         _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="READY")
-        self._process("HIMSUSDT:2")
+        self._process("HIMSUSDT:2")  # READY alone does not vouch for an ENTRY from before it
         store = self.runtime.store
+        self.assertEqual(store.load_executions_for_symbol(ACCOUNT, Symbol("HIMSUSDT")), ())
+        self.runtime._robot_command_dispatcher = lambda operation: operation(self.runtime)
+        self.runtime._streamed_book = lambda symbol: _p1_book()
+        self.runtime._robot_breakout_monitor.tick()
+        self._process("HIMSUSDT:3")
         fills = store.load_executions_for_symbol(ACCOUNT, Symbol("HIMSUSDT"))
         self.assertEqual([(fill.price.value, fill.quantity.value) for fill in fills],
                          [(D("28.25"), D("1.17"))])
@@ -98,7 +104,7 @@ class BoxRecoveryResumeTests(BoxEntryFenceTests):
     """Invariants after the fence: reconciliation retires stale ENTRYs, protection keeps working."""
 
     test_closed_admission_never_fills_box_entry_limits = None
-    test_the_fence_lifts_only_with_ready_admission = None
+    test_the_fence_lifts_only_with_ready_admission_and_a_monitor_confirmation = None
     test_generic_robot_match_path_is_fenced_too = None
 
     def _book(self, bid, ask, quantity="5", sequence=2):
@@ -131,7 +137,6 @@ class BoxRecoveryResumeTests(BoxEntryFenceTests):
 
     def test_closed_admission_blocks_remaining_entries_but_never_the_take_exit(self):
         store = self.runtime.store
-        _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="READY")
         key, take, remaining = self._open_position_with_take_and_remaining_entries()
 
         _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
@@ -169,7 +174,7 @@ class BoxRecoveryResumeTests(BoxEntryFenceTests):
 
     def _open_position_with_take_and_remaining_entries(self):
         store = self.runtime.store
-        _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="READY")
+        # The fixture opened READY before it placed the grid: its ENTRYs are in this epoch.
         self._run(_p1_book(quantity="2.21"), "HIMSUSDT:1")  # P1 fills 2.21 @ 28.25, TAKE EXIT armed
         key = PositionKey(ACCOUNT, Category.LINEAR, Symbol("HIMSUSDT"), 0)
         self.assertEqual(store.get_position_projection(key).quantity.value, D("2.21"))
@@ -245,13 +250,29 @@ class WedgeEntryFenceTests(unittest.TestCase):
         self.assertEqual(applied, 1)  # only the manual limit
         self.assertEqual(self._limits(), {"wedge-entry-1": D("0"), "manual-limit-1": D("1")})
 
-    def test_ready_admission_keeps_the_existing_fill(self):
+    def test_ready_admission_fills_the_entry_once_the_monitor_confirmed_it(self):
+        store = self.runtime.store
+
+        def match():
+            return self.runtime._match_limits_only(
+                Symbol("BTCUSDT"), _book("BTCUSDT", "63990", "63995"), "BTCUSDT:1",
+                allowed_order_ids={"wedge-entry-1"},
+            )
+
         _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="READY")
-        applied = self.runtime._match_limits_only(
-            Symbol("BTCUSDT"), _book("BTCUSDT", "63990", "63995"), "BTCUSDT:1",
-            allowed_order_ids={"wedge-entry-1"},
+        self.assertEqual(match(), 0)  # seeded before this READY epoch: not yet re-evaluated
+        self.assertEqual(self._limits()["wedge-entry-1"], D("0"))
+
+        # What RobotBreakoutMonitor._confirm_entry_admission persists after its checks.
+        version = store.get_robot_runtime_state(ACCOUNT).version
+        record = store.get_robot_candidate("candidate-btc")
+        state = dict(record.robot_state)
+        state["execution"] = {**state["execution"], "entry_admission_version": version}
+        store.save_robot_candidate_state(
+            "candidate-btc", status="APPROVED", robot_state=state,
+            expected_revision=record.state_revision, updated_at_ms=int(time.time() * 1000),
         )
-        self.assertEqual(applied, 1)
+        self.assertEqual(match(), 1)
         self.assertEqual(self._limits()["wedge-entry-1"], D("1"))
 
 

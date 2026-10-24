@@ -3455,6 +3455,25 @@ class SQLiteStore:
         ).fetchone()
         return _paper_limit_from_row(row) if row is not None else None
 
+    def load_all_active_paper_limits(
+        self, trading_account_id: TradingAccountId,
+    ) -> tuple[PaperLimitOrderRecord, ...]:
+        self._assert_owner()
+        rows = self._connection.execute(
+            "SELECT * FROM paper_limit_orders WHERE trading_account_id = ? AND status IN ('open', 'partially_filled') ORDER BY created_at_ms, order_id",
+            (trading_account_id.value,),
+        )
+        return tuple(_paper_limit_from_row(row) for row in rows)
+
+    def get_paper_limit_create_action_id(self, order_id: str) -> str | None:
+        """The client action id that created ``order_id`` (None if no create row exists)."""
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT client_action_id FROM paper_limit_actions WHERE order_id = ? AND operation = 'create'",
+            (order_id,),
+        ).fetchone()
+        return row[0] if row is not None else None
+
     def load_active_paper_limits(
         self, trading_account_id: TradingAccountId, symbol: Symbol,
     ) -> tuple[PaperLimitOrderRecord, ...]:
