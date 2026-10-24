@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hmac
 import logging
+import logging.handlers
 import os
 import queue
 import socket
@@ -26,9 +27,6 @@ import requests
 import socks
 import websocket
 
-from terminal.runtime.nonblocking_console_logging import (
-    disable_console_quick_edit, install_nonblocking_console_logging,
-)
 from terminal.api.models import (
     CloseAllCommandRequest,
     AmendCommandRequest,
@@ -3996,15 +3994,40 @@ def create_configured_paper_runtime(
     )
 
 
+CONSOLE_LOG_QUEUE_SIZE = 10_000
+
+
+class _DropWhenFullQueueHandler(logging.handlers.QueueHandler):
+    """Never blocks the logging thread: a full queue drops the record."""
+
+    def enqueue(self, record: logging.LogRecord) -> None:
+        try:
+            self.queue.put_nowait(record)
+        except queue.Full:
+            pass
+
+
+def _install_console_log_queue(level, fmt: str, *, stream=None,
+                               queue_size: int = CONSOLE_LOG_QUEUE_SIZE) -> logging.handlers.QueueListener:
+    """A3-R8: loggers (incl. the PAPER owner) only enqueue into a bounded queue; the
+    QueueListener's daemon thread is the only console writer. A blocked console
+    (2026-10-12: owner stuck in WriteConsoleW) then stalls only that thread."""
+    log_queue: queue.Queue = queue.Queue(maxsize=queue_size)
+    console = logging.StreamHandler(stream)
+    console.setFormatter(logging.Formatter(fmt))
+    root = logging.getLogger()
+    root.handlers[:] = [_DropWhenFullQueueHandler(log_queue)]
+    root.setLevel(level)
+    listener = logging.handlers.QueueListener(log_queue, console)
+    listener.start()
+    return listener
+
+
 def main() -> None:
-    # A3-R8: the owner thread must never block on the Windows console. Loggers only
-    # enqueue (bounded, drop on full); one daemon thread writes. QuickEdit selection
-    # in this backend window can no longer freeze output.
-    install_nonblocking_console_logging(
-        level=os.environ.get("BYBITSCANNER_LOG_LEVEL", "INFO").upper(),
-        fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+    _install_console_log_queue(
+        os.environ.get("BYBITSCANNER_LOG_LEVEL", "INFO").upper(),
+        "%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    disable_console_quick_edit()
     database_path = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
     port = int(os.environ.get("BYBITSCANNER_PAPER_PORT", str(PORT)))
 
