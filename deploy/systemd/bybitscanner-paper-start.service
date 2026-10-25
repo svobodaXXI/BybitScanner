@@ -1,0 +1,29 @@
+# BybitScanner PAPER contour start (VPS). PREPARED, NOT ENABLED. One command, one owner:
+#
+#     systemctl start bybitscanner-paper-start.service
+#
+# pulls in the PAPER backend and the Telegram worker (Requires=/After=), then runs the SAME
+# canonical runtime intent the Windows shortcut sends: `python -m tools.runtime_intent ALL`
+# (Robot: start / reconcile / resume -> READY; protection health; Scanner -> RUNNING, with MIRROR
+# and the Box overlay per paper.env). It never spawns processes (systemd owns them) and sends one
+# POST /api/runtime/intent; a refusal (e.g. ROBOT_RECONCILIATION_FAILED) fails this unit and is
+# printed in its journal. Autopilot is not switched by the intent: after every (re)start it is OFF
+# (fail-closed) until the owner enables PAPER_AUTO (runbook).
+# No [Install] section (no start at boot), Restart=no.
+
+[Unit]
+Description=BybitScanner PAPER contour start (backend + Telegram, then runtime intent ALL)
+Requires=bybitscanner-paper-backend.service bybitscanner-telegram.service
+After=bybitscanner-paper-backend.service bybitscanner-telegram.service
+
+[Service]
+Type=oneshot
+User=bybitscanner
+Group=bybitscanner
+WorkingDirectory=/opt/BybitScanner
+EnvironmentFile=/etc/bybitscanner/paper.env
+ExecStart=/opt/BybitScanner/venv/bin/python -m tools.runtime_intent ALL
+Restart=no
+TimeoutStartSec=300
+NoNewPrivileges=true
+PrivateTmp=true

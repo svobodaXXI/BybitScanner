@@ -22,6 +22,7 @@ FORBIDDEN_MODULES = (
 )
 BACKEND = "bybitscanner-paper-backend.service"
 TELEGRAM = "bybitscanner-telegram.service"
+START = "bybitscanner-paper-start.service"
 
 
 def names(checks, ok=None):
@@ -37,13 +38,13 @@ class FakeHost:
 
     def __init__(self):
         self.files = {
-            Path(f"/etc/systemd/system/{unit}"): repo_text(vps_check.UNIT_DIR / unit) for unit in (BACKEND, TELEGRAM)}
+            Path(f"/etc/systemd/system/{unit}"): repo_text(vps_check.UNIT_DIR / unit) for unit in (BACKEND, TELEGRAM, START)}
         self.files[vps_check.ENV_FILE] = repo_text("deploy/systemd/paper.env.example")
         self.files[vps_check.NGINX_SITE] = repo_text(vps_check.NGINX_LOOPBACK)
         self.show = {unit: {"LoadState": "loaded", "UnitFileState": "static", "ActiveState": "inactive",
                             "FragmentPath": f"/etc/systemd/system/{unit}", "DropInPaths": "",
                             "EnvironmentFiles": f"{vps_check.ENV_FILE.as_posix()} (ignore_errors=no)", "Environment": ""}
-                     for unit in (BACKEND, TELEGRAM)}
+                     for unit in (BACKEND, TELEGRAM, START)}
         self.nginx = repo_text(vps_check.NGINX_LOOPBACK)
         self.ss = "LISTEN 0 511 127.0.0.1:8080 0.0.0.0:*\nLISTEN 0 4096 127.0.0.53%lo:53 0.0.0.0:*\n" \
                   "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n"
@@ -281,12 +282,13 @@ class RuntimeIntentLinuxTests(unittest.TestCase):
                 mock.patch.object(runtime_intent.subprocess, "Popen", side_effect=AssertionError("spawned")):
             with self.assertRaisesRegex(OSError, "owned by systemd"):
                 runtime_intent.spawn_console(["x"], ROOT)
+            clock = iter(range(0, 1_000_000)).__next__
             bootstrap = runtime_intent.RuntimeIntentBootstrap(
                 root=ROOT, env={}, get=lambda url, timeout: (_ for _ in ()).throw(runtime_intent.Unreachable()),
-                post=lambda url, payload, timeout: posts.append(url), sleep=lambda s: None)
+                post=lambda url, payload, timeout: posts.append(url), sleep=lambda s: None, monotonic=clock)
             result = bootstrap.execute("ALL")
         self.assertEqual(result.outcome, runtime_intent.OUTCOME_FAILED)
-        self.assertIn("owned by systemd", result.message)
+        self.assertIn("started by its systemd unit; nothing was spawned", result.message)
         self.assertEqual(posts, [])
 
     def test_windows_console_spawn_is_unchanged(self):
