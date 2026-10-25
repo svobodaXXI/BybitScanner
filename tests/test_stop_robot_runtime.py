@@ -1104,7 +1104,8 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(fallback.count("taskkill"), 1)  # only the exact /PID call
 
     def test_exact_pid_termination_uses_one_pid_per_call_without_tree_or_name(self):
-        with mock.patch.object(legacy.subprocess, "run") as run:
+        # The exact-PID taskkill fallback is Windows-only (refusal off Windows: test_stop_robot_linux).
+        with mock.patch.object(legacy.os, "name", "nt"), mock.patch.object(legacy.subprocess, "run") as run:
             legacy.terminate_exact_pids((4321, 1234))
         self.assertEqual(
             [c.args[0] for c in run.call_args_list],
@@ -1366,7 +1367,8 @@ class ScannerScopeTests(unittest.TestCase):
 
 class HandoffAndCliTests(unittest.TestCase):
     def test_detached_helper_has_no_persistent_window(self):
-        with mock.patch("tools.stop_robot_runtime.subprocess.Popen") as popen:
+        # Windows behaviour (console flags); the Linux session handoff is covered in test_stop_robot_linux.
+        with mock.patch.object(shutdown.os, "name", "nt"),                 mock.patch("tools.stop_robot_runtime.subprocess.Popen") as popen:
             shutdown.launch_detached("all", notify_chat=42, root=ROOT)
         args, kwargs = popen.call_args
         self.assertEqual(args[0][1:], ["-m", "tools.stop_robot_runtime", "all", "--notify-chat", "42"])
