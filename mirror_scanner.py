@@ -17,7 +17,9 @@ FVG / iFVG are recorded quality attributes only; they never create, admit or
 reject a candidate. Nothing here trades: every candidate carries the existing
 ``mirror_retest_robot_bridge.observe_for_robot`` result (``executable=False``,
 ``admission_allowed=False``) and the common ``prepare_robot_handoff`` capability
-answer; PAPER admission of a standalone MIRROR candidate is not authorised.
+answer; PAPER admission of a standalone MIRROR candidate is not authorised. The
+PAPER Robot reads these candidates (``mirror_retest_robot.scanner_level_sources``)
+only as RETEST campaigns for its own Box attempts in the campaign direction.
 
 Durability: the state (registry, tracker records, pending notifications) is
 replaced atomically before any Telegram send; a pending card is re-sent after a
@@ -75,7 +77,7 @@ WEDGE_ENGINE_PATTERNS = frozenset({"Rising Wedge", "Falling Wedge", "Triangle Co
 PAPER_BLOCKERS = (
     "standalone_mirror_trading_rules_not_owner_accepted",
     "mirror_not_in_robot_supported_patterns",
-    "paper_mirror_execution_only_as_box_overlay_of_wedge_parent",
+    "paper_mirror_execution_only_as_box_attempt_overlay",
 )
 
 _SAFE_SYMBOL = re.compile(r"^[A-Z0-9]+$")

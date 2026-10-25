@@ -2789,12 +2789,19 @@ class RobotBreakoutMonitor:
                 if (item.signal_snapshot or {}).get("pattern") in mirror.WEDGE_PATTERNS
                 and (parent_id is None or item.candidate_id == parent_id)
             ]
+            # A linked Box child belongs to its Wedge parent's campaign only; any other Box attempt may also join a
+            # live Scanner MIRROR level campaign.
+            scanner_sources = (
+                mirror.scanner_level_sources(record.symbol.value, root=self._mirror_policy.scanner_root)
+                if parent_id is None and self._mirror_policy.scanner_levels else ()
+            )
             campaign = mirror.find_active_campaign(
                 self._mirror_policy,
                 wedge_siblings,
                 symbol=record.symbol.value,
                 direction=str(record.robot_state.get("direction", "")).upper(),
                 now_ms=now_ms,
+                scanner_sources=scanner_sources,
             )
             if (
                 parent_id is not None
