@@ -83,10 +83,16 @@ Result:
 - **Stopped**: the journal shows `Runtime STOPPED.` and the unit is `inactive`.
 - **Blocked** (open Robot position, unresolved protection obligation, unknown or unreachable state):
   the journal shows `STOP BLOCKED: <reason>`, exit code 1, and **the backend keeps running**.
-  The unit's stop signal is `SIGCONT` (harmless) and `SendSIGKILL=no`, so after `TimeoutStopSec`
-  (180 s) the unit reads `failed (timeout)` while the process, and its protection, stays alive.
-  Resolve the reason (e.g. let the position reach its STOP/TAKE or close it through the Robot),
-  then stop again. Never answer a blocked stop with `kill`, `systemctl kill` or `pkill`.
+  The unit's stop signal is `SIGCONT` (harmless) and `SendSIGKILL=no`. Verified on systemd 255 with
+  a dummy unit: `systemctl stop` returns after 2 x `TimeoutStopSec` (stop-sigterm, then final-sigterm;
+  up to ~6 min here) **with exit code 0**, the unit reads `failed` (`Result=exit-code`) and the journal
+  says the process "remains running after unit stopped" -- the backend and its protection stay alive,
+  but systemd no longer tracks it. So always judge the outcome by the journal (`Runtime STOPPED.` vs
+  `STOP BLOCKED:`), never by the exit code of `systemctl stop`.
+  Resolve the reason (e.g. let the position reach its STOP/TAKE or close it through the Robot), then
+  stop with the direct CLI form above (the unit is already inactive, `systemctl stop` would do nothing).
+  A new `systemctl start` meanwhile is refused by the `ExecStartPre` gate (port 8765 is taken).
+  Never answer a blocked stop with `kill`, `systemctl kill` or `pkill`.
 - On Linux there is no forced-termination fallback at all: an unreachable-but-listening backend,
   a missing shutdown endpoint or an unknown state is reported and nothing is terminated by PID,
   name or port. `tools.legacy_runtime_process` refuses off Windows.
@@ -96,7 +102,7 @@ Result:
 
 Limits — this is a guard against operator mistakes, not an absolute guarantee: root can still end the
 process (`systemctl kill -s KILL`, `kill -9`, editing the unit, `systemctl daemon-reexec`) and a host
-reboot or power loss ends it regardless (the stop then waits up to 180 s, and PAPER restart
+reboot or power loss ends it regardless (a blocked stop then delays the reboot by up to ~6 min, and PAPER restart
 recovery is fail-closed). No unit restarts automatically and none starts at boot.
 
 After this change the installed units must be refreshed (the `unit_state` / `installed_unit` checks

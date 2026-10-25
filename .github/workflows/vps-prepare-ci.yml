@@ -13,6 +13,7 @@ on:
       - "tests/test_vps_check.py"
       - "tests/test_stop_robot_linux.py"
       - "DOCUMENTS/VPS_DEPLOYMENT_RUNBOOK.md"
+      - "ci/systemd_shutdown_probe.py"
       - ".github/workflows/vps-prepare-ci.yml"
   workflow_dispatch:
 
@@ -38,3 +39,19 @@ jobs:
         run: python -m unittest -v tests.test_vps_check tests.test_stop_robot_linux
       - name: The validator itself runs and reports (expected FAIL items on a runner, never a start)
         run: python -m tools.vps_check --no-systemd || true
+
+  systemd-shutdown-semantics:
+    # Real systemd (runner PID 1, root): dummy units derived from deploy/systemd keep the repository's
+    # stop keys verbatim. Proves: a blocked ExecStop leaves the protected process alive; a successful
+    # ExecStop ends the unit cleanly; the Telegram unit's KillMode lets the real launch_detached helper
+    # outlive the worker (control-group would reap it). No BybitScanner runtime, DB, network or Telegram.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install requests==2.34.2 PySocks==1.7.1
+      - name: Dummy-unit probe of the stop semantics
+        run: sudo "$(which python)" ci/systemd_shutdown_probe.py

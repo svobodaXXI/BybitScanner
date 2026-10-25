@@ -13,9 +13,12 @@
 # (ExecStop = tools.stop_robot_runtime: Scanner -> Robot safe-stop -> protection
 # quiescence -> Telegram -> this backend's identity-checked /api/runtime/shutdown).
 # If the safe-stop is BLOCKED (open position, unresolved protection, unknown state) the
-# backend keeps running: the stop signal is a harmless SIGCONT and SIGKILL is disabled,
-# so after TimeoutStopSec the unit shows "failed (timeout)" while the process, and its
-# protection, stays alive -- read the reason with `journalctl -u bybitscanner-paper-backend`.
+# backend keeps running: the stop signal is a harmless SIGCONT and SIGKILL is disabled.
+# Verified on systemd 255 with a dummy unit: after 2 x TimeoutStopSec (stop-sigterm, then
+# final-sigterm) the unit is "failed" (Result=exit-code), `systemctl stop` still returns 0,
+# and the process "remains running after unit stopped" -- no longer tracked by the unit, so the
+# next stop must use the direct CLI form (runbook). Read the reason with
+# `journalctl -u bybitscanner-paper-backend`.
 # This guards against operator mistakes, not against root: `systemctl kill -s KILL`,
 # `kill -9`, editing the unit or a host reboot can still end the process.
 
