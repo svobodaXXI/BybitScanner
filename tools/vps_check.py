@@ -317,8 +317,9 @@ def check_installed_units(root: Path, *, run: Runner = subprocess.run,
             if text.replace("\r\n", "\n") != read(root / UNIT_DIR / unit).replace("\r\n", "\n"):
                 problems.append(f"{fragment} differs from {UNIT_DIR / unit}")
             problems += unit_problems(text, entry, check_interpreter=True)
-        files = [item.split(" (", 1)[0].lstrip("-") for item in show.get("EnvironmentFiles", "").split("\n")
-                 if item.strip()]
+        files = re.findall(r"(?:^|\s)(-?/\S+)\s+\(ignore_errors=(?:yes|no)\)",
+                           show.get("EnvironmentFiles", ""))
+        files = [item.lstrip("-") for item in files]
         if files[:1] != [ENV_FILE.as_posix()] or any(
                 item not in {ENV_FILE.as_posix(), OWNER_ENV_FILE.as_posix()} for item in files):
             problems.append(f"EnvironmentFiles={files or 'none'}")
@@ -329,8 +330,8 @@ def check_installed_units(root: Path, *, run: Runner = subprocess.run,
         for path in files:
             try:
                 effective.update(parse_env_lines(read(Path(path)).splitlines()))
-            except OSError:
-                if path == OWNER_ENV_FILE.as_posix():
+            except OSError as error:
+                if path == OWNER_ENV_FILE.as_posix() and isinstance(error, FileNotFoundError):
                     continue                             # optional (``-`` prefix): absent is fine
                 checks.append(Check(f"effective_env:{unit}", False, f"{path} unreadable"))
         effective.update(parse_env_lines(show.get("Environment", "").split()))

@@ -1,9 +1,10 @@
 """Real-systemd probe of the PAPER contour START chain with dummy backend/Telegram (CI runner, root).
 
-The repository's own three units are installed under their real names with only these substitutions:
+The repository's own three units are installed under isolated bbs-start-probe names with only these substitutions:
 the venv interpreter -> this runner's Python, /opt/BybitScanner -> this checkout, the backend's and
 the worker's programs -> small loopback HTTP stand-ins, the env file -> a probe env file, User= -> root,
-and the backend's prepare-only ExecStartPre gate (it needs a provisioned host) is dropped. Everything
+and the backend's prepare-only ExecStartPre gate (it needs a provisioned host) is dropped.
+ExecStop is a dummy cleanup command; shutdown semantics are proved separately. Everything
 else -- Requires/After ordering, the Telegram `runtime_intent --wait-backend` readiness gate and the
 start unit's real `python -m tools.runtime_intent ALL` -- is the repository's code.
 
@@ -20,7 +21,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import re
+import socket
 import subprocess
 import sys
 import textwrap
@@ -30,7 +31,8 @@ REPO = Path(__file__).resolve().parents[1]
 WORK = Path("/run/bbs-start")
 PY = sys.executable
 BACKEND_PORT, TELEGRAM_PORT = 18765, 18766
-UNITS = ("bybitscanner-paper-backend.service", "bybitscanner-telegram.service", "bybitscanner-paper-start.service")
+SOURCE_UNITS = ("bybitscanner-paper-backend.service", "bybitscanner-telegram.service", "bybitscanner-paper-start.service")
+UNITS = tuple(name.replace("bybitscanner-", "bbs-start-probe-") for name in SOURCE_UNITS)
 sys.path.insert(0, str(REPO))
 from tools.runtime_intent import expected_database_identity  # noqa: E402
 
@@ -42,10 +44,11 @@ ENV = {
     "LIVE_MARKET_MUTATIONS_ENABLED": "false",
 }
 IDENTITY = expected_database_identity(REPO, ENV)
+SCENARIO_START = 0
 
 
 def sh(*argv: str, check: bool = True) -> subprocess.CompletedProcess:
-    out = subprocess.run(list(argv), capture_output=True, text=True)
+    out = subprocess.run(list(argv), capture_output=True, text=True, timeout=100)
     if check and out.returncode != 0:
         raise SystemExit(f"{argv} failed: {out.stdout}{out.stderr}")
     return out
@@ -57,7 +60,7 @@ def show(unit: str) -> dict[str, str]:
 
 
 def journal(unit: str) -> list[str]:
-    return sh("journalctl", "-u", unit, "--no-pager", "-o", "cat", check=False).stdout.strip().splitlines()[-8:]
+    return sh("journalctl", "-u", unit, "--no-pager", "-o", "cat", "--since", f"@{SCENARIO_START}", check=False).stdout.strip().splitlines()[-8:]
 
 
 SERVER = textwrap.dedent('''
@@ -69,6 +72,8 @@ SERVER = textwrap.dedent('''
         with open(events, "a") as handle:
             handle.write(json.dumps({"t": time.time(), "kind": kind, "event": event, **extra}) + "\\n")
 
+    if reply == "mismatch":
+        identity = "wrong-database"
     log("process_started")
     time.sleep(delay)                                   # a backend needs time before it listens
 
@@ -121,6 +126,10 @@ def render(unit: str, text: str, reply: str) -> str:
             continue
         if unit.startswith("bybitscanner-paper-backend") and line.startswith("ExecStartPre="):
             continue                                       # prepare-only gate needs a provisioned host
+        if line.startswith("ExecStop="):
+            line = "ExecStop=/bin/true"  # dummy cleanup; stop semantics have their own probe
+        if line.startswith("TimeoutStopSec="):
+            line = "TimeoutStopSec=3"
         if line.startswith(("User=", "Group=", "StateDirectory", "EnvironmentFile=")):
             continue
         if line.startswith("ExecStart=") and "paper_http_server" in line:
@@ -131,13 +140,16 @@ def render(unit: str, text: str, reply: str) -> str:
         out.append(line)
         if line == "[Service]":
             out += [f"EnvironmentFile={WORK}/probe.env"]
-    return "\n".join(out) + "\n"
+    rendered = "\n".join(out) + "\n"
+    for source, target in zip(SOURCE_UNITS, UNITS):
+        rendered = rendered.replace(source, target)
+    return rendered
 
 
 def install(reply: str) -> None:
-    for unit in UNITS:
-        text = (REPO / "deploy/systemd" / unit).read_text(encoding="utf-8")
-        Path(f"/etc/systemd/system/{unit}").write_text(render(unit, text, reply), encoding="utf-8")
+    for source, unit in zip(SOURCE_UNITS, UNITS):
+        text = (REPO / "deploy/systemd" / source).read_text(encoding="utf-8")
+        Path(f"/etc/systemd/system/{unit}").write_text(render(source, text, reply), encoding="utf-8")
     sh("systemctl", "daemon-reload")
 
 
@@ -156,10 +168,12 @@ def stop_all() -> None:
 
 
 def scenario(reply: str) -> dict[str, object]:
+    global SCENARIO_START
+    SCENARIO_START = int(time.time())
     (WORK / "events.jsonl").unlink(missing_ok=True)
     install(reply)
     started = time.time()
-    start = sh("systemctl", "start", "bybitscanner-paper-start.service", check=False)
+    start = sh("systemctl", "start", "bbs-start-probe-paper-start.service", check=False)
     log = events()
     first = {}
     for item in log:
@@ -172,20 +186,37 @@ def scenario(reply: str) -> dict[str, object]:
               >= first.get("backend:listening", float("inf")),
               "intent_after_both": bool(intents) and first.get("backend:intent", 0)
               >= max(first.get("backend:listening", 0), first.get("telegram:listening", 0)),
-              "start_journal": journal("bybitscanner-paper-start.service")}
+              "start_journal": journal("bbs-start-probe-paper-start.service")}
     stop_all()
     return result
 
 
 def main() -> int:
-    WORK.mkdir(parents=True, exist_ok=True)
+    if sys.platform != "linux" or os.geteuid() != 0 or os.environ.get("GITHUB_ACTIONS") != "true":
+        raise SystemExit("Refusing: disposable GitHub Actions Linux runner as root required")
+    if Path("/proc/1/comm").read_text().strip() != "systemd":
+        raise SystemExit("Refusing: PID 1 must be systemd")
+    for unit in (*SOURCE_UNITS, *UNITS):
+        loaded = sh("systemctl", "show", unit, "-p", "LoadState", "--value", check=False).stdout.strip()
+        if loaded != "not-found":
+            raise SystemExit(f"Refusing existing unit: {unit} ({loaded})")
+    for port in (BACKEND_PORT, TELEGRAM_PORT):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", port))
+    WORK.mkdir(parents=True, exist_ok=False)
     (WORK / "server.py").write_text(SERVER, encoding="utf-8")
     (WORK / "probe.env").write_text("".join(f"{k}={v}\n" for k, v in ENV.items()), encoding="utf-8")
-    s1 = scenario("ok")
-    s2 = scenario("blocked")
-    print(json.dumps({"S1_start_chain": s1, "S2_intent_blocked": s2}, indent=2))
-    start_unit = "bybitscanner-paper-start.service"
+    try:
+        s1 = scenario("ok")
+        s2 = scenario("blocked")
+        s3 = scenario("mismatch")
+    finally:
+        stop_all()
+    print(json.dumps({"S1_start_chain": s1, "S2_intent_blocked": s2, "S3_wrong_identity": s3}, indent=2))
+    start_unit = "bbs-start-probe-paper-start.service"
     checks = {
+        "S3: wrong DB blocks dependent units and sends no intent": s3["start_rc"] != 0
+            and s3["intents"] == [] and "telegram:process_started" not in s3["order"],
         "S1: start unit succeeded": s1["start_rc"] == 0 and s1["units"][start_unit].get("Result") == "success",
         "S1: Telegram started only after the backend proved its identity": s1["telegram_after_backend_listening"],
         "S1: exactly one intent ALL": s1["intents"] == [{"intent": "ALL"}],
