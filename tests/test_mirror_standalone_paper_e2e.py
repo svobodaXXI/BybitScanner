@@ -155,9 +155,9 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
                 robot_tick_interval_s=0.02,
             )), instrument
 
-    def test_pin_bar_full_paper_lifecycle_via_existing_robot(self):
+    def test_hammer_full_paper_lifecycle_via_existing_robot(self):
         tl = self.timeline
-        # Same reference, STOP and TAKE as the Engulfing E2E; only the confirming
+        # Same reference, STOP and TAKE as the Engulfing E2E; only the formation
         # shape changes. This proves the Pin Bar signal traverses the real
         # admission, R0, matcher, protection, restart and fee-inclusive close.
         tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.9, 105.02, 103.9, 105.0)
@@ -169,7 +169,7 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
 
     def test_mirror_signal_to_closed_paper_trade_with_fees_net_pnl_and_no_repeat_after_restart(self):
         tl, report = self.timeline, {}
-        # 1. MIRROR breakout (fresh), then the bullish Engulfing confirmation on 5m.
+        # 1. MIRROR breakout (fresh), then the bullish Engulfing and the following closed confirmation on 5m.
         self.assertEqual(self.scan(tl.breakout_open + 2 * FIVE)["new_candidates"], 1)
         summary = self.scan(tl.t)
         self.assertEqual(len(summary["standalone_handoffs"]), 1, summary)
@@ -254,7 +254,7 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
                 return projection if projection and projection.stop_loss and projection.take_profit else None
 
             prot = _wait_until(protection)
-            self.assertEqual(prot.stop_loss, Decimal("103.9") - tick)            # beyond the confirmation low
+            self.assertEqual(prot.stop_loss, Decimal("103.9") - tick)            # beyond the formation low
             self.assertEqual(prot.take_profit, Decimal("110.0"))                # 100 % at the MIRROR level
             report["entry"] = {"side": "BUY", "qty": str(trade.entry_quantity), "avg": str(trade.average_entry),
                                "stop": str(prot.stop_loss), "take": str(prot.take_profit)}
@@ -453,8 +453,9 @@ class MirrorStandaloneRules(MirrorStandaloneHarness):
         tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.1, 105.2, 103.9, 105.0)   # no 5m Engulfing
         base = tl.t - 4 * FIVE
         fine = [candle(base + i * ONE, *ohlc) | {"close_time_ms": base + (i + 1) * ONE} for i, ohlc in enumerate((
-            (104.4, 104.5, 104.2, 104.3), (104.3, 104.35, 104.0, 104.05),       # bearish
-            (104.0, 104.9, 103.98, 104.8),                                       # bullish Engulfing on 1m
+            (104.4, 104.5, 104.2, 104.3), (104.3, 104.35, 104.0, 104.05), # bearish
+            (104.0, 104.9, 103.98, 104.8),                             # bullish Engulfing
+            (104.8, 105.1, 104.7, 104.9),                               # NEXT closed candle confirms body
         ))]
         late = candle(tl.t, 104.9, 104.95, 104.5, 104.6) | {"close_time_ms": tl.t + ONE}
         late_engulf = candle(tl.t + ONE, 104.5, 105.4, 104.4, 105.3) | {"close_time_ms": tl.t + 2 * ONE}
@@ -462,7 +463,7 @@ class MirrorStandaloneRules(MirrorStandaloneHarness):
         self.scan(tl.t, fine=fine + [late, late_engulf])
         entries = self.state()["standalone_entries"]
         self.assertEqual([e["terms"]["source_timeframe"] for e in entries], ["1"])
-        self.assertEqual(entries[0]["terms"]["confirmation"]["close_time_ms"], base + 3 * ONE)
+        self.assertEqual(entries[0]["terms"]["confirmation"]["close_time_ms"], base + 4 * ONE)
 
     def test_no_confirmation_after_the_first_retest(self):
         tl = self.timeline
