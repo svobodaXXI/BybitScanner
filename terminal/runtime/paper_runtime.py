@@ -1952,8 +1952,16 @@ class PaperRuntime:
         PAPER protection close in ``_match_symbol``.
         """
         applied = 0
-        for order in self.store.load_active_paper_limits(self._account_id, symbol):
+        fenced_entry_ids: frozenset[str] | None = None
+        active_orders = self.store.load_active_paper_limits(self._account_id, symbol)
+        for order in active_orders:
             if allowed_order_ids is not None and order.order_id.value not in allowed_order_ids:
+                continue
+            if fenced_entry_ids is None:
+                fenced_entry_ids = self._robot_entry_limit_ids_fenced_by_admission(
+                    symbol, active_orders,
+                )
+            if order.order_id.value in fenced_entry_ids:
                 continue
             result = self._limit_executor.execute(
                 order=order, book=book, match_event_id=match_event_id,
@@ -1961,6 +1969,124 @@ class PaperRuntime:
             if result is not None and result.apply_result is ExecutionApplyResult.APPLIED:
                 applied += 1
         return applied
+
+    def _robot_linked_entry_limits(self, symbol: Symbol) -> dict[str, object]:
+        """ENTRY LIMIT id -> admission stamp, for live Robot candidates on ``symbol``.
+
+        The stamp is the runtime-state version in which the monitor last
+        re-evaluated the candidate's resting ENTRY (``entry_admission_version``).
+        """
+        linked: dict[str, object] = {}
+        for candidate in self.store.load_robot_candidates_for_symbol(
+            self._paper_account_id, symbol,
+        ):
+            if candidate.status not in {"APPROVED", "OPEN"} or candidate.robot_state is None:
+                continue
+            phase = candidate.robot_state.get("phase")
+            execution = candidate.robot_state.get("execution") or {}
+            stamp = execution.get("entry_admission_version")
+            if candidate.status == "APPROVED" and phase == "RETEST_DETECTED":
+                order_id = execution.get("limit_order_id")
+                if isinstance(order_id, str) and order_id.strip():
+                    linked[order_id.strip()] = stamp
+                continue
+            if (
+                phase != "BOX_ENTRY_READY"
+                or candidate.signal_snapshot.get("pattern") != "IKIGAI_BOX"
+            ):
+                continue
+            source_id = execution.get("source_box_candidate_id")
+            if not isinstance(source_id, str) or not source_id.strip():
+                source_id = candidate.robot_state.get("source_box_candidate_id")
+            ownership = (
+                self.store.load_box_order_ownership(source_id.strip())
+                if isinstance(source_id, str) and source_id.strip()
+                else ()
+            )
+            if ownership:
+                for owner in ownership:
+                    if owner.role == "ENTRY":
+                        linked[owner.order_id.value] = stamp
+                continue
+            # Pre-OFR-5 Box candidates linked their entry LIMIT ids directly
+            # (same fallback as robot_protection_coverage_roles()).
+            raw_order_ids = execution.get("limit_order_ids")
+            if isinstance(raw_order_ids, (tuple, list)):
+                for item in raw_order_ids:
+                    if isinstance(item, str):
+                        linked[item] = stamp
+        return linked
+
+    def _robot_entry_limit_ids_fenced_by_admission(
+        self, symbol: Symbol, active_orders,
+    ) -> frozenset[str]:
+        """Robot ENTRY LIMIT ids that must not fill on this book event (#608).
+
+        A Robot ENTRY is an active LIMIT recorded in ``robot_entry_orders`` (origin
+        written with the LIMIT) or linked by a live Robot candidate. It fills only
+        when all of these hold, otherwise it is fenced (fail-closed):
+
+        * admission is (ROBOT_RUNNING, READY) now;
+        * a live APPROVED/OPEN candidate owns it (no lost link, terminal
+          candidate or failed cancel);
+        * it belongs to the current admission epoch, robot_runtime_state.version:
+          it was created in that version, or the monitor re-evaluated it in that
+          version (``entry_admission_version``). Restart recovery, start from
+          STOPPED, resume and every fence change the version, so an ENTRY from an
+          earlier epoch -- or of unknown epoch (LEGACY) -- needs a fresh
+          confirmation. No wall-clock time is involved.
+
+        EXIT/TAKE LIMITs, STOP/TAKE protection and non-Robot LIMITs are never listed.
+        """
+        robot_entries = self.store.load_active_robot_entry_orders(self._account_id, symbol)
+        linked = self._robot_linked_entry_limits(symbol)
+        if not robot_entries and not linked:
+            return frozenset()
+        state = self.store.get_robot_runtime_state(self._paper_account_id)
+        ready = (
+            state is not None and state.mode == ROBOT_RUNNING and state.recovery_status == READY
+        )
+        fenced: set[str] = set()
+        for order in active_orders:
+            order_id = order.order_id.value
+            if order_id not in robot_entries and order_id not in linked:
+                continue
+            created_epoch = robot_entries.get(order_id, (None, None))[1]
+            if (
+                ready
+                and order_id in linked
+                and state.version in (created_epoch, linked[order_id])
+            ):
+                continue
+            fenced.add(order_id)
+        return frozenset(fenced)
+
+    def _robot_retire_unowned_entry_limits(self) -> tuple[list[str], list[str]]:
+        """Cancel Robot ENTRY LIMITs no live candidate owns, through the existing cancel path.
+
+        Returns (cancelled order ids, unresolved markers). A cancel that cannot be
+        confirmed is reported so reconciliation stays fail-closed instead of
+        leaving the order to fill later.
+        """
+        cancelled: list[str] = []
+        unresolved: list[str] = []
+        linked_by_symbol: dict[str, dict[str, object]] = {}
+        robot_entries = self.store.load_active_robot_entry_orders(self._account_id)
+        for order_id, (symbol, _epoch) in sorted(robot_entries.items()):
+            linked = linked_by_symbol.get(symbol.value)
+            if linked is None:
+                linked = linked_by_symbol[symbol.value] = self._robot_linked_entry_limits(symbol)
+            if order_id in linked:
+                continue
+            digest = hashlib.sha256(f"{order_id}\0sync-unowned-entry".encode("utf-8")).hexdigest()[:32]
+            result = self._robot_cancel_limit(PaperLimitCancelRequest(
+                ClientActionId(f"robot-sync-unowned-{digest}"), symbol.value, order_id,
+            ))
+            if result.status == CommandResultStatus.COMPLETED:
+                cancelled.append(order_id)
+            else:
+                unresolved.append(f"unowned-entry-limit:{order_id}")
+        return cancelled, unresolved
 
     def process_robot_market_event(
         self, symbol: str, book: NormalizedOrderBook, *, event_id: str, received_at_ms: int,
@@ -3569,11 +3695,14 @@ class PaperRuntime:
         )
         monitor.tick()
 
-        cancelled_order_ids: list[str] = []
+        # Robot-created ENTRY LIMITs that no live candidate owns (link lost between
+        # submit and persist, terminal candidate, earlier failed cancel) are never
+        # matched (see _robot_entry_limit_ids_fenced_by_admission); retire them here,
+        # before the per-candidate pass, so a pre-entry Wedge can be proven order-free.
+        cancelled_order_ids, unresolved_candidate_ids = self._robot_retire_unowned_entry_limits()
         finalized_candidate_ids: list[str] = []
         terminalized_candidate_ids: list[str] = []
         still_pending_protection: list[str] = []
-        unresolved_candidate_ids: list[str] = []
 
         # Only candidates that were APPROVED at the start of this safety
         # pass can contribute to its result. Resolve those rows by primary key
@@ -4179,10 +4308,13 @@ class PaperRuntime:
         return self._create_limit(request, self._context)
 
     def _robot_create_limit(self, request: LimitCommandRequest) -> PaperLimitMutationResult:
-        return self._create_limit(request, self._robot_context)
+        # Every Robot LIMIT created here is an ENTRY (Box writes its own through
+        # Box ownership); the store records origin and admission epoch with it.
+        return self._create_limit(request, self._robot_context, robot_entry=True)
 
     def _create_limit(
         self, request: LimitCommandRequest, context_provider: PaperCommandContextProvider,
+        *, robot_entry: bool = False,
     ) -> PaperLimitMutationResult:
         symbol = request.symbol.strip().upper()
         if request.time_in_force is not TimeInForce.GTC:
@@ -4222,6 +4354,7 @@ class PaperRuntime:
             price=admitted.normalized_limit_price,
             quantity=admitted.final_quantity,
             created_at_ms=int(time.time() * 1000),
+            robot_entry=robot_entry,
         )
         return PaperLimitMutationResult(
             request.client_action_id.value, CommandResultStatus.COMPLETED,
