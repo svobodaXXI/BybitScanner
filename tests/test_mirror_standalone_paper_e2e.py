@@ -326,6 +326,9 @@ class MirrorStandaloneRules(MirrorStandaloneHarness):
                         candle(2 * FIVE, 105, 105.1, 104, 105)):  # doji not a trade
             self.assertFalse(ms._nison_hammer(invalid, "LONG", down))
         self.assertFalse(ms._nison_hammer(bar, "SIDEWAYS", down))
+        # A historical gap must not be mistaken for a fresh local downtrend.
+        gap = down[1] | {"open_time_ms": 3 * FIVE, "close_time_ms": 4 * FIVE}
+        self.assertFalse(ms._nison_hammer(bar, "LONG", [down[0], gap]))
 
     def test_confirmation_requires_immediately_next_candle_above_body_not_wick(self):
         bar = candle(0, 104.9, 106.0, 103.9, 105.0)
@@ -335,6 +338,11 @@ class MirrorStandaloneRules(MirrorStandaloneHarness):
         self.assertFalse(ms._next_close_confirms([bar], next_candle | {"open_time_ms": 2 * FIVE}, "LONG", FIVE))
         self.assertFalse(ms._next_close_confirms([bar], next_candle | {"closed": False}, "LONG", FIVE))
         self.assertFalse(ms._next_close_confirms([bar], next_candle, "SHORT", FIVE))
+        hanging = candle(0, 105.1, 106.8, 104.9, 105.0)
+        short_confirm = candle(FIVE, 104.99, 105.0, 104.6, 104.8)
+        self.assertTrue(ms._next_close_confirms([hanging], short_confirm, "SHORT", FIVE))
+        self.assertFalse(ms._next_close_confirms(
+            [hanging], short_confirm | {"close": 105.0}, "SHORT", FIVE))
         first = candle(0, 104.7, 104.8, 104.0, 104.2)
         second = candle(FIVE, 104.1, 104.85, 103.9, 104.6)
         confirm = candle(2 * FIVE, 104.65, 105, 104.6, 104.75)
@@ -363,6 +371,19 @@ class MirrorStandaloneRules(MirrorStandaloneHarness):
         self.assertGreaterEqual(Decimal(terms["reward_risk"]), Decimal("2"))
         self.assertEqual(self.scan(tl.t)["standalone_handoffs"], [])
         self.assertEqual(len(self.state()["standalone_entries"]), 1)
+
+    def test_engulfing_waits_for_next_close_and_ignores_premature_retest(self):
+        tl = self.timeline
+        self.scan(tl.breakout_open + 2 * FIVE)
+        early = self.scan(tl.t - 2 * FIVE)
+        self.assertEqual(early["standalone_handoffs"], [])
+        self.assertEqual(self.state()["standalone_entries"], [])
+        # A later confirming candle that WICKS into MIRROR has already retested:
+        # closing back below the level is not permission for another entry.
+        tl.coarse[-2] = candle(tl.t - 2 * FIVE, 105.0, 110.1, 104.8, 105.2)
+        self.scan(tl.t)
+        self.assertEqual(self.state()["standalone_entries"], [])
+        self.assertEqual(self.state()["records"][self.level.level_id]["status"], "RETESTED")
 
     def test_short_hanging_man_scanner_confirmation_not_inverted_hammer(self):
         tl = self.timeline
