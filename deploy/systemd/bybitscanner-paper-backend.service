@@ -1,0 +1,31 @@
+# BybitScanner PAPER backend (issue #624). PREPARED, NOT ENABLED.
+#
+# There is deliberately NO [Install] section: `systemctl enable` cannot make this
+# unit start at boot. It runs only on an explicit, owner-authorized
+# `systemctl start` and is never restarted automatically (PAPER fail-closed:
+# a crashed trading runtime stays down until a human looks at it).
+# Starting it starts the PAPER runtime (Bybit public market data, PAPER recovery,
+# protection, Robot monitor); do not start it to "check" the server --
+# use `python -m tools.vps_check` instead.
+
+[Unit]
+Description=BybitScanner PAPER backend (127.0.0.1:8765, PAPER only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bybitscanner
+Group=bybitscanner
+WorkingDirectory=/opt/BybitScanner
+EnvironmentFile=/etc/bybitscanner/paper.env
+# PAPER DB and its side files live here (created by systemd for User= on a start only).
+StateDirectory=bybitscanner
+StateDirectoryMode=0750
+ExecStartPre=/opt/BybitScanner/venv/bin/python -m tools.vps_check --pre-start
+ExecStart=/opt/BybitScanner/venv/bin/python -m terminal.runtime.paper_http_server
+Restart=no
+KillSignal=SIGINT
+TimeoutStopSec=60
+NoNewPrivileges=true
+PrivateTmp=true

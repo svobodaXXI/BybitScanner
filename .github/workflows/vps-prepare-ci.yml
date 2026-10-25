@@ -1,0 +1,34 @@
+name: VPS prepare-only checks
+
+# Issue #624: the Linux prepare/validate-only path on a real Linux runner.
+# Offline only: no requirements install, no backend, no network to Bybit.
+on:
+  pull_request:
+    paths:
+      - "tools/vps_check.py"
+      - "tools/runtime_intent.py"
+      - "deploy/**"
+      - "tests/test_vps_check.py"
+      - ".github/workflows/vps-prepare-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: vps-prepare-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  vps-prepare-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Offline prepare-only tests (Linux)
+        run: python -m unittest -v tests.test_vps_check
+      - name: The validator itself runs and reports (expected FAIL items on a runner, never a start)
+        run: python -m tools.vps_check --no-systemd || true
