@@ -337,6 +337,46 @@ class MirrorStandaloneRules(MirrorStandaloneHarness):
         self.assertEqual(self.scan(tl.t)["standalone_handoffs"], [])
         self.assertEqual(len(self.state()["standalone_entries"]), 1)
 
+    def test_short_pin_bar_routes_through_same_scanner_and_handoff(self):
+        tl = self.timeline
+        # Mirror all prices about 100: a downward naked breakout with a LONG
+        # lower-wick Pin Bar becomes an upward breakout with a SHORT upper wick.
+        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.9, 105.1, 103.9, 105.0)
+        tl.coarse = [candle(r["open_time_ms"], 200 - r["open"], 200 - r["low"],
+                            200 - r["high"], 200 - r["close"]) for r in tl.coarse]
+        self.level = horizontal_level(
+            symbol=SYMBOL, timeframe="5", source=SOURCE_SWING_ZONE, pattern=None,
+            side="upper", price=90.0,
+            anchor_time_ms=tl.level_confirmed - FIVE,
+            confirmed_at_ms=tl.level_confirmed,
+        )
+        self.assertTrue(ms._pin_bar(tl.coarse[-3], "SHORT"))
+        self.assertFalse(ms._engulfing(tl.coarse[-4], tl.coarse[-3], "SHORT"))
+        self.assertEqual(self.scan(tl.breakout_open + 2 * FIVE)["new_candidates"], 1)
+        result = self.scan(tl.t)
+        self.assertEqual(len(result["standalone_handoffs"]), 1)
+        entries = self.state()["standalone_entries"]
+        self.assertEqual(len(entries), 1)
+        terms = entries[0]["terms"]
+        self.assertEqual((terms["direction"], terms["confirmation"]["kind"],
+                          terms["source_timeframe"]), ("SHORT", ms.CONFIRMATION_PIN_BAR, "5"))
+        self.assertEqual((terms["reference"], terms["stop"], terms["target"]),
+                         ("95.0", "96.1", "90.0"))
+        self.assertGreaterEqual(Decimal(terms["reward_risk"]), 2)
+        self.assertEqual(self.scan(tl.t)["standalone_handoffs"], [])
+
+    def test_engulfing_takes_priority_when_the_same_candle_is_also_pin_bar(self):
+        tl = self.timeline
+        tl.coarse[-4] = candle(tl.t - 4 * FIVE, 104.5, 104.8, 103.9, 104.3)
+        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.2, 104.7, 103.1, 104.6)
+        self.assertTrue(ms._engulfing(tl.coarse[-4], tl.coarse[-3], "LONG"))
+        self.assertTrue(ms._pin_bar(tl.coarse[-3], "LONG"))
+        self.scan(tl.breakout_open + 2 * FIVE)
+        self.scan(tl.t)
+        entries = self.state()["standalone_entries"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["terms"]["confirmation"]["kind"], ms.CONFIRMATION_ENGULFING)
+
     def test_1m_pin_bar_requires_only_its_own_closed_candle(self):
         tl = self.timeline
         tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.1, 105.2, 103.9, 105.0)
