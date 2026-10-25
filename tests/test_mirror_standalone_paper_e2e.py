@@ -410,6 +410,9 @@ class MirrorStandaloneRules(MirrorStandaloneHarness):
                             200-r["high"], 200-r["close"]) for r in tl.coarse]
         # Last two closes before the formation rise: 95.4 -> 96.0.
         tl.coarse[-3] = candle(tl.t - 3 * FIVE, 95.1, 95.12, 93.9, 95.0)
+        # Valid SHORT confirmation: closes below body and does NOT breach
+        # Hanging Man high (the mirrored baseline high 95.2 would invalidate).
+        tl.coarse[-2] = candle(tl.t - 2 * FIVE, 95.0, 95.05, 94.6, 94.8)
         self.level = horizontal_level(
             symbol=SYMBOL, timeframe="5", source=SOURCE_SWING_ZONE, pattern=None,
             side="upper", price=90.0,
