@@ -20,17 +20,16 @@ reject a candidate. Nothing here trades: every candidate carries the existing
 answer. The PAPER Robot reads these candidates (``mirror_retest_robot.scanner_level_sources``)
 as RETEST campaigns for its own Box attempts in the campaign direction.
 
-Standalone MIRROR entry (``BYBITSCANNER_MIRROR_STANDALONE_ROBOT=1`` only; owner
-rules 2026-10-25): while a 5m MIRROR candidate on a horizontal level is still
-untested, every new closed 5m and 1m candle is checked independently (no
-cross-timeframe agreement, no future candle) for a reversal confirmation in the
-campaign direction. Implemented confirmation: Engulfing
-(``geometry.reversal_patterns.is_bullish_engulfing``; the SHORT side is the same
-rule on price-negated candles). Entry reference = confirmation close, STOP = its
-extreme (the Robot adds the one-tick buffer and the 1.5% non-Box limit), TAKE =
-100 % at the level (first retest), frozen net RR >= 2 with fees and the 0.5 %
-exit slippage allowance. Each confirmation is handed to the common Robot
-handoff at most once; admission, R0 and execution stay with the Robot.
+Standalone MIRROR entry (``BYBITSCANNER_MIRROR_STANDALONE_ROBOT=1`` only;
+owner decisions 2026-10-25): a 5m untested horizontal-level campaign watches
+closed 5m and 1m candles independently. A Nison-style Hammer after a decline,
+Hanging Man after a rise, or the existing directional Engulfing becomes
+eligible only when its *immediately following* closed candle closes beyond
+the pattern's real-body boundary (not its wick). Entry reference = that next
+close; structural STOP = pattern extreme; TAKE = 100 % at first level retest.
+The common Robot still owns the one-tick STOP buffer, the 1.5% limit, net RR
+>=2 with fees/slippage, R0, admission and all executions. Doji/Inverted Hammer
+are not standalone entry triggers. No look-ahead or cross-TF agreement.
 
 Durability: the state (registry, tracker records, pending notifications) is
 replaced atomically before any Telegram send; a pending card is re-sent after a
@@ -92,7 +91,12 @@ PAPER_BLOCKERS = (
 STANDALONE_LEVEL_TIMEFRAME = "5"      # its breakout identity equals the Robot's own 5m campaign replay
 CONFIRMATION_TIMEFRAMES = ("5", "1")
 CONFIRMATION_ENGULFING = "ENGULFING"
-ENTRY_STOP_KIND = "CONFIRMATION_CANDLE_EXTREME"
+CONFIRMATION_HAMMER = "HAMMER"
+CONFIRMATION_HANGING_MAN = "HANGING_MAN"
+# Engineering interpretation of Nison's "very little or no" upper shadow.
+# The book does NOT give this numerical cut-off; not a profitability claim.
+HAMMER_MAX_UPPER_TO_BODY = "0.50"
+ENTRY_STOP_KIND = "REVERSAL_FORMATION_EXTREME"
 ENTRY_MIN_NET_RR = 2                  # owner: Net RR >= 2:1 with fees and slippage
 
 _SAFE_SYMBOL = re.compile(r"^[A-Z0-9]+$")
@@ -315,17 +319,100 @@ def _engulfing(previous: Mapping[str, Any], current: Mapping[str, Any], directio
     return bool(is_bullish_engulfing(pd.DataFrame([view(previous), view(current)]), 1))
 
 
-def _entry_terms(level: MirrorLevel, record: Mapping[str, Any], candle: Mapping[str, Any],
-                 timeframe: str) -> tuple[dict[str, Any] | None, str | None]:
-    """Frozen standalone entry terms from one confirming candle, or ``(None, rejection)``."""
+def _candle_numbers(row: Mapping[str, Any]):
+    """Positive finite OHLC of an explicitly closed, physically valid candle."""
+    from decimal import Decimal, InvalidOperation
 
+    if row.get("closed") is not True:
+        return None
+    try:
+        o, h, lo, c = (Decimal(str(row[k])) for k in ("open", "high", "low", "close"))
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        return None
+    if (not all(x.is_finite() and x > 0 for x in (o, h, lo, c))
+            or lo > min(o, c) or h < max(o, c) or h <= lo):
+        return None
+    return o, h, lo, c
+
+
+def _nison_hammer(candle: Mapping[str, Any], direction: str,
+                  preceding: Sequence[Mapping[str, Any]]) -> bool:
+    """Hammer LONG or Hanging Man SHORT: identical lower-wick shape, different context.
+
+    Nison: small real body at upper end, lower wick at least 2x the body,
+    very little/no upper wick. For the otherwise qualitative upper-wick phrase
+    we use an explicit <= 1/2-body implementation tolerance. Previous two
+    consecutive closes must fall (LONG) or rise (SHORT), a causal conservative
+    proxy for the prior trend rather than a number ascribed to Nison.
+    Doji remains observational, not an entry trigger.
+    """
+    from decimal import Decimal
+
+    if direction not in ("LONG", "SHORT") or len(preceding) < 2:
+        return False
+    values = _candle_numbers(candle)
+    before = [_candle_numbers(x) for x in preceding[-2:]]
+    if values is None or any(x is None for x in before):
+        return False
+    older, newer = before
+    try:
+        duration = int(candle["close_time_ms"]) - int(candle["open_time_ms"])
+        if (duration <= 0
+                or any(int(row["close_time_ms"]) - int(row["open_time_ms"]) != duration
+                       for row in preceding[-2:])
+                or int(preceding[-2]["close_time_ms"]) != int(preceding[-1]["open_time_ms"])
+                or int(preceding[-1]["close_time_ms"]) != int(candle["open_time_ms"])):
+            return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    if direction == "LONG" and not older[3] > newer[3]:
+        return False
+    if direction == "SHORT" and not older[3] < newer[3]:
+        return False
+    o, h, lo, c = values
+    body = abs(c - o)
+    if body == 0:  # doji requires its own independently reviewed context/rule
+        return False
+    lower_wick = min(o, c) - lo
+    upper_wick = h - max(o, c)
+    return (lower_wick >= 2 * body
+            and upper_wick <= Decimal(HAMMER_MAX_UPPER_TO_BODY) * body)
+
+
+def _next_close_confirms(formation: Sequence[Mapping[str, Any]],
+                         following: Mapping[str, Any], direction: str, step: int) -> bool:
+    """The *next* closed same-TF candle confirms beyond the pattern BODY, not wick."""
+    candles = [*formation, following]
+    values = [_candle_numbers(x) for x in candles]
+    if direction not in ("LONG", "SHORT") or not formation or any(x is None for x in values):
+        return False
+    try:
+        if any(int(right["open_time_ms"]) != int(left["close_time_ms"])
+               or int(left["close_time_ms"]) - int(left["open_time_ms"]) != step
+               for left, right in zip(candles, candles[1:])):
+            return False
+        if int(following["close_time_ms"]) - int(following["open_time_ms"]) != step:
+            return False
+    except (KeyError, ValueError, TypeError):
+        return False
+    real_body_top = max(max(o, c) for o, _, _, c in values[:-1])
+    real_body_bottom = min(min(o, c) for o, _, _, c in values[:-1])
+    return (values[-1][3] > real_body_top if direction == "LONG"
+            else values[-1][3] < real_body_bottom)
+
+
+def _entry_terms(level: MirrorLevel, record: Mapping[str, Any], candle: Mapping[str, Any],
+                 timeframe: str, *, confirmation_kind: str,
+                 formation: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any] | None, str | None]:
+    """Frozen standalone entry terms: following close, preceding formation STOP."""
     from decimal import Decimal
     import robot_l_shape
     from mirror_retest_robot import PAPER_FEE_RATE, STOP_SLIPPAGE_FRACTION
 
     direction = record["naked_retest"]["breakout"]["campaign_direction"]
     reference = Decimal(str(candle["close"]))
-    stop = Decimal(str(candle["low"] if direction == "LONG" else candle["high"]))
+    stop = (min(Decimal(str(x["low"])) for x in formation) if direction == "LONG"
+            else max(Decimal(str(x["high"])) for x in formation))
     target = Decimal(str(level.boundary.price_at(int(candle["close_time_ms"]))))
     sign = 1 if direction == "LONG" else -1
     if not ((reference - stop) * sign > 0 and (target - reference) * sign > 0):
@@ -348,20 +435,22 @@ def _entry_terms(level: MirrorLevel, record: Mapping[str, Any], candle: Mapping[
         "reward_risk": str(rr),
         "level_id": level.level_id, "level_timeframe": level.timeframe, "level_source": level.source,
         "level_pattern": level.pattern, "level_breakout_close_ms": int(breakout["close_time_ms"]),
-        "confirmation": {"kind": CONFIRMATION_ENGULFING, "timeframe": timeframe,
+        "confirmation": {"kind": confirmation_kind, "timeframe": timeframe,
                          **{key: candle[key] for key in ("open_time_ms", "close_time_ms", "open", "high", "low",
-                                                         "close")}},
+                                                         "close")},
+                         "formation": [{key: source[key] for key in
+                                        ("open_time_ms", "close_time_ms", "open", "high", "low", "close")}
+                                       for source in formation]},
     }, None
 
 
 def _standalone_confirmations(level: MirrorLevel, record: dict[str, Any], frames: Mapping[str, Sequence],
                               latest_close: int) -> list[dict[str, Any]]:
-    """New confirmations of a live standalone-eligible level on each timeframe independently.
+    """Closed 5m/1m separately: pattern first, immediately following close second.
 
-    Only closed candles after the breakout candle and up to the last candle the tracker has proven untested
-    (no candle after it, so never a candle after the first retest).
+    No trade from the formation candle alone, no later/missing confirmation,
+    and nothing after the first retest of the horizontal MIRROR level.
     """
-
     if (level.timeframe != STANDALONE_LEVEL_TIMEFRAME or not level.is_horizontal
             or record.get("candidate") is not True or record.get("lifecycle") != LIFECYCLE_TRACKING
             or record.get("status") != STATUS_UNTESTED):
@@ -372,20 +461,52 @@ def _standalone_confirmations(level: MirrorLevel, record: dict[str, Any], frames
     cursors = record.setdefault("entry_cursors", {})
     found = []
     for timeframe in CONFIRMATION_TIMEFRAMES:
+        step = timeframe_ms(timeframe)
         rows = [row for row in frames.get(timeframe) or ()
                 if int(row["open_time_ms"]) >= int(breakout["open_time_ms"])
-                and int(row["close_time_ms"]) <= latest_close]
+                and int(row["close_time_ms"]) <= latest_close
+                and row.get("closed") is True]
         cursor = int(cursors.get(timeframe) or breakout["close_time_ms"])
-        for previous, current in zip(rows, rows[1:]):
+        # i is the confirmation candle. A Hammer/Hanging Man needs two candles
+        # *before* the formation for its local directional context.
+        for i in range(2, len(rows)):
+            current, previous = rows[i], rows[i - 1]
             if int(current["close_time_ms"]) <= cursor or int(current["open_time_ms"]) < int(breakout["close_time_ms"]):
                 continue
             cursor = int(current["close_time_ms"])
-            touched = current["high"] >= price if direction == "LONG" else current["low"] <= price
-            if touched or not _engulfing(previous, current, direction):
+            # No entry if the target was touched by any candle in this formation.
+            # The 5m tracker also guards historical first retests outside this window.
+            engulf_formation = rows[i - 2:i]
+            pattern = None
+            kind = None
+            if (_engulfing(engulf_formation[0], engulf_formation[1], direction)
+                    and _next_close_confirms(engulf_formation, current, direction, step)):
+                pattern, kind = engulf_formation, CONFIRMATION_ENGULFING
+            elif (i >= 3
+                  and _nison_hammer(previous, direction, rows[i - 3:i - 1])
+                  and _next_close_confirms([previous], current, direction, step)):
+                pattern = [previous]
+                kind = CONFIRMATION_HAMMER if direction == "LONG" else CONFIRMATION_HANGING_MAN
+            if pattern is None:
                 continue
-            terms, rejection = _entry_terms(level, record, current, timeframe)
+            involved = [*pattern, current]
+            if any((x["high"] >= price if direction == "LONG" else x["low"] <= price)
+                   for x in involved):
+                continue
+            # The following candle must not invalidate the original formation
+            # before we have even observed its confirmation close. Its low/high
+            # may be beyond the eventual buffered STOP; a close-only check
+            # would otherwise admit a reversal that has already failed.
+            formation_extreme = (min(x["low"] for x in pattern) if direction == "LONG"
+                                 else max(x["high"] for x in pattern))
+            invalidated = (current["low"] <= formation_extreme if direction == "LONG"
+                           else current["high"] >= formation_extreme)
+            if invalidated:
+                continue
+            terms, rejection = _entry_terms(
+                level, record, current, timeframe, confirmation_kind=kind, formation=pattern)
             found.append({"timeframe": timeframe, "confirmation_close_ms": int(current["close_time_ms"]),
-                          "terms": terms, "rejection": rejection})
+                          "kind": kind, "terms": terms, "rejection": rejection})
         cursors[timeframe] = cursor
     return found
 
@@ -543,7 +664,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
             entry_id = f"{level_id}@{item['timeframe']}@{item['confirmation_close_ms']}"
             journal.append({"event": "mirror_entry_confirmation", **base, "level_id": level_id,
                             "entry_id": entry_id, "confirmation_timeframe": item["timeframe"],
-                            "kind": CONFIRMATION_ENGULFING, "rejection": item["rejection"],
+                            "kind": item["kind"], "rejection": item["rejection"],
                             "terms": item["terms"]})
             if item["terms"] is not None and all(e["entry_id"] != entry_id for e in entries):
                 entries.append({"entry_id": entry_id, "terms": item["terms"], "handoff": "PENDING",
