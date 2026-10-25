@@ -299,6 +299,8 @@ def scanner_candidate_admission_error(candidate: Mapping[str, Any]) -> str | Non
         return "Scanner candidate pattern is not supported by Robot"
 
     source_timeframe = str(candidate.get("timeframe", "")).strip()
+    if robot_l_shape.is_mirror_snapshot(snapshot) and not robot_l_shape.mirror_standalone_enabled():
+        return "MIRROR standalone Robot is not enabled"
     if is_l_shape:
         if source_timeframe not in {"1", "5"}:
             return "L-shape Robot supports only 1m or 5m source timeframe"

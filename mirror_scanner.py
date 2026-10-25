@@ -17,9 +17,20 @@ FVG / iFVG are recorded quality attributes only; they never create, admit or
 reject a candidate. Nothing here trades: every candidate carries the existing
 ``mirror_retest_robot_bridge.observe_for_robot`` result (``executable=False``,
 ``admission_allowed=False``) and the common ``prepare_robot_handoff`` capability
-answer; PAPER admission of a standalone MIRROR candidate is not authorised. The
-PAPER Robot reads these candidates (``mirror_retest_robot.scanner_level_sources``)
-only as RETEST campaigns for its own Box attempts in the campaign direction.
+answer. The PAPER Robot reads these candidates (``mirror_retest_robot.scanner_level_sources``)
+as RETEST campaigns for its own Box attempts in the campaign direction.
+
+Standalone MIRROR entry (``BYBITSCANNER_MIRROR_STANDALONE_ROBOT=1`` only; owner
+rules 2026-10-25): while a 5m MIRROR candidate on a horizontal level is still
+untested, every new closed 5m and 1m candle is checked independently (no
+cross-timeframe agreement, no future candle) for a reversal confirmation in the
+campaign direction. Implemented confirmation: Engulfing
+(``geometry.reversal_patterns.is_bullish_engulfing``; the SHORT side is the same
+rule on price-negated candles). Entry reference = confirmation close, STOP = its
+extreme (the Robot adds the one-tick buffer and the 1.5% non-Box limit), TAKE =
+100 % at the level (first retest), frozen net RR >= 2 with fees and the 0.5 %
+exit slippage allowance. Each confirmation is handed to the common Robot
+handoff at most once; admission, R0 and execution stay with the Robot.
 
 Durability: the state (registry, tracker records, pending notifications) is
 replaced atomically before any Telegram send; a pending card is re-sent after a
@@ -75,10 +86,14 @@ WEDGE_ENGINE_PATTERNS = frozenset({"Rising Wedge", "Falling Wedge", "Triangle Co
 
 # Why a detected MIRROR candidate cannot reach PAPER on its own (shown in Terminal, never bypassed here).
 PAPER_BLOCKERS = (
-    "standalone_mirror_trading_rules_not_owner_accepted",
-    "mirror_not_in_robot_supported_patterns",
-    "paper_mirror_execution_only_as_box_attempt_overlay",
+    "standalone_mirror_entry_off_until_owner_enables_BYBITSCANNER_MIRROR_STANDALONE_ROBOT",
 )
+
+STANDALONE_LEVEL_TIMEFRAME = "5"      # its breakout identity equals the Robot's own 5m campaign replay
+CONFIRMATION_TIMEFRAMES = ("5", "1")
+CONFIRMATION_ENGULFING = "ENGULFING"
+ENTRY_STOP_KIND = "CONFIRMATION_CANDLE_EXTREME"
+ENTRY_MIN_NET_RR = 2                  # owner: Net RR >= 2:1 with fees and slippage
 
 _SAFE_SYMBOL = re.compile(r"^[A-Z0-9]+$")
 
@@ -286,6 +301,101 @@ def _duplicate_breakout(level_id, level, record, records, registry) -> str | Non
     return None
 
 
+def _engulfing(previous: Mapping[str, Any], current: Mapping[str, Any], direction: str) -> bool:
+    """The repository's Engulfing rule; SHORT is the same rule on price-negated candles."""
+
+    import pandas as pd
+    from geometry.reversal_patterns import is_bullish_engulfing
+
+    def view(row):
+        if direction == "LONG":
+            return {"open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]}
+        return {"open": -row["open"], "high": -row["low"], "low": -row["high"], "close": -row["close"]}
+
+    return bool(is_bullish_engulfing(pd.DataFrame([view(previous), view(current)]), 1))
+
+
+def _entry_terms(level: MirrorLevel, record: Mapping[str, Any], candle: Mapping[str, Any],
+                 timeframe: str) -> tuple[dict[str, Any] | None, str | None]:
+    """Frozen standalone entry terms from one confirming candle, or ``(None, rejection)``."""
+
+    from decimal import Decimal
+    import robot_l_shape
+    from mirror_retest_robot import PAPER_FEE_RATE, STOP_SLIPPAGE_FRACTION
+
+    direction = record["naked_retest"]["breakout"]["campaign_direction"]
+    reference = Decimal(str(candle["close"]))
+    stop = Decimal(str(candle["low"] if direction == "LONG" else candle["high"]))
+    target = Decimal(str(level.boundary.price_at(int(candle["close_time_ms"]))))
+    sign = 1 if direction == "LONG" else -1
+    if not ((reference - stop) * sign > 0 and (target - reference) * sign > 0):
+        return None, "entry_geometry_invalid"
+    try:
+        rr = robot_l_shape.net_reward_risk(direction, entry_price=reference, stop_price=stop,
+                                           target_price=target, fee_rate=PAPER_FEE_RATE,
+                                           exit_slippage_fraction=STOP_SLIPPAGE_FRACTION)
+    except robot_l_shape.RobotLShapeError:
+        return None, "entry_net_rr_unavailable"
+    if rr < ENTRY_MIN_NET_RR:
+        return None, f"entry_net_rr_below_2:{rr:.2f}"
+    breakout = record["naked_retest"]["breakout"]
+    return {
+        "direction": direction, "source_timeframe": timeframe,
+        "breakout_time_ms": int(candle["open_time_ms"]),
+        "reference": str(reference), "target": str(target), "stop": str(stop), "structural_stop": str(stop),
+        "stop_kind": ENTRY_STOP_KIND,
+        "potential_percent": str(abs(target - reference) / reference * 100),
+        "reward_risk": str(rr),
+        "level_id": level.level_id, "level_timeframe": level.timeframe, "level_source": level.source,
+        "level_pattern": level.pattern, "level_breakout_close_ms": int(breakout["close_time_ms"]),
+        "confirmation": {"kind": CONFIRMATION_ENGULFING, "timeframe": timeframe,
+                         **{key: candle[key] for key in ("open_time_ms", "close_time_ms", "open", "high", "low",
+                                                         "close")}},
+    }, None
+
+
+def _standalone_confirmations(level: MirrorLevel, record: dict[str, Any], frames: Mapping[str, Sequence],
+                              latest_close: int) -> list[dict[str, Any]]:
+    """New confirmations of a live standalone-eligible level on each timeframe independently.
+
+    Only closed candles after the breakout candle and up to the last candle the tracker has proven untested
+    (no candle after it, so never a candle after the first retest).
+    """
+
+    if (level.timeframe != STANDALONE_LEVEL_TIMEFRAME or not level.is_horizontal
+            or record.get("candidate") is not True or record.get("lifecycle") != LIFECYCLE_TRACKING
+            or record.get("status") != STATUS_UNTESTED):
+        return []
+    breakout = record["naked_retest"]["breakout"]
+    direction = breakout["campaign_direction"]
+    price = level.boundary.price_at(int(breakout["close_time_ms"]))
+    cursors = record.setdefault("entry_cursors", {})
+    found = []
+    for timeframe in CONFIRMATION_TIMEFRAMES:
+        rows = [row for row in frames.get(timeframe) or ()
+                if int(row["open_time_ms"]) >= int(breakout["open_time_ms"])
+                and int(row["close_time_ms"]) <= latest_close]
+        cursor = int(cursors.get(timeframe) or breakout["close_time_ms"])
+        for previous, current in zip(rows, rows[1:]):
+            if int(current["close_time_ms"]) <= cursor or int(current["open_time_ms"]) < int(breakout["close_time_ms"]):
+                continue
+            cursor = int(current["close_time_ms"])
+            touched = current["high"] >= price if direction == "LONG" else current["low"] <= price
+            if touched or not _engulfing(previous, current, direction):
+                continue
+            terms, rejection = _entry_terms(level, record, current, timeframe)
+            found.append({"timeframe": timeframe, "confirmation_close_ms": int(current["close_time_ms"]),
+                          "terms": terms, "rejection": rejection})
+        cursors[timeframe] = cursor
+    return found
+
+
+def _standalone_snapshot(symbol: str, terms: Mapping[str, Any]) -> dict[str, Any]:
+    timeframe = terms["source_timeframe"]
+    return {"pattern": PATTERN, "symbol": symbol, "timeframe": timeframe, "scanner_source_timeframe": timeframe,
+            "robot_handoff_ready": True, "mirror_entry": dict(terms)}
+
+
 def _imbalance_quality(record: Mapping[str, Any], gaps, rows) -> list[dict[str, Any]]:
     """Linked FVGs with their current fill / inversion (iFVG) phase -- attributes only."""
 
@@ -385,6 +495,8 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
 
     gaps = detect_fvgs(rows, symbol=symbol, timeframe=timeframe)
     pending = state["pending_notifications"]
+    entries = state.setdefault("standalone_entries", [])
+    frames = {timeframe: rows, **({"1": list(fine_candles)} if fine_candles and timeframe != "1" else {})}
     for level_id, record in list(records.items()):
         level = registry.levels.get(level_id)
         if level is None or record["lifecycle"] != LIFECYCLE_TRACKING:
@@ -427,6 +539,15 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                 record.update(lifecycle=LIFECYCLE_REJECTED, rejection="history_gap")
                 journal.append({"event": "mirror_level_rejected", **base, "level_id": level_id,
                                 "reason": "history_gap"})
+        for item in _standalone_confirmations(level, record, frames, latest_close):
+            entry_id = f"{level_id}@{item['timeframe']}@{item['confirmation_close_ms']}"
+            journal.append({"event": "mirror_entry_confirmation", **base, "level_id": level_id,
+                            "entry_id": entry_id, "confirmation_timeframe": item["timeframe"],
+                            "kind": CONFIRMATION_ENGULFING, "rejection": item["rejection"],
+                            "terms": item["terms"]})
+            if item["terms"] is not None and all(e["entry_id"] != entry_id for e in entries):
+                entries.append({"entry_id": entry_id, "terms": item["terms"], "handoff": "PENDING",
+                                "candidate_id": None})
         if (record["lifecycle"] == LIFECYCLE_TRACKING and record["status"] == STATUS_WAITING
                 and level.anchors[-1][0] < latest_close - WAITING_EXPIRY_CANDLES * step):
             record.update(lifecycle=LIFECYCLE_REJECTED, rejection="expired_before_breakout",
@@ -453,6 +574,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
     save_state(state, root)                      # durable before anything leaves the process
     for item in journal:
         append_event(item, root)
+    handed = _hand_off_standalone_entries(symbol, state, root)
     for item in journal:
         if item["event"] in ("mirror_breakout", "mirror_first_retest") and item.get("candidate"):
             print(f"{symbol:<15} {timeframe}m MIRROR {item['event']} level={item['level_id']} "
@@ -463,7 +585,40 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                                   if item["event"] == "mirror_breakout" and item["candidate"]),
             "tracking": sum(1 for r in records.values() if r["lifecycle"] == LIFECYCLE_TRACKING),
             "candidates": sum(1 for r in records.values() if r.get("candidate")),
-            "events": [item["event"] for item in journal], "pending": list(pending)}
+            "events": [item["event"] for item in journal], "pending": list(pending),
+            "standalone_handoffs": handed}
+
+
+def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) -> list[str]:
+    """Hand each new standalone entry to the common Robot handoff at most once.
+
+    The attempt is made durable (``SENT``) before the handoff; an entry left ``SENT`` by a crash is never
+    handed again (a duplicate candidate could spend the campaign twice). Flag off -> ``OFF`` (observation).
+    """
+
+    from pattern_robot_integration import is_robot_executable_signal, prepare_robot_handoff
+
+    handed = []
+    for entry in state.get("standalone_entries") or ():
+        if entry.get("handoff") != "PENDING":
+            continue
+        snapshot = _standalone_snapshot(symbol, entry["terms"])
+        timeframe = entry["terms"]["source_timeframe"]
+        if not is_robot_executable_signal(snapshot, timeframe=timeframe):
+            entry["handoff"] = "OFF"
+            save_state(state, root)
+            continue
+        entry["handoff"] = "SENT"
+        save_state(state, root)
+        result = prepare_robot_handoff(snapshot, timeframe=timeframe, enabled=True)
+        entry["handoff"] = "HANDED" if result.candidate_id else "FAILED"
+        entry["candidate_id"] = result.candidate_id
+        save_state(state, root)
+        append_event({"event": "mirror_entry_handoff", "symbol": symbol, "entry_id": entry["entry_id"],
+                      "handoff": entry["handoff"], "candidate_id": result.candidate_id}, root)
+        if result.candidate_id:
+            handed.append(result.candidate_id)
+    return handed
 
 
 # --- Telegram -----------------------------------------------------------------------------------

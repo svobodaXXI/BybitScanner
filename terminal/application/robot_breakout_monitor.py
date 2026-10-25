@@ -1272,6 +1272,28 @@ class RobotBreakoutMonitor:
                     record, reason=reason, details=details,
                 )
                 return True
+            if robot_l_shape.is_mirror_snapshot(record.signal_snapshot) and not mirror.is_attached(execution):
+                # Standalone MIRROR: the campaign must still be live (no entry after the first retest) and the
+                # attempt must fit the campaign's single R0 budget. The decision is made durable on its own
+                # tick, before any order exists; the LIMIT follows on the next tick.
+                if not robot_l_shape.mirror_standalone_enabled():
+                    self._invalidate_pre_entry_candidate(
+                        record, reason="MIRROR standalone Robot is not enabled",
+                    )
+                    return True
+                decision = self._mirror_standalone_attachment(record, plan)
+                if decision.get("decision") == mirror.DEFERRED:
+                    return False
+                if decision.get("decision") != mirror.ATTACHED:
+                    execution["mirror"] = decision
+                    record = self._with_execution(record, execution)
+                    self._invalidate_pre_entry_candidate(
+                        record, reason=f"MIRROR {decision.get('reason')}",
+                    )
+                    return True
+                execution["mirror"] = decision
+                self._persist_execution(record, execution)
+                return True
             if not self._arm_entry_coverage(record.symbol.value):
                 return False
             result = robot_entry_limit.submit_initial_retest_limit(
@@ -1790,6 +1812,7 @@ class RobotBreakoutMonitor:
                     payload,
                     record.robot_state,
                     average_entry=average_entry,
+                    tick_size=self._tick_size_provider(record.symbol.value),
                 )
             else:
                 structural_extreme = self._structural_extreme(
@@ -2260,13 +2283,21 @@ class RobotBreakoutMonitor:
             stop_price = robot_protection.limited_stop(
                 terms.direction,
                 entry_price=plan.request.limit_price,
-                preferred_stop=terms.stop,
+                preferred_stop=robot_l_shape.preferred_stop(
+                    record.signal_snapshot, terms,
+                    tick_size=self._tick_size_provider(record.symbol.value),
+                ),
+            )
+            slippage = (
+                mirror.STOP_SLIPPAGE_FRACTION
+                if robot_l_shape.is_mirror_snapshot(record.signal_snapshot) else Decimal("0")
             )
             rr = robot_l_shape.net_reward_risk(
                 terms.direction,
                 entry_price=plan.request.limit_price,
                 stop_price=stop_price,
                 target_price=terms.target,
+                exit_slippage_fraction=slippage,
             )
         except Exception as error:
             details["error"] = str(error)
@@ -2776,6 +2807,75 @@ class RobotBreakoutMonitor:
             return False
         return True
 
+    def _mirror_prior_attempts(self, record, campaign, siblings) -> list[dict[str, object]]:
+        """Earlier ATTACHED attempts (Box overlay or standalone) of the same campaign, for its one R0 budget."""
+        prior: list[dict[str, object]] = []
+        if campaign is None:
+            return prior
+        for item in siblings:
+            other = mirror.mirror_record((item.robot_state or {}).get("execution"))
+            if (
+                item.candidate_id == record.candidate_id
+                or other is None
+                or other.get("decision") != mirror.ATTACHED
+                or other.get("campaign_id") != campaign["campaign_id"]
+            ):
+                continue
+            closed = item.status not in {"APPROVED", "OPEN"}
+            net = None
+            if closed:
+                trade = self._store().get_robot_trade(f"robot-trade-{item.candidate_id}")
+                if trade is None:
+                    net = Decimal("0")       # ended before any fill
+                elif trade.realized_pnl_usdt is not None and trade.fees_costs_usdt is not None:
+                    net = trade.realized_pnl_usdt - trade.fees_costs_usdt
+            prior.append({"mirror": other, "closed": closed, "net_pnl_usdt": net})
+        return prior
+
+    def _mirror_standalone_attachment(self, record: RobotCandidateRecord, plan) -> dict[str, object]:
+        """Durable decision for a standalone MIRROR entry, except transient failures (retry without orders)."""
+        now_ms = self._now_ms()
+        try:
+            policy = self._mirror_policy
+            if policy is None:
+                return {"strategy_id": mirror.STRATEGY_ID, "decision": mirror.BLOCKED,
+                        "reason": "mirror_robot_policy_off", "decided_at_ms": now_ms}
+            terms = robot_l_shape.frozen_terms(record.signal_snapshot)
+            entry = record.signal_snapshot["mirror_entry"]
+            sources = [
+                item for item in mirror.scanner_level_sources(record.symbol.value, root=policy.scanner_root)
+                if item["level_id"] == entry.get("level_id") and item["timeframe"] == entry.get("level_timeframe")
+            ]
+            siblings = self._store().load_robot_candidates_for_symbol(self._account_id, record.symbol)
+            campaign = None
+            if sources:
+                campaign = mirror.find_active_campaign(
+                    policy,
+                    [item for item in siblings
+                     if (item.signal_snapshot or {}).get("pattern") in mirror.WEDGE_PATTERNS],
+                    symbol=record.symbol.value, direction=terms.direction, now_ms=now_ms,
+                    scanner_sources=sources, breakout_close_ms=sources[0]["breakout_close_ms"],
+                )
+            stop_price = robot_protection.limited_stop(
+                terms.direction, entry_price=plan.request.limit_price,
+                preferred_stop=robot_l_shape.preferred_stop(
+                    record.signal_snapshot, terms,
+                    tick_size=self._tick_size_provider(record.symbol.value),
+                ),
+            )
+            return mirror.plan_standalone_attachment(
+                policy, direction=terms.direction, entry_price=plan.request.limit_price,
+                stop_price=stop_price, target_price=terms.target, campaign=campaign,
+                prior_attempts=self._mirror_prior_attempts(record, campaign, siblings), now_ms=now_ms,
+            )
+        except Exception as error:
+            return {
+                "strategy_id": mirror.STRATEGY_ID,
+                "decision": mirror.DEFERRED,
+                "reason": f"mirror_error:{type(error).__name__}",
+                "decided_at_ms": now_ms,
+            }
+
     def _mirror_attachment(self, record: RobotCandidateRecord) -> dict[str, object]:
         """Durable MIRROR decision, except transient failures which retry without orders."""
         now_ms = self._now_ms()
@@ -2809,26 +2909,7 @@ class RobotBreakoutMonitor:
                 and campaign.get("parent_candidate_id") != parent_id
             ):
                 raise mirror.MirrorRobotError("linked MIRROR parent campaign changed")
-            prior = []
-            if campaign is not None:
-                for item in siblings:
-                    other = mirror.mirror_record((item.robot_state or {}).get("execution"))
-                    if (
-                        item.candidate_id == record.candidate_id
-                        or other is None
-                        or other.get("decision") != mirror.ATTACHED
-                        or other.get("campaign_id") != campaign["campaign_id"]
-                    ):
-                        continue
-                    closed = item.status not in {"APPROVED", "OPEN"}
-                    net = None
-                    if closed:
-                        trade = self._store().get_robot_trade(f"robot-trade-{item.candidate_id}")
-                        if trade is None:
-                            net = Decimal("0")       # ended before any fill
-                        elif trade.realized_pnl_usdt is not None and trade.fees_costs_usdt is not None:
-                            net = trade.realized_pnl_usdt - trade.fees_costs_usdt
-                    prior.append({"mirror": other, "closed": closed, "net_pnl_usdt": net})
+            prior = self._mirror_prior_attempts(record, campaign, siblings)
             return mirror.plan_attachment(
                 self._mirror_policy,
                 box_snapshot=self._box_source(record, record.robot_state.get("execution") or {}).signal_snapshot,
@@ -3015,6 +3096,15 @@ class RobotBreakoutMonitor:
                 robot_protection._action_id(plan.candidate_id, "stop", stop), plan.symbol, stop,
             ),
         )
+
+    @staticmethod
+    def _with_execution(
+        record: RobotCandidateRecord, execution: Mapping[str, object],
+    ) -> RobotCandidateRecord:
+        """The same record (same revision) carrying ``execution`` for a following single write."""
+        state = dict(record.robot_state or {})
+        state["execution"] = dict(execution)
+        return replace(record, robot_state=state)
 
     def _persist_execution(
         self, record: RobotCandidateRecord, execution: Mapping[str, object],

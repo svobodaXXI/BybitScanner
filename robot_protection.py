@@ -619,8 +619,12 @@ def build_l_shape_protection_plan(
     state: Mapping[str, Any],
     *,
     average_entry: Decimal,
+    tick_size: Decimal | None = None,
 ) -> ProtectionPlan:
-    """Build shared protection requests from immutable L-shape STOP/target terms."""
+    """Build shared protection requests from immutable L-shape STOP/target terms.
+
+    ``tick_size`` is required for a standalone MIRROR entry (one-tick STOP buffer).
+    """
     if candidate.get("status") != "APPROVED":
         raise RobotProtectionError("candidate must be APPROVED")
     snapshot = candidate.get("signal_snapshot")
@@ -641,7 +645,11 @@ def build_l_shape_protection_plan(
 
     entry = _decimal(average_entry, "average_entry")
     # Frozen L-shape STOP within 1.5% of the actual entry, else the 1.5% fallback.
-    stop = limited_stop(direction, entry_price=entry, preferred_stop=terms.stop)
+    try:
+        preferred = robot_l_shape.preferred_stop(snapshot, terms, tick_size=tick_size)
+    except robot_l_shape.RobotLShapeError as exc:
+        raise RobotProtectionError(str(exc)) from exc
+    stop = limited_stop(direction, entry_price=entry, preferred_stop=preferred)
     take = terms.target
     if direction == DIRECTION_LONG and not (stop < entry < take):
         raise RobotProtectionError("LONG L-shape protection geometry is invalid")
