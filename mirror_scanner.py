@@ -493,6 +493,16 @@ def _standalone_confirmations(level: MirrorLevel, record: dict[str, Any], frames
             if any((x["high"] >= price if direction == "LONG" else x["low"] <= price)
                    for x in involved):
                 continue
+            # The following candle must not invalidate the original formation
+            # before we have even observed its confirmation close. Its low/high
+            # may be beyond the eventual buffered STOP; a close-only check
+            # would otherwise admit a reversal that has already failed.
+            formation_extreme = (min(x["low"] for x in pattern) if direction == "LONG"
+                                 else max(x["high"] for x in pattern))
+            invalidated = (current["low"] <= formation_extreme if direction == "LONG"
+                           else current["high"] >= formation_extreme)
+            if invalidated:
+                continue
             terms, rejection = _entry_terms(
                 level, record, current, timeframe, confirmation_kind=kind, formation=pattern)
             found.append({"timeframe": timeframe, "confirmation_close_ms": int(current["close_time_ms"]),
