@@ -385,6 +385,25 @@ class MirrorStandaloneRules(MirrorStandaloneHarness):
         self.assertEqual(self.state()["standalone_entries"], [])
         self.assertEqual(self.state()["records"][self.level.level_id]["status"], "RETESTED")
 
+    def test_next_confirmation_cannot_revive_already_breached_formation_stop(self):
+        tl = self.timeline
+        # The candle closes above the formation body, but first wicks below
+        # its lowest extreme. The pattern has failed intrabar: no MIRROR entry.
+        for kind in ("ENGULFING", "HAMMER"):
+            with self.subTest(kind=kind):
+                self.mirror_root = self.root / f"breached-{kind.lower()}"
+                tl.coarse[-3] = (candle(tl.t - 3 * FIVE, 103.95, 105.2, 103.9, 105.0)
+                                 if kind == "ENGULFING" else
+                                 candle(tl.t - 3 * FIVE, 104.9, 105.02, 103.9, 105.0))
+                tl.coarse[-2] = candle(tl.t - 2 * FIVE, 105.0, 105.4, 103.8, 105.2)
+                self.assertTrue(ms._next_close_confirms(
+                    ([tl.coarse[-4], tl.coarse[-3]] if kind == "ENGULFING"
+                     else [tl.coarse[-3]]), tl.coarse[-2], "LONG", FIVE))
+                self.scan(tl.breakout_open + 2 * FIVE)
+                result = self.scan(tl.t)
+                self.assertEqual(result["standalone_handoffs"], [])
+                self.assertEqual(self.state()["standalone_entries"], [])
+
     def test_short_hanging_man_scanner_confirmation_not_inverted_hammer(self):
         tl = self.timeline
         tl.coarse = [candle(r["open_time_ms"], 200-r["open"], 200-r["low"],
