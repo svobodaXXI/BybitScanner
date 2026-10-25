@@ -332,7 +332,7 @@ def _pin_bar(candle: Mapping[str, Any], direction: str) -> bool:
     """
     from decimal import Decimal, InvalidOperation
 
-    if direction not in {"LONG", "SHORT"} or not candle.get("closed", True):
+    if direction not in {"LONG", "SHORT"} or candle.get("closed") is not True:
         return False
     try:
         o, h, lo, c = (Decimal(str(candle[key])) for key in ("open", "high", "low", "close"))
