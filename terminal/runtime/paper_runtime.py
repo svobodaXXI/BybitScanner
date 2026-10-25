@@ -4062,7 +4062,11 @@ class PaperRuntime:
                     + ",".join(sorted(unresolved_obligation_ids))
                 )
 
-            candidates = self.store.load_active_robot_candidate_states(self._paper_account_id)
+            # Full, hash-validated OPEN records: the Box proof below needs the immutable
+            # signal snapshot, which the lightweight active-state projection lacks.
+            candidates = self.store.load_robot_candidates_by_status(
+                self._paper_account_id, ("OPEN",),
+            )
             for candidate in candidates:
                 if candidate.status != "OPEN":
                     continue
