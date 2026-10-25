@@ -172,6 +172,29 @@ class BoxRecoveryResumeTests(BoxEntryFenceTests):
             ["cancelled"] * len(remaining),
         )
 
+    def test_reconcile_proves_an_open_box_trade_after_the_outage(self):
+        """25.10.2026 AXISUSDT: an OPEN Box with resting ENTRY slots made reconcile_robot fail closed
+        (light candidate record had no signal snapshot). It must prove the Box and land on PAUSED."""
+        store = self.runtime.store
+        key, take, remaining = self._open_position_with_take_and_remaining_entries()
+        trade = store.get_open_robot_trade_for_symbol(ACCOUNT, Symbol("HIMSUSDT"))
+        _set_admission(self.runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
+
+        result = self.runtime.robot_reconcile()
+
+        self.assertTrue(result.success, result.reason)
+        self.assertEqual(result.recovery_status, "PAUSED")
+        self.assertEqual(result.unresolved_trade_ids, ())
+        self.assertEqual(store.get_open_robot_trade_for_symbol(ACCOUNT, Symbol("HIMSUSDT")).trade_id,
+                         trade.trade_id)
+        self.assertEqual(store.get_position_projection(key).quantity.value, D("2.21"))
+        self.assertEqual(store.get_paper_limit(take.order_id.value, ACCOUNT).status, "open")
+        # Still fenced: a dip through the stale grid adds no exposure while PAUSED.
+        self._run(self._book("28.05", "28.06", quantity="50", sequence=2), "HIMSUSDT:2")
+        self.assertEqual(store.get_position_projection(key).quantity.value, D("2.21"))
+        self.assertTrue(all(store.get_paper_limit(order_id, ACCOUNT).status != "filled"
+                            for order_id in remaining))
+
     def _open_position_with_take_and_remaining_entries(self):
         store = self.runtime.store
         # The fixture opened READY before it placed the grid: its ENTRYs are in this epoch.
