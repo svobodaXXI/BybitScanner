@@ -1,6 +1,53 @@
 ﻿# BybitScanner VPS Deployment Runbook
 
-## Current authoritative state
+## VPS 83.217.213.181 — prepare-only, stopped (issue #624, 2026-10-25)
+
+Target: Ubuntu 24.04 VDSina VPS, repository `/opt/BybitScanner`, Terminal static files in
+`/var/www/bybitscanner`, Nginx on `127.0.0.1:8080` only (SSH tunnel). The server is prepared and
+**stays stopped**: no backend, Scanner, MIRROR, Autopilot, PAPER Robot or Telegram; no LIVE; the main
+PC PAPER DB is not transferred.
+
+What the repository provides:
+- `tools/vps_check.py` — offline validator (`python -m tools.vps_check`). Reads files, package
+  metadata and local state only; never imports the backend/Scanner/Telegram, never connects to Bybit,
+  never opens or creates the PAPER DB, never starts a unit. Exit 0 = prepared and stopped.
+- `deploy/systemd/bybitscanner-paper-backend.service`, `bybitscanner-telegram.service` — **no
+  `[Install]` section** (cannot be enabled, no start at boot), `Restart=no`. The backend unit's
+  `ExecStartPre` runs `tools.vps_check --pre-start`: a start is refused while any LIVE gate or the
+  operator token is set, or 8765/8766 is already taken.
+- `deploy/systemd/paper.env.example` — template for `/etc/bybitscanner/paper.env` (LIVE gates off,
+  fresh PAPER DB path, no secrets; standalone MIRROR off).
+- `deploy/nginx/bybitscanner-loopback.conf` — loopback-only Terminal site.
+- On Linux `python -m tools.runtime_intent` never spawns processes: systemd is the only owner of the
+  backend and Telegram, so the bootstrap fails closed instead of starting a second owner.
+
+Procedure (as root, after the PR is merged; it starts nothing):
+
+    cd /opt/BybitScanner
+    git fetch origin stable/adfb50b-forward
+    git checkout --detach origin/stable/adfb50b-forward
+    id bybitscanner || useradd --system --home-dir /opt/BybitScanner --shell /usr/sbin/nologin bybitscanner
+    chown -R bybitscanner:bybitscanner /opt/BybitScanner
+    install -d -m 750 -o root -g bybitscanner /etc/bybitscanner
+    test -e /etc/bybitscanner/paper.env || install -m 640 -o root -g bybitscanner deploy/systemd/paper.env.example /etc/bybitscanner/paper.env
+    install -m 644 deploy/systemd/bybitscanner-paper-backend.service deploy/systemd/bybitscanner-telegram.service /etc/systemd/system/
+    systemctl daemon-reload
+    diff -u deploy/nginx/bybitscanner-loopback.conf /etc/nginx/sites-available/bybitscanner
+    sudo -u bybitscanner /opt/BybitScanner/.venv/bin/python -m tools.vps_check --env-file /etc/bybitscanner/paper.env
+
+Expected: `VPS_PREPARE_CHECK OK`, both units `is-enabled=static is-active=inactive`, ports 8765/8766
+free, no PAPER DB. Known open items reported as FAIL until the owner decides:
+`scanner_config_present` (machine-local `config.py` with the Telegram identity is not in Git) and
+`unit_file:… interpreter … not found` if the venv is not `/opt/BybitScanner/.venv` (then fix the
+unit's interpreter path; do not guess). If `git checkout` refuses because of local changes, stop
+and report them — never `git clean` or `reset`. Do **not** run `systemctl start` and do not run
+`python -m terminal.runtime.paper_http_server` as a check: both start the PAPER runtime.
+
+---
+
+## Previous VPS 91.84.98.100 (historical record; not the #624 target)
+
+### State as recorded for that VPS
 
 Authoritative Git checkpoint:
 `8c6a5b6`

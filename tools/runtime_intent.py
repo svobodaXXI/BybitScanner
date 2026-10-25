@@ -139,7 +139,17 @@ def paper_safe_backend_env(env: Mapping[str, str]) -> dict[str, str]:
 
 
 def spawn_console(argv: list[str], cwd: Path, env: Mapping[str, str] | None = None) -> None:
-    """Start a dependency in its own visible console that closes when the child exits."""
+    """Start a dependency in its own visible console that closes when the child exits.
+
+    Windows only. On Linux the PAPER backend and the Telegram worker are owned by
+    their systemd units (``deploy/systemd``, issue #624); a second owner spawned
+    here could race them, so the bootstrap fails closed and no intent is sent.
+    """
+    if os.name != "nt":
+        raise OSError(
+            "on Linux the PAPER backend and Telegram worker are owned by systemd "
+            "(deploy/systemd); this bootstrap never spawns them"
+        )
     subprocess.Popen(
         ["cmd.exe", "/c", *argv], cwd=str(cwd),
         env=None if env is None else dict(env),

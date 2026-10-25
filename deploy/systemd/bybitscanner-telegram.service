@@ -1,0 +1,23 @@
+# BybitScanner Telegram monitoring worker (issue #624). PREPARED, NOT ENABLED.
+#
+# No [Install] section (cannot be enabled) and Restart=no, like the backend.
+# It needs the machine-local config.py with the Telegram token, which is never
+# stored in Git; do not start it before the owner authorizes Telegram on this host.
+
+[Unit]
+Description=BybitScanner Telegram monitoring (PAPER backend client)
+After=bybitscanner-paper-backend.service
+Requires=bybitscanner-paper-backend.service
+
+[Service]
+Type=simple
+User=bybitscanner
+Group=bybitscanner
+WorkingDirectory=/opt/BybitScanner
+EnvironmentFile=/etc/bybitscanner/paper.env
+ExecStart=/opt/BybitScanner/.venv/bin/python /opt/BybitScanner/telegram_monitoring.py
+Restart=no
+KillSignal=SIGINT
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
