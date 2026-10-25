@@ -295,6 +295,55 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
 
 
 class MirrorStandaloneRules(MirrorStandaloneHarness):
+    def test_pin_bar_shape_is_directional_and_rejects_bad_ohlc(self):
+        long_bar = {"open": 104.8, "high": 105.1, "low": 103.0, "close": 105.0, "closed": True}
+        short_bar = {"open": 104.8, "high": 106.6, "low": 104.5, "close": 104.6, "closed": True}
+        self.assertTrue(ms._pin_bar(long_bar, "LONG"))
+        self.assertFalse(ms._pin_bar(long_bar, "SHORT"))
+        self.assertTrue(ms._pin_bar(short_bar, "SHORT"))
+        self.assertFalse(ms._pin_bar(short_bar, "LONG"))
+        self.assertFalse(ms._pin_bar(long_bar | {"closed": False}, "LONG"))
+        self.assertFalse(ms._pin_bar(long_bar | {"low": 105.2}, "LONG"))
+        self.assertFalse(ms._pin_bar(long_bar | {"high": 104.9}, "LONG"))
+        self.assertFalse(ms._pin_bar(long_bar | {"close": float("nan")}, "LONG"))
+        self.assertFalse(ms._pin_bar(long_bar | {"low": 0}, "LONG"))
+        self.assertFalse(ms._pin_bar({"open": 10, "high": 10, "low": 10, "close": 10}, "LONG"))
+        self.assertFalse(ms._pin_bar(long_bar, "SIDEWAYS"))
+        self.assertFalse(ms._pin_bar({"open": 104.8}, "LONG"))
+
+    def test_5m_pin_bar_routes_through_existing_mirror_handoff_once(self):
+        tl = self.timeline
+        # No Engulfing: current opens above previous close. Long lower-wick rejection.
+        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.9, 105.1, 103.2, 105.0)
+        self.assertFalse(ms._engulfing(tl.coarse[-4], tl.coarse[-3], "LONG"))
+        self.scan(tl.breakout_open + 2 * FIVE)
+        first = self.scan(tl.t)
+        self.assertEqual(len(first["standalone_handoffs"]), 1)
+        entries = self.state()["standalone_entries"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["terms"]["confirmation"]["kind"], ms.CONFIRMATION_PIN_BAR)
+        self.assertEqual(entries[0]["terms"]["source_timeframe"], "5")
+        self.assertGreaterEqual(Decimal(entries[0]["terms"]["reward_risk"]), Decimal("2"))
+        self.assertEqual(self.scan(tl.t)["standalone_handoffs"], [])
+        self.assertEqual(len(self.state()["standalone_entries"]), 1)
+
+    def test_1m_pin_bar_requires_only_its_own_closed_candle(self):
+        tl = self.timeline
+        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.1, 105.2, 103.9, 105.0)
+        base = tl.t - 4 * FIVE
+        fine = [
+            candle(base, 104.6, 104.7, 104.1, 104.2) | {"close_time_ms": base + ONE},
+            candle(base + ONE, 104.8, 105.0, 103.5, 104.9) | {"close_time_ms": base + 2 * ONE},
+        ]
+        future = candle(tl.t, 104.8, 105.0, 103.3, 104.9) | {"close_time_ms": tl.t + ONE}
+        self.scan(tl.breakout_open + 2 * FIVE)
+        self.scan(tl.t, fine=fine + [future])
+        entries = self.state()["standalone_entries"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["terms"]["confirmation"]["kind"], ms.CONFIRMATION_PIN_BAR)
+        self.assertEqual(entries[0]["terms"]["source_timeframe"], "1")
+        self.assertEqual(entries[0]["terms"]["confirmation"]["close_time_ms"], base + 2 * ONE)
+
     def test_flag_off_journals_the_confirmation_but_never_hands_off_or_admits(self):
         with mock.patch.dict(os.environ, {robot_l_shape.MIRROR_STANDALONE_ENV: "0"}):
             self.scan(self.timeline.breakout_open + 2 * FIVE)
