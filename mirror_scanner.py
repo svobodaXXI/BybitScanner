@@ -355,6 +355,16 @@ def _nison_hammer(candle: Mapping[str, Any], direction: str,
     if values is None or any(x is None for x in before):
         return False
     older, newer = before
+    try:
+        duration = int(candle["close_time_ms"]) - int(candle["open_time_ms"])
+        if (duration <= 0
+                or any(int(row["close_time_ms"]) - int(row["open_time_ms"]) != duration
+                       for row in preceding[-2:])
+                or int(preceding[-2]["close_time_ms"]) != int(preceding[-1]["open_time_ms"])
+                or int(preceding[-1]["close_time_ms"]) != int(candle["open_time_ms"])):
+            return False
+    except (KeyError, TypeError, ValueError):
+        return False
     if direction == "LONG" and not older[3] > newer[3]:
         return False
     if direction == "SHORT" and not older[3] < newer[3]:
