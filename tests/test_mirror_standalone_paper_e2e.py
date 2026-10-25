@@ -140,7 +140,11 @@ class MirrorStandaloneHarness(unittest.TestCase):
 
 class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
     def runtime(self, robot_candle, book):
-        instrument = _instrument()
+        # At the next confirmation close (105.2), a coarse 0.1 tick makes
+        # LIMIT=105.4 and buffered STOP=103.8 fail the Robot's net RR/R0 gate.
+        # A 0.01 tick is a *different valid instrument* (not a bypass):
+        # the canonical Robot must still re-check fees, slippage and RR.
+        instrument = replace(_instrument(), tick_size=Decimal("0.01"))
 
         def policy_factory(**kwargs):
             real = mirror.build_runtime_policy(**kwargs, environ={mirror.ENV_FLAG: "1"})
