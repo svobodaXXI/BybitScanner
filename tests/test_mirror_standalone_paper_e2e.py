@@ -155,6 +155,18 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
                 robot_tick_interval_s=0.02,
             )), instrument
 
+    def test_pin_bar_full_paper_lifecycle_via_existing_robot(self):
+        tl = self.timeline
+        # Same reference, STOP and TAKE as the Engulfing E2E; only the confirming
+        # shape changes. This proves the Pin Bar signal traverses the real
+        # admission, R0, matcher, protection, restart and fee-inclusive close.
+        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.9, 105.1, 103.9, 105.0)
+        self.assertTrue(ms._pin_bar(tl.coarse[-3], "LONG"))
+        self.assertFalse(ms._engulfing(tl.coarse[-4], tl.coarse[-3], "LONG"))
+        self.test_mirror_signal_to_closed_paper_trade_with_fees_net_pnl_and_no_repeat_after_restart()
+        self.assertEqual(self.state()["standalone_entries"][0]["terms"]["confirmation"]["kind"],
+                         ms.CONFIRMATION_PIN_BAR)
+
     def test_mirror_signal_to_closed_paper_trade_with_fees_net_pnl_and_no_repeat_after_restart(self):
         tl, report = self.timeline, {}
         # 1. MIRROR breakout (fresh), then the bullish Engulfing confirmation on 5m.
@@ -267,10 +279,8 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
             fills = runtime.call(lambda owner: owner.store.load_executions_for_symbol(ACCOUNT, Symbol(SYMBOL)))
             fees = sum((f.fee for f in fills), Decimal(0))
             self.assertEqual(fees, sum((f.price.value * f.quantity.value * FEE for f in fills), Decimal(0)))
-            exit_fee = sum((f.fee for f in fills if f.side is OrderSide.SELL), Decimal(0))
-            # Shared non-Box protection close: exit fee only until PR #615 (CR-PAPER-PROTECTION-LIFECYCLE-001)
-            # adds the entry fee; the true Net PnL below is taken from the executions themselves.
-            self.assertIn(closed.fees_costs_usdt, {exit_fee, fees})
+            # PR #615 merged: a non-Box close must attribute both entry and exit fees.
+            self.assertEqual(closed.fees_costs_usdt, fees)
             net = closed.realized_pnl_usdt - fees
             self.assertGreater(net, 0)
             self.assertEqual(candidate().status, "CLOSED")
