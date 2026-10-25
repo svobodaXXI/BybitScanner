@@ -42,7 +42,9 @@ MIN_PYTHON = (3, 12)
 SERVICE_USER = "bybitscanner"
 ENV_FILE = Path("/etc/bybitscanner/paper.env")
 STATE_DIR = Path("/var/lib/bybitscanner")              # systemd StateDirectory: PAPER DB + its side files
-UNITS = ("bybitscanner-paper-backend.service", "bybitscanner-telegram.service")
+UNITS = ("bybitscanner-paper-backend.service", "bybitscanner-telegram.service",
+         "bybitscanner-paper-start.service")
+OWNER_ENV_FILE = Path("/etc/bybitscanner/owner.env")      # optional, root-only: Autopilot owner token
 UNIT_DIR = Path("deploy/systemd")
 NGINX_LOOPBACK = Path("deploy/nginx/bybitscanner-loopback.conf")
 NGINX_SITE = Path("/etc/nginx/sites-enabled/bybitscanner")
@@ -122,8 +124,12 @@ def check_requirements(root: Path,
     return [Check("requirements", not missing and not mismatched, detail)]
 
 
-def check_safety_env(env: Mapping[str, str], source: str) -> list[Check]:
-    """LIVE gates and the operator token stay off (the same keys the bootstrap forces off)."""
+def check_safety_env(env: Mapping[str, str], source: str, *, enforce_off_switches: bool = True) -> list[Check]:
+    """LIVE gates and the operator token stay off (the same keys the bootstrap forces off).
+
+    ``enforce_off_switches`` False (the backend's pre-start gate): owner-only strategy switches such
+    as standalone MIRROR are reported, not refused -- enabling them is the owner's launch decision;
+    LIVE gates are always enforced."""
     checks = []
     for key, safe in PAPER_SAFE_BACKEND_ENV.items():
         value = str(env.get(key, "")).strip()
@@ -132,7 +138,8 @@ def check_safety_env(env: Mapping[str, str], source: str) -> list[Check]:
         checks.append(Check(f"{source}:{key}", ok, shown))
     for key in OFF_SWITCHES:
         value = str(env.get(key, "")).strip()
-        checks.append(Check(f"{source}:{key}", value != "1", value or "<unset>"))
+        checks.append(Check(f"{source}:{key}", value != "1" or not enforce_off_switches,
+                            (value or "<unset>") + ("" if enforce_off_switches else " (owner switch, reported)")))
     return checks
 
 
@@ -175,8 +182,13 @@ def _unit_sections(text: str) -> dict[str, dict[str, str]]:
             current = sections.setdefault(line[1:-1], {})
         elif current is not None and "=" in line:
             key, value = line.split("=", 1)
-            current[key.strip()] = value.strip()
+            key, value = key.strip(), value.strip()
+            # Repeatable directives keep every value, one per line (e.g. two EnvironmentFile=).
+            current[key] = f"{current[key]}\n{value}" if key in current and key in _REPEATABLE else value
     return sections
+
+
+_REPEATABLE = {"EnvironmentFile", "Environment", "ExecStartPre", "Requires", "After"}
 
 
 def unit_problems(text: str, entry: str, *, check_interpreter: bool) -> list[str]:
@@ -190,8 +202,10 @@ def unit_problems(text: str, entry: str, *, check_interpreter: bool) -> list[str
         problems.append(f"Restart={service.get('Restart')}")
     if entry not in service.get("ExecStart", ""):
         problems.append("unexpected ExecStart")
-    if service.get("EnvironmentFile", "").lstrip("-") != ENV_FILE.as_posix():
-        problems.append(f"EnvironmentFile={service.get('EnvironmentFile')}")
+    env_files = [item.strip() for item in service.get("EnvironmentFile", "").split("\n") if item.strip()]
+    if env_files[:1] != [ENV_FILE.as_posix()] or any(
+            item not in {ENV_FILE.as_posix(), "-" + OWNER_ENV_FILE.as_posix()} for item in env_files):
+        problems.append(f"EnvironmentFile={env_files}")
     interpreter = (service.get("ExecStart", "").split() or [""])[0]
     if check_interpreter and not Path(interpreter).exists():
         problems.append(f"interpreter {interpreter} not found on this host")
@@ -220,16 +234,29 @@ def stop_contract_problems(service: Mapping[str, str], entry: str, *,
             problems.append("SendSIGKILL is not disabled")
         if service.get("KillMode", "control-group") == "none":
             problems.append("KillMode=none")
-    else:
+    elif "telegram_monitoring" in entry:
         if service.get("KillMode", "control-group") != "process":
             problems.append("KillMode is not process (the detached stop helper would be reaped with the worker)")
         if "ExecStop" in service:
             problems.append("unexpected ExecStop on the Telegram worker")
+        if "-m tools.runtime_intent --wait-backend" not in service.get("ExecStartPre", ""):
+            problems.append("no backend readiness gate (ExecStartPre runtime_intent --wait-backend)")
+    else:                                              # the contour start unit
+        if service.get("Type") != "oneshot":
+            problems.append(f"Type={service.get('Type')} (the start unit must be a oneshot)")
+        if "ExecStop" in service:
+            problems.append("unexpected ExecStop on the start unit")
+        requires = " ".join(unit.get("Requires", "").split())
+        after = " ".join(unit.get("After", "").split())
+        for needed in ("bybitscanner-paper-backend.service", "bybitscanner-telegram.service"):
+            if needed not in requires.split() or needed not in after.split():
+                problems.append(f"start unit does not Require/After {needed}")
     return problems
 
 
 _ENTRIES = {"bybitscanner-paper-backend.service": "-m terminal.runtime.paper_http_server",
-            "bybitscanner-telegram.service": "telegram_monitoring.py"}
+            "bybitscanner-telegram.service": "telegram_monitoring.py",
+            "bybitscanner-paper-start.service": "-m tools.runtime_intent ALL"}
 
 
 def check_repo_units(root: Path, *, check_interpreter: bool = False) -> list[Check]:
@@ -292,7 +319,8 @@ def check_installed_units(root: Path, *, run: Runner = subprocess.run,
             problems += unit_problems(text, entry, check_interpreter=True)
         files = [item.split(" (", 1)[0].lstrip("-") for item in show.get("EnvironmentFiles", "").split("\n")
                  if item.strip()]
-        if files != [ENV_FILE.as_posix()]:
+        if files[:1] != [ENV_FILE.as_posix()] or any(
+                item not in {ENV_FILE.as_posix(), OWNER_ENV_FILE.as_posix()} for item in files):
             problems.append(f"EnvironmentFiles={files or 'none'}")
         checks.append(Check(name, not problems,
                             "; ".join(problems) or f"static, {show.get('ActiveState')}, no drop-ins"))
@@ -302,6 +330,8 @@ def check_installed_units(root: Path, *, run: Runner = subprocess.run,
             try:
                 effective.update(parse_env_lines(read(Path(path)).splitlines()))
             except OSError:
+                if path == OWNER_ENV_FILE.as_posix():
+                    continue                             # optional (``-`` prefix): absent is fine
                 checks.append(Check(f"effective_env:{unit}", False, f"{path} unreadable"))
         effective.update(parse_env_lines(show.get("Environment", "").split()))
         checks += check_safety_env(effective, f"effective:{unit}")
@@ -404,7 +434,7 @@ def run_checks(*, root: Path = PROJECT_ROOT, env: Mapping[str, str] | None = Non
     checks = [Check("platform_linux", linux, platform)]
     checks += check_python()
     checks += check_requirements(root)
-    checks += check_safety_env(env, "process_env")
+    checks += check_safety_env(env, "process_env", enforce_off_switches=not pre_start)
     checks.append(Check("scanner_config_present", (root / "config.py").exists(),
                         "config.py (machine-local, gitignored; contents not read)"))
     checks += check_ports()
