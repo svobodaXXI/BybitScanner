@@ -177,6 +177,55 @@ def _frozen_robot_apex_index(signal_snapshot: Mapping[str, object]) -> Decimal:
     return value
 
 
+def robot_entry_order_ids(
+    store,
+    account_id: TradingAccountId,
+    record: RobotCandidateRecord,
+    execution: Mapping[str, object],
+    *,
+    entry_path: str,
+) -> tuple[OrderId, ...]:
+    """Durable order identities of one Robot candidate's own entry (LIMIT or late MARKET)."""
+    if entry_path == "LIMIT":
+        raw_order_ids = execution.get("limit_order_ids")
+        if raw_order_ids is not None:
+            if (
+                not isinstance(raw_order_ids, (tuple, list))
+                or not raw_order_ids
+                or any(not isinstance(item, str) or not item.strip() for item in raw_order_ids)
+            ):
+                raise RobotBreakoutMonitorError("Robot LIMIT entry identities are invalid")
+            normalized = tuple(OrderId(item.strip()) for item in raw_order_ids)
+            if len({item.value for item in normalized}) != len(normalized):
+                raise RobotBreakoutMonitorError("Robot LIMIT entry identities contain duplicates")
+            return normalized
+
+        raw_order_id = execution.get("limit_order_id")
+        if not isinstance(raw_order_id, str) or not raw_order_id.strip():
+            return ()
+        return (OrderId(raw_order_id.strip()),)
+
+    if entry_path != "MARKET":
+        raise RobotBreakoutMonitorError(f"unsupported Robot entry path: {entry_path}")
+    intent = execution.get("late_market_intent")
+    if not isinstance(intent, Mapping):
+        return ()
+    raw_command_id = intent.get("command_id")
+    if not isinstance(raw_command_id, str) or not raw_command_id.strip():
+        raise RobotBreakoutMonitorError("late Market intent lacks command identity")
+    command = store.get_command(CommandId(raw_command_id.strip()))
+    if command is None or command.exchange_order_id is None:
+        return ()
+    if (
+        command.trading_account_id != account_id
+        or command.symbol != record.symbol
+    ):
+        raise RobotBreakoutMonitorError(
+            "late Market command identity does not match Robot candidate scope"
+        )
+    return (command.exchange_order_id,)
+
+
 class RobotBreakoutMonitor:
     """Advance durable APPROVED Robot candidates through breakout/retest on each closed 1m candle."""
 
@@ -2035,44 +2084,9 @@ class RobotBreakoutMonitor:
         *,
         entry_path: str,
     ) -> tuple[OrderId, ...]:
-        if entry_path == "LIMIT":
-            raw_order_ids = execution.get("limit_order_ids")
-            if raw_order_ids is not None:
-                if (
-                    not isinstance(raw_order_ids, (tuple, list))
-                    or not raw_order_ids
-                    or any(not isinstance(item, str) or not item.strip() for item in raw_order_ids)
-                ):
-                    raise RobotBreakoutMonitorError("Robot LIMIT entry identities are invalid")
-                normalized = tuple(OrderId(item.strip()) for item in raw_order_ids)
-                if len({item.value for item in normalized}) != len(normalized):
-                    raise RobotBreakoutMonitorError("Robot LIMIT entry identities contain duplicates")
-                return normalized
-
-            raw_order_id = execution.get("limit_order_id")
-            if not isinstance(raw_order_id, str) or not raw_order_id.strip():
-                return ()
-            return (OrderId(raw_order_id.strip()),)
-
-        if entry_path != "MARKET":
-            raise RobotBreakoutMonitorError(f"unsupported Robot entry path: {entry_path}")
-        intent = execution.get("late_market_intent")
-        if not isinstance(intent, Mapping):
-            return ()
-        raw_command_id = intent.get("command_id")
-        if not isinstance(raw_command_id, str) or not raw_command_id.strip():
-            raise RobotBreakoutMonitorError("late Market intent lacks command identity")
-        command = self._store().get_command(CommandId(raw_command_id.strip()))
-        if command is None or command.exchange_order_id is None:
-            return ()
-        if (
-            command.trading_account_id != self._account_id
-            or command.symbol != record.symbol
-        ):
-            raise RobotBreakoutMonitorError(
-                "late Market command identity does not match Robot candidate scope"
-            )
-        return (command.exchange_order_id,)
+        return robot_entry_order_ids(
+            self._store(), self._account_id, record, execution, entry_path=entry_path,
+        )
 
     def _prove_entry_evidence(
         self,
