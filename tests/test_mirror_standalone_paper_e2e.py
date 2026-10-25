@@ -324,7 +324,7 @@ class MirrorStandaloneRules(MirrorStandaloneHarness):
     def test_5m_pin_bar_routes_through_existing_mirror_handoff_once(self):
         tl = self.timeline
         # No Engulfing: current opens above previous close. Long lower-wick rejection.
-        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.9, 105.1, 103.2, 105.0)
+        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.9, 105.1, 103.9, 105.0)
         self.assertFalse(ms._engulfing(tl.coarse[-4], tl.coarse[-3], "LONG"))
         self.scan(tl.breakout_open + 2 * FIVE)
         first = self.scan(tl.t)
@@ -343,7 +343,7 @@ class MirrorStandaloneRules(MirrorStandaloneHarness):
         base = tl.t - 4 * FIVE
         fine = [
             candle(base, 104.6, 104.7, 104.1, 104.2) | {"close_time_ms": base + ONE},
-            candle(base + ONE, 104.8, 105.0, 103.5, 104.9) | {"close_time_ms": base + 2 * ONE},
+            candle(base + ONE, 104.8, 105.0, 103.9, 104.9) | {"close_time_ms": base + 2 * ONE},
         ]
         future = candle(tl.t, 104.8, 105.0, 103.3, 104.9) | {"close_time_ms": tl.t + ONE}
         self.scan(tl.breakout_open + 2 * FIVE)
