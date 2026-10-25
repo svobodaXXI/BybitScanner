@@ -24,7 +24,8 @@ Standalone MIRROR entry (``BYBITSCANNER_MIRROR_STANDALONE_ROBOT=1`` only; owner
 rules 2026-10-25): while a 5m MIRROR candidate on a horizontal level is still
 untested, every new closed 5m and 1m candle is checked independently (no
 cross-timeframe agreement, no future candle) for a reversal confirmation in the
-campaign direction. Implemented confirmation: Engulfing
+campaign direction. Implemented confirmations: Engulfing and Pin Bar (with conservative proposed shape thresholds;
+not a new entry engine). Engulfing
 (``geometry.reversal_patterns.is_bullish_engulfing``; the SHORT side is the same
 rule on price-negated candles). Entry reference = confirmation close, STOP = its
 extreme (the Robot adds the one-tick buffer and the 1.5% non-Box limit), TAKE =
@@ -92,6 +93,13 @@ PAPER_BLOCKERS = (
 STANDALONE_LEVEL_TIMEFRAME = "5"      # its breakout identity equals the Robot's own 5m campaign replay
 CONFIRMATION_TIMEFRAMES = ("5", "1")
 CONFIRMATION_ENGULFING = "ENGULFING"
+CONFIRMATION_PIN_BAR = "PIN_BAR"
+# Proposed conservative Pin Bar morphology. These thresholds are not owner-frozen;
+# this trading change requires review before merging into the runtime branch.
+PIN_BAR_MIN_REJECTION_SHARE = "0.60"
+PIN_BAR_MAX_OPPOSITE_SHARE = "0.20"
+PIN_BAR_MAX_BODY_SHARE = "0.25"
+PIN_BAR_CLOSE_END_SHARE = "0.30"
 ENTRY_STOP_KIND = "CONFIRMATION_CANDLE_EXTREME"
 ENTRY_MIN_NET_RR = 2                  # owner: Net RR >= 2:1 with fees and slippage
 
@@ -315,8 +323,38 @@ def _engulfing(previous: Mapping[str, Any], current: Mapping[str, Any], directio
     return bool(is_bullish_engulfing(pd.DataFrame([view(previous), view(current)]), 1))
 
 
+def _pin_bar(candle: Mapping[str, Any], direction: str) -> bool:
+    """Closed-candle wick rejection, no future bars; LONG/SHORT are exact mirrors.
+
+    Proposed morphology: rejection wick >= 60% of range, opposite wick <= 20%,
+    body <= 25%, close in the destination-side 30%. No invalid/zero-range OHLC.
+    This is a detector only; campaign, RR and STOP/TAKE checks remain authoritative.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    if direction not in {"LONG", "SHORT"} or not candle.get("closed", True):
+        return False
+    try:
+        o, h, lo, c = (Decimal(str(candle[key])) for key in ("open", "high", "low", "close"))
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        return False
+    if (not all(x.is_finite() and x > 0 for x in (o, h, lo, c))
+            or lo > min(o, c) or h < max(o, c) or h <= lo):
+        return False
+    total = h - lo
+    body = abs(c - o)
+    lower = min(o, c) - lo
+    upper = h - max(o, c)
+    rejection, opposite = (lower, upper) if direction == "LONG" else (upper, lower)
+    end_close = (h - c) if direction == "LONG" else (c - lo)
+    return (rejection >= Decimal(PIN_BAR_MIN_REJECTION_SHARE) * total
+            and opposite <= Decimal(PIN_BAR_MAX_OPPOSITE_SHARE) * total
+            and body <= Decimal(PIN_BAR_MAX_BODY_SHARE) * total
+            and end_close <= Decimal(PIN_BAR_CLOSE_END_SHARE) * total)
+
+
 def _entry_terms(level: MirrorLevel, record: Mapping[str, Any], candle: Mapping[str, Any],
-                 timeframe: str) -> tuple[dict[str, Any] | None, str | None]:
+                 timeframe: str, *, confirmation_kind: str = CONFIRMATION_ENGULFING) -> tuple[dict[str, Any] | None, str | None]:
     """Frozen standalone entry terms from one confirming candle, or ``(None, rejection)``."""
 
     from decimal import Decimal
@@ -348,7 +386,7 @@ def _entry_terms(level: MirrorLevel, record: Mapping[str, Any], candle: Mapping[
         "reward_risk": str(rr),
         "level_id": level.level_id, "level_timeframe": level.timeframe, "level_source": level.source,
         "level_pattern": level.pattern, "level_breakout_close_ms": int(breakout["close_time_ms"]),
-        "confirmation": {"kind": CONFIRMATION_ENGULFING, "timeframe": timeframe,
+        "confirmation": {"kind": confirmation_kind, "timeframe": timeframe,
                          **{key: candle[key] for key in ("open_time_ms", "close_time_ms", "open", "high", "low",
                                                          "close")}},
     }, None
@@ -381,11 +419,16 @@ def _standalone_confirmations(level: MirrorLevel, record: dict[str, Any], frames
                 continue
             cursor = int(current["close_time_ms"])
             touched = current["high"] >= price if direction == "LONG" else current["low"] <= price
-            if touched or not _engulfing(previous, current, direction):
+            if touched:
                 continue
-            terms, rejection = _entry_terms(level, record, current, timeframe)
+            # One confirmation per candle: Engulfing has priority if both shapes match.
+            kind = (CONFIRMATION_ENGULFING if _engulfing(previous, current, direction)
+                    else CONFIRMATION_PIN_BAR if _pin_bar(current, direction) else None)
+            if kind is None:
+                continue
+            terms, rejection = _entry_terms(level, record, current, timeframe, confirmation_kind=kind)
             found.append({"timeframe": timeframe, "confirmation_close_ms": int(current["close_time_ms"]),
-                          "terms": terms, "rejection": rejection})
+                          "kind": kind, "terms": terms, "rejection": rejection})
         cursors[timeframe] = cursor
     return found
 
@@ -543,7 +586,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
             entry_id = f"{level_id}@{item['timeframe']}@{item['confirmation_close_ms']}"
             journal.append({"event": "mirror_entry_confirmation", **base, "level_id": level_id,
                             "entry_id": entry_id, "confirmation_timeframe": item["timeframe"],
-                            "kind": CONFIRMATION_ENGULFING, "rejection": item["rejection"],
+                            "kind": item["kind"], "rejection": item["rejection"],
                             "terms": item["terms"]})
             if item["terms"] is not None and all(e["entry_id"] != entry_id for e in entries):
                 entries.append({"entry_id": entry_id, "terms": item["terms"], "handoff": "PENDING",
