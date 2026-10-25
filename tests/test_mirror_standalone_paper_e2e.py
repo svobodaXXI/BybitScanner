@@ -162,7 +162,7 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
     def test_hammer_full_paper_lifecycle_via_existing_robot(self):
         tl = self.timeline
         # Same reference, STOP and TAKE as the Engulfing E2E; only the formation
-        # shape changes. This proves the Pin Bar signal traverses the real
+        # shape changes. This proves the Hammer signal traverses the real
         # admission, R0, matcher, protection, restart and fee-inclusive close.
         tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.9, 105.02, 103.9, 105.0)
         self.assertTrue(ms._nison_hammer(tl.coarse[-3], "LONG", tl.coarse[-5:-3]))
@@ -217,17 +217,18 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
             finally:
                 store.close()
             self.assertEqual((record.status, record.robot_state["phase"], record.robot_state["pattern"]),
-                             ("APPROVED", robot_l_shape.PHASE_WAITING_RETEST, "MIRROR"))
+                             ("APPROVED", robot_l_shape.PHASE_RETEST_DETECTED, "MIRROR"))
             candidate_id = record.candidate_id
             report["admission"] = {"autopilot": "SHADOW ALLOW -> PAPER_AUTO ALLOW", "candidate": candidate_id}
 
-            # 3. Entry: price returns to the confirmation close -> MIRROR campaign / R0 gate -> 1-WV LIMIT.
+            # 3. Entry: confirmation already CLOSED; submit the shared 1-WV LIMIT immediately
+            # after admission and campaign/R0 gates, without a second retest candle.
             _start_robot_monitor(runtime)
 
             def candidate():
                 return runtime.call(lambda owner: owner.store.get_robot_candidate(candidate_id))
 
-            robot_candle.set({"time_ms": tl.t - FIVE, "high": 105.3, "low": 105.15, "close": 105.2})
+            self.assertIsNone(robot_candle(SYMBOL))
             attached = _wait_until(lambda: mirror.mirror_record((candidate().robot_state or {}).get("execution")))
             self.assertEqual(attached["decision"], mirror.ATTACHED, attached)
             self.assertEqual((attached["mode"], attached["source"], attached["mirror_level_id"]),
