@@ -195,6 +195,32 @@ def unit_problems(text: str, entry: str, *, check_interpreter: bool) -> list[str
     interpreter = (service.get("ExecStart", "").split() or [""])[0]
     if check_interpreter and not Path(interpreter).exists():
         problems.append(f"interpreter {interpreter} not found on this host")
+    problems += stop_contract_problems(service, entry)
+    return problems
+
+
+# Issue #627: a plain signal is not a safe stop. The backend stops only through the canonical owner
+# safe-stop (ExecStop); when that is blocked the stop signal must be harmless and SIGKILL disabled.
+_SAFE_STOP = "-m tools.stop_robot_runtime all"
+_HARMLESS_STOP_SIGNALS = {"SIGCONT"}
+
+
+def stop_contract_problems(service: Mapping[str, str], entry: str) -> list[str]:
+    problems = []
+    if "paper_http_server" in entry:
+        if _SAFE_STOP not in service.get("ExecStop", ""):
+            problems.append("ExecStop is not the canonical safe-stop (tools.stop_robot_runtime all)")
+        if service.get("KillSignal", "SIGTERM") not in _HARMLESS_STOP_SIGNALS:
+            problems.append(f"KillSignal={service.get('KillSignal', 'SIGTERM')} would end the backend after a blocked safe-stop")
+        if service.get("SendSIGKILL", "yes") != "no":
+            problems.append("SendSIGKILL is not disabled")
+        if service.get("KillMode", "control-group") == "none":
+            problems.append("KillMode=none")
+    else:
+        if service.get("KillMode", "control-group") != "process":
+            problems.append("KillMode is not process (the detached stop helper would be reaped with the worker)")
+        if "ExecStop" in service:
+            problems.append("unexpected ExecStop on the Telegram worker")
     return problems
 
 

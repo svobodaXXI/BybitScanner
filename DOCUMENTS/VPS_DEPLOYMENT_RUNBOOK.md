@@ -61,6 +61,51 @@ Expected: `VPS_PREPARE_CHECK OK`. Known open item until the owner decides: `scan
 `systemctl start` and do not run `python -m terminal.runtime.paper_http_server` as a check: both
 start the PAPER runtime.
 
+### Stopping (issue #627) — only through the canonical safe-stop
+
+A signal is not a safe stop: ending the backend while a Robot-owned position is open removes its
+local STOP/TAKE protection. The only supported stop order is the one `tools.stop_robot_runtime`
+implements, through identity-checked localhost endpoints: Scanner STOPPED -> Robot safe-stop
+(reconcile first when `RECONCILIATION_REQUIRED`) -> protection quiescence -> Telegram `/shutdown` ->
+backend `/api/runtime/shutdown` (always last; the backend itself refuses with `runtime_still_required`
+while the Robot, Scanner or protection coverage is not fully stopped).
+
+Normal stop (as root; one command, safe-stop runs as the unit's `ExecStop`):
+
+    systemctl stop bybitscanner-paper-backend.service
+    journalctl -u bybitscanner-paper-backend.service -n 30 --no-pager
+
+Equivalent direct form from an operator shell (needs the unit's environment for the PAPER DB identity):
+
+    sudo -u bybitscanner /opt/BybitScanner/venv/bin/python -m tools.stop_robot_runtime all --env-file /etc/bybitscanner/paper.env
+
+Result:
+- **Stopped**: the journal shows `Runtime STOPPED.` and the unit is `inactive`.
+- **Blocked** (open Robot position, unresolved protection obligation, unknown or unreachable state):
+  the journal shows `STOP BLOCKED: <reason>`, exit code 1, and **the backend keeps running**.
+  The unit's stop signal is `SIGCONT` (harmless) and `SendSIGKILL=no`, so after `TimeoutStopSec`
+  (180 s) the unit reads `failed (timeout)` while the process, and its protection, stays alive.
+  Resolve the reason (e.g. let the position reach its STOP/TAKE or close it through the Robot),
+  then stop again. Never answer a blocked stop with `kill`, `systemctl kill` or `pkill`.
+- On Linux there is no forced-termination fallback at all: an unreachable-but-listening backend,
+  a missing shutdown endpoint or an unknown state is reported and nothing is terminated by PID,
+  name or port. `tools.legacy_runtime_process` refuses off Windows.
+- Stopping only the Telegram worker (`systemctl stop bybitscanner-telegram.service`) is allowed and
+  not safety-relevant; its unit uses `KillMode=process` so the stop helper started by its own buttons
+  (own session) is not reaped with it. Stopping the backend also stops the Telegram unit (it `Requires=` it).
+
+Limits — this is a guard against operator mistakes, not an absolute guarantee: root can still end the
+process (`systemctl kill -s KILL`, `kill -9`, editing the unit, `systemctl daemon-reexec`) and a host
+reboot or power loss ends it regardless (the stop then waits up to 180 s, and PAPER restart
+recovery is fail-closed). No unit restarts automatically and none starts at boot.
+
+After this change the installed units must be refreshed (the `unit_state` / `installed_unit` checks
+of `tools.vps_check` fail while the installed copy differs from the repository):
+
+    install -m 644 deploy/systemd/bybitscanner-paper-backend.service deploy/systemd/bybitscanner-telegram.service /etc/systemd/system/
+    systemctl daemon-reload
+    /opt/BybitScanner/venv/bin/python -m tools.vps_check
+
 ---
 
 ## Previous VPS 91.84.98.100 (historical record; not the #624 target)

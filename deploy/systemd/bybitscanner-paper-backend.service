@@ -1,4 +1,4 @@
-# BybitScanner PAPER backend (issue #624). PREPARED, NOT ENABLED.
+# BybitScanner PAPER backend (issues #624, #627). PREPARED, NOT ENABLED.
 #
 # There is deliberately NO [Install] section: `systemctl enable` cannot make this
 # unit start at boot. It runs only on an explicit, owner-authorized
@@ -7,6 +7,17 @@
 # Starting it starts the PAPER runtime (Bybit public market data, PAPER recovery,
 # protection, Robot monitor); do not start it to "check" the server --
 # use `python -m tools.vps_check` instead.
+#
+# STOP (#627): a plain signal is NOT a safe stop (open Robot positions would lose their
+# local STOP/TAKE protection), so `systemctl stop` runs the canonical owner safe-stop
+# (ExecStop = tools.stop_robot_runtime: Scanner -> Robot safe-stop -> protection
+# quiescence -> Telegram -> this backend's identity-checked /api/runtime/shutdown).
+# If the safe-stop is BLOCKED (open position, unresolved protection, unknown state) the
+# backend keeps running: the stop signal is a harmless SIGCONT and SIGKILL is disabled,
+# so after TimeoutStopSec the unit shows "failed (timeout)" while the process, and its
+# protection, stays alive -- read the reason with `journalctl -u bybitscanner-paper-backend`.
+# This guards against operator mistakes, not against root: `systemctl kill -s KILL`,
+# `kill -9`, editing the unit or a host reboot can still end the process.
 
 [Unit]
 Description=BybitScanner PAPER backend (127.0.0.1:8765, PAPER only)
@@ -24,8 +35,10 @@ StateDirectory=bybitscanner
 StateDirectoryMode=0750
 ExecStartPre=/opt/BybitScanner/venv/bin/python -m tools.vps_check --pre-start
 ExecStart=/opt/BybitScanner/venv/bin/python -m terminal.runtime.paper_http_server
+ExecStop=/opt/BybitScanner/venv/bin/python -m tools.stop_robot_runtime all
 Restart=no
-KillSignal=SIGINT
-TimeoutStopSec=60
+KillSignal=SIGCONT
+SendSIGKILL=no
+TimeoutStopSec=180
 NoNewPrivileges=true
 PrivateTmp=true

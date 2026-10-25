@@ -5,6 +5,11 @@ the canonical Scanner/Robot stop, and the graceful endpoint answered 404/501. Th
 listener PID of the exact localhost port is resolved, its ancestry is proven by
 command line up to the launcher-owned console, and only that verified chain is
 terminated by exact PID. Anything ambiguous raises and nothing is terminated.
+
+Windows only. On Linux (systemd, issue #627) there is no forced-termination path at all:
+``resolve_legacy_chain`` and ``terminate_exact_pids`` refuse, so a process without a graceful
+shutdown endpoint is never killed by PID, name or port. The only Linux capability is the
+read-only ``probe_listener_pids`` ("is something listening on this loopback port?").
 """
 
 from __future__ import annotations
@@ -19,7 +24,16 @@ from typing import Iterable, Mapping
 
 BACKEND = "backend"
 TELEGRAM = "telegram"
+# Linux listener probe: a listener is present but its PID is deliberately not resolved --
+# Linux never terminates by PID, and only "present / absent" matters to the caller.
+LISTENER_PID_UNRESOLVED = 0
+_LISTEN_STATE = "0A"
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def legacy_fallback_supported() -> bool:
+    """True only where the Windows exact-PID fallback exists (never on Linux)."""
+    return os.name == "nt"
 
 
 class LegacyOwnerUnproven(RuntimeError):
@@ -181,12 +195,48 @@ def _query_listener_chain(port: int) -> tuple[list[int], dict[int, ProcessInfo]]
     return listeners, processes
 
 
+def linux_listening(port: int, tables: Iterable[str]) -> bool:
+    """True if any ``/proc/net/tcp``-style table lists a LISTEN socket on ``port`` (any local address).
+
+    Conservative on purpose: a wildcard or non-loopback listener on the PAPER port still counts as
+    "something is there", so the caller keeps the runtime alive instead of declaring it absent.
+    """
+    for table in tables:
+        for line in table.splitlines()[1:]:
+            fields = line.split()
+            if len(fields) < 4 or fields[3] != _LISTEN_STATE:
+                continue
+            _address, _, hex_port = fields[1].rpartition(":")
+            try:
+                if int(hex_port, 16) == port:
+                    return True
+            except ValueError:
+                continue
+    return False
+
+
+def _read_linux_tables() -> list[str]:
+    tables = []
+    for name in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            tables.append(Path(name).read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue                      # tcp6 can be absent; at least one table must exist
+    if not tables:
+        raise LegacyOwnerUnproven("listener state is unreadable on this host")
+    return tables
+
+
 def probe_listener_pids(host: str, port: int) -> tuple[int, ...]:
     """Read-only localhost listener probe; empty means exact port has no listener."""
-    if os.name != "nt":
-        raise LegacyOwnerUnproven("legacy process fallback is available only on Windows")
     if host != "127.0.0.1" or not isinstance(port, int) or not 0 < port < 65536:
         raise LegacyOwnerUnproven(f"legacy listener {host}:{port} is not an exact localhost port")
+    if os.name != "nt":
+        try:
+            tables = _read_linux_tables()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise LegacyOwnerUnproven(f"listener probe failed: {type(exc).__name__}") from exc
+        return (LISTENER_PID_UNRESOLVED,) if linux_listening(port, tables) else ()
     listeners, _processes = _query_listener_chain(port)
     return tuple(sorted(set(listeners)))
 
@@ -203,6 +253,8 @@ def resolve_legacy_chain(kind: str, host: str, port: int, root: Path) -> tuple[i
 
 def terminate_exact_pids(pids: Iterable[int]) -> None:
     """Force-terminate each verified PID individually; never by name, never with /T."""
+    if not legacy_fallback_supported():
+        raise LegacyOwnerUnproven("forced termination is unavailable off Windows (systemd owns the processes)")
     for pid in pids:
         subprocess.run(
             ["taskkill", "/PID", str(int(pid)), "/F"],

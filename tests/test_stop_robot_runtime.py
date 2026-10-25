@@ -161,7 +161,7 @@ class FakeRuntime:
             legacy_resolver=self.resolve_legacy, listener_probe=self.probe_listener,
             legacy_terminator=self.terminate_legacy,
             legacy_paper_quiescence=self.prove_legacy_paper_quiescence,
-            legacy_paper_guard=lambda: nullcontext(),
+            legacy_paper_guard=lambda: nullcontext(), legacy_supported=True,
         )
 
 
