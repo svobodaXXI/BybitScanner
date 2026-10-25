@@ -254,7 +254,8 @@ class IkigaiBoxPlanPreparationTests(unittest.TestCase):
         ):
             self.assertNotIn("handoff_box_plan_to_robot", source)
         self.assertFalse(hasattr(PaperRuntime, "_admit_ikigai_box_robot_candidate"))
-        self.assertIn("def run_scan_pass(*, box_plan_preparer=None", main_source)
+        # Keyword-only preparer, whatever the line wrapping (#600 split the signature).
+        self.assertRegex(main_source, r"def run_scan_pass\(\s*\*,\s*box_plan_preparer=None")
         self.assertIn("robot_plan_preparer=box_plan_preparer", main_source)
         watch_sender = box_source.split("def send_ikigai_box_watch_observation", 1)[1]
         self.assertNotIn("robot_plan_preparer", watch_sender)
@@ -328,6 +329,8 @@ def test_robot_paper_execution_is_independent_of_ui_selected_account():
                 ))
             assert runtime.process_orderbook_update("BTCUSDT:1") == 0
 
+            # A Robot ENTRY fills only under READY and owned by a live candidate (#608).
+            _set_admission(runtime, mode="ROBOT_RUNNING", recovery_status="READY")
             executor = RobotPaperActionExecutor(runtime)
             submitted = executor.create_limit(LimitCommandRequest(
                 ClientActionId("robot-limit"), "BTCUSDT", OrderSide.BUY,
@@ -347,6 +350,18 @@ def test_robot_paper_execution_is_independent_of_ui_selected_account():
             assert runtime.store.get_paper_limit(
                 submitted.order_id, TradingAccountId("paper")
             ).price == Decimal("64251")
+            runtime.store.create_robot_candidate(
+                candidate_id="candidate-ui-independent", trading_account_id=TradingAccountId("paper"),
+                symbol=Symbol("BTCUSDT"), status="APPROVED",
+                signal_snapshot={"symbol": "BTCUSDT", "pattern": "Falling Wedge"},
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            runtime.store.save_robot_candidate_state(
+                "candidate-ui-independent", status="APPROVED",
+                robot_state={"phase": "RETEST_DETECTED",
+                             "execution": {"limit_order_id": submitted.order_id}},
+                expected_revision=0, updated_at_ms=1001,
+            )
 
             applied = runtime.robot_match_symbol("BTCUSDT")
             assert applied == 1
@@ -840,12 +855,14 @@ def _flatten_symbol_with_colliding_robot_entry(
         order_id=_last_entry_order_id(runtime, symbol), updated_at_ms=2000,
     )
 
-    executor = RobotPaperActionExecutor(runtime)
-    submitted = executor.create_limit(LimitCommandRequest(
+    # Setup fill only: no candidate owns it and admission is not READY, which a
+    # real Robot ENTRY never may (#608), so it uses the same guard without the
+    # Robot ENTRY marker.
+    submitted = runtime._create_limit(LimitCommandRequest(
         ClientActionId(f"{colliding_candidate_id}-limit"), symbol, OrderSide.BUY,
         VolumeRequest(VolumeUnit.USDT, Decimal("321")),
         entry_price, entry_price, TimeInForce.GTC,
-    ))
+    ), runtime._robot_context)
     assert submitted.status is CommandResultStatus.COMPLETED
     assert runtime.robot_match_symbol(symbol) == 1
     colliding_order_id = _last_entry_order_id(runtime, symbol)
@@ -1176,12 +1193,14 @@ def test_evaluate_robot_protection_crossing_returns_none_without_confirmed_prote
         runtime = _runtime(Path(temp) / "paper.sqlite3")
         try:
             runtime._robot_command_dispatcher = lambda operation: operation(runtime)
-            executor = RobotPaperActionExecutor(runtime)
-            submitted = executor.create_limit(LimitCommandRequest(
+            # Setup fill only: no candidate owns it and admission is not READY, which a
+            # real Robot ENTRY never may (#608), so it uses the same guard without the
+            # Robot ENTRY marker.
+            submitted = runtime._create_limit(LimitCommandRequest(
                 ClientActionId("no-protection-limit"), "BTCUSDT", OrderSide.BUY,
                 VolumeRequest(VolumeUnit.USDT, Decimal("321")),
                 Decimal("64250.5"), Decimal("64250.5"), TimeInForce.GTC,
-            ))
+            ), runtime._robot_context)
             assert submitted.status is CommandResultStatus.COMPLETED
             assert runtime.robot_match_symbol("BTCUSDT") == 1
 
