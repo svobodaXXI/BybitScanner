@@ -14,6 +14,11 @@ to an active MIRROR RETEST campaign and, if so, how the *existing* Box exit mach
 * Every behaviour change is derived from the candidate's durable ``robot_state.execution["mirror"]``; the policy object
   (network candles, account risk) is only needed to attach a campaign and to advance the retest.
 
+Campaign sources: the frozen boundaries of the symbol's Wedge Robot candidates and the live Scanner MIRROR candidates
+(``mirror_scanner``: fresh, confident naked breakout of a still untested level of any source -- Wedge / Triangle,
+HORN, L-shape, Ikigai Box, swing zone). Either way the Robot replays the boundary itself on closed 5m candles; a Scanner
+candidate only names the level and must agree with that replay (direction; same breakout candle on 5m).
+
 Enable: ``BYBITSCANNER_MIRROR_RETEST_ROBOT=1`` (anything else = off, the Box Robot is unchanged).
 """
 
@@ -63,6 +68,9 @@ COARSE_MS = 300_000
 FRESH_LAG_MS = 2 * COARSE_MS          # the replay must reach the latest closed 5m candle (or the one before)
 MAX_SOURCE_CALLS = 3                  # bounded catch-up per boundary (each call <= 3000 closed 5m candles)
 MAX_WEDGES = 5                        # most recent Wedge candidates of the symbol examined per attachment
+MAX_SCANNER_LEVELS = 5                # most recent Scanner MIRROR candidates examined per attachment
+SCANNER_TIMEFRAMES = ("5", "1")
+SCANNER_SOURCE = "MIRROR_SCANNER"
 
 ATTACHED = "ATTACHED"
 NOT_ATTACHED = "NOT_ATTACHED"        # not a MIRROR attempt: the plain Box proceeds unchanged
@@ -97,6 +105,9 @@ class MirrorRobotPolicy:
     quantity_step: Callable[[str], Decimal]
     fee_rate: Decimal = PAPER_FEE_RATE
     stop_slippage_fraction: Decimal = STOP_SLIPPAGE_FRACTION
+    # Scanner MIRROR candidates as campaign sources (``mirror_scanner`` evidence root; None = its default root).
+    scanner_levels: bool = True
+    scanner_root: Any = None
     # In-process replay cache: boundary_id -> (state proven so far, data_blocked). Closed candles never change, so a
     # cached state is only extended by newer closed candles; a restart simply replays again.
     boundary_states: dict = field(default_factory=dict)
@@ -192,11 +203,74 @@ def advance_boundary(policy: MirrorRobotPolicy, candidate_ref: str, symbol: str,
     return current, bool(current.get("data_blocked"))
 
 
-def find_active_campaign(policy: MirrorRobotPolicy, wedge_records: Iterable[Any], *, symbol: str,
-                         direction: str, now_ms: int) -> dict[str, Any] | None:
-    """The most recent ACTIVE campaign in ``direction`` on ``symbol``, replayed only from durable inputs."""
+def scanner_level_sources(symbol: str, *, root: Any = None) -> list[dict[str, Any]]:
+    """Live Scanner MIRROR candidates of ``symbol``: a fresh naked breakout of a level that is still untested.
 
-    best: dict[str, Any] | None = None
+    Read-only over ``mirror_scanner``'s durable state. An unreadable state file is not "no campaign": it raises, so the
+    attachment defers without orders (the Scanner itself never overwrites such a file).
+    """
+
+    from mirror_levels.levels import LevelRegistry, MirrorLevelError
+    from mirror_levels.tracker import STATUS_UNTESTED
+    from mirror_scanner import LIFECYCLE_TRACKING, MirrorStateError, load_state, state_path
+
+    sources = []
+    for timeframe in SCANNER_TIMEFRAMES:
+        if not state_path(symbol, timeframe, root).exists():
+            continue
+        try:
+            state = load_state(symbol, timeframe, root)
+            registry = LevelRegistry.from_dict(state["registry"])
+        except (MirrorStateError, MirrorLevelError, KeyError, TypeError, ValueError) as exc:
+            raise MirrorRobotError(f"MIRROR Scanner state unreadable: {symbol} {timeframe}m") from exc
+        for level_id, record in sorted(state["records"].items()):
+            if (not isinstance(record, Mapping) or record.get("candidate") is not True
+                    or record.get("lifecycle") != LIFECYCLE_TRACKING or record.get("status") != STATUS_UNTESTED):
+                continue                                 # stale / weak / duplicate / retested / gap: never a source
+            level = registry.levels.get(level_id)
+            breakout = (record.get("naked_retest") or {}).get("breakout")
+            if (level is None or level.symbol != symbol or not isinstance(breakout, Mapping)
+                    or breakout.get("campaign_direction") not in {CAMPAIGN_LONG, CAMPAIGN_SHORT}):
+                continue
+            sources.append({"level_id": level_id, "timeframe": timeframe, "boundary": level.boundary,
+                            "pattern": level.pattern, "source": level.source,
+                            "breakout_open_ms": int(breakout["open_time_ms"]),
+                            "breakout_close_ms": int(breakout["close_time_ms"]),
+                            "campaign_direction": breakout["campaign_direction"]})
+    sources.sort(key=lambda item: (-item["breakout_close_ms"], item["level_id"]))
+    return sources[:MAX_SCANNER_LEVELS]                  # bounded network work per attachment
+
+
+def _replay_active(policy: MirrorRobotPolicy, ref: str, symbol: str, boundary: Boundary, *, direction: str,
+                   now_ms: int) -> tuple[dict[str, Any] | None, bool]:
+    """``(active state in direction | None, unresolved)`` from the Robot's own closed-5m replay of one boundary."""
+
+    cached = policy.boundary_states.get(boundary.boundary_id)
+    if cached is not None and cached[0].get("phase") in TERMINAL_PHASES:
+        return None, False                               # a finished campaign never reopens (rule 5)
+    state, blocked = advance_boundary(policy, ref, symbol, boundary, None if cached is None else cached[0],
+                                      now_ms=now_ms)
+    policy.boundary_states[boundary.boundary_id] = (state, blocked)
+    if blocked:
+        return None, True                                # incomplete candle or 1m proof is not "no campaign"
+    if state.get("phase") != PHASE_CAMPAIGN_ACTIVE or state["breakout"]["campaign_direction"] != direction:
+        return None, False
+    if int(state.get("cursor_close_time_ms") or 0) < now_ms - now_ms % COARSE_MS - FRESH_LAG_MS:
+        return None, True                                # cannot prove active status from stale replay
+    return state, False
+
+
+def find_active_campaign(policy: MirrorRobotPolicy, wedge_records: Iterable[Any], *, symbol: str,
+                         direction: str, now_ms: int,
+                         scanner_sources: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any] | None:
+    """The most recent ACTIVE campaign in ``direction`` on ``symbol``, replayed only from durable inputs.
+
+    One naked breakout seen through several sources (a Wedge line and the Scanner level of the same line) is one
+    campaign: equal breakout candles collapse onto the Wedge source, else the smallest boundary id, so every attempt
+    of that breakout shares one ``campaign_id`` and one R0 budget.
+    """
+
+    found: list[dict[str, Any]] = []
     unresolved = False
     eligible = [record for record in wedge_records
                 if isinstance(getattr(record, "signal_snapshot", None), Mapping)
@@ -208,30 +282,36 @@ def find_active_campaign(policy: MirrorRobotPolicy, wedge_records: Iterable[Any]
         boundaries = boundaries_from_candidate_snapshot(
             candidate_id=record.candidate_id, created_at_ms=approved, signal_snapshot=snapshot)
         for boundary in boundaries or ():
-            cached = policy.boundary_states.get(boundary.boundary_id)
-            if cached is not None and cached[0].get("phase") in TERMINAL_PHASES:
-                continue                                 # a finished campaign never reopens (rule 5)
-            state, blocked = advance_boundary(policy, record.candidate_id, symbol, boundary,
-                                              None if cached is None else cached[0], now_ms=now_ms)
-            policy.boundary_states[boundary.boundary_id] = (state, blocked)
-            if blocked:
-                unresolved = True                          # incomplete candle or 1m proof is not "no campaign"
-                continue
-            if state.get("phase") != PHASE_CAMPAIGN_ACTIVE:
-                continue
-            if state["breakout"]["campaign_direction"] != direction:
-                continue
-            if int(state.get("cursor_close_time_ms") or 0) < now_ms - now_ms % COARSE_MS - FRESH_LAG_MS:
-                unresolved = True                          # cannot prove active status from stale replay
-                continue
-            breakout_close = int(state["breakout"]["close_time_ms"])
-            if best is None or breakout_close > best["breakout_close_ms"]:
-                best = {"campaign_id": f"{boundary.boundary_id}@{breakout_close}",
-                        "parent_candidate_id": record.candidate_id, "boundary": boundary,
-                        "state": state, "breakout_close_ms": breakout_close, "campaign_direction": direction}
-    if best is None and unresolved:
-        raise MirrorRobotError("MIRROR campaign evidence is incomplete")
-    return best
+            state, blocked = _replay_active(policy, record.candidate_id, symbol, boundary,
+                                            direction=direction, now_ms=now_ms)
+            unresolved = unresolved or blocked
+            if state is not None:
+                found.append({"boundary": boundary, "state": state, "parent_candidate_id": record.candidate_id})
+    for source in scanner_sources:
+        if source.get("campaign_direction") != direction or source["boundary"].as_of_time_ms > now_ms:
+            continue
+        state, blocked = _replay_active(policy, f"mirror-level:{source['level_id']}", symbol, source["boundary"],
+                                        direction=direction, now_ms=now_ms)
+        unresolved = unresolved or blocked
+        if state is None:
+            continue
+        if source.get("timeframe") == "5" and int(state["breakout"]["open_time_ms"]) != source["breakout_open_ms"]:
+            continue                                     # the Robot's replay does not confirm the Scanner breakout
+        found.append({"boundary": source["boundary"], "state": state, "parent_candidate_id": None,
+                      "source": SCANNER_SOURCE, "mirror_level_id": source["level_id"],
+                      "mirror_timeframe": source.get("timeframe"), "mirror_pattern": source.get("pattern"),
+                      "mirror_level_source": source.get("source")})
+    if not found:
+        if unresolved:
+            raise MirrorRobotError("MIRROR campaign evidence is incomplete")
+        return None
+    for item in found:
+        item["breakout_close_ms"] = int(item["state"]["breakout"]["close_time_ms"])
+    found.sort(key=lambda item: (-item["breakout_close_ms"], item["parent_candidate_id"] is None,
+                                 item["boundary"].boundary_id))
+    best = found[0]
+    return {**best, "campaign_id": f"{best['boundary'].boundary_id}@{best['breakout_close_ms']}",
+            "campaign_direction": direction}
 
 
 # --- attachment (entry gate) -------------------------------------------------------------------------------
@@ -350,6 +430,8 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
         "budget_cap_usdt": str(gate.budget.cap_usdt),
         **({"parent_candidate_id": campaign["parent_candidate_id"]}
            if campaign.get("parent_candidate_id") is not None else {}),
+        **({key: campaign[key] for key in ("source", "mirror_level_id", "mirror_timeframe", "mirror_pattern",
+                                           "mirror_level_source") if campaign.get(key) is not None}),
     }
 
 
