@@ -95,7 +95,7 @@ Procedure (as root, after the PR is merged; it starts nothing):
     touch signals_history.json && chown bybitscanner:bybitscanner signals_history.json
     install -d -m 750 -o root -g bybitscanner /etc/bybitscanner
     test -e /etc/bybitscanner/paper.env || install -m 640 -o root -g bybitscanner deploy/systemd/paper.env.example /etc/bybitscanner/paper.env
-    install -m 644 deploy/systemd/bybitscanner-paper-backend.service deploy/systemd/bybitscanner-telegram.service /etc/systemd/system/
+    install -m 644 deploy/systemd/bybitscanner-paper-backend.service deploy/systemd/bybitscanner-telegram.service deploy/systemd/bybitscanner-paper-start.service /etc/systemd/system/
     systemctl daemon-reload
     diff -u deploy/nginx/bybitscanner-loopback.conf /etc/nginx/sites-enabled/bybitscanner
     /opt/BybitScanner/venv/bin/python -m tools.vps_check
@@ -155,7 +155,7 @@ reboot or power loss ends it regardless. `RefuseManualStop` does not stop root f
 After this change the installed units must be refreshed (the `unit_state` / `installed_unit` checks
 of `tools.vps_check` fail while the installed copy differs from the repository):
 
-    install -m 644 deploy/systemd/bybitscanner-paper-backend.service deploy/systemd/bybitscanner-telegram.service /etc/systemd/system/
+    install -m 644 deploy/systemd/bybitscanner-paper-backend.service deploy/systemd/bybitscanner-telegram.service deploy/systemd/bybitscanner-paper-start.service /etc/systemd/system/
     systemctl daemon-reload
     /opt/BybitScanner/venv/bin/python -m tools.vps_check
 

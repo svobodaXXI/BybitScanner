@@ -174,6 +174,11 @@ class RepositoryUnitTests(unittest.TestCase):
         self.assertNotIn(".venv", runbook)
         self.assertIn("merge --ff-only", runbook)
         self.assertIn(VENV_PYTHON, runbook)
+        unit_installs = [line for line in runbook.splitlines()
+                         if line.strip().startswith("install -m 644 deploy/systemd/")]
+        self.assertEqual(len(unit_installs), 2)
+        for unit in (BACKEND, TELEGRAM, START):
+            self.assertTrue(all(f"deploy/systemd/{unit}" in line for line in unit_installs))
 
 
 class InstalledStateTests(unittest.TestCase):
