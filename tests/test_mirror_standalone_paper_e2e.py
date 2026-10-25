@@ -159,6 +159,81 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
                 robot_tick_interval_s=0.02,
             )), instrument
 
+    def test_target_touch_cancels_unfilled_mirror_limit_inside_open_candle(self):
+        # A confirmed reversal arms a LIMIT at 105.22. The first MIRROR
+        # retest at 110 is seen in an authoritative BOOK event, not a CLOSED
+        # 5m candle. If price later returns to 105.22, it MUST NOT fill.
+        tl = self.timeline
+        self.scan(tl.breakout_open + 2 * FIVE)
+        summary = self.scan(tl.t)
+        self.assertEqual(len(summary["standalone_handoffs"]), 1)
+        candidate_ref = summary["standalone_handoffs"][0]
+        candle_provider, book = _RobotCandle(), _MutableBookProvider()
+        book.set(SYMBOL, bid=Decimal("105.3"), ask=Decimal("105.4"))
+        runtime, instrument = self.runtime(candle_provider, book)
+        try:
+            self.assertEqual(start_robot(database_path=self.db).recovery_status, "READY")
+            store = SQLiteStore.open(self.db)
+            try:
+                state = store.get_robot_autopilot_state(ACCOUNT)
+                store.update_robot_autopilot_state(
+                    ACCOUNT, mode="SHADOW", expected_version=state.version,
+                    updated_at_ms=int(time.time() * 1000))
+                shadow = observe_shadow_candidate(
+                    store, ACCOUNT, source=SOURCE_SCANNER, candidate_ref=candidate_ref,
+                    protection_healthy=lambda: True, candidate_store_dir=self.candidates,
+                    clock_ms=lambda: int(time.time() * 1000))
+                self.assertEqual(shadow.result.outcome, OUTCOME_ALLOW)
+                state = store.get_robot_autopilot_state(ACCOUNT)
+                store.update_robot_autopilot_state(
+                    ACCOUNT, mode="PAPER_AUTO", expected_version=state.version,
+                    updated_at_ms=int(time.time() * 1000))
+                admitted = admit_paper_auto_candidate(
+                    store, ACCOUNT, allow_decision_id=shadow.decision.decision_id,
+                    source=SOURCE_SCANNER, protection_healthy=lambda: True,
+                    candidate_fresh=lambda *_: True, candidate_store_dir=self.candidates,
+                    clock_ms=lambda: int(time.time() * 1000))
+                self.assertEqual(admitted.result.outcome, OUTCOME_ALLOW)
+                candidate_id = admitted.decision.resulting_candidate_id or candidate_ref
+            finally:
+                store.close()
+            _start_robot_monitor(runtime)
+
+            def candidate():
+                return runtime.call(lambda owner: owner.store.get_robot_candidate(candidate_id))
+
+            def order():
+                order_id = (candidate().robot_state.get("execution") or {}).get("limit_order_id")
+                return (runtime.call(lambda owner: owner.store.get_paper_limit(order_id, ACCOUNT))
+                        if order_id else None)
+
+            limit = _wait_until(order)
+            self.assertEqual(limit.price, Decimal("105.2") + 2 * instrument.tick_size)
+            self.assertEqual(limit.filled_quantity, 0)
+            # Same market event cannot fill the low-priced BUY limit at 110.
+            # But it MUST end the unfilled campaign before any later pullback.
+            event = _event_book(SYMBOL, bid=Decimal("110.01"), ask=Decimal("110.02"))
+            runtime.call(lambda owner: owner.process_robot_market_event(
+                SYMBOL, event, event_id="mirror-first-intrabar-retest",
+                received_at_ms=event.received_at_ms))
+            self.assertEqual(candidate().status, "INVALIDATED")
+            self.assertTrue(candidate().robot_state.get("mirror_first_retest_event_ms"))
+            self.assertEqual(order().status, "cancelled")
+            # Later return to the old LIMIT price must not create a trade.
+            event2 = _event_book(SYMBOL, bid=limit.price - instrument.tick_size,
+                                 ask=limit.price)
+            runtime.call(lambda owner: owner.process_robot_market_event(
+                SYMBOL, event2, event_id="mirror-late-pullback-after-target",
+                received_at_ms=event2.received_at_ms))
+            self.assertEqual(candidate().status, "INVALIDATED")
+            fills = runtime.call(
+                lambda owner: owner.store.load_executions_for_symbol(ACCOUNT, Symbol(SYMBOL)))
+            self.assertEqual(len(fills), 0)
+            self.assertIsNone(runtime.call(
+                lambda owner: owner.store.get_open_robot_trade_for_symbol(ACCOUNT, Symbol(SYMBOL))))
+        finally:
+            runtime.close()
+
     def test_hammer_full_paper_lifecycle_via_existing_robot(self):
         tl = self.timeline
         # Same reference, STOP and TAKE as the Engulfing E2E; only the formation
