@@ -2870,13 +2870,22 @@ class RobotBreakoutMonitor:
                     symbol=record.symbol.value, direction=terms.direction, now_ms=now_ms,
                     scanner_sources=sources, breakout_close_ms=sources[0]["breakout_close_ms"],
                 )
-            stop_price = robot_protection.limited_stop(
-                terms.direction, entry_price=plan.request.limit_price,
-                preferred_stop=robot_l_shape.preferred_stop(
-                    record.signal_snapshot, terms,
-                    tick_size=self._tick_size_provider(record.symbol.value),
-                ),
+            preferred_stop = robot_l_shape.preferred_stop(
+                record.signal_snapshot, terms,
+                tick_size=self._tick_size_provider(record.symbol.value),
             )
+            # Standalone MIRROR's owner rule is STOP BEYOND the original
+            # formation. Do not silently move that STOP inside the formation
+            # via the generic 1.5% fallback; reject this proposed trade instead.
+            if not robot_protection.stop_within_limit(
+                terms.direction, entry_price=plan.request.limit_price,
+                stop_price=preferred_stop,
+            ):
+                return {"strategy_id": mirror.STRATEGY_ID, "decision": mirror.BLOCKED,
+                        "mode": "STANDALONE",
+                        "reason": "mirror_formation_stop_exceeds_1p5_percent_or_invalid",
+                        "decided_at_ms": now_ms}
+            stop_price = preferred_stop
             return mirror.plan_standalone_attachment(
                 policy, direction=terms.direction, entry_price=plan.request.limit_price,
                 stop_price=stop_price, target_price=terms.target, campaign=campaign,

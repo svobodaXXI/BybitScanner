@@ -2114,6 +2114,61 @@ class PaperRuntime:
                 phase = candidate.robot_state.get("phase")
                 if candidate.status == "APPROVED" and phase == "RETEST_DETECTED":
                     order_id = execution.get("limit_order_id")
+                    # The first MIRROR target touch must terminate an UNFILLED
+                    # entry even inside an OPEN candle. Closed-candle checks
+                    # alone would let an old resting LIMIT fill after target.
+                    # Persist the touch BEFORE cancel: failed cancels must be
+                    # retried on every later event, not forgotten on reversal.
+                    if candidate.signal_snapshot.get("pattern") == "MIRROR":
+                        import robot_l_shape
+                        from terminal.market_data.models import BookHealth
+
+                        terms = robot_l_shape.frozen_terms(candidate.signal_snapshot)
+                        state = dict(candidate.robot_state)
+                        seen_at = state.get("mirror_first_retest_event_ms")
+                        if not seen_at and book.health is BookHealth.READY:
+                            executable = (book.bids[0].price.value if terms.direction == "LONG"
+                                          and book.bids else
+                                          book.asks[0].price.value if terms.direction == "SHORT"
+                                          and book.asks else None)
+                            crossed = (executable is not None and
+                                       (executable >= terms.target if terms.direction == "LONG"
+                                        else executable <= terms.target))
+                            if crossed:
+                                seen_at = received_at_ms
+                                state["mirror_first_retest_event_ms"] = received_at_ms
+                                self.store.save_robot_candidate_state(
+                                    candidate.candidate_id, status="APPROVED", robot_state=state,
+                                    expected_revision=candidate.state_revision,
+                                    updated_at_ms=int(time.time() * 1000),
+                                )
+                                candidate = self.store.get_robot_candidate(candidate.candidate_id)
+                        if seen_at:
+                            order = (self.store.get_paper_limit(order_id, self._paper_account_id)
+                                     if order_id else None)
+                            if order is not None and order.status not in INACTIVE_LIMIT_STATUSES:
+                                result = self._robot_cancel_limit(PaperLimitCancelRequest(
+                                    ClientActionId("mirror-target-cancel-" + hashlib.sha256(
+                                        candidate.candidate_id.encode("utf-8")).hexdigest()[:32]),
+                                    normalized.value, order_id,
+                                ))
+                                if result.status != CommandResultStatus.COMPLETED:
+                                    # Stop this event before any resting-entry matcher.
+                                    raise RuntimeError("MIRROR target entry cancel could not be proved")
+                            if order is not None and order.filled_quantity > 0:
+                                # Preserve the filled exposure for existing
+                                # Robot finalize/protection; cancel remainder only.
+                                continue
+                            state = dict(candidate.robot_state)
+                            state["phase"] = robot_l_shape.PHASE_INVALIDATED
+                            state["last_event"] = robot_l_shape.EVENT_INVALIDATED_TARGET
+                            state["invalidated_reason"] = "MIRROR_FIRST_RETEST_BEFORE_FILL"
+                            self.store.save_robot_candidate_state(
+                                candidate.candidate_id, status="INVALIDATED", robot_state=state,
+                                expected_revision=candidate.state_revision,
+                                updated_at_ms=int(time.time() * 1000),
+                            )
+                            continue
                     if order_id:
                         owned_limit_ids.add(order_id)
                     continue

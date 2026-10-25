@@ -8,8 +8,11 @@ recovery remain owned by the existing shared Robot components.
 
 The same frozen reference/target/stop lifecycle carries a standalone MIRROR
 entry (``pattern == "MIRROR"``, terms under ``mirror_entry``): reference = close
-of the confirming reversal candle, stop = beyond its extreme, target = the
-MIRROR level (100 % TAKE at the first retest). ``is_l_shape_snapshot`` answers
+of the NEXT candle confirming the reversal, stop = beyond the underlying
+formation extreme, target = the MIRROR level (100 % TAKE at the first retest).
+Unlike L-shape, MIRROR is already entry-eligible after confirmation; it does
+NOT wait for a second closed-candle retest of its reference.
+``is_l_shape_snapshot`` answers
 for both: every shared path (admission, freshness, monitor, recovery) treats
 them as one single-LIMIT frozen-level adapter; the L-shape-only signal
 threshold (potential >= 0.8 %) is not applied to MIRROR.
@@ -46,6 +49,7 @@ PHASE_WAITING_RETEST = "L_SHAPE_WAITING_RETEST"
 PHASE_INVALIDATED = "L_SHAPE_INVALIDATED"
 
 EVENT_INITIALIZED = "L_SHAPE_INITIALIZED"
+EVENT_MIRROR_CONFIRMATION_READY = "MIRROR_CONFIRMATION_READY"
 EVENT_NO_TRANSITION = "L_SHAPE_NO_TRANSITION"
 EVENT_RETEST = "L_SHAPE_RETEST"
 EVENT_INVALIDATED_TARGET = "L_SHAPE_TARGET_REACHED_BEFORE_ENTRY"
@@ -260,6 +264,30 @@ def initialize_state(candidate: Mapping[str, Any]) -> tuple[dict[str, Any], str]
     if not isinstance(snapshot, Mapping):
         raise RobotLShapeError("signal snapshot is missing")
     terms = frozen_terms(snapshot)
+    if is_mirror_snapshot(snapshot):
+        # Scanner already proved an immediately following, CLOSED confirming
+        # candle. Requiring another reference retest delays a trade contrary
+        # to the owner's entry rule. Reuse the same protected, idempotent LIMIT
+        # phase; this is a signal-confirmation event, not a price retest.
+        confirmation = snapshot.get("mirror_entry", {}).get("confirmation")
+        if not isinstance(confirmation, Mapping):
+            raise RobotLShapeError("MIRROR confirmation is missing")
+        close_ms = _timestamp(confirmation.get("close_time_ms"), "MIRROR confirmation close_time_ms")
+        source_tf_ms = int(terms.source_timeframe) * 60_000
+        if (close_ms != terms.breakout_time_ms + source_tf_ms
+                or confirmation.get("timeframe") != terms.source_timeframe
+                or str(confirmation.get("kind")) not in {"ENGULFING", "HAMMER", "HANGING_MAN"}):
+            raise RobotLShapeError("MIRROR closed confirmation identity mismatch")
+        return {
+            "state_version": STATE_VERSION,
+            "phase": PHASE_RETEST_DETECTED,
+            "pattern": MIRROR_PATTERN,
+            "direction": terms.direction,
+            "last_candle_time_ms": close_ms,
+            "breakout_time_ms": terms.breakout_time_ms,
+            "retest_time_ms": close_ms,
+            "last_event": EVENT_MIRROR_CONFIRMATION_READY,
+        }, EVENT_MIRROR_CONFIRMATION_READY
     return {
         "state_version": STATE_VERSION,
         "phase": PHASE_WAITING_RETEST,
