@@ -29,7 +29,7 @@ from terminal.api.models import (
 )
 from terminal.domain.models import OrderSide, TradingAccountId
 from terminal.runtime.paper_http_server import LiveOrderBookProvider, PublicOrderBookBuffer
-from terminal.runtime.paper_runtime import PaperRuntime, RobotPaperActionExecutor
+from terminal.runtime.paper_runtime import PaperRuntime
 from tests.test_robot_protection_close_no_rest import _Context, _Hub, _SlowRestSession, _stream
 from tests.test_terminal_paper_runtime import _instrument
 
@@ -66,11 +66,14 @@ class _Fixture:
             instrument_provider=lambda symbol: replace(primary, symbol=symbol),
         )
         self.runtime._robot_command_dispatcher = lambda operation: operation(self.runtime)
-        submitted = RobotPaperActionExecutor(self.runtime).create_limit(LimitCommandRequest(
+        # Matching I/O only: no candidate owns this LIMIT and admission is not
+        # READY, so it is created without the Robot ENTRY marker (#608 fences an
+        # ownerless Robot ENTRY); the guard and matching path are the same.
+        submitted = self.runtime._create_limit(LimitCommandRequest(
             ClientActionId("robot-entry-limit"), SYMBOL, OrderSide.BUY,
             VolumeRequest(VolumeUnit.USDT, Decimal("321")),
             Decimal("64250.5"), Decimal("64250.5"), TimeInForce.GTC,
-        ))
+        ), self.runtime._robot_context)
         assert submitted.status is CommandResultStatus.COMPLETED
         self.order_id = submitted.order_id
         self.session.calls.clear()

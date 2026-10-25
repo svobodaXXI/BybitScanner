@@ -1177,6 +1177,7 @@ class SQLiteStore:
             cls._initialize_or_validate_schema(connection)
             cls._ensure_robot_candidate_read_indexes(connection)
             cls._ensure_auto_decision_read_indexes(connection)
+            cls._ensure_robot_entry_orders(connection)
             return cls(connection, database_path, busy_timeout_ms)
         except (sqlite3.DatabaseError, OSError) as exc:
             if connection is not None:
@@ -1253,6 +1254,62 @@ class SQLiteStore:
         try:
             for name, target in missing:
                 connection.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+
+    # #608 Robot ENTRY origin and admission epoch. One row per PAPER LIMIT that
+    # Robot created as an ENTRY, written in the same transaction as the LIMIT,
+    # carrying the robot_runtime_state.version current at creation (the
+    # admission epoch; versions only ever increase and are never reused). Created
+    # idempotently on open with no version bump, like the read indexes above.
+    # When the table is first created, active LIMITs that already carry Robot
+    # evidence (Box ENTRY ownership, a Robot create-action prefix, or a reference
+    # from a Robot candidate) are recorded as LEGACY with an unknown epoch, so
+    # they can never fill without a fresh confirmation.
+    _ROBOT_ENTRY_LEGACY_ACTION_PREFIXES = (
+        "robot-retest-limit-", "robot-lshape-limit-", "robot-topup-limit-", "box-entry-",
+    )
+
+    @staticmethod
+    def _ensure_robot_entry_orders(connection: sqlite3.Connection) -> None:
+        present = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='robot_entry_orders'"
+        ).fetchone()
+        if present is not None:
+            return  # steady state: no write transaction on open
+        prefix_clause = " OR ".join(
+            "a.client_action_id LIKE ?" for _ in SQLiteStore._ROBOT_ENTRY_LEGACY_ACTION_PREFIXES
+        )
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS robot_entry_orders (
+                    order_id TEXT PRIMARY KEY,
+                    trading_account_id TEXT NOT NULL,
+                    admission_version INTEGER,
+                    origin TEXT NOT NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    CHECK (origin IN ('ROBOT', 'LEGACY'))
+                ) WITHOUT ROWID"""
+            )
+            connection.execute(
+                f"""INSERT OR IGNORE INTO robot_entry_orders
+                    SELECT o.order_id, o.trading_account_id, NULL, 'LEGACY', o.created_at_ms
+                    FROM paper_limit_orders o
+                    WHERE o.status IN ('open', 'partially_filled') AND (
+                        EXISTS (SELECT 1 FROM box_order_ownership b
+                                WHERE b.order_id = o.order_id AND b.role = 'ENTRY')
+                        OR EXISTS (SELECT 1 FROM paper_limit_actions a
+                                   WHERE a.order_id = o.order_id AND a.operation = 'create'
+                                   AND ({prefix_clause}))
+                        OR EXISTS (SELECT 1 FROM robot_candidates c
+                                   WHERE c.trading_account_id = o.trading_account_id
+                                   AND c.robot_state_json LIKE '%"' || o.order_id || '"%')
+                    )""",
+                tuple(f"{prefix}%" for prefix in SQLiteStore._ROBOT_ENTRY_LEGACY_ACTION_PREFIXES),
+            )
             connection.execute("COMMIT")
         except Exception:
             connection.execute("ROLLBACK")
@@ -3176,7 +3233,7 @@ class SQLiteStore:
         self, *, client_action_id: str, request_fingerprint: str,
         order_id: OrderId, order_link_id: str, trading_account_id: TradingAccountId,
         symbol: Symbol, side: OrderSide, price: Decimal, quantity: Decimal,
-        created_at_ms: int,
+        created_at_ms: int, robot_entry: bool = False,
     ) -> tuple[PaperLimitOrderRecord, bool]:
         existing_action = self._connection.execute(
             "SELECT operation, request_fingerprint, order_id FROM paper_limit_actions WHERE client_action_id = ?",
@@ -3208,6 +3265,15 @@ class SQLiteStore:
             "INSERT INTO paper_limit_actions VALUES (?, 'create', ?, ?, ?)",
             (client_action_id, request_fingerprint, order_id.value, created_at_ms),
         )
+        if robot_entry:
+            # Origin and admission epoch, atomically with the LIMIT itself (#608).
+            self._connection.execute(
+                """INSERT INTO robot_entry_orders VALUES (
+                    ?, ?, (SELECT version FROM robot_runtime_state WHERE trading_account_id = ?),
+                    'ROBOT', ?)""",
+                (order_id.value, trading_account_id.value, trading_account_id.value,
+                 created_at_ms),
+            )
         self._advance_paper_state_revision(trading_account_id, symbol)
         return record, True
 
@@ -3215,11 +3281,12 @@ class SQLiteStore:
         self, *, client_action_id: str, request_fingerprint: str,
         order_id: OrderId, order_link_id: str, trading_account_id: TradingAccountId,
         symbol: Symbol, side: OrderSide, price: Decimal, quantity: Decimal,
-        created_at_ms: int,
+        created_at_ms: int, robot_entry: bool = False,
     ) -> tuple[PaperLimitOrderRecord, bool]:
         self._assert_owner()
         with self._transaction():
             return self._create_paper_limit(
+                robot_entry=robot_entry,
                 client_action_id=client_action_id,
                 request_fingerprint=request_fingerprint,
                 order_id=order_id,
@@ -3252,6 +3319,7 @@ class SQLiteStore:
                 candidate_id, order_id=order_id, role=role, slot=slot,
             )
             order, created = self._create_paper_limit(
+                robot_entry=role == "ENTRY",
                 client_action_id=client_action_id,
                 request_fingerprint=request_fingerprint,
                 order_id=order_id,
@@ -3302,6 +3370,7 @@ class SQLiteStore:
                     candidate_id, order_id=item.order_id, role="ENTRY", slot=item.slot,
                 )
                 order, _ = self._create_paper_limit(
+                    robot_entry=True,
                     client_action_id=item.client_action_id,
                     request_fingerprint=item.request_fingerprint,
                     order_id=item.order_id,
@@ -3339,6 +3408,7 @@ class SQLiteStore:
                     candidate_id, order_id=item.order_id, role="ENTRY", slot=item.slot,
                 )
                 order, _ = self._create_paper_limit(
+                    robot_entry=True,
                     client_action_id=item.client_action_id,
                     request_fingerprint=item.request_fingerprint,
                     order_id=item.order_id,
@@ -3454,6 +3524,25 @@ class SQLiteStore:
             (order_id, trading_account_id.value),
         ).fetchone()
         return _paper_limit_from_row(row) if row is not None else None
+
+    def load_active_robot_entry_orders(
+        self, trading_account_id: TradingAccountId, symbol: Symbol | None = None,
+    ) -> dict[str, tuple[Symbol, int | None]]:
+        """Active Robot ENTRY LIMITs: order id -> (symbol, admission epoch or None if unknown)."""
+        self._assert_owner()
+        query = (
+            "SELECT o.order_id, o.symbol, m.admission_version FROM robot_entry_orders m "
+            "JOIN paper_limit_orders o ON o.order_id = m.order_id "
+            "WHERE o.trading_account_id = ? AND o.status IN ('open', 'partially_filled')"
+        )
+        params: tuple[object, ...] = (trading_account_id.value,)
+        if symbol is not None:
+            query += " AND o.symbol = ?"
+            params += (symbol.value,)
+        return {
+            row[0]: (Symbol(row[1]), None if row[2] is None else int(row[2]))
+            for row in self._connection.execute(query, params)
+        }
 
     def load_active_paper_limits(
         self, trading_account_id: TradingAccountId, symbol: Symbol,

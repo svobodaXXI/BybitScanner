@@ -475,11 +475,14 @@ def _open_robot_position_with_confirmed_protection(
     -- everything evaluate_robot_protection_crossing() needs to cover."""
     runtime._robot_command_dispatcher = lambda operation: operation(runtime)
     executor = RobotPaperActionExecutor(runtime)
-    submitted = executor.create_limit(LimitCommandRequest(
+    # The fill only builds the position this fixture needs: it happens before
+    # any candidate exists and outside READY, which a real Robot ENTRY never may
+    # (#608), so the LIMIT goes through the same guard without the ENTRY marker.
+    submitted = runtime._create_limit(LimitCommandRequest(
         ClientActionId(f"{trade_id}-limit"), symbol, OrderSide.BUY,
         VolumeRequest(VolumeUnit.USDT, Decimal("321")),
         entry_price, entry_price, TimeInForce.GTC,
-    ))
+    ), runtime._robot_context)
     assert submitted.status is CommandResultStatus.COMPLETED
     assert runtime.robot_match_symbol(symbol) == 1
 

@@ -341,6 +341,9 @@ class RobotBreakoutMonitor:
                     if record.signal_snapshot.get("pattern") == "IKIGAI_BOX":
                         if self._sync_box_trade(record, execution):
                             advanced.append(record.candidate_id)
+                        # Exposure proven owned and protected in this epoch: the
+                        # remaining ENTRY slots of its grid are confirmed too.
+                        self._confirm_entry_admission(record)
                     elif self._refresh_open_trade_entry_attestation(record, execution):
                         advanced.append(record.candidate_id)
                 except Exception as error:
@@ -911,6 +914,9 @@ class RobotBreakoutMonitor:
         # Resting Box LIMITs are matched only on the ordered Robot market-event
         # path, which evaluates Box ownership and protection on the same event.
         # Do not call the legacy generic match_resting_orders path here.
+        # Reaching this point means admission, ownership and protection hold in
+        # this epoch, so the resting ENTRY grid is confirmed for matching.
+        record = self._confirm_entry_admission(record, execution)
         return self._sync_box_trade(record, execution, create_trade=True)
 
     def _sync_box_trade(
@@ -1349,6 +1355,7 @@ class RobotBreakoutMonitor:
                 )
                 return True
 
+            record = self._confirm_entry_admission(record, execution)
             if match_resting_orders and self._match_resting_orders is not None:
                 self._match_resting_orders(record.symbol.value)
                 order = self._store().get_paper_limit(
@@ -1538,6 +1545,9 @@ class RobotBreakoutMonitor:
                 self._persist_state(record, expired_state)
                 return True
 
+            # Admission, liveness and apex all hold in this epoch: the resting
+            # ENTRY may now be matched by the runtime.
+            record = self._confirm_entry_admission(record, execution)
             last_limit_index = int(
                 execution.get(
                     "last_limit_index",
@@ -2341,6 +2351,43 @@ class RobotBreakoutMonitor:
             release(symbol)
         except Exception as error:
             print(f"[ROBOT ENTRY COVERAGE RELEASE ERROR] symbol={symbol} error={error}")
+
+    def _confirm_entry_admission(
+        self, record: RobotCandidateRecord, execution: dict[str, object] | None = None,
+    ) -> RobotCandidateRecord:
+        """Record that this READY epoch re-evaluated the candidate's resting ENTRY (#608).
+
+        An ENTRY LIMIT placed before the current READY epoch (restart, start from
+        STOPPED, resume) is not matched by the runtime until the monitor has run
+        its admission checks in the epoch and stamped the runtime-state version
+        here. Only ever written under (ROBOT_RUNNING, READY); the next transition
+        changes the version and so withdraws the confirmation. Returns the freshest
+        record so the caller's later writes use the new revision.
+        """
+        state = self._store().get_robot_runtime_state(self._account_id)
+        if state is None or state.mode != "ROBOT_RUNNING" or state.recovery_status != "READY":
+            return record
+        fresh = self._store().get_robot_candidate(record.candidate_id)
+        if fresh is None or fresh.status not in {"APPROVED", "OPEN"} or fresh.robot_state is None:
+            return record
+        current = dict(fresh.robot_state.get("execution") or {})
+        if execution is not None:
+            execution["entry_admission_version"] = state.version
+        if current.get("entry_admission_version") == state.version:
+            return fresh
+        current["entry_admission_version"] = state.version
+        new_state = dict(fresh.robot_state)
+        new_state["execution"] = current
+        try:
+            return self._store().save_robot_candidate_state(
+                fresh.candidate_id,
+                status=fresh.status,
+                robot_state=new_state,
+                expected_revision=fresh.state_revision,
+                updated_at_ms=self._now_ms(),
+            )
+        except ConcurrentUpdate:
+            return record
 
     def _read_admission_gate(self) -> tuple[bool, bool]:
         state = self._store().get_robot_runtime_state(self._account_id)
