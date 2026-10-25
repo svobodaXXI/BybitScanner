@@ -195,7 +195,7 @@ def unit_problems(text: str, entry: str, *, check_interpreter: bool) -> list[str
     interpreter = (service.get("ExecStart", "").split() or [""])[0]
     if check_interpreter and not Path(interpreter).exists():
         problems.append(f"interpreter {interpreter} not found on this host")
-    problems += stop_contract_problems(service, entry)
+    problems += stop_contract_problems(service, entry, unit=sections.get("Unit", {}))
     return problems
 
 
@@ -205,9 +205,13 @@ _SAFE_STOP = "-m tools.stop_robot_runtime all"
 _HARMLESS_STOP_SIGNALS = {"SIGCONT"}
 
 
-def stop_contract_problems(service: Mapping[str, str], entry: str) -> list[str]:
+def stop_contract_problems(service: Mapping[str, str], entry: str, *,
+                           unit: Mapping[str, str] | None = None) -> list[str]:
     problems = []
+    unit = unit or {}
     if "paper_http_server" in entry:
+        if unit.get("RefuseManualStop", "no") not in {"yes", "true", "1", "on"}:
+            problems.append("RefuseManualStop is not yes (a manual stop job could untrack a protected backend)")
         if _SAFE_STOP not in service.get("ExecStop", ""):
             problems.append("ExecStop is not the canonical safe-stop (tools.stop_robot_runtime all)")
         if service.get("KillSignal", "SIGTERM") not in _HARMLESS_STOP_SIGNALS:

@@ -200,7 +200,9 @@ class SystemdIntegrationTests(unittest.TestCase):
         self.assertEqual(service["SendSIGKILL"], "no")
         self.assertEqual(service["Restart"], "no")
         self.assertGreaterEqual(int(service["TimeoutStopSec"]), 120)   # longer than the tool's own waits
-        self.assertNotIn("Install", vps_check._unit_sections(self.unit("bybitscanner-paper-backend.service")))
+        sections = vps_check._unit_sections(self.unit("bybitscanner-paper-backend.service"))
+        self.assertNotIn("Install", sections)
+        self.assertEqual(sections["Unit"]["RefuseManualStop"], "yes")   # no manual stop job can untrack it
 
     def test_telegram_worker_does_not_reap_the_detached_stop_helper(self):
         sections = vps_check._unit_sections(self.unit("bybitscanner-telegram.service"))
@@ -220,6 +222,7 @@ class SystemdIntegrationTests(unittest.TestCase):
             "KillSignal=SIGINT": backend.replace("KillSignal=SIGCONT", "KillSignal=SIGINT"),
             "SendSIGKILL is not disabled": backend.replace("SendSIGKILL=no", "SendSIGKILL=yes"),
             "KillMode=none": backend.replace("Restart=no", "Restart=no\nKillMode=none"),
+            "RefuseManualStop is not yes": backend.replace("RefuseManualStop=yes\n", ""),
         }
         for expected, text in cases.items():
             with self.subTest(expected):
@@ -232,8 +235,8 @@ class SystemdIntegrationTests(unittest.TestCase):
     def test_no_plain_signal_stop_is_documented_for_normal_operation(self):
         runbook = (ROOT / "DOCUMENTS/VPS_DEPLOYMENT_RUNBOOK.md").read_text(encoding="utf-8").split(
             "## Previous VPS", 1)[0]
-        self.assertIn("systemctl stop bybitscanner-paper-backend", runbook)
-        self.assertIn("tools.stop_robot_runtime", runbook)
+        self.assertIn("RefuseManualStop=yes", runbook)
+        self.assertIn("-m tools.stop_robot_runtime all --env-file /etc/bybitscanner/paper.env", runbook)
         self.assertIn("Never answer a blocked stop with `kill`", runbook)
         self.assertIn("not an absolute guarantee", runbook)
 

@@ -70,40 +70,37 @@ implements, through identity-checked localhost endpoints: Scanner STOPPED -> Rob
 backend `/api/runtime/shutdown` (always last; the backend itself refuses with `runtime_still_required`
 while the Robot, Scanner or protection coverage is not fully stopped).
 
-Normal stop (as root; one command, safe-stop runs as the unit's `ExecStop`):
+Normal stop (as root) — the canonical safe-stop, as the service user with the unit's environment:
 
-    systemctl stop bybitscanner-paper-backend.service
-    journalctl -u bybitscanner-paper-backend.service -n 30 --no-pager
+    runuser -u bybitscanner -- /opt/BybitScanner/venv/bin/python -m tools.stop_robot_runtime all --env-file /etc/bybitscanner/paper.env
 
-Equivalent direct form from an operator shell (needs the unit's environment for the PAPER DB identity):
+`systemctl stop|restart bybitscanner-paper-backend.service` is **refused** (`RefuseManualStop=yes`):
+systemd cannot cancel a stop job once it has started, and a blocked safe-stop inside one would leave
+the backend alive but no longer tracked by the unit (verified on systemd 255 with a dummy unit).
+The Telegram stop buttons start the same safe-stop as a detached helper.
 
-    sudo -u bybitscanner /opt/BybitScanner/venv/bin/python -m tools.stop_robot_runtime all --env-file /etc/bybitscanner/paper.env
-
-Result:
-- **Stopped**: the journal shows `Runtime STOPPED.` and the unit is `inactive`.
-- **Blocked** (open Robot position, unresolved protection obligation, unknown or unreachable state):
-  the journal shows `STOP BLOCKED: <reason>`, exit code 1, and **the backend keeps running**.
-  The unit's stop signal is `SIGCONT` (harmless) and `SendSIGKILL=no`. Verified on systemd 255 with
-  a dummy unit: `systemctl stop` returns after 2 x `TimeoutStopSec` (stop-sigterm, then final-sigterm;
-  up to ~6 min here) **with exit code 0**, the unit reads `failed` (`Result=exit-code`) and the journal
-  says the process "remains running after unit stopped" -- the backend and its protection stay alive,
-  but systemd no longer tracks it. So always judge the outcome by the journal (`Runtime STOPPED.` vs
-  `STOP BLOCKED:`), never by the exit code of `systemctl stop`.
-  Resolve the reason (e.g. let the position reach its STOP/TAKE or close it through the Robot), then
-  stop with the direct CLI form above (the unit is already inactive, `systemctl stop` would do nothing).
-  A new `systemctl start` meanwhile is refused by the `ExecStartPre` gate (port 8765 is taken).
-  Never answer a blocked stop with `kill`, `systemctl kill` or `pkill`.
+Result (printed by the command; exit code 0 = stopped, 1 = blocked):
+- **Stopped** — `Runtime STOPPED.`: the backend exited through its own identity-checked
+  `/api/runtime/shutdown`; the unit is `inactive` (`Result=success`), Telegram too.
+- **Blocked** — `STOP BLOCKED: <reason>` (open Robot position, unresolved protection obligation,
+  unknown or unreachable state): **nothing changed** — the backend keeps running, protected, and the
+  unit stays `active` and managed. Resolve the reason (e.g. let the position reach its STOP/TAKE or
+  close it through the Robot), then run the command again. Never answer a blocked stop with `kill`,
+  `systemctl kill` or `pkill`.
 - On Linux there is no forced-termination fallback at all: an unreachable-but-listening backend,
   a missing shutdown endpoint or an unknown state is reported and nothing is terminated by PID,
   name or port. `tools.legacy_runtime_process` refuses off Windows.
+- Host shutdown/reboot (a stop job systemd starts itself, where `RefuseManualStop` does not apply)
+  still runs the same safe-stop as `ExecStop`; if it is blocked, the unit sends only `SIGCONT` and
+  never SIGKILL, and the host shutdown itself ends the process after up to 2 x `TimeoutStopSec`
+  (~6 min). PAPER restart recovery is fail-closed.
 - Stopping only the Telegram worker (`systemctl stop bybitscanner-telegram.service`) is allowed and
   not safety-relevant; its unit uses `KillMode=process` so the stop helper started by its own buttons
-  (own session) is not reaped with it. Stopping the backend also stops the Telegram unit (it `Requires=` it).
+  (own session) is not reaped with it.
 
 Limits — this is a guard against operator mistakes, not an absolute guarantee: root can still end the
 process (`systemctl kill -s KILL`, `kill -9`, editing the unit, `systemctl daemon-reexec`) and a host
-reboot or power loss ends it regardless (a blocked stop then delays the reboot by up to ~6 min, and PAPER restart
-recovery is fail-closed). No unit restarts automatically and none starts at boot.
+reboot or power loss ends it regardless. `RefuseManualStop` does not stop root from editing the unit. No unit restarts automatically and none starts at boot.
 
 After this change the installed units must be refreshed (the `unit_state` / `installed_unit` checks
 of `tools.vps_check` fail while the installed copy differs from the repository):

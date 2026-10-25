@@ -9,21 +9,24 @@
 # use `python -m tools.vps_check` instead.
 #
 # STOP (#627): a plain signal is NOT a safe stop (open Robot positions would lose their
-# local STOP/TAKE protection), so `systemctl stop` runs the canonical owner safe-stop
-# (ExecStop = tools.stop_robot_runtime: Scanner -> Robot safe-stop -> protection
-# quiescence -> Telegram -> this backend's identity-checked /api/runtime/shutdown).
-# If the safe-stop is BLOCKED (open position, unresolved protection, unknown state) the
-# backend keeps running: the stop signal is a harmless SIGCONT and SIGKILL is disabled.
-# Verified on systemd 255 with a dummy unit: after 2 x TimeoutStopSec (stop-sigterm, then
-# final-sigterm) the unit is "failed" (Result=exit-code), `systemctl stop` still returns 0,
-# and the process "remains running after unit stopped" -- no longer tracked by the unit, so the
-# next stop must use the direct CLI form (runbook). Read the reason with
-# `journalctl -u bybitscanner-paper-backend`.
+# local STOP/TAKE protection). systemd cannot abort a stop job once it has begun, and a
+# refused safe-stop inside a stop job would leave the backend alive but no longer tracked by
+# this unit (verified on systemd 255). Therefore:
+# * RefuseManualStop=yes: `systemctl stop|restart` of this unit is refused; it stays active,
+#   protected and managed. The only manual stop is the canonical owner safe-stop
+#   `python -m tools.stop_robot_runtime all` (also behind the Telegram stop buttons):
+#   Scanner -> Robot safe-stop -> protection quiescence -> Telegram -> this backend's
+#   identity-checked /api/runtime/shutdown, after which the process exits by itself and the
+#   unit ends cleanly. A blocked safe-stop changes nothing.
+# * ExecStop runs the same safe-stop for stops systemd starts itself (host shutdown, a
+#   Conflicts= job). If it is blocked there, the stop signal is a harmless SIGCONT and SIGKILL
+#   is disabled, so the process is not killed by this unit (the host shutdown itself ends it).
 # This guards against operator mistakes, not against root: `systemctl kill -s KILL`,
 # `kill -9`, editing the unit or a host reboot can still end the process.
 
 [Unit]
 Description=BybitScanner PAPER backend (127.0.0.1:8765, PAPER only)
+RefuseManualStop=yes
 After=network-online.target
 Wants=network-online.target
 
