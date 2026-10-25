@@ -1,4 +1,43 @@
-## CURRENT OWNER GOAL — 2026-10-18 — RESULT-FIRST PROCESS CONSISTENCY
+## CURRENT OWNER GOAL — 2026-10-25 — MIRROR STANDALONE PAPER ACCEPTANCE
+
+Owner goal: observed autonomous PAPER acceptance of MIRROR (universal levels, Box
+overlay and standalone entry) through the existing Scanner → Autopilot →
+Admission → PAPER Robot path. No LIVE.
+
+**Delivered and merged into `stable/adfb50b-forward` on 2026-10-25 (HEAD `3fe700ed`):**
+#619 universal MIRROR observation (Scanner, Terminal, Telegram) → #620 Scanner
+MIRROR candidates open RETEST campaigns for PAPER Box attempts → #621
+`reconcile_robot` proves OPEN Box trades (outage restart blocker) → #615 entry +
+exit fees on Wedge/L-shape protection close → #622 standalone MIRROR entry
+(OFF by default, `BYBITSCANNER_MIRROR_STANDALONE_ROBOT=1`). Verified on the merged
+HEAD in an isolated worktree / temp PAPER DB only: 310 targeted tests passed plus
+the standalone E2E (10 tests); trade record Net PnL +11.33547 USDT equals the
+executions (fees 0.30693 = entry 0.14997 + exit 0.15696). Implemented standalone
+confirmation: **Engulfing on 5m and 1m independently**. Not implemented (no
+detector/rule): Pin Bar, Double Top/Bottom, channels; Wedge/Triangle/L-shape as
+standalone confirmations; sloped MIRROR levels. Details:
+`RETEST_BOX_CHAIN_IMPLEMENTATION_PLAN.md` §2b.
+
+**Operational PAPER state at the end of 2026-10-25 (last confirmation):** main PC
+checkout still `9f28ae09` (no fast-forward while the backend runs); Autopilot OFF;
+Robot `ROBOT_RUNNING/RECONCILIATION_REQUIRED` after a refused close; Scanner
+STOPPED; standalone MIRROR not activated. BLUAIUSDT LONG 27730 @ 0.009013 remains
+open under confirmed STOP 0.008878 / TAKE 0.010418. Three owner-authorized
+Robot-owned closes returned `service_unavailable`; probable cause (hypothesis, not
+proven): its book exceeds the 1000 ms PAPER Market freshness limit at the moment
+of the single attempt. Canonical stop is refused while a Robot-owned position is
+open.
+
+**Next dependent steps:** BLUAIUSDT closes (own STOP/TAKE, or a separately
+authorized fix of the Robot close for a sparse book) → canonical stop
+«Остановить робота» → fast-forward the PC to stable → add
+`BYBITSCANNER_MIRROR_STANDALONE_ROBOT=1` to `start_runtime.local.bat` → «Запуск
+робота» → owner re-enables PAPER_AUTO → observed MIRROR PAPER acceptance (signals,
+first retests, admissions, executions, fees, Net PnL).
+
+---
+
+## HISTORICAL OWNER PRIORITY — 2026-10-18 — RESULT-FIRST PROCESS CONSISTENCY
 
 Owner-directed task: systematically reconcile the BybitScanner development
 process with the merged Result-First next-action gate (PR #535).
