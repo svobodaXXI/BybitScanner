@@ -35,7 +35,7 @@ from urllib.parse import urlsplit
 
 from terminal.application.robot_control import RobotControlRejected, stop_robot
 from tools.legacy_runtime_process import (
-    BACKEND, TELEGRAM, LegacyOwnerUnproven, probe_listener_pids,
+    BACKEND, TELEGRAM, LegacyOwnerUnproven, legacy_fallback_supported, probe_listener_pids,
     resolve_legacy_chain, terminate_exact_pids,
 )
 from tools.runtime_intent import PROJECT_ROOT, expected_database_identity
@@ -296,8 +296,12 @@ class RuntimeShutdown:
         legacy_paper_quiescence: Callable[[], None] | None = None,
         legacy_paper_guard: Callable[[], ContextManager[None]] | None = None,
         progress: Callable[[str], None] | None = None,
+        legacy_supported: bool | None = None,
     ) -> None:
         env = dict(os.environ if env is None else env)
+        # The exact-PID legacy fallbacks (and the SQLite writer barrier that precedes them) exist on
+        # Windows only. Elsewhere every path that would need them fails closed (issue #627).
+        self._legacy_supported = legacy_fallback_supported() if legacy_supported is None else legacy_supported
         database_path = _database_path(root, env)
         self._root = root
         self._expected = expected_database_identity(root, env)
@@ -351,7 +355,8 @@ class RuntimeShutdown:
         self._mark(f"Telegram monitoring: {telegram}")
 
         if (
-            backend == PRESENT
+            self._legacy_supported
+            and backend == PRESENT
             and scope == SCOPE_ALL
             and self._robot_state() == ROBOT_STOPPED_PAIR
             and self._legacy_owner_queue_starved()
@@ -551,6 +556,13 @@ class RuntimeShutdown:
                 "Robot reconcile did not confirm success; not retried; runtime kept alive"
             )
 
+    def _require_legacy_fallback(self, what: str) -> None:
+        if not self._legacy_supported:
+            raise SafeStopError(
+                f"{what} has no graceful shutdown endpoint and the legacy process fallback is "
+                "unavailable on this platform (Linux/systemd); nothing was terminated; runtime kept alive"
+            )
+
     def _retire_entry_coverage(self) -> LegacyBackendProof | None:
         if self._robot_state() != ROBOT_STOPPED_PAIR:
             raise SafeStopError("Robot is not fully STOPPED; runtime kept alive")
@@ -562,6 +574,7 @@ class RuntimeShutdown:
         except Exception as exc:
             raise SafeStopError("Entry coverage retirement outcome is unknown; not retried; runtime kept alive") from exc
         if status in (404, 501):
+            self._require_legacy_fallback("PAPER backend entry-coverage retirement")
             return self._prove_legacy_entry_coverage()
         if status != 200 or not isinstance(body, dict) or body.get("ok") is not True:
             raise SafeStopError("Entry coverage retirement was not confirmed; runtime kept alive")
@@ -891,6 +904,7 @@ class RuntimeShutdown:
             raise SafeStopError(f"{name} shutdown outcome is unknown; not retried") from exc
         if status in (404, 501):
             # Identity was proven by health and the graceful endpoint is absent: legacy process.
+            self._require_legacy_fallback(name)
             step = f"{step}:legacy-terminate"
             self._terminate_legacy(health_url, name, kind)
         elif status != 200 or not isinstance(body, dict) or body.get("ok") is not True:
@@ -933,13 +947,19 @@ def launch_detached(scope: str, *, notify_chat: object | None = None, root: Path
     argv = [sys.executable, "-m", "tools.stop_robot_runtime", scope]
     if notify_chat is not None:
         argv += ["--notify-chat", str(notify_chat)]
+    detach: dict[str, object]
+    if os.name == "nt":
+        detach = {"creationflags": (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )}
+    else:
+        # Own session: the helper must outlive the Telegram worker it may shut down. The Telegram
+        # unit sets KillMode=process so systemd does not reap the helper together with the worker.
+        detach = {"start_new_session": True}
     subprocess.Popen(
         argv, cwd=str(root),
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        creationflags=(
-            getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        ),
+        **detach,
     )
 
 
@@ -961,25 +981,51 @@ def _notify(chat_id: str, text: str) -> None:
         print(f"[STOP NOTIFY ERROR] {type(exc).__name__}")
 
 
+USAGE = "usage: python -m tools.stop_robot_runtime [all|scanner] [--notify-chat CHAT_ID] [--env-file PATH]"
+
+
+def _environment(env_file: Path | None) -> dict[str, str]:
+    """Process environment, plus ``KEY=VALUE`` lines of ``--env-file`` (the systemd EnvironmentFile).
+
+    An operator shell does not carry the unit's environment; without it the PAPER DB path, and so
+    the DB identity the backend reports, would not match and the stop would (correctly) be blocked.
+    """
+    env = dict(os.environ)
+    if env_file is not None:
+        from tools.vps_check import parse_env_file
+
+        env.update(parse_env_file(env_file))
+    return env
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     notify_chat = None
+    env_file = None
+    if "--env-file" in args:
+        index = args.index("--env-file")
+        if index + 1 >= len(args):
+            print(USAGE)
+            return 64
+        env_file = Path(args[index + 1])
+        del args[index:index + 2]
     if "--notify-chat" in args:
         index = args.index("--notify-chat")
         if index + 1 >= len(args):
-            print("usage: python -m tools.stop_robot_runtime [all|scanner] [--notify-chat CHAT_ID]")
+            print(USAGE)
             return 64
         notify_chat = args[index + 1]
         del args[index:index + 2]
     if len(args) > 1:
-        print("usage: python -m tools.stop_robot_runtime [all|scanner] [--notify-chat CHAT_ID]")
+        print(USAGE)
         return 64
     def progress(message: str) -> None:
         print(f"[STOP] {message}", flush=True)
 
     try:
         progress(f"starting scope={args[0] if args else SCOPE_ALL}")
-        result = RuntimeShutdown(progress=progress).run(args[0] if args else SCOPE_ALL)
+        result = RuntimeShutdown(env=_environment(env_file), progress=progress).run(
+            args[0] if args else SCOPE_ALL)
     except Exception as exc:
         print(f"[STOP CRASH] {type(exc).__name__}: {exc}", flush=True)
         print(traceback.format_exc(), end="", flush=True)

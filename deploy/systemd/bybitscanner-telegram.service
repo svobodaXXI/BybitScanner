@@ -1,6 +1,11 @@
-# BybitScanner Telegram monitoring worker (issue #624). PREPARED, NOT ENABLED.
+# BybitScanner Telegram monitoring worker (issues #624, #627). PREPARED, NOT ENABLED.
 #
 # No [Install] section (cannot be enabled) and Restart=no, like the backend.
+# KillMode=process (#627): the worker's own "stop" buttons start tools.stop_robot_runtime as an
+# independent helper (own session) that outlives the worker it shuts down. With the default
+# control-group kill, systemd would reap that helper the moment the worker exits and the
+# backend would be left half-stopped. Stopping only the worker is not safety-relevant: the
+# backend (not this unit) owns protection.
 # It needs the machine-local config.py with the Telegram token, which is never
 # stored in Git; do not start it before the owner authorizes Telegram on this host.
 
@@ -20,6 +25,7 @@ StateDirectory=bybitscanner
 StateDirectoryMode=0750
 ExecStart=/opt/BybitScanner/venv/bin/python /opt/BybitScanner/telegram_monitoring.py
 Restart=no
+KillMode=process
 KillSignal=SIGINT
 TimeoutStopSec=30
 NoNewPrivileges=true
