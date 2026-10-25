@@ -175,12 +175,46 @@ const statisticsResponse = {
   },
 };
 
+const mirrorResponse = {
+  ok: true,
+  paper_admission: "NOT_AUTHORIZED",
+  paper_blockers: ["standalone_mirror_trading_rules_not_owner_accepted"],
+  counts: { BROKEN_UNTESTED: 1 },
+  levels: [
+    {
+      symbol: "KNCUSDT",
+      timeframe: "5",
+      level_id: "lvl-1",
+      status: "BROKEN_UNTESTED",
+      lifecycle: "TRACKING",
+      candidate: true,
+      freshness: "FRESH",
+      rejection_reason: null,
+      breakout: { direction: "DOWN", campaign_direction: "LONG", open_time_ms: 1792843800000, open: 0.12299, close: 0.12228 },
+      breakout_evidence: { kind: "FULL_BODY", body_atr: 2.21 },
+      level_label: "Broadening lower",
+      level_geometry_text: "наклонная A1 2026-10-24 05:20 UTC 0.12433 → A2 2026-10-24 09:00 UTC 0.1237",
+      first_retest_text: "ещё не было (уровень свежий)",
+      imbalance_text: "нет (на допуск не влияет)",
+      sources_text: "Broadening",
+      parent_patterns: [{ pattern: "Broadening", formation_id: "horn:KNCUSDT:5:1" }],
+      robot: {
+        mode: "OBSERVE_ONLY",
+        risk_reason: "robot_execution_not_authorized",
+        paper_admission: "NOT_AUTHORIZED",
+        paper_blockers: ["standalone_mirror_trading_rules_not_owner_accepted"],
+      },
+    },
+  ],
+};
+
 function installFetchMock() {
   const fetchMock = vi.fn().mockImplementation(async (url: string) => ({
     ok: true,
     json: async () => {
       if (url.includes("/api/diary/setups")) return setupsResponse;
       if (url.includes("/api/diary/statistics")) return statisticsResponse;
+      if (url.includes("/api/scanner/mirror-levels")) return mirrorResponse;
       return tradesResponse;
     },
   }));
@@ -254,6 +288,21 @@ describe("DiaryOverlay", () => {
     expect(screen.getAllByText("1/1 (100%)")).toHaveLength(2);
     expect(screen.getByText("0/1 (0%)")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/statistics");
+  });
+
+  it("shows Scanner MIRROR levels read-only with geometry, retest and PAPER status", async () => {
+    const fetchMock = installFetchMock();
+    render(<DiaryOverlay accountKey="paper:1" onClose={() => {}} />);
+
+    await screen.findByText("BTCUSDT");
+    fireEvent.click(screen.getByRole("button", { name: "MIRROR" }));
+
+    expect(await screen.findByText("KNCUSDT")).toBeTruthy();
+    expect(screen.getByText("КАНДИДАТ")).toBeTruthy();
+    expect(screen.getByText(/Уровень Broadening lower: наклонная A1/)).toBeTruthy();
+    expect(screen.getByText("Ретест: ещё не было (уровень свежий)")).toBeTruthy();
+    expect(screen.getByText(/PAPER NOT_AUTHORIZED/)).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith("/api/scanner/mirror-levels");
   });
 
   it("refetches after active account authority changes", async () => {

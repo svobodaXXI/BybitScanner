@@ -57,6 +57,7 @@ def build_scan_finished_message(
     box_observation_count=0,
     horn_found_count=0,
     horn_sent_count=0,
+    mirror_candidate_count=0,
 ):
     """Build the final Scanner notification from the admission-owned count."""
 
@@ -67,11 +68,51 @@ def build_scan_finished_message(
         + (f"Наблюдений коробки Икигаи: {box_observation_count}\n" if box_observation_count else "")
         + (f"Рупор (наблюдение): найдено {horn_found_count}, отправлено {horn_sent_count}\n"
            if horn_found_count else "")
+        + (f"MIRROR (наблюдение): новых кандидатов {mirror_candidate_count}\n"
+           if mirror_candidate_count else "")
         + f"Просканировано тикеров: {total_symbols_scanned}\n"
         f"Elapsed: "
         f"{elapsed_minutes:02d}:"
         f"{elapsed_remainder:02d}"
     )
+
+
+def observe_mirror_symbol(symbol, mirror_inputs):
+    """MIRROR observation of one symbol: 1m first, then 5m with those 1m candles.
+
+    Returns (new candidates, Telegram cards sent, errors). Observation only: a
+    failure here never affects any other Scanner delivery.
+    """
+    from mirror_scanner import closed_rows, observe_mirror_levels, send_mirror_notifications
+
+    found = sent = failed = 0
+    fine = None
+    if "1" in mirror_inputs:
+        try:
+            fine = closed_rows(mirror_inputs["1"]["candles"].iloc[:-1], "1")
+        except Exception:
+            fine = None
+    for timeframe in ("1", "5"):
+        inputs = mirror_inputs.get(timeframe)
+        if inputs is None:
+            continue
+        try:
+            summary = observe_mirror_levels(
+                symbol, inputs["candles"], timeframe=timeframe,
+                wedge_result=inputs["wedge_result"],
+                horn_observation=inputs["horn_observation"],
+                l_shape_observation=inputs["l_shape_observation"],
+                fine_candles=fine if timeframe == "5" else None,
+            )
+            if summary:
+                found += summary["new_candidates"]
+                sent += send_mirror_notifications(
+                    symbol, timeframe, test_mode=config.TELEGRAM_TEST_MODE,
+                )
+        except Exception as mirror_error:
+            failed += 1
+            print(f"{symbol:<15} {timeframe}m MIRROR ERROR: {mirror_error}", flush=True)
+    return found, sent, failed
 
 
 def run_scan_pass(
@@ -125,6 +166,11 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
 
     horn_enabled = horn_observation_enabled()
 
+    from mirror_scanner import mirror_observation_enabled
+
+    mirror_enabled = mirror_observation_enabled()
+    mirror_candidate_count = 0
+
     def report_progress(position, symbol, timeframe):
         progress = {
             "symbols_done": position,
@@ -133,6 +179,7 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
             "timeframe": timeframe,
             "horn_found": horn_found_count,
             "horn_sent": horn_sent_count,
+            "mirror_candidates": mirror_candidate_count,
             "sent_to_telegram": sent_to_telegram_count,
             "errors": error_count,
         }
@@ -179,10 +226,14 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
         )
 
     for position, symbol in enumerate(symbols, 1):
+        # MIRROR reads the same snapshots after both timeframes, so a 5m retest
+        # contact can be settled by this pass's 1m candles (no extra request).
+        mirror_inputs = {}
         for timeframe in ("5", "1"):
             if control_checkpoint is not None and not control_checkpoint():
                 print("[SCANNER] current pass stopped by owner")
                 return
+            horn = l_shape = None
             try:
                 analysis_result = analyze_symbol(symbol, timeframe=timeframe)
 
@@ -233,6 +284,14 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
                     except Exception as horn_error:
                         error_count += 1
                         print(f"{symbol:<15} {timeframe}m HORN ERROR: {horn_error}", flush=True)
+
+                if mirror_enabled and analysis_result.get("data") is not None:
+                    mirror_inputs[timeframe] = {
+                        "candles": analysis_result["data"],
+                        "wedge_result": analysis_result.get("result"),
+                        "horn_observation": horn,
+                        "l_shape_observation": l_shape,
+                    }
 
                 # Experimental Box observations are explicitly opt-in and use
                 # the same fetched OHLC snapshot even when no Wedge exists.
@@ -424,6 +483,12 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
             finally:
                 report_progress(position, symbol, timeframe)
 
+        if mirror_inputs:
+            found, sent, failed = observe_mirror_symbol(symbol, mirror_inputs)
+            mirror_candidate_count += found
+            sent_to_telegram_count += sent
+            error_count += failed
+
     print(f"Найдено паттернов: {approved_pattern_count}")
     if box_observation_count:
         print(f"Наблюдений коробки Икигаи: {box_observation_count}")
@@ -466,6 +531,7 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
                 box_observation_count=box_observation_count,
                 horn_found_count=horn_found_count,
                 horn_sent_count=horn_sent_count,
+                mirror_candidate_count=mirror_candidate_count,
             )
         )
     except Exception as e:

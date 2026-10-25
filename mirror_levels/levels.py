@@ -308,12 +308,20 @@ def levels_from_ikigai_box(*, symbol: str, timeframe: str, formation: Any,
 
 
 def levels_from_l_shape(*, symbol: str, timeframe: str, formation: Any,
-                        candle_times_ms: Sequence[int]) -> tuple[MirrorLevel, ...]:
-    """L-shape ``breakout_level`` (H for LONG, L for SHORT), known at its breakout candle."""
+                        candle_times_ms: Sequence[int],
+                        known_at_breakout_open: bool = False) -> tuple[MirrorLevel, ...]:
+    """L-shape ``breakout_level`` (H for LONG, L for SHORT), known at its breakout candle.
+
+    ``known_at_breakout_open``: the level price is the earlier extreme, so it is
+    already known when the breakout candle opens; the breakout candle itself can
+    then be the level's naked breakout (Scanner MIRROR source). Default keeps the
+    level known only after the breakout candle closed.
+    """
 
     try:
         step = timeframe_ms(timeframe)
-        confirmed = int(candle_times_ms[int(formation.as_of_index)]) + step
+        breakout_open = int(candle_times_ms[int(formation.as_of_index)])
+        confirmed = breakout_open if known_at_breakout_open else breakout_open + step
         side = SIDE_UPPER if formation.direction == "LONG" else SIDE_LOWER
         return (horizontal_level(
             symbol=symbol, timeframe=timeframe, source=SOURCE_PATTERN_BOUNDARY, pattern="L-shape",
@@ -328,14 +336,35 @@ def levels_from_l_shape(*, symbol: str, timeframe: str, formation: Any,
 
 # --- registry -------------------------------------------------------------------------------------
 
+def same_level(a: MirrorLevel, b: MirrorLevel, tolerance: float) -> bool:
+    """Whether two levels describe one real boundary within ``tolerance`` price units.
+
+    Horizontal levels compare prices; sloped lines compare both at the later of
+    their first anchors and at the later confirmation (the span both describe).
+    A horizontal level never merges with a sloped one.
+    """
+
+    if (a.symbol, a.timeframe, a.side, a.is_horizontal) != (b.symbol, b.timeframe, b.side, b.is_horizontal):
+        return False
+    if a.is_horizontal:
+        return abs(a.boundary.anchor_price - b.boundary.anchor_price) <= tolerance
+    start = max(a.anchors[0][0], b.anchors[0][0])
+    end = max(a.confirmed_at_ms, b.confirmed_at_ms)
+    return all(abs(a.price_at(t) - b.price_at(t)) <= tolerance for t in (start, end))
+
+
 @dataclass
 class LevelRegistry:
     """Deduplicated levels of one symbol/timeframe universe, stable across restarts.
 
     Exact duplicates (same ``level_id``) are idempotent. Two different sources
     describing the same horizontal price (within ``merge_tolerance`` price units
-    at the same side) are reconciled into the earliest-confirmed level; the other
-    source is kept in ``aliases`` for provenance, never silently dropped.
+    at the same side), or two sloped lines that agree within ``merge_tolerance``
+    at both ends of their common span (a Scanner re-fit of the same boundary),
+    are reconciled into the earliest-confirmed level -- or, with
+    ``prefer_existing``, into the level registered first (a live Scanner, where
+    the first registered level already carries its lifecycle); the other source
+    is kept in ``aliases`` for provenance, never silently dropped.
     """
 
     levels: dict[str, MirrorLevel] = field(default_factory=dict)
@@ -349,20 +378,18 @@ class LevelRegistry:
                 return self.levels[primary]
         return None
 
-    def add(self, level: MirrorLevel, *, merge_tolerance: float = 0.0) -> MirrorLevel:
+    def add(self, level: MirrorLevel, *, merge_tolerance: float = 0.0,
+            prefer_existing: bool = False) -> MirrorLevel:
         if level.level_id in self.levels:
             return self.levels[level.level_id]
         known = self.get(level.level_id)
         if known is not None:
             return known
-        if level.is_horizontal and merge_tolerance > 0:
+        if merge_tolerance > 0:
             for existing in sorted(self.levels.values(), key=lambda x: (x.confirmed_at_ms, x.level_id)):
-                if (existing.is_horizontal and existing.symbol == level.symbol
-                        and existing.timeframe == level.timeframe and existing.side == level.side
-                        and abs(existing.boundary.anchor_price - level.boundary.anchor_price)
-                        <= merge_tolerance):
+                if same_level(existing, level, merge_tolerance):
                     primary, other = ((existing, level)
-                                      if (existing.confirmed_at_ms, existing.level_id)
+                                      if prefer_existing or (existing.confirmed_at_ms, existing.level_id)
                                       <= (level.confirmed_at_ms, level.level_id)
                                       else (level, existing))
                     if primary is level:

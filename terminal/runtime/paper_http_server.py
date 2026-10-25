@@ -2846,6 +2846,21 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **to_primitive(result)})
             return
 
+        if parsed.path == "/api/scanner/mirror-levels":
+            # Read-only projection of the Scanner's durable MIRROR state files; it never
+            # touches the PAPER owner thread or the PAPER DB.
+            try:
+                from mirror_scanner import project_mirror_levels
+
+                include_waiting = parse_qs(parsed.query).get("include_waiting", ["0"])[0] == "1"
+                projection = project_mirror_levels(include_waiting=include_waiting)
+            except Exception:
+                LOGGER.exception("Scanner MIRROR levels projection failed")
+                self._json_response(503, {"ok": False, "error": "mirror_levels_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
         if parsed.path == "/api/instruments":
             self._json_response(200, {"ok": True, "instruments": self.server.market_data.instruments})
             return
