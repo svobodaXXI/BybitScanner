@@ -1,8 +1,8 @@
 """Standalone MIRROR entry -> existing Autopilot / Admission / PAPER Robot, on an isolated temp PAPER DB.
 
 Signal: the real ``mirror_scanner.observe_mirror_levels`` sees a 5m naked DOWN breakout of an untested horizontal
-level at 110 (LONG campaign back to 110), then a bullish Engulfing below the level -> frozen entry terms
-(reference = confirmation close, STOP = confirmation low + the Robot's one-tick buffer, TAKE = 110, net RR >= 2 with
+level at 110 (LONG campaign back to 110), then a bullish Engulfing and NEXT closed candle beyond its body -> frozen entry terms
+(reference = next candle close, STOP = formation low + the Robot's one-tick buffer, TAKE = 110, net RR >= 2 with
 fees and slippage) -> common Robot handoff (flag on) -> Autopilot SHADOW ALLOW -> PAPER_AUTO admission -> the shared
 single-LIMIT lifecycle of the real ``PaperRuntime``: MIRROR campaign / R0 gate, ENTRY LIMIT, real PAPER fill, STOP /
 TAKE protection, TAKE close, fees and Net PnL; restart afterwards executes nothing again.
@@ -73,7 +73,7 @@ class Timeline:
             candle(self.t - 2 * FIVE, 105.0, 105.4, 104.8, 105.2),
             candle(self.t - FIVE, 105.2, 105.5, 105.0, 105.3),
         ]
-        self.confirmation = self.coarse[-3]
+        self.confirmation = self.coarse[-2]
         self.level_confirmed = start + 10 * FIVE
 
     def frame(self, upto_close_ms):
@@ -160,12 +160,12 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
         # Same reference, STOP and TAKE as the Engulfing E2E; only the confirming
         # shape changes. This proves the Pin Bar signal traverses the real
         # admission, R0, matcher, protection, restart and fee-inclusive close.
-        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.9, 105.1, 103.9, 105.0)
-        self.assertTrue(ms._pin_bar(tl.coarse[-3], "LONG"))
+        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.9, 105.02, 103.9, 105.0)
+        self.assertTrue(ms._nison_hammer(tl.coarse[-3], "LONG", tl.coarse[-5:-3]))
         self.assertFalse(ms._engulfing(tl.coarse[-4], tl.coarse[-3], "LONG"))
         self.test_mirror_signal_to_closed_paper_trade_with_fees_net_pnl_and_no_repeat_after_restart()
         self.assertEqual(self.state()["standalone_entries"][0]["terms"]["confirmation"]["kind"],
-                         ms.CONFIRMATION_PIN_BAR)
+                         ms.CONFIRMATION_HAMMER)
 
     def test_mirror_signal_to_closed_paper_trade_with_fees_net_pnl_and_no_repeat_after_restart(self):
         tl, report = self.timeline, {}
@@ -177,7 +177,7 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
         entry = self.state()["standalone_entries"][0]
         terms = entry["terms"]
         self.assertEqual((entry["handoff"], terms["direction"], terms["source_timeframe"]), ("HANDED", "LONG", "5"))
-        self.assertEqual((terms["reference"], terms["stop"], terms["target"]), ("105.0", "103.9", "110.0"))
+        self.assertEqual((terms["reference"], terms["stop"], terms["target"]), ("105.2", "103.9", "110.0"))
         self.assertGreaterEqual(Decimal(terms["reward_risk"]), 2)
         report["signal"] = {"level": LEVEL, "breakout": "5m 111 -> 105 (naked DOWN)",
                             "confirmation": terms["confirmation"], "frozen": {k: terms[k] for k in (
@@ -223,7 +223,7 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
             def candidate():
                 return runtime.call(lambda owner: owner.store.get_robot_candidate(candidate_id))
 
-            robot_candle.set({"time_ms": tl.t - 2 * FIVE, "high": 105.3, "low": 104.95, "close": 105.1})
+            robot_candle.set({"time_ms": tl.t - FIVE, "high": 105.3, "low": 105.15, "close": 105.2})
             attached = _wait_until(lambda: mirror.mirror_record((candidate().robot_state or {}).get("execution")))
             self.assertEqual(attached["decision"], mirror.ATTACHED, attached)
             self.assertEqual((attached["mode"], attached["source"], attached["mirror_level_id"]),
@@ -240,7 +240,7 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
 
             order = _wait_until(limit)
             tick = instrument.tick_size
-            self.assertEqual((order.side, order.price), (OrderSide.BUY, Decimal("105.0") + 2 * tick))
+            self.assertEqual((order.side, order.price), (OrderSide.BUY, Decimal("105.2") + 2 * tick))
 
             # 4. Fill through the real PAPER matcher.
             book.set(SYMBOL, bid=order.price - tick, ask=order.price)
@@ -305,94 +305,119 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
 
 
 class MirrorStandaloneRules(MirrorStandaloneHarness):
-    def test_pin_bar_shape_is_directional_and_rejects_bad_ohlc(self):
-        long_bar = {"open": 104.8, "high": 105.1, "low": 103.0, "close": 105.0, "closed": True}
-        short_bar = {"open": 104.8, "high": 106.6, "low": 104.5, "close": 104.6, "closed": True}
-        self.assertTrue(ms._pin_bar(long_bar, "LONG"))
-        self.assertFalse(ms._pin_bar(long_bar, "SHORT"))
-        self.assertTrue(ms._pin_bar(short_bar, "SHORT"))
-        self.assertFalse(ms._pin_bar(short_bar, "LONG"))
-        self.assertFalse(ms._pin_bar(long_bar | {"closed": False}, "LONG"))
-        self.assertFalse(ms._pin_bar(long_bar | {"low": 105.2}, "LONG"))
-        self.assertFalse(ms._pin_bar(long_bar | {"high": 104.9}, "LONG"))
-        self.assertFalse(ms._pin_bar(long_bar | {"close": float("nan")}, "LONG"))
-        self.assertFalse(ms._pin_bar(long_bar | {"low": 0}, "LONG"))
-        self.assertFalse(ms._pin_bar({"open": 10, "high": 10, "low": 10, "close": 10}, "LONG"))
-        self.assertFalse(ms._pin_bar(long_bar, "SIDEWAYS"))
-        self.assertFalse(ms._pin_bar({"open": 104.8}, "LONG"))
+    def test_nison_hammer_and_hanging_man_have_the_same_lower_wick(self):
+        down = [candle(0, 107, 108, 105, 106), candle(FIVE, 106, 106.5, 104.3, 104.6)]
+        up = [candle(0, 103, 104, 102, 103.5), candle(FIVE, 103.5, 104.6, 103.3, 104)]
+        bar = candle(2 * FIVE, 104.9, 105.02, 103.9, 105.0)
+        self.assertTrue(ms._nison_hammer(bar, "LONG", down))
+        self.assertFalse(ms._nison_hammer(bar, "LONG", up))
+        self.assertTrue(ms._nison_hammer(bar, "SHORT", up))   # hanging man: LOWER wick
+        self.assertFalse(ms._nison_hammer(bar, "SHORT", down))
+        inverted = candle(2 * FIVE, 104.9, 106.5, 104.8, 105.0)
+        self.assertFalse(ms._nison_hammer(inverted, "LONG", down))
+        self.assertFalse(ms._nison_hammer(inverted, "SHORT", up))
+        for invalid in (bar | {"closed": False}, bar | {"low": 105.2},
+                        bar | {"high": 104.9}, bar | {"close": float("nan")},
+                        bar | {"low": 0}, {"open": 104.8},
+                        candle(2 * FIVE, 105, 105.1, 104, 105)):  # doji not a trade
+            self.assertFalse(ms._nison_hammer(invalid, "LONG", down))
+        self.assertFalse(ms._nison_hammer(bar, "SIDEWAYS", down))
 
-    def test_5m_pin_bar_routes_through_existing_mirror_handoff_once(self):
+    def test_confirmation_requires_immediately_next_candle_above_body_not_wick(self):
+        bar = candle(0, 104.9, 106.0, 103.9, 105.0)
+        next_candle = candle(FIVE, 105.0, 105.4, 104.8, 105.2)
+        self.assertTrue(ms._next_close_confirms([bar], next_candle, "LONG", FIVE))
+        self.assertFalse(ms._next_close_confirms([bar], next_candle | {"close": 105.0}, "LONG", FIVE))
+        self.assertFalse(ms._next_close_confirms([bar], next_candle | {"open_time_ms": 2 * FIVE}, "LONG", FIVE))
+        self.assertFalse(ms._next_close_confirms([bar], next_candle | {"closed": False}, "LONG", FIVE))
+        self.assertFalse(ms._next_close_confirms([bar], next_candle, "SHORT", FIVE))
+        first = candle(0, 104.7, 104.8, 104.0, 104.2)
+        second = candle(FIVE, 104.1, 104.85, 103.9, 104.6)
+        confirm = candle(2 * FIVE, 104.65, 105, 104.6, 104.75)
+        self.assertTrue(ms._next_close_confirms([first, second], confirm, "LONG", FIVE))
+        self.assertFalse(ms._next_close_confirms([first, second], confirm | {"close": 104.7}, "LONG", FIVE))
+
+    def test_5m_hammer_requires_next_close_and_hands_off_once(self):
         tl = self.timeline
-        # No Engulfing: current opens above previous close. Long lower-wick rejection.
-        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.9, 105.1, 103.9, 105.0)
+        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.9, 105.02, 103.9, 105.0)
+        self.assertTrue(ms._nison_hammer(tl.coarse[-3], "LONG", tl.coarse[-5:-3]))
         self.assertFalse(ms._engulfing(tl.coarse[-4], tl.coarse[-3], "LONG"))
         self.scan(tl.breakout_open + 2 * FIVE)
+        # Formation candle is closed, confirmation candle is not: no entry.
+        middle = self.scan(tl.t - 2 * FIVE)
+        self.assertEqual(middle["standalone_handoffs"], [])
         first = self.scan(tl.t)
         self.assertEqual(len(first["standalone_handoffs"]), 1)
         entries = self.state()["standalone_entries"]
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]["terms"]["confirmation"]["kind"], ms.CONFIRMATION_PIN_BAR)
-        self.assertEqual(entries[0]["terms"]["source_timeframe"], "5")
-        self.assertGreaterEqual(Decimal(entries[0]["terms"]["reward_risk"]), Decimal("2"))
+        terms = entries[0]["terms"]
+        self.assertEqual((terms["confirmation"]["kind"], terms["source_timeframe"]),
+                         (ms.CONFIRMATION_HAMMER, "5"))
+        self.assertEqual((terms["reference"], terms["stop"], terms["target"]),
+                         ("105.2", "103.9", "110.0"))
+        self.assertEqual(terms["confirmation"]["formation"][0]["close"], 105.0)
+        self.assertGreaterEqual(Decimal(terms["reward_risk"]), Decimal("2"))
         self.assertEqual(self.scan(tl.t)["standalone_handoffs"], [])
         self.assertEqual(len(self.state()["standalone_entries"]), 1)
 
-    def test_short_pin_bar_routes_through_same_scanner_and_handoff(self):
+    def test_short_hanging_man_scanner_confirmation_not_inverted_hammer(self):
         tl = self.timeline
-        # Mirror all prices about 100: a downward naked breakout with a LONG
-        # lower-wick Pin Bar becomes an upward breakout with a SHORT upper wick.
-        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.9, 105.1, 103.9, 105.0)
-        tl.coarse = [candle(r["open_time_ms"], 200 - r["open"], 200 - r["low"],
-                            200 - r["high"], 200 - r["close"]) for r in tl.coarse]
+        tl.coarse = [candle(r["open_time_ms"], 200-r["open"], 200-r["low"],
+                            200-r["high"], 200-r["close"]) for r in tl.coarse]
+        # Last two closes before the formation rise: 95.4 -> 96.0.
+        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 95.1, 95.12, 93.9, 95.0)
         self.level = horizontal_level(
             symbol=SYMBOL, timeframe="5", source=SOURCE_SWING_ZONE, pattern=None,
             side="upper", price=90.0,
-            anchor_time_ms=tl.level_confirmed - FIVE,
-            confirmed_at_ms=tl.level_confirmed,
-        )
-        self.assertTrue(ms._pin_bar(tl.coarse[-3], "SHORT"))
+            anchor_time_ms=tl.level_confirmed - FIVE, confirmed_at_ms=tl.level_confirmed)
+        self.assertTrue(ms._nison_hammer(tl.coarse[-3], "SHORT", tl.coarse[-5:-3]))
         self.assertFalse(ms._engulfing(tl.coarse[-4], tl.coarse[-3], "SHORT"))
         self.assertEqual(self.scan(tl.breakout_open + 2 * FIVE)["new_candidates"], 1)
+        self.assertEqual(self.scan(tl.t - 2 * FIVE)["standalone_handoffs"], [])
         result = self.scan(tl.t)
         self.assertEqual(len(result["standalone_handoffs"]), 1)
-        entries = self.state()["standalone_entries"]
-        self.assertEqual(len(entries), 1)
-        terms = entries[0]["terms"]
+        terms = self.state()["standalone_entries"][0]["terms"]
         self.assertEqual((terms["direction"], terms["confirmation"]["kind"],
-                          terms["source_timeframe"]), ("SHORT", ms.CONFIRMATION_PIN_BAR, "5"))
+                          terms["source_timeframe"]),
+                         ("SHORT", ms.CONFIRMATION_HANGING_MAN, "5"))
         self.assertEqual((terms["reference"], terms["stop"], terms["target"]),
-                         ("95.0", "96.1", "90.0"))
+                         ("94.8", "95.12", "90.0"))
         self.assertGreaterEqual(Decimal(terms["reward_risk"]), 2)
         self.assertEqual(self.scan(tl.t)["standalone_handoffs"], [])
 
-    def test_engulfing_takes_priority_when_the_same_candle_is_also_pin_bar(self):
+    def test_engulfing_takes_priority_over_hammer_with_next_candle_confirmation(self):
         tl = self.timeline
-        tl.coarse[-4] = candle(tl.t - 4 * FIVE, 104.5, 104.8, 103.9, 104.3)
-        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.2, 104.7, 103.1, 104.6)
+        tl.coarse[-4] = candle(tl.t - 4 * FIVE, 104.55, 104.65, 104.2, 104.4)
+        tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.35, 104.65, 103.85, 104.6)
         self.assertTrue(ms._engulfing(tl.coarse[-4], tl.coarse[-3], "LONG"))
-        self.assertTrue(ms._pin_bar(tl.coarse[-3], "LONG"))
+        self.assertTrue(ms._nison_hammer(tl.coarse[-3], "LONG", tl.coarse[-5:-3]))
         self.scan(tl.breakout_open + 2 * FIVE)
         self.scan(tl.t)
         entries = self.state()["standalone_entries"]
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["terms"]["confirmation"]["kind"], ms.CONFIRMATION_ENGULFING)
 
-    def test_1m_pin_bar_requires_only_its_own_closed_candle(self):
+    def test_1m_hammer_needs_its_own_next_close_not_future_candles(self):
         tl = self.timeline
         tl.coarse[-3] = candle(tl.t - 3 * FIVE, 104.1, 105.2, 103.9, 105.0)
         base = tl.t - 4 * FIVE
         fine = [
-            candle(base, 104.6, 104.7, 104.1, 104.2) | {"close_time_ms": base + ONE},
-            candle(base + ONE, 104.8, 105.0, 103.9, 104.9) | {"close_time_ms": base + 2 * ONE},
+            candle(base, 104.6, 104.7, 104.4, 104.5) | {"close_time_ms": base + ONE},
+            candle(base + ONE, 104.5, 104.6, 104.0, 104.1) | {"close_time_ms": base + 2*ONE},
+            candle(base + 2*ONE, 104.9, 105.02, 103.9, 105.0) | {"close_time_ms": base + 3*ONE},
+            candle(base + 3*ONE, 105.0, 105.3, 104.9, 105.15) | {"close_time_ms": base + 4*ONE},
         ]
-        future = candle(tl.t, 104.8, 105.0, 103.3, 104.9) | {"close_time_ms": tl.t + ONE}
+        future = candle(tl.t, 104.9, 105.0, 103.3, 104.9) | {"close_time_ms": tl.t + ONE}
         self.scan(tl.breakout_open + 2 * FIVE)
-        self.scan(tl.t, fine=fine + [future])
+        self.scan(tl.t, fine=fine[:3])
+        self.assertEqual(self.state()["standalone_entries"], [])
+        self.scan(tl.t, fine=fine+[future])
         entries = self.state()["standalone_entries"]
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]["terms"]["confirmation"]["kind"], ms.CONFIRMATION_PIN_BAR)
+        self.assertEqual(entries[0]["terms"]["confirmation"]["kind"], ms.CONFIRMATION_HAMMER)
         self.assertEqual(entries[0]["terms"]["source_timeframe"], "1")
-        self.assertEqual(entries[0]["terms"]["confirmation"]["close_time_ms"], base + 2 * ONE)
+        self.assertEqual(entries[0]["terms"]["confirmation"]["close_time_ms"], base + 4*ONE)
+        self.assertEqual(entries[0]["terms"]["stop"], "103.9")
 
     def test_flag_off_journals_the_confirmation_but_never_hands_off_or_admits(self):
         with mock.patch.dict(os.environ, {robot_l_shape.MIRROR_STANDALONE_ENV: "0"}):
