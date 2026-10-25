@@ -59,7 +59,8 @@ KEEP = ("Type", "Restart", "KillSignal", "SendSIGKILL", "KillMode", "NoNewPrivil
 KEEP_UNIT = ("RefuseManualStop",)
 
 
-def dummy_unit(repo_unit: str, *, exec_start: str, exec_stop: str | None, kill_mode: str | None = None) -> tuple[str, dict]:
+def dummy_unit(repo_unit: str, *, exec_start: str, exec_stop: str | None, kill_mode: str | None = None,
+               environment: dict[str, str] | None = None) -> tuple[str, dict]:
     parsed = sections((REPO / "deploy/systemd" / repo_unit).read_text(encoding="utf-8"))
     service, unit_section = parsed["Service"], parsed.get("Unit", {})
     kept = {key: service[key] for key in KEEP if key in service}
@@ -68,8 +69,9 @@ def dummy_unit(repo_unit: str, *, exec_start: str, exec_stop: str | None, kill_m
         kept["KillMode"] = kill_mode
     lines = ["[Unit]", f"Description=probe of {repo_unit}", *[f"{k}={v}" for k, v in kept_unit.items()],
              "", "[Service]"]
-    kept = {**kept_unit, **kept}
     lines += [f"{k}={v}" for k, v in kept.items()]
+    lines += [f"Environment={k}={v}" for k, v in (environment or {}).items()]
+    kept = {**kept_unit, **kept}
     lines += [f"ExecStart={exec_start}", f"WorkingDirectory={WORK}", f"TimeoutStopSec={TIMEOUT_STOP}"]
     if exec_stop:
         lines.append(f"ExecStop={exec_stop}")
@@ -115,12 +117,12 @@ def backend_main() -> Path:
     return path
 
 
-def start_backend(name: str, exec_stop: str) -> tuple[str, int, dict]:
+def start_backend(name: str, exec_stop: str, environment: dict[str, str] | None = None) -> tuple[str, int, dict]:
     for leftover in ("stop-request", "backend.pid"):
         (WORK / leftover).unlink(missing_ok=True)
     unit = f"bbs-probe-{name}.service"
     text, kept = dummy_unit("bybitscanner-paper-backend.service",
-                            exec_start=f"{PY} {backend_main()}", exec_stop=exec_stop)
+                            exec_start=f"{PY} {backend_main()}", exec_stop=exec_stop, environment=environment)
     install(unit, text)
     sh("systemctl", "start", unit)
     assert wait_for(lambda: (WORK / "backend.pid").exists(), 10), "dummy backend did not start"
@@ -156,8 +158,14 @@ def scenario_manual_stop_refused() -> dict[str, object]:
     return result
 
 
+# The repository's real ExecStop tool, as systemd also runs it after the main process exited on its
+# own: with nothing listening on 8765/8766 and no PAPER DB it must succeed idempotently.
+REAL_TOOL = f"{PY} -m tools.stop_robot_runtime all"
+REAL_TOOL_ENV = {"PYTHONPATH": str(REPO), "BYBITSCANNER_PAPER_DB": str(WORK / "absent.sqlite3")}
+
+
 def scenario_canonical_safe_stop() -> dict[str, object]:
-    unit, pid, kept = start_backend("canonical", BLOCKED)
+    unit, pid, kept = start_backend("canonical", REAL_TOOL, environment=REAL_TOOL_ENV)
     (WORK / "stop-request").touch()                   # what /api/runtime/shutdown does: exit by itself
     gone = wait_for(lambda: not alive(pid), 10)
     wait_for(lambda: show(unit).get("ActiveState") == "inactive", 10)
