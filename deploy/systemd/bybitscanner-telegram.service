@@ -23,6 +23,9 @@ EnvironmentFile=/etc/bybitscanner/paper.env
 # PAPER DB and its side files live here (created by systemd for User= on a start only).
 StateDirectory=bybitscanner
 StateDirectoryMode=0750
+# Readiness: start only once the canonical PAPER backend for the configured PAPER DB answers
+# (first start creates the DB; the worker must not race it).
+ExecStartPre=/opt/BybitScanner/venv/bin/python -m tools.runtime_intent --wait-backend
 ExecStart=/opt/BybitScanner/venv/bin/python /opt/BybitScanner/telegram_monitoring.py
 Restart=no
 KillMode=process

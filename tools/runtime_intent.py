@@ -6,6 +6,10 @@ Scanner transitions and their capability gates belong to that backend route;
 this module only owns process bootstrap and dependency identity.
 
 Usage: python -m tools.runtime_intent [ALL|SCANNER|ROBOT]
+       python -m tools.runtime_intent --wait-backend   (readiness gate for dependent systemd units)
+
+On Linux the backend and Telegram worker are owned by systemd units (deploy/systemd); the bootstrap
+then waits for them and never spawns anything.
 """
 
 from __future__ import annotations
@@ -262,8 +266,14 @@ class RuntimeIntentBootstrap:
         monotonic: Callable[[], float] = time.monotonic,
         out: Callable[[str], None] = lambda line: print(line, flush=True),
         require_telegram: bool = True,
+        systemd_managed: bool | None = None,
     ) -> None:
         self._require_telegram = require_telegram
+        # Linux (#627 contour): the backend and Telegram are started by their systemd units, so the
+        # bootstrap only waits for them to prove READY and never spawns a second owner. An explicitly
+        # injected ``spawn`` keeps the Windows console behaviour (used by tests on every platform).
+        self._systemd_managed = (os.name != "nt" and spawn is None) if systemd_managed is None \
+            else systemd_managed
         self._root = root
         self._env = dict(os.environ if env is None else env)
         self._get = get
@@ -320,14 +330,37 @@ class RuntimeIntentBootstrap:
         if state == READY:
             return
         if state == ABSENT:
-            self._out(f"Starting {name}...")
-            self._spawn(name, argv, self._root, child_env)
+            if self._systemd_managed:
+                self._out(f"Waiting for {name} (started by its systemd unit)...")
+            else:
+                self._out(f"Starting {name}...")
+                self._spawn(name, argv, self._root, child_env)
         deadline = self._monotonic() + READY_TIMEOUT_S
         while self._monotonic() < deadline:
             self._sleep(POLL_INTERVAL_S)
             if probe() == READY:
                 return
-        raise TimeoutError(f"{name} did not prove READY within {int(READY_TIMEOUT_S)} s")
+        owner = " (on Linux it is started by its systemd unit; nothing was spawned)" \
+            if self._systemd_managed else ""
+        raise TimeoutError(f"{name} did not prove READY within {int(READY_TIMEOUT_S)} s{owner}")
+
+    def wait_backend(self) -> int:
+        """Readiness gate for dependent units: 0 once the canonical PAPER backend for the expected
+        PAPER DB answers its health probe, 1 otherwise. Never spawns, never sends an intent."""
+        try:
+            state = self._probe_backend()
+            deadline = self._monotonic() + READY_TIMEOUT_S
+            while state != READY and self._monotonic() < deadline:
+                self._sleep(POLL_INTERVAL_S)
+                state = self._probe_backend()
+        except Mismatch as error:
+            self._out(f"FAILED: {error}")
+            return EXIT_BOOTSTRAP_FAILED
+        if state == READY:
+            self._out("PAPER backend READY")
+            return EXIT_OK
+        self._out(f"FAILED: PAPER backend did not prove READY within {int(READY_TIMEOUT_S)} s")
+        return EXIT_BOOTSTRAP_FAILED
 
     def _probe_backend(self) -> str:
         try:
@@ -423,8 +456,10 @@ def execute_runtime_intent(
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
+    if args == ["--wait-backend"]:
+        return RuntimeIntentBootstrap(require_telegram=False).wait_backend()
     if len(args) > 1:
-        print("usage: python -m tools.runtime_intent [ALL|SCANNER|ROBOT]", flush=True)
+        print("usage: python -m tools.runtime_intent [ALL|SCANNER|ROBOT] | --wait-backend", flush=True)
         return EXIT_USAGE
     return RuntimeIntentBootstrap(require_telegram=True).run(
         args[0] if args else "ALL", desktop_notice=True,

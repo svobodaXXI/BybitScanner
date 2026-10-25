@@ -14,6 +14,9 @@ on:
       - "tests/test_stop_robot_linux.py"
       - "DOCUMENTS/VPS_DEPLOYMENT_RUNBOOK.md"
       - "ci/systemd_shutdown_probe.py"
+      - "ci/systemd_start_probe.py"
+      - "signal/__init__.py"
+      - "tests/test_linux_contour.py"
       - ".github/workflows/vps-prepare-ci.yml"
   workflow_dispatch:
 
@@ -36,7 +39,7 @@ jobs:
       - name: Install the only third-party dependency of the stop tool (pinned as in requirements.txt)
         run: python -m pip install requests==2.34.2 PySocks==1.7.1
       - name: Offline prepare-only tests (Linux)
-        run: python -m unittest -v tests.test_vps_check tests.test_stop_robot_linux
+        run: python -m unittest -v tests.test_vps_check tests.test_stop_robot_linux tests.test_runtime_intent_bootstrap tests.test_linux_contour
       - name: The validator itself runs and reports (expected FAIL items on a runner, never a start)
         run: python -m tools.vps_check --no-systemd || true
 
@@ -55,3 +58,25 @@ jobs:
       - run: python -m pip install requests==2.34.2 PySocks==1.7.1
       - name: Dummy-unit probe of the stop semantics
         run: sudo "$(which python)" ci/systemd_shutdown_probe.py
+
+  systemd-start-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Real systemd, isolated dummy units, canonical readiness and intent
+        run: sudo env GITHUB_ACTIONS=true "$(which python)" ci/systemd_start_probe.py
+
+  windows-bootstrap-regression:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install requests==2.34.2 PySocks==1.7.1
+      - run: python -m unittest -v tests.test_vps_check tests.test_stop_robot_linux tests.test_runtime_intent_bootstrap tests.test_linux_contour

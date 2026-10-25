@@ -1,4 +1,54 @@
-﻿# BybitScanner VPS Deployment Runbook
+# BybitScanner VPS Deployment Runbook
+
+## Linux contour integration (stacked on #628; no runtime acceptance)
+
+The start chain is now prepared as three static units:
+backend -> Telegram's identity-checked readiness gate -> the oneshot
+`bybitscanner-paper-start.service` -> one canonical `runtime_intent ALL`.
+Linux waits for systemd-owned dependencies and never spawns a second owner.
+A failed identity check sends no intent; an HTTP 409 fails the oneshot with the
+backend's blocker. A failed start does not stop or roll back dependencies:
+they may remain active and require the canonical safe-stop described below.
+
+The integration preserves Claude's unfinished work in commit
+`2898abe8ba06622ad84a6f7b6b07650ccaf530a7`. The original Windows worktree
+`C:\\BybitScanner-vps-contour` is retained unchanged.
+
+### First VPS start remains blocked until
+
+- #628 and this stacked integration have been reviewed and owner-approved for
+  merge, then the stopped VPS has safely fast-forwarded to the approved stable SHA.
+- All three units are installed from that SHA; the existing prepare-only procedure
+  must also install `deploy/systemd/bybitscanner-paper-start.service`.
+- Machine-local `config.py`, Telegram identity and exactly one polling owner
+  are verified without exposing secrets or sharing the PC database. The current
+  VPS state must be checked directly; repository/CI evidence is not host evidence.
+- `paper.env` selects the separate VPS PAPER DB and intended full-universe Scanner
+  and MIRROR settings. Preparation keeps standalone MIRROR off. Its owner-approved
+  enablement is allowed by the pre-start gate; every LIVE gate stays disabled.
+- For PAPER_AUTO, `/etc/bybitscanner/owner.env` (root:root, 0600) supplies
+  `BYBITSCANNER_AUTOPILOT_OWNER_TOKEN` (at least 32 characters) to the backend.
+  Never print or commit its value. Autopilot remains OFF after every restart:
+  the existing owner-authenticated `POST /api/robot/autopilot` requires
+  `mode=PAPER_AUTO` and `confirm_paper_auto=true`. The start unit does not enable it.
+- The owner explicitly chooses the first runtime start. No automatic boot start,
+  restart or bypass of reconciliation/protection is introduced.
+
+After these gates, the owner entrypoint is `systemctl start
+bybitscanner-paper-start.service`. Its success proves the canonical intent only;
+verify Scanner, MIRROR candidate/admission, Autopilot PAPER_AUTO, protection and
+Telegram delivery before claiming the complete autonomous PAPER outcome.
+No real runtime was started by the integration work.
+
+### Evidence boundary
+
+Linux CI exercises real systemd with isolated `bbs-start-probe-*` HTTP dummies:
+delayed backend readiness, exactly one intent, blocked reconciliation and wrong
+database identity. It refuses existing production/probe units and non-CI hosts.
+It never starts Scanner, Telegram polling, Robot, or a real PAPER database.
+Shutdown semantics remain covered by the separate #628 dummy-unit probe.
+Offline Linux and Windows tests cover readiness timeout/mismatch, LIVE gate
+preservation, systemd environment-file parsing and the stdlib signal API.
 
 ## VPS 83.217.213.181 — prepare-only, stopped (issue #624, 2026-10-25)
 
@@ -45,7 +95,7 @@ Procedure (as root, after the PR is merged; it starts nothing):
     touch signals_history.json && chown bybitscanner:bybitscanner signals_history.json
     install -d -m 750 -o root -g bybitscanner /etc/bybitscanner
     test -e /etc/bybitscanner/paper.env || install -m 640 -o root -g bybitscanner deploy/systemd/paper.env.example /etc/bybitscanner/paper.env
-    install -m 644 deploy/systemd/bybitscanner-paper-backend.service deploy/systemd/bybitscanner-telegram.service /etc/systemd/system/
+    install -m 644 deploy/systemd/bybitscanner-paper-backend.service deploy/systemd/bybitscanner-telegram.service deploy/systemd/bybitscanner-paper-start.service /etc/systemd/system/
     systemctl daemon-reload
     diff -u deploy/nginx/bybitscanner-loopback.conf /etc/nginx/sites-enabled/bybitscanner
     /opt/BybitScanner/venv/bin/python -m tools.vps_check
@@ -105,7 +155,7 @@ reboot or power loss ends it regardless. `RefuseManualStop` does not stop root f
 After this change the installed units must be refreshed (the `unit_state` / `installed_unit` checks
 of `tools.vps_check` fail while the installed copy differs from the repository):
 
-    install -m 644 deploy/systemd/bybitscanner-paper-backend.service deploy/systemd/bybitscanner-telegram.service /etc/systemd/system/
+    install -m 644 deploy/systemd/bybitscanner-paper-backend.service deploy/systemd/bybitscanner-telegram.service deploy/systemd/bybitscanner-paper-start.service /etc/systemd/system/
     systemctl daemon-reload
     /opt/BybitScanner/venv/bin/python -m tools.vps_check
 

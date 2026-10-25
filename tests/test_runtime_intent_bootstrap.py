@@ -403,6 +403,7 @@ class ProductionPrimitivesTests(unittest.TestCase):
             expected,
         )
 
+    @mock.patch("tools.runtime_intent.os.name", "nt")
     def test_spawn_uses_a_new_visible_console_without_shell(self):
         with mock.patch("tools.runtime_intent.subprocess.Popen") as popen:
             runtime_intent.spawn_console(["start_paper_backend.bat"], ROOT)
