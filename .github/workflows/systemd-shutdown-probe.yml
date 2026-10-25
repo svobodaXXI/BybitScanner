@@ -1,0 +1,26 @@
+name: systemd shutdown probe (#628)
+
+# One-off evidence run for PR #628 on a real systemd (GitHub Ubuntu runner, root via sudo).
+# Dummy services only: no BybitScanner runtime, PAPER DB, network trading or Telegram.
+on:
+  push:
+    branches: ["ci/systemd-shutdown-probe-628"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install requests==2.34.2 PySocks==1.7.1
+      - name: systemd is PID 1
+        run: ps -p 1 -o comm= && systemctl --version | head -1
+      - name: Probe stop semantics with dummy units derived from deploy/systemd
+        run: sudo "$(which python)" ci/systemd_shutdown_probe.py
