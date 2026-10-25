@@ -52,6 +52,7 @@ def _notify_candidate_observer(candidate_id: str) -> None:
 
 L_SHAPE_PATTERN = "L-shape"
 L_SHAPE_SOURCE_TIMEFRAMES = frozenset({"1", "5"})
+MIRROR_PATTERN = "MIRROR"
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +87,16 @@ def is_robot_executable_signal(
     if pattern == L_SHAPE_PATTERN:
         return (
             normalized_timeframe in L_SHAPE_SOURCE_TIMEFRAMES
+            and signal_snapshot.get("robot_handoff_ready") is True
+        )
+
+    if pattern == MIRROR_PATTERN:
+        # Standalone MIRROR entry: same 1m/5m single-LIMIT lifecycle as L-shape, OFF by default.
+        from robot_l_shape import mirror_standalone_enabled
+
+        return (
+            mirror_standalone_enabled()
+            and normalized_timeframe in L_SHAPE_SOURCE_TIMEFRAMES
             and signal_snapshot.get("robot_handoff_ready") is True
         )
 

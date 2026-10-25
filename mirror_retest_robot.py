@@ -108,6 +108,8 @@ class MirrorRobotPolicy:
     # Scanner MIRROR candidates as campaign sources (``mirror_scanner`` evidence root; None = its default root).
     scanner_levels: bool = True
     scanner_root: Any = None
+    # USDT value of 1 working volume (standalone MIRROR entries are 1-WV LIMITs); None = unknown -> DEFERRED.
+    one_wv_usdt: Callable[[], Decimal | None] | None = None
     # In-process replay cache: boundary_id -> (state proven so far, data_blocked). Closed candles never change, so a
     # cached state is only extended by newer closed candles; a restart simply replays again.
     boundary_states: dict = field(default_factory=dict)
@@ -262,12 +264,14 @@ def _replay_active(policy: MirrorRobotPolicy, ref: str, symbol: str, boundary: B
 
 def find_active_campaign(policy: MirrorRobotPolicy, wedge_records: Iterable[Any], *, symbol: str,
                          direction: str, now_ms: int,
-                         scanner_sources: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any] | None:
+                         scanner_sources: Sequence[Mapping[str, Any]] = (),
+                         breakout_close_ms: int | None = None) -> dict[str, Any] | None:
     """The most recent ACTIVE campaign in ``direction`` on ``symbol``, replayed only from durable inputs.
 
     One naked breakout seen through several sources (a Wedge line and the Scanner level of the same line) is one
     campaign: equal breakout candles collapse onto the Wedge source, else the smallest boundary id, so every attempt
-    of that breakout shares one ``campaign_id`` and one R0 budget.
+    of that breakout shares one ``campaign_id`` and one R0 budget. ``breakout_close_ms`` restricts the answer to the
+    campaign of that one breakout candle (a standalone attempt belongs to its own level's breakout only).
     """
 
     found: list[dict[str, Any]] = []
@@ -307,6 +311,10 @@ def find_active_campaign(policy: MirrorRobotPolicy, wedge_records: Iterable[Any]
         return None
     for item in found:
         item["breakout_close_ms"] = int(item["state"]["breakout"]["close_time_ms"])
+    if breakout_close_ms is not None:
+        found = [item for item in found if item["breakout_close_ms"] == int(breakout_close_ms)]
+        if not found:
+            return None
     found.sort(key=lambda item: (-item["breakout_close_ms"], item["parent_candidate_id"] is None,
                                  item["boundary"].boundary_id))
     best = found[0]
@@ -318,6 +326,63 @@ def find_active_campaign(policy: MirrorRobotPolicy, wedge_records: Iterable[Any]
 
 def _floor(value: Decimal, step: Decimal) -> Decimal:
     return (value / step).to_integral_value(rounding=ROUND_FLOOR) * step
+
+
+def _campaign_budget(policy: MirrorRobotPolicy, campaign: Mapping[str, Any],
+                     prior_attempts: Sequence[Mapping[str, Any]], *, worst_case: Decimal, potential: Decimal,
+                     now_ms: int) -> dict[str, Any]:
+    """One R0 per campaign (frozen at its first attempt, never restored) and the §5 gate for a new attempt.
+
+    Shared by Box-overlay and standalone attempts, so one breakout never spends two budgets.
+    """
+
+    def defer(reason: str) -> dict[str, Any]:
+        return {"decision": DEFERRED, "reason": reason}
+
+    def no(reason: str) -> dict[str, Any]:
+        return {"decision": BLOCKED, "reason": reason}
+
+    r0 = next((Decimal(str(a["mirror"]["r0_usdt"])) for a in prior_attempts
+               if isinstance(a.get("mirror"), Mapping) and a["mirror"].get("r0_usdt") is not None), None)
+    if r0 is None:
+        # The PAPER runtime supplies a structured account-risk verdict. Keep WAIT retriable,
+        # but reject a proven daily-loss latch or exhausted risk headroom.
+        account_risk = policy.account_risk_limit_usdt(now_ms)
+        if isinstance(account_risk, AccountRiskLimit):
+            if account_risk.decision == RISK_WAIT:
+                return defer(f"r0_wait:{account_risk.reason}")
+            if account_risk.decision == RISK_DENY:
+                return no(f"r0_denied:{account_risk.reason}")
+            if account_risk.decision != RISK_OK:
+                return defer("r0_unavailable")
+            account_limit = account_risk.limit_usdt
+        else:
+            account_limit = account_risk               # injected test/legacy policy
+        if account_limit is None:
+            return defer("r0_unavailable")
+        frozen = freeze_campaign_r0(idea_potential_net_usdt=potential,
+                                    account_risk_limit_usdt=account_limit)
+        if frozen is None:
+            return no("r0_invalid")
+        r0 = Decimal(str(frozen))
+    realized_losses = Decimal(0)
+    live_worst = Decimal(0)
+    for attempt in prior_attempts:
+        if attempt.get("closed"):
+            net = attempt.get("net_pnl_usdt")
+            if net is None:
+                return defer("prior_attempt_result_unknown")
+            realized_losses += max(Decimal(0), -Decimal(str(net)))
+        else:
+            live_worst += Decimal(str(attempt["mirror"]["worst_case_usdt"]))
+    gate = entry_gate(open_campaign_budget(r0), campaign_phase=campaign["state"]["phase"], data_reliable=True,
+                      realized_loss_costs_usdt=realized_losses, live_pending_worst_case_usdt=live_worst,
+                      new_attempt_worst_case_usdt=worst_case, remaining_net_reward_usdt=potential)
+    if gate.decision == RISK_WAIT:
+        return defer(f"campaign_gate_wait:{gate.reason}")
+    if gate.decision != DECISION_ALLOW:
+        return no(f"campaign_gate_{gate.decision.lower()}:{gate.reason}")
+    return {"decision": ATTACHED, "reason": gate.reason, "r0": r0, "gate": gate}
 
 
 def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any], symbol: str,
@@ -381,46 +446,13 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
 
     if potential <= 0:
         return no("net_potential_nonpositive")
-    r0 = next((Decimal(str(a["mirror"]["r0_usdt"])) for a in prior_attempts
-               if isinstance(a.get("mirror"), Mapping) and a["mirror"].get("r0_usdt") is not None), None)
-    if r0 is None:
-        # The PAPER runtime supplies a structured account-risk verdict. Keep WAIT retriable,
-        # but reject a proven daily-loss latch or exhausted risk headroom.
-        account_risk = policy.account_risk_limit_usdt(now_ms)
-        if isinstance(account_risk, AccountRiskLimit):
-            if account_risk.decision == RISK_WAIT:
-                return defer(f"r0_wait:{account_risk.reason}")
-            if account_risk.decision == RISK_DENY:
-                return no(f"r0_denied:{account_risk.reason}")
-            if account_risk.decision != RISK_OK:
-                return defer("r0_unavailable")
-            account_limit = account_risk.limit_usdt
-        else:
-            account_limit = account_risk               # injected test/legacy policy
-        if account_limit is None:
-            return defer("r0_unavailable")
-        frozen = freeze_campaign_r0(idea_potential_net_usdt=potential,
-                                    account_risk_limit_usdt=account_limit)
-        if frozen is None:
-            return no("r0_invalid")
-        r0 = Decimal(str(frozen))
-    realized_losses = Decimal(0)
-    live_worst = Decimal(0)
-    for attempt in prior_attempts:
-        if attempt.get("closed"):
-            net = attempt.get("net_pnl_usdt")
-            if net is None:
-                return defer("prior_attempt_result_unknown")
-            realized_losses += max(Decimal(0), -Decimal(str(net)))
-        else:
-            live_worst += Decimal(str(attempt["mirror"]["worst_case_usdt"]))
-    gate = entry_gate(open_campaign_budget(r0), campaign_phase=campaign["state"]["phase"], data_reliable=True,
-                      realized_loss_costs_usdt=realized_losses, live_pending_worst_case_usdt=live_worst,
-                      new_attempt_worst_case_usdt=worst_case, remaining_net_reward_usdt=potential)
-    if gate.decision == RISK_WAIT:
-        return defer(f"campaign_gate_wait:{gate.reason}")
-    if gate.decision != DECISION_ALLOW:
-        return no(f"campaign_gate_{gate.decision.lower()}:{gate.reason}")
+    budget = _campaign_budget(policy, campaign, prior_attempts, worst_case=worst_case, potential=potential,
+                              now_ms=now_ms)
+    if budget["decision"] == DEFERRED:
+        return defer(budget["reason"])
+    if budget["decision"] != ATTACHED:
+        return no(budget["reason"])
+    r0, gate = budget["r0"], budget["gate"]
     return {
         "strategy_id": STRATEGY_ID, "decision": ATTACHED, "reason": gate.reason, "decided_at_ms": now_ms,
         "campaign_id": campaign["campaign_id"], "campaign_direction": direction,
@@ -428,6 +460,77 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
         "partial_quantities": [str(p) for p in partial], "target_at_attach": str(target),
         "r0_usdt": str(r0), "worst_case_usdt": str(worst_case), "remaining_net_reward_usdt": str(potential),
         "budget_cap_usdt": str(gate.budget.cap_usdt),
+        **({"parent_candidate_id": campaign["parent_candidate_id"]}
+           if campaign.get("parent_candidate_id") is not None else {}),
+        **({key: campaign[key] for key in ("source", "mirror_level_id", "mirror_timeframe", "mirror_pattern",
+                                           "mirror_level_source") if campaign.get(key) is not None}),
+    }
+
+
+def plan_standalone_attachment(policy: MirrorRobotPolicy, *, direction: str, entry_price: Any, stop_price: Any,
+                               target_price: Any, campaign: Mapping[str, Any] | None,
+                               prior_attempts: Sequence[Mapping[str, Any]], now_ms: int) -> dict[str, Any]:
+    """Decide, before any order exists, whether a standalone MIRROR entry (one 1-WV LIMIT) may trade.
+
+    Requires the live campaign of its own level (none after the first retest -> never an entry), the campaign
+    direction, a known 1 WV and the same single campaign R0 / §5 gate as the Box overlay. Worst case and potential
+    are in USDT at 1 WV with the PAPER fee on both sides and the documented adverse slippage on the exit leg.
+    Anything but ATTACHED / DEFERRED means: no order, the candidate is retired.
+    """
+
+    def no(reason: str) -> dict[str, Any]:
+        out = {"strategy_id": STRATEGY_ID, "decision": BLOCKED, "mode": "STANDALONE", "reason": reason,
+               "decided_at_ms": now_ms}
+        if campaign is not None:
+            out["campaign_id"] = campaign["campaign_id"]
+        return out
+
+    def defer(reason: str) -> dict[str, Any]:
+        out = {"strategy_id": STRATEGY_ID, "decision": DEFERRED, "mode": "STANDALONE", "reason": reason,
+               "decided_at_ms": now_ms}
+        if campaign is not None:
+            out["campaign_id"] = campaign["campaign_id"]
+        return out
+
+    if campaign is None:
+        return no("no_active_campaign")
+    if direction != campaign["campaign_direction"]:
+        return no("direction_mismatch")
+    try:
+        entry = _decimal(entry_price, "entry price")
+        stop = _decimal(stop_price, "stop price")
+        target = _decimal(target_price, "target price")
+    except MirrorRobotError:
+        return no("entry_terms_unavailable")
+    sign = Decimal(1) if direction == CAMPAIGN_LONG else Decimal(-1)
+    if entry <= 0 or (entry - stop) * sign <= 0 or (target - entry) * sign <= 0:
+        return no("entry_terms_invalid")
+    one_wv = policy.one_wv_usdt() if policy.one_wv_usdt is not None else None
+    if one_wv is None:
+        return defer("one_wv_unavailable")
+    one_wv = _decimal(one_wv, "1 WV")
+    if one_wv <= 0:
+        return no("one_wv_invalid")
+    quantity = one_wv / entry
+    fee, slip = policy.fee_rate, policy.stop_slippage_fraction
+    worst_case = quantity * ((entry - stop) * sign + fee * (entry + stop) + slip * stop)
+    potential = quantity * ((target - entry) * sign - fee * (entry + target) - slip * target)
+    if potential <= 0:
+        return no("net_potential_nonpositive")
+    budget = _campaign_budget(policy, campaign, prior_attempts, worst_case=worst_case, potential=potential,
+                              now_ms=now_ms)
+    if budget["decision"] == DEFERRED:
+        return defer(budget["reason"])
+    if budget["decision"] != ATTACHED:
+        return no(budget["reason"])
+    boundary: Boundary = campaign["boundary"]
+    return {
+        "strategy_id": STRATEGY_ID, "decision": ATTACHED, "mode": "STANDALONE", "reason": budget["reason"],
+        "decided_at_ms": now_ms, "campaign_id": campaign["campaign_id"], "campaign_direction": direction,
+        "boundary": boundary_to_dict(boundary), "state": campaign["state"],
+        "entry_price": str(entry), "stop_price": str(stop), "target_price": str(target),
+        "one_wv_usdt": str(one_wv), "r0_usdt": str(budget["r0"]), "worst_case_usdt": str(worst_case),
+        "remaining_net_reward_usdt": str(potential), "budget_cap_usdt": str(budget["gate"].budget.cap_usdt),
         **({"parent_candidate_id": campaign["parent_candidate_id"]}
            if campaign.get("parent_candidate_id") is not None else {}),
         **({key: campaign[key] for key in ("source", "mirror_level_id", "mirror_timeframe", "mirror_pattern",
@@ -541,6 +644,20 @@ def build_runtime_policy(*, database_path: Any, account_id: Any,
                                    committed_worst_case_usdt=facts.committed_worst_case_usdt)
         return limit   # Preserve WAIT vs DENY and source reason for attachment decision.
 
+    def one_wv_usdt() -> Decimal | None:
+        from terminal.domain.models import TradingAccountId
+        from terminal.persistence.sqlite_store import SQLiteStore
+        from terminal.runtime.paper_context import working_volume_usdt
+
+        reader = SQLiteStore.open_reader(database_path)
+        try:
+            with reader.read_snapshot():
+                account = reader.get_paper_account(
+                    account_id if isinstance(account_id, TradingAccountId) else TradingAccountId(str(account_id)))
+        finally:
+            reader.close()
+        return None if account is None else working_volume_usdt(account.equity_usdt)   # the PAPER 1-WV rule
+
     return MirrorRobotPolicy(candles=BybitClosedKlineSource(strict_availability=True),
                              account_risk_limit_usdt=risk_limit,
-                             quantity_step=quantity_step)
+                             quantity_step=quantity_step, one_wv_usdt=one_wv_usdt)
