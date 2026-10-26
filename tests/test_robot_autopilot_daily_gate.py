@@ -97,10 +97,49 @@ class PolicyTests(unittest.TestCase):
         blocked = ap.daily_loss_gate_facts(_equity("-10"), [], enabled=True)
         self.assertEqual(ap.evaluate_auto_admission(_facts(blocked)).reason_code, ap.REASON_DAILY_LOSS_LIMIT)
         unknown = ap.daily_loss_gate_facts(_equity(None, available=False), [], enabled=True)
-        self.assertEqual(ap.evaluate_auto_admission(_facts(unknown)).reason_code,
-                         ap.REASON_DAILY_EQUITY_UNAVAILABLE)
+        self.assertEqual(ap.evaluate_auto_admission(_facts(unknown)).outcome, ap.OUTCOME_ALLOW)
         self.assertEqual(ap.evaluate_auto_admission(_facts(None)).reason_code,
                          ap.REASON_DAILY_EQUITY_UNAVAILABLE)
+
+    def test_opening_exception_preserves_prior_loss_latch(self):
+        blocked = ap.daily_loss_gate_facts(_equity("-11"), [], enabled=True)
+        gate = ap.daily_loss_gate_facts(
+            _equity(None, available=False), [_Audit(blocked)], enabled=True)
+        self.assertFalse(gate["opening_baseline_exception"])
+        self.assertEqual(ap.evaluate_auto_admission(_facts(gate)).reason_code,
+                         ap.REASON_DAILY_LOSS_LIMIT)
+
+    def test_other_unavailable_reasons_and_missing_gate_still_block(self):
+        for reason in ("MARK_PRICE_MISSING", "MARK_PRICE_STALE", "MARK_PRICE_INVALID",
+                       "PROJECTION_MISMATCH", "READ_FAILED", "EXTERNAL_TRANSFER_UNSUPPORTED",
+                       "ACCOUNT_CREATED_AFTER_DAY_START", "UNKNOWN", None):
+            with self.subTest(reason=reason):
+                equity = replace(_equity(None, available=False), unavailability_reason=reason)
+                gate = ap.daily_loss_gate_facts(equity, [], enabled=True)
+                self.assertFalse(gate["opening_baseline_exception"])
+                self.assertEqual(ap.evaluate_auto_admission(_facts(gate)).reason_code,
+                                 ap.REASON_DAILY_EQUITY_UNAVAILABLE)
+        self.assertEqual(ap.evaluate_auto_admission(_facts(None)).reason_code,
+                         ap.REASON_DAILY_EQUITY_UNAVAILABLE)
+
+    def test_opening_exception_preserves_other_admission_gates(self):
+        gate = ap.daily_loss_gate_facts(_equity(None, available=False), [], enabled=True)
+        cases = [
+            ({"environment": "LIVE"}, ap.REASON_LIVE_NOT_ALLOWED),
+            ({"candidate_fresh": None}, ap.REASON_CANDIDATE_FRESHNESS_UNKNOWN),
+            ({"candidate_fresh": False}, ap.REASON_CANDIDATE_STALE),
+            ({"protection_healthy": False}, ap.REASON_PROTECTION_UNHEALTHY),
+            ({"reconciliation_clear": False}, ap.REASON_RECONCILIATION_REQUIRED),
+            ({"robot_mode": "ROBOT_STOPPED"}, ap.REASON_ROBOT_NOT_READY),
+            ({"symbol_owned": True}, ap.REASON_SYMBOL_OWNED),
+            ({"portfolio_facts": {"available": True, "occupied_ro": 19}},
+             ap.REASON_PORTFOLIO_AGGREGATE_CAP),
+        ]
+        for overrides, reason in cases:
+            with self.subTest(overrides=overrides):
+                self.assertEqual(
+                    ap.evaluate_auto_admission(replace(_facts(gate), **overrides)).reason_code,
+                    reason)
 
     def test_disabled_gate_exempts_only_itself_and_is_still_audited(self):
         blocked = ap.daily_loss_gate_facts(_equity("-15"), [], enabled=False)
@@ -212,11 +251,17 @@ class AdmissionTransactionTests(unittest.TestCase):
         self.assertEqual(self.admit("j", D0 + 5 * MIN, daily_marks=broken).result.reason_code,
                          ap.REASON_DAILY_EQUITY_UNAVAILABLE)
 
-    def test_unprovable_baseline_waits_unless_owner_disabled_the_gate(self):
+    def test_opening_position_exception_is_audited_without_disabling_loss_gate(self):
         self.fill("Buy", "100", "1", D0 - MIN)
         self.fill("Sell", "100", "1", D0 + MIN)  # open across 00:00 MSK
-        self.assertEqual(self.admit("k", D0 + 2 * MIN).result.reason_code,
-                         ap.REASON_DAILY_EQUITY_UNAVAILABLE)
+        admission = self.admit("k", D0 + 2 * MIN)
+        gate = json.loads(admission.decision.facts_json)["daily_loss_gate"]
+        self.assertEqual(admission.result.outcome, ap.OUTCOME_ALLOW)
+        self.assertTrue(gate["enabled"])
+        self.assertTrue(gate["opening_baseline_exception"])
+        self.assertFalse(gate["data_available"])
+        self.assertIsNone(gate["baseline_equity_usdt"])
+        self.assertIsNone(gate["latched"])
         admission = self.admit("l", D0 + 3 * MIN, daily_loss_gate_enabled=False)
         gate = json.loads(admission.decision.facts_json)["daily_loss_gate"]
         self.assertEqual((admission.result.outcome, gate["enabled"], gate["unavailability_reason"]),
