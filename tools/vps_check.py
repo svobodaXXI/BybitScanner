@@ -53,7 +53,7 @@ WRITE_TARGETS = ("runtime", "charts", "debug", "review_queue", "reports", "signa
 # Ports that must never listen on a non-loopback address on this host.
 GUARDED_PORTS = (80, 443, 8080, 8765, int(DEFAULT_TELEGRAM_PORT))
 # Owner-only switches that must stay off on a prepare-only server.
-OFF_SWITCHES = ()  # Owner-approved MIRROR is a PAPER strategy, not a LIVE gate.
+OFF_SWITCHES = ("BYBITSCANNER_MIRROR_STANDALONE_ROBOT",)  # PAPER feature: report and validate, do not force OFF.
 # Keys whose *value* is secret: reported as set/unset only.
 SECRET_KEY = re.compile(r"(TOKEN|SECRET|API_KEY|PASSWORD)", re.IGNORECASE)
 _FALSE = {"", "0", "false", "no", "off"}
@@ -138,7 +138,7 @@ def check_safety_env(env: Mapping[str, str], source: str, *, enforce_off_switche
         checks.append(Check(f"{source}:{key}", ok, shown))
     for key in OFF_SWITCHES:
         value = str(env.get(key, "")).strip()
-        checks.append(Check(f"{source}:{key}", value != "1" or not enforce_off_switches,
+        checks.append(Check(f"{source}:{key}", value.lower() in _FALSE or value == "1",
                             (value or "<unset>") + ("" if enforce_off_switches else " (owner switch, reported)")))
     return checks
 
