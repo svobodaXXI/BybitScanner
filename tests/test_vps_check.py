@@ -120,14 +120,14 @@ class VerdictTests(unittest.TestCase):
 
 
 class SafetyEnvTests(unittest.TestCase):
-    def test_live_gates_operator_token_and_standalone_switch_must_be_off(self):
+    def test_live_gates_and_operator_token_must_be_off_but_mirror_is_paper_allowed(self):
         self.assertTrue(all(c.ok for c in vps_check.check_safety_env({}, "env")))
         unsafe = vps_check.check_safety_env({
             "LIVE_MARKET_MUTATIONS_ENABLED": "true", "BYBITSCANNER_OPERATOR_TOKEN": "s3cr3t",
             "LIVE_LIMIT_ACCEPTANCE_NOTIONAL_CEILING": "50", "BYBITSCANNER_MIRROR_STANDALONE_ROBOT": "1"}, "env")
         self.assertEqual(set(names(unsafe, ok=False)), {
             "env:LIVE_MARKET_MUTATIONS_ENABLED", "env:BYBITSCANNER_OPERATOR_TOKEN",
-            "env:LIVE_LIMIT_ACCEPTANCE_NOTIONAL_CEILING", "env:BYBITSCANNER_MIRROR_STANDALONE_ROBOT"})
+            "env:LIVE_LIMIT_ACCEPTANCE_NOTIONAL_CEILING"})
         token = next(c for c in unsafe if c.name == "env:BYBITSCANNER_OPERATOR_TOKEN")
         self.assertEqual(token.detail, "<set>")                                   # value never printed
 
@@ -138,6 +138,7 @@ class SafetyEnvTests(unittest.TestCase):
         self.assertEqual({k: v for k, v in env.items() if vps_check.SECRET_KEY.search(k) and v}, {})
         self.assertTrue(env["BYBITSCANNER_PAPER_DB"].startswith(vps_check.STATE_DIR.as_posix() + "/"))
         self.assertEqual(env["PYTHONDONTWRITEBYTECODE"], "1")
+        self.assertEqual(env["BYBITSCANNER_MIRROR_STANDALONE_ROBOT"], "1")
 
     def test_paper_db_identity_is_the_bootstrap_identity_and_an_existing_db_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
