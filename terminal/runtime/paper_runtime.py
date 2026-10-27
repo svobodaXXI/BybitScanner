@@ -3565,9 +3565,25 @@ class PaperRuntime:
             digest = hashlib.sha256(
                 f"{request.client_action_id.value}\0{symbol}".encode("utf-8")
             ).hexdigest()[:32]
+            # Reuse the PAPER Market engine's durable command/exec replay
+            # identity on HTTP redelivery of the same account-wide Close-All.
+            # Namespace it separately from Robot-owned Close-All so the two
+            # routes cannot claim the same order identity for one action ID.
+            market_digest = hashlib.sha256(
+                (
+                    "paper-account-close-all" + chr(0)
+                    + request.client_action_id.value + chr(0) + symbol
+                ).encode("utf-8")
+            ).hexdigest()[:32]
+            order_link_id = (
+                f"tw_{market_digest}{sum(bytes.fromhex(market_digest)) & 0xF:x}"
+            )
             results.append(self.api.full_close(
                 FullCloseCommandRequest(ClientActionId(f"paper-close-all-{digest}"), symbol),
                 market_book=self._robot_execution_book(symbol, evidence.get(symbol)),
+                identity=CommandIdentityCandidate(
+                    CommandId(f"cmd_{market_digest}"), order_link_id,
+                ),
             ))
         refreshed = self.open_positions()
         return CloseAllCommandResponse(

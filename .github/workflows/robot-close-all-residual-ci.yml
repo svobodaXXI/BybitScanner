@@ -8,6 +8,7 @@ on:
       - "terminal/application/robot_trade_ledger.py"
       - "terminal/api/rest.py"
       - "tests/test_robot_close_all_stable_identity.py"
+      - "tests/test_paper_close_all_stable_identity.py"
       - "tests/test_robot_close_all_owner_preflight.py"
       - "tests/test_robot_close_all_pending_work_preflight.py"
       - "tests/test_robot_close_all_trade_ledger_preflight.py"
@@ -46,6 +47,7 @@ jobs:
           terminal/api/rest.py
           tests/test_robot_close_all_residual_proof.py
           tests/test_robot_close_all_stable_identity.py
+          tests/test_paper_close_all_stable_identity.py
           tests/test_robot_close_all_owner_preflight.py
           tests/test_robot_close_all_pending_work_preflight.py
           tests/test_robot_close_all_trade_ledger_preflight.py
@@ -55,6 +57,7 @@ jobs:
           python -m unittest -v
           tests.test_robot_close_all_residual_proof
           tests.test_robot_close_all_stable_identity
+          tests.test_paper_close_all_stable_identity
           tests.test_robot_close_all_owner_preflight
           tests.test_robot_close_all_pending_work_preflight
           tests.test_robot_close_all_trade_ledger_preflight
