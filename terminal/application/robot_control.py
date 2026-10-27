@@ -64,6 +64,7 @@ from terminal.application.robot_recovery import (
     ROBOT_STOPPED,
     RobotRecoveryCoordinator,
 )
+from terminal.api.models import ClientActionId
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import (
     PersistenceError,
@@ -349,6 +350,7 @@ def close_all_now(
     database_path: Path | str | None = None,
     clock_ms: Callable[[], int] | None = None,
     backend_url: str | None = None,
+    client_action_id: str | None = None,
 ) -> dict:
     """Legal only from ``(ROBOT_RUNNING, READY)`` or ``(ROBOT_RUNNING, PAUSED)`` (Section 4).
 
@@ -363,7 +365,9 @@ def close_all_now(
 
     ``http_post(url, payload) -> dict`` performs the actual network call and
     is supplied by the caller — see the module docstring for why this
-    function never imports a network client itself.
+    function never imports a network client itself. The optional action ID
+    is a transport correlation hook: it does not change Robot command
+    legality or close scope. By default, the existing clock-derived ID is used.
     """
     store = _open_store(database_path)
     try:
@@ -380,9 +384,15 @@ def close_all_now(
         store.close()
 
     url = f"{backend_url or DEFAULT_PAPER_BACKEND_URL}/api/robot/close-all-now"
-    client_action_id = f"robot-close-all-{now}"
+    # Telegram supplies a stable opaque action id for redelivery of the SAME
+    # confirmed callback. Other existing callers keep the time-based default.
+    action_id = (
+        f"robot-close-all-{now}"
+        if client_action_id is None
+        else ClientActionId(client_action_id).value
+    )
     try:
-        return http_post(url, {"client_action_id": client_action_id})
+        return http_post(url, {"client_action_id": action_id})
     except RobotControlRejected:
         raise
     except Exception as exc:
