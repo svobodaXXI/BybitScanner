@@ -141,10 +141,10 @@ class RobotTelegramFeedTests(unittest.TestCase):
         self.assertIsNone(parse_robot_control_callback("robot:approve:candidate"))
         self.assertIsNone(parse_robot_control_callback("robot:view:feed"))
 
-    def test_control_keyboard_stopped_offers_only_start(self):
+    def test_control_keyboard_stopped_offers_start_and_all_paper_close(self):
         keyboard = build_robot_control_keyboard("ROBOT_STOPPED", "ROBOT_STOPPED")["inline_keyboard"]
         buttons = [button for row in keyboard for button in row]
-        self.assertEqual(len(buttons), 1)
+        self.assertEqual(len(buttons), 2)
         self.assertEqual(buttons[0]["callback_data"], "robot:cmd:start")
         self.assertEqual(buttons[1]["callback_data"], "robot:cmd:paper_close_all")
 
