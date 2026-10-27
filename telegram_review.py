@@ -381,27 +381,24 @@ def _call_robot_control_command(command):
     raise ValueError(f"unsupported Robot control command: {command}")
 
 
-def _post_robot_close_all_now(url, payload):
-    # close_all_now() itself imports no network client (see
-    # terminal.application.robot_control's module docstring) -- this is the
-    # transport it is handed, kept here since telegram_review.py already
-    # depends on requests.
+def _post_robot_backend_command(url, payload, *, command):
+    """Shared Telegram transport: preserve each Robot command's wire contract."""
     response = requests.post(url, json=payload, timeout=15)
     body = response.json()
     if response.status_code != 200 or not body.get("ok", False):
-        raise RobotControlRejected(f"PAPER backend rejected close_all_now: {body}")
+        raise RobotControlRejected(f"PAPER backend rejected {command}: {body}")
     return body
+
+
+def _post_robot_close_all_now(url, payload):
+    # close_all_now() owns legality; Telegram supplies the existing network
+    # transport without duplicating response validation.
+    return _post_robot_backend_command(url, payload, command="close_all_now")
 
 
 def _post_robot_synchronize_pending_entries(url, payload):
-    # pause_robot()/stop_robot()'s synchronous bridge (AUTOPILOT_ROBOT_V0_1_
-    # ROBOT_CONTROL_DECISION.md v1.3 Section 7) -- same transport pattern as
-    # _post_robot_close_all_now above.
-    response = requests.post(url, json=payload, timeout=15)
-    body = response.json()
-    if response.status_code != 200 or not body.get("ok", False):
-        raise RobotControlRejected(f"PAPER backend rejected synchronize_pending_entries: {body}")
-    return body
+    # Shared bridge for pause/stop, with its original rejection identity.
+    return _post_robot_backend_command(url, payload, command="synchronize_pending_entries")
 
 
 def _request_close_all_confirmation(callback_query):

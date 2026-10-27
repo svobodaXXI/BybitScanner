@@ -1,3 +1,18 @@
+## CURRENT OWNER GOAL — 2026-10-27 — INTERNAL PAPER CONTOUR CONSOLIDATION
+
+Owner requests one automatically self-checking PAPER lifecycle across Scanner,
+Autopilot, Admission, Robot, protection, Telegram and VPS, **without altering
+current trading functionality or external interfaces**. Owning plan:
+`DOCUMENTS/PAPER_CONTOUR_INTERNAL_CONSOLIDATION_PLAN_20261027.md`.
+First narrow PR: internal Telegram Robot HTTP response transport consolidation +
+regression, no runtime deploy. Follow-up: #649 durable one-action close (existing
+Telegram control); #646 selective reuse/ownership reconciliation; safe launch and
+diagnostics. Never confuse a refactor with a newly accepted runtime capability.
+Three PAPER positions were still open at last owner check; no confirmed flatten.
+MIRROR #648 merged but VPS acceptance paused; then Wedge #592. No LIVE.
+
+---
+
 ## CURRENT OWNER GOAL — 2026-10-25 — MIRROR STANDALONE PAPER ACCEPTANCE
 
 Owner goal: observed autonomous PAPER acceptance of MIRROR (universal levels, Box
