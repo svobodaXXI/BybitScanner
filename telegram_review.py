@@ -494,7 +494,7 @@ def _paper_close_all_report_messages(result):
             "PAPER Close-All — экономика закрытия:"
             if i == 0 else "PAPER Close-All — продолжение отчёта:"
         )
-        messages.append(heading + "\\n" + "\\n".join(lines[i:i+10]))
+        messages.append(heading + "\n" + "\n".join(lines[i:i+10]))
     return tuple(messages)
 
 
