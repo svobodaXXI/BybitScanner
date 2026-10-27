@@ -20,6 +20,7 @@ from typing import Callable, Mapping
 
 from terminal.api.rest import TerminalCommandApi
 from terminal.application.command_identity import CommandIdentityCandidate
+from terminal.application.robot_trade_ledger import prove_robot_open_trade_ledger
 from terminal.api.models import (
     ClientActionId, CloseAllCommandRequest, CloseAllCommandResponse, CommandResult, CommandResultStatus,
     FullCloseCommandRequest, LimitCommandRequest, PaperLimitAmendRequest, PaperLimitCancelRequest,
@@ -3768,25 +3769,12 @@ class PaperRuntime:
         orphan_trade_ids: tuple[str, ...] = ()
         ledger_read_failed = False
         try:
-            open_trades = self.store.load_open_robot_trades(self._account_id)
-            candidates_by_id = {item.candidate_id: item for item in open_candidates}
-            trades_by_candidate_id = {
-                item.candidate_id: item for item in open_trades
-            }
-            orphan_trade_ids = tuple(sorted(
-                item.trade_id for item in open_trades
-                if item.candidate_id not in candidates_by_id
-            ))
-            ledger_unproven = (
-                len(candidates_by_id) != len(open_candidates)
-                or len(trades_by_candidate_id) != len(open_trades)
-                or candidates_by_id.keys() != trades_by_candidate_id.keys()
-                or any(
-                    item.symbol != candidates_by_id[item.candidate_id].symbol
-                    for item in open_trades
-                    if item.candidate_id in candidates_by_id
-                )
+            ledger = prove_robot_open_trade_ledger(
+                open_candidates,
+                self.store.load_open_robot_trades(self._account_id),
             )
+            ledger_unproven = not ledger.valid
+            orphan_trade_ids = ledger.orphan_trade_ids
         except Exception:
             ledger_unproven = True
             ledger_read_failed = True
@@ -4380,6 +4368,17 @@ class PaperRuntime:
             candidates = self.store.load_robot_candidates_by_status(
                 self._paper_account_id, ("OPEN",),
             )
+            ledger = prove_robot_open_trade_ledger(
+                candidates, self.store.load_open_robot_trades(self._paper_account_id),
+            )
+            if not ledger.valid:
+                unresolved_candidate_ids.update(ledger.invalid_candidate_ids)
+                unresolved_trade_ids.update(ledger.invalid_trade_ids)
+                return fail(
+                    "reconcile_robot cannot prove OPEN Robot candidate/trade ledger: "
+                    + "candidates=" + ",".join(ledger.invalid_candidate_ids)
+                    + " trades=" + ",".join(ledger.invalid_trade_ids)
+                )
             for candidate in candidates:
                 if candidate.status != "OPEN":
                     continue
