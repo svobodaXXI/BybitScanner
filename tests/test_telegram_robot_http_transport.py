@@ -74,6 +74,45 @@ class RobotHttpTransportTests(unittest.TestCase):
                 post.assert_called_once()
 
 
+class AccountWidePaperTransportTests(unittest.TestCase):
+    def test_paper_close_uses_only_general_paper_endpoint_and_stable_payload(self):
+        payload = {"client_action_id": "paper-close-all-cb-" + "a" * 32}
+        body = {
+            "ok": True, "client_action_id": payload["client_action_id"],
+            "results": [], "positions": [],
+        }
+        response = SimpleNamespace(status_code=200, json=lambda: body)
+        with patch.object(review, "DEFAULT_PAPER_BACKEND_URL", "http://127.0.0.1:8765"), \
+             patch.object(review.requests, "post", return_value=response) as post:
+            self.assertIs(review._post_paper_close_all(payload), body)
+        post.assert_called_once_with(
+            "http://127.0.0.1:8765/api/close-all",
+            json=payload, timeout=15,
+        )
+
+    def test_http_conflict_never_returns_success_or_falls_back_to_robot_route(self):
+        payload = {"client_action_id": "paper-action"}
+        for status, body in (
+            (409, {"ok": False, "error": "robot_trade_ledger_unproven"}),
+            (503, {"ok": False, "error": "paper_close_all_unavailable"}),
+            (200, {"ok": False, "error": "partial_close"}),
+        ):
+            with self.subTest(status=status):
+                response = SimpleNamespace(status_code=status, json=lambda: body)
+                with patch.object(review.requests, "post", return_value=response) as post:
+                    with self.assertRaisesRegex(review.RobotControlRejected,
+                                                "PAPER backend rejected paper_close_all"):
+                        review._post_paper_close_all(payload)
+                self.assertEqual(post.call_count, 1)
+                self.assertTrue(post.call_args.args[0].endswith("/api/close-all"))
+
+    def test_transport_timeout_is_not_retried_under_a_new_identity(self):
+        with patch.object(review.requests, "post", side_effect=requests.Timeout("network")) as post:
+            with self.assertRaises(requests.Timeout):
+                review._post_paper_close_all({"client_action_id": "repeat-exact"})
+        post.assert_called_once()
+
+
 class TelegramCloseAllCallbackIdentityTests(unittest.TestCase):
     def test_same_confirmed_callback_preserves_action_id(self):
         callback = {"id": "telegram-opaque-123"}
