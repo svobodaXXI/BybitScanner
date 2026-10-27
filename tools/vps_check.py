@@ -248,15 +248,20 @@ def stop_contract_problems(service: Mapping[str, str], entry: str, *,
             problems.append("unexpected ExecStop on the start unit")
         requires = " ".join(unit.get("Requires", "").split())
         after = " ".join(unit.get("After", "").split())
-        for needed in ("bybitscanner-paper-backend.service", "bybitscanner-telegram.service"):
-            if needed not in requires.split() or needed not in after.split():
-                problems.append(f"start unit does not Require/After {needed}")
+        if "bybitscanner-paper-backend.service" not in requires.split() or (
+                "bybitscanner-paper-backend.service" not in after.split()):
+            problems.append("start unit must Require/After the PAPER backend")
+        wants = " ".join(unit.get("Wants", "").split())
+        if "bybitscanner-telegram.service" in requires.split() or (
+                "bybitscanner-telegram.service" not in wants.split()) or (
+                "bybitscanner-telegram.service" not in after.split()):
+            problems.append("start unit must Wants/After optional Telegram, never Require it")
     return problems
 
 
 _ENTRIES = {"bybitscanner-paper-backend.service": "-m terminal.runtime.paper_http_server",
             "bybitscanner-telegram.service": "telegram_monitoring.py",
-            "bybitscanner-paper-start.service": "-m tools.runtime_intent ALL"}
+            "bybitscanner-paper-start.service": "-m tools.runtime_intent --no-telegram ALL"}
 
 
 def check_repo_units(root: Path, *, check_interpreter: bool = False) -> list[Check]:
