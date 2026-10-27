@@ -1,5 +1,7 @@
 # BybitScanner VPS Deployment Runbook
 
+> **Актуальная приёмка 27.10.2026 после PR #638:** Telegram optional для запуска PAPER-ядра; доказанный SSH reverse tunnel, ошибки запуска и требования будущей кнопки описаны в [VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md](VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md). Начальные разделы этого runbook ниже описывают прежнее подготовительное состояние и не являются текущим runtime-статусом.
+
 ## Linux contour integration (stacked on #628; no runtime acceptance)
 
 The start chain is now prepared as three static units:
