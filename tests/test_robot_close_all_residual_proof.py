@@ -65,6 +65,13 @@ def fake_runtime(*, robot_symbols=("BOTUSDT",), remaining=(),
         _account_id=ACCOUNT,
         store=store,
         _robot_full_close=close,
+        _robot_prepare_manual_close=Mock(side_effect=lambda candidate, request, identity: (
+            request, identity,
+        )),
+        _robot_finalize_manual_close=Mock(side_effect=lambda candidate: (
+            close.call_count > 0
+            and status == CommandResultStatus.COMPLETED
+        )),
         _robot_linked_entry_limits=Mock(return_value={}),
         _robot_close_box_candidate=Mock(),
         open_positions=inventory,
