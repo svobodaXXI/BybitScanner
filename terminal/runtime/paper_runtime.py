@@ -3668,6 +3668,12 @@ class PaperRuntime:
             if self.store.load_active_robot_entry_orders(account_id):
                 raise PaperCloseAllRejected("stopped_robot_has_active_entry_orders")
 
+        # An opposite-side Robot ENTRY is not necessarily an EXIT. Never
+        # classify it by side or rely on the later flat-only LIMIT cleanup:
+        # any surviving Robot ENTRY could fill when a Market close fails.
+        if self.store.load_active_robot_entry_orders(account_id):
+            fail("robot_entry_limit_remaining_after_sync")
+
         # Prove every Robot net position before the first Market dispatch.
         candidates = self.store.load_robot_candidates_by_status(account_id, ("OPEN",))
         trades = self.store.load_open_robot_trades(account_id)
