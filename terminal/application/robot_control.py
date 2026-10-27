@@ -84,6 +84,19 @@ class RobotControlRejected(PersistenceError):
     """Raised when an operator control command is illegal from the current durable state."""
 
 
+# One internal authority for Telegram and backend close-all legality.
+# Keep these two states aligned with the existing Robot v0.1 control contract.
+ROBOT_CLOSE_ALL_ALLOWED_STATES = frozenset({
+    (ROBOT_RUNNING, READY),
+    (ROBOT_RUNNING, PAUSED),
+})
+
+
+def robot_close_all_is_legal(mode: str, recovery_status: str) -> bool:
+    """Pure state check shared by both ends of the existing close-all channel."""
+    return (mode, recovery_status) in ROBOT_CLOSE_ALL_ALLOWED_STATES
+
+
 def _clock(clock_ms: Callable[[], int] | None) -> Callable[[], int]:
     return clock_ms or (lambda: int(time.time() * 1000))
 
@@ -358,7 +371,7 @@ def close_all_now(
         runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
         if runtime is None:
             raise RobotControlRejected("Robot runtime state is unavailable")
-        if runtime.mode != ROBOT_RUNNING or runtime.recovery_status not in (READY, PAUSED):
+        if not robot_close_all_is_legal(runtime.mode, runtime.recovery_status):
             raise RobotControlRejected(
                 "close_all_now is legal only from (ROBOT_RUNNING, READY) "
                 "or (ROBOT_RUNNING, PAUSED)"
