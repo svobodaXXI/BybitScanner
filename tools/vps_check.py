@@ -53,7 +53,7 @@ WRITE_TARGETS = ("runtime", "charts", "debug", "review_queue", "reports", "signa
 # Ports that must never listen on a non-loopback address on this host.
 GUARDED_PORTS = (80, 443, 8080, 8765, int(DEFAULT_TELEGRAM_PORT))
 # Owner-only switches that must stay off on a prepare-only server.
-OFF_SWITCHES = ("BYBITSCANNER_MIRROR_STANDALONE_ROBOT",)
+OFF_SWITCHES = ()  # Owner-approved MIRROR is a PAPER strategy, not a LIVE gate.
 # Keys whose *value* is secret: reported as set/unset only.
 SECRET_KEY = re.compile(r"(TOKEN|SECRET|API_KEY|PASSWORD)", re.IGNORECASE)
 _FALSE = {"", "0", "false", "no", "off"}
