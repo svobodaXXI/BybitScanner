@@ -36,7 +36,7 @@ def reconcile_fixture(candidates=(), trades=()):
         reason="earlier uncertain close",
     )
     reconciling = SimpleNamespace(
-        mode="ROBOT_RUNNING", recovery_status="RECONCILING", reason=None,
+        mode="ROBOT_RUNNING", recovery_status="RECONCILING", reason=None, version=3,
     )
     paused = SimpleNamespace(
         mode="ROBOT_RUNNING", recovery_status="PAUSED", reason=None,
