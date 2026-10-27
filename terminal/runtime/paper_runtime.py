@@ -477,11 +477,29 @@ class ScannerControlRuntime:
                 self._start_inflight.set()
                 failure_reason = None
                 try:
-                    self._scan_pass(
-                        control_checkpoint=self._control_checkpoint,
-                        child_started=self._child_started,
-                        stop_requested=self._child_stop_requested,
-                    )
+                    # One owner START retains RUNNING across successful passes.
+                    # Child isolation remains one process per pass. A failed
+                    # child ends the session rather than retrying blindly.
+                    while not self._stop.is_set():
+                        current = self._store().get_scanner_runtime_state(
+                            self._account_id
+                        )
+                        if current is None or current.mode == SCANNER_STOPPED:
+                            break
+                        if current.mode == SCANNER_PAUSED:
+                            self._stop.wait(0.2)
+                            continue
+                        if current.mode != SCANNER_RUNNING:
+                            raise ScannerControlRuntimeError("unknown_scanner_mode")
+                        self._scan_pass(
+                            control_checkpoint=self._control_checkpoint,
+                            child_started=self._child_started,
+                            stop_requested=self._child_stop_requested,
+                        )
+                        # Respect the configured interval between *completed*
+                        # passes without starting another child during PAUSE.
+                        if self._stop.wait(self._scan_interval_s):
+                            break
                 except Exception as error:
                     failure_reason = self._process_failure_reason(error)
                     print(f"[SCANNER CONTROL RUNTIME ERROR] error={error}")
@@ -494,7 +512,9 @@ class ScannerControlRuntime:
                         current = self._store().get_scanner_runtime_state(
                             self._account_id
                         )
-                        if current is not None and current.mode == SCANNER_RUNNING:
+                        if current is not None and current.mode in (
+                            SCANNER_RUNNING, SCANNER_PAUSED,
+                        ):
                             self._store().update_scanner_runtime_state(
                                 self._account_id,
                                 mode=SCANNER_STOPPED,
@@ -521,6 +541,14 @@ class ScannerControlRuntime:
             return False
         try:
             current = self._store().get_scanner_runtime_state(self._account_id)
+            if self._start_confirmed.is_set():
+                # Subsequent passes use fresh children under the original
+                # owner START; never overwrite an intervening STOP/PAUSE.
+                if current is None or current.mode not in (
+                    SCANNER_RUNNING, SCANNER_PAUSED,
+                ):
+                    return False
+                return True
             if current is None or current.mode != SCANNER_STOPPED:
                 raise ScannerControlRuntimeError(
                     "Scanner child started from a non-stopped durable state"

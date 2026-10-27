@@ -206,14 +206,17 @@ class ScannerControlRuntimeTests(unittest.TestCase):
 
 
 class ScannerControlRuntimeRealThreadTests(unittest.TestCase):
-    def test_real_background_thread_scans_using_its_own_store_connection(self):
+    def test_one_start_continues_until_explicit_stop(self):
         with tempfile.TemporaryDirectory() as temp:
             db_path = Path(temp) / "terminal.db"
-            scanned = threading.Event()
+            calls = []
+            second_pass = threading.Event()
 
             def scan_once(*, child_started, **_callbacks):
-                self.assertTrue(child_started(6262))
-                scanned.set()
+                self.assertTrue(child_started(6262 + len(calls)))
+                calls.append(True)
+                if len(calls) >= 2:
+                    second_pass.set()
 
             runtime = ScannerControlRuntime(
                 lambda: SQLiteStore.open(db_path),
@@ -225,41 +228,69 @@ class ScannerControlRuntimeRealThreadTests(unittest.TestCase):
             runtime.start()
             try:
                 self.assertEqual(runtime.start_scanner().mode, SCANNER_RUNNING)
-                self.assertTrue(scanned.wait(timeout=5.0))
-                deadline = time.monotonic() + 5
-                while runtime.status().mode != SCANNER_STOPPED and time.monotonic() < deadline:
-                    time.sleep(0.01)
+                self.assertTrue(second_pass.wait(timeout=5.0))
+                self.assertEqual(runtime.status().mode, SCANNER_RUNNING)
+                self.assertEqual(runtime.stop_scanner().mode, SCANNER_STOPPED)
+                count = len(calls)
+                time.sleep(0.20)
+                self.assertEqual(len(calls), count)
             finally:
                 runtime.close()
 
-            verify_store = SQLiteStore.open(db_path)
-            try:
-                state = verify_store.get_scanner_runtime_state(ACCOUNT_ID)
-            finally:
-                verify_store.close()
-            self.assertEqual(state.mode, SCANNER_STOPPED)
-
-    def test_one_start_runs_only_one_normal_pass(self):
+    def test_pause_between_passes_prevents_new_child_until_resume(self):
         with tempfile.TemporaryDirectory() as temp:
+            first_completed = threading.Event()
             calls = []
-
             def scan_once(*, child_started, **_callbacks):
                 self.assertTrue(child_started(7272))
                 calls.append(True)
+                first_completed.set()
 
             runtime = ScannerControlRuntime(
                 lambda: SQLiteStore.open(Path(temp) / "paper.sqlite3"),
-                ACCOUNT_ID,
-                scan_pass=scan_once,
+                ACCOUNT_ID, scan_pass=scan_once,
+                clock_ms=lambda: int(time.time() * 1000),
+                scan_interval_s=0.25,
+            )
+            runtime.start()
+            try:
+                runtime.start_scanner()
+                self.assertTrue(first_completed.wait(timeout=5.0))
+                self.assertEqual(runtime.pause_scanner().mode, SCANNER_PAUSED)
+                time.sleep(0.50)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(runtime.resume_scanner().mode, SCANNER_RUNNING)
+                deadline = time.monotonic() + 5.0
+                while len(calls) < 2 and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertGreaterEqual(len(calls), 2)
+                runtime.stop_scanner()
+            finally:
+                runtime.close()
+
+    def test_child_error_stops_session_without_retry(self):
+        with tempfile.TemporaryDirectory() as temp:
+            calls = []
+            def failed_scan(*, child_started, **_callbacks):
+                self.assertTrue(child_started(8282))
+                calls.append(True)
+                raise RuntimeError("simulated_child_failure")
+            runtime = ScannerControlRuntime(
+                lambda: SQLiteStore.open(Path(temp) / "paper.sqlite3"),
+                ACCOUNT_ID, scan_pass=failed_scan,
                 clock_ms=lambda: int(time.time() * 1000),
                 scan_interval_s=0.05,
             )
             runtime.start()
             try:
                 runtime.start_scanner()
-                time.sleep(0.20)
-                self.assertEqual(calls, [True])
+                deadline = time.monotonic() + 5.0
+                while runtime.status().mode != SCANNER_STOPPED and time.monotonic() < deadline:
+                    time.sleep(0.01)
                 self.assertEqual(runtime.status().mode, SCANNER_STOPPED)
+                self.assertEqual(runtime.status().reason, "scanner_process_error:RuntimeError")
+                time.sleep(0.15)
+                self.assertEqual(len(calls), 1)
             finally:
                 runtime.close()
 
