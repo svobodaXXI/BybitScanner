@@ -1,5 +1,6 @@
 ﻿from pathlib import Path
 from datetime import datetime
+import hashlib
 import json
 import re
 import time
@@ -418,9 +419,30 @@ def _request_close_all_confirmation(callback_query):
         )
 
 
+def _robot_close_all_callback_action_id(callback_query):
+    """Tie a retried Telegram delivery to its original PAPER close action.
+
+    Telegram callback_query.id uniquely identifies the confirmed button tap.
+    We hash it into the existing opaque client_action_id rather than storing
+    Telegram data in PAPER commands. Separate confirmation taps remain separate
+    operator actions; legacy callers without callback IDs keep their default.
+    """
+    callback_id = callback_query.get("id")
+    if not isinstance(callback_id, str) or not callback_id:
+        return None
+    digest = hashlib.sha256(
+        ("robot-close-all-confirm" + chr(0) + callback_id).encode("utf-8")
+    ).hexdigest()[:32]
+    return f"robot-close-all-cb-{digest}"
+
+
 def _confirm_close_all_now(callback_query):
+    action_id = _robot_close_all_callback_action_id(callback_query)
     try:
-        result = close_all_now(http_post=_post_robot_close_all_now)
+        result = close_all_now(
+            http_post=_post_robot_close_all_now,
+            **({"client_action_id": action_id} if action_id is not None else {}),
+        )
     except RobotControlRejected as exc:
         _answer_callback(
             callback_query.get("id"),
