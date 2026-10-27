@@ -1882,7 +1882,7 @@ class PaperRuntime:
     ):
         return self._robot_api.full_close(
             request, market_book=self._robot_execution_book(request.symbol, evidence),
-            identity=identity,
+            **({"identity": identity} if identity is not None else {}),
         )
 
     def add_bybit_account(self, display_name: str, api_key: str, api_secret: str) -> dict[str, object]:
