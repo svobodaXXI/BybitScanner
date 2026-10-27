@@ -328,6 +328,121 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         send_mock.assert_called_once()
         self.assertIn("Отменено", send_mock.call_args.args[2])
 
+    @staticmethod
+    def _private_paper_callback(callback_id, command):
+        callback = _owner_callback(callback_id, command)
+        callback["message"]["chat"]["type"] = "private"
+        return callback
+
+    def test_paper_close_requires_its_own_confirmation_without_dispatch(self):
+        callback = self._private_paper_callback("paper-offer", "paper_close_all")
+        with patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "42"), \
+             patch.object(telegram_review, "_post_paper_close_all") as post, \
+             patch.object(telegram_review.telegram_bot, "send_message") as send, \
+             patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._process_callback(callback)
+        post.assert_not_called()
+        self.assertIn("ВСЕХ PAPER-позиций", answer.call_args.args[1])
+        self.assertIn("ручные + Robot", send.call_args.args[2])
+        markup = send.call_args.kwargs["reply_markup"]
+        self.assertEqual(markup["inline_keyboard"][0][0]["callback_data"],
+                         "robot:cmd:paper_close_all_confirm")
+
+    def test_paper_confirm_success_uses_single_route_scoped_action(self):
+        callback = self._private_paper_callback("paper-confirm", "paper_close_all_confirm")
+        action_id = telegram_review._paper_close_all_callback_action_id(callback)
+        self.assertNotEqual(action_id, telegram_review._robot_close_all_callback_action_id(callback))
+        result = {
+            "ok": True, "client_action_id": action_id,
+            "results": [{"status": "completed"}], "positions": [],
+        }
+        with patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "42"), \
+             patch.object(telegram_review, "_post_paper_close_all", return_value=result) as post, \
+             patch.object(telegram_review, "close_all_now") as robot_only, \
+             patch.object(telegram_review, "_send_robot_status_panel") as panel, \
+             patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._process_callback(callback)
+        post.assert_called_once_with({"client_action_id": action_id})
+        robot_only.assert_not_called()
+        self.assertIn("PAPER FLAT", answer.call_args.args[1])
+        panel.assert_called_once()
+
+    def test_paper_confirm_replay_is_stable_but_new_tap_gets_new_id(self):
+        a = self._private_paper_callback("same-tap", "paper_close_all_confirm")
+        b = self._private_paper_callback("different-tap", "paper_close_all_confirm")
+        self.assertEqual(telegram_review._paper_close_all_callback_action_id(a),
+                         telegram_review._paper_close_all_callback_action_id(dict(a)))
+        self.assertNotEqual(telegram_review._paper_close_all_callback_action_id(a),
+                            telegram_review._paper_close_all_callback_action_id(b))
+
+    def test_paper_cancel_is_noop_without_robot_side_effects(self):
+        callback = self._private_paper_callback("paper-cancel", "paper_close_all_cancel")
+        with patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "42"), \
+             patch.object(telegram_review, "_post_paper_close_all") as post, \
+             patch.object(telegram_review, "close_all_now") as robot, \
+             patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._process_callback(callback)
+        post.assert_not_called()
+        robot.assert_not_called()
+        answer.assert_called_once_with("paper-cancel", "Закрытие PAPER отменено")
+
+    def test_group_or_forwarded_paper_confirmation_is_refused(self):
+        for chat in ({"id": -1001234, "type": "supergroup"}, {"id": 42, "type": "group"},
+                     {"id": -1001234, "type": "private"}, {"id": 42}):
+            with self.subTest(chat=chat):
+                callback = self._private_paper_callback("paper-group", "paper_close_all_confirm")
+                callback["message"]["chat"] = chat
+                with patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "42"), \
+                     patch.object(telegram_review, "_post_paper_close_all") as post, \
+                     patch.object(telegram_review, "_answer_callback") as answer:
+                    telegram_review._process_callback(callback)
+                post.assert_not_called()
+                self.assertIn("личном чате", answer.call_args.args[1])
+
+    def test_non_owner_paper_confirmation_never_posts(self):
+        callback = self._private_paper_callback("paper-other", "paper_close_all_confirm")
+        callback["from"]["id"] = 99
+        with patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "42"), \
+             patch.object(telegram_review, "_post_paper_close_all") as post, \
+             patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._process_callback(callback)
+        post.assert_not_called()
+        answer.assert_called_once_with("paper-other", "Недостаточно прав")
+
+    def test_paper_success_requires_verified_flat_result(self):
+        callback = self._private_paper_callback("paper-incomplete", "paper_close_all_confirm")
+        action_id = telegram_review._paper_close_all_callback_action_id(callback)
+        cases = (
+            {"ok": True, "client_action_id": action_id, "results": [], "positions": [{"symbol": "BTCUSDT"}]},
+            {"ok": True, "client_action_id": action_id, "results": [{"status": "unknown"}], "positions": []},
+            {"ok": True, "client_action_id": "wrong", "results": [], "positions": []},
+            {"ok": True, "client_action_id": action_id, "results": [], "positions": None},
+            {"ok": True, "client_action_id": action_id, "results": [], "positions": [] , "something": 0},
+            {"ok": True, "client_action_id": action_id, "results": ["bad"], "positions": []},
+        )
+        for i, body in enumerate(cases):
+            if i == 4:
+                continue  # Other optional backend fields are permitted.
+            with self.subTest(i=i), \
+                 patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "42"), \
+                 patch.object(telegram_review, "_post_paper_close_all", return_value=body) as post, \
+                 patch.object(telegram_review, "_send_robot_status_panel") as panel, \
+                 patch.object(telegram_review, "_answer_callback") as answer:
+                telegram_review._process_callback(callback)
+                post.assert_called_once()
+                panel.assert_not_called()
+                self.assertIn("не подтверждено", answer.call_args.args[1])
+
+    def test_paper_confirm_missing_callback_id_fails_closed(self):
+        callback = self._private_paper_callback("paper-no-id", "paper_close_all_confirm")
+        callback.pop("id")
+        with patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "42"), \
+             patch.object(telegram_review, "_post_paper_close_all") as post, \
+             patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._process_callback(callback)
+        post.assert_not_called()
+        self.assertIn("не подтверждено", answer.call_args.args[1])
+
     def test_non_owner_control_callback_is_rejected(self):
         callback_query = {
             "id": "cb-6",
