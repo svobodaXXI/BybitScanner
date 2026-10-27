@@ -23,6 +23,7 @@ import pandas as pd
 
 import mirror_retest_robot as mirror
 import mirror_scanner as ms
+import pattern_freshness as pf
 import robot_candidate_store
 import robot_l_shape
 from geometry.naked_retest import PHASE_CAMPAIGN_ACTIVE
@@ -30,7 +31,7 @@ from mirror_levels.levels import SOURCE_SWING_ZONE, horizontal_level
 from terminal.application.robot_admission import admit_robot_candidate
 from terminal.application.robot_autopilot import OUTCOME_ALLOW
 from terminal.application.robot_autopilot_shadow import (
-    SOURCE_SCANNER, admit_paper_auto_candidate, observe_shadow_candidate,
+    SOURCE_SCANNER, admit_arrived_auto_candidate, admit_paper_auto_candidate, observe_shadow_candidate,
 )
 from terminal.application.robot_control import start_robot
 from terminal.application.trading_accounts import paper_account_manager
@@ -269,24 +270,26 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
             started = start_robot(database_path=self.db)
             self.assertEqual((started.mode, started.recovery_status), ("ROBOT_RUNNING", "READY"))
 
-            # 2. Autopilot SHADOW ALLOW -> PAPER_AUTO admission (the existing first-eligible path).
+            # 2. Real arrived-candidate PAPER_AUTO route: no SHADOW pre-approval,
+            # no direct admit_paper_auto_candidate and no stubbed freshness.
             store = SQLiteStore.open(self.db)
             try:
                 autopilot = store.get_robot_autopilot_state(ACCOUNT)
-                store.update_robot_autopilot_state(ACCOUNT, mode="SHADOW", expected_version=autopilot.version,
-                                                   updated_at_ms=int(time.time() * 1000))
-                observed = observe_shadow_candidate(
+                store.update_robot_autopilot_state(
+                    ACCOUNT, mode="PAPER_AUTO", expected_version=autopilot.version,
+                    updated_at_ms=int(time.time() * 1000))
+
+                def freshness(symbol, snapshot):
+                    evidence = pf.load_pattern_closed_candles(
+                        symbol, snapshot, candle_loader=lambda *args, **kwargs: self.timeline.frame(self.timeline.t),
+                        now_ms=self.timeline.t + 1000)
+                    return pf.pattern_candidate_fresh(snapshot, evidence)
+
+                admitted = admit_arrived_auto_candidate(
                     store, ACCOUNT, source=SOURCE_SCANNER, candidate_ref=candidate_ref,
-                    protection_healthy=lambda: True, candidate_store_dir=self.candidates,
-                    clock_ms=lambda: int(time.time() * 1000))
-                self.assertEqual(observed.result.outcome, OUTCOME_ALLOW, observed.result)
-                autopilot = store.get_robot_autopilot_state(ACCOUNT)
-                store.update_robot_autopilot_state(ACCOUNT, mode="PAPER_AUTO", expected_version=autopilot.version,
-                                                   updated_at_ms=int(time.time() * 1000))
-                admitted = admit_paper_auto_candidate(
-                    store, ACCOUNT, allow_decision_id=observed.decision.decision_id, source=SOURCE_SCANNER,
-                    protection_healthy=lambda: True, candidate_fresh=lambda *_: True,
+                    protection_healthy=lambda: True, candidate_fresh=freshness,
                     candidate_store_dir=self.candidates, clock_ms=lambda: int(time.time() * 1000))
+                self.assertIsNotNone(admitted)
                 self.assertEqual(admitted.result.outcome, OUTCOME_ALLOW, admitted.result)
                 record = store.get_robot_candidate(admitted.decision.resulting_candidate_id or candidate_ref)
             finally:
@@ -294,7 +297,7 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
             self.assertEqual((record.status, record.robot_state["phase"], record.robot_state["pattern"]),
                              ("APPROVED", robot_l_shape.PHASE_RETEST_DETECTED, "MIRROR"))
             candidate_id = record.candidate_id
-            report["admission"] = {"autopilot": "SHADOW ALLOW -> PAPER_AUTO ALLOW", "candidate": candidate_id}
+            report["admission"] = {"autopilot": "PAPER_AUTO arrived-candidate ALLOW", "candidate": candidate_id}
 
             # 3. Entry: confirmation already CLOSED; submit the shared 1-WV LIMIT immediately
             # after admission and campaign/R0 gates, without a second retest candle.
