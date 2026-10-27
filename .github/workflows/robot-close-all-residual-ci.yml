@@ -9,6 +9,7 @@ on:
       - "tests/test_robot_close_all_stable_identity.py"
       - "tests/test_robot_close_all_owner_preflight.py"
       - "tests/test_robot_close_all_pending_work_preflight.py"
+      - "tests/test_robot_close_all_trade_ledger_preflight.py"
       - "tests/test_robot_close_all_residual_proof.py"
       - ".github/workflows/robot-close-all-residual-ci.yml"
 
@@ -44,6 +45,7 @@ jobs:
           tests/test_robot_close_all_stable_identity.py
           tests/test_robot_close_all_owner_preflight.py
           tests/test_robot_close_all_pending_work_preflight.py
+          tests/test_robot_close_all_trade_ledger_preflight.py
       - name: Robot close-all residual exposure regression
         run: >-
           python -m unittest -v
@@ -51,3 +53,4 @@ jobs:
           tests.test_robot_close_all_stable_identity
           tests.test_robot_close_all_owner_preflight
           tests.test_robot_close_all_pending_work_preflight
+          tests.test_robot_close_all_trade_ledger_preflight
