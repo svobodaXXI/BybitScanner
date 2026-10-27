@@ -484,13 +484,21 @@ class ScannerControlRuntime:
                         current = self._store().get_scanner_runtime_state(
                             self._account_id
                         )
-                        if current is None or current.mode == SCANNER_STOPPED:
+                        if current is None:
                             break
-                        if current.mode == SCANNER_PAUSED:
-                            self._stop.wait(0.2)
-                            continue
-                        if current.mode != SCANNER_RUNNING:
-                            raise ScannerControlRuntimeError("unknown_scanner_mode")
+                        if not self._start_confirmed.is_set():
+                            # First child alone is permitted from STOPPED:
+                            # RUNNING is committed only after PID confirmation.
+                            if current.mode != SCANNER_STOPPED:
+                                raise ScannerControlRuntimeError("invalid_initial_scanner_mode")
+                        else:
+                            if current.mode == SCANNER_STOPPED:
+                                break
+                            if current.mode == SCANNER_PAUSED:
+                                self._stop.wait(0.2)
+                                continue
+                            if current.mode != SCANNER_RUNNING:
+                                raise ScannerControlRuntimeError("unknown_scanner_mode")
                         self._scan_pass(
                             control_checkpoint=self._control_checkpoint,
                             child_started=self._child_started,
