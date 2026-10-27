@@ -14,6 +14,7 @@ from robot_telegram_feed import (
     build_observation_card,
     build_opened_card,
     build_robot_close_all_confirmation_keyboard,
+    build_paper_close_all_confirmation_keyboard,
     build_robot_control_keyboard,
     build_robot_tab_keyboard,
     format_paper_positions_view,
@@ -133,6 +134,9 @@ class RobotTelegramFeedTests(unittest.TestCase):
         self.assertEqual(parse_robot_control_callback("robot:cmd:close_all"), "close_all")
         self.assertEqual(parse_robot_control_callback("robot:cmd:close_all_confirm"), "close_all_confirm")
         self.assertEqual(parse_robot_control_callback("robot:cmd:close_all_cancel"), "close_all_cancel")
+        self.assertEqual(parse_robot_control_callback("robot:cmd:paper_close_all"), "paper_close_all")
+        self.assertEqual(parse_robot_control_callback("robot:cmd:paper_close_all_confirm"), "paper_close_all_confirm")
+        self.assertEqual(parse_robot_control_callback("robot:cmd:paper_close_all_cancel"), "paper_close_all_cancel")
         self.assertIsNone(parse_robot_control_callback("robot:cmd:unknown"))
         self.assertIsNone(parse_robot_control_callback("robot:approve:candidate"))
         self.assertIsNone(parse_robot_control_callback("robot:view:feed"))
@@ -142,24 +146,34 @@ class RobotTelegramFeedTests(unittest.TestCase):
         buttons = [button for row in keyboard for button in row]
         self.assertEqual(len(buttons), 1)
         self.assertEqual(buttons[0]["callback_data"], "robot:cmd:start")
+        self.assertEqual(buttons[1]["callback_data"], "robot:cmd:paper_close_all")
 
     def test_control_keyboard_running_ready_offers_pause_close_all_and_stop(self):
         keyboard = build_robot_control_keyboard("ROBOT_RUNNING", "READY")["inline_keyboard"]
         buttons = [button for row in keyboard for button in row]
         callbacks = [button["callback_data"] for button in buttons]
-        self.assertEqual(callbacks, ["robot:cmd:pause", "robot:cmd:close_all", "robot:cmd:stop"])
+        self.assertEqual(callbacks, ["robot:cmd:pause", "robot:cmd:close_all", "robot:cmd:stop", "robot:cmd:paper_close_all"])
 
     def test_control_keyboard_running_paused_toggles_to_resume(self):
         keyboard = build_robot_control_keyboard("ROBOT_RUNNING", "PAUSED")["inline_keyboard"]
         buttons = [button for row in keyboard for button in row]
         callbacks = [button["callback_data"] for button in buttons]
-        self.assertEqual(callbacks, ["robot:cmd:resume", "robot:cmd:close_all", "robot:cmd:stop"])
+        self.assertEqual(callbacks, ["robot:cmd:resume", "robot:cmd:close_all", "robot:cmd:stop", "robot:cmd:paper_close_all"])
 
     def test_control_keyboard_reconciliation_required_offers_no_buttons(self):
         stopped = build_robot_control_keyboard("ROBOT_STOPPED", "RECONCILIATION_REQUIRED")
         running = build_robot_control_keyboard("ROBOT_RUNNING", "RECONCILIATION_REQUIRED")
         self.assertEqual(stopped["inline_keyboard"], [])
         self.assertEqual(running["inline_keyboard"], [])
+
+    def test_paper_confirmation_is_separate_from_robot_only_keyboard(self):
+        keyboard = build_paper_close_all_confirmation_keyboard()["inline_keyboard"]
+        self.assertEqual(
+            [button["callback_data"] for row in keyboard for button in row],
+            ["robot:cmd:paper_close_all_confirm", "robot:cmd:paper_close_all_cancel"],
+        )
+        legacy = build_robot_close_all_confirmation_keyboard()["inline_keyboard"]
+        self.assertEqual(legacy[0][0]["callback_data"], "robot:cmd:close_all_confirm")
 
     def test_close_all_confirmation_keyboard_has_confirm_and_cancel(self):
         keyboard = build_robot_close_all_confirmation_keyboard()["inline_keyboard"]
