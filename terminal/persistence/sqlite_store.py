@@ -3544,6 +3544,23 @@ class SQLiteStore:
             for row in self._connection.execute(query, params)
         }
 
+    def load_active_paper_limits_for_account(
+        self, trading_account_id: TradingAccountId,
+    ) -> tuple[PaperLimitOrderRecord, ...]:
+        """All working PAPER LIMITs for post-flatten cancellation and proof.
+
+        Account scoped, includes symbols without a current position, and
+        retains the immutable source rows for normal cancel execution.
+        """
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT * FROM paper_limit_orders
+               WHERE trading_account_id = ? AND status IN ('open', 'partially_filled')
+               ORDER BY symbol, created_at_ms, order_id""",
+            (trading_account_id.value,),
+        )
+        return tuple(_paper_limit_from_row(row) for row in rows)
+
     def load_active_paper_limits(
         self, trading_account_id: TradingAccountId, symbol: Symbol,
     ) -> tuple[PaperLimitOrderRecord, ...]:
