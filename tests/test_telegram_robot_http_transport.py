@@ -74,5 +74,50 @@ class RobotHttpTransportTests(unittest.TestCase):
                 post.assert_called_once()
 
 
+class TelegramCloseAllCallbackIdentityTests(unittest.TestCase):
+    def test_same_confirmed_callback_preserves_action_id(self):
+        callback = {"id": "telegram-opaque-123"}
+        a = review._robot_close_all_callback_action_id(callback)
+        b = review._robot_close_all_callback_action_id(dict(callback))
+        self.assertEqual(a, b)
+        self.assertTrue(a.startswith("robot-close-all-cb-"))
+        self.assertLessEqual(len(a), 128)
+        self.assertNotIn(callback["id"], a)
+
+    def test_distinct_confirmations_are_distinct_commands(self):
+        first = review._robot_close_all_callback_action_id({"id": "confirmation-1"})
+        second = review._robot_close_all_callback_action_id({"id": "confirmation-2"})
+        self.assertNotEqual(first, second)
+
+    def test_callback_confirm_passes_one_stable_id_without_ui_change(self):
+        callback = {"id": "same-callback"}
+        result = {"ok": True, "results": []}
+        with patch.object(review, "close_all_now", return_value=result) as dispatch, \\
+                patch.object(review, "_answer_callback") as ack, \\
+                patch.object(review, "_send_robot_status_panel") as status:
+            self.assertIs(review._confirm_close_all_now(callback), result)
+            self.assertIs(review._confirm_close_all_now(callback), result)
+        self.assertEqual(dispatch.call_count, 2)
+        calls = [call.kwargs for call in dispatch.call_args_list]
+        self.assertEqual(calls[0], calls[1])
+        self.assertEqual(
+            calls[0]["client_action_id"],
+            review._robot_close_all_callback_action_id(callback),
+        )
+        self.assertIs(calls[0]["http_post"], review._post_robot_close_all_now)
+        self.assertEqual(ack.call_count, 2)
+        self.assertEqual(status.call_count, 2)
+
+    def test_missing_callback_id_keeps_original_call_contract(self):
+        self.assertIsNone(review._robot_close_all_callback_action_id({}))
+        with patch.object(review, "close_all_now", return_value={"ok": True}) as dispatch, \\
+                patch.object(review, "_answer_callback"), \\
+                patch.object(review, "_send_robot_status_panel"):
+            review._confirm_close_all_now({})
+        dispatch.assert_called_once_with(
+            http_post=review._post_robot_close_all_now,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
