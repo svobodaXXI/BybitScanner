@@ -17,20 +17,24 @@ from terminal.api.models import (
 from terminal.api.rest import TerminalCommandApi
 from terminal.application.command_identity import CommandIdentityCandidate
 from terminal.application.trading_application import ApplicationResult
-from terminal.domain.models import TradingAccountId
+from terminal.domain.models import Symbol, TradingAccountId
 from terminal.runtime.paper_runtime import PaperRuntime
 
 
 def _runtime_for_symbols(*symbols):
     candidates = [
         SimpleNamespace(
-            symbol=SimpleNamespace(value=symbol),
+            candidate_id=f"candidate-{i}-{symbol}",
+            symbol=Symbol(symbol),
+            status="OPEN",
+            robot_state={},
             signal_snapshot={"pattern": "Falling Wedge"},
         )
-        for symbol in symbols
+        for i, symbol in enumerate(symbols)
     ]
     store = SimpleNamespace(
         load_robot_candidates_by_status=Mock(return_value=candidates),
+        load_active_robot_candidate_states=Mock(return_value=candidates),
         get_robot_runtime_state=Mock(),
         update_robot_runtime_state=Mock(),
     )

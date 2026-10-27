@@ -3737,8 +3737,32 @@ class PaperRuntime:
             self.store.load_robot_candidates_by_status(self._account_id, ("OPEN",)),
             key=lambda item: item.symbol.value,
         )
+        # A PAPER symbol has one net position. If ownership is ambiguous,
+        # never send multiple aggregate MARKET closes against that net lot.
+        # Reuse the same durable ownership proof used by robot_reconcile().
+        # All checks run on the serialized PAPER owner before any dispatch.
+        unproven_owner_symbols = set()
+        candidate_symbols = {item.symbol for item in open_candidates}
+        try:
+            for symbol in candidate_symbols:
+                owners = active_robot_owner_candidate_ids(
+                    self.store, self._account_id, symbol,
+                )
+                if len(owners) != 1 or any(
+                    item.candidate_id != owners[0]
+                    for item in open_candidates if item.symbol == symbol
+                ):
+                    unproven_owner_symbols.add(symbol.value)
+        except Exception:
+            # An unavailable ownership read is not evidence that dispatch is
+            # safe; hold ALL closes until the existing reconcile path proves it.
+            unproven_owner_symbols.update(symbol.value for symbol in candidate_symbols)
+
+        # Prevent partial dispatch when a single symbol is not proven; the
+        # operator can reconcile once rather than recover a half-closed batch.
+        ownership_blocked = bool(unproven_owner_symbols)
         results = []
-        any_unconfirmed = False
+        any_unconfirmed = ownership_blocked
         for candidate in open_candidates:
             symbol = candidate.symbol.value
             digest = hashlib.sha256(
@@ -3746,7 +3770,16 @@ class PaperRuntime:
             ).hexdigest()[:32]
             is_box = candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
             try:
-                if is_box:
+                if ownership_blocked:
+                    result = CommandResult(
+                        f"robot-close-all-{digest}",
+                        CommandResultStatus.UNAVAILABLE,
+                        "robot_owner_unproven",
+                        "Robot ownership requires reconciliation",
+                        None,
+                        True,
+                    )
+                elif is_box:
                     result = self._robot_close_box_candidate(candidate)
                 else:
                     # The existing PAPER Market engine already guarantees

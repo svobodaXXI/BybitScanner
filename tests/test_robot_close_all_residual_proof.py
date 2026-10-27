@@ -13,7 +13,7 @@ from unittest.mock import Mock
 from terminal.api.models import (
     ClientActionId, CloseAllCommandRequest, CommandResult, CommandResultStatus,
 )
-from terminal.domain.models import TradingAccountId
+from terminal.domain.models import Symbol, TradingAccountId
 from terminal.runtime.paper_runtime import PaperRuntime
 
 
@@ -24,13 +24,17 @@ def fake_runtime(*, robot_symbols=("BOTUSDT",), remaining=(),
                  status=CommandResultStatus.COMPLETED, inventory_error=None):
     candidates = [
         SimpleNamespace(
-            symbol=SimpleNamespace(value=symbol),
+            candidate_id=f"candidate-{i}-{symbol}",
+            symbol=Symbol(symbol),
+            status="OPEN",
+            robot_state={},
             signal_snapshot={"pattern": "Falling Wedge"},
         )
-        for symbol in robot_symbols
+        for i, symbol in enumerate(robot_symbols)
     ]
     store = SimpleNamespace(
         load_robot_candidates_by_status=Mock(return_value=candidates),
+        load_active_robot_candidate_states=Mock(return_value=candidates),
         get_robot_runtime_state=Mock(return_value=SimpleNamespace(
             mode="ROBOT_RUNNING", recovery_status="READY", version=7,
         )),
