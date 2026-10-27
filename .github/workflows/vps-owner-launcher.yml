@@ -1,0 +1,23 @@
+name: VPS owner launcher offline tests
+on:
+  pull_request:
+    paths:
+      - 'tools/vps_owner_launcher.py'
+      - 'tests/test_vps_owner_launcher.py'
+      - '.github/workflows/vps-owner-launcher.yml'
+  push:
+    paths:
+      - 'tools/vps_owner_launcher.py'
+      - 'tests/test_vps_owner_launcher.py'
+      - '.github/workflows/vps-owner-launcher.yml'
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline fail-closed tests
+        run: python -m unittest -v tests.test_vps_owner_launcher
