@@ -305,5 +305,16 @@ class RuntimeIntentLinuxTests(unittest.TestCase):
         self.assertEqual(kwargs["env"], {"A": "1"})
 
 
+class VpsOneActionWiringTests(unittest.TestCase):
+    def test_core_requires_backend_but_not_telegram(self):
+        unit = repo_text("deploy/systemd/bybitscanner-paper-start.service")
+        self.assertIn("Requires=bybitscanner-paper-backend.service", unit)
+        self.assertIn("Wants=bybitscanner-telegram.service", unit)
+        self.assertNotIn("Requires=bybitscanner-paper-backend.service bybitscanner-telegram.service", unit)
+        self.assertIn("EnvironmentFile=/etc/bybitscanner/paper.env", unit)
+        self.assertIn("tools.runtime_intent --no-telegram ALL", unit)
+        self.assertIn("Restart=no", unit)
+
+
 if __name__ == "__main__":
     unittest.main()
