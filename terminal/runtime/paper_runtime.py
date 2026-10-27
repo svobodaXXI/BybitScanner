@@ -3569,7 +3569,10 @@ class PaperRuntime:
             # Namespace it separately from Robot-owned Close-All so the two
             # routes cannot claim the same order identity for one action ID.
             market_digest = hashlib.sha256(
-                f"paper-account-close-all\\0{request.client_action_id.value}\\0{symbol}".encode("utf-8")
+                (
+                    "paper-account-close-all" + chr(0)
+                    + request.client_action_id.value + chr(0) + symbol
+                ).encode("utf-8")
             ).hexdigest()[:32]
             order_link_id = (
                 f"tw_{market_digest}{sum(bytes.fromhex(market_digest)) & 0xF:x}"
