@@ -172,10 +172,27 @@ class PaperOpenPositionsResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class PaperCloseAllSymbolReport:
+    """Verified PAPER economics, or explicit unproven evidence per symbol."""
+
+    symbol: str
+    owner: str
+    evidence_status: str
+    entry_price: Decimal | None = None
+    exit_price: Decimal | None = None
+    quantity: Decimal | None = None
+    gross_pnl_usdt: Decimal | None = None
+    fees_costs_usdt: Decimal | None = None
+    net_pnl_usdt: Decimal | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CloseAllCommandResponse:
     client_action_id: str
     results: tuple[CommandResult, ...]
     positions: tuple[PaperOpenPositionProjection, ...]
+    symbol_reports: tuple[PaperCloseAllSymbolReport, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
