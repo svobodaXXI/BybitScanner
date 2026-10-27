@@ -71,6 +71,10 @@ from terminal.application.live_account_reconciliation import (
 )
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
 from terminal.application.robot_manual_close_proof import prove_robot_manual_close
+from terminal.application.paper_close_all_report import (
+    paper_close_all_market_link, unproven, verified_manual_close,
+    verified_robot_close,
+)
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
 from terminal.application.ikigai_box_catchup import (
     build_box_manual_close_market_plan,
@@ -3599,6 +3603,46 @@ class PaperRuntime:
             request.client_action_id.value, tuple(results), refreshed.positions,
         )
 
+    def _paper_close_all_symbol_reports(
+        self, request: CloseAllCommandRequest, positions_before,
+        open_trades_before,
+    ):
+        """Economic proof only from the durable PAPER owner/store; no quote guesses."""
+        account = self._paper_account_id
+        robot_trades = {trade.symbol: trade for trade in open_trades_before}
+        reports = []
+        for before in positions_before:
+            symbol = before.position_key.symbol
+            robot_trade = robot_trades.get(symbol)
+            owner = "ROBOT" if robot_trade is not None else "MANUAL"
+            try:
+                after = self.store.get_position_projection(before.position_key)
+                if robot_trade is not None:
+                    current = self.store.get_robot_trade(robot_trade.trade_id)
+                    report = verified_robot_close(symbol.value, current, after)
+                else:
+                    link = paper_close_all_market_link(
+                        request.client_action_id.value, symbol.value,
+                    )
+                    fill = self.store.get_execution(ExecutionDedupKey(
+                        account, Category.LINEAR, ExecutionId("paper-exec-" + link),
+                    ))
+                    history = (
+                        self.store.load_executions_for_symbol(account, symbol)
+                        if fill is not None else ()
+                    )
+                    report = verified_manual_close(
+                        symbol=symbol.value, before=before, after=after,
+                        exit_fill=fill, fills=history, expected_link=link,
+                        account_id=account,
+                    )
+            except Exception:
+                # Diagnostics cannot turn an otherwise proven FLAT close into
+                # invented economics, nor claim a nonexistent execution.
+                report = unproven(symbol.value, owner, "economic_evidence_unavailable")
+            reports.append(report)
+        return tuple(reports)
+
     def coordinated_paper_close_all(
         self, request: CloseAllCommandRequest, *,
         evidence: Mapping[str, NormalizedOrderBook] | None = None,
@@ -3693,6 +3737,7 @@ class PaperRuntime:
             fail("robot_protection_obligation_unresolved")
 
         positions = self.store.load_open_position_projections(account_id)
+        initial_trades = tuple(trades)
         position_by_symbol = {item.position_key.symbol: item for item in positions}
         if any(symbol not in position_by_symbol for symbol in robot_symbols):
             fail("robot_open_trade_without_position")
@@ -3751,6 +3796,7 @@ class PaperRuntime:
         ):
             return CloseAllCommandResponse(
                 request.client_action_id.value, combined, manual.positions,
+                self._paper_close_all_symbol_reports(request, positions, initial_trades),
             )
         if self.store.load_open_robot_trades(account_id):
             fail("robot_trade_ledger_still_open")
@@ -3776,6 +3822,7 @@ class PaperRuntime:
             fail("paper_active_limits_remaining")
         return CloseAllCommandResponse(
             request.client_action_id.value, combined, self.open_positions().positions,
+            self._paper_close_all_symbol_reports(request, positions, initial_trades),
         )
 
     def _robot_close_box_candidate(self, candidate) -> CommandResult:
