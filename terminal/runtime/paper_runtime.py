@@ -123,6 +123,14 @@ from terminal.runtime.paper_context import (
 
 LOGGER = logging.getLogger(__name__)
 
+class PaperCloseAllRejected(RuntimeError):
+    """Owner-confirmed account-wide PAPER flatten cannot prove safe execution."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
 DIAGNOSTICS_QUEUE_LIMIT = 32
 
 
@@ -3589,6 +3597,179 @@ class PaperRuntime:
         refreshed = self.open_positions()
         return CloseAllCommandResponse(
             request.client_action_id.value, tuple(results), refreshed.positions,
+        )
+
+    def coordinated_paper_close_all(
+        self, request: CloseAllCommandRequest, *,
+        evidence: Mapping[str, NormalizedOrderBook] | None = None,
+    ) -> CloseAllCommandResponse:
+        """One owner-thread PAPER flatten, reusing existing Robot/manual close paths.
+
+        Fail closed on unknown ownership or pending protection; never let the
+        generic manual Close-All close a Robot-owned net position. Disable new
+        Robot admissions first and preserve protective EXIT limits until FLAT.
+        This does not automatically resume the Robot or PAPER_AUTO.
+        """
+        from terminal.application.robot_trade_ledger import prove_robot_open_trade_ledger
+
+        self.require_paper_mutations()  # Explicit PAPER-only account gate.
+        account_id = self._paper_account_id
+        runtime = self.store.get_robot_runtime_state(account_id)
+        if runtime is None:
+            raise PaperCloseAllRejected("robot_runtime_state_unavailable")
+        if runtime.mode == "ROBOT_RUNNING":
+            if runtime.recovery_status == "READY":
+                runtime = self.store.update_robot_runtime_state(
+                    account_id, mode="ROBOT_RUNNING", recovery_status="PAUSED",
+                    reason="paper_close_all", expected_version=runtime.version,
+                    updated_at_ms=max(int(time.time() * 1000), runtime.updated_at_ms),
+                )
+            elif runtime.recovery_status != "PAUSED":
+                raise PaperCloseAllRejected("robot_reconciliation_required")
+        elif (runtime.mode, runtime.recovery_status) != ("ROBOT_STOPPED", "ROBOT_STOPPED"):
+            raise PaperCloseAllRejected("robot_reconciliation_required")
+
+        # PAPER_AUTO must not create fresh candidates when flatten is requested.
+        autopilot = self.store.get_robot_autopilot_state(account_id)
+        if autopilot is None:
+            raise PaperCloseAllRejected("autopilot_state_unavailable")
+        if autopilot.mode != "OFF":
+            self.store.update_robot_autopilot_state(
+                account_id, mode="OFF", reason="paper_close_all",
+                expected_version=autopilot.version,
+                updated_at_ms=max(int(time.time() * 1000), autopilot.updated_at_ms),
+            )
+
+        def fail(reason: str) -> None:
+            # The durable PAUSED gate already prevents new Robot entries. If
+            # Robot safety evidence is unresolved, additionally fence recovery.
+            current = self.store.get_robot_runtime_state(account_id)
+            if (
+                current is not None and current.mode == "ROBOT_RUNNING"
+                and current.recovery_status != "RECONCILIATION_REQUIRED"
+            ):
+                self.store.update_robot_runtime_state(
+                    account_id, mode="ROBOT_RUNNING",
+                    recovery_status="RECONCILIATION_REQUIRED",
+                    reason="paper_close_all: " + reason,
+                    expected_version=current.version,
+                    updated_at_ms=max(int(time.time() * 1000), current.updated_at_ms),
+                )
+            raise PaperCloseAllRejected(reason)
+
+        if runtime.mode == "ROBOT_RUNNING":
+            try:
+                sync = self.robot_synchronize_pending_entries()
+            except Exception:
+                fail("pending_robot_entry_sync_failed")
+            if sync.unresolved_candidate_ids or sync.still_pending_protection:
+                fail("pending_robot_entry_unresolved")
+        else:
+            if self.store.load_active_robot_entry_orders(account_id):
+                raise PaperCloseAllRejected("stopped_robot_has_active_entry_orders")
+
+        # Prove every Robot net position before the first Market dispatch.
+        candidates = self.store.load_robot_candidates_by_status(account_id, ("OPEN",))
+        trades = self.store.load_open_robot_trades(account_id)
+        if not prove_robot_open_trade_ledger(candidates, trades).valid:
+            fail("robot_trade_ledger_unproven")
+        robot_symbols = {item.symbol for item in candidates}
+        for symbol in robot_symbols:
+            owners = active_robot_owner_candidate_ids(self.store, account_id, symbol)
+            if len(owners) != 1 or not any(
+                item.candidate_id == owners[0] for item in candidates
+                if item.symbol == symbol
+            ):
+                fail("robot_owner_unproven")
+        if runtime.mode == "ROBOT_STOPPED" and robot_symbols:
+            raise PaperCloseAllRejected("stopped_robot_has_open_exposure")
+        if self.store.load_unresolved_paper_protection_obligations(account_id):
+            fail("robot_protection_obligation_unresolved")
+
+        positions = self.store.load_open_position_projections(account_id)
+        position_by_symbol = {item.position_key.symbol: item for item in positions}
+        if any(symbol not in position_by_symbol for symbol in robot_symbols):
+            fail("robot_open_trade_without_position")
+        # The existing serialized PAPER owner excludes concurrent book updates.
+        # Cancel only orders that could increase/open a net position. Preserve
+        # opposite-side protective EXIT LIMITs while there is exposure.
+        limits = self.store.load_active_paper_limits_for_account(account_id)
+        for limit in limits:
+            position = position_by_symbol.get(limit.symbol)
+            opening = (
+                position is None
+                or (position.side is PositionSide.LONG and limit.side is OrderSide.BUY)
+                or (position.side is PositionSide.SHORT and limit.side is OrderSide.SELL)
+            )
+            if not opening:
+                continue
+            digest = hashlib.sha256(
+                (request.client_action_id.value + chr(0) + limit.order_id.value).encode("utf-8")
+            ).hexdigest()[:32]
+            try:
+                result = self._robot_cancel_limit(PaperLimitCancelRequest(
+                    ClientActionId(f"paper-flatten-entry-{digest}"),
+                    limit.symbol.value, limit.order_id.value,
+                ))
+            except Exception:
+                fail("paper_entry_limit_cancel_failed")
+            if result.status is not CommandResultStatus.COMPLETED:
+                fail("paper_entry_limit_cancel_unconfirmed")
+
+        # No entry may refill the lot after preflight. The original Robot
+        # close path maintains Box slot ownership, stable non-Box identities,
+        # and actual trade economics. Only if it fully succeeds may the
+        # ordinary PAPER manual path close the remaining (manual) symbols.
+        robot_results: tuple[CommandResult, ...] = ()
+        if candidates:
+            robot_close = self.robot_close_all(request)
+            robot_results = robot_close.results
+            if any(item.status is not CommandResultStatus.COMPLETED for item in robot_results):
+                fail("robot_owned_close_unconfirmed")
+            if self.store.load_open_robot_trades(account_id):
+                fail("robot_trade_close_unconfirmed")
+            if any(
+                item.position_key.symbol in robot_symbols
+                for item in self.store.load_open_position_projections(account_id)
+            ):
+                fail("robot_position_close_unconfirmed")
+
+        manual = self.close_all(request, evidence=evidence)
+        combined = robot_results + manual.results
+
+        # A Market result alone is not enough: leave pending EXIT limits
+        # untouched unless the entire account is durably FLAT.
+        if manual.positions or any(
+            result.status is not CommandResultStatus.COMPLETED
+            for result in combined
+        ):
+            return CloseAllCommandResponse(
+                request.client_action_id.value, combined, manual.positions,
+            )
+        if self.store.load_open_robot_trades(account_id):
+            fail("robot_trade_ledger_still_open")
+        if self.store.load_unresolved_paper_protection_obligations(account_id):
+            fail("robot_protection_obligation_unresolved")
+
+        # Now that PAPER is FLAT, cancel any leftover closing/EXIT limits so
+        # no resting order can reopen exposure on a later market event.
+        for limit in self.store.load_active_paper_limits_for_account(account_id):
+            digest = hashlib.sha256(
+                (request.client_action_id.value + chr(0) + limit.order_id.value).encode("utf-8")
+            ).hexdigest()[:32]
+            try:
+                result = self._robot_cancel_limit(PaperLimitCancelRequest(
+                    ClientActionId(f"paper-flatten-flat-{digest}"),
+                    limit.symbol.value, limit.order_id.value,
+                ))
+            except Exception:
+                fail("paper_flat_limit_cancel_failed")
+            if result.status is not CommandResultStatus.COMPLETED:
+                fail("paper_flat_limit_cancel_unconfirmed")
+        if self.store.load_active_paper_limits_for_account(account_id):
+            fail("paper_active_limits_remaining")
+        return CloseAllCommandResponse(
+            request.client_action_id.value, combined, self.open_positions().positions,
         )
 
     def _robot_close_box_candidate(self, candidate) -> CommandResult:
