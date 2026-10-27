@@ -11,6 +11,8 @@ on:
       - "terminal/runtime/paper_http_server.py"
       - "tests/test_robot_close_all_state_authority.py"
       - "tests/test_telegram_robot_http_transport.py"
+      - "tests/test_telegram_robot_control.py"
+      - "tests/test_robot_telegram_feed.py"
       - ".github/workflows/robot-telegram-transport-ci.yml"
 
 permissions:
@@ -42,10 +44,14 @@ jobs:
           terminal/application/robot_control.py
           terminal/runtime/paper_http_server.py
           tests/test_telegram_robot_http_transport.py
+          tests/test_telegram_robot_control.py
+          tests/test_robot_telegram_feed.py
           tests/test_robot_close_all_state_authority.py
       - name: Existing Telegram Robot transport contract
         run: >-
           python -m unittest -v
           tests.test_telegram_robot_http_transport
+          tests.test_telegram_robot_control
+          tests.test_robot_telegram_feed
           tests.test_robot_close_all_state_authority
           tests.test_robot_control
