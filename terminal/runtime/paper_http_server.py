@@ -76,7 +76,7 @@ from terminal.market_data.workspace_errors import (
     UpstreamWorkspaceMarketDataFailure,
 )
 from terminal.application.robot_breakout_monitor import DEFAULT_TICK_INTERVAL_S as DEFAULT_ROBOT_TICK_INTERVAL_S
-from terminal.runtime.paper_runtime import PaperRuntime, ScannerControlRuntimeError
+from terminal.runtime.paper_runtime import PaperRuntime, PaperCloseAllRejected, ScannerControlRuntimeError
 from terminal.exchange.bybit_account_validation import AccountValidationError, BybitAccountValidator
 from terminal.exchange.bybit_v5_mutation_adapter import BybitV5MutationAdapter
 from terminal.persistence.credential_store import (
@@ -3642,12 +3642,29 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 request = CloseAllCommandRequest(ClientActionId(payload["client_action_id"]))
                 evidence = self._manual_close_all_evidence()
                 result = self.server.runtime.call(
-                    lambda runtime: runtime.close_all(request, **evidence)
+                    lambda runtime: runtime.coordinated_paper_close_all(request, **evidence)
                 )
-            except Exception:
+            except PaperCloseAllRejected as exc:
+                # A specific safety refusal is not a validation error or a
+                # successful flatten. Operator sees the exact blocking gate.
+                self._json_response(409, {"ok": False, "error": exc.reason})
+                return
+            except (ValueError, TypeError, KeyError, json.JSONDecodeError):
                 self._json_response(400, to_primitive(_validation_error()))
                 return
-            self._json_response(200, {"ok": True, **to_primitive(result)})
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "paper_close_all_unavailable"})
+                return
+            # HTTP 200 must prove account FLAT, not just that a Market command
+            # was accepted. Keep the same result and position DTO on failures.
+            success = (
+                not result.positions
+                and all(item.status is CommandResultStatus.COMPLETED for item in result.results)
+            )
+            self._json_response(
+                200 if success else 409,
+                {"ok": success, **to_primitive(result)},
+            )
             return
 
         if self.path == "/api/robot/close-all-now":

@@ -5,12 +5,18 @@ on:
   pull_request:
     paths:
       - "terminal/runtime/paper_runtime.py"
+      - "terminal/runtime/paper_http_server.py"
+      - "terminal/persistence/sqlite_store.py"
       - "terminal/application/robot_manual_close_proof.py"
+      - "terminal/application/paper_close_all_report.py"
+      - "terminal/api/models.py"
       - "terminal/application/robot_trade_ledger.py"
       - "terminal/api/rest.py"
       - "tests/test_robot_close_all_stable_identity.py"
       - "tests/test_robot_manual_close_evidence.py"
       - "tests/test_paper_close_all_stable_identity.py"
+      - "tests/test_paper_close_all_owner_coordination.py"
+      - "tests/test_paper_close_all_economics.py"
       - "tests/test_robot_close_all_owner_preflight.py"
       - "tests/test_robot_close_all_pending_work_preflight.py"
       - "tests/test_robot_close_all_trade_ledger_preflight.py"
@@ -45,13 +51,19 @@ jobs:
         run: >-
           python -m py_compile
           terminal/runtime/paper_runtime.py
+          terminal/runtime/paper_http_server.py
+          terminal/persistence/sqlite_store.py
           terminal/application/robot_manual_close_proof.py
+          terminal/application/paper_close_all_report.py
+          terminal/api/models.py
           terminal/application/robot_trade_ledger.py
           terminal/api/rest.py
           tests/test_robot_close_all_residual_proof.py
           tests/test_robot_close_all_stable_identity.py
           tests/test_robot_manual_close_evidence.py
           tests/test_paper_close_all_stable_identity.py
+          tests/test_paper_close_all_owner_coordination.py
+          tests/test_paper_close_all_economics.py
           tests/test_robot_close_all_owner_preflight.py
           tests/test_robot_close_all_pending_work_preflight.py
           tests/test_robot_close_all_trade_ledger_preflight.py
@@ -63,6 +75,8 @@ jobs:
           tests.test_robot_close_all_stable_identity
           tests.test_robot_manual_close_evidence
           tests.test_paper_close_all_stable_identity
+          tests.test_paper_close_all_owner_coordination
+          tests.test_paper_close_all_economics
           tests.test_robot_close_all_owner_preflight
           tests.test_robot_close_all_pending_work_preflight
           tests.test_robot_close_all_trade_ledger_preflight

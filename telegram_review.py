@@ -14,6 +14,7 @@ from telegram_labels import ROBOT_EMOJI
 from robot_candidate_store import RobotCandidateNotFound
 from robot_telegram_feed import (
     build_robot_close_all_confirmation_keyboard,
+    build_paper_close_all_confirmation_keyboard,
     build_robot_control_keyboard,
     format_robot_status_text,
     parse_robot_control_callback,
@@ -24,6 +25,7 @@ from terminal.application.robot_admission import (
 )
 from terminal.application.robot_control import (
     RobotControlRejected,
+    DEFAULT_PAPER_BACKEND_URL,
     close_all_now,
     get_robot_runtime_status,
     pause_robot,
@@ -397,6 +399,12 @@ def _post_robot_close_all_now(url, payload):
     return _post_robot_backend_command(url, payload, command="close_all_now")
 
 
+def _post_paper_close_all(payload):
+    """One account-wide PAPER request. Never fall back to Robot-only Close-All."""
+    url = f"{DEFAULT_PAPER_BACKEND_URL}/api/close-all"
+    return _post_robot_backend_command(url, payload, command="paper_close_all")
+
+
 def _post_robot_synchronize_pending_entries(url, payload):
     # Shared bridge for pause/stop, with its original rejection identity.
     return _post_robot_backend_command(url, payload, command="synchronize_pending_entries")
@@ -417,6 +425,121 @@ def _request_close_all_confirmation(callback_query):
             "❌ Закрыть все позиции робота Market-ордером? Это действие необратимо.",
             reply_markup=build_robot_close_all_confirmation_keyboard(),
         )
+
+
+def _request_paper_close_all_confirmation(callback_query):
+    message = callback_query.get("message") or {}
+    chat_id = (message.get("chat") or {}).get("id")
+    _answer_callback(
+        callback_query.get("id"),
+        "Подтвердите закрытие ВСЕХ PAPER-позиций, включая ручные",
+    )
+    if chat_id is not None:
+        telegram_bot.send_message(
+            config.TELEGRAM_TOKEN, chat_id,
+            "⚠️ Закрыть ВСЕ PAPER-позиции (ручные + Robot) Market-ордерами? "
+            "Ожидающие входы будут отменены, Robot поставлен на паузу, "
+            "PAPER_AUTO выключен. Действие необратимо.",
+            reply_markup=build_paper_close_all_confirmation_keyboard(),
+        )
+
+
+def _paper_close_all_callback_action_id(callback_query):
+    """Opaque, route-separated replay key for this EXACT confirmed callback."""
+    callback_id = callback_query.get("id")
+    if not isinstance(callback_id, str) or not callback_id:
+        raise RobotControlRejected("paper_close_all confirmation identity is missing")
+    digest = hashlib.sha256(
+        ("paper-close-all-confirm" + chr(0) + callback_id).encode("utf-8")
+    ).hexdigest()[:32]
+    return f"paper-close-all-cb-{digest}"
+
+
+def _paper_close_all_report_messages(result):
+    """Present only backend-verified economics, without inventing Net PnL.
+
+    All symbols are included across short Telegram messages; missing
+    economics is displayed as unproven even when the account is FLAT.
+    """
+    reports = result.get("symbol_reports")
+    if not isinstance(reports, list) or not reports:
+        return ()
+    lines = []
+    for item in reports:
+        if not isinstance(item, dict):
+            lines.append("Неизвестный символ: экономические данные недоступны")
+            continue
+        symbol = str(item.get("symbol") or "UNKNOWN")[:32]
+        owner = str(item.get("owner") or "UNKNOWN")[:12]
+        proven = (
+            item.get("evidence_status") == "VERIFIED"
+            and all(item.get(field) is not None for field in (
+                "entry_price", "exit_price", "quantity",
+                "gross_pnl_usdt", "fees_costs_usdt", "net_pnl_usdt",
+            ))
+        )
+        if proven:
+            lines.append(
+                f"{symbol} ({owner}): вход {item['entry_price']}; "
+                f"выход {item['exit_price']}; объём {item['quantity']}; "
+                f"Gross {item['gross_pnl_usdt']} USDT; "
+                f"комиссии {item['fees_costs_usdt']} USDT; "
+                f"Net {item['net_pnl_usdt']} USDT"
+            )
+        else:
+            lines.append(f"{symbol} ({owner}): Net PnL не подтверждён")
+    messages = []
+    for i in range(0, len(lines), 10):
+        heading = (
+            "PAPER Close-All — экономика закрытия:"
+            if i == 0 else "PAPER Close-All — продолжение отчёта:"
+        )
+        messages.append(heading + "\n" + "\n".join(lines[i:i+10]))
+    return tuple(messages)
+
+
+def _confirm_paper_close_all(callback_query):
+    try:
+        action_id = _paper_close_all_callback_action_id(callback_query)
+        result = _post_paper_close_all({"client_action_id": action_id})
+        # The backend is authoritative. A transport 200 with malformed
+        # position/result fields is NOT an account-wide FLAT proof.
+        if (
+            not isinstance(result, dict)
+            or result.get("ok") is not True
+            or result.get("client_action_id") != action_id
+            or result.get("positions") != []
+            or not isinstance(result.get("results"), list)
+            or any(item.get("status") != "completed"
+                   for item in result["results"]
+                   if isinstance(item, dict))
+            or any(not isinstance(item, dict) for item in result["results"])
+        ):
+            raise RobotControlRejected("paper_close_all FLAT confirmation was not proven")
+    except RobotControlRejected as exc:
+        _answer_callback(
+            callback_query.get("id"),
+            f"PAPER: закрытие не подтверждено — {exc}",
+        )
+        print("[PAPER CLOSE ALL REJECTED]", exc)
+        return None
+    except Exception as exc:
+        _answer_callback(callback_query.get("id"), "PAPER: ошибка закрытия")
+        print("[PAPER CLOSE ALL ERROR]", exc)
+        return None
+
+    summary = f"✅ PAPER FLAT: закрытие подтверждено. Команд: {len(result['results'])}"
+    _answer_callback(callback_query.get("id"), summary)
+    _send_robot_status_panel(callback_query, summary)
+    chat_id = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
+    if chat_id is not None:
+        for text in _paper_close_all_report_messages(result):
+            try:
+                telegram_bot.send_message(config.TELEGRAM_TOKEN, chat_id, text)
+            except Exception as exc:
+                print("[PAPER CLOSE ALL REPORT DELIVERY ERROR]", type(exc).__name__)
+    print("[PAPER CLOSE ALL CONFIRMED]", action_id, len(result["results"]))
+    return result
 
 
 def _robot_close_all_callback_action_id(callback_query):
@@ -476,6 +599,14 @@ def _run_robot_control_command(
     # close, so it is never fired directly from a single tap -- see
     # AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.2 Rationale and
     # CR-ROBOT-CONTROL-001's approved_scope for the one-tap confirmation.
+    if command == "paper_close_all":
+        _request_paper_close_all_confirmation(callback_query)
+        return None
+    if command == "paper_close_all_confirm":
+        return _confirm_paper_close_all(callback_query)
+    if command == "paper_close_all_cancel":
+        _answer_callback(callback_query.get("id"), "Закрытие PAPER отменено")
+        return None
     if command == "close_all":
         _request_close_all_confirmation(callback_query)
         return None
@@ -684,6 +815,23 @@ def _process_callback(
             return
         _run_workspace_callback(callback_query, parsed)
         return
+
+    if parsed["kind"] == "robot_control" and parsed["command"] in {
+        "paper_close_all", "paper_close_all_confirm", "paper_close_all_cancel",
+    }:
+        # Unlike the legacy Robot-only controls, account-wide flatten can
+        # close manual positions. Restrict this higher-impact confirmation
+        # to the verified owner's personal chat (no forwarded/group callbacks).
+        callback_chat = (callback_query.get("message") or {}).get("chat") or {}
+        if (
+            str(callback_chat.get("id", "")).strip() != owner_id
+            or callback_chat.get("type") != "private"
+        ):
+            _answer_callback(
+                callback_query.get("id"),
+                "Закрытие всех PAPER-позиций разрешено только в личном чате",
+            )
+            return
 
     if parsed["kind"] == "robot_control":
         _run_robot_control_command(
