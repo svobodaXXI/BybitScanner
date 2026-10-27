@@ -452,6 +452,40 @@ class RobotControlCommandTests(unittest.TestCase):
         self.assertEqual(url, "http://127.0.0.1:8765/api/robot/close-all-now")
         self.assertIn("client_action_id", payload)
 
+    def test_close_all_explicit_id_is_stable_across_redelivery(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        sent = []
+        for timestamp in (2000, 9999):
+            close_all_now(
+                database_path=self.db_path, clock_ms=lambda: timestamp,
+                client_action_id="robot-close-all-cb-fixed",
+                http_post=lambda url, payload: sent.append((url, payload)) or {"ok": True},
+            )
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(sent[0], sent[1])
+        self.assertEqual(
+            sent[0][1]["client_action_id"],
+            "robot-close-all-cb-fixed",
+        )
+
+    def test_close_all_default_id_remains_time_derived(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        sent = []
+        close_all_now(
+            database_path=self.db_path, clock_ms=lambda: 2345,
+            http_post=lambda url, payload: sent.append(payload) or {"ok": True},
+        )
+        self.assertEqual(sent[0], {"client_action_id": "robot-close-all-2345"})
+
+    def test_close_all_explicit_action_id_must_be_valid(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        with self.assertRaisesRegex(ValueError, "client_action_id"):
+            close_all_now(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                client_action_id="bad\\nnewline",
+                http_post=lambda url, payload: self.fail("must not reach backend"),
+            )
+
     def test_close_all_now_from_running_paused_posts_to_backend(self):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="PAUSED")
         result = close_all_now(
