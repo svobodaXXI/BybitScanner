@@ -482,7 +482,7 @@ class RobotControlCommandTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "client_action_id"):
             close_all_now(
                 database_path=self.db_path, clock_ms=lambda: 2000,
-                client_action_id="bad\\nnewline",
+                client_action_id="bad" + chr(10) + "newline",
                 http_post=lambda url, payload: self.fail("must not reach backend"),
             )
 
