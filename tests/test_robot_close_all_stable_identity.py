@@ -118,7 +118,7 @@ class CloseAllStableIdentityTests(unittest.TestCase):
         app = SimpleNamespace(submit=Mock(return_value=ApplicationResult(None, None, None)))
         api = TerminalCommandApi(app, context)
         api.full_close(FullCloseCommandRequest(ClientActionId("manual"), "BOTUSDT"))
-        self.assertIsNone(app.submit.call_args.kwargs["identity"])
+        self.assertNotIn("identity", app.submit.call_args.kwargs)
 
     def test_robot_wrapper_preserves_identity(self):
         identity = CommandIdentityCandidate(
