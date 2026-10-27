@@ -17,7 +17,7 @@ from terminal.api.models import (
 from terminal.api.rest import TerminalCommandApi
 from terminal.application.command_identity import CommandIdentityCandidate
 from terminal.application.trading_application import ApplicationResult
-from terminal.domain.models import TradingAccountId
+from terminal.domain.models import Symbol, TradingAccountId
 from terminal.runtime.paper_runtime import PaperRuntime
 
 
@@ -25,7 +25,7 @@ def _runtime_for_symbols(*symbols):
     candidates = [
         SimpleNamespace(
             candidate_id=f"candidate-{i}-{symbol}",
-            symbol=SimpleNamespace(value=symbol),
+            symbol=Symbol(symbol),
             status="OPEN",
             robot_state={},
             signal_snapshot={"pattern": "Falling Wedge"},
