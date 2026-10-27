@@ -5,6 +5,7 @@ Pure/synthetic owner + store: zero real database, HTTP, exchange or runtime.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 import unittest
@@ -109,22 +110,13 @@ class RobotManualCloseEvidenceTests(unittest.TestCase):
             "tw_" + "b" * 32 + "0"
         )
         self.assertIsNone(proof(candidate=bad))
-        wrong_order = fill()
-        wrong_order = SimpleNamespace(**{
-            **vars(wrong_order), "order_id": OrderId("wrong-order"),
-        })
+        wrong_order = replace(fill(), order_id=OrderId("wrong-order"))
         self.assertIsNone(proof(fill=wrong_order))
 
     def test_neither_partial_fill_nor_mismatched_side_can_finalize(self):
-        bad_fill = fill()
-        bad_fill = SimpleNamespace(**{
-            **vars(bad_fill), "quantity": Quantity(Decimal("1")),
-        })
+        bad_fill = replace(fill(), quantity=Quantity(Decimal("1")))
         self.assertIsNone(proof(fill=bad_fill))
-        opposite = fill()
-        opposite = SimpleNamespace(**{
-            **vars(opposite), "side": OrderSide.BUY,
-        })
+        opposite = replace(fill(), side=OrderSide.BUY)
         self.assertIsNone(proof(fill=opposite))
 
     def test_trade_owner_and_frozen_entry_quantity_must_match(self):
