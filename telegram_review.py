@@ -455,6 +455,49 @@ def _paper_close_all_callback_action_id(callback_query):
     return f"paper-close-all-cb-{digest}"
 
 
+def _paper_close_all_report_messages(result):
+    """Present only backend-verified economics, without inventing Net PnL.
+
+    All symbols are included across short Telegram messages; missing
+    economics is displayed as unproven even when the account is FLAT.
+    """
+    reports = result.get("symbol_reports")
+    if not isinstance(reports, list) or not reports:
+        return ()
+    lines = []
+    for item in reports:
+        if not isinstance(item, dict):
+            lines.append("Неизвестный символ: экономические данные недоступны")
+            continue
+        symbol = str(item.get("symbol") or "UNKNOWN")[:32]
+        owner = str(item.get("owner") or "UNKNOWN")[:12]
+        proven = (
+            item.get("evidence_status") == "VERIFIED"
+            and all(item.get(field) is not None for field in (
+                "entry_price", "exit_price", "quantity",
+                "gross_pnl_usdt", "fees_costs_usdt", "net_pnl_usdt",
+            ))
+        )
+        if proven:
+            lines.append(
+                f"{symbol} ({owner}): вход {item['entry_price']}; "
+                f"выход {item['exit_price']}; объём {item['quantity']}; "
+                f"Gross {item['gross_pnl_usdt']} USDT; "
+                f"комиссии {item['fees_costs_usdt']} USDT; "
+                f"Net {item['net_pnl_usdt']} USDT"
+            )
+        else:
+            lines.append(f"{symbol} ({owner}): Net PnL не подтверждён")
+    messages = []
+    for i in range(0, len(lines), 10):
+        heading = (
+            "PAPER Close-All — экономика закрытия:"
+            if i == 0 else "PAPER Close-All — продолжение отчёта:"
+        )
+        messages.append(heading + "\\n" + "\\n".join(lines[i:i+10]))
+    return tuple(messages)
+
+
 def _confirm_paper_close_all(callback_query):
     try:
         action_id = _paper_close_all_callback_action_id(callback_query)
@@ -488,6 +531,13 @@ def _confirm_paper_close_all(callback_query):
     summary = f"✅ PAPER FLAT: закрытие подтверждено. Команд: {len(result['results'])}"
     _answer_callback(callback_query.get("id"), summary)
     _send_robot_status_panel(callback_query, summary)
+    chat_id = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
+    if chat_id is not None:
+        for text in _paper_close_all_report_messages(result):
+            try:
+                telegram_bot.send_message(config.TELEGRAM_TOKEN, chat_id, text)
+            except Exception as exc:
+                print("[PAPER CLOSE ALL REPORT DELIVERY ERROR]", type(exc).__name__)
     print("[PAPER CLOSE ALL CONFIRMED]", action_id, len(result["results"]))
     return result
 
