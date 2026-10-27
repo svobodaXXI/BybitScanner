@@ -1,7 +1,7 @@
 """Pattern-specific closed-candle freshness evidence for PAPER_AUTO admission.
 
 The Wedge proof (``scanner_geometry_cursor`` + ``robot_state_machine``) replays
-closed 1m candles against a frozen cursor and apex. IKIGAI_BOX and L-shape have
+closed 1m candles against a frozen cursor and apex. IKIGAI_BOX, L-shape and standalone MIRROR have
 neither: their frozen terms are a TAKE price (Box) or a target/stop pair
 (L-shape), and their lifecycle ends when price reaches them. This module proves
 that, and only that, from authoritative closed candles of the pattern's own
@@ -29,6 +29,7 @@ from scanner_geometry_cursor import load_scanner_catchup_closed_candles
 
 KIND_BOX = "IKIGAI_BOX"
 KIND_L_SHAPE = "L-shape"
+KIND_MIRROR = "MIRROR"
 
 # A kline request is bounded; a signal older than this cannot be proven fresh.
 MAX_LOOKBACK_CANDLES = 600
@@ -47,6 +48,8 @@ def freshness_kind(signal_snapshot: Any) -> str | None:
         return KIND_BOX
     if robot_l_shape.is_l_shape_snapshot(signal_snapshot):
         return KIND_L_SHAPE
+    if robot_l_shape.is_mirror_snapshot(signal_snapshot):
+        return KIND_MIRROR
     return None
 
 
@@ -131,7 +134,10 @@ def _terms(snapshot: Mapping[str, Any]) -> _Terms:
     kind = freshness_kind(snapshot)
     if kind == KIND_BOX:
         return _box_terms(snapshot)
-    if kind == KIND_L_SHAPE:
+    if kind in (KIND_L_SHAPE, KIND_MIRROR):
+        # Both have frozen target/stop and a closed-candle terminal condition.
+        # For MIRROR breakout_time_ms is the confirming candle OPEN, so its
+        # successor is the first post-confirmation candle to inspect.
         return _l_shape_terms(snapshot)
     raise PatternFreshnessError("pattern has no closed-candle freshness proof here")
 
@@ -231,7 +237,7 @@ def freshness_fetch(
     *,
     pattern_fetch: Callable[[str, Mapping[str, Any]], tuple] = load_pattern_closed_candles,
 ) -> Callable[[str, Mapping[str, Any]], tuple]:
-    """Route Box / L-shape to their own evidence; Wedge keeps its existing fetch."""
+    """Route Box / L-shape / MIRROR to shared evidence; Wedge keeps its fetch."""
 
     def fetch(symbol: str, signal_snapshot: Mapping[str, Any]) -> tuple:
         if freshness_kind(signal_snapshot) is None:
