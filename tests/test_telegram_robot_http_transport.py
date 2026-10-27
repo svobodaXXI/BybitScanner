@@ -92,9 +92,11 @@ class TelegramCloseAllCallbackIdentityTests(unittest.TestCase):
     def test_callback_confirm_passes_one_stable_id_without_ui_change(self):
         callback = {"id": "same-callback"}
         result = {"ok": True, "results": []}
-        with patch.object(review, "close_all_now", return_value=result) as dispatch, \\
-                patch.object(review, "_answer_callback") as ack, \\
-                patch.object(review, "_send_robot_status_panel") as status:
+        with (
+            patch.object(review, "close_all_now", return_value=result) as dispatch,
+            patch.object(review, "_answer_callback") as ack,
+            patch.object(review, "_send_robot_status_panel") as status,
+        ):
             self.assertIs(review._confirm_close_all_now(callback), result)
             self.assertIs(review._confirm_close_all_now(callback), result)
         self.assertEqual(dispatch.call_count, 2)
@@ -110,9 +112,11 @@ class TelegramCloseAllCallbackIdentityTests(unittest.TestCase):
 
     def test_missing_callback_id_keeps_original_call_contract(self):
         self.assertIsNone(review._robot_close_all_callback_action_id({}))
-        with patch.object(review, "close_all_now", return_value={"ok": True}) as dispatch, \\
-                patch.object(review, "_answer_callback"), \\
-                patch.object(review, "_send_robot_status_panel"):
+        with (
+            patch.object(review, "close_all_now", return_value={"ok": True}) as dispatch,
+            patch.object(review, "_answer_callback"),
+            patch.object(review, "_send_robot_status_panel"),
+        ):
             review._confirm_close_all_now({})
         dispatch.assert_called_once_with(
             http_post=review._post_robot_close_all_now,
