@@ -5,6 +5,8 @@ on:
   pull_request:
     paths:
       - "terminal/runtime/paper_runtime.py"
+      - "terminal/api/rest.py"
+      - "tests/test_robot_close_all_stable_identity.py"
       - "tests/test_robot_close_all_residual_proof.py"
       - ".github/workflows/robot-close-all-residual-ci.yml"
 
@@ -35,6 +37,11 @@ jobs:
         run: >-
           python -m py_compile
           terminal/runtime/paper_runtime.py
+          terminal/api/rest.py
           tests/test_robot_close_all_residual_proof.py
+          tests/test_robot_close_all_stable_identity.py
       - name: Robot close-all residual exposure regression
-        run: python -m unittest -v tests.test_robot_close_all_residual_proof
+        run: >-
+          python -m unittest -v
+          tests.test_robot_close_all_residual_proof
+          tests.test_robot_close_all_stable_identity
