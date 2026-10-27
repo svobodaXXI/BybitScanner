@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import socket
 import sys
 import tempfile
 from types import ModuleType, SimpleNamespace
@@ -1213,6 +1214,31 @@ class TelegramWorkerSingletonReadinessTests(unittest.TestCase):
         request.assert_not_called()
         menu.assert_not_called()
         self.assertEqual(self._health()[0], 503)
+
+    def test_reuse_address_policy_is_exclusive_on_windows_and_restart_safe_on_linux(self):
+        server_class = monitoring._ExclusiveHealthServer
+        self.assertEqual(server_class.allow_reuse_address, sys.platform.startswith("linux"))
+        if sys.platform == "win32":
+            self.assertFalse(server_class.allow_reuse_address)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "TIME_WAIT bind semantics are Linux-specific")
+    def test_restart_right_after_stop_rebinds_despite_time_wait_connections(self):
+        first = monitoring.acquire_worker_singleton(port=0)
+        port = first.server_address[1]
+        for _ in range(3):
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as client:
+                client.sendall(b"GET /health HTTP/1.0\r\n\r\n")
+                while client.recv(4096):
+                    pass
+        first.shutdown()
+        first.server_close()
+        second = monitoring.acquire_worker_singleton(port=port)
+        self.assertIsNotNone(second)
+        try:
+            self.assertIsNone(monitoring.acquire_worker_singleton(port=port))
+        finally:
+            second.shutdown()
+            second.server_close()
 
     def test_health_exposes_no_secrets(self):
         monitoring._POLLING_READY.set()
