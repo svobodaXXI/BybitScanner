@@ -367,6 +367,45 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         self.assertIn("PAPER FLAT", answer.call_args.args[1])
         panel.assert_called_once()
 
+    def test_economics_report_contains_verified_gross_fees_and_net(self):
+        callback = self._private_paper_callback("economic-cb", "paper_close_all_confirm")
+        action_id = telegram_review._paper_close_all_callback_action_id(callback)
+        result = {
+            "ok": True, "client_action_id": action_id, "results": [], "positions": [],
+            "symbol_reports": [
+                {"symbol": "BTCUSDT", "owner": "ROBOT", "evidence_status": "VERIFIED",
+                 "entry_price": "10", "exit_price": "12", "quantity": "2",
+                 "gross_pnl_usdt": "4", "fees_costs_usdt": "0.05", "net_pnl_usdt": "3.95"},
+                {"symbol": "ETHUSDT", "owner": "MANUAL", "evidence_status": "UNPROVEN",
+                 "net_pnl_usdt": None, "reason": "entry_basis_unknown"},
+            ],
+        }
+        with patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "42"), \
+             patch.object(telegram_review, "_post_paper_close_all", return_value=result), \
+             patch.object(telegram_review, "_send_robot_status_panel"), \
+             patch.object(telegram_review.telegram_bot, "send_message") as send, \
+             patch.object(telegram_review, "_answer_callback"):
+            telegram_review._process_callback(callback)
+        send.assert_called_once()
+        message = send.call_args.args[2]
+        self.assertIn("BTCUSDT (ROBOT)", message)
+        self.assertIn("вход 10; выход 12", message)
+        self.assertIn("Net 3.95 USDT", message)
+        self.assertIn("ETHUSDT (MANUAL): Net PnL не подтверждён", message)
+        self.assertNotIn("Net None", message)
+
+    def test_multiple_symbols_are_paginated_without_fabricating_net(self):
+        result = {"symbol_reports": [
+            {"symbol": f"PAIR{i}", "owner": "MANUAL", "evidence_status": "UNPROVEN",
+             "reason": "missing_fees"} for i in range(21)
+        ]}
+        messages = telegram_review._paper_close_all_report_messages(result)
+        self.assertEqual(len(messages), 3)
+        self.assertIn("PAIR0", messages[0])
+        self.assertIn("PAIR10", messages[1])
+        self.assertIn("PAIR20", messages[2])
+        self.assertIn("не подтверждён", messages[2])
+
     def test_paper_confirm_replay_is_stable_but_new_tap_gets_new_id(self):
         a = self._private_paper_callback("same-tap", "paper_close_all_confirm")
         b = self._private_paper_callback("different-tap", "paper_close_all_confirm")
