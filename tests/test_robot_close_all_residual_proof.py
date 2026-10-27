@@ -24,13 +24,17 @@ def fake_runtime(*, robot_symbols=("BOTUSDT",), remaining=(),
                  status=CommandResultStatus.COMPLETED, inventory_error=None):
     candidates = [
         SimpleNamespace(
+            candidate_id=f"candidate-{i}-{symbol}",
             symbol=SimpleNamespace(value=symbol),
+            status="OPEN",
+            robot_state={},
             signal_snapshot={"pattern": "Falling Wedge"},
         )
-        for symbol in robot_symbols
+        for i, symbol in enumerate(robot_symbols)
     ]
     store = SimpleNamespace(
         load_robot_candidates_by_status=Mock(return_value=candidates),
+        load_active_robot_candidate_states=Mock(return_value=candidates),
         get_robot_runtime_state=Mock(return_value=SimpleNamespace(
             mode="ROBOT_RUNNING", recovery_status="READY", version=7,
         )),
