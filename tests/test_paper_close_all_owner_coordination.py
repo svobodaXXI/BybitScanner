@@ -114,6 +114,13 @@ def fixture(
         )),
         open_positions=Mock(return_value=SimpleNamespace(positions=())),
     )
+    # The production runtime owns this read-only formatter; the synthetic
+    # SimpleNamespace owner must expose the same method for integration tests.
+    runtime._paper_close_all_symbol_reports = (
+        lambda request, before, trades: PaperRuntime._paper_close_all_symbol_reports(
+            runtime, request, before, trades,
+        )
+    )
     return runtime, current
 
 
