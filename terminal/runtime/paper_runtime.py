@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from terminal.api.rest import TerminalCommandApi
+from terminal.application.command_identity import CommandIdentityCandidate
 from terminal.api.models import (
     ClientActionId, CloseAllCommandRequest, CloseAllCommandResponse, CommandResult, CommandResultStatus,
     FullCloseCommandRequest, LimitCommandRequest, PaperLimitAmendRequest, PaperLimitCancelRequest,
@@ -93,7 +94,7 @@ from terminal.runtime.closed_candle_cache import (
     CachedClosedCandleProvider, PreparedCatchupEvidence,
 )
 from terminal.domain.models import (
-    Category, Execution, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, PositionKey,
+    Category, CommandId, Execution, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, PositionKey,
     PositionSide, Quantity, Symbol, TradingAccountId,
 )
 from terminal.exchange.events import InstrumentSnapshot
@@ -1875,9 +1876,13 @@ class PaperRuntime:
             for position in self.store.load_open_position_projections(self._account_id)
         )
 
-    def _robot_full_close(self, request, *, evidence: NormalizedOrderBook | None = None):
+    def _robot_full_close(
+        self, request, *, evidence: NormalizedOrderBook | None = None,
+        identity: CommandIdentityCandidate | None = None,
+    ):
         return self._robot_api.full_close(
             request, market_book=self._robot_execution_book(request.symbol, evidence),
+            **({"identity": identity} if identity is not None else {}),
         )
 
     def add_bybit_account(self, display_name: str, api_key: str, api_secret: str) -> dict[str, object]:
@@ -3744,9 +3749,19 @@ class PaperRuntime:
                 if is_box:
                     result = self._robot_close_box_candidate(candidate)
                 else:
-                    result = self._robot_full_close(FullCloseCommandRequest(
-                        ClientActionId(f"robot-close-all-{digest}"), symbol,
-                    ))
+                    # The existing PAPER Market engine already guarantees
+                    # stable order/exec identity replay. Bind it to the same
+                    # operator action + symbol instead of generating a fresh
+                    # order on ambiguous HTTP retry.
+                    order_link_id = f"tw_{digest}{sum(bytes.fromhex(digest)) & 0xF:x}"
+                    result = self._robot_full_close(
+                        FullCloseCommandRequest(
+                            ClientActionId(f"robot-close-all-{digest}"), symbol,
+                        ),
+                        identity=CommandIdentityCandidate(
+                            CommandId(f"cmd_{digest}"), order_link_id,
+                        ),
+                    )
             except Exception as error:
                 result = CommandResult(
                     f"robot-close-all-{digest}",

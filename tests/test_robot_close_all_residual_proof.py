@@ -36,7 +36,7 @@ def fake_runtime(*, robot_symbols=("BOTUSDT",), remaining=(),
         )),
         update_robot_runtime_state=Mock(),
     )
-    close = Mock(side_effect=lambda request: CommandResult(
+    close = Mock(side_effect=lambda request, *, identity=None: CommandResult(
         request.client_action_id.value, status, "test", "test",
     ))
     if inventory_error:
