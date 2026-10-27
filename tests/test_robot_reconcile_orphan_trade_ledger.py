@@ -59,7 +59,10 @@ def reconcile_fixture(candidates=(), trades=()):
             )),
         ),
         robot_synchronize_pending_entries=Mock(return_value=sync),
-        _robot_reconciliation_required_state=Mock(return_value=required),
+        _robot_reconciliation_required_state=Mock(side_effect=lambda reason: SimpleNamespace(
+            mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED",
+            reason=reason,
+        )),
         _dispatch_paper_protection_obligation=Mock(),
         _robot_full_close=Mock(),
         _robot_close_box_candidate=Mock(),
@@ -142,7 +145,7 @@ class RobotReconcileLedgerGateTests(unittest.TestCase):
     def test_clean_empty_ledger_keeps_existing_paused_success(self):
         runtime, store = reconcile_fixture()
         result = PaperRuntime.robot_reconcile(runtime)
-        self.assertTrue(result.success)
+        self.assertTrue(result.success, result)
         self.assertEqual(result.recovery_status, "PAUSED")
         self.assertEqual(result.unresolved_trade_ids, ())
         store.update_robot_runtime_state.assert_called_once()
