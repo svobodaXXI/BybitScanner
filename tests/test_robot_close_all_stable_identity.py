@@ -35,6 +35,9 @@ def _runtime_for_symbols(*symbols):
     store = SimpleNamespace(
         load_robot_candidates_by_status=Mock(return_value=candidates),
         load_active_robot_candidate_states=Mock(return_value=candidates),
+        load_active_robot_entry_orders=Mock(return_value={}),
+        load_unresolved_paper_protection_obligations=Mock(return_value=()),
+        load_active_paper_limits=Mock(return_value=()),
         get_robot_runtime_state=Mock(),
         update_robot_runtime_state=Mock(),
     )
@@ -45,6 +48,7 @@ def _runtime_for_symbols(*symbols):
     runtime = SimpleNamespace(
         _account_id=TradingAccountId("paper"), store=store,
         _robot_full_close=close,
+        _robot_linked_entry_limits=Mock(return_value={}),
         _robot_close_box_candidate=Mock(),
         open_positions=Mock(return_value=SimpleNamespace(positions=())),
     )
