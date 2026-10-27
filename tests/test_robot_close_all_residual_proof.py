@@ -108,7 +108,7 @@ class RobotCloseAllResidualProofTests(unittest.TestCase):
         runtime, store, close, inventory = fake_runtime(
             inventory_error=LookupError("inventory unavailable"),
         )
-        with self.assertRaises(RuntimeError):
+        with self.assertRaisesRegex(LookupError, "inventory unavailable"):
             perform_close(runtime)
         close.assert_called_once()
         inventory.assert_called_once()
