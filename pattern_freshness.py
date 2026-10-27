@@ -46,10 +46,10 @@ def freshness_kind(signal_snapshot: Any) -> str | None:
         return None
     if str(signal_snapshot.get("pattern", "")).strip() == KIND_BOX:
         return KIND_BOX
-    if robot_l_shape.is_l_shape_snapshot(signal_snapshot):
-        return KIND_L_SHAPE
     if robot_l_shape.is_mirror_snapshot(signal_snapshot):
         return KIND_MIRROR
+    if robot_l_shape.is_l_shape_snapshot(signal_snapshot):
+        return KIND_L_SHAPE
     return None
 
 
