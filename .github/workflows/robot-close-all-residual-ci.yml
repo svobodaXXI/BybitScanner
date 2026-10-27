@@ -1,0 +1,40 @@
+name: Robot close-all residual exposure safety
+
+# Synthetic owner/store state only; no PAPER DB, backend, exchange, or credentials.
+on:
+  pull_request:
+    paths:
+      - "terminal/runtime/paper_runtime.py"
+      - "tests/test_robot_close_all_residual_proof.py"
+      - ".github/workflows/robot-close-all-residual-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  close-all-residual-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install existing lightweight runtime imports
+        run: >-
+          python -m pip install
+          requests==2.34.2
+          PySocks==1.7.1
+          websocket-client==1.9.0
+          pandas==3.0.5
+          numpy==2.5.1
+          matplotlib==3.11.1
+          mplfinance==0.12.10b0
+      - name: Compile affected code and tests
+        run: >-
+          python -m py_compile
+          terminal/runtime/paper_runtime.py
+          tests/test_robot_close_all_residual_proof.py
+      - name: Robot close-all residual exposure regression
+        run: python -m unittest -v tests.test_robot_close_all_residual_proof
