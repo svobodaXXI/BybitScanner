@@ -1112,8 +1112,12 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
 class _ExclusiveHealthServer(ThreadingHTTPServer):
     # SO_REUSEADDR on Windows lets a second process bind the same port; the
-    # listener is the singleton, so the bind must be exclusive.
-    allow_reuse_address = False
+    # listener is the singleton, so the bind must be exclusive there. On Linux it
+    # only permits rebinding over TIME_WAIT leftovers of the previous listener
+    # (health probes close from the server side) and never a second live
+    # listener; without it a restart within ~60 s of a stop fails with
+    # "already owns" although no worker is running.
+    allow_reuse_address = sys.platform.startswith("linux")
     daemon_threads = True
 
     def server_bind(self):
