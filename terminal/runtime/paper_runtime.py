@@ -3758,11 +3758,49 @@ class PaperRuntime:
             # safe; hold ALL closes until the existing reconcile path proves it.
             unproven_owner_symbols.update(symbol.value for symbol in candidate_symbols)
 
-        # Prevent partial dispatch when a single symbol is not proven; the
-        # operator can reconcile once rather than recover a half-closed batch.
+        # A still-working Robot ENTRY LIMIT could refill the same net position
+        # after our Market close. An unresolved STOP/TAKE obligation could
+        # independently submit a competing close. Fail closed before ANY Market
+        # dispatch, rather than pretending the whole campaign is atomic.
+        # These existing owner-store reads do not cancel or mutate any order.
+        conflicting_work_symbols: set[str] = set()
+        if candidate_symbols and not unproven_owner_symbols:
+            try:
+                active_entries = self.store.load_active_robot_entry_orders(self._account_id)
+                obligations = self.store.load_unresolved_paper_protection_obligations(
+                    self._account_id
+                )
+                for symbol in candidate_symbols:
+                    if (
+                        any(item_symbol == symbol for item_symbol, _ in active_entries.values())
+                        or any(item.symbol == symbol for item in obligations)
+                    ):
+                        conflicting_work_symbols.add(symbol.value)
+                        continue
+                    # Historical/Box entry LIMITs may predate robot_entry_orders.
+                    # The runtime's existing linked-entry lookup identifies
+                    # their ownership; unrelated manual and Box EXIT limits
+                    # must not block a Robot close.
+                    linked_entry_ids = self._robot_linked_entry_limits(symbol)
+                    if linked_entry_ids and any(
+                        order.order_id.value in linked_entry_ids
+                        for order in self.store.load_active_paper_limits(
+                            self._account_id, symbol,
+                        )
+                    ):
+                        conflicting_work_symbols.add(symbol.value)
+            except Exception:
+                # An unavailable pending-work read is not proof that dispatch
+                # is safe. Avoid a partial close until reconciliation succeeds.
+                conflicting_work_symbols.update(
+                    symbol.value for symbol in candidate_symbols
+                )
+
+        # If even one target symbol is ambiguous, do not partially dispatch.
         ownership_blocked = bool(unproven_owner_symbols)
+        pending_work_blocked = bool(conflicting_work_symbols)
         results = []
-        any_unconfirmed = ownership_blocked
+        any_unconfirmed = ownership_blocked or pending_work_blocked
         for candidate in open_candidates:
             symbol = candidate.symbol.value
             digest = hashlib.sha256(
@@ -3770,12 +3808,19 @@ class PaperRuntime:
             ).hexdigest()[:32]
             is_box = candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
             try:
-                if ownership_blocked:
+                if ownership_blocked or pending_work_blocked:
                     result = CommandResult(
                         f"robot-close-all-{digest}",
                         CommandResultStatus.UNAVAILABLE,
-                        "robot_owner_unproven",
-                        "Robot ownership requires reconciliation",
+                        (
+                            "robot_owner_unproven"
+                            if ownership_blocked else "robot_close_work_inflight"
+                        ),
+                        (
+                            "Robot ownership requires reconciliation"
+                            if ownership_blocked
+                            else "Robot entry or protection work requires reconciliation"
+                        ),
                         None,
                         True,
                     )
