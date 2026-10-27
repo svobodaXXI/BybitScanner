@@ -458,8 +458,16 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if args == ["--wait-backend"]:
         return RuntimeIntentBootstrap(require_telegram=False).wait_backend()
+    # VPS systemd owns Telegram independently. Its network outage must not block
+    # the canonical Backend runtime intent or weaken any Robot safety gate.
+    if args == ["--no-telegram", "ALL"]:
+        if os.name == "nt":
+            print("ERROR: --no-telegram is only supported on Linux VPS", flush=True)
+            return EXIT_USAGE
+        print("INFO: Telegram readiness not required for PAPER core; notifications unverified.", flush=True)
+        return RuntimeIntentBootstrap(require_telegram=False).run("ALL")
     if len(args) > 1:
-        print("usage: python -m tools.runtime_intent [ALL|SCANNER|ROBOT] | --wait-backend", flush=True)
+        print("usage: python -m tools.runtime_intent [ALL|SCANNER|ROBOT] | --wait-backend | --no-telegram ALL (Linux VPS)", flush=True)
         return EXIT_USAGE
     return RuntimeIntentBootstrap(require_telegram=True).run(
         args[0] if args else "ALL", desktop_notice=True,

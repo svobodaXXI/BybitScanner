@@ -422,6 +422,29 @@ class ProductionPrimitivesTests(unittest.TestCase):
         self.assertEqual(popen.call_args.kwargs["env"], child)
         self.assertIsNot(popen.call_args.kwargs["env"], child)
 
+    def test_linux_vps_one_action_does_not_wait_for_telegram(self):
+        with mock.patch.object(runtime_intent.os, "name", "posix"):
+            with mock.patch.object(RuntimeIntentBootstrap, "run", return_value=0) as run:
+                self.assertEqual(runtime_intent.main(["--no-telegram", "ALL"]), 0)
+        run.assert_called_once_with("ALL")
+
+    def test_vps_no_telegram_argument_rejected_on_windows(self):
+        with mock.patch.object(runtime_intent.os, "name", "nt"):
+            with mock.patch.object(RuntimeIntentBootstrap, "run") as run:
+                self.assertEqual(runtime_intent.main(["--no-telegram", "ALL"]),
+                                 runtime_intent.EXIT_USAGE)
+                run.assert_not_called()
+
+    def test_vps_no_telegram_keeps_backend_identity_gate(self):
+        world = FakeWorld(expected_database_identity(ROOT, {}))
+        world.backend = world.backend_health(database_identity="0" * 64)
+        world.telegram = None
+        world.intent_reply = _converged()
+        # Telegram is absent but the mismatch must still prohibit an intent POST.
+        result = world.bootstrap(require_telegram=False).execute("ALL")
+        self.assertEqual(result.outcome, runtime_intent.OUTCOME_FAILED)
+        self.assertEqual(world.posts, [])
+
     def test_main_defaults_to_all_and_rejects_extra_arguments(self):
         with mock.patch.object(RuntimeIntentBootstrap, "run", return_value=0) as run:
             self.assertEqual(runtime_intent.main([]), 0)
