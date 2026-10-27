@@ -166,6 +166,16 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
         self.assertEqual(runtime.store.get_robot_runtime_state(ACCOUNT).recovery_status,
                          "RECONCILIATION_REQUIRED")
 
+    def test_robot_entry_limit_remaining_after_sync_blocks_even_opposite_side(self):
+        runtime, _ = fixture(robot=True)
+        runtime.store.load_active_robot_entry_orders.return_value = {
+            "robot-reverse-entry": (Symbol("BOTUSDT"), 4),
+        }
+        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_entry_limit_remaining_after_sync"):
+            run(runtime)
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+
     def test_unresolved_protection_never_dispatches_market_close(self):
         runtime, _ = fixture(robot=True, obligations=(
             SimpleNamespace(trade_id="trade-bot"),
