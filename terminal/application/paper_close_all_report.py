@@ -8,26 +8,12 @@ lot from this account's immutable fills.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from decimal import Decimal
 import hashlib
 from typing import Iterable
 
+from terminal.api.models import PaperCloseAllSymbolReport
 from terminal.domain.models import Category, OrderSide, PositionSide
-
-
-@dataclass(frozen=True, slots=True)
-class PaperCloseAllSymbolReport:
-    symbol: str
-    owner: str
-    evidence_status: str
-    entry_price: Decimal | None = None
-    exit_price: Decimal | None = None
-    quantity: Decimal | None = None
-    gross_pnl_usdt: Decimal | None = None
-    fees_costs_usdt: Decimal | None = None
-    net_pnl_usdt: Decimal | None = None
-    reason: str | None = None
 
 
 def paper_close_all_market_link(action_id: str, symbol: str) -> str:
