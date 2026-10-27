@@ -5,11 +5,13 @@ on:
   pull_request:
     paths:
       - "terminal/runtime/paper_runtime.py"
+      - "terminal/application/robot_trade_ledger.py"
       - "terminal/api/rest.py"
       - "tests/test_robot_close_all_stable_identity.py"
       - "tests/test_robot_close_all_owner_preflight.py"
       - "tests/test_robot_close_all_pending_work_preflight.py"
       - "tests/test_robot_close_all_trade_ledger_preflight.py"
+      - "tests/test_robot_reconcile_orphan_trade_ledger.py"
       - "tests/test_robot_close_all_residual_proof.py"
       - ".github/workflows/robot-close-all-residual-ci.yml"
 
@@ -40,12 +42,14 @@ jobs:
         run: >-
           python -m py_compile
           terminal/runtime/paper_runtime.py
+          terminal/application/robot_trade_ledger.py
           terminal/api/rest.py
           tests/test_robot_close_all_residual_proof.py
           tests/test_robot_close_all_stable_identity.py
           tests/test_robot_close_all_owner_preflight.py
           tests/test_robot_close_all_pending_work_preflight.py
           tests/test_robot_close_all_trade_ledger_preflight.py
+          tests/test_robot_reconcile_orphan_trade_ledger.py
       - name: Robot close-all residual exposure regression
         run: >-
           python -m unittest -v
@@ -54,3 +58,4 @@ jobs:
           tests.test_robot_close_all_owner_preflight
           tests.test_robot_close_all_pending_work_preflight
           tests.test_robot_close_all_trade_ledger_preflight
+          tests.test_robot_reconcile_orphan_trade_ledger
