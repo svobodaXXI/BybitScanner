@@ -71,7 +71,9 @@ def prove_robot_manual_close(
         or position.position_key.position_idx != 0
         or position.side is not PositionSide.FLAT
         or position.quantity.value != 0
-        or position.version <= trade.entry_position_version
+        # Exactly one aggregate PAPER Market execution must have flattened
+        # the previously attested Robot lot; any intervening fill is ambiguous.
+        or position.version != trade.entry_position_version + 1
         or fill.dedup_key.trading_account_id != trade.trading_account_id
         or fill.dedup_key.category is not Category.LINEAR
         or fill.dedup_key.exec_id.value != "paper-exec-" + link
