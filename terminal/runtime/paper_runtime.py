@@ -3759,6 +3759,29 @@ class PaperRuntime:
             results.append(result)
             if result.status != CommandResultStatus.COMPLETED:
                 any_unconfirmed = True
+        # COMPLETED alone is insufficient evidence of FLAT: an already-flat
+        # API result, stale command outcome or incomplete close can leave a
+        # Robot-owned position open. Reuse the inventory read already required
+        # by the existing response, without resubmitting any order.
+        refreshed = None
+        inventory_error = None
+        try:
+            refreshed = self.open_positions()
+        except Exception as exc:
+            # The response would have failed anyway. Preserve the Robot
+            # admission fence before allowing the original failure to propagate.
+            any_unconfirmed = True
+            inventory_error = exc
+        if refreshed is not None:
+            remaining_symbols = {
+                position.symbol for position in refreshed.positions
+                if position.position_quantity > 0
+            }
+            if any(
+                candidate.symbol.value in remaining_symbols
+                for candidate in open_candidates
+            ):
+                any_unconfirmed = True
         if any_unconfirmed:
             runtime = self.store.get_robot_runtime_state(self._account_id)
             if runtime is not None and runtime.mode == "ROBOT_RUNNING":
@@ -3770,7 +3793,10 @@ class PaperRuntime:
                     expected_version=runtime.version,
                     updated_at_ms=int(time.time() * 1000),
                 )
-        refreshed = self.open_positions()
+        if inventory_error is not None:
+            # Preserve the existing failure type rather than claiming
+            # a successful Close-All with unknown inventory.
+            raise inventory_error
         return CloseAllCommandResponse(
             request.client_action_id.value, tuple(results), refreshed.positions,
         )
