@@ -70,6 +70,7 @@ from terminal.application.live_account_reconciliation import (
     LiveAccountReconciliationError,
 )
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
+from terminal.application.robot_manual_close_proof import prove_robot_manual_close
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
 from terminal.application.ikigai_box_catchup import (
     build_box_manual_close_market_plan,
@@ -3722,6 +3723,129 @@ class PaperRuntime:
         )
         return result
 
+    def _robot_prepare_manual_close(
+        self, candidate, request: FullCloseCommandRequest,
+        identity: CommandIdentityCandidate,
+    ) -> tuple[FullCloseCommandRequest, CommandIdentityCandidate]:
+        """Latch the exact non-Box close identity before any Market dispatch.
+
+        A subsequent confirmation or restart reuses the first durable intent,
+        never a new execution identity while this candidate remains OPEN.
+        """
+        trade = self.store.get_open_robot_trade_for_symbol(
+            self._paper_account_id, candidate.symbol,
+        )
+        if (
+            trade is None or trade.candidate_id != candidate.candidate_id
+            or trade.pattern == "IKIGAI_BOX"
+            or trade.entry_quantity is None or trade.entry_quantity <= 0
+            or trade.entry_position_version is None
+        ):
+            raise RuntimeError("Robot manual close lacks one attested OPEN trade")
+        fresh = self.store.get_robot_candidate(candidate.candidate_id)
+        if fresh is None or fresh.status != "OPEN":
+            raise RuntimeError("Robot manual close candidate is not OPEN")
+        state = dict(fresh.robot_state or {})
+        execution = dict(state.get("execution") or {})
+        intent = execution.get("robot_close_all_manual_intent")
+        if isinstance(intent, Mapping):
+            if (
+                intent.get("trade_id") != trade.trade_id
+                or intent.get("candidate_id") != fresh.candidate_id
+                or intent.get("symbol") != trade.symbol.value
+                or intent.get("entry_quantity") != str(trade.entry_quantity)
+                or intent.get("entry_position_version") != trade.entry_position_version
+                or not isinstance(intent.get("client_action_id"), str)
+                or not isinstance(intent.get("command_id"), str)
+                or not isinstance(intent.get("order_link_id"), str)
+            ):
+                raise RuntimeError("durable Robot manual close intent conflicts with trade")
+            return (
+                FullCloseCommandRequest(
+                    ClientActionId(intent["client_action_id"]), trade.symbol.value,
+                ),
+                CommandIdentityCandidate(
+                    CommandId(intent["command_id"]), intent["order_link_id"],
+                ),
+            )
+        if intent is not None:
+            raise RuntimeError("Robot manual close intent is corrupt")
+        position = self.store.get_position_projection(PositionKey(
+            self._paper_account_id, Category.LINEAR, trade.symbol, 0,
+        ))
+        side = (
+            PositionSide.LONG if trade.direction == "LONG"
+            else PositionSide.SHORT if trade.direction == "SHORT" else None
+        )
+        if (
+            side is None or position is None or position.side is not side
+            or position.quantity.value != trade.entry_quantity
+            or position.version != trade.entry_position_version
+        ):
+            raise RuntimeError("Robot manual close position attestation differs from trade")
+        execution["robot_close_all_manual_intent"] = {
+            "trade_id": trade.trade_id,
+            "candidate_id": fresh.candidate_id,
+            "symbol": trade.symbol.value,
+            "entry_quantity": str(trade.entry_quantity),
+            "entry_position_version": trade.entry_position_version,
+            "client_action_id": request.client_action_id.value,
+            "command_id": identity.command_id.value,
+            "order_link_id": identity.order_link_id,
+        }
+        state["execution"] = execution
+        self.store.save_robot_candidate_state(
+            fresh.candidate_id, status="OPEN", robot_state=state,
+            expected_revision=fresh.state_revision,
+            updated_at_ms=int(time.time() * 1000),
+        )
+        return request, identity
+
+    def _robot_finalize_manual_close(self, candidate) -> bool:
+        """Finalize one MANUAL Robot trade only from its persisted PAPER fill."""
+        fresh = self.store.get_robot_candidate(candidate.candidate_id)
+        if fresh is None or fresh.status != "OPEN":
+            return False
+        execution_state = (fresh.robot_state or {}).get("execution") or {}
+        intent = execution_state.get("robot_close_all_manual_intent")
+        if not isinstance(intent, Mapping):
+            return False
+        link = intent.get("order_link_id")
+        if not isinstance(link, str) or not link.startswith("tw_") or len(link) != 36:
+            return False
+        trade = self.store.get_open_robot_trade_for_symbol(
+            self._paper_account_id, fresh.symbol,
+        )
+        if trade is None or trade.candidate_id != fresh.candidate_id:
+            return False
+        position_key = PositionKey(
+            self._paper_account_id, Category.LINEAR, fresh.symbol, 0,
+        )
+        position = self.store.get_position_projection(position_key)
+        fill = self.store.get_execution(ExecutionDedupKey(
+            self._paper_account_id, Category.LINEAR,
+            ExecutionId("paper-exec-" + link),
+        ))
+        entry_fees = self._robot_entry_fees(trade) if fill is not None else None
+        proof = prove_robot_manual_close(
+            trade=trade, candidate=fresh, position=position,
+            fill=fill, entry_fees=entry_fees,
+        )
+        if proof is None:
+            return False
+        self.store.close_robot_trade(
+            trade.trade_id,
+            exit_time_ms=proof.exit_time_ms,
+            exit_price=proof.exit_price,
+            exit_reason="MANUAL",
+            realized_pnl_usdt=proof.realized_pnl_usdt,
+            realized_pnl_pct=proof.realized_pnl_pct,
+            fees_costs_usdt=proof.fees_costs_usdt,
+            updated_at_ms=max(int(time.time() * 1000), proof.exit_time_ms),
+        )
+        self.store.clear_paper_protection_for_flat(position_key)
+        return True
+
     def robot_close_all(self, request: CloseAllCommandRequest) -> CloseAllCommandResponse:
         """Market-close exclusively Robot-owned open positions (close_all_now()).
 
@@ -3869,14 +3993,40 @@ class PaperRuntime:
                     # operator action + symbol instead of generating a fresh
                     # order on ambiguous HTTP retry.
                     order_link_id = f"tw_{digest}{sum(bytes.fromhex(digest)) & 0xF:x}"
-                    result = self._robot_full_close(
+                    manual_request, manual_identity = self._robot_prepare_manual_close(
+                        candidate,
                         FullCloseCommandRequest(
                             ClientActionId(f"robot-close-all-{digest}"), symbol,
                         ),
-                        identity=CommandIdentityCandidate(
+                        CommandIdentityCandidate(
                             CommandId(f"cmd_{digest}"), order_link_id,
                         ),
                     )
+                    if self._robot_finalize_manual_close(candidate):
+                        # A previous HTTP delivery filled this exact durable
+                        # intent; prove it without submitting another order.
+                        result = CommandResult(
+                            manual_request.client_action_id.value,
+                            CommandResultStatus.COMPLETED,
+                            "robot_manual_close_proven",
+                            "Robot trade closed from durable PAPER execution",
+                        )
+                    else:
+                        result = self._robot_full_close(
+                            manual_request, identity=manual_identity,
+                        )
+                        if (
+                            result.status == CommandResultStatus.COMPLETED
+                            and not self._robot_finalize_manual_close(candidate)
+                        ):
+                            result = CommandResult(
+                                manual_request.client_action_id.value,
+                                CommandResultStatus.UNKNOWN,
+                                "robot_manual_close_unproven",
+                                "PAPER close needs trade-ledger reconciliation",
+                                getattr(result, "command_id", None),
+                                True,
+                            )
             except Exception as error:
                 result = CommandResult(
                     f"robot-close-all-{digest}",
@@ -4471,6 +4621,13 @@ class PaperRuntime:
                         self.store.clear_paper_protection_for_flat(position_key)
                         if newly_closed:
                             closed_trade_ids.append(trade.trade_id)
+                        continue
+
+                    # A Close-All intent was committed before its Market fill.
+                    # Resume only the exact proven execution; never dispatch
+                    # a replacement close during operator reconciliation.
+                    if self._robot_finalize_manual_close(candidate):
+                        closed_trade_ids.append(trade.trade_id)
                         continue
 
                     # Non-Box aggregate emergency-close recovery retains the
