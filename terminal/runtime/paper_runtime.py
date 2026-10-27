@@ -20,6 +20,7 @@ from typing import Callable, Mapping
 
 from terminal.api.rest import TerminalCommandApi
 from terminal.application.command_identity import CommandIdentityCandidate
+from terminal.application.robot_trade_ledger import prove_robot_open_trade_ledger
 from terminal.api.models import (
     ClientActionId, CloseAllCommandRequest, CloseAllCommandResponse, CommandResult, CommandResultStatus,
     FullCloseCommandRequest, LimitCommandRequest, PaperLimitAmendRequest, PaperLimitCancelRequest,
@@ -3565,9 +3566,25 @@ class PaperRuntime:
             digest = hashlib.sha256(
                 f"{request.client_action_id.value}\0{symbol}".encode("utf-8")
             ).hexdigest()[:32]
+            # Reuse the PAPER Market engine's durable command/exec replay
+            # identity on HTTP redelivery of the same account-wide Close-All.
+            # Namespace it separately from Robot-owned Close-All so the two
+            # routes cannot claim the same order identity for one action ID.
+            market_digest = hashlib.sha256(
+                (
+                    "paper-account-close-all" + chr(0)
+                    + request.client_action_id.value + chr(0) + symbol
+                ).encode("utf-8")
+            ).hexdigest()[:32]
+            order_link_id = (
+                f"tw_{market_digest}{sum(bytes.fromhex(market_digest)) & 0xF:x}"
+            )
             results.append(self.api.full_close(
                 FullCloseCommandRequest(ClientActionId(f"paper-close-all-{digest}"), symbol),
                 market_book=self._robot_execution_book(symbol, evidence.get(symbol)),
+                identity=CommandIdentityCandidate(
+                    CommandId(f"cmd_{market_digest}"), order_link_id,
+                ),
             ))
         refreshed = self.open_positions()
         return CloseAllCommandResponse(
@@ -3892,25 +3909,12 @@ class PaperRuntime:
         orphan_trade_ids: tuple[str, ...] = ()
         ledger_read_failed = False
         try:
-            open_trades = self.store.load_open_robot_trades(self._account_id)
-            candidates_by_id = {item.candidate_id: item for item in open_candidates}
-            trades_by_candidate_id = {
-                item.candidate_id: item for item in open_trades
-            }
-            orphan_trade_ids = tuple(sorted(
-                item.trade_id for item in open_trades
-                if item.candidate_id not in candidates_by_id
-            ))
-            ledger_unproven = (
-                len(candidates_by_id) != len(open_candidates)
-                or len(trades_by_candidate_id) != len(open_trades)
-                or candidates_by_id.keys() != trades_by_candidate_id.keys()
-                or any(
-                    item.symbol != candidates_by_id[item.candidate_id].symbol
-                    for item in open_trades
-                    if item.candidate_id in candidates_by_id
-                )
+            ledger = prove_robot_open_trade_ledger(
+                open_candidates,
+                self.store.load_open_robot_trades(self._account_id),
             )
+            ledger_unproven = not ledger.valid
+            orphan_trade_ids = ledger.orphan_trade_ids
         except Exception:
             ledger_unproven = True
             ledger_read_failed = True
@@ -4530,6 +4534,17 @@ class PaperRuntime:
             candidates = self.store.load_robot_candidates_by_status(
                 self._paper_account_id, ("OPEN",),
             )
+            ledger = prove_robot_open_trade_ledger(
+                candidates, self.store.load_open_robot_trades(self._paper_account_id),
+            )
+            if not ledger.valid:
+                unresolved_candidate_ids.update(ledger.invalid_candidate_ids)
+                unresolved_trade_ids.update(ledger.invalid_trade_ids)
+                return fail(
+                    "reconcile_robot cannot prove OPEN Robot candidate/trade ledger: "
+                    + "candidates=" + ",".join(ledger.invalid_candidate_ids)
+                    + " trades=" + ",".join(ledger.invalid_trade_ids)
+                )
             for candidate in candidates:
                 if candidate.status != "OPEN":
                     continue
