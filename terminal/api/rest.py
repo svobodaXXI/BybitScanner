@@ -110,7 +110,9 @@ class TerminalCommandApi:
                 SlippageMetadata(SlippageToleranceType.PERCENT, Decimal("0.5")),
             )
             return _application_result(action_id, self._application.submit(
-                intent, pretrade, identity=identity, **_market_book_kwargs(market_book),
+                intent, pretrade,
+                **({"identity": identity} if identity is not None else {}),
+                **_market_book_kwargs(market_book),
             ))
         except Exception as exc:
             return _safe_error(action_id, exc)
