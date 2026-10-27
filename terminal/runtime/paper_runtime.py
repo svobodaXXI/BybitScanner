@@ -3764,12 +3764,14 @@ class PaperRuntime:
         # Robot-owned position open. Reuse the inventory read already required
         # by the existing response, without resubmitting any order.
         refreshed = None
+        inventory_error = None
         try:
             refreshed = self.open_positions()
-        except Exception:
+        except Exception as exc:
             # The response would have failed anyway. Preserve the Robot
-            # admission fence before allowing that failure to propagate.
+            # admission fence before allowing the original failure to propagate.
             any_unconfirmed = True
+            inventory_error = exc
         if refreshed is not None:
             remaining_symbols = {
                 position.symbol for position in refreshed.positions
@@ -3791,10 +3793,10 @@ class PaperRuntime:
                     expected_version=runtime.version,
                     updated_at_ms=int(time.time() * 1000),
                 )
-        if refreshed is None:
-            # Preserve the existing unsuccessful HTTP outcome rather than
-            # claiming a successful Close-All with unknown inventory.
-            raise RuntimeError("Robot close-all could not verify remaining PAPER positions")
+        if inventory_error is not None:
+            # Preserve the existing failure type rather than claiming
+            # a successful Close-All with unknown inventory.
+            raise inventory_error
         return CloseAllCommandResponse(
             request.client_action_id.value, tuple(results), refreshed.positions,
         )
