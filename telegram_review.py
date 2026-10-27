@@ -467,7 +467,7 @@ def _confirm_paper_close_all(callback_query):
             or result.get("client_action_id") != action_id
             or result.get("positions") != []
             or not isinstance(result.get("results"), list)
-            or any(item.get("status") != "COMPLETED"
+            or any(item.get("status") != "completed"
                    for item in result["results"]
                    if isinstance(item, dict))
             or any(not isinstance(item, dict) for item in result["results"])
