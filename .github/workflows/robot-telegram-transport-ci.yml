@@ -50,8 +50,8 @@ jobs:
       - name: Existing Telegram Robot transport contract
         run: >-
           python -m unittest -v
-          tests.test_telegram_robot_http_transport
           tests.test_telegram_robot_control
+          tests.test_telegram_robot_http_transport
           tests.test_robot_telegram_feed
           tests.test_robot_close_all_state_authority
           tests.test_robot_control
