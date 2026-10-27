@@ -8,6 +8,8 @@ on:
       - "telegram_monitoring.py"
       - "robot_telegram_feed.py"
       - "terminal/application/robot_control.py"
+      - "terminal/runtime/paper_http_server.py"
+      - "tests/test_robot_close_all_state_authority.py"
       - "tests/test_telegram_robot_http_transport.py"
       - ".github/workflows/robot-telegram-transport-ci.yml"
 
@@ -35,6 +37,15 @@ jobs:
           matplotlib==3.11.1
           mplfinance==0.12.10b0
       - name: Compile Telegram control and tests
-        run: python -m py_compile telegram_review.py tests/test_telegram_robot_http_transport.py
+        run: >-
+          python -m py_compile telegram_review.py
+          terminal/application/robot_control.py
+          terminal/runtime/paper_http_server.py
+          tests/test_telegram_robot_http_transport.py
+          tests/test_robot_close_all_state_authority.py
       - name: Existing Telegram Robot transport contract
-        run: python -m unittest -v tests.test_telegram_robot_http_transport
+        run: >-
+          python -m unittest -v
+          tests.test_telegram_robot_http_transport
+          tests.test_robot_close_all_state_authority
+          tests.test_robot_control
