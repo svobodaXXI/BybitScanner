@@ -1,0 +1,40 @@
+name: Telegram Robot control transport
+
+# Pure mocked HTTP tests. No runtime, PAPER database, credentials or Bybit access.
+on:
+  pull_request:
+    paths:
+      - "telegram_review.py"
+      - "telegram_monitoring.py"
+      - "robot_telegram_feed.py"
+      - "terminal/application/robot_control.py"
+      - "tests/test_telegram_robot_http_transport.py"
+      - ".github/workflows/robot-telegram-transport-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  telegram-robot-transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install existing lightweight test imports
+        run: >-
+          python -m pip install
+          requests==2.34.2
+          PySocks==1.7.1
+          websocket-client==1.9.0
+          pandas==3.0.5
+          numpy==2.5.1
+          matplotlib==3.11.1
+          mplfinance==0.12.10b0
+      - name: Compile Telegram control and tests
+        run: python -m py_compile telegram_review.py tests/test_telegram_robot_http_transport.py
+      - name: Existing Telegram Robot transport contract
+        run: python -m unittest -v tests.test_telegram_robot_http_transport
