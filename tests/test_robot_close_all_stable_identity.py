@@ -56,6 +56,13 @@ def _runtime_for_symbols(*symbols):
     runtime = SimpleNamespace(
         _account_id=TradingAccountId("paper"), store=store,
         _robot_full_close=close,
+        _robot_prepare_manual_close=Mock(side_effect=lambda candidate, request, identity: (
+            request, identity,
+        )),
+        _robot_finalize_manual_close=Mock(side_effect=lambda candidate: (
+            close.call_count > 0
+            
+        )),
         _robot_linked_entry_limits=Mock(return_value={}),
         _robot_close_box_candidate=Mock(),
         open_positions=Mock(return_value=SimpleNamespace(positions=())),
