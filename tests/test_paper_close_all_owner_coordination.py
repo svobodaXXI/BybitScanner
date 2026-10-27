@@ -59,7 +59,7 @@ def fixture(
         mode=mode, recovery_status=status, version=4, updated_at_ms=0,
     )
     autopilot = SimpleNamespace(mode="PAPER_AUTO", version=3, updated_at_ms=0)
-    current = {"robot": state, "trades": (trade(),) if robot else ()}
+    current = {"robot": state, "trades": (trade(),) if robot else (), "limits": list(orders)}
 
     def update_robot(account, *, mode, recovery_status, reason, expected_version, updated_at_ms):
         assert expected_version == current["robot"].version
@@ -86,9 +86,9 @@ def fixture(
                 (position("MANUALUSDT"),) if manual else ()
             )
         )),
-        load_active_paper_limits_for_account=Mock(side_effect=(
-            tuple(orders), (), (),
-        )),
+        load_active_paper_limits_for_account=Mock(
+            side_effect=lambda account: tuple(current["limits"]),
+        ),
     )
     # A successful Robot close removes that one durable owner before manual
     # close, as the production close_robot_trade transaction does.
@@ -105,8 +105,12 @@ def fixture(
         close_all=Mock(return_value=response(
             (completed("manual-close"),) if manual else (),
         )),
-        _robot_cancel_limit=Mock(return_value=SimpleNamespace(
-            status=CommandResultStatus.COMPLETED,
+        _robot_cancel_limit=Mock(side_effect=lambda request: (
+            current["limits"].__setitem__(
+                slice(None), [item for item in current["limits"]
+                              if item.order_id.value != request.order_id],
+            )
+            or SimpleNamespace(status=CommandResultStatus.COMPLETED)
         )),
         open_positions=Mock(return_value=SimpleNamespace(positions=())),
     )
@@ -194,7 +198,8 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
         result = run(runtime)
         self.assertFalse(result.positions)
         requests = [x.args[0].order_id for x in runtime._robot_cancel_limit.call_args_list]
-        self.assertEqual(requests, ["entry"])
+        self.assertEqual(requests, ["entry", "take"])
+        self.assertEqual(runtime.store.load_active_paper_limits_for_account(ACCOUNT), ())
 
     def test_residual_position_preserves_exit_limit_and_non_success(self):
         take = limit("take", side=OrderSide.SELL)
