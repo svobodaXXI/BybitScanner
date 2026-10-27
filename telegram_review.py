@@ -431,7 +431,7 @@ def _robot_close_all_callback_action_id(callback_query):
     if not isinstance(callback_id, str) or not callback_id:
         return None
     digest = hashlib.sha256(
-        f"robot-close-all-confirm\\0{callback_id}".encode("utf-8")
+        ("robot-close-all-confirm" + chr(0) + callback_id).encode("utf-8")
     ).hexdigest()[:32]
     return f"robot-close-all-cb-{digest}"
 
