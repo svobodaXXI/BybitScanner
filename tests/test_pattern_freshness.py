@@ -318,5 +318,47 @@ class RuntimeVerdictTests(unittest.TestCase):
         self.assertIsNone(self.verdict(l_shape(), lambda s, snap: (self.candle(first + STEP, 1, 1),)))
 
 
+class MirrorFreshnessTests(unittest.TestCase):
+    """MIRROR reuses the frozen target/stop evidence, never Wedge apex replay."""
+
+    @staticmethod
+    def snapshot(direction="SHORT"):
+        base = l_shape(direction)
+        base["pattern"] = "MIRROR"
+        terms = base.pop("l_shape")
+        # MIRROR's breakout_time_ms denotes the CONFIRMATION candle open.
+        terms["breakout_time_ms"] = DECISION
+        terms["confirmation"] = {
+            "kind": "ENGULFING", "timeframe": str(TF),
+            "open_time_ms": DECISION, "close_time_ms": FIRST,
+        }
+        base["mirror_entry"] = terms
+        return base
+
+    def test_mirror_uses_shared_freshness_and_paper_auto_runtime(self):
+        snapshot = self.snapshot()
+        self.assertEqual(pf.freshness_kind(snapshot), pf.KIND_MIRROR)
+        self.assertEqual(pf.freshness_fetch(lambda *_: ("wedge",),
+                                          pattern_fetch=lambda *_: ("mirror",))("X", snapshot), ("mirror",))
+        verdict = RuntimeVerdictTests.verdict
+        candle = RuntimeVerdictTests.candle
+        self.assertIs(verdict(snapshot, lambda *_: ()), True)
+        self.assertIs(verdict(snapshot, lambda *_: (candle(FIRST, 307.0, 306.0),)), True)
+        self.assertIs(verdict(snapshot, lambda *_: (candle(FIRST, 306.0, 304.0),)), False)
+        self.assertIsNone(verdict(snapshot, lambda *_: (candle(FIRST + STEP, 307.0, 306.0),)))
+
+    def test_confirmation_candle_is_not_rejudged_as_post_entry(self):
+        snapshot = self.snapshot()
+        rows = [(DECISION - STEP, 307.0, 306.0, 306.5),
+                (DECISION, 400.0, 1.0, 307.6),  # confirmed signal: not post-entry
+                (FIRST, 307.0, 306.0, 306.5),
+                (FIRST + STEP, 307.0, 306.0, 306.5)]  # forming
+        candles = pf.load_pattern_closed_candles("ABCUSDT", snapshot,
+                                                 candle_loader=loader_for(rows),
+                                                 now_ms=FIRST + STEP + 1000)
+        self.assertEqual([x["time_ms"] for x in candles], [FIRST])
+        self.assertTrue(pf.pattern_candidate_fresh(snapshot, candles))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,8 @@ on:
   pull_request:
     paths:
       - "mirror_scanner.py"
+      - "pattern_freshness.py"
+      - "tests/test_pattern_freshness.py"
       - "tests/test_mirror_standalone_paper_e2e.py"
       - ".github/workflows/mirror-standalone-ci.yml"
   workflow_dispatch:
@@ -40,6 +42,8 @@ jobs:
         run: >-
           python -m py_compile
           mirror_scanner.py
+          pattern_freshness.py
+          tests/test_pattern_freshness.py
           tests/test_mirror_standalone_paper_e2e.py
       - name: Full synthetic MIRROR standalone PAPER E2E and regression suite
-        run: python -m unittest -v tests.test_mirror_standalone_paper_e2e
+        run: python -m unittest -v tests.test_pattern_freshness tests.test_mirror_standalone_paper_e2e
