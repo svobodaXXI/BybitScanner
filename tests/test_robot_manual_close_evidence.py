@@ -104,6 +104,11 @@ class RobotManualCloseEvidenceTests(unittest.TestCase):
         stale.updated_at_ms = 149
         self.assertIsNone(proof(position=stale))
 
+    def test_extra_position_execution_does_not_prove_manual_flat(self):
+        ambiguous = position()
+        ambiguous.version += 1
+        self.assertIsNone(proof(position=ambiguous))
+
     def test_exec_id_and_order_id_must_match_first_durable_intent(self):
         bad = candidate()
         bad.robot_state["execution"]["robot_close_all_manual_intent"]["order_link_id"] = (
