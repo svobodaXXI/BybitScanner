@@ -3758,6 +3758,39 @@ class PaperRuntime:
             # safe; hold ALL closes until the existing reconcile path proves it.
             unproven_owner_symbols.update(symbol.value for symbol in candidate_symbols)
 
+        # Candidate state alone is not durable trade ownership. A restart
+        # can leave an OPEN candidate without a matching non-terminal Robot
+        # trade, or an orphan trade without an OPEN candidate. Neither permits
+        # a net-symbol close: the same ledger invariant is enforced by
+        # RobotRecoveryCoordinator before publishing READY on restart.
+        # This check is read-only and takes place before the first Market order.
+        ledger_unproven = False
+        orphan_trade_ids: tuple[str, ...] = ()
+        ledger_read_failed = False
+        try:
+            open_trades = self.store.load_open_robot_trades(self._account_id)
+            candidates_by_id = {item.candidate_id: item for item in open_candidates}
+            trades_by_candidate_id = {
+                item.candidate_id: item for item in open_trades
+            }
+            orphan_trade_ids = tuple(sorted(
+                item.trade_id for item in open_trades
+                if item.candidate_id not in candidates_by_id
+            ))
+            ledger_unproven = (
+                len(candidates_by_id) != len(open_candidates)
+                or len(trades_by_candidate_id) != len(open_trades)
+                or candidates_by_id.keys() != trades_by_candidate_id.keys()
+                or any(
+                    item.symbol != candidates_by_id[item.candidate_id].symbol
+                    for item in open_trades
+                    if item.candidate_id in candidates_by_id
+                )
+            )
+        except Exception:
+            ledger_unproven = True
+            ledger_read_failed = True
+
         # A still-working Robot ENTRY LIMIT could refill the same net position
         # after our Market close. An unresolved STOP/TAKE obligation could
         # independently submit a competing close. Fail closed before ANY Market
@@ -3800,7 +3833,7 @@ class PaperRuntime:
         ownership_blocked = bool(unproven_owner_symbols)
         pending_work_blocked = bool(conflicting_work_symbols)
         results = []
-        any_unconfirmed = ownership_blocked or pending_work_blocked
+        any_unconfirmed = ownership_blocked or pending_work_blocked or ledger_unproven
         for candidate in open_candidates:
             symbol = candidate.symbol.value
             digest = hashlib.sha256(
@@ -3808,21 +3841,21 @@ class PaperRuntime:
             ).hexdigest()[:32]
             is_box = candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
             try:
-                if ownership_blocked or pending_work_blocked:
+                if ownership_blocked or ledger_unproven or pending_work_blocked:
+                    reason = (
+                        "robot_owner_unproven" if ownership_blocked
+                        else "robot_trade_ownership_unproven" if ledger_unproven
+                        else "robot_close_work_inflight"
+                    )
+                    message = (
+                        "Robot ownership requires reconciliation" if ownership_blocked
+                        else "Robot trade ledger requires reconciliation" if ledger_unproven
+                        else "Robot entry or protection work requires reconciliation"
+                    )
                     result = CommandResult(
                         f"robot-close-all-{digest}",
                         CommandResultStatus.UNAVAILABLE,
-                        (
-                            "robot_owner_unproven"
-                            if ownership_blocked else "robot_close_work_inflight"
-                        ),
-                        (
-                            "Robot ownership requires reconciliation"
-                            if ownership_blocked
-                            else "Robot entry or protection work requires reconciliation"
-                        ),
-                        None,
-                        True,
+                        reason, message, None, True,
                     )
                 elif is_box:
                     result = self._robot_close_box_candidate(candidate)
@@ -3852,6 +3885,28 @@ class PaperRuntime:
             results.append(result)
             if result.status != CommandResultStatus.COMPLETED:
                 any_unconfirmed = True
+        # Orphan trades have no OPEN candidate to generate a normal close
+        # result. Surface their unresolved identities using existing result
+        # fields, without sending a Market order or claiming a clean no-op.
+        for trade_id in orphan_trade_ids:
+            digest = hashlib.sha256(
+                f"{request.client_action_id.value}\\0orphan-trade\\0{trade_id}".encode("utf-8")
+            ).hexdigest()[:32]
+            results.append(CommandResult(
+                f"robot-close-all-{digest}",
+                CommandResultStatus.UNAVAILABLE,
+                "robot_trade_ownership_unproven",
+                "Robot trade ledger requires reconciliation",
+                None, True,
+            ))
+        if ledger_read_failed and not open_candidates:
+            results.append(CommandResult(
+                request.client_action_id.value,
+                CommandResultStatus.UNAVAILABLE,
+                "robot_trade_ownership_unproven",
+                "Robot trade ledger is unavailable",
+                None, True,
+            ))
         # COMPLETED alone is insufficient evidence of FLAT: an already-flat
         # API result, stale command outcome or incomplete close can leave a
         # Robot-owned position open. Reuse the inventory read already required

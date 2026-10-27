@@ -34,6 +34,14 @@ def _runtime_for_symbols(*symbols):
     ]
     store = SimpleNamespace(
         load_robot_candidates_by_status=Mock(return_value=candidates),
+        load_open_robot_trades=Mock(return_value=tuple(
+            SimpleNamespace(
+                trade_id=f"trade-{candidate.candidate_id}",
+                candidate_id=candidate.candidate_id,
+                symbol=candidate.symbol,
+            )
+            for candidate in candidates
+        )),
         load_active_robot_candidate_states=Mock(return_value=candidates),
         load_active_robot_entry_orders=Mock(return_value={}),
         load_unresolved_paper_protection_obligations=Mock(return_value=()),
