@@ -86,6 +86,7 @@ from terminal.persistence.live_account_store import LiveAccountProjectionStore
 from terminal.persistence.active_account_preference import ActiveAccountPreferenceStore
 from terminal.application.live_account_reconciliation import LiveAccountReconciliationError
 from terminal.application.runtime_intent import RuntimeIntent, RuntimeIntentReconciler
+from terminal.application.robot_control import ROBOT_CLOSE_ALL_ALLOWED_STATES
 
 
 LOGGER = logging.getLogger(__name__)
@@ -271,10 +272,7 @@ def _require_robot_route_legality(runtime: PaperRuntime, command: str) -> None:
         raise RobotRouteLegalityError("Robot runtime state is unavailable")
     pair = (state.mode, state.recovery_status)
     allowed = {
-        "close_all_now": {
-            ("ROBOT_RUNNING", "READY"),
-            ("ROBOT_RUNNING", "PAUSED"),
-        },
+        "close_all_now": ROBOT_CLOSE_ALL_ALLOWED_STATES,
         "synchronize_pending_entries": {
             ("ROBOT_RUNNING", "PAUSED"),
             ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
