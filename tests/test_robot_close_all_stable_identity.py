@@ -60,8 +60,10 @@ def _runtime_for_symbols(*symbols):
             request, identity,
         )),
         _robot_finalize_manual_close=Mock(side_effect=lambda candidate: (
-            close.call_count > 0
-            
+            close.call_count > next(
+                i for i, item in enumerate(candidates)
+                if item.candidate_id == candidate.candidate_id
+            )
         )),
         _robot_linked_entry_limits=Mock(return_value={}),
         _robot_close_box_candidate=Mock(),
