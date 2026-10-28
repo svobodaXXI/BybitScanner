@@ -28,3 +28,7 @@ This MVP reuses the project's existing diagnostics, not the Terminal's UI. An ex
 - No SSH credentials or host fingerprints are provisioned by the application.
 
 The update preflight is **informational**, not approval to stop or deploy. It does not establish that the backend is attached to the expected PAPER DB, verify open-position protection, or prove shutdown safety. Any failure must block further owner-side decisions until diagnosed.
+
+## Portable Windows build
+
+The pull-request Windows CI builds a single-file `BybitScanner-VPS-Manager.exe` and uploads it as the `BybitScanner-VPS-Manager-Windows` workflow artifact (14-day retention). Download the artifact from the completed GitHub Actions run and extract the zip. Windows OpenSSH Client and previously configured SSH key/host trust are still required. No Python installation is required for the built EXE. Treat downloaded CI binaries as test builds, not signed releases.
