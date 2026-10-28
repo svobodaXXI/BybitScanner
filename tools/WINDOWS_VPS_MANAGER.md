@@ -4,7 +4,7 @@ Standalone Windows utility in `tools/windows_vps_manager.py`, without embedding 
 
 ## Launch
 
-On Windows with Python 3 + Tkinter and Windows OpenSSH Client installed:
+On Windows with Python 3 + Tkinter and Windows OpenSSH Client installed, double-click `tools/Запустить VPS Manager.cmd`, or launch manually:
 
 ```powershell
 py -3 tools\windows_vps_manager.py
