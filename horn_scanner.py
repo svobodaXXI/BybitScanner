@@ -6,7 +6,9 @@ HORN-4 (DOCUMENTS/SCANNER_BROADENING_FORMATION_HORN_1.md, issue #504):
 - 4 confirmed alternating pivots = PRELIMINARY (shown, explicitly provisional),
   5+ = MATURE; no LONG/SHORT;
 - observation only: no Robot candidate, no admission, no order, no Autopilot;
-  the Telegram card carries only the TradingView link;
+  HORN-5 (#509): the Telegram card is the canonical short text, then the chart
+  with the shared keyboard (TradingView; owner also MetaScalp and review), and
+  never a Robot button;
 - Horn never suppresses or replaces Wedge/Triangle/Box/L-shape; a Wedge result
   on the same snapshot is stored next to the Horn for owner comparison;
 - evidence is appended per event and fsynced immediately (detection, OHLC,
@@ -20,8 +22,14 @@ import time
 
 import config
 from geometry.broadening import detect_broadening
-from geometry.broadening_chart import broadening_caption, render_broadening_chart
-from notification import build_tradingview_keyboard, get_telegram_chat_ids, send_photo
+from geometry.broadening_chart import broadening_signal_text, render_broadening_chart
+from notification import (
+    build_tradingview_keyboard,
+    get_telegram_chat_ids,
+    get_telegram_owner_chat_id,
+    send_message,
+    send_photo,
+)
 from signal_memory import load_memory, save_memory
 
 _SAFE_SYMBOL = re.compile(r"^[A-Z0-9]+$")
@@ -159,13 +167,34 @@ def observe_broadening(symbol, candles, *, timeframe, wedge_result=None, chart_d
     return observation
 
 
+def _deliver(event, send, key, stage, chat_id, test_mode, root):
+    """One Telegram call; its outcome is appended to the evidence log."""
+    result = {"event": event, "identity": key, "stage": stage,
+              "chat_id": str(chat_id), "test_mode": bool(test_mode)}
+    try:
+        response = send()
+        ok = isinstance(response, dict) and bool(response.get("ok"))
+        result.update(ok=ok, message_id=((response or {}).get("result") or {}).get("message_id")
+                      if isinstance(response, dict) else None)
+    except Exception as error:
+        ok = False
+        result.update(ok=False, error=str(error)[:200])
+    append_event(result, root)
+    return ok
+
+
 def send_broadening_observation(symbol, observation, *, timeframe, test_mode=False, root=None):
-    """Send the chart once per formation identity and stage.
+    """Send the card once per formation identity and stage.
+
+    HORN-5 canonical card (as Ikigai Box): a short text, then the chart with
+    the shared keyboard. The owner gets the shared MetaScalp and review
+    buttons; other recipients only TradingView. There is never a Robot button.
 
     The first sighting (PRELIMINARY or MATURE) is delivered; a later upgrade to
-    MATURE is delivered once more. Per-recipient delivery is remembered in the
-    namespaced signal-memory key, so a failed recipient stays retryable and no
-    card is sent twice. Every result is appended to the evidence log.
+    MATURE is delivered once more. Per-recipient text and chart delivery are
+    remembered separately in the namespaced signal-memory key, so a failed
+    recipient stays retryable without a repeated text and no card is sent
+    twice. Every result is appended to the evidence log.
     """
     if not getattr(config, "TELEGRAM_ENABLED", False) or not observation:
         return False
@@ -176,39 +205,44 @@ def send_broadening_observation(symbol, observation, *, timeframe, test_mode=Fal
     memory = load_memory()
     seen = memory.get(key, {}) if not test_mode else {}
     delivered = {s: set(ids) for s, ids in (seen.get("stages_delivered") or {}).items()}
-    already = delivered.get(stage, set())
+    texted = {s: set(ids) for s, ids in (seen.get("stages_text_delivered") or {}).items()}
 
-    caption = broadening_caption(symbol, timeframe, observation["formation"])
+    message = broadening_signal_text(symbol, timeframe, observation["formation"])
     if test_mode:
-        caption += "\n🧪 TEST MODE"
-    markup = build_tradingview_keyboard(symbol, timeframe, include_review_actions=False)
+        message += "\n🧪 TEST MODE"
+    owner_chat_id = get_telegram_owner_chat_id()
+
+    def remember():
+        if test_mode:
+            return
+        memory[key] = {
+            "pattern": "Broadening",
+            "stages_delivered": {s: sorted(ids) for s, ids in delivered.items()},
+            "stages_text_delivered": {s: sorted(ids) for s, ids in texted.items()},
+        }
+        save_memory(memory)
 
     all_ok, sent_new = True, False
     for chat_id in recipients:
-        if chat_id in already:
+        if chat_id in delivered.get(stage, set()):
             continue
-        result = {"event": "horn_delivery", "identity": key, "stage": stage,
-                  "chat_id": str(chat_id), "test_mode": bool(test_mode)}
-        try:
-            response = send_photo(config.TELEGRAM_TOKEN, chat_id, observation["chart_path"],
-                                  caption=caption, reply_markup=markup)
-            ok = isinstance(response, dict) and bool(response.get("ok"))
-            result.update(ok=ok, message_id=((response or {}).get("result") or {}).get("message_id")
-                          if isinstance(response, dict) else None)
-        except Exception as error:
-            ok = False
-            result.update(ok=False, error=str(error)[:200])
-        append_event(result, root)
-        if not ok:
+        if chat_id not in texted.get(stage, set()):
+            if not _deliver("horn_text_delivery",
+                            lambda: send_message(config.TELEGRAM_TOKEN, chat_id, message),
+                            key, stage, chat_id, test_mode, root):
+                all_ok = False
+                continue
+            texted[stage] = texted.get(stage, set()) | {chat_id}
+            remember()
+        is_owner = bool(owner_chat_id) and chat_id == owner_chat_id
+        markup = build_tradingview_keyboard(symbol, timeframe, include_review_actions=is_owner)
+        if not _deliver("horn_delivery",
+                        lambda: send_photo(config.TELEGRAM_TOKEN, chat_id, observation["chart_path"],
+                                           caption="", reply_markup=markup),
+                        key, stage, chat_id, test_mode, root):
             all_ok = False
             continue
         sent_new = True
-        if not test_mode:
-            already = already | {chat_id}
-            delivered[stage] = already
-            memory[key] = {
-                "pattern": "Broadening",
-                "stages_delivered": {s: sorted(ids) for s, ids in delivered.items()},
-            }
-            save_memory(memory)
+        delivered[stage] = delivered.get(stage, set()) | {chat_id}
+        remember()
     return all_ok and sent_new
