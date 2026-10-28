@@ -30,6 +30,14 @@ class TestWindowsVpsManager(unittest.TestCase):
         with self.assertRaises(ValueError):
             ssh_command("vps.example.org", "bybitscanner", "rm -rf /")
 
+    def test_git_actions_are_safe_directory_scoped(self) -> None:
+        for action, remote in ACTIONS.items():
+            if "git " in remote:
+                with self.subTest(action=action):
+                    self.assertNotIn("git -C", remote)
+                    self.assertIn("git -c safe.directory=/opt/BybitScanner -C /opt/BybitScanner", remote)
+                    self.assertNotIn("config --global", remote)
+
     def test_explicit_key_is_offered_and_pinned(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             key = Path(folder) / "bybitscanner_laptop"

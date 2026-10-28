@@ -18,6 +18,10 @@ from tkinter import messagebox, ttk
 
 PROJECT = "/opt/BybitScanner"
 VENV = f"{PROJECT}/venv/bin/python"
+# The repo belongs to the service account; a per-command safe.directory lets
+# the read-only manager user run git without any persistent config change.
+GIT = f"git -c safe.directory={PROJECT} -C {PROJECT}"
+HEALTH = "curl -fsS --connect-timeout 3 --max-time 6 http://127.0.0.1:8765/api/health"
 HOST_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
 # Without an explicit -i, OpenSSH only tries the default id_* names, so a
@@ -31,25 +35,35 @@ ACTIONS = {
         "systemctl show bybitscanner-telegram.service -p ActiveState -p SubState; "
         "systemctl show bybitscanner-paper-start.service -p ActiveState -p SubState"
     ),
-    "Диагностика PAPER": f"cd {PROJECT} && {VENV} -m tools.vps_check --no-systemd",
+    # tools.vps_check is a pre-start gate (ports must be free, secret env file
+    # readable), so on a running VPS it can only fail; read live health instead.
+    "Диагностика PAPER": (
+        "systemctl show bybitscanner-paper-backend.service "
+        "-p ActiveState -p SubState -p MainPID -p NRestarts -p ActiveEnterTimestamp; "
+        f"{HEALTH} | python3 -m json.tool"
+    ),
     "Git / локальные изменения": (
-        f"git -C {PROJECT} status --short && "
-        f"git -C {PROJECT} branch --show-current && "
-        f"git -C {PROJECT} rev-parse --short HEAD"
+        f"{GIT} status --short && "
+        f"{GIT} branch --show-current && "
+        f"{GIT} rev-parse --short HEAD"
     ),
     "Предпроверка обновления": (
         "printf '=== GIT ===\\n'; "
-        f"git -C {PROJECT} status --porcelain=v1; "
-        f"git -C {PROJECT} branch --show-current; "
-        f"git -C {PROJECT} rev-parse HEAD; "
+        f"{GIT} status --porcelain=v1; "
+        f"{GIT} branch --show-current; "
+        f"{GIT} rev-parse HEAD; "
         "printf '=== BACKEND ===\\n'; "
         "systemctl show bybitscanner-paper-backend.service "
         "-p ActiveState -p SubState -p MainPID; "
         "printf '=== PAPER HEALTH ===\\n'; "
-        "curl -fsS --connect-timeout 3 --max-time 6 "
-        "http://127.0.0.1:8765/api/health"
+        f"{HEALTH}"
     ),
+    # Without journal read access journalctl prints "-- No entries --" and exits 0,
+    # which looks like a healthy empty log; fail loudly instead.
     "Последние журналы": (
+        "id -nG | grep -qwE 'systemd-journal|adm' || "
+        "{ echo 'NO ACCESS: this SSH user cannot read the systemd journal "
+        "(needs group systemd-journal or adm)'; exit 13; }; "
         "journalctl -u bybitscanner-paper-backend.service "
         "--no-pager -n 35 --output=short-iso"
     ),
