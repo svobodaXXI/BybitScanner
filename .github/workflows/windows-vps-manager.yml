@@ -1,0 +1,28 @@
+name: Windows VPS Manager smoke
+on:
+  pull_request:
+    paths:
+      - "tools/windows_vps_manager.py"
+      - "tools/Запустить VPS Manager.cmd"
+      - "tests/test_windows_vps_manager.py"
+      - ".github/workflows/windows-vps-manager.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-mvp:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check Tkinter
+        run: python -c "import tkinter; print('Tkinter import OK')"
+      - name: Compile utility
+        run: python -m py_compile tools/windows_vps_manager.py
+      - name: Run isolated safety tests
+        run: python -m unittest discover -s tests -p test_windows_vps_manager.py -v
