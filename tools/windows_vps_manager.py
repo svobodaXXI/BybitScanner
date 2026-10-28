@@ -90,10 +90,12 @@ class VPSManager(tk.Tk):
         buttons = ttk.Frame(self, padding=(12, 0, 12, 9))
         buttons.pack(fill="x")
         self.buttons = []
-        for name in ACTIONS:
+        for index, name in enumerate(ACTIONS):
             button = ttk.Button(buttons, text=name, command=lambda selected=name: self.run_action(selected))
-            button.pack(side="left", padx=(0, 7), pady=3)
+            button.grid(row=index // 3, column=index % 3, padx=(0, 7), pady=3, sticky="ew")
             self.buttons.append(button)
+        for column in range(3):
+            buttons.columnconfigure(column, weight=1)
         ttk.Label(self, text="Журнал (только чтение)", padding=(12, 3)).pack(anchor="w")
         frame = ttk.Frame(self, padding=(12, 0, 12, 12))
         frame.pack(fill="both", expand=True)
