@@ -12,12 +12,16 @@ import re
 import subprocess
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, ttk
 
 PROJECT = "/opt/BybitScanner"
 VENV = f"{PROJECT}/venv/bin/python"
 HOST_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
+# Without an explicit -i, OpenSSH only tries the default id_* names, so a
+# purpose-built key such as ~/.ssh/bybitscanner_laptop is never offered.
+DEFAULT_KEY = Path.home() / ".ssh" / "bybitscanner_laptop"
 # Fixed, audited commands: no free-form shell and no trading mutations.
 ACTIONS = {
     "Состояние": (
@@ -52,20 +56,28 @@ ACTIONS = {
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
-def ssh_command(host: str, user: str, action: str) -> list[str]:
+def ssh_command(host: str, user: str, action: str, key: str = "") -> list[str]:
     host = host.strip()
     user = user.strip()
+    key = key.strip()
     if not HOST_PATTERN.fullmatch(host) or host.startswith("-"):
         raise ValueError("Недопустимое имя или адрес VPS")
     if not USER_PATTERN.fullmatch(user):
         raise ValueError("Недопустимое имя пользователя")
     if action not in ACTIONS:
         raise ValueError("Неизвестная операция")
+    identity: list[str] = []
+    if key:
+        path = Path(key).expanduser()
+        if not path.is_file():
+            raise ValueError(f"Файл ключа SSH не найден: {path}")
+        # IdentitiesOnly keeps the agent from racing ahead with other keys.
+        identity = ["-o", "IdentitiesOnly=yes", "-i", str(path)]
     return [
         "ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
         "-o", "ConnectTimeout=8", "-o", "NumberOfPasswordPrompts=0",
         "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
-        f"{user}@{host}", ACTIONS[action],
+        *identity, f"{user}@{host}", ACTIONS[action],
     ]
 
 
@@ -77,6 +89,7 @@ class VPSManager(tk.Tk):
         self.minsize(780, 380)
         self.host = tk.StringVar(value="")
         self.user = tk.StringVar(value="bybitscanner")
+        self.key = tk.StringVar(value=str(DEFAULT_KEY) if DEFAULT_KEY.is_file() else "")
         self.status = tk.StringVar(value="Не подключено · PAPER only")
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
         self.busy = False
@@ -86,7 +99,11 @@ class VPSManager(tk.Tk):
         ttk.Entry(top, textvariable=self.host, width=30).grid(row=0, column=1, padx=6)
         ttk.Label(top, text="SSH пользователь:").grid(row=0, column=2)
         ttk.Entry(top, textvariable=self.user, width=18).grid(row=0, column=3, padx=6)
-        ttk.Label(top, textvariable=self.status).grid(row=1, column=0, columnspan=4, sticky="w", pady=9)
+        ttk.Label(top, text="SSH ключ:").grid(row=1, column=0, sticky="w", pady=(7, 0))
+        ttk.Entry(top, textvariable=self.key, width=60).grid(
+            row=1, column=1, columnspan=3, padx=6, pady=(7, 0), sticky="we"
+        )
+        ttk.Label(top, textvariable=self.status).grid(row=2, column=0, columnspan=4, sticky="w", pady=9)
         buttons = ttk.Frame(self, padding=(12, 0, 12, 9))
         buttons.pack(fill="x")
         self.buttons = []
@@ -116,7 +133,7 @@ class VPSManager(tk.Tk):
         if self.busy:
             return
         try:
-            command = ssh_command(self.host.get(), self.user.get(), name)
+            command = ssh_command(self.host.get(), self.user.get(), name, self.key.get())
         except ValueError as exc:
             messagebox.showerror("VPS Manager", str(exc))
             return
