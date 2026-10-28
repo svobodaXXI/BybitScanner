@@ -74,7 +74,7 @@ class VPSManager(tk.Tk):
         super().__init__()
         self.title("BybitScanner VPS Manager — PAPER")
         self.geometry("880x510")
-        self.minsize(610, 380)
+        self.minsize(780, 380)
         self.host = tk.StringVar(value="")
         self.user = tk.StringVar(value="bybitscanner")
         self.status = tk.StringVar(value="Не подключено · PAPER only")
@@ -143,7 +143,7 @@ class VPSManager(tk.Tk):
                 _kind, result = self.events.get_nowait()
                 self.write(result)
                 self.busy = False
-                self.status.set("Готово · PAPER only")
+                self.status.set("Завершено · проверьте Exit code в журнале")
                 for button in self.buttons:
                     button.state(["!disabled"])
         except queue.Empty:
