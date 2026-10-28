@@ -32,6 +32,18 @@ ACTIONS = {
         f"git -C {PROJECT} branch --show-current && "
         f"git -C {PROJECT} rev-parse --short HEAD"
     ),
+    "Предпроверка обновления": (
+        "printf '=== GIT ===\\n'; "
+        f"git -C {PROJECT} status --porcelain=v1; "
+        f"git -C {PROJECT} branch --show-current; "
+        f"git -C {PROJECT} rev-parse HEAD; "
+        "printf '=== BACKEND ===\\n'; "
+        "systemctl show bybitscanner-paper-backend.service "
+        "-p ActiveState -p SubState -p MainPID; "
+        "printf '=== PAPER HEALTH ===\\n'; "
+        "curl -fsS --connect-timeout 3 --max-time 6 "
+        "http://127.0.0.1:8765/api/health"
+    ),
     "Последние журналы": (
         "journalctl -u bybitscanner-paper-backend.service "
         "--no-pager -n 35 --output=short-iso"
@@ -61,7 +73,7 @@ class VPSManager(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("BybitScanner VPS Manager — PAPER")
-        self.geometry("780x510")
+        self.geometry("880x510")
         self.minsize(610, 380)
         self.host = tk.StringVar(value="")
         self.user = tk.StringVar(value="bybitscanner")
@@ -80,7 +92,7 @@ class VPSManager(tk.Tk):
         self.buttons = []
         for name in ACTIONS:
             button = ttk.Button(buttons, text=name, command=lambda selected=name: self.run_action(selected))
-            button.pack(side="left", padx=(0, 7))
+            button.pack(side="left", padx=(0, 7), pady=3)
             self.buttons.append(button)
         ttk.Label(self, text="Журнал (только чтение)", padding=(12, 3)).pack(anchor="w")
         frame = ttk.Frame(self, padding=(12, 0, 12, 12))
