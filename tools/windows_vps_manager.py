@@ -16,7 +16,7 @@ from tkinter import messagebox, ttk
 
 PROJECT = "/opt/BybitScanner"
 VENV = f"{PROJECT}/venv/bin/python"
-HOST_PATTERN = re.compile(r"^(?:[a-zA-Z0-9][a-zA-Z0-9._-]*|\\[[0-9a-fA-F:]+\\])$")
+HOST_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
 # Fixed, audited commands: no free-form shell and no trading mutations.
 ACTIONS = {
