@@ -26,6 +26,28 @@ blocker, explaining the single needed decision. Never suppress safety gates,
 assume authorization, or claim success without observed evidence. After the
 blocker is resolved, return directly to the original end result.
 
+## Outcome-owned delegation — proven lesson (2026-10-28)
+
+**One goal → one end-to-end assignment → observable acceptance.** Do not turn a
+single owner outcome into serial prompts for logs, key searches, terminal tests,
+preparatory reports or other subgoals. Give the executor the **end state, allowed
+scope, non-negotiable invariants, minimal proof and STOP/escalation boundary**;
+leave the choice of ordinary technical steps and tools to that executor.
+
+**Change method, not goal:** If one terminal, tool or environment is demonstrably
+blocking progress, use a different authorized route before asking the owner to
+repeat the same input. Reuse prior PASS evidence and GitHub history first.
+Diagnostic actions are subordinate to delivery, time-boxed by their decision
+value, and cannot be reported as completion. Repeated diagnostics with no new
+information are a workflow failure, not progress.
+
+**Acceptance is real-world evidence:** Confirm the target operation actually
+works in the intended environment (e.g. authenticated SSH exit 0 or observed UI
+state), not merely that a command, file, test, PR or tool invocation exists.
+When a protected action needs owner consent, ask for the **single required
+approval at its boundary**, then resume the same goal. Keep all existing
+trading, runtime, Git/harness and secret-protection contracts intact.
+
 ## Fast task entry
 
 1. Identify the owner's actual outcome, intended GitHub ref or local worktree,
