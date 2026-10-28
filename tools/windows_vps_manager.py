@@ -6,6 +6,7 @@ Run: py -3 tools/windows_vps_manager.py
 """
 from __future__ import annotations
 
+import argparse
 import os
 import queue
 import re
@@ -82,14 +83,16 @@ def ssh_command(host: str, user: str, action: str, key: str = "") -> list[str]:
 
 
 class VPSManager(tk.Tk):
-    def __init__(self) -> None:
+    def __init__(self, host: str = "", user: str = "bybitscanner", key: str | None = None) -> None:
         super().__init__()
         self.title("BybitScanner VPS Manager — PAPER")
         self.geometry("880x510")
         self.minsize(780, 380)
-        self.host = tk.StringVar(value="")
-        self.user = tk.StringVar(value="bybitscanner")
-        self.key = tk.StringVar(value=str(DEFAULT_KEY) if DEFAULT_KEY.is_file() else "")
+        self.host = tk.StringVar(value=host)
+        self.user = tk.StringVar(value=user)
+        if key is None:
+            key = str(DEFAULT_KEY) if DEFAULT_KEY.is_file() else ""
+        self.key = tk.StringVar(value=key)
         self.status = tk.StringVar(value="Не подключено · PAPER only")
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
         self.busy = False
@@ -170,5 +173,17 @@ class VPSManager(tk.Tk):
         self.after(100, self.drain)
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    # Lets a local desktop shortcut prefill the fields, so the VPS address
+    # lives on the owner's machine and never in the repository.
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--host", default="")
+    parser.add_argument("--user", default="bybitscanner")
+    parser.add_argument("--key", default=None)
+    args, _unknown = parser.parse_known_args(argv)
+    return args
+
+
 if __name__ == "__main__":
-    VPSManager().mainloop()
+    options = parse_args()
+    VPSManager(options.host, options.user, options.key).mainloop()

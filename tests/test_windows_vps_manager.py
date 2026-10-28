@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.windows_vps_manager import ACTIONS, ssh_command
+from tools.windows_vps_manager import ACTIONS, parse_args, ssh_command
 
 
 class TestWindowsVpsManager(unittest.TestCase):
@@ -55,6 +55,14 @@ class TestWindowsVpsManager(unittest.TestCase):
                     "vps.example.org", "bybitscanner", "Состояние",
                     str(Path(folder) / "absent_key"),
                 )
+
+    def test_shortcut_arguments_prefill_fields(self) -> None:
+        args = parse_args(["--host", "vps.example.org", "--user", "vpsmanager", "--key", "C:/k"])
+        self.assertEqual((args.host, args.user, args.key), ("vps.example.org", "vpsmanager", "C:/k"))
+        defaults = parse_args([])
+        self.assertEqual((defaults.host, defaults.user, defaults.key), ("", "bybitscanner", None))
+        # Unknown switches must not crash a windowed executable.
+        self.assertEqual(parse_args(["--bogus", "x"]).host, "")
 
     def test_invalid_remote_targets_rejected(self) -> None:
         for hostname, user in [
