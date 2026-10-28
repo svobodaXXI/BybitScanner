@@ -16,7 +16,7 @@ The existing SSH configuration can specify the key and port under `%USERPROFILE%
 
 ## Scope
 
-Four **read-only** actions: systemd status, existing `tools.vps_check --no-systemd`, Git working-tree/branch/commit inspection, and backend's last 35 journal entries. The program intentionally has **no** general-purpose remote command field, trade operations, stop/start, service restart, deploy, database writes or LIVE operations. Remote commands are an allowlist executed with `ssh` and SSH host-key verification.
+Five **read-only** actions: systemd status, existing `tools.vps_check --no-systemd`, Git working-tree/branch/commit inspection, backend's last 35 journal entries, and a combined update preflight (Git status, systemd status, localhost PAPER health). The program intentionally has **no** general-purpose remote command field, trade operations, stop/start, service restart, deploy, database writes or LIVE operations. Remote commands are an allowlist executed with `ssh` and SSH host-key verification.
 
 This MVP reuses the project's existing diagnostics, not the Terminal's UI. An extension for safe PAPER deployment requires explicit owner authorization, identity/preflight verification, backup/rollback design and a tested stop protocol. A direct ChatGPT-to-VPS control channel is **not** provided by this Windows GUI; it is a local operator utility.
 
@@ -26,3 +26,5 @@ This MVP reuses the project's existing diagnostics, not the Terminal's UI. An ex
 - The `bybitscanner` account may need read access to `journalctl`; error output is displayed as-is.
 - The VPS host/user are entered per launch. No secrets are requested or stored.
 - No SSH credentials or host fingerprints are provisioned by the application.
+
+The update preflight is **informational**, not approval to stop or deploy. It does not establish that the backend is attached to the expected PAPER DB, verify open-position protection, or prove shutdown safety. Any failure must block further owner-side decisions until diagnosed.
