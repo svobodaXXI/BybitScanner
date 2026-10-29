@@ -206,29 +206,66 @@ export default {
               button.web_app.url.startsWith("https://") && button.web_app.url.length <= 2048))))) {
       return reply(400, {ok:false,error:"invalid_reply_markup"});
     }
-    let response;
-    try {
-      response = await fetch("https://api.telegram.org/bot" +
-        env.TELEGRAM_BOT_TOKEN + "/sendMessage", {
-        method:"POST",
-        headers:{"content-type":"application/json"},
-        body:JSON.stringify({chat_id:env.TELEGRAM_CHAT_ID,text:input.text, ...(input.reply_markup === undefined ? {} : {reply_markup:input.reply_markup})}),
-        signal:AbortSignal.timeout(10000)
-      });
-    } catch (_) {
-      return reply(503, {ok:false,error:"telegram_transport_unavailable",event_id:input.event_id});
-    }
-    let result;
-    try { result = await response.json(); }
-    catch (_) { return reply(502, {ok:false,error:"invalid_telegram_response",event_id:input.event_id}); }
-    if (!response.ok || result.ok !== true) {
-      return reply(502, {
-        ok:false,error:"telegram_rejected",event_id:input.event_id,
-        retryable:response.status === 429 || response.status >= 500,
-        retry_after_seconds:Number(response.headers.get("retry-after") || 0)
-      });
-    }
-    return reply(200, {ok:true,event_id:input.event_id,
-      stage:"accepted_by_telegram_api",telegram_message_id:result.result?.message_id ?? null});
+    // Durable Object serializes all requests for one event_id.
+    if (!env.TELEGRAM_EVENTS) return reply(503,{ok:false,error:"idempotency_storage_unavailable"});
+    const id = env.TELEGRAM_EVENTS.idFromName(input.event_id);
+    const stub = env.TELEGRAM_EVENTS.get(id);
+    return stub.fetch(new Request("https://internal/send", {
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify(input)
+    }));
   }
 };
+
+
+// Durable Object: persists the decision BEFORE contacting Telegram.
+// Ambiguous timeouts stay UNKNOWN; replays return the stored state, never resend.
+export class TelegramEvent {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+  }
+  async fetch(request) {
+    if (new URL(request.url).pathname !== "/send" || request.method !== "POST")
+      return reply(404,{ok:false,error:"not_found"});
+    let event;
+    try { event = await request.json(); }
+    catch (_) { return reply(400,{ok:false,error:"invalid_json"}); }
+    const fingerprint = await crypto.subtle.digest("SHA-256",
+      new TextEncoder().encode(JSON.stringify({
+        text:event.text,reply_markup:event.reply_markup ?? null
+      })));
+    const digest = Array.from(new Uint8Array(fingerprint), b => b.toString(16).padStart(2,"0")).join("");
+    const existing = await this.state.storage.get("delivery");
+    if (existing) {
+      if (existing.digest !== digest)
+        return reply(409,{ok:false,error:"event_id_payload_conflict"});
+      return reply(existing.status === "ACCEPTED" ? 200 : 409,{
+        ok:existing.status === "ACCEPTED",event_id:event.event_id,
+        stage:existing.status === "ACCEPTED" ? "accepted_by_telegram_api" : "delivery_unknown",
+        telegram_message_id:existing.message_id ?? null,
+        deduplicated:true
+      });
+    }
+    await this.state.storage.put("delivery",{digest,status:"UNKNOWN",message_id:null});
+    try {
+      const result = await fetch("https://api.telegram.org/bot" +
+        this.env.TELEGRAM_BOT_TOKEN + "/sendMessage",{
+        method:"POST",headers:{"content-type":"application/json"},
+        body:JSON.stringify({chat_id:this.env.TELEGRAM_CHAT_ID,text:event.text,
+          ...(event.reply_markup === undefined ? {} : {reply_markup:event.reply_markup})}),
+        signal:AbortSignal.timeout(10000)
+      });
+      const payload = await result.json();
+      if (!result.ok || payload.ok !== true)
+        return reply(502,{ok:false,error:"telegram_rejected_or_unknown",event_id:event.event_id});
+      const messageId = payload.result?.message_id ?? null;
+      await this.state.storage.put("delivery",{digest,status:"ACCEPTED",message_id:messageId});
+      return reply(200,{ok:true,event_id:event.event_id,
+        stage:"accepted_by_telegram_api",telegram_message_id:messageId});
+    } catch (_) {
+      return reply(503,{ok:false,error:"delivery_unknown",event_id:event.event_id});
+    }
+  }
+}
