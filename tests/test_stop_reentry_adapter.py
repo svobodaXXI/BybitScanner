@@ -163,6 +163,16 @@ def test_actual_paper_auto_stop_then_fresh_lshape_reserves_second_attempt(
     # The simple STOP fixture prepared a waiting candidate for store-level tests;
     # this end-to-end test admits it through the actual Scanner handoff instead.
     store._connection.execute("DELETE FROM robot_candidates WHERE candidate_id='second'")
+    # Portfolio Admission requires exact reconstructed position lots. The
+    # STOP-level fixture has only an exit fill; add its real earlier entry
+    # counterpart so the canonical collector proves net FLAT (10 - 10 = 0).
+    store._connection.execute(
+        """INSERT INTO executions (
+           trading_account_id,category,exec_id,order_id,symbol,side,
+           price,quantity,fee,exchange_timestamp_ms)
+           VALUES ('paper','linear','entry-exec-1','entry-order-1',
+                   'LABUSDT','Buy','1','10','0.1',200)"""
+    )
     store.initialize_paper_account(account, Decimal("5000"), updated_at_ms=10)
     ap = store.initialize_robot_autopilot_state(account, updated_at_ms=10)
     store.update_robot_autopilot_state(
