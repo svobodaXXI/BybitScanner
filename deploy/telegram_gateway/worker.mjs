@@ -101,6 +101,36 @@ export default {
         return reply(200,payload);
       } catch (_) { return reply(503,{ok:false,error:"telegram_method_unavailable"}); }
     }
+    if (url.pathname === "/v1/photo-file-id" && request.method === "POST") {
+      if (!env.GATEWAY_SHARED_SECRET || env.GATEWAY_SHARED_SECRET.length < 32 ||
+          !env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID)
+        return reply(503,{ok:false,error:"not_configured"});
+      const auth = request.headers.get("authorization") || "";
+      if (!auth.startsWith("Bearer ") || !matches(auth.slice(7),env.GATEWAY_SHARED_SECRET))
+        return reply(401,{ok:false,error:"unauthorized"});
+      let body;
+      try {
+        const raw = await request.text();
+        if (raw.length > 8192) return reply(413,{ok:false,error:"too_large"});
+        body = JSON.parse(raw);
+      } catch (_) { return reply(400,{ok:false,error:"invalid_json"}); }
+      if (!body || Object.keys(body).some(k => !["file_id","caption","reply_markup"].includes(k)) ||
+          typeof body.file_id !== "string" || !body.file_id || body.file_id.length > 1024 ||
+          (body.caption !== undefined && (typeof body.caption !== "string" || body.caption.length > 1024)))
+        return reply(400,{ok:false,error:"invalid_photo"});
+      if (body.reply_markup !== undefined)
+        return reply(400,{ok:false,error:"photo_markup_not_supported"});
+      try {
+        const tg = await fetch("https://api.telegram.org/bot"+env.TELEGRAM_BOT_TOKEN+"/sendPhoto",{
+          method:"POST",headers:{"content-type":"application/json"},
+          body:JSON.stringify({chat_id:env.TELEGRAM_CHAT_ID,photo:body.file_id,
+                               caption:body.caption ?? ""}),
+          signal:AbortSignal.timeout(15000)
+        });
+        const result=await tg.json();
+        return reply(200,result);
+      } catch (_) { return reply(503,{ok:false,error:"telegram_photo_unavailable"}); }
+    }
     if (url.pathname !== "/v1/send" || request.method !== "POST") {
       return reply(404, {ok:false,error:"not_found"});
     }
