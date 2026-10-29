@@ -71,7 +71,27 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
         return "BLOCKED: installed HEAD differs from approved target"
     if not command(*PREFIX, "systemctl", "start", SERVICE):
         return "BLOCKED: PAPER core start failed; no admission bypass attempted"
-    return "CORE_STARTED: exact HEAD and PAPER core start confirmed; PAPER_AUTO/reentry and protection require API proof"
+    # The oneshot says only that startup was requested; do not report READY
+    # unless the PAPER backend has independently proven its safety.
+    from tools.runtime_intent import http_get
+    try:
+        health = http_get("http://127.0.0.1:8765/api/health", 5)
+        protection = http_get("http://127.0.0.1:8765/api/robot/protection-health", 5)
+        scanner = http_get("http://127.0.0.1:8765/api/scanner/status", 5)
+        autopilot = http_get("http://127.0.0.1:8765/api/robot/autopilot", 5)
+        h, p, s, a = (reply.json() for reply in
+                       (health, protection, scanner, autopilot))
+        if not all(reply.status == 200 for reply in
+                   (health, protection, scanner, autopilot)):
+            raise ValueError("backend verification endpoint failed")
+        if (h.get("mode") != "paper" or h.get("paper_live_safe") is not True
+                or p.get("healthy") is not True
+                or s.get("mode") != "SCANNER_RUNNING"
+                or a.get("mode") != "PAPER_AUTO"):
+            raise ValueError("PAPER state not ready")
+    except (ValueError, KeyError, OSError, TypeError):
+        return "BLOCKED: PAPER core started but PAPER_AUTO/protection readiness not proven; do not enable new admission"
+    return "READY: exact HEAD, PAPER-only, Scanner, PAPER_AUTO and protection confirmed"
 
 
 def main(argv=None) -> int:
@@ -82,7 +102,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     status = run_maintenance(args.sha, env_file=args.env_file, wait_seconds=args.wait_seconds)
     print(status)
-    return 0 if status.startswith("CORE_STARTED:") else 2
+    return 0 if status.startswith("READY:") else 2
 
 
 if __name__ == "__main__":
