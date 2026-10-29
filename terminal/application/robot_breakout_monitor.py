@@ -1930,6 +1930,37 @@ class RobotBreakoutMonitor:
             )
             return False
 
+        # The admitted LIMIT price is not the actual fill price. Keep the
+        # confirmed STOP/TAKE live while validating actual fee-aware RR.
+        # Reuse idempotent emergency-close recovery until authoritative FLAT.
+        try:
+            fills = tuple(
+                fill
+                for order_id in confirmed_evidence.order_ids
+                for fill in self._store().load_executions_for_order(
+                    self._account_id, order_id,
+                )
+            )
+            if not fills or any(fill.fee < 0 for fill in fills):
+                raise robot_protection.RobotProtectionError(
+                    "post-fill fee evidence is unavailable"
+                )
+            actual_rr = robot_protection.post_fill_net_rr(
+                direction,
+                average_entry=average_entry,
+                quantity=entry_quantity,
+                entry_fee=sum((fill.fee for fill in fills), Decimal("0")),
+                stop_price=plan.stop_price,
+                take_price=plan.take_price,
+            )
+            if actual_rr < Decimal("2"):
+                raise robot_protection.RobotProtectionError(
+                    f"POST_FILL_NET_RR_BELOW_2 rr={actual_rr}"
+                )
+        except Exception as error:
+            self._fail_closed_unprotected_fill(record, error)
+            return False
+
         now_ms = self._now_ms()
         self._store().create_robot_trade(
             trade_id=f"robot-trade-{record.candidate_id}",
