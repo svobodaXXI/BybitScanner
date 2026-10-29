@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - 'terminal/application/stop_reentry_*.py'
+      - 'terminal/application/robot_reentry_adapter.py'
+      - 'terminal/application/robot_autopilot_shadow.py'
+      - 'terminal/application/robot_admission.py'
       - 'terminal/persistence/schema.py'
       - 'terminal/persistence/sqlite_store.py'
       - 'terminal/diary/reentry.py'
@@ -34,4 +37,5 @@ jobs:
             tests/test_stop_reentry_setup.py \
             tests/test_stop_reentry_diary.py \
             tests/test_stop_reentry_reservation.py \
-            tests/test_stop_reentry_admission_atomic.py
+            tests/test_stop_reentry_admission_atomic.py \
+            tests/test_stop_reentry_adapter.py
