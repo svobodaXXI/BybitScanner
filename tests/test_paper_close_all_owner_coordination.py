@@ -102,6 +102,7 @@ def fixture(
             unresolved_candidate_ids=(), still_pending_protection=(),
         )),
         robot_close_all=Mock(side_effect=close_robot),
+        robot_reconcile=Mock(return_value=SimpleNamespace(success=False)),
         close_all=Mock(return_value=response(
             (completed("manual-close"),) if manual else (),
         )),
@@ -156,6 +157,29 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
 
     def test_preexisting_reconciliation_fence_blocks_market_dispatch(self):
         runtime, _ = fixture(status="RECONCILIATION_REQUIRED", robot=True)
+        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_reconciliation_required"):
+            run(runtime)
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+
+    def test_reconciliation_success_allows_canonical_close(self):
+        runtime, state = fixture(status="RECONCILIATION_REQUIRED", robot=True)
+        def reconcile():
+            current = state["robot"]
+            state["robot"] = SimpleNamespace(
+                mode="ROBOT_RUNNING", recovery_status="PAUSED",
+                version=current.version + 1, updated_at_ms=1,
+            )
+            return SimpleNamespace(success=True)
+        runtime.robot_reconcile.side_effect = reconcile
+        result = run(runtime)
+        self.assertEqual(len(result.results), 2)
+        runtime.robot_reconcile.assert_called_once()
+        runtime.robot_close_all.assert_called_once()
+
+    def test_reconcile_claim_without_paused_state_cannot_dispatch(self):
+        runtime, _ = fixture(status="RECONCILIATION_REQUIRED", robot=True)
+        runtime.robot_reconcile.return_value = SimpleNamespace(success=True)
         with self.assertRaisesRegex(PaperCloseAllRejected, "robot_reconciliation_required"):
             run(runtime)
         runtime.robot_close_all.assert_not_called()
