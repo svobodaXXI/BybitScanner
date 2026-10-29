@@ -168,6 +168,7 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                             "REENTRY_CHILD_CANDIDATES": str(self.candidates),
                             "REENTRY_CHILD_CHARTS": str(self.root),
                             "REENTRY_CHILD_BREAKOUT": str(breakout_open),
+                            "REENTRY_CHILD_SYMBOL": SYMBOL,
                         }):
                     run_scan_pass_in_child_process(
                         target="tests.test_stop_reentry_child_ipc:_child_scan_lshape",
