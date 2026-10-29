@@ -48,6 +48,12 @@ def _runtime_for_symbols(*symbols):
         load_active_paper_limits=Mock(return_value=()),
         get_robot_runtime_state=Mock(),
         update_robot_runtime_state=Mock(),
+        # CR-ROBOT-CLOSE-ALL-MAX-QTY-001: robot_close_all() re-reads the
+        # position after a COMPLETED chunk; already flat here, so these
+        # tests see exactly the one chunk they expect.
+        get_position_projection=Mock(return_value=SimpleNamespace(
+            quantity=SimpleNamespace(value=Decimal(0)),
+        )),
     )
     close = Mock(side_effect=lambda request, *, identity: CommandResult(
         request.client_action_id.value, CommandResultStatus.COMPLETED,
@@ -56,8 +62,11 @@ def _runtime_for_symbols(*symbols):
     runtime = SimpleNamespace(
         _account_id=TradingAccountId("paper"), store=store,
         _robot_full_close=close,
-        _robot_prepare_manual_close=Mock(side_effect=lambda candidate, request, identity: (
+        _robot_prepare_manual_close=Mock(side_effect=lambda candidate, request, identity, chunk_index=0: (
             request, identity,
+        )),
+        _instrument_provider=Mock(return_value=SimpleNamespace(
+            max_market_order_quantity=Decimal("999999"), quantity_step=Decimal("0.0001"),
         )),
         _robot_finalize_manual_close=Mock(side_effect=lambda candidate: (
             close.call_count > next(
