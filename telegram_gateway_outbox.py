@@ -60,15 +60,40 @@ def enqueue(event_id: str, chat_id: str, message: str, reply_markup=None) -> Non
         )
 
 
+def claim_pending(event_id: str) -> bool:
+    """Atomically claim only unsent PENDING; never replay an uncertain attempt."""
+    with _connect() as db:
+        result = db.execute(
+            "UPDATE telegram_outbox SET status='IN_FLIGHT',updated_at_ms=? "
+            "WHERE event_id=? AND status='PENDING'",
+            (int(time.time() * 1000), event_id),
+        )
+        return result.rowcount == 1
+
+
+def pending(limit: int = 25):
+    """Bounded unsent records, excluding UNKNOWN and IN_FLIGHT."""
+    if not 1 <= limit <= 100:
+        raise OutboxError("Invalid pending batch size")
+    with _connect() as db:
+        return db.execute(
+            "SELECT event_id,chat_id,text,reply_markup FROM telegram_outbox "
+            "WHERE status='PENDING' ORDER BY created_at_ms,event_id LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+
 def mark(event_id: str, status: str, message_id=None) -> None:
     if status not in {"IN_FLIGHT", "ACCEPTED", "UNKNOWN", "REJECTED"}:
         raise OutboxError("Invalid outbox transition")
     with _connect() as db:
         now = int(time.time() * 1000)
+        previous = {"IN_FLIGHT": "PENDING", "ACCEPTED": "IN_FLIGHT",
+                    "UNKNOWN": "IN_FLIGHT", "REJECTED": "IN_FLIGHT"}[status]
         cursor = db.execute(
             "UPDATE telegram_outbox SET status=?, updated_at_ms=?, "
-            "telegram_message_id=? WHERE event_id=?",
-            (status, now, None if message_id is None else str(message_id), event_id),
+            "telegram_message_id=? WHERE event_id=? AND status=?",
+            (status, now, None if message_id is None else str(message_id), event_id, previous),
         )
         if cursor.rowcount != 1:
             raise OutboxError("Missing outbox event")
