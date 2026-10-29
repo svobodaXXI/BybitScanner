@@ -283,6 +283,38 @@ def build_protection_plan(
     )
 
 
+def post_fill_net_rr(
+    direction: str, *, average_entry: Decimal, quantity: Decimal,
+    entry_fee: Decimal, stop_price: Decimal, take_price: Decimal,
+    exit_fee_rate: Decimal = Decimal("0.0006"),
+) -> Decimal:
+    """Fee-aware RR on durable entry fills and final executable protection.
+
+    Conservative PAPER exit fees use the taker rate; negative/unknown entry
+    costs and invalid geometry fail closed rather than admitting a trade.
+    """
+    entry = _decimal(average_entry, "actual average entry")
+    size = _decimal(quantity, "actual filled quantity")
+    stop = _decimal(stop_price, "final STOP")
+    take = _decimal(take_price, "final TAKE")
+    if not entry_fee.is_finite() or entry_fee < 0:
+        raise RobotProtectionError("actual entry fee is invalid")
+    if not exit_fee_rate.is_finite() or not Decimal(0) <= exit_fee_rate < 1:
+        raise RobotProtectionError("PAPER exit fee rate is invalid")
+    if direction == DIRECTION_LONG and not (stop < entry < take):
+        raise RobotProtectionError("actual LONG protection geometry is invalid")
+    if direction == DIRECTION_SHORT and not (take < entry < stop):
+        raise RobotProtectionError("actual SHORT protection geometry is invalid")
+    if direction not in (DIRECTION_LONG, DIRECTION_SHORT):
+        raise RobotProtectionError("actual entry direction is invalid")
+    sign = Decimal(1 if direction == DIRECTION_LONG else -1)
+    reward = sign * (take - entry) * size - entry_fee - take * size * exit_fee_rate
+    risk = sign * (entry - stop) * size + entry_fee + stop * size * exit_fee_rate
+    if risk <= 0:
+        raise RobotProtectionError("actual STOP carries no positive risk")
+    return reward / risk
+
+
 @dataclass(frozen=True, slots=True)
 class BoxStopTerms:
     """Pure terms only; not an order, a fill proof, or execution approval."""
