@@ -246,3 +246,91 @@ def test_actual_paper_auto_stop_then_fresh_lshape_reserves_second_attempt(
     assert store._connection.execute(
         "SELECT COUNT(*) FROM robot_trades"
     ).fetchone()[0] == 1  # No new position added before independent LIMIT fill
+
+
+def box(*, decision_ms=300_000):
+    """Frozen Box plan economics are not a fixed Robot 250-USDT RO."""
+    return {
+        "pattern": "IKIGAI_BOX", "contract_version": 1,
+        "environment": "PAPER", "execution_authorized": False, "attempt": 1,
+        "identity": {"symbol": "LABUSDT", "timeframe": "5", "direction": "LONG"},
+        "decision_time_ms": decision_ms,
+        "plan": {
+            "direction": "LONG",
+            "full_position": {
+                "quantity": "8", "average_entry": "92.8", "net_stop_loss": "25.6",
+            },
+            "partial_fill_loss_upper_bound": "25.6",
+            "minimum_partial_fill_rr": "1.18",
+        },
+    }
+
+
+def test_box_uses_frozen_grid_worst_loss_not_small_nonbox_budget():
+    snap = box()
+    assert proven_pattern_entry(snap, now_ms=599_999) is None
+    evidence = proven_pattern_entry(snap, now_ms=600_000)
+    assert evidence.pattern == "IKIGAI_BOX"
+    assert evidence.direction == "LONG"
+    assert evidence.confirmed_at_ms == 600_000
+    assert evidence.risk_reservation_usdt == (
+        Decimal("25.6") + Decimal("8") * Decimal("92.8") * Decimal("0.002")
+    )
+    corrupt = box()
+    corrupt["plan"]["partial_fill_loss_upper_bound"] = "-1"
+    assert proven_pattern_entry(corrupt, now_ms=600_000) is None
+    corrupt = box()
+    corrupt["environment"] = "LIVE"
+    assert proven_pattern_entry(corrupt, now_ms=600_000) is None
+    corrupt = box()
+    corrupt["decision_time_ms"] += 1
+    assert proven_pattern_entry(corrupt, now_ms=600_000) is None
+
+
+def test_5m_wedge_reuses_proven_affine_1m_handoff_geometry():
+    from scanner_geometry_cursor import project_frozen_geometry_to_robot_1m
+
+    snap = wedge()
+    source_geometry = snap["geometry"]
+    snap["scanner_source_timeframe"] = "5"
+    snap["robot_handoff_ready"] = True
+    snap["robot_geometry"] = project_frozen_geometry_to_robot_1m(
+        source_geometry, source_timeframe="5",
+    )
+    assert proven_pattern_entry(snap, now_ms=1_079_999) is None
+    qualified = proven_pattern_entry(snap, now_ms=1_080_000)
+    assert qualified is not None
+    assert qualified.direction == "LONG"
+    assert qualified.confirmed_at_ms == 1_080_000
+    broken = dict(snap)
+    broken["robot_geometry"] = dict(snap["robot_geometry"])
+    broken["robot_geometry"]["scanner_source_timeframe"] = "1"
+    assert proven_pattern_entry(broken, now_ms=1_080_000) is None
+    broken = dict(snap)
+    broken.pop("robot_geometry")
+    assert proven_pattern_entry(broken, now_ms=1_080_000) is None
+
+
+def test_optin_dispatch_never_silently_falls_back_to_old_untracked_admission(
+    prepared, monkeypatch,
+):
+    from terminal.application.robot_autopilot_shadow import (
+        _auto_reentry_proposal_for_candidate, _Candidate, SOURCE_SCANNER,
+    )
+    from terminal.persistence.sqlite_store import PersistenceError
+
+    store, _ = prepared
+    monkeypatch.setenv("BYBITSCANNER_STOP_REENTRY_AUTO", "1")
+    candidate = _Candidate(
+        ref="unproven", pattern="Falling Wedge", symbol=Symbol("LABUSDT"),
+        timeframe="1", source_identity="unproven:hash", snapshot_sha256=None,
+        valid=True, executable=True, invalidated=False, already_admitted=False,
+        own_ids=frozenset({"unproven"}),
+        snapshot={"symbol": "LABUSDT", "pattern": "Falling Wedge"},
+    )
+    with pytest.raises(PersistenceError, match="no verified"):
+        with store.robot_admission_transaction():
+            _auto_reentry_proposal_for_candidate(
+                store, TradingAccountId("paper"), source=SOURCE_SCANNER,
+                candidate=candidate, now_ms=1_200_000,
+            )
