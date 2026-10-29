@@ -34,6 +34,7 @@ def _child_scan_lshape(*, box_plan_preparer=None, control_checkpoint=None,
     )
 
     robot_candidate_store.DEFAULT_STORE_DIR = Path(os.environ["REENTRY_CHILD_CANDIDATES"])
+    symbol = os.environ.get("REENTRY_CHILD_SYMBOL", SYMBOL)
     closed = _long_shape()
     if "REENTRY_CHILD_BREAKOUT" in os.environ:
         breakout_open = int(os.environ["REENTRY_CHILD_BREAKOUT"])
@@ -45,14 +46,14 @@ def _child_scan_lshape(*, box_plan_preparer=None, control_checkpoint=None,
     open_bar["time"] += STEP_MS
     open_bar[["open", "high", "low", "close"]] = 9999.0
     observation = l_shape_scanner.observe_l_shape(
-        SYMBOL, pd.concat([closed, open_bar], ignore_index=True),
+        symbol, pd.concat([closed, open_bar], ignore_index=True),
         timeframe="5", chart_dir=os.environ["REENTRY_CHILD_CHARTS"],
     )
     if observation is None:
         raise AssertionError("no fresh confirmed Scanner L-shape")
     with observing(robot_candidate_observer):
         result = prepare_robot_handoff(
-            l_shape_scanner._robot_signal_snapshot(SYMBOL, "5", observation),
+            l_shape_scanner._robot_signal_snapshot(symbol, "5", observation),
             timeframe="5", enabled=True,
         )
     if not result.candidate_id:
