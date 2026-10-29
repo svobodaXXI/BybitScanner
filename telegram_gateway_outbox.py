@@ -6,6 +6,7 @@ for operator reconciliation; blindly replaying them could duplicate alerts.
 from __future__ import annotations
 
 import os
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -36,6 +37,7 @@ def _connect():
         event_id TEXT PRIMARY KEY,
         chat_id TEXT NOT NULL,
         text TEXT NOT NULL,
+        reply_markup TEXT,
         status TEXT NOT NULL CHECK(status IN
             ('PENDING','IN_FLIGHT','ACCEPTED','UNKNOWN','REJECTED')),
         created_at_ms INTEGER NOT NULL,
@@ -45,14 +47,16 @@ def _connect():
     return connection
 
 
-def enqueue(event_id: str, chat_id: str, message: str) -> None:
+def enqueue(event_id: str, chat_id: str, message: str, reply_markup=None) -> None:
     now = int(time.time() * 1000)
     with _connect() as db:
         db.execute(
             "INSERT INTO telegram_outbox "
-            "(event_id,chat_id,text,status,created_at_ms,updated_at_ms) "
-            "VALUES (?,?,?,'PENDING',?,?)",
-            (event_id, str(chat_id), message, now, now),
+            "(event_id,chat_id,text,reply_markup,status,created_at_ms,updated_at_ms) "
+            "VALUES (?,?,?, ?, 'PENDING',?,?)",
+            (event_id, str(chat_id), message,
+             json.dumps(reply_markup, ensure_ascii=False) if reply_markup is not None else None,
+             now, now),
         )
 
 
