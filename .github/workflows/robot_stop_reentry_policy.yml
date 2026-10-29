@@ -38,4 +38,5 @@ jobs:
             tests/test_stop_reentry_diary.py \
             tests/test_stop_reentry_reservation.py \
             tests/test_stop_reentry_admission_atomic.py \
-            tests/test_stop_reentry_adapter.py
+            tests/test_stop_reentry_adapter.py \
+            tests/test_stop_reentry_box_handoff.py
