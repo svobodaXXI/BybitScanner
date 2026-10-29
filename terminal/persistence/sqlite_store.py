@@ -5025,6 +5025,39 @@ class SQLiteStore:
                 candidate_id, order_id=order_id, role=role, slot=slot,
             )
 
+    def prove_box_never_started_flat(self, candidate_id: str) -> bool:
+        """Strict read-only evidence for a Box attempt never admitted to execution.
+
+        Absence of a baseline alone is insufficient: refuse if any ownership,
+        active order, fill or actual exposure exists. Never synthesize ownership.
+        """
+        self._assert_owner()
+        with self._transaction():
+            candidate = self._box_ownership_candidate(candidate_id)
+            baseline = self._connection.execute(
+                "SELECT 1 FROM box_attempt_ownership WHERE candidate_id=?",
+                (candidate_id,),
+            ).fetchone()
+            if baseline is not None:
+                return False
+            if self.load_box_order_ownership(candidate_id):
+                return False
+            if self.load_active_paper_limits(
+                candidate.trading_account_id, candidate.symbol,
+            ):
+                return False
+            if self.load_executions_for_symbol(
+                candidate.trading_account_id, candidate.symbol,
+            ):
+                return False
+            position = self.get_position_projection(PositionKey(
+                candidate.trading_account_id, Category.LINEAR, candidate.symbol, 0,
+            ))
+            return position is None or (
+                position.side is PositionSide.FLAT
+                and position.quantity.value == 0
+            )
+
     def prove_box_owned_position(self, candidate_id: str):
         """Read one consistent journal/ownership/position view; no runtime action."""
         with self._transaction():
