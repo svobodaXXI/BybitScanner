@@ -108,7 +108,9 @@ class ReentryDiaryTests(unittest.TestCase):
                trading_account_id,campaign_id,attempt_index,candidate_id,
                reserved_risk_usdt,previous_stop_exec_id,reserved_at_ms)
                VALUES ('paper','campaign-1',?,'retry-candidate','2',
-                       'exec-stop-1',?)""", (attempt_index, reserved_at_ms),
+                       ?,?)""", (attempt_index,
+                                None if attempt_index == 1 else 'exec-stop-1',
+                                reserved_at_ms),
         )
 
     def _second_closed_trade(self, con, *, signal_at=350, direction="LONG"):
