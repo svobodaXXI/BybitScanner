@@ -78,12 +78,28 @@ structurally compatible with the same frozen thesis and direction.
   setup / closed-candle / neckline test); `stop_reentry_campaign.py` (pure
   risk-limited attempt proposal). These three may later be consolidated,
   but **no second execution engine** is introduced.
-- **Missing P0 durable wiring:** add the minimal SQLite single-writer
-  `reentry_campaign` + `reentry_attempt` records or extend existing durable
-  Robot state if it already provides identity/revision proof. Unique constraints
-  on campaign/attempt/candidate and source fingerprint; compare-and-set revision
-  to prevent dual Scanner callbacks / process restarts from doubling entries.
-  Fill & STOP proof comes from authoritative Robot executions/trades.
+- **Owner decision 29.10: attempt journal MUST reuse Trading Diary/statistics.**
+  Existing `robot_trades`, `robot_candidates`, `executions`, protection
+  obligations and `terminal.statistics.reader.RobotStatisticsReader` are the
+  authoritative trade, fill, exit and financial data. The `terminal.diary`
+  read side projects campaign -> individual attempt -> original/new pattern ->
+  exit reason -> gross/fees/known-cost net, preserving attribution and missing
+  cost coverage. It must not duplicate trades, fees or PnL into a second journal.
+- **P0 canonical identity linkage in existing PAPER SQLite:** version 26 adds
+  only `robot_reentry_campaigns` and `robot_reentry_attempts` identity and
+  reservation tables. They are linkage/atomic admission metadata, **not** a
+  parallel trading diary or execution ledger. `terminal.diary.reentry` reads
+  them through the existing `RobotStatisticsReader`, strictly read-only and
+  fail-closed on duplicate/non-STOP/overlapping lineage. The separate D2
+  `.trading_diary.sqlite3` remains research-only and MUST NOT become order
+  admission authority, because transactions cannot be atomic across stores.
+- **Still missing P0 admission wiring:** durably create/reserve this metadata
+  inside the **same** canonical `SQLiteStore.autopilot_decision_transaction`
+  / Robot Admission transaction as candidate ownership, using verified STOP
+  executions, no pending/open exposure and cumulative fee/risk evidence.
+  Unique constraints must fence dual callbacks, restart and duplicate signals.
+  Do not silently auto-migrate a production VPS until isolated migration and
+  recovery acceptance pass.
 - **Missing adapter wiring:** map immutable existing Wedge/Box/MIRROR/L-shape
   snapshots to the campaign without modifying their detector geometry.
   Create #647 candle and double-bottom/top recognition only when verified;
