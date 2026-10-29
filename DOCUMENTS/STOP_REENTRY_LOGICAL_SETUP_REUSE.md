@@ -192,11 +192,20 @@ structurally compatible with the same frozen thesis and direction.
   This intentionally tightens fallback STOP placement; original geometry,
   instrument tick normalization, fee-inclusive Robot RR gate and
   protective fail-closed rules are unchanged.
-- **Remaining P0 blockers:** the test now proves ONE continuous
-  in-process Scanner → PAPER lifecycle, but the actual spawned Scanner
-  child-process IPC → post-STOP callback → PAPER_AUTO path still needs
-  acceptance. Finish validated double-bottom/top
-  and candle confirmation adapters (#647); prove a new independent thesis
+- **Spawned Scanner child IPC now proven as a separate acceptance slice:**
+  `tests/test_stop_reentry_child_ipc.py` runs the actual latest-closed
+  L-shape detector + immutable Scanner handoff in a `multiprocessing spawn`
+  child. The existing `scanner_process` pipe relays precisely one candidate
+  ID to the parent, where the canonical PAPER DB verifies the prior STOP
+  execution and structural campaign lineage. No secondary DB or engine.
+  GitHub Actions #40867446983 PASS; 3/3 workflows passed.
+- **Remaining P0 blockers:** the uninterrupted full protected PAPER
+  fill/TAKE test and the actual child-process IPC test now both PASS, but
+  they are *separate* paths: the child IPC test hands off to a parent
+  validation callback rather than the production runtime dispatcher.
+  A spawned Scanner → runtime's own PAPER_AUTO dispatcher → completed
+  retry LIMIT/TAKE in one continuous replay remains unproven.
+  Finish validated double-bottom/top and candle confirmation adapters (#647); prove a new independent thesis
   after structural invalidation without resetting a live risk budget;
   pre-v26 STOP campaign attribution; further crash-during-open-or-pending
   replay and partial-fill resilience. This E2E proves one retried protected
