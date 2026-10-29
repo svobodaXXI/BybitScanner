@@ -46,8 +46,14 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
         return "BLOCKED: target is not on approved stable"
     if not command("git", "merge", "--ff-only", target):
         return "BLOCKED: fast-forward failed after safe-stop"
-    if not command("git", "rev-parse", "--verify", "HEAD"):
+    try:
+        installed = runner(["git", "rev-parse", "--verify", "HEAD"],
+                           cwd=root, capture_output=True, text=True,
+                           timeout=180, check=False)
+    except (OSError, subprocess.TimeoutExpired):
         return "BLOCKED: unable to verify installed HEAD"
+    if installed.returncode != 0 or installed.stdout.strip() != target:
+        return "BLOCKED: installed HEAD differs from approved target"
     if not command(*PREFIX, "systemctl", "start", SERVICE):
         return "BLOCKED: PAPER core start failed; no admission bypass attempted"
     return "READY: canonical safe-stop, fast-forward and PAPER core start completed; PAPER_AUTO must be confirmed separately"
