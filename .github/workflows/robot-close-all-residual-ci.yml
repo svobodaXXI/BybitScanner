@@ -78,7 +78,7 @@ jobs:
           tests.test_robot_manual_close_evidence
           tests.test_paper_close_all_stable_identity
           tests.test_paper_close_all_owner_coordination
-          tests.test_box_pristine_baseline
+          tests.test_box_pristine_baseline.PristineBaselineTests.test_never_started_recovery_refuses_unfinished_market_command
           tests.test_paper_close_all_economics
           tests.test_robot_close_all_owner_preflight
           tests.test_robot_close_all_pending_work_preflight
