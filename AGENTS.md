@@ -7,6 +7,9 @@ at `DOCUMENTS/AGENT_GUIDE_FULL.md`, authoritative for its applicable contracts.
 Current owner instruction and actual repository/host evidence outrank dated
 historical task snapshots; normative safety and approval contracts still apply.
 
+Generated ContextDumps and other derived context are non-authoritative; current
+repository files, owner instructions, and observed runtime evidence prevail.
+
 ## Owner time and trust — mandatory at every new task
 
 **Owner escalation (2026-10-20):** Repeated decomposition of one end-to-end
