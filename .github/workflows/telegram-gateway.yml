@@ -26,5 +26,7 @@ jobs:
         run: python -m pip install requests PySocks
       - name: Syntax-check Gateway Worker
         run: node --check deploy/telegram_gateway/worker.mjs
+      - name: Gateway Worker smoke tests
+        run: node --test tests/test_telegram_gateway_worker.mjs
       - name: Focused Python tests
         run: python -m unittest discover -s tests -p 'test_telegram_gateway_*.py' -v
