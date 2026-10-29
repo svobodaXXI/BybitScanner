@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 import sqlite3
 import time
 import threading
@@ -43,6 +44,7 @@ from terminal.application.robot_admission import (
     linked_mirror_parent_candidate,
     scanner_candidate_admission_error,
 )
+from terminal.application.robot_reentry_adapter import automatic_reentry_proposal
 from terminal.application.robot_autopilot import (
     OUTCOME_ALLOW,
     OUTCOME_WAIT,
@@ -568,6 +570,25 @@ def _observe_shadow_candidate_locked(
     return ShadowObservation(facts, result, decision, created)
 
 
+def _auto_reentry_proposal_for_candidate(
+    store: SQLiteStore, account: TradingAccountId, *,
+    source: str, candidate: _Candidate, now_ms: int,
+):
+    """Opt-in extension to the existing canonical admission only.
+
+    Older deployments keep exactly their original admission behaviour.
+    PAPER only; feature OFF until owner approves completed cross-pattern E2E.
+    """
+    if os.environ.get("BYBITSCANNER_STOP_REENTRY_AUTO", "").strip() != "1":
+        return None
+    if source != SOURCE_SCANNER:
+        return None  # Box source has no verified generic entry-risk adapter yet
+    return automatic_reentry_proposal(
+        store, account, candidate_id=candidate.ref, symbol=candidate.symbol,
+        snapshot=candidate.snapshot, now_ms=now_ms,
+    )
+
+
 def admit_paper_auto_candidate(
     store: SQLiteStore, account: TradingAccountId, *, allow_decision_id: str,
     source: str, protection_healthy: Callable[[], bool] | None = None,
@@ -662,6 +683,10 @@ def admit_paper_auto_candidate(
                     mark_legacy_approved=False,
                     linked_mirror_parent_candidate_id=(
                         facts.linked_mirror_parent_candidate_id
+                    ),
+                    reentry=_auto_reentry_proposal_for_candidate(
+                        store, account, source=source, candidate=candidate,
+                        now_ms=now,
                     ),
                 )
             decision, decision_created = record_auto_decision(
@@ -770,6 +795,10 @@ def admit_arrived_auto_candidate(
                 mark_legacy_approved=False,
                 linked_mirror_parent_candidate_id=(
                     facts.linked_mirror_parent_candidate_id
+                ),
+                reentry=_auto_reentry_proposal_for_candidate(
+                    store, account, source=source, candidate=candidate,
+                    now_ms=now,
                 ),
             )
         decision, decision_created = record_auto_decision(
