@@ -4296,10 +4296,31 @@ class PaperRuntime:
                     # operator action + symbol instead of generating a fresh
                     # order on ambiguous HTTP retry.
                     client_action_id = ClientActionId(f"robot-close-all-{digest}")
+                    # Cap chunk ZERO before latching its durable identity or
+                    # dispatching the first Market order. Otherwise an oversized
+                    # position fails above_maximum_quantity before the chunk loop.
+                    instrument = self._instrument_provider(symbol)
+                    position_key = PositionKey(
+                        self._account_id, Category.LINEAR, candidate.symbol, 0,
+                    )
+                    position = self.store.get_position_projection(position_key)
+                    if position is None or position.quantity.value <= 0:
+                        raise RuntimeError("Robot close quantity cannot be confirmed")
+                    first_quantity = min(
+                        position.quantity.value, instrument.max_market_order_quantity,
+                    )
+                    step = instrument.quantity_step
+                    if step <= 0:
+                        raise RuntimeError("invalid instrument quantity step")
+                    first_quantity = (first_quantity // step) * step
+                    if first_quantity <= 0:
+                        raise RuntimeError("Robot close chunk below quantity step")
                     order_link_id = f"tw_{digest}{sum(bytes.fromhex(digest)) & 0xF:x}"
                     manual_request, manual_identity = self._robot_prepare_manual_close(
                         candidate,
-                        FullCloseCommandRequest(client_action_id, symbol),
+                        FullCloseCommandRequest(
+                            client_action_id, symbol, quantity=first_quantity,
+                        ),
                         CommandIdentityCandidate(
                             CommandId(f"cmd_{digest}"), order_link_id,
                         ),
