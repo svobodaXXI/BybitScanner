@@ -37,11 +37,11 @@ class TelegramGatewayTests(unittest.TestCase):
         self.assertTrue(session_cls.return_value.post.call_args.args[0].endswith("/v1/send"))
 
     @patch("telegram_gateway_client.requests.Session")
-    def test_forbid_unapproved_recipient_and_keyboards(self, session_cls):
+    def test_forbid_unapproved_recipient_and_invalid_keyboard(self, session_cls):
         with self.assertRaises(gateway.TelegramGatewayError):
             telegram_bot.send_message("unused-token", "99999", "hello")
         with self.assertRaises(gateway.TelegramGatewayError):
-            telegram_bot.send_message("unused-token", "12345", "hello", {"inline_keyboard": []})
+            telegram_bot.send_message("unused-token", "12345", "hello", "invalid keyboard")
         session_cls.assert_not_called()
 
     @patch("telegram_gateway_client.requests.Session")
