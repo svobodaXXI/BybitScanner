@@ -35,6 +35,9 @@ def send_text(chat_id, text, *, reply_markup=None):
     if reply_markup is not None and not isinstance(reply_markup, dict):
         raise TelegramGatewayError("Invalid Gateway keyboard")
     event_id = secrets.token_urlsafe(24)
+    import telegram_gateway_outbox as outbox
+    outbox.enqueue(event_id, str(chat_id), text, reply_markup)
+    outbox.mark(event_id, "IN_FLIGHT")
     try:
         session = requests.Session()
         session.trust_env = False
@@ -47,11 +50,15 @@ def send_text(chat_id, text, *, reply_markup=None):
         )
         result = response.json()
     except (requests.RequestException, ValueError) as exc:
+        outbox.mark(event_id, "UNKNOWN")
         raise TelegramGatewayError("Gateway transport failed; delivery unknown") from exc
     if not isinstance(result, dict) or response.status_code != 200 or result.get("ok") is not True:
+        outbox.mark(event_id, "UNKNOWN")
         raise TelegramGatewayError("Gateway rejected message; delivery unknown")
     if result.get("event_id") != event_id or result.get("stage") != "accepted_by_telegram_api":
+        outbox.mark(event_id, "UNKNOWN")
         raise TelegramGatewayError("Gateway acknowledgement invalid")
+    outbox.mark(event_id, "ACCEPTED", result.get("telegram_message_id"))
     return {"ok": True, "result": {"message_id": result.get("telegram_message_id")},
             "delivery_stage": "accepted_by_telegram_api"}
 
