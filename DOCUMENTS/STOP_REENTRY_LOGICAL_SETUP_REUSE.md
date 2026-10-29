@@ -192,44 +192,42 @@ structurally compatible with the same frozen thesis and direction.
   This intentionally tightens fallback STOP placement; original geometry,
   instrument tick normalization, fee-inclusive Robot RR gate and
   protective fail-closed rules are unchanged.
-- **2026-10-29 integration probe (do not misreport full PASS):**
-  Tried one continuous spawned Scanner L-shape -> production
-  `PaperRuntime._dispatch_autopilot_shadow_scanner_candidate` ->
-  PAPER_AUTO -> protected retry fill. The relay, exact same-symbol
-  immutable candidate, prepared closed-candle freshness, canonical
-  `ALLOW` and durable **attempt 2** after real STOP were demonstrated in
-  GitHub Actions before the monitor stage. The 5m breakout must be aligned
-  to the exchange 300000-ms grid; synthetic future candle closes require a
-  controlled test-time clock. The last combined probe (run #40873656319)
-  remained **FAIL**: after admission the candidate stayed
-  `L_SHAPE_WAITING_RETEST` even though the monitor thread was alive,
-  Robot RUNNING and the injected candle was readable. This does not prove
-  a production regression: isolate the synthetic clock / monitor ingestion
-  boundary without overriding the retest admission or issuing a direct
-  limit. Restored the previously green independent protected matcher E2E
-  in commit `d48045a` while retaining the spawned-child proof and enhanced
-  child fixture. Do not claim combined E2E or enable the feature until a
-  new single-run test passes.
-- **Spawned Scanner child IPC now proven as a separate acceptance slice:**
-  `tests/test_stop_reentry_child_ipc.py` runs the actual latest-closed
-  L-shape detector + immutable Scanner handoff in a `multiprocessing spawn`
-  child. The existing `scanner_process` pipe relays precisely one candidate
-  ID to the parent, where the canonical PAPER DB verifies the prior STOP
-  execution and structural campaign lineage. No secondary DB or engine.
-  GitHub Actions #40867446983 PASS; 3/3 workflows passed.
-- **Remaining P0 blockers:** the uninterrupted full protected PAPER
-  fill/TAKE test and the actual child-process IPC test now both PASS, but
-  they are *separate* paths: the child IPC test hands off to a parent
-  validation callback rather than the production runtime dispatcher.
-  A spawned Scanner → runtime's own PAPER_AUTO dispatcher → completed
-  retry LIMIT/TAKE in one continuous replay remains unproven.
-  Finish validated double-bottom/top and candle confirmation adapters (#647); prove a new independent thesis
-  after structural invalidation without resetting a live risk budget;
-  pre-v26 STOP campaign attribution; further crash-during-open-or-pending
-  replay and partial-fill resilience. This E2E proves one retried protected
-  position, not all pattern routes or an unattended 24/7 VPS run.
-  Do **not** enable flag, merge or deploy as universally complete until
-  those acceptance slices pass. LIVE prohibited and VPS stopped.
+- **2026-10-29 resolved: ONE spawned-child-to-protected-fill PAPER E2E PASS.**
+  `tests/test_stop_reentry_paper_e2e.py` now proves in one uninterrupted
+  disposable PAPER DB: actual MIRROR Scanner signal → first Robot LIMIT fill
+  → canonical protected STOP → genuine L-shape detector running in spawned
+  Scanner child on synthetic, aligned, latest-closed 5m OHLC → immutable
+  candidate-ID relay through production `scanner_process` IPC →
+  `PaperRuntime._dispatch_autopilot_shadow_scanner_candidate` →
+  canonical PAPER_AUTO and **attempt_index=2** after the verified STOP →
+  normal Robot closed-candle retest monitor → separate LIMIT/fill → TAKE
+  → existing Diary reconciles attempts, gross/fees/known-cost net →
+  restart against same SQLite without duplicate executions.
+  PASS: [Robot PAPER acceptance #40875335919](https://github.com/svobodaXXI/BybitScanner/actions/runs/40875335919)
+  (`1 passed` full E2E); all three workflows success at code commit
+  `6fa5e28`. Independent spawned-IPC and freshness tests also remain PASS.
+  No direct order call or disabled admission gate; no network or VPS.
+- **Root cause of earlier combined E2E monitor stall:** after a real STOP,
+  the deterministic test fabricated a just-closed future 5m candle and
+  advanced only PAPER_AUTO's admission clock. The newly created candidate
+  was timestamped in the simulated future; the real-time Robot monitor
+  attempted to update it with an earlier wall-clock timestamp.
+  `SQLiteStore.save_robot_candidate_state` correctly rejects that with
+  `ConcurrentUpdate` (fail-closed monotonic timestamps); the monitor
+  swallowed the expected CAS conflict. The isolated **test now patches
+  the wall-clock for the whole post-STOP PAPER replay**, including
+  Scanner admission, Robot monitor, matching and restart. It does NOT
+  loosen SQLite CAS, protection, admission or RR. Keep 5m kline opening
+  times aligned to 300000ms and never treat a forming candle as confirmed.
+- **Remaining P0 before universal activation:** independent double-bottom/
+  double-top confirmed neckline detectors and entry contracts (#647),
+  continued movement beyond initial corridor with proved strategy context,
+  new independent thesis after structural invalidation without resetting
+  a live campaign's risk budget, pre-v26 STOP attribution, and partial-fill
+  / crash-while-OPEN-or-pending recovery. The passing E2E is a synthetic
+  deterministic acceptance of one scenario, NOT VPS forward testing or
+  universal proof for every pattern. Do not enable the flag, merge as
+  universal or deploy to VPS before the remaining acceptance and approval.
 - **Reservation is not an executed attempt.** Preserve both identities:
   queued/cancelled/no-fill candidates are Diary observations, but do not count
   as verified filled STOP losses. A retry needs an earlier executed-and-closed
@@ -268,10 +266,12 @@ structurally compatible with the same frozen thesis and direction.
 
 ## Boundary of PR #668
 
-This PR includes **pure policy, canonical PAPER identity reservations,
-optional atomic Robot Admission and one tested STOP→L-shape LIMIT/fill→TAKE
-PAPER E2E**. Wedge 1m/5m, Box and MIRROR adapters have bounded admission
-proofs; a subsequent real Scanner pattern after STOP, independent neckline
-detectors, broader risk/campaign transitions and crash-during-fill recovery
-remain incomplete. The feature is **not production-ready for universal reentry**.
-Keep the feature OFF and the VPS stopped until full acceptance and approval.
+This PR includes **canonical PAPER campaign identity/reservations,
+atomic Robot Admission, bounded Box/Wedge/MIRROR/L-shape entry proofs and a
+passing single-run spawned Scanner→actual runtime dispatcher→protected
+post-STOP L-shape LIMIT fill→TAKE→Diary→restart E2E**. The same test exercises
+the production-shaped IPC and monitoring route on synthetic market inputs.
+Independent double-extremum neckline candidates, continued-trend structural
+context and crash/partial-fill recovery remain incomplete. It is **not
+production-ready universal reentry**; keep the opt-in flag OFF, VPS stopped
+and LIVE prohibited until full acceptance and owner-approved deployment.
