@@ -36,13 +36,14 @@ def send_text(chat_id, text, *, reply_markup=None):
         raise TelegramGatewayError("Gateway keyboard transport not implemented")
     event_id = secrets.token_urlsafe(24)
     try:
-        response = requests.post(
+        session = requests.Session()
+        session.trust_env = False
+        response = session.post(
             url.rstrip("/") if parsed.path.rstrip("/") == "/v1/send" else url.rstrip("/") + "/v1/send",
             json={"event_id": event_id, "text": text},
             headers={"Authorization": "Bearer " + key},
             timeout=12,
             allow_redirects=False,
-            proxies={"http": None, "https": None},
         )
         result = response.json()
     except (requests.RequestException, ValueError) as exc:
