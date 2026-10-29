@@ -59,7 +59,7 @@ export default {
              (typeof button.callback_data === "string" && button.callback_data.length <= 64 ||
               typeof button.url === "string" && button.url.startsWith("https://") && button.url.length <= 2048 ||
               button.web_app && typeof button.web_app.url === "string" &&
-              button.web_app.url.startsWith("https://") && button.web_app.url.length <= 2048)))) {
+              button.web_app.url.startsWith("https://") && button.web_app.url.length <= 2048))))) {
       return reply(400, {ok:false,error:"invalid_reply_markup"});
     }
     let response;
