@@ -158,6 +158,21 @@ class PristineBaselineTests(unittest.TestCase):
             self.store.begin_box_attempt_ownership(self.plan.candidate_id)
         self.assertIsNone(self.baseline())
 
+    def test_never_started_recovery_refuses_unfinished_market_command(self):
+        self.assertTrue(self.store.prove_box_never_started_flat(self.plan.candidate_id))
+        with self.store._transaction():
+            self.store._connection.execute(
+                """INSERT INTO trading_commands (
+                       command_id, order_link_id, trading_account_id, category, symbol,
+                       position_idx, command_kind, side, requested_notional, normalized_price,
+                       normalized_quantity, origin, controller, current_state, version,
+                       exchange_order_id, created_at_ms, updated_at_ms)
+                   VALUES ('cmd-pending', 'link-pending', 'paper', 'linear', 'BTCUSDT', 0,
+                           'create_market', 'Buy', '10', NULL, '1', 'terminal_manual', 'manual',
+                           'submitting', 1, NULL, 100, 100)""",
+            )
+        self.assertFalse(self.store.prove_box_never_started_flat(self.plan.candidate_id))
+
     def test_missing_projection_with_in_flight_command_is_rejected(self):
         with self.store._transaction():
             self.store._connection.execute(

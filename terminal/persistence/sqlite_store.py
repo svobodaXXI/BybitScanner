@@ -5046,8 +5046,20 @@ class SQLiteStore:
                 candidate.trading_account_id, candidate.symbol,
             ):
                 return False
-            if self.load_executions_for_symbol(
-                candidate.trading_account_id, candidate.symbol,
+            if any(
+                command.trading_account_id == candidate.trading_account_id
+                and command.symbol == candidate.symbol
+                for command in self.load_unfinished_commands()
+            ):
+                return False
+            # Symbol history from before this immutable plan existed cannot
+            # belong to this attempt. Any fill at or after plan creation is
+            # ambiguous without ownership and therefore still fails closed.
+            if any(
+                execution.exchange_timestamp_ms >= candidate.updated_at_ms
+                for execution in self.load_executions_for_symbol(
+                    candidate.trading_account_id, candidate.symbol,
+                )
             ):
                 return False
             position = self.get_position_projection(PositionKey(

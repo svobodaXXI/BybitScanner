@@ -3663,7 +3663,36 @@ class PaperRuntime:
         runtime = self.store.get_robot_runtime_state(account_id)
         if runtime is None:
             raise PaperCloseAllRejected("robot_runtime_state_unavailable")
+        # PAPER_AUTO must not create fresh candidates when flatten is requested.
+        autopilot = self.store.get_robot_autopilot_state(account_id)
+        if autopilot is None:
+            raise PaperCloseAllRejected("autopilot_state_unavailable")
+        if autopilot.mode != "OFF":
+            self.store.update_robot_autopilot_state(
+                account_id, mode="OFF", reason="paper_close_all",
+                expected_version=autopilot.version,
+                updated_at_ms=max(int(time.time() * 1000), autopilot.updated_at_ms),
+            )
+
         if runtime.mode == "ROBOT_RUNNING":
+            if runtime.recovery_status == "RECONCILIATION_REQUIRED":
+                # The owner-requested flatten is itself a recovery opportunity.
+                # Reuse the canonical, serialized Robot reconciliation rather
+                # than leaving a provably inert pending candidate in a deadlock.
+                # This is fail-closed: any unresolved entry, trade, ownership or
+                # protection keeps the original guards and existing EXITs alive.
+                try:
+                    recovery = self.robot_reconcile()
+                except Exception as exc:
+                    raise PaperCloseAllRejected(
+                        "robot_reconciliation_required"
+                    ) from exc
+                if getattr(recovery, "success", None) is not True:
+                    raise PaperCloseAllRejected("robot_reconciliation_required")
+                runtime = self.store.get_robot_runtime_state(account_id)
+                if (runtime is None or runtime.mode != "ROBOT_RUNNING"
+                        or runtime.recovery_status != "PAUSED"):
+                    raise PaperCloseAllRejected("robot_reconciliation_required")
             if runtime.recovery_status == "READY":
                 runtime = self.store.update_robot_runtime_state(
                     account_id, mode="ROBOT_RUNNING", recovery_status="PAUSED",
@@ -3675,16 +3704,6 @@ class PaperRuntime:
         elif (runtime.mode, runtime.recovery_status) != ("ROBOT_STOPPED", "ROBOT_STOPPED"):
             raise PaperCloseAllRejected("robot_reconciliation_required")
 
-        # PAPER_AUTO must not create fresh candidates when flatten is requested.
-        autopilot = self.store.get_robot_autopilot_state(account_id)
-        if autopilot is None:
-            raise PaperCloseAllRejected("autopilot_state_unavailable")
-        if autopilot.mode != "OFF":
-            self.store.update_robot_autopilot_state(
-                account_id, mode="OFF", reason="paper_close_all",
-                expected_version=autopilot.version,
-                updated_at_ms=max(int(time.time() * 1000), autopilot.updated_at_ms),
-            )
 
         def fail(reason: str) -> None:
             # The durable PAUSED gate already prevents new Robot entries. If
