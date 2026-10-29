@@ -14,6 +14,8 @@ import json
 from typing import Mapping, Any
 
 import robot_l_shape
+import robot_state_machine
+from scanner_geometry_cursor import CURSOR_VERSION
 from terminal.application.robot_admission import RobotReentryAdmissionRequest
 from terminal.application.robot_portfolio import RO_USDT
 from terminal.domain.models import TradingAccountId, Symbol
@@ -41,6 +43,42 @@ def proven_pattern_entry(
     """Only existing, independently confirmed closed pattern evidence counts."""
     if type(now_ms) is not int or now_ms < 0:
         return None
+    pattern = str(snapshot.get("pattern", "")).strip()
+    if pattern in {"Falling Wedge", "Rising Wedge"}:
+        # The frozen 1m Scanner cursor identifies an actual source candle;
+        # the Wedge Robot owns later breakout/retest/entry and STOP/TAKE.
+        # Never use an envelope arrival timestamp as candle confirmation.
+        cursor = snapshot.get("scanner_geometry_cursor")
+        geometry = snapshot.get("geometry")
+        if not isinstance(cursor, Mapping) or not isinstance(geometry, Mapping):
+            return None
+        stamp = cursor.get("source_candle_time_ms")
+        index = cursor.get("geometry_index")
+        if (cursor.get("version") != CURSOR_VERSION or cursor.get("timeframe") != "1"
+                or type(stamp) is not int or stamp <= 0 or stamp % 60_000 != 0
+                or type(index) is not int or index < 0
+                or geometry.get("current_index") != index):
+            return None
+        confirmation = stamp + 60_000
+        if confirmation > now_ms:
+            return None
+        try:
+            robot_state_machine.initialize_state({
+                "candidate_id": "reentry-wedge-proof",
+                "status": "APPROVED", "timeframe": "1",
+                "signal_snapshot": dict(snapshot),
+            })
+        except (ValueError, TypeError, robot_state_machine.RobotStateMachineError):
+            return None
+        return ProvenPatternEntry(
+            pattern=pattern,
+            direction="LONG" if pattern == "Falling Wedge" else "SHORT",
+            confirmed_at_ms=confirmation,
+            risk_reservation_usdt=Decimal(RO_USDT) * (
+                Decimal("0.015") + Decimal("2") * robot_l_shape.PAPER_ROBOT_FEE_RATE
+                + REENTRY_ADVERSE_SLIPPAGE_FRACTION
+            ),
+        )
     if snapshot.get("robot_handoff_ready") is not True:
         return None
     if not robot_l_shape.is_l_shape_snapshot(snapshot):
