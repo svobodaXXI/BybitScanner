@@ -93,13 +93,29 @@ structurally compatible with the same frozen thesis and direction.
   fail-closed on duplicate/non-STOP/overlapping lineage. The separate D2
   `.trading_diary.sqlite3` remains research-only and MUST NOT become order
   admission authority, because transactions cannot be atomic across stores.
-- **Still missing P0 admission wiring:** durably create/reserve this metadata
-  inside the **same** canonical `SQLiteStore.autopilot_decision_transaction`
-  / Robot Admission transaction as candidate ownership, using verified STOP
-  executions, no pending/open exposure and cumulative fee/risk evidence.
-  Unique constraints must fence dual callbacks, restart and duplicate signals.
-  Do not silently auto-migrate a production VPS until isolated migration and
-  recovery acceptance pass.
+- **Implemented in draft PR #668 (not active strategy behavior):**
+  `SQLiteStore.create_robot_reentry_campaign` and
+  `SQLiteStore.reserve_robot_stop_reentry` require the existing canonical
+  `BEGIN IMMEDIATE` Robot admission transaction and durable READY state.
+  `admit_robot_candidate(..., reentry=RobotReentryAdmissionRequest(...))`
+  and the Box handoff accept an optional **internal typed** strategy proof
+  so candidate and Diary linkage commit or rollback together. Without that
+  argument the original behaviour is unchanged. The last STOP must be a
+  closed `robot_trades` row plus resolved `paper_protection_obligations`
+  with a matching immutable `executions` record. Account/symbol/direction,
+  synchronized FLAT, no pending entry/protection, unique candidate/attempt
+  and cumulative realized loss+fees+new reserved worst-case risk are checked.
+  Unique schema constraints forbid >3 slots or restarting the same frozen
+  thesis to reset its risk budget.
+- **Not yet enabled/complete:** strategy adapters must independently prove
+  the same frozen structural thesis and post-STOP *completed candle* and
+  construct the typed request in the existing Scanner/Box/MIRROR/Wedge
+  producer path. Current `PAPER_AUTO` does **not** supply the request,
+  so no new automatic retry is enabled by this PR. Closed-STOP source
+  fields, setup identity, original risk budget and per-pattern confirmation
+  must be mapped from verified snapshots; no inference by symbol alone.
+  Isolated PAPER replay, crash and recovery tests, and owner-approved
+  deployment are still required. Do not deploy unfinished logic to VPS.
 - **Reservation is not an executed attempt.** Preserve both identities:
   queued/cancelled/no-fill candidates are Diary observations, but do not count
   as verified filled STOP losses. A retry needs an earlier executed-and-closed
@@ -136,7 +152,9 @@ structurally compatible with the same frozen thesis and direction.
 
 ## Boundary of PR #668
 
-This PR currently provides **only side-effect-free policy primitives and
-tests**. It is not production reentry. The final success condition remains a
+This PR now includes **pure policy, canonical PAPER identity reservations
+and an optional atomic Robot Admission boundary**, plus targeted tests.
+Existing strategy producers do not yet pass the verified reentry contract,
+so it is **not production automatic reentry**. The final success condition remains a
 durable, end-to-end automatic PAPER reentry from an actual fresh confirmed
 signal, with STOP/TAKE, correct attribution and exactly-once ledger updates.
