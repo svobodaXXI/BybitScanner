@@ -42,8 +42,52 @@ export default {
           signal: AbortSignal.timeout(38000)
         });
         const payload = await remote.json();
-        return reply(remote.ok ? 200 : 502, payload);
+        return reply(200, payload);
       } catch (_) { return reply(503, {ok:false,error:"telegram_poll_unavailable"}); }
+    }
+    if (url.pathname === "/v1/bot-method" && request.method === "POST") {
+      if (!env.GATEWAY_SHARED_SECRET || env.GATEWAY_SHARED_SECRET.length < 32 ||
+          !env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID)
+        return reply(503, {ok:false,error:"not_configured"});
+      const header = request.headers.get("authorization") || "";
+      if (!header.startsWith("Bearer ") || !matches(header.slice(7), env.GATEWAY_SHARED_SECRET))
+        return reply(401, {ok:false,error:"unauthorized"});
+      let body;
+      try {
+        const raw = await request.text();
+        if (raw.length > 16384) return reply(413,{ok:false,error:"too_large"});
+        body = JSON.parse(raw);
+      } catch (_) { return reply(400,{ok:false,error:"invalid_json"}); }
+      if (!body || !["answerCallbackQuery","setMyCommands","getChatMenuButton",
+                     "setChatMenuButton"].includes(body.method) ||
+          !body.params || typeof body.params !== "object" ||
+          Array.isArray(body.params)) return reply(400,{ok:false,error:"unsupported_method"});
+      const params = body.params;
+      if (["getChatMenuButton","setChatMenuButton"].includes(body.method) &&
+          String(params.chat_id) !== String(env.TELEGRAM_CHAT_ID))
+        return reply(403,{ok:false,error:"owner_chat_required"});
+      if (body.method === "setChatMenuButton" &&
+          params.menu_button !== JSON.stringify({type:"commands"}))
+        return reply(400,{ok:false,error:"unsupported_menu"});
+      if (body.method === "answerCallbackQuery" &&
+          (typeof params.callback_query_id !== "string" ||
+           params.callback_query_id.length < 1 || params.callback_query_id.length > 256))
+        return reply(400,{ok:false,error:"invalid_callback"});
+      const allowed = {
+        answerCallbackQuery:["callback_query_id","text"],
+        setMyCommands:["commands"],
+        getChatMenuButton:["chat_id"],
+        setChatMenuButton:["chat_id","menu_button"]
+      }[body.method];
+      if (Object.keys(params).some(key => !allowed.includes(key)))
+        return reply(400,{ok:false,error:"invalid_params"});
+      try {
+        const tg = await fetch("https://api.telegram.org/bot" + env.TELEGRAM_BOT_TOKEN +
+          "/" + body.method, {method:"POST",headers:{"content-type":"application/json"},
+          body: JSON.stringify(params),signal:AbortSignal.timeout(10000)});
+        const payload = await tg.json();
+        return reply(200,payload);
+      } catch (_) { return reply(503,{ok:false,error:"telegram_method_unavailable"}); }
     }
     if (url.pathname !== "/v1/send" || request.method !== "POST") {
       return reply(404, {ok:false,error:"not_found"});
