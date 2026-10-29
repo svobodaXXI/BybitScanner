@@ -48,7 +48,7 @@ class NeverStartedRecoveryTests(unittest.TestCase):
                     store._connection.execute(
                         """INSERT INTO position_projections (
                                trading_account_id, category, symbol, position_idx, side,
-                               quantity, average_entry, unrealized_pnl, realized_pnl,
+                               quantity, average_entry, realized_pnl, accumulated_fee,
                                engaged_notional, sync_state, version, updated_at_ms)
                            VALUES ('paper', 'linear', 'BTCUSDT', 0, 'Flat',
                                    '0', NULL, '0', '0', '0', 'synced', 2, 2000)"""
