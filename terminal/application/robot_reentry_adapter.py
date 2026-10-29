@@ -67,7 +67,10 @@ def proven_pattern_entry(
         # RO=250 USDT per canonical Robot capital unit; reserve the maximum
         # planned geometric stop loss plus fees and adverse fill allowance.
         base = Decimal(RO_USDT)
-        distance = abs(entry - stop) / entry
+        # Shared non-Box Robot admission enforces its 1.5% maximum STOP
+        # distance. Reserve that worst permitted geometry rather than the
+        # unbuffered MIRROR STOP (the actual Robot adds one instrument tick).
+        distance = max(abs(entry - stop) / entry, Decimal("0.015"))
         risk = base * (
             distance + Decimal("2") * robot_l_shape.PAPER_ROBOT_FEE_RATE
             + REENTRY_ADVERSE_SLIPPAGE_FRACTION
