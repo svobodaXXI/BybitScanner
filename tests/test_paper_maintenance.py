@@ -24,7 +24,7 @@ def fake_runner(calls, *, fail=None):
     def run(argv, **kwargs):
         calls.append(tuple(argv))
         return SimpleNamespace(returncode=1 if tuple(argv) == fail else 0,
-                               stdout="a" * 40 if tuple(argv) == ("git", "rev-parse", "--verify", "HEAD") else "")
+                               stdout=("a" * 40 if tuple(argv) == ("git", "rev-parse", "--verify", "HEAD") else "stable/adfb50b-forward\n" if tuple(argv) == ("git", "branch", "--show-current") else ""))
     return run
 
 
@@ -97,3 +97,14 @@ def test_expired_safe_stop_leaves_code_and_service_untouched():
         clock=lambda: now[0], sleep=sleep)
     assert result.startswith("BLOCKED:")
     assert not any(cmd[:2] == ("git", "merge") or "systemctl" in cmd for cmd in calls)
+
+
+def test_wrong_branch_blocks_before_safe_stop():
+    calls = []
+    def runner(argv, **kwargs):
+        calls.append(tuple(argv))
+        return SimpleNamespace(returncode=0, stdout="feature/other\n" if argv == ["git", "branch", "--show-current"] else "")
+    result = run_maintenance("a" * 40, runner=runner,
+        stop=lambda _: (_ for _ in ()).throw(AssertionError("stop must not run")))
+    assert result.startswith("BLOCKED:")
+    assert not any("systemctl" in cmd for cmd in calls)
