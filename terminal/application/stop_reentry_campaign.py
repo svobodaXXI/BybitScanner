@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+from terminal.application.stop_reentry_setup import LogicalSetup, qualify_logical_reentry
+
 MAX_ATTEMPTS = 3
 
 
@@ -41,9 +43,11 @@ def propose_stop_retry(
     candidate_id: str,
     symbol: str,
     direction: str,
-    confirmed_signal: bool,
-    same_frozen_thesis: bool,
+    setup: LogicalSetup | None,
     prior_stop_execution_id: str | None,
+    stop_proven_in_ledger: bool,
+    no_open_or_pending: bool,
+    robot_ready: bool,
     new_worst_case_loss_usdt: Decimal,
 ) -> Transition:
     """Produce a candidate reservation proposal, never submit an order.
@@ -63,13 +67,26 @@ def propose_stop_retry(
         return Transition("DENY", "retry_limit", campaign)
     if symbol != campaign.symbol or direction != campaign.direction:
         return Transition("DENY", "campaign_identity_mismatch", campaign)
-    if same_frozen_thesis is not True or confirmed_signal is not True:
-        return Transition("WAIT", "new_setup_not_confirmed", campaign)
+    if no_open_or_pending is not True:
+        return Transition("WAIT", "exposure_or_pending_entry", campaign)
+    if robot_ready is not True:
+        return Transition("WAIT", "robot_not_ready", campaign)
+    if not isinstance(setup, LogicalSetup):
+        return Transition("WAIT", "new_setup_proof_unavailable", campaign)
     last = campaign.attempts[-1]
+    if (setup.signal_id != candidate_id
+            or setup.previous_signal_id != last.candidate_id
+            or setup.direction != direction
+            or setup.campaign_direction != campaign.direction):
+        return Transition("WAIT", "campaign_setup_lineage_unverified", campaign)
+    qualified = qualify_logical_reentry(setup)
+    if qualified.outcome != "ALLOW":
+        return Transition(qualified.outcome, qualified.reason, campaign)
     if (
         not isinstance(prior_stop_execution_id, str)
         or not prior_stop_execution_id
         or last.confirmed_stop_execution_id != prior_stop_execution_id
+        or stop_proven_in_ledger is not True
     ):
         return Transition("WAIT", "last_stop_unproven", campaign)
     if not isinstance(new_worst_case_loss_usdt, Decimal):
