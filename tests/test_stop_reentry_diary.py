@@ -194,15 +194,30 @@ class ReentryDiaryTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "differs from campaign"):
             ReentryDiaryReader(self.path).load()
 
-    def test_retry_signal_cannot_predate_stop(self):
+    def test_old_formation_can_finish_as_new_confirmed_post_stop_setup(self):
+        # The trade signal_time_ms may refer to the first candle of a
+        # double-bottom, before STOP. The owning strategy checks the actual
+        # *confirmation* close separately in canonical admission.
         con = self._connect()
         self._campaign(con)
         self._closed_trade(con)
         self._second_attempt(con)
-        self._second_closed_trade(con, signal_at=300)
+        self._second_closed_trade(con, signal_at=250)
         con.commit()
         con.close()
-        with self.assertRaisesRegex(Exception, "predates prior STOP"):
+        result = ReentryDiaryReader(self.path).load()[0]
+        self.assertEqual(result.filled_attempt_count, 2)
+
+    def test_reentry_execution_cannot_overlap_prior_position(self):
+        con = self._connect()
+        self._campaign(con)
+        self._closed_trade(con)
+        self._second_attempt(con)
+        self._second_closed_trade(con)
+        con.execute("UPDATE robot_trades SET entry_time_ms=300 WHERE trade_id='trade-2'")
+        con.commit()
+        con.close()
+        with self.assertRaisesRegex(Exception, "entry predates prior STOP"):
             ReentryDiaryReader(self.path).load()
 
     def test_read_only_diary_does_not_create_missing_database(self):
