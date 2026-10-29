@@ -24,3 +24,9 @@ This prototype intentionally does not declare Telegram READY and does not solve 
 - Set `BYBITSCANNER_TELEGRAM_GATEWAY_SECRET` (same bearer key as Worker) and `TELEGRAM_CHAT_ID` in the Telegram service's protected environment. No secrets in repository. The client excludes inherited system SOCKS proxies for the Gateway HTTPS hop.
 - Text messages now support a constrained subset of inline keyboards (`callback_data`, HTTPS `url` and HTTPS `web_app`); photo, menu configuration, and `getUpdates` calls still use direct Telegram API and remain blocked on this VPS. **Do not deploy this slice as an operational fix.**
 - Existing owner commands and monitoring require an authenticated inbound relay and expanded Bot API coverage before this can replace current Telegram transport.
+
+## Inbound relay slice (unverified)
+- Worker exposes authenticated `POST /v1/get-updates`; it proxies Telegram's single long-poll response and never polls autonomously. VPS `telegram_monitoring.py` stays the **sole** update consumer and continues owner checks and existing callback dispatch.
+- Restricted `POST /v1/bot-method` supports only `answerCallbackQuery`, `setMyCommands`, `getChatMenuButton`, `setChatMenuButton`; it does not permit arbitrary Telegram methods or trading API operations.
+- `telegram_monitoring._telegram_request` uses the gateway only when opted in; existing direct behavior remains the default.
+- **Not a deployed or accepted solution:** callbacks and full workflows still depend on additional direct Telegram API uses, photos remain direct, durable delivery is absent, Worker hosting and endpoint are unverified. No production rollout.
