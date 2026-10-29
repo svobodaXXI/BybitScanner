@@ -33,8 +33,8 @@ from terminal.api.models import (
 from terminal.application.robot_autopilot import daily_loss_gate_enabled
 from terminal.application.paper_daily_equity import MarkPrice
 from terminal.application.robot_autopilot_shadow import (
-    DEFERRED_HANDOVER, SOURCE_BOX_PLAN, SOURCE_SCANNER, ShadowChunk, ShadowDeferredObserver,
-    admit_arrived_auto_candidate, commit_shadow_chunk, observe_shadow_candidate,
+    DEFERRED_HANDOVER, SOURCE_BOX_PLAN, SOURCE_SCANNER, FreshnessUnknown, ShadowChunk,
+    ShadowDeferredObserver, admit_arrived_auto_candidate, commit_shadow_chunk, observe_shadow_candidate,
     owner_autopilot_mode, resolve_autopilot_evidence_target,
 )
 from terminal.application.wedge_source_terminal_producer import WedgeTerminalProducerWorker
@@ -97,7 +97,7 @@ from scanner_geometry_cursor import (
     load_scanner_catchup_closed_candles, project_latest_geometry_index,
 )
 from terminal.runtime.closed_candle_cache import (
-    CachedClosedCandleProvider, PreparedCatchupEvidence,
+    CachedClosedCandleProvider, CatchupEvidenceUnavailable, PreparedCatchupEvidence,
 )
 from terminal.domain.models import (
     Category, CommandId, Execution, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, PositionKey,
@@ -1301,7 +1301,7 @@ class PaperRuntime:
                     self.store, self._paper_account_id,
                     source=source, candidate_ref=str(candidate_ref),
                     protection_healthy=self._autopilot_protection_health,
-                    candidate_fresh=self._autopilot_candidate_fresh,
+                    candidate_fresh=self._autopilot_candidate_fresh_classified,
                     daily_loss_gate_enabled=getattr(self, "_autopilot_daily_loss_gate_enabled", True),
                     daily_marks=(lambda: daily_marks) if daily_marks is not None else None,
                 )
@@ -1321,31 +1321,43 @@ class PaperRuntime:
     observe_autopilot_shadow_candidate = observe_autopilot_candidate
 
     def _autopilot_candidate_fresh(self, symbol: str, signal_snapshot) -> bool | None:
+        """Unchanged contract: True/False when proven, None when unproven."""
+        try:
+            return PaperRuntime._autopilot_candidate_fresh_classified(self, symbol, signal_snapshot)
+        except FreshnessUnknown:
+            return None
+
+    def _autopilot_candidate_fresh_classified(self, symbol: str, signal_snapshot) -> bool:
         """Owner thread. Prove from authoritative closed candles that an idea is live.
 
         Evidence is only what was prepared off the owner thread (no REST here) and
         is replayed through the existing Robot state machine: a setup that reached
         its apex is dead. A load that succeeded with no new closed candle is still
         proof the setup has not reached its apex. No evidence, an unsupported
-        pattern or any failure means unproven -> None, which the policy turns into
-        WAIT, never ALLOW.
+        pattern or any failure means unproven, which the policy turns into WAIT,
+        never ALLOW. Unproven raises ``FreshnessUnknown`` with a stable reason class
+        so the durable decision audit records *why* (#608); never exception text.
         """
         import robot_state_machine
 
         evidence = self.robot_catchup_evidence
-        if evidence is None or not isinstance(signal_snapshot, Mapping):
-            return None
+        if evidence is None:
+            raise FreshnessUnknown("EVIDENCE_PROVIDER_MISSING")
+        if not isinstance(signal_snapshot, Mapping):
+            raise FreshnessUnknown("UNSUPPORTED_SNAPSHOT")
         try:
             candles = tuple(evidence(symbol, dict(signal_snapshot)))
+        except CatchupEvidenceUnavailable as unavailable:
+            raise FreshnessUnknown(unavailable.reason) from None
         except Exception:
-            return None
+            raise FreshnessUnknown("EVIDENCE_ERROR") from None
         if pattern_freshness.freshness_kind(signal_snapshot) is not None:
             # IKIGAI_BOX / L-shape: no apex lifecycle; stale once the frozen TAKE
             # (Box) or target/stop (L-shape) was reached by a closed candle.
             try:
                 return pattern_freshness.pattern_candidate_fresh(signal_snapshot, candles)
             except Exception:
-                return None
+                raise FreshnessUnknown("PATTERN_REPLAY_FAILED") from None
         try:
             state, _event = robot_state_machine.initialize_state({
                 "status": "APPROVED",
@@ -1356,7 +1368,7 @@ class PaperRuntime:
                 dict(signal_snapshot), state, candles,
             )
         except Exception:
-            return None
+            raise FreshnessUnknown("WEDGE_REPLAY_FAILED") from None
         return replayed.get("phase") != robot_state_machine.PHASE_EXPIRED_AT_APEX
 
     def autopilot_state(self):
