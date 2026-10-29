@@ -3664,6 +3664,18 @@ class PaperRuntime:
         if runtime is None:
             raise PaperCloseAllRejected("robot_runtime_state_unavailable")
         if runtime.mode == "ROBOT_RUNNING":
+            if runtime.recovery_status == "RECONCILIATION_REQUIRED":
+                # The owner-requested flatten is itself a recovery opportunity.
+                # Reuse the canonical, serialized Robot reconciliation rather
+                # than leaving a provably inert pending candidate in a deadlock.
+                # This is fail-closed: any unresolved entry, trade, ownership or
+                # protection keeps the original guards and existing EXITs alive.
+                recovery = self.robot_reconcile()
+                if not recovery.success:
+                    raise PaperCloseAllRejected("robot_reconciliation_required")
+                runtime = self.store.get_robot_runtime_state(account_id)
+                if runtime is None or runtime.recovery_status != "PAUSED":
+                    raise PaperCloseAllRejected("robot_reconciliation_required")
             if runtime.recovery_status == "READY":
                 runtime = self.store.update_robot_runtime_state(
                     account_id, mode="ROBOT_RUNNING", recovery_status="PAUSED",
