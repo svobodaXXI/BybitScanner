@@ -119,3 +119,72 @@ def detect_confirmed_double_extremum(
                     neckline=neck, extreme=extreme, target=target, stop=stop,
                 )
     return None
+
+
+def frozen_neckline_snapshot(
+    symbol: str, timeframe: str, candles: Sequence[Mapping[str, object]],
+) -> dict[str, object] | None:
+    """Build a Robot-ready snapshot ONLY for a fully closed 1m/5m breakout.
+
+    Stop uses the confirming candle's opposing extreme; measured-move TAKE
+    is fixed at confirmation. Fee-aware NET 2:1 is checked before handoff
+    and repeated by the canonical Robot at its actual order price.
+    """
+    if timeframe not in {"1", "5"} or not isinstance(symbol, str) or not symbol:
+        return None
+    found = detect_confirmed_double_extremum(candles)
+    if found is None:
+        return None
+    try:
+        import robot_l_shape
+        last = candles[found.confirmed_index]
+        open_time = last["time"]
+        if isinstance(open_time, bool) or int(open_time) != open_time:
+            return None
+        open_ms = int(open_time)
+        interval = int(timeframe) * 60_000
+        if open_ms <= 0 or open_ms % interval:
+            return None
+        entry = _price(last, "close")
+        stop = (_price(last, "high") if found.direction == "SHORT"
+                else _price(last, "low"))
+        target = found.target
+        if not (target < entry < stop if found.direction == "SHORT"
+                else stop < entry < target):
+            return None
+        gross_risk = abs(entry - stop)
+        if gross_risk == 0:
+            return None
+        reward_risk = abs(entry - target) / gross_risk
+        potential = abs(target - entry) / entry * Decimal("100")
+        if potential < Decimal("0.8") or reward_risk < Decimal("2"):
+            return None
+        if robot_l_shape.net_reward_risk(
+            found.direction, entry_price=entry,
+            stop_price=stop, target_price=target,
+        ) < Decimal("2"):
+            return None
+        return {
+            "pattern": found.pattern, "symbol": symbol,
+            "timeframe": timeframe, "scanner_source_timeframe": timeframe,
+            "robot_handoff_ready": True,
+            "neckline_entry": {
+                "direction": found.direction, "source_timeframe": timeframe,
+                "breakout_time_ms": open_ms, "reference": str(entry),
+                "target": str(target), "stop": str(stop),
+                "structural_stop": str(stop), "stop_kind": "CONFIRMATION_EXTREME",
+                "potential_percent": str(potential),
+                "reward_risk": str(reward_risk),
+                "neckline": str(found.neckline),
+                "first_pivot_index": found.first_pivot_index,
+                "second_pivot_index": found.second_pivot_index,
+                "neck_index": found.neck_index,
+                "confirmation": {
+                    "timeframe": timeframe, "kind": "NECKLINE_BODY_CLOSE",
+                    "close_time_ms": open_ms + interval, "close": str(entry),
+                },
+            },
+        }
+    except (TypeError, ValueError, ArithmeticError, KeyError,
+            robot_l_shape.RobotLShapeError):
+        return None
