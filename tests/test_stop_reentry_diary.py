@@ -177,11 +177,12 @@ class ReentryDiaryTests(unittest.TestCase):
         con = self._connect()
         self._campaign(con)
         self._closed_trade(con)
-        self._second_attempt(con, attempt_index=1)
-        con.commit()
+        # SQL unique index now rejects a duplicate before the Diary can
+        # observe it. Keep this test as a durability invariant.
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "UNIQUE constraint"):
+            self._second_attempt(con, attempt_index=1)
+        con.rollback()
         con.close()
-        with self.assertRaisesRegex(Exception, "attempt indexes"):
-            ReentryDiaryReader(self.path).load()
 
     def test_retry_trade_direction_conflict_fails_closed(self):
         con = self._connect()
