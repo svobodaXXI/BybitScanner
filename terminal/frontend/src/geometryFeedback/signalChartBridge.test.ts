@@ -31,6 +31,16 @@ describe("GFL frozen signal-to-chart bridge", () => {
     expect(() => projectSignalGeometry([{ ...source[0], anchors: [{ ...source[0].anchors[0], bar_open_time_ms: at(0, 12).bar_open_time_ms + 1 }, source[0].anchors[1]] }], candles)).toThrow(/absent/);
   });
 
+  it("rejects zero-length and backward Scanner ray anchors instead of projecting misleading lines", () => {
+    expect(() => projectSignalGeometry([
+      { ...source[0], anchors: [at(1, 12), at(1, 13)] },
+    ], candles)).toThrow(/advance/);
+    expect(() => projectSignalGeometry([
+      { ...source[0], anchors: [at(2, 14), at(0, 12)] },
+    ], candles)).toThrow(/advance/);
+    expect(projectSignalGeometry(source, candles).editableDrawings).toHaveLength(2);
+  });
+
   it("rejects malformed candles, duplicate IDs, incomplete rays, and invalid prices", () => {
     expect(() => projectSignalGeometry(source, [candles[1], candles[0]])).toThrow();
     expect(() => projectSignalGeometry(source, [candles[0], candles[0]])).toThrow();
