@@ -338,19 +338,19 @@ def test_no_shelf_condition_or_terminology_remains():
 # --- Scanner signal eligibility (owner decision 2026-09-23) -----------------
 
 
-def test_b2usdt_is_eligible_with_the_half_target_fallback_stop():
+def test_b2usdt_is_eligible_with_fee_headroom_fallback_stop():
     formation = find_latest_l_shape(_b2usdt())
     plan = l_shape_signal_plan(formation)
 
     assert plan.eligible and plan.rejection is None
     assert plan.reference == formation.breakout_level == 0.5168
     assert plan.target == formation.target_level
-    # Structural STOP at the trough low 0.4388 is 0.078 away, more than half
-    # the 0.0416 target distance, so the ratio-based STOP applies.
+    # Structural STOP at 0.4388 is wider than 1/2 reward;
+    # the fee-aware fallback reserves 1/3 reward for the STOP risk.
     assert plan.structural_stop == 0.4388
     assert plan.stop_kind == STOP_RATIO_FALLBACK
-    assert abs(plan.stop - (0.5168 - 0.0416 / 2)) < 1e-9
-    assert plan.reward_risk == 2.0
+    assert abs(plan.stop - (0.5168 - 0.0416 / 3)) < 1e-9
+    assert abs(plan.reward_risk - 3.0) < 1e-9
     assert round(formation.potential_percent, 2) == 8.05
 
 
@@ -383,7 +383,7 @@ def test_short_stop_is_on_the_adverse_side_of_the_breakout():
 
     assert plan.eligible
     assert plan.stop > plan.reference > plan.target
-    assert plan.reward_risk == 2.0
+    assert abs(plan.reward_risk - 3.0) < 1e-9
 
 
 def test_signal_plan_never_changes_the_formation():
