@@ -915,6 +915,7 @@ SCHEMA_V26_MIGRATION_STATEMENTS = (
         created_at_ms INTEGER NOT NULL,
         PRIMARY KEY (trading_account_id, campaign_id),
         UNIQUE (trading_account_id, first_candidate_id),
+        UNIQUE (trading_account_id, symbol, direction, frozen_thesis_sha256),
         FOREIGN KEY (first_candidate_id) REFERENCES robot_candidates(candidate_id),
         CHECK (direction IN ('LONG', 'SHORT')),
         CHECK (length(frozen_thesis_sha256) = 64),
