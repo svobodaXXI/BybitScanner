@@ -162,6 +162,17 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
         runtime.robot_close_all.assert_not_called()
         runtime.close_all.assert_not_called()
 
+    def test_reconcile_failure_fences_autopilot_before_attempt(self):
+        runtime, _ = fixture(status="RECONCILIATION_REQUIRED", robot=True)
+        def reconcile():
+            runtime.store.update_robot_autopilot_state.assert_called_once()
+            return SimpleNamespace(success=False)
+        runtime.robot_reconcile.side_effect = reconcile
+        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_reconciliation_required"):
+            run(runtime)
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+
     def test_reconciliation_success_allows_canonical_close(self):
         runtime, state = fixture(status="RECONCILIATION_REQUIRED", robot=True)
         def reconcile():
