@@ -152,3 +152,50 @@ def send_photo_file_id(chat_id, file_id, caption="", reply_markup=None):
     if response.status_code != 200 or not isinstance(result, dict):
         raise TelegramGatewayError("Gateway photo rejected")
     return result
+
+def send_photo_upload(chat_id, photo_path, caption="", reply_markup=None):
+    """Upload a bounded PNG/JPEG through the fixed-owner Gateway."""
+    from pathlib import Path
+    if reply_markup is not None:
+        raise TelegramGatewayError("photo keyboard not supported")
+    if str(chat_id) != os.getenv("TELEGRAM_CHAT_ID", "").strip():
+        raise TelegramGatewayError("Gateway photo recipient mismatch")
+    path = Path(photo_path)
+    suffix = path.suffix.lower()
+    if suffix not in {".png", ".jpg", ".jpeg"}:
+        raise TelegramGatewayError("unsupported image format")
+    if not isinstance(caption, str) or len(caption) > 1024:
+        raise TelegramGatewayError("invalid caption")
+    url = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_URL", "").strip()
+    key = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_SECRET", "").strip()
+    parsed = urlsplit(url)
+    if (parsed.scheme != "https" or not parsed.netloc or parsed.username or
+            parsed.password or parsed.query or parsed.fragment or
+            parsed.path.rstrip("/") not in ("", "/v1/send") or len(key) < 32):
+        raise TelegramGatewayError("invalid Gateway configuration")
+    endpoint = url.rstrip("/")
+    if endpoint.endswith("/v1/send"):
+        endpoint = endpoint[:-len("/v1/send")]
+    try:
+        if path.stat().st_size > 2000000:
+            raise TelegramGatewayError("photo too large for Gateway")
+        photo = path.read_bytes()
+        if not photo or len(photo) > 2000000:
+            raise TelegramGatewayError("invalid photo size")
+        media_type = "image/png" if suffix == ".png" else "image/jpeg"
+        session = requests.Session()
+        session.trust_env = False
+        response = session.post(
+            endpoint + "/v1/photo-upload",
+            data=photo,
+            headers={"Authorization": "Bearer " + key,
+                     "Content-Type": media_type,
+                     "X-Telegram-Caption": caption},
+            timeout=25, allow_redirects=False,
+        )
+        result = response.json()
+    except (OSError, requests.RequestException, ValueError) as exc:
+        raise TelegramGatewayError("Gateway photo upload unavailable") from exc
+    if response.status_code != 200 or not isinstance(result, dict):
+        raise TelegramGatewayError("Gateway photo upload rejected")
+    return result
