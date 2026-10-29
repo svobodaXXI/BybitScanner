@@ -3670,7 +3670,12 @@ class PaperRuntime:
                 # than leaving a provably inert pending candidate in a deadlock.
                 # This is fail-closed: any unresolved entry, trade, ownership or
                 # protection keeps the original guards and existing EXITs alive.
-                recovery = self.robot_reconcile()
+                try:
+                    recovery = self.robot_reconcile()
+                except Exception as exc:
+                    raise PaperCloseAllRejected(
+                        "robot_reconciliation_required"
+                    ) from exc
                 if not recovery.success:
                     raise PaperCloseAllRejected("robot_reconciliation_required")
                 runtime = self.store.get_robot_runtime_state(account_id)
