@@ -158,14 +158,28 @@ structurally compatible with the same frozen thesis and direction.
   The definition is intentionally conservative: distant continuation
   formations, older incompatible snapshots and unlinked historical STOPs
   remain WAIT until a more specific strategy-context bridge exists.
-- **Remaining P0 blockers:** a formally proven independent NEW thesis after
-  invalidation of an unfinished campaign (without resetting active risk);
-  standalone double-bottom/top and candle confirmation adapters (#647);
-  pre-v26 STOP campaign attribution; executed PAPER LIMIT fill → protection
-  STOP/TAKE lifecycle and crash/recovery acceptance. The existence of an
-  automatically reserved candidate does NOT establish an executed retry.
-  Do **not** enable flag, merge or deploy until remaining E2E checks pass.
-  LIVE prohibited and VPS stopped.
+- **Actual protected retry E2E now demonstrated (isolated DB):**
+  `tests/test_stop_reentry_paper_e2e.py` reuses the production
+  `MirrorStandaloneHarness`. The real MIRROR Scanner candidate receives a
+  canonical PAPER LIMIT/fill and STOP, then a separately frozen, synthetic
+  confirmed L-shape enters the same campaign through PAPER_AUTO and its own
+  retest monitor, submits a *different* PAPER LIMIT/fill and closes by TAKE.
+  Both closures have STOP/TAKE protection executions, and existing Trading
+  Diary calculates 2 filled attempts with individual and aggregate gross,
+  fees and known-cost net. The test restarts the exact same SQLite runtime
+  after closure and proves no duplicate order/execution.
+  The E2E is included in `robot-paper-acceptance-ci.yml`, not the thin
+  unit-only policy workflow.
+- **Remaining P0 blockers:** independently verify a real Scanner-emitted
+  *second* pattern after a STOP (the E2E uses a synthetic independently
+  confirmed L-shape candle/snapshot); finish validated double-bottom/top
+  and candle confirmation adapters (#647); prove a new independent thesis
+  after structural invalidation without resetting a live risk budget;
+  pre-v26 STOP campaign attribution; further crash-during-open-or-pending
+  replay and partial-fill resilience. This E2E proves one retried protected
+  position, not all pattern routes or an unattended 24/7 VPS run.
+  Do **not** enable flag, merge or deploy as universally complete until
+  those acceptance slices pass. LIVE prohibited and VPS stopped.
 - **Reservation is not an executed attempt.** Preserve both identities:
   queued/cancelled/no-fill candidates are Diary observations, but do not count
   as verified filled STOP losses. A retry needs an earlier executed-and-closed
@@ -204,10 +218,10 @@ structurally compatible with the same frozen thesis and direction.
 
 ## Boundary of PR #668
 
-This PR now includes **pure policy, canonical PAPER identity reservations
-and an optional atomic Robot Admission boundary**, plus targeted tests.
-The opt-in MIRROR/L-shape PAPER_AUTO route now passes a verified request
-but Wedge/Box and universal 1+2 fencing are incomplete. It is **not
-production-ready automatic reentry**. The final success condition remains a
-durable, end-to-end automatic PAPER reentry from an actual fresh confirmed
-signal, with STOP/TAKE, correct attribution and exactly-once ledger updates.
+This PR includes **pure policy, canonical PAPER identity reservations,
+optional atomic Robot Admission and one tested STOP→L-shape LIMIT/fill→TAKE
+PAPER E2E**. Wedge 1m/5m, Box and MIRROR adapters have bounded admission
+proofs; a subsequent real Scanner pattern after STOP, independent neckline
+detectors, broader risk/campaign transitions and crash-during-fill recovery
+remain incomplete. The feature is **not production-ready for universal reentry**.
+Keep the feature OFF and the VPS stopped until full acceptance and approval.
