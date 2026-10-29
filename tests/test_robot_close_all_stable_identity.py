@@ -51,9 +51,10 @@ def _runtime_for_symbols(*symbols):
         # CR-ROBOT-CLOSE-ALL-MAX-QTY-001: robot_close_all() re-reads the
         # position after a COMPLETED chunk; already flat here, so these
         # tests see exactly the one chunk they expect.
-        get_position_projection=Mock(return_value=SimpleNamespace(
-            quantity=SimpleNamespace(value=Decimal(0)),
-        )),
+        get_position_projection=Mock(side_effect=[
+            SimpleNamespace(quantity=SimpleNamespace(value=Decimal("2"))),
+            *[SimpleNamespace(quantity=SimpleNamespace(value=Decimal(0))) for _ in range(20)],
+        ]),
     )
     close = Mock(side_effect=lambda request, *, identity: CommandResult(
         request.client_action_id.value, CommandResultStatus.COMPLETED,
