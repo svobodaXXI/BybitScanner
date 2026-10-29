@@ -59,3 +59,19 @@ def test_pure_gate_does_not_grant_order_authority():
     assert (decision.outcome, decision.reason) == (
         ALLOW, "eligible_for_canonical_admission"
     )
+
+def test_nonboolean_evidence_never_grants_reentry():
+    # Imported API data can contain truthy strings, numbers or absent fields.
+    # None of these constitute authoritative positive proof.
+    for field in (
+        "stop_closed",
+        "fresh_confirmed_signal",
+        "same_campaign_and_direction",
+        "campaign_valid",
+        "no_open_or_pending",
+        "robot_ready",
+        "risk_budget_ok",
+    ):
+        for invalid in (None, 1, "true", "false", [], {}):
+            result = evaluate_stop_reentry(eligible(**{field: invalid}))
+            assert result.outcome != ALLOW, (field, invalid)
