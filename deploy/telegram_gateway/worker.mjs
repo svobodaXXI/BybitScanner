@@ -101,6 +101,37 @@ export default {
         return reply(200,payload);
       } catch (_) { return reply(503,{ok:false,error:"telegram_method_unavailable"}); }
     }
+    if (url.pathname === "/v1/photo-upload" && request.method === "POST") {
+      if (!env.GATEWAY_SHARED_SECRET || env.GATEWAY_SHARED_SECRET.length < 32 ||
+          !env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID)
+        return reply(503,{ok:false,error:"not_configured"});
+      const auth = request.headers.get("authorization") || "";
+      if (!auth.startsWith("Bearer ") || !matches(auth.slice(7),env.GATEWAY_SHARED_SECRET))
+        return reply(401,{ok:false,error:"unauthorized"});
+      const type = request.headers.get("content-type") || "";
+      if (!type.startsWith("image/png") && !type.startsWith("image/jpeg"))
+        return reply(415,{ok:false,error:"unsupported_image_type"});
+      const caption = request.headers.get("x-telegram-caption") || "";
+      if (caption.length > 1024) return reply(400,{ok:false,error:"invalid_caption"});
+      if (Number(request.headers.get("content-length") || 0) > 2000000)
+        return reply(413,{ok:false,error:"photo_too_large"});
+      let bytes;
+      try { bytes = await request.arrayBuffer(); }
+      catch (_) { return reply(400,{ok:false,error:"invalid_photo"}); }
+      if (!bytes.byteLength || bytes.byteLength > 2000000)
+        return reply(413,{ok:false,error:"photo_too_large"});
+      const form = new FormData();
+      form.set("chat_id",String(env.TELEGRAM_CHAT_ID));
+      form.set("caption",caption);
+      form.set("photo",new Blob([bytes],{type:type.split(";")[0]}),"chart.png");
+      try {
+        const tg = await fetch("https://api.telegram.org/bot"+env.TELEGRAM_BOT_TOKEN+"/sendPhoto",{
+          method:"POST",body:form,signal:AbortSignal.timeout(20000)
+        });
+        const payload=await tg.json();
+        return reply(200,payload);
+      } catch (_) { return reply(503,{ok:false,error:"telegram_photo_unavailable"}); }
+    }
     if (url.pathname === "/v1/photo-file-id" && request.method === "POST") {
       if (!env.GATEWAY_SHARED_SECRET || env.GATEWAY_SHARED_SECRET.length < 32 ||
           !env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID)
