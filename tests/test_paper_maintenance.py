@@ -7,7 +7,8 @@ from tools.paper_maintenance import run_maintenance
 def fake_runner(calls, *, fail=None):
     def run(argv, **kwargs):
         calls.append(tuple(argv))
-        return SimpleNamespace(returncode=1 if tuple(argv) == fail else 0)
+        return SimpleNamespace(returncode=1 if tuple(argv) == fail else 0,
+                               stdout="a" * 40 if tuple(argv) == ("git", "rev-parse", "--verify", "HEAD") else "")
     return run
 
 
