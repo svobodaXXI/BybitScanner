@@ -49,7 +49,17 @@ export default {
     }
     if (input.reply_markup !== undefined &&
         (!input.reply_markup || typeof input.reply_markup !== "object" ||
-         !Array.isArray(input.reply_markup.inline_keyboard))) {
+         !Array.isArray(input.reply_markup.inline_keyboard) ||
+         Object.keys(input.reply_markup).length !== 1 ||
+         input.reply_markup.inline_keyboard.length > 20 ||
+         !input.reply_markup.inline_keyboard.every(row =>
+           Array.isArray(row) && row.length <= 8 && row.every(button =>
+             button && typeof button.text === "string" && button.text.length <= 64 &&
+             Object.keys(button).length === 2 &&
+             (typeof button.callback_data === "string" && button.callback_data.length <= 64 ||
+              typeof button.url === "string" && button.url.startsWith("https://") && button.url.length <= 2048 ||
+              button.web_app && typeof button.web_app.url === "string" &&
+              button.web_app.url.startsWith("https://") && button.web_app.url.length <= 2048)))) {
       return reply(400, {ok:false,error:"invalid_reply_markup"});
     }
     let response;
@@ -58,7 +68,7 @@ export default {
         env.TELEGRAM_BOT_TOKEN + "/sendMessage", {
         method:"POST",
         headers:{"content-type":"application/json"},
-        body:JSON.stringify({chat_id:env.TELEGRAM_CHAT_ID,text:input.text, ...input.reply_markup === undefined ? {} : {reply_markup:input.reply_markup}}),
+        body:JSON.stringify({chat_id:env.TELEGRAM_CHAT_ID,text:input.text, ...(input.reply_markup === undefined ? {} : {reply_markup:input.reply_markup})}),
         signal:AbortSignal.timeout(10000)
       });
     } catch (_) {
