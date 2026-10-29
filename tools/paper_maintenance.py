@@ -91,7 +91,24 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
             raise ValueError("PAPER state not ready")
     except (ValueError, KeyError, OSError, TypeError):
         return "BLOCKED: PAPER core started but PAPER_AUTO/protection readiness not proven; do not enable new admission"
-    return "READY: exact HEAD, PAPER-only, Scanner, PAPER_AUTO and protection confirmed"
+    # An enabled Autopilot is not proof that Robot can admit trades.
+    # Read the canonical durable state without mutating the PAPER DB.
+    try:
+        import sqlite3
+        from tools.stop_robot_runtime import _database_path
+        db = _database_path(root, _environment(env_file))
+        with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True) as conn:
+            row = conn.execute(
+                "SELECT mode, recovery_status FROM robot_runtime_state "
+                "WHERE trading_account_id='paper'"
+            ).fetchone()
+        if row != ("ROBOT_RUNNING", "READY"):
+            raise ValueError("Robot is not READY")
+        if _environment(env_file).get("BYBITSCANNER_STOP_REENTRY_AUTO") != "1":
+            raise ValueError("STOP reentry is not enabled")
+    except (OSError, ValueError, sqlite3.Error):
+        return "BLOCKED: PAPER core started but Robot READY/reentry not proven"
+    return "READY: exact HEAD, PAPER-only, Robot, Scanner, PAPER_AUTO, reentry and protection confirmed"
 
 
 def main(argv=None) -> int:
