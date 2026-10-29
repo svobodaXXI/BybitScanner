@@ -1,6 +1,6 @@
 # ROBOT STOP-reentry: logical next setup and mature-engine reuse
 
-Status: **contract + pure policy under PR #668, NOT connected to PAPER_AUTO**.
+Status: **optional PAPER_AUTO linkage and strict admission gate under PR #668; feature OFF by default, not production-ready**.
 Owner priority: complete cross-pattern STOP retries, then deploy to VPS after
 targeted CI and PAPER acceptance; Codex is used only for authorized VPS/SSH
 operations, not software development. **PAPER only. LIVE prohibited.**
@@ -143,18 +143,29 @@ structurally compatible with the same frozen thesis and direction.
   `BYBITSCANNER_STOP_REENTRY_AUTO=1`, an unsupported or unproven
   Scanner/Box candidate cannot silently fall through to the normal
   untracked Robot admission. The flag is still OFF by default.
-- **Critical NOT-YET-SOLVED P0 blocker:** a previous STOP campaign and a
-  candidate of the same symbol and direction do **not** by themselves
-  prove one structural trade thesis. The current optional resolver can
-  find a stopped campaign by symbol/direction, but its geometric
-  relationship to a newly formed different pattern still needs an
-  authoritative frozen-source compatibility proof. Do **not** enable the
-  feature or mark universal retries ready until this is enforced in code,
-  including a way to end the old thesis and create a genuinely independent
-  new idea without resetting a live campaign's risk budget. Other
-  blockers: independent double-bottom/top recognition (#647), pre-v26
-  legacy STOP attribution, actual PAPER fill→STOP/TAKE replay and crash
-  recovery acceptance. Keep LIVE prohibited and VPS stopped.
+- **Implemented conservative matching boundary:** `robot_reentry_thesis`
+  derives a frozen directional price corridor from the actual immutable
+  previous candidate (MIRROR, L-shape, Wedge or Box), fetched and hash-
+  verified by canonical Robot Admission, and from the new independently
+  confirmed candidate. The new reference must remain within the previous
+  STOP-to-TAKE structure; price corridors must overlap. Symbol/direction
+  by themselves never qualify. Any explicit `reentry_parent` signal hint
+  is validated against that exact candidate ID and SHA; it cannot override
+  the canonical DB or price proof. The Robot may establish the parent
+  automatically in its transaction, so Scanner candidates need no manual
+  lineage annotation. Failure records auditable PAPER_AUTO
+  `WAIT:REENTRY_THESIS_UNPROVEN` and no candidate/order reservation.
+  The definition is intentionally conservative: distant continuation
+  formations, older incompatible snapshots and unlinked historical STOPs
+  remain WAIT until a more specific strategy-context bridge exists.
+- **Remaining P0 blockers:** a formally proven independent NEW thesis after
+  invalidation of an unfinished campaign (without resetting active risk);
+  standalone double-bottom/top and candle confirmation adapters (#647);
+  pre-v26 STOP campaign attribution; executed PAPER LIMIT fill → protection
+  STOP/TAKE lifecycle and crash/recovery acceptance. The existence of an
+  automatically reserved candidate does NOT establish an executed retry.
+  Do **not** enable flag, merge or deploy until remaining E2E checks pass.
+  LIVE prohibited and VPS stopped.
 - **Reservation is not an executed attempt.** Preserve both identities:
   queued/cancelled/no-fill candidates are Diary observations, but do not count
   as verified filled STOP losses. A retry needs an earlier executed-and-closed
@@ -170,15 +181,14 @@ structurally compatible with the same frozen thesis and direction.
   derived from existing statistics. Unknown funding/external costs stay
   unknown; known-cost net is not silently claimed to be complete net.
 
-- **Missing structural-thesis compatibility and double-extremum adapters:**
-  independently prove a new setup belongs to an unfinished campaign; do not
-  infer this from symbol/direction or move original geometry. Once that is
-  done, build the double-bottom/top entry candidates from independently
-  confirmed neckline-close evidence.
-  Create #647 candle and double-bottom/top recognition only when verified;
-  never infer a double-bottom from a STOP alone. For a new confirmed setup
-  whose original structural thesis is no longer valid, create a separately
-  admissible campaign instead of bypassing risk/attempt cap.
+- **Outstanding structural context and double-extremum adapters:**
+  frozen-corridor overlap is the currently tested conservative rule, but
+  broader continuation beyond the previous TAKE requires a separately
+  verified context/leg-of-trend model. Never infer a double bottom from
+  an executed STOP. Build #647 neckline-close candidates independently
+  and test both 1m and 5m confirmation. A genuinely new thesis after
+  prior structural invalidation must have an explicit terminal transition,
+  not a silent risk-budget reset.
 - **Missing risk wiring:** model cumulative realized STOP costs, all fees,
   slippage and reserved worst-case pending/live losses without double
   counting. Treat unknown/ambiguous numbers as WAIT. Do not reset the
