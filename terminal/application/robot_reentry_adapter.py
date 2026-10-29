@@ -1,9 +1,7 @@
-"""Trusted, opt-in reentry evidence from actual MIRROR/L-shape frozen terms.
+"""Verified, opt-in frozen MIRROR/L-shape/Wedge/Box reentry facts.
 
-Reuses the existing pattern adapter and Robot's 250-USDT PAPER risk unit.
-No fabricated STOP, confirmation, strategy, or source pattern metadata.
-Wedge and Box require separate verified entry-ready/financial adapters.
-This module ONLY creates an admission proposal; no order submission.
+Only a caller in canonical Robot Admission may turn the pure evidence into
+an attempt reservation. No second order or financial journal is introduced.
 """
 from __future__ import annotations
 
@@ -43,14 +41,74 @@ def proven_pattern_entry(
     """Only existing, independently confirmed closed pattern evidence counts."""
     if type(now_ms) is not int or now_ms < 0:
         return None
+    if not isinstance(snapshot, Mapping):
+        return None
     pattern = str(snapshot.get("pattern", "")).strip()
+    if pattern == "IKIGAI_BOX":
+        # This is the immutable *canonical Box plan*, never a mutable scanner
+        # observation. The source reader verifies its hash and BOX_PLAN_ONLY
+        # state; the owning admission validates it again before handoff.
+        identity, plan = snapshot.get("identity"), snapshot.get("plan")
+        if not isinstance(identity, Mapping) or not isinstance(plan, Mapping):
+            return None
+        timeframe = str(identity.get("timeframe", ""))
+        if not timeframe.isdecimal() or int(timeframe) not in (1, 5):
+            return None
+        interval = int(timeframe) * 60_000
+        decision = snapshot.get("decision_time_ms")
+        direction = str(identity.get("direction", ""))
+        if (type(decision) is not int or decision <= 0
+                or decision % interval != 0
+                or direction not in {"LONG", "SHORT"}
+                or plan.get("direction") != direction
+                or snapshot.get("environment") != "PAPER"
+                or snapshot.get("execution_authorized") is not False
+                or snapshot.get("contract_version") != 1
+                or snapshot.get("attempt") != 1
+                or decision + interval > now_ms):
+            return None
+        try:
+            full = plan["full_position"]
+            risk_full = Decimal(str(full["net_stop_loss"]))
+            risk_partial = Decimal(str(plan["partial_fill_loss_upper_bound"]))
+            qty = Decimal(str(full["quantity"]))
+            avg = Decimal(str(full["average_entry"]))
+            minimum_rr = Decimal(str(plan["minimum_partial_fill_rr"]))
+            if (not all(v.is_finite() and v > 0 for v in (
+                risk_full, risk_partial, qty, avg, minimum_rr
+            )) or risk_partial < risk_full):
+                return None
+            # Box net_stop_loss already accounts for planned fees. Reserve
+            # additional adverse slippage on the frozen entire position,
+            # not a flat 250-USDT RO which can understate multi-grid risk.
+            risk = risk_partial + qty * avg * REENTRY_ADVERSE_SLIPPAGE_FRACTION
+            if not risk.is_finite():
+                return None
+            return ProvenPatternEntry(
+                pattern=pattern, direction=direction,
+                confirmed_at_ms=decision + interval,
+                risk_reservation_usdt=risk,
+            )
+        except (KeyError, ValueError, TypeError, ArithmeticError):
+            return None
     if pattern in {"Falling Wedge", "Rising Wedge"}:
         # The frozen 1m Scanner cursor identifies an actual source candle;
         # the Wedge Robot owns later breakout/retest/entry and STOP/TAKE.
         # Never use an envelope arrival timestamp as candle confirmation.
         cursor = snapshot.get("scanner_geometry_cursor")
-        geometry = snapshot.get("geometry")
+        source_tf = str(snapshot.get("scanner_source_timeframe") or "1")
+        if source_tf not in {"1", "5"}:
+            return None
+        geometry = snapshot.get("robot_geometry") if source_tf == "5" else (
+            snapshot.get("robot_geometry") or snapshot.get("geometry")
+        )
         if not isinstance(cursor, Mapping) or not isinstance(geometry, Mapping):
+            return None
+        if source_tf == "5" and (
+            geometry.get("robot_coordinate_timeframe") != "1"
+            or geometry.get("scanner_source_timeframe") != "5"
+            or snapshot.get("robot_handoff_ready") is not True
+        ):
             return None
         stamp = cursor.get("source_candle_time_ms")
         index = cursor.get("geometry_index")
@@ -141,7 +199,12 @@ def automatic_reentry_proposal(
     if not store.in_robot_admission_transaction():
         raise PersistenceError("automatic reentry requires Robot admission transaction")
     evidence = proven_pattern_entry(snapshot, now_ms=now_ms)
-    if evidence is None or not candidate_id or symbol.value != str(snapshot.get("symbol")):
+    if evidence is None or not candidate_id:
+        return None
+    declared_symbol = (snapshot.get("identity") or {}).get("symbol") if (
+        evidence.pattern == "IKIGAI_BOX" and isinstance(snapshot.get("identity"), Mapping)
+    ) else snapshot.get("symbol")
+    if symbol.value != str(declared_symbol):
         return None
     matches = store._connection.execute(
         """SELECT campaign_id, frozen_thesis_sha256 FROM robot_reentry_campaigns
