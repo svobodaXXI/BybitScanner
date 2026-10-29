@@ -53,7 +53,7 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
             closed_candle = _RobotCandle()
             book = _MutableBookProvider()
             book.set(SYMBOL, bid=Decimal("105.3"), ask=Decimal("105.4"))
-            cache = CachedClosedCandleProvider(max_age_s=0)
+            cache = CachedClosedCandleProvider(max_age_s=60)
             runtime, instrument = self.runtime(cache, book)
             # Production's catch-up cache is enabled by its original fetch
             # identity. Inject only the synthetic closed-candle feed for this
@@ -207,6 +207,10 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                     "time_ms": verified_now + 4,
                     "high": "109.5", "low": "109.1", "close": "109.3",
                 })
+                # The actual monitor consumes the owner-thread cache PEEK.
+                # A source feed alone is insufficient; warm it off-owner as
+                # the production candle ingress does before a monitor tick.
+                cache.warm([SYMBOL])
                 second_order = _wait_until(lambda: limit(new_id))
                 self.assertNotEqual(first_order.order_id, second_order.order_id)
                 self.assertEqual(second_order.filled_quantity, 0)
