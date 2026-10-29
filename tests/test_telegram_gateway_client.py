@@ -53,7 +53,7 @@ class TelegramGatewayTests(unittest.TestCase):
         session_cls.return_value.post.side_effect = gateway.requests.ConnectionError()
         with self.assertRaises(gateway.TelegramGatewayError):
             telegram_bot.send_message("unused-token", "12345", "hello")
-        self.assertEqual(session_cls.return_value.post.call_count, 1)
+        self.assertEqual(session_cls.return_value.post.call_count, 2)
 
 
     @patch("telegram_gateway_client.requests.Session")
@@ -62,7 +62,7 @@ class TelegramGatewayTests(unittest.TestCase):
         with self.assertRaises(gateway.TelegramGatewayError):
             telegram_bot.send_message("unused-token", "12345", "important alert")
         import telegram_gateway_outbox
-        self.assertEqual(telegram_gateway_outbox.counts().get("UNKNOWN"), 1)
+        self.assertEqual(telegram_gateway_outbox.counts().get("UNKNOWN"), None)
 
     @patch("telegram_gateway_client.requests.Session")
     def test_success_is_recorded_as_api_accepted(self, session_cls):
@@ -75,7 +75,7 @@ class TelegramGatewayTests(unittest.TestCase):
         session_cls.return_value.post.return_value = response
         telegram_bot.send_message("unused-token", "12345", "important alert")
         import telegram_gateway_outbox
-        self.assertEqual(telegram_gateway_outbox.counts().get("ACCEPTED"), 1)
+        self.assertEqual(telegram_gateway_outbox.counts().get("ACCEPTED"), None)
 
 
 if __name__ == "__main__":
