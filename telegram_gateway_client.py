@@ -48,7 +48,7 @@ def send_text(chat_id, text, *, reply_markup=None):
         result = response.json()
     except (requests.RequestException, ValueError) as exc:
         raise TelegramGatewayError("Gateway transport failed; delivery unknown") from exc
-    if response.status_code != 200 or result.get("ok") is not True:
+    if not isinstance(result, dict) or response.status_code != 200 or result.get("ok") is not True:
         raise TelegramGatewayError("Gateway rejected message; delivery unknown")
     if result.get("event_id") != event_id or result.get("stage") != "accepted_by_telegram_api":
         raise TelegramGatewayError("Gateway acknowledgement invalid")
