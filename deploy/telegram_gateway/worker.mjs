@@ -66,9 +66,21 @@ export default {
       if (["getChatMenuButton","setChatMenuButton"].includes(body.method) &&
           String(params.chat_id) !== String(env.TELEGRAM_CHAT_ID))
         return reply(403,{ok:false,error:"owner_chat_required"});
-      if (body.method === "setChatMenuButton" &&
-          params.menu_button !== JSON.stringify({type:"commands"}))
-        return reply(400,{ok:false,error:"unsupported_menu"});
+      if (body.method === "setChatMenuButton") {
+        let menu;
+        try { menu = JSON.parse(params.menu_button); } catch (_) {
+          return reply(400,{ok:false,error:"invalid_menu"});
+        }
+        const commands = menu && menu.type === "commands" && Object.keys(menu).length === 1;
+        const webApp = menu && menu.type === "web_app" &&
+          Object.keys(menu).sort().join(",") === "text,type,web_app" &&
+          typeof menu.text === "string" && menu.text.length <= 64 &&
+          menu.web_app && Object.keys(menu.web_app).join(",") === "url" &&
+          typeof menu.web_app.url === "string" &&
+          menu.web_app.url.startsWith("https://") &&
+          menu.web_app.url.length <= 2048;
+        if (!commands && !webApp) return reply(400,{ok:false,error:"unsupported_menu"});
+      }
       if (body.method === "answerCallbackQuery" &&
           (typeof params.callback_query_id !== "string" ||
            params.callback_query_id.length < 1 || params.callback_query_id.length > 256))
