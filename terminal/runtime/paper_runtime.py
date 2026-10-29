@@ -3676,7 +3676,7 @@ class PaperRuntime:
                     raise PaperCloseAllRejected(
                         "robot_reconciliation_required"
                     ) from exc
-                if not recovery.success:
+                if getattr(recovery, "success", None) is not True:
                     raise PaperCloseAllRejected("robot_reconciliation_required")
                 runtime = self.store.get_robot_runtime_state(account_id)
                 if (runtime is None or runtime.mode != "ROBOT_RUNNING"
