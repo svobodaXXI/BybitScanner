@@ -581,12 +581,18 @@ def _auto_reentry_proposal_for_candidate(
     """
     if os.environ.get("BYBITSCANNER_STOP_REENTRY_AUTO", "").strip() != "1":
         return None
-    if source != SOURCE_SCANNER:
-        return None  # Box source has no verified generic entry-risk adapter yet
-    return automatic_reentry_proposal(
+    if source not in {SOURCE_SCANNER, SOURCE_BOX_PLAN} or not candidate.valid:
+        raise PersistenceError("unverified source cannot bypass reentry campaign")
+    proposal = automatic_reentry_proposal(
         store, account, candidate_id=candidate.ref, symbol=candidate.symbol,
         snapshot=candidate.snapshot, now_ms=now_ms,
     )
+    if proposal is None:
+        # Never silently continue normal PAPER_AUTO admission while the
+        # universal campaign risk fence is explicitly enabled. Unsupported
+        # or ambiguous candidates wait, not become untracked first trades.
+        raise PersistenceError("candidate has no verified reentry strategy proof")
+    return proposal
 
 
 def admit_paper_auto_candidate(
