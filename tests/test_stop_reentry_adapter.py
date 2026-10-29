@@ -127,14 +127,19 @@ def test_existing_mirror_stopped_campaign_can_accept_fresh_lshape(prepared):
     store._connection.execute(
         "UPDATE robot_candidates SET approved_at_ms=100000, updated_at_ms=100000 WHERE candidate_id='second'"
     )
-    new_signal = lshape(breakout_ms=59_000)
+    parent = store.get_robot_candidate("first")
+    new_signal = lshape(breakout_ms=360_000)
+    new_signal["reentry_parent"] = {
+        "candidate_id": parent.candidate_id,
+        "snapshot_sha256": parent.snapshot_sha256,
+    }
     with store.robot_admission_transaction():
         plan = automatic_reentry_proposal(
             store, TradingAccountId("paper"), candidate_id="second",
-            symbol=Symbol("LABUSDT"), snapshot=new_signal, now_ms=120_000,
+            symbol=Symbol("LABUSDT"), snapshot=new_signal, now_ms=420_000,
         )
         assert plan.previous_stop_exec_id == "stop-exec-1"
-        assert plan.confirmed_at_ms == 119_000
+        assert plan.confirmed_at_ms == 420_000
 
 
 def test_paper_auto_mirror_opt_in_creates_real_candidate_and_diary_link_atomically(
@@ -204,6 +209,17 @@ def test_actual_paper_auto_stop_then_fresh_lshape_reserves_second_attempt(
     # The simple STOP fixture prepared a waiting candidate for store-level tests;
     # this end-to-end test admits it through the actual Scanner handoff instead.
     store._connection.execute("DELETE FROM robot_candidates WHERE candidate_id='second'")
+    parent = store.get_robot_candidate("first")
+    # The integration fixture uses real 1m-scale chronology, unlike the
+    # deliberately tiny millisecond counters in low-level storage tests.
+    store._connection.execute(
+        """UPDATE robot_trades SET signal_time_ms=120000,
+           entry_time_ms=180000, exit_time_ms=300000, created_at_ms=180000,
+           updated_at_ms=300100 WHERE trade_id='trade-1'"""
+    )
+    store._connection.execute(
+        "UPDATE executions SET exchange_timestamp_ms=300000 WHERE exec_id='stop-exec-1'"
+    )
     # Portfolio Admission requires exact reconstructed position lots. The
     # STOP-level fixture has only an exit fill; add its real earlier entry
     # counterpart so the canonical collector proves net FLAT (10 - 10 = 0).
@@ -212,7 +228,7 @@ def test_actual_paper_auto_stop_then_fresh_lshape_reserves_second_attempt(
            trading_account_id,category,exec_id,order_id,symbol,side,
            price,quantity,fee,exchange_timestamp_ms)
            VALUES ('paper','linear','entry-exec-1','entry-order-1',
-                   'LABUSDT','Buy','1','10','0.1',200)"""
+                   'LABUSDT','Buy','1','10','0.1',180000)"""
     )
     store.initialize_paper_account(account, Decimal("5000"), updated_at_ms=10)
     ap = store.initialize_robot_autopilot_state(account, updated_at_ms=10)
@@ -223,14 +239,19 @@ def test_actual_paper_auto_stop_then_fresh_lshape_reserves_second_attempt(
     monkeypatch.setenv("BYBITSCANNER_STOP_REENTRY_AUTO", "1")
     monkeypatch.setenv("BYBITSCANNER_MIRROR_STANDALONE_ROBOT", "1")
     directory = tmp_path / "candidates"
+    fresh = lshape(breakout_ms=360_000)
+    fresh["reentry_parent"] = {
+        "candidate_id": parent.candidate_id,
+        "snapshot_sha256": parent.snapshot_sha256,
+    }
     create_signal_snapshot(
-        lshape(breakout_ms=59_000), timeframe="1", store_dir=directory,
+        fresh, timeframe="1", store_dir=directory,
         candidate_id="second", created_at="2026-10-29T12:00:00+00:00",
     )
     admission = admit_arrived_auto_candidate(
         store, account, source=SOURCE_SCANNER, candidate_ref="second",
         protection_healthy=lambda: True, candidate_fresh=lambda *_: True,
-        candidate_store_dir=directory, clock_ms=lambda: 120_000,
+        candidate_store_dir=directory, clock_ms=lambda: 480_000,
         daily_loss_gate_enabled=False,
     )
     assert admission is not None
