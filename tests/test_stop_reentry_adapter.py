@@ -148,3 +148,50 @@ def test_paper_auto_mirror_opt_in_creates_real_candidate_and_diary_link_atomical
         assert store._connection.execute(
             "SELECT COUNT(*) FROM robot_trades"
         ).fetchone()[0] == 0  # Admission does NOT place or fill an order
+
+
+def test_actual_paper_auto_stop_then_fresh_lshape_reserves_second_attempt(
+    prepared, tmp_path, monkeypatch,
+):
+    """The old trade has a real canonical STOP; no order is issued by admission."""
+    from robot_candidate_store import create_signal_snapshot
+    from terminal.application.robot_autopilot_shadow import (
+        SOURCE_SCANNER, admit_arrived_auto_candidate,
+    )
+    account = TradingAccountId("paper")
+    store, path = prepared
+    # The simple STOP fixture prepared a waiting candidate for store-level tests;
+    # this end-to-end test admits it through the actual Scanner handoff instead.
+    store._connection.execute("DELETE FROM robot_candidates WHERE candidate_id='second'")
+    store.initialize_paper_account(account, Decimal("5000"), updated_at_ms=10)
+    ap = store.initialize_robot_autopilot_state(account, updated_at_ms=10)
+    store.update_robot_autopilot_state(
+        account, mode="PAPER_AUTO", expected_version=ap.version,
+        updated_at_ms=11,
+    )
+    monkeypatch.setenv("BYBITSCANNER_STOP_REENTRY_AUTO", "1")
+    monkeypatch.setenv("BYBITSCANNER_MIRROR_STANDALONE_ROBOT", "1")
+    directory = tmp_path / "candidates"
+    create_signal_snapshot(
+        lshape(breakout_ms=59_000), timeframe="1", store_dir=directory,
+        candidate_id="second", created_at="2026-10-29T12:00:00+00:00",
+    )
+    admission = admit_arrived_auto_candidate(
+        store, account, source=SOURCE_SCANNER, candidate_ref="second",
+        protection_healthy=lambda: True, candidate_fresh=lambda *_: True,
+        candidate_store_dir=directory, clock_ms=lambda: 120_000,
+        daily_loss_gate_enabled=False,
+    )
+    assert admission is not None
+    assert admission.result.outcome == "ALLOW", admission.result
+    assert admission.candidate_created
+    rows = store._connection.execute(
+        "SELECT attempt_index, candidate_id, previous_stop_exec_id "
+        "FROM robot_reentry_attempts ORDER BY attempt_index"
+    ).fetchall()
+    assert [(row[0], row[1], row[2]) for row in rows] == [
+        (1, "first", None), (2, "second", "stop-exec-1")
+    ]
+    assert store._connection.execute(
+        "SELECT COUNT(*) FROM robot_trades"
+    ).fetchone()[0] == 1  # No new position added before independent LIMIT fill
