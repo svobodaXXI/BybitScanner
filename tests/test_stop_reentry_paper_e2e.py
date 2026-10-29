@@ -11,6 +11,10 @@ from decimal import Decimal
 import os
 import time
 from unittest import mock
+from types import SimpleNamespace
+
+import pattern_freshness
+import terminal.application.robot_autopilot_shadow as autopilot_shadow
 
 import robot_candidate_store
 import tests.test_telegram_delivery  # existing offline Scanner configuration stubs
@@ -49,7 +53,12 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
             closed_candle = _RobotCandle()
             book = _MutableBookProvider()
             book.set(SYMBOL, bid=Decimal("105.3"), ask=Decimal("105.4"))
-            runtime, instrument = self.runtime(CachedClosedCandleProvider(fetch=closed_candle, max_age_s=0), book)
+            cache = CachedClosedCandleProvider(max_age_s=0)
+            runtime, instrument = self.runtime(cache, book)
+            # Production's catch-up cache is enabled by its original fetch
+            # identity. Inject only the synthetic closed-candle feed for this
+            # deterministic test; never disable freshness verification.
+            cache._fetch = closed_candle
             try:
                 self.assertEqual(start_robot(database_path=self.db).recovery_status, "READY")
                 store = SQLiteStore.open(self.db)
@@ -141,9 +150,20 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                     lambda owner: owner._dispatch_autopilot_shadow_scanner_candidate
                 )
                 book.set(SYMBOL, bid=Decimal("109.3"), ask=Decimal("109.4"))
+                open_bar = candles.iloc[-1:].copy()
+                open_bar["time"] += FIVE
+                open_bar[["open", "high", "low", "close"]] = 9999.0
+                scanner_frame = pd.concat([candles, open_bar], ignore_index=True)
                 def scanner_candles(symbol, timeframe, limit, minimum=2):
-                    return candles
-                with mock.patch("analyzer.candles.load_candles", scanner_candles), \
+                    return scanner_frame
+                # Virtual closed-candle time: the STOP occurred during the
+                # breakout bar; the new signal is eligible only AFTER its
+                # 5m closing boundary, without sleeping five wall minutes.
+                verified_now = breakout_open + FIVE + 1000
+                clock = SimpleNamespace(time=lambda: verified_now / 1000)
+                with mock.patch.object(pattern_freshness, "time", clock), \
+                        mock.patch.object(autopilot_shadow, "time", clock), \
+                        mock.patch("analyzer.candles.load_candles", scanner_candles), \
                         mock.patch.dict(os.environ, {
                             "REENTRY_CHILD_CANDIDATES": str(self.candidates),
                             "REENTRY_CHILD_CHARTS": str(self.root),
@@ -183,7 +203,7 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                 # then submit a new one-WV LIMIT. No extra open position existed
                 # at admission time and no direct order call is made here.
                 closed_candle.set({
-                    "time_ms": stopped.exit_time_ms + 4,
+                    "time_ms": verified_now + 4,
                     "high": "109.5", "low": "109.1", "close": "109.3",
                 })
                 second_order = _wait_until(lambda: limit(new_id))
