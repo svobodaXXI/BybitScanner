@@ -127,19 +127,34 @@ structurally compatible with the same frozen thesis and direction.
   entry is refused. Existing unlinked Wedge/Box STOP cannot be treated as a
   first attempt in this opt-in slice: it fails closed until canonical
   backfill/adapters are built.
-- **Still missing P0:** Box frozen-plan risk and closed-candle provenance;
-  5m-to-1m Wedge handoff assurance; unknown-cursor/stale Wedge candidates
-  remain outside this opt-in route. Generalized initial-campaign backfill
-  for already stopped pre-v26 Box/Wedge trades must be proven before
-  universal coverage. Exact instrument-specific loss/fees and durable
-  prior-campaign linkage still require PAPER acceptance.
-  The standalone double-bottom/top detector and candle recognizer (#647)
-  must independently produce verified candidates; no pattern guessing.
-  Wedge without the verified 1m cursor, or any Box plan, still uses its
-  older normal PAPER_AUTO path, so enabling the flag **is NOT safe or
-  sufficient for the owner's full universal 1+2 retry requirement**. Complete the universal
-  dispatch enforcement and full PAPER replay/restart acceptance before
-  enabling flag, merge or deploying to VPS.
+- **Added in this draft:** immutable Box plan `decision_time_ms` +
+  completed source candle and worst-case frozen grid `net_stop_loss` /
+  `partial_fill_loss_upper_bound` + conservative quantity-weighted
+  slippage are now used for the attempt's budget (NOT a flat 250-USDT
+  non-Box risk). The original `BOX_PLAN_ONLY` row is hash-verified,
+  Robot-created child is recorded as the actual admitted attempt, and
+  source plan/child are never mistaken for two separate entries.
+  Wedge 5m uses its already-frozen affine 1m `robot_geometry` and
+  `scanner_geometry_cursor`, rechecked by canonical Wedge state machine.
+  A malformed/historical unsupported snapshot does not invent a candle,
+  stop or strategy. Both source types share the same PAPER_AUTO →
+  canonical Robot Admission → Diary linkage.
+- **Universal fail-closed dispatch:** when
+  `BYBITSCANNER_STOP_REENTRY_AUTO=1`, an unsupported or unproven
+  Scanner/Box candidate cannot silently fall through to the normal
+  untracked Robot admission. The flag is still OFF by default.
+- **Critical NOT-YET-SOLVED P0 blocker:** a previous STOP campaign and a
+  candidate of the same symbol and direction do **not** by themselves
+  prove one structural trade thesis. The current optional resolver can
+  find a stopped campaign by symbol/direction, but its geometric
+  relationship to a newly formed different pattern still needs an
+  authoritative frozen-source compatibility proof. Do **not** enable the
+  feature or mark universal retries ready until this is enforced in code,
+  including a way to end the old thesis and create a genuinely independent
+  new idea without resetting a live campaign's risk budget. Other
+  blockers: independent double-bottom/top recognition (#647), pre-v26
+  legacy STOP attribution, actual PAPER fill→STOP/TAKE replay and crash
+  recovery acceptance. Keep LIVE prohibited and VPS stopped.
 - **Reservation is not an executed attempt.** Preserve both identities:
   queued/cancelled/no-fill candidates are Diary observations, but do not count
   as verified filled STOP losses. A retry needs an earlier executed-and-closed
@@ -155,8 +170,11 @@ structurally compatible with the same frozen thesis and direction.
   derived from existing statistics. Unknown funding/external costs stay
   unknown; known-cost net is not silently claimed to be complete net.
 
-- **Missing Box, higher-TF Wedge and double-extremum adapters:** map their
-  independently proven entry terms to the campaign without modifying geometry.
+- **Missing structural-thesis compatibility and double-extremum adapters:**
+  independently prove a new setup belongs to an unfinished campaign; do not
+  infer this from symbol/direction or move original geometry. Once that is
+  done, build the double-bottom/top entry candidates from independently
+  confirmed neckline-close evidence.
   Create #647 candle and double-bottom/top recognition only when verified;
   never infer a double-bottom from a STOP alone. For a new confirmed setup
   whose original structural thesis is no longer valid, create a separately
