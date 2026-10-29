@@ -1719,6 +1719,53 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.LONG)
 
+    def test_post_fill_rr_below_two_keeps_protection_and_closes_without_open_trade(self):
+        """A safely admitted LIMIT can fill at a price that collapses Net RR."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        order_id = self.store.get_robot_candidate(
+            "candidate-1"
+        ).robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81")
+        )
+        with patch.object(
+            RobotBreakoutMonitor, "_frozen_prices",
+            return_value=(Decimal("100"), Decimal("82")),
+        ):
+            self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take", "full_close"],
+        )
+        self.assertIn(
+            "POST_FILL_NET_RR_BELOW_2",
+            record.robot_state["execution"]["protection_failure"],
+        )
+        self.assertEqual(
+            self.store.get_position_projection(
+                PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+            ).side,
+            PositionSide.FLAT,
+        )
+
+    def test_aioz_short_fee_aware_actual_fill_rr_regression(self):
+        """Durable short fill and post-fill 1.5% fallback must not pass 2:1."""
+        rr = robot_protection.post_fill_net_rr(
+            "SHORT",
+            average_entry=Decimal("0.09599739878"),
+            quantity=Decimal("2618"),
+            entry_fee=Decimal("0.150792714"),
+            stop_price=Decimal("0.09743735976"),
+            take_price=Decimal("0.09299934035"),
+        )
+        self.assertGreater(rr, Decimal("1.85"))
+        self.assertLess(rr, Decimal("2"))
+
     def test_pre_plan_exception_after_fill_triggers_emergency_close(self):
         """Any ordinary exception in the post-fill region BEFORE
         build_protection_plan() is even reached (here: _frozen_prices()) must
