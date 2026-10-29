@@ -12,6 +12,8 @@ from terminal.application.robot_reentry_adapter import (
     proven_pattern_entry, automatic_reentry_proposal,
 )
 from terminal.domain.models import TradingAccountId, Symbol
+from terminal.persistence.sqlite_store import PersistenceError
+from terminal.persistence.sqlite_store import SQLiteStore
 from tests.test_stop_reentry_reservation import prepared
 
 
@@ -120,6 +122,65 @@ def test_original_mirror_registers_new_campaign_without_any_risk_reset(prepared)
         )
     assert original.previous_stop_exec_id is None
     assert original.original_risk_budget_usdt == original.reserved_risk_usdt * 3
+
+
+@pytest.mark.parametrize(
+    "exit_reason",
+    ["STOP", "MANUAL", "TAKEOVER", "EMERGENCY_CLOSE", "EMERGENCY_PROTECTION_FAILURE"],
+)
+def test_unlinked_terminal_trade_cannot_mint_fresh_retry_budget(tmp_path, exit_reason):
+    """Pre-v26/unknown lineage is WAIT unless the last close is a TAKE."""
+    with _unlinked_terminal_store(tmp_path, exit_reason) as store:
+        with pytest.raises(
+            PersistenceError, match="canonical TAKE or lineage proof"
+        ), store.robot_admission_transaction():
+            automatic_reentry_proposal(
+                store, TradingAccountId("paper"), candidate_id="new-lshape",
+                symbol=Symbol("LABUSDT"), snapshot=lshape(), now_ms=1_060_000,
+            )
+
+        assert store._connection.execute(
+            "SELECT COUNT(*) FROM robot_reentry_campaigns"
+        ).fetchone()[0] == 0
+
+
+def test_unlinked_take_allows_only_a_new_independent_campaign(tmp_path):
+    with _unlinked_terminal_store(tmp_path, "TAKE") as store:
+        with store.robot_admission_transaction():
+            proposal = automatic_reentry_proposal(
+                store, TradingAccountId("paper"), candidate_id="new-lshape",
+                symbol=Symbol("LABUSDT"), snapshot=lshape(), now_ms=1_060_000,
+            )
+
+        assert proposal.previous_stop_exec_id is None
+        assert proposal.original_risk_budget_usdt == proposal.reserved_risk_usdt * 3
+
+
+def _unlinked_terminal_store(tmp_path, exit_reason):
+    store = SQLiteStore.open(tmp_path / f"unlinked-{exit_reason}.sqlite3")
+    store.create_robot_candidate(
+        candidate_id="legacy", trading_account_id=TradingAccountId("paper"),
+        symbol=Symbol("LABUSDT"), status="APPROVED",
+        signal_snapshot=mirror(), approved_at_ms=100_000, updated_at_ms=100_000,
+    )
+    store._connection.execute(
+        "UPDATE robot_candidates SET status='CLOSED', updated_at_ms=300000 "
+        "WHERE candidate_id='legacy'"
+    )
+    store._connection.execute(
+        """INSERT INTO robot_trades (
+           trade_id,trading_account_id,candidate_id,symbol,direction,
+           pattern,source_timeframe,signal_time_ms,entry_time_ms,entry_path,
+           actual_wv,average_entry,stop_price,take_price,
+           exit_time_ms,exit_price,exit_reason,realized_pnl_usdt,
+           realized_pnl_pct,fees_costs_usdt,version,created_at_ms,
+           updated_at_ms,entry_quantity,entry_position_version)
+           VALUES ('legacy-trade','paper','legacy','LABUSDT','LONG',
+                   'MIRROR','1',100000,120000,'LIMIT','1','100','99','110',
+                   300000,'99',?,'-1','-1','0.2',2,120000,300000,'1',1)""",
+        (exit_reason,),
+    )
+    return store
 
 
 def test_existing_mirror_stopped_campaign_can_accept_fresh_lshape(prepared):
