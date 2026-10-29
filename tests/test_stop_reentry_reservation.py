@@ -177,6 +177,22 @@ def test_active_position_or_pending_limit_disallows_retry(prepared):
     assert count(path) == 1
 
 
+def test_pending_protection_command_blocks_new_entry(prepared):
+    store, path = prepared
+    with sqlite3.connect(path) as con:
+        con.execute(
+            """INSERT INTO protection_projections (
+              trading_account_id,category,symbol,position_idx,status,
+              take_profit,stop_loss,trailing_stop,pending_command_id,
+              version,evidence_at_ms,updated_at_ms)
+              VALUES ('paper','linear','LABUSDT',0,'pending',
+                      NULL,NULL,NULL,'pending-protection',1,400,400)"""
+        )
+    with pytest.raises(PersistenceError, match="pending STOP/TAKE"), store.robot_admission_transaction():
+        reserve(store)
+    assert count(path) == 1
+
+
 def test_missing_actual_fill_or_resolved_stop_never_reserves(prepared):
     store, path = prepared
     with sqlite3.connect(path) as con:
