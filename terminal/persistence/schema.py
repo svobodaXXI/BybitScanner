@@ -932,6 +932,7 @@ SCHEMA_V26_MIGRATION_STATEMENTS = (
         reserved_at_ms INTEGER NOT NULL,
         PRIMARY KEY (trading_account_id, campaign_id, candidate_id),
         UNIQUE (trading_account_id, candidate_id),
+        UNIQUE (trading_account_id, campaign_id, attempt_index),
         FOREIGN KEY (trading_account_id, campaign_id)
             REFERENCES robot_reentry_campaigns(trading_account_id, campaign_id),
         FOREIGN KEY (candidate_id) REFERENCES robot_candidates(candidate_id),
