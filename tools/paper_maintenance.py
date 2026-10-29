@@ -42,10 +42,15 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
     # service to discover a dirty tree or invalid/unavailable target later.
     if not command("git", "fetch", "origin", "stable/adfb50b-forward"):
         return "BLOCKED: cannot fetch approved stable"
-    if not command("git", "diff", "--quiet") or not command(
-        "git", "diff", "--cached", "--quiet"
-    ):
+    # Ignore explicitly ignored runtime DB/log files but refuse any tracked
+    # or untracked source change before touching an actively protected service.
+    working = execute("git", "status", "--porcelain", "--untracked-files=normal")
+    if working is None or working.returncode != 0 or working.stdout.strip():
         return "BLOCKED: working tree contains changes"
+    branch = execute("git", "branch", "--show-current")
+    if (branch is None or branch.returncode != 0
+            or branch.stdout.strip() != "stable/adfb50b-forward"):
+        return "BLOCKED: installed branch is not canonical stable"
     if not command("git", "merge-base", "--is-ancestor", target,
                    "origin/stable/adfb50b-forward"):
         return "BLOCKED: target is not on approved stable"
