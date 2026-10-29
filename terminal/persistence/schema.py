@@ -930,7 +930,7 @@ SCHEMA_V26_MIGRATION_STATEMENTS = (
         reserved_risk_usdt TEXT NOT NULL,
         previous_stop_exec_id TEXT,
         reserved_at_ms INTEGER NOT NULL,
-        PRIMARY KEY (trading_account_id, campaign_id, attempt_index),
+        PRIMARY KEY (trading_account_id, campaign_id, candidate_id),
         UNIQUE (trading_account_id, candidate_id),
         FOREIGN KEY (trading_account_id, campaign_id)
             REFERENCES robot_reentry_campaigns(trading_account_id, campaign_id),
