@@ -154,7 +154,7 @@ def send_photo_file_id(chat_id, file_id, caption="", reply_markup=None):
         result = response.json()
     except (requests.RequestException, ValueError) as exc:
         raise TelegramGatewayError("Gateway photo transport unavailable") from exc
-    if response.status_code != 200 or not isinstance(result, dict):
+    if response.status_code != 200 or not isinstance(result, dict) or result.get("ok") is not True:
         raise TelegramGatewayError("Gateway photo rejected")
     return result
 
@@ -201,6 +201,6 @@ def send_photo_upload(chat_id, photo_path, caption="", reply_markup=None):
         result = response.json()
     except (OSError, requests.RequestException, ValueError) as exc:
         raise TelegramGatewayError("Gateway photo upload unavailable") from exc
-    if response.status_code != 200 or not isinstance(result, dict):
+    if response.status_code != 200 or not isinstance(result, dict) or result.get("ok") is not True:
         raise TelegramGatewayError("Gateway photo upload rejected")
     return result
