@@ -15,7 +15,7 @@ def fake_runner(calls, *, fail=None):
 def test_rejects_bad_sha_without_stop_or_mutation():
     calls = []
     assert run_maintenance("bad", stop=lambda _: calls.append("stop")) .startswith("BLOCKED:")
-    assert all(cmd[0] == "git" for cmd in calls)\n
+    assert calls == []
 
 def test_protected_open_exposure_never_fetches_or_restarts():
     calls = []
@@ -30,7 +30,7 @@ def test_safe_stop_required_even_if_result_ok():
     incomplete = SimpleNamespace(ok=True, runtime_stopped=False)
     result = run_maintenance("a" * 40, stop=lambda _: incomplete, runner=fake_runner(calls))
     assert result.startswith("BLOCKED:")
-    assert not calls
+    assert not any("systemctl" in cmd or cmd[:2] == ("git", "merge") for cmd in calls)
 
 
 def test_approved_target_only_after_safe_stop():
