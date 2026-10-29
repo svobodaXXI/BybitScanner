@@ -35,6 +35,12 @@ def _child_scan_lshape(*, box_plan_preparer=None, control_checkpoint=None,
 
     robot_candidate_store.DEFAULT_STORE_DIR = Path(os.environ["REENTRY_CHILD_CANDIDATES"])
     closed = _long_shape()
+    if "REENTRY_CHILD_BREAKOUT" in os.environ:
+        breakout_open = int(os.environ["REENTRY_CHILD_BREAKOUT"])
+        closed["time"] = [
+            breakout_open - STEP_MS * (len(closed) - 1 - i)
+            for i in range(len(closed))
+        ]
     open_bar = closed.iloc[-1:].copy()
     open_bar["time"] += STEP_MS
     open_bar[["open", "high", "low", "close"]] = 9999.0
