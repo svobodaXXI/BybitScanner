@@ -85,3 +85,33 @@ def get_updates(**params):
     if response.status_code != 200 or not isinstance(result, dict):
         raise TelegramGatewayError("Gateway poll rejected")
     return result
+
+def bot_method(method, **params):
+    """Pass only monitoring menu/callback methods via authorized Gateway."""
+    permitted = {"answerCallbackQuery", "setMyCommands",
+                 "getChatMenuButton", "setChatMenuButton"}
+    if method not in permitted:
+        raise TelegramGatewayError("unsupported Gateway method")
+    url = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_URL", "").strip()
+    key = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_SECRET", "").strip()
+    parsed = urlsplit(url)
+    if (parsed.scheme != "https" or not parsed.netloc or parsed.username or
+            parsed.password or parsed.query or parsed.fragment or
+            parsed.path.rstrip("/") not in ("", "/v1/send") or len(key) < 32):
+        raise TelegramGatewayError("invalid Gateway method configuration")
+    endpoint = url.rstrip("/")
+    if endpoint.endswith("/v1/send"):
+        endpoint = endpoint[:-len("/v1/send")]
+    try:
+        session = requests.Session()
+        session.trust_env = False
+        response = session.post(endpoint + "/v1/bot-method",
+                                json={"method": method, "params": params},
+                                headers={"Authorization": "Bearer " + key},
+                                timeout=15, allow_redirects=False)
+        result = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        raise TelegramGatewayError("Gateway method unavailable") from exc
+    if response.status_code != 200 or not isinstance(result, dict):
+        raise TelegramGatewayError("Gateway method rejected")
+    return result
