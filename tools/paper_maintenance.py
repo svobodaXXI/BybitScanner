@@ -110,7 +110,7 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
                 raise ValueError("Robot is not READY")
             if _environment(env_file).get("BYBITSCANNER_STOP_REENTRY_AUTO") != "1":
                 raise ValueError("STOP reentry is not enabled")
-    except (OSError, ValueError, Exception):
+    except Exception:
         return "BLOCKED: PAPER core started but Robot READY/reentry not proven"
     return "READY: exact HEAD, PAPER-only, Robot, Scanner, PAPER_AUTO, reentry and protection confirmed"
 
