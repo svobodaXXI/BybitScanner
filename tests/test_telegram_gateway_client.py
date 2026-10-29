@@ -56,5 +56,27 @@ class TelegramGatewayTests(unittest.TestCase):
         self.assertEqual(session_cls.return_value.post.call_count, 1)
 
 
+    @patch("telegram_gateway_client.requests.Session")
+    def test_failed_gateway_retains_uncertain_alert(self, session_cls):
+        session_cls.return_value.post.side_effect = gateway.requests.ConnectionError()
+        with self.assertRaises(gateway.TelegramGatewayError):
+            telegram_bot.send_message("unused-token", "12345", "important alert")
+        import telegram_gateway_outbox
+        self.assertEqual(telegram_gateway_outbox.counts().get("UNKNOWN"), 1)
+
+    @patch("telegram_gateway_client.requests.Session")
+    def test_success_is_recorded_as_api_accepted(self, session_cls):
+        response = MagicMock(status_code=200)
+        def result():
+            event_id = session_cls.return_value.post.call_args.kwargs["json"]["event_id"]
+            return {"ok": True, "event_id": event_id,
+                    "stage": "accepted_by_telegram_api", "telegram_message_id": 123}
+        response.json.side_effect = result
+        session_cls.return_value.post.return_value = response
+        telegram_bot.send_message("unused-token", "12345", "important alert")
+        import telegram_gateway_outbox
+        self.assertEqual(telegram_gateway_outbox.counts().get("ACCEPTED"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
