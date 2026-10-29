@@ -219,9 +219,21 @@ structurally compatible with the same frozen thesis and direction.
   Scanner admission, Robot monitor, matching and restart. It does NOT
   loosen SQLite CAS, protection, admission or RR. Keep 5m kline opening
   times aligned to 300000ms and never treat a forming candle as confirmed.
-- **Remaining P0 before universal activation:** independent double-bottom/
-  double-top confirmed neckline detectors and entry contracts (#647),
-  continued movement beyond initial corridor with proved strategy context,
+- **2026-10-29 #592 double-extremum increment:** new closed-candle
+  `geometry/double_extremum.py` independently detects Double Top/Bottom
+  only after the latest fully closed 1m/5m candle BODY crosses the neck.
+  It rejects wick-only, stale or mismatched pivot geometry, and generates
+  immutable `neckline_entry` STOP beyond the confirming candle extreme
+  with measured target only when planned fee-aware Net RR >= 2:1.
+  Existing `robot_l_shape` immediate confirmed LIMIT, Robot Admission,
+  protected STOP/TAKE, PAPER_AUTO campaign lineage and risk are reused;
+  `main.py` emits deduplicated Scanner candidates only when STOP-reentry
+  feature is opted in. Focused detector/lineage policy and standard PAPER
+  suites passed at commit `452fcb9`. This demonstrates executable
+  integration, NOT yet an independent live-market acceptance or crash
+  during outstanding open/pending double-neckline order.
+- **Remaining P0 before universal activation:** the double-extremum LIVE Scanner→retry LIMIT→STOP/TAKE test
+  for each direction, continued movement beyond initial corridor with proved strategy context,
   new independent thesis after structural invalidation without resetting
   a live campaign's risk budget, pre-v26 STOP attribution, and partial-fill
   / crash-while-OPEN-or-pending recovery. The passing E2E is a synthetic
