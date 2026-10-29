@@ -54,3 +54,34 @@ def send_text(chat_id, text, *, reply_markup=None):
         raise TelegramGatewayError("Gateway acknowledgement invalid")
     return {"ok": True, "result": {"message_id": result.get("telegram_message_id")},
             "delivery_stage": "accepted_by_telegram_api"}
+
+def get_updates(**params):
+    """Relay polling through Gateway; VPS remains sole update consumer."""
+    url = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_URL", "").strip()
+    key = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_SECRET", "").strip()
+    parsed = urlsplit(url)
+    if (parsed.scheme != "https" or not parsed.netloc or parsed.username or
+            parsed.password or parsed.query or parsed.fragment or
+            parsed.path.rstrip("/") not in ("", "/v1/send") or len(key) < 32):
+        raise TelegramGatewayError("invalid Gateway polling configuration")
+    allowed = {"offset", "timeout", "allowed_updates"}
+    if set(params) - allowed:
+        raise TelegramGatewayError("unsupported Gateway polling parameters")
+    if "allowed_updates" in params and isinstance(params["allowed_updates"], str):
+        import json
+        params["allowed_updates"] = json.loads(params["allowed_updates"])
+    endpoint = url.rstrip("/")
+    if endpoint.endswith("/v1/send"):
+        endpoint = endpoint[:-len("/v1/send")]
+    try:
+        session = requests.Session()
+        session.trust_env = False
+        response = session.post(endpoint + "/v1/get-updates", json=params,
+                                headers={"Authorization": "Bearer " + key},
+                                timeout=42, allow_redirects=False)
+        result = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        raise TelegramGatewayError("Gateway poll unavailable") from exc
+    if response.status_code != 200 or not isinstance(result, dict):
+        raise TelegramGatewayError("Gateway poll rejected")
+    return result
