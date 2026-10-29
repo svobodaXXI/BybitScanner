@@ -212,13 +212,27 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                 self.assertEqual([a.exit_reason for a in journal[0].attempts],
                                  ["STOP", "TAKE"])
                 self.assertEqual(journal[0].filled_attempt_count, 2)
-                self.assertIsNotNone(journal[0].known_net_pnl_usdt)
+                self.assertIsNotNone(stopped.fees_costs_usdt)
+                self.assertIsNotNone(taken.fees_costs_usdt)
+                net_first = stopped.realized_pnl_usdt - stopped.fees_costs_usdt
+                net_second = taken.realized_pnl_usdt - taken.fees_costs_usdt
+                self.assertEqual(
+                    [a.known_net_pnl_usdt for a in journal[0].attempts],
+                    [net_first, net_second],
+                )
+                self.assertEqual(journal[0].known_net_pnl_usdt, net_first + net_second)
+                self.assertLess(net_first, 0)
+                self.assertGreater(net_second, 0)
                 executions = runtime.call(
                     lambda owner: owner.store.load_executions_for_symbol(
                         ACCOUNT, Symbol(SYMBOL),
                     ),
                 )
                 self.assertGreaterEqual(len(executions), 4)
+                self.assertEqual(
+                    sum((fill.fee for fill in executions), Decimal("0")),
+                    stopped.fees_costs_usdt + taken.fees_costs_usdt,
+                )
 
                 # Reboot from the SAME SQLite and confirm no repeat submission.
                 runtime.close()
