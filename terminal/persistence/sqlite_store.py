@@ -60,6 +60,7 @@ from .schema import (
     SCHEMA_V23_MIGRATION_STATEMENTS,
     SCHEMA_V24_MIGRATION_STATEMENTS,
     SCHEMA_V25_MIGRATION_STATEMENTS,
+    SCHEMA_V26_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -1321,6 +1322,10 @@ class SQLiteStore:
         if version == SCHEMA_VERSION:
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
+        if version == 25:
+            SQLiteStore._validate_required_tables(connection, version=25)
+            SQLiteStore._migrate_v25_to_v26(connection)
+            return
         if version == 24:
             SQLiteStore._validate_required_tables(connection, version=24)
             SQLiteStore._migrate_v24_to_v25(connection)
@@ -1790,6 +1795,20 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+        SQLiteStore._migrate_v25_to_v26(connection)
+
+    @staticmethod
+    def _migrate_v25_to_v26(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V26_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 26")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        SQLiteStore._validate_required_tables(connection, version=26)
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -1842,6 +1861,8 @@ class SQLiteStore:
             required.update({"box_attempt_ownership", "box_order_ownership"})
         if version >= 24:
             required.update({"robot_autopilot_state", "robot_auto_decisions"})
+        if version >= 26:
+            required.update({"robot_reentry_campaigns", "robot_reentry_attempts"})
         actual = {
             row[0]
             for row in connection.execute(
