@@ -50,6 +50,7 @@ from terminal.application.robot_autopilot import (
     OUTCOME_WAIT,
     POLICY_VERSION,
     REASON_ALREADY_ADMITTED,
+    REASON_REENTRY_THESIS_UNPROVEN,
     RobotAutoAdmissionFacts,
     RobotAutoAdmissionResult,
     daily_loss_gate_facts,
@@ -676,25 +677,34 @@ def admit_paper_auto_candidate(
             robot_candidate = None
             candidate_created = False
             if result.outcome == OUTCOME_ALLOW:
-                admission_ref = (
-                    candidate.ref if source == SOURCE_SCANNER
-                    else box_plan_admission_handle(candidate.ref)
-                )
-                robot_candidate, candidate_created = admit_robot_candidate(
-                    admission_ref,
-                    store_dir=candidate_store_dir,
-                    clock_ms=lambda: now,
-                    transaction_store=store,
-                    expected_snapshot_sha256=candidate.snapshot_sha256,
-                    mark_legacy_approved=False,
-                    linked_mirror_parent_candidate_id=(
-                        facts.linked_mirror_parent_candidate_id
-                    ),
-                    reentry=_auto_reentry_proposal_for_candidate(
+                try:
+                    reentry_plan = _auto_reentry_proposal_for_candidate(
                         store, account, source=source, candidate=candidate,
                         now_ms=now,
-                    ),
-                )
+                    )
+                except PersistenceError:
+                    # No candidate was admitted or reserved; keep the audit
+                    # observation and let the next fresh signal retry.
+                    result = RobotAutoAdmissionResult(
+                        OUTCOME_WAIT, REASON_REENTRY_THESIS_UNPROVEN, POLICY_VERSION,
+                    )
+                else:
+                    admission_ref = (
+                        candidate.ref if source == SOURCE_SCANNER
+                        else box_plan_admission_handle(candidate.ref)
+                    )
+                    robot_candidate, candidate_created = admit_robot_candidate(
+                        admission_ref,
+                        store_dir=candidate_store_dir,
+                        clock_ms=lambda: now,
+                        transaction_store=store,
+                        expected_snapshot_sha256=candidate.snapshot_sha256,
+                        mark_legacy_approved=False,
+                        linked_mirror_parent_candidate_id=(
+                            facts.linked_mirror_parent_candidate_id
+                        ),
+                        reentry=reentry_plan,
+                    )
             decision, decision_created = record_auto_decision(
                 store,
                 trading_account_id=account,
@@ -788,25 +798,34 @@ def admit_arrived_auto_candidate(
         robot_candidate = None
         candidate_created = False
         if result.outcome == OUTCOME_ALLOW:
-            admission_ref = (
-                candidate.ref if source == SOURCE_SCANNER
-                else box_plan_admission_handle(candidate.ref)
-            )
-            robot_candidate, candidate_created = admit_robot_candidate(
-                admission_ref,
-                store_dir=candidate_store_dir,
-                clock_ms=lambda: now,
-                transaction_store=store,
-                expected_snapshot_sha256=candidate.snapshot_sha256,
-                mark_legacy_approved=False,
-                linked_mirror_parent_candidate_id=(
-                    facts.linked_mirror_parent_candidate_id
-                ),
-                reentry=_auto_reentry_proposal_for_candidate(
+            try:
+                reentry_plan = _auto_reentry_proposal_for_candidate(
                     store, account, source=source, candidate=candidate,
                     now_ms=now,
-                ),
-            )
+                )
+            except PersistenceError:
+                # No candidate was admitted or reserved; keep the audit
+                # observation and let the next fresh signal retry.
+                result = RobotAutoAdmissionResult(
+                    OUTCOME_WAIT, REASON_REENTRY_THESIS_UNPROVEN, POLICY_VERSION,
+                )
+            else:
+                admission_ref = (
+                    candidate.ref if source == SOURCE_SCANNER
+                    else box_plan_admission_handle(candidate.ref)
+                )
+                robot_candidate, candidate_created = admit_robot_candidate(
+                    admission_ref,
+                    store_dir=candidate_store_dir,
+                    clock_ms=lambda: now,
+                    transaction_store=store,
+                    expected_snapshot_sha256=candidate.snapshot_sha256,
+                    mark_legacy_approved=False,
+                    linked_mirror_parent_candidate_id=(
+                        facts.linked_mirror_parent_candidate_id
+                    ),
+                    reentry=reentry_plan,
+                )
         decision, decision_created = record_auto_decision(
             store,
             trading_account_id=account,
