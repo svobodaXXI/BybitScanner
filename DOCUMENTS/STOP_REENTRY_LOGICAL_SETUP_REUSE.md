@@ -107,15 +107,32 @@ structurally compatible with the same frozen thesis and direction.
   and cumulative realized loss+fees+new reserved worst-case risk are checked.
   Unique schema constraints forbid >3 slots or restarting the same frozen
   thesis to reset its risk budget.
-- **Not yet enabled/complete:** strategy adapters must independently prove
-  the same frozen structural thesis and post-STOP *completed candle* and
-  construct the typed request in the existing Scanner/Box/MIRROR/Wedge
-  producer path. Current `PAPER_AUTO` does **not** supply the request,
-  so no new automatic retry is enabled by this PR. Closed-STOP source
-  fields, setup identity, original risk budget and per-pattern confirmation
-  must be mapped from verified snapshots; no inference by symbol alone.
-  Isolated PAPER replay, crash and recovery tests, and owner-approved
-  deployment are still required. Do not deploy unfinished logic to VPS.
+- **New opt-in slice:** `terminal.application.robot_reentry_adapter`
+  now derives a trusted admission request directly from immutable MIRROR and
+  L-shape frozen terms: MIRROR's *next* closed confirmation candle
+  (`robot_l_shape.initialize_state` verifies the kind, identity and TF),
+  or L-shape's completed breakout candle. The adapter reserves the maximum
+  non-Box permitted STOP distance (1.5%) on the existing 250-USDT Robot RO
+  plus two-sided fees and conservative adverse slippage. First admission
+  freezes the three-attempt risk budget; subsequent matching direction STOP
+  campaign reuses the budget and obtains `previous_stop_exec_id` from the
+  same canonical SQLite. No selection by symbol alone without direction,
+  completed pattern and uniquely outstanding durable campaign.
+  **Existing `PAPER_AUTO` calls this adapter when and only when environment
+  `BYBITSCANNER_STOP_REENTRY_AUTO=1`.** OFF by default; no production rollout
+  approved. A later TAKE permits a new independent frozen idea; a fourth STOP
+  entry is refused. Existing unlinked Wedge/Box STOP cannot be treated as a
+  first attempt in this opt-in slice: it fails closed until canonical
+  backfill/adapters are built.
+- **Still missing P0:** Wedge and Box entry-ready closed-candle provenance,
+  exact instrument-specific risk plans and durable prior-campaign linkage.
+  The standalone double-bottom/top detector and candle recognizer (#647)
+  must independently produce verified candidates; no pattern guessing.
+  Wedge or Box arriving after a STOP currently uses its older normal
+  PAPER_AUTO path, so enabling the flag **is NOT safe or sufficient for
+  the owner's full universal 1+2 retry requirement**. Complete the universal
+  dispatch enforcement and full PAPER replay/restart acceptance before
+  enabling flag, merge or deploying to VPS.
 - **Reservation is not an executed attempt.** Preserve both identities:
   queued/cancelled/no-fill candidates are Diary observations, but do not count
   as verified filled STOP losses. A retry needs an earlier executed-and-closed
@@ -131,8 +148,8 @@ structurally compatible with the same frozen thesis and direction.
   derived from existing statistics. Unknown funding/external costs stay
   unknown; known-cost net is not silently claimed to be complete net.
 
-- **Missing adapter wiring:** map immutable existing Wedge/Box/MIRROR/L-shape
-  snapshots to the campaign without modifying their detector geometry.
+- **Missing Wedge/Box and double-extremum adapters:** map their immutable
+  proven entry terms to the campaign without modifying detector geometry.
   Create #647 candle and double-bottom/top recognition only when verified;
   never infer a double-bottom from a STOP alone. For a new confirmed setup
   whose original structural thesis is no longer valid, create a separately
@@ -154,7 +171,8 @@ structurally compatible with the same frozen thesis and direction.
 
 This PR now includes **pure policy, canonical PAPER identity reservations
 and an optional atomic Robot Admission boundary**, plus targeted tests.
-Existing strategy producers do not yet pass the verified reentry contract,
-so it is **not production automatic reentry**. The final success condition remains a
+The opt-in MIRROR/L-shape PAPER_AUTO route now passes a verified request
+but Wedge/Box and universal 1+2 fencing are incomplete. It is **not
+production-ready automatic reentry**. The final success condition remains a
 durable, end-to-end automatic PAPER reentry from an actual fresh confirmed
 signal, with STOP/TAKE, correct attribution and exactly-once ledger updates.
