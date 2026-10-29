@@ -8,6 +8,7 @@ Only synthetic books/candles, no external API, LIVE, VPS or second engine.
 from __future__ import annotations
 
 from decimal import Decimal
+from dataclasses import replace
 import os
 import time
 from unittest import mock
@@ -261,13 +262,53 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                         (ACCOUNT.value,),
                     ).fetchone()[0],
                 ), 2)
-                book.set(SYMBOL, bid=second_order.price - instrument.tick_size,
-                         ask=second_order.price)
+                # Preserve a REAL partial fill before any Robot ownership
+                # finalization, then lose the process. The existing PAPER
+                # matching executor writes order, execution and projection;
+                # recovery must cancel remainder and protect only filled qty.
+                from terminal.market_data.models import PriceLevel
+                from terminal.domain.models import Price, Quantity
+                partial_qty = Decimal("0.1")
+                self.assertGreater(second_order.quantity, partial_qty)
+                partial_book = replace(
+                    _event_book(
+                        SYMBOL, bid=second_order.price - instrument.tick_size,
+                        ask=second_order.price,
+                    ),
+                    asks=(PriceLevel(Price(second_order.price), Quantity(partial_qty)),),
+                )
+                matched = runtime.call(lambda owner: owner._match_limits_only(
+                    Symbol(SYMBOL), partial_book, "reentry-retry-partial-before-crash",
+                    allowed_order_ids={second_order.order_id},
+                ))
+                self.assertEqual(matched, 1)
+                partially_filled = limit(new_id)
+                self.assertEqual(partially_filled.status, "partially_filled")
+                self.assertEqual(partially_filled.filled_quantity, partial_qty)
+                self.assertIsNone(runtime.call(
+                    lambda owner: owner.store.get_open_robot_trade_for_symbol(
+                        ACCOUNT, Symbol(SYMBOL),
+                    ),
+                ))
+                runtime.close()
+                book.set(SYMBOL, bid=second_order.price + instrument.tick_size,
+                         ask=second_order.price + 2 * instrument.tick_size)
+                runtime, _ = self.runtime(cache, book)
+                _start_robot_monitor(runtime)
                 second_trade = _wait_until(lambda: (
                     lambda t: t if t is not None and t.candidate_id == new_id else None
                 )(runtime.call(lambda owner: owner.store.get_open_robot_trade_for_symbol(
                     ACCOUNT, Symbol(SYMBOL),
                 ))))
+                restored_order = limit(new_id)
+                self.assertEqual(restored_order.filled_quantity, partial_qty)
+                self.assertEqual(restored_order.status, "cancelled")
+                self.assertEqual(second_trade.entry_quantity, partial_qty)
+                self.assertEqual(runtime.call(
+                    lambda owner: owner.store._connection.execute(
+                        "SELECT COUNT(*) FROM robot_reentry_attempts"
+                    ).fetchone()[0],
+                ), 2)
                 self.assertNotEqual(first_trade.trade_id, second_trade.trade_id)
                 self.assertEqual((second_trade.pattern, second_trade.entry_path),
                                  ("L-shape", "LIMIT"))
