@@ -192,6 +192,24 @@ structurally compatible with the same frozen thesis and direction.
   This intentionally tightens fallback STOP placement; original geometry,
   instrument tick normalization, fee-inclusive Robot RR gate and
   protective fail-closed rules are unchanged.
+- **2026-10-29 integration probe (do not misreport full PASS):**
+  Tried one continuous spawned Scanner L-shape -> production
+  `PaperRuntime._dispatch_autopilot_shadow_scanner_candidate` ->
+  PAPER_AUTO -> protected retry fill. The relay, exact same-symbol
+  immutable candidate, prepared closed-candle freshness, canonical
+  `ALLOW` and durable **attempt 2** after real STOP were demonstrated in
+  GitHub Actions before the monitor stage. The 5m breakout must be aligned
+  to the exchange 300000-ms grid; synthetic future candle closes require a
+  controlled test-time clock. The last combined probe (run #40873656319)
+  remained **FAIL**: after admission the candidate stayed
+  `L_SHAPE_WAITING_RETEST` even though the monitor thread was alive,
+  Robot RUNNING and the injected candle was readable. This does not prove
+  a production regression: isolate the synthetic clock / monitor ingestion
+  boundary without overriding the retest admission or issuing a direct
+  limit. Restored the previously green independent protected matcher E2E
+  in commit `d48045a` while retaining the spawned-child proof and enhanced
+  child fixture. Do not claim combined E2E or enable the feature until a
+  new single-run test passes.
 - **Spawned Scanner child IPC now proven as a separate acceptance slice:**
   `tests/test_stop_reentry_child_ipc.py` runs the actual latest-closed
   L-shape detector + immutable Scanner handoff in a `multiprocessing spawn`
