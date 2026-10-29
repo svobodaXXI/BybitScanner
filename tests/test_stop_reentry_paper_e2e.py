@@ -148,7 +148,7 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                     stopped.exit_time_ms + 1,
                 )
                 robot_candidate_store.create_signal_snapshot(
-                    new_snapshot, timeframe="1", store_dir=self.candidates,
+                    new_snapshot, timeframe="5", store_dir=self.candidates,
                     candidate_id=new_id,
                 )
                 book.set(SYMBOL, bid=Decimal("109.3"), ask=Decimal("109.4"))
