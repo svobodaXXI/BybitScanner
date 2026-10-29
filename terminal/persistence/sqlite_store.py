@@ -5371,6 +5371,13 @@ class SQLiteStore:
                 or _load_decimal(position["quantity"]) != 0
                 or str(position["sync_state"]).lower() != "synced"):
             raise PersistenceError("reentry symbol is not proven synchronized FLAT")
+        if self._connection.execute(
+            """SELECT 1 FROM protection_projections
+               WHERE trading_account_id=? AND category='linear'
+                 AND symbol=? AND pending_command_id IS NOT NULL LIMIT 1""",
+            (account.value, symbol),
+        ).fetchone():
+            raise PersistenceError("pending STOP/TAKE protection command blocks reentry")
         for table, predicate in (
             ("robot_trades", "exit_time_ms IS NULL"),
             ("robot_candidates", "status IN ('APPROVED','OPEN') AND candidate_id<>?"),
