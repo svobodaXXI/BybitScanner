@@ -5046,6 +5046,12 @@ class SQLiteStore:
                 candidate.trading_account_id, candidate.symbol,
             ):
                 return False
+            if any(
+                command.trading_account_id == candidate.trading_account_id
+                and command.symbol == candidate.symbol
+                for command in self.load_unfinished_commands()
+            ):
+                return False
             if self.load_executions_for_symbol(
                 candidate.trading_account_id, candidate.symbol,
             ):
