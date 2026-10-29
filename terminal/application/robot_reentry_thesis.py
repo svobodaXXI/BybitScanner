@@ -45,7 +45,7 @@ def frozen_corridor(snapshot: Mapping[str, Any]) -> FrozenCorridor | None:
         return None
     try:
         pattern = snapshot.get("pattern")
-        if pattern in {"MIRROR", "L-shape"}:
+        if pattern in {"MIRROR", "L-shape", "Double Top", "Double Bottom"}:
             terms = robot_l_shape.frozen_terms(snapshot)
             return FrozenCorridor(
                 terms.direction, min(terms.stop, terms.target),
