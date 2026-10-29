@@ -32,15 +32,15 @@ def send_text(chat_id, text, *, reply_markup=None):
         raise TelegramGatewayError("invalid Gateway HTTPS URL")
     if len(key) < 32 or not owner or str(chat_id) != owner:
         raise TelegramGatewayError("Gateway owner/configuration mismatch")
-    if reply_markup is not None:
-        raise TelegramGatewayError("Gateway keyboard transport not implemented")
+    if reply_markup is not None and not isinstance(reply_markup, dict):
+        raise TelegramGatewayError("Invalid Gateway keyboard")
     event_id = secrets.token_urlsafe(24)
     try:
         session = requests.Session()
         session.trust_env = False
         response = session.post(
             url.rstrip("/") if parsed.path.rstrip("/") == "/v1/send" else url.rstrip("/") + "/v1/send",
-            json={"event_id": event_id, "text": text},
+            json={"event_id": event_id, "text": text, **({"reply_markup": reply_markup} if reply_markup is not None else {})},
             headers={"Authorization": "Bearer " + key},
             timeout=12,
             allow_redirects=False,
