@@ -12,6 +12,8 @@ on:
       - 'terminal/persistence/sqlite_store.py'
       - 'terminal/diary/reentry.py'
       - 'tests/test_stop_reentry_*.py'
+      - 'tests/test_double_extremum.py'
+      - 'geometry/double_extremum.py'
       - '.github/workflows/robot_stop_reentry_policy.yml'
   workflow_dispatch:
 
@@ -41,4 +43,5 @@ jobs:
             tests/test_stop_reentry_admission_atomic.py \
             tests/test_stop_reentry_adapter.py \
             tests/test_stop_reentry_box_handoff.py \
-            tests/test_stop_reentry_thesis.py
+            tests/test_stop_reentry_thesis.py \
+            tests/test_double_extremum.py
