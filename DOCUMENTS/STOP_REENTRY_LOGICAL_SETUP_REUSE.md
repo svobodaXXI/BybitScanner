@@ -161,9 +161,12 @@ structurally compatible with the same frozen thesis and direction.
 - **Actual protected retry E2E now demonstrated (isolated DB):**
   `tests/test_stop_reentry_paper_e2e.py` reuses the production
   `MirrorStandaloneHarness`. The real MIRROR Scanner candidate receives a
-  canonical PAPER LIMIT/fill and STOP, then a separately frozen, synthetic
-  confirmed L-shape enters the same campaign through PAPER_AUTO and its own
-  retest monitor, submits a *different* PAPER LIMIT/fill and closes by TAKE.
+  canonical PAPER LIMIT/fill and STOP, then the **real**
+  `l_shape_scanner.observe_l_shape` detects a fresh latest-closed 5m
+  breakout from synthetic market candles, freezes its genuine geometry,
+  and the canonical PAPER_AUTO reentry routes that signal through the
+  existing Robot retest monitor. A *different* PAPER LIMIT fills and
+  closes by TAKE. No artificial hand-authored L-shape terms are used.
   Both closures have STOP/TAKE protection executions, and existing Trading
   Diary calculates 2 filled attempts with individual and aggregate gross,
   fees and known-cost net. The test restarts the exact same SQLite runtime
@@ -175,13 +178,24 @@ structurally compatible with the same frozen thesis and direction.
   breakout and its immutable `_robot_signal_snapshot` to the canonical
   previous STOP campaign. It separately proves that the same old breakout
   is no longer emitted if a subsequent candle closes without a new signal.
-  Both tests passed together in GitHub Actions #40864436788; the full E2E
-  also proves per-trade fees and Diary aggregate net equal actual fills.
-- **Remaining P0 blockers:** the actual post-STOP second-pattern Scanner
-  process → callback/IPC → PAPER_AUTO → final fill must still be proven
-  end-to-end in a *single* replay (current tests separately prove the
-  Scanner detector/admission and the PAPER matcher lifecycle). Finish
-  validated double-bottom/top
+  The formerly separate tests now also pass as ONE uninterrupted
+  real Scanner-detection → Admission → PAPER matcher lifecycle in
+  [GitHub Actions #40865975980](https://github.com/svobodaXXI/BybitScanner/actions/runs/40865975980)
+  (3/3 workflows PASS). The E2E independently proves per-trade fees and
+  Diary aggregate net equal actual fills, then restart no-duplicate.
+- **Actual execution blocker fixed, not bypassed:** the L-shape Scanner
+  ratio STOP fallback previously had gross RR exactly 2:1; the Robot
+  correctly rejected it after two-tick entry adjustment and round-trip
+  fees for failing the owner's Net RR >= 2:1. The fallback uses a
+  conservative gross 3:1 stop distance for fee/slippage headroom,
+  while retaining the original structural STOP whenever appropriate.
+  This intentionally tightens fallback STOP placement; original geometry,
+  instrument tick normalization, fee-inclusive Robot RR gate and
+  protective fail-closed rules are unchanged.
+- **Remaining P0 blockers:** the test now proves ONE continuous
+  in-process Scanner → PAPER lifecycle, but the actual spawned Scanner
+  child-process IPC → post-STOP callback → PAPER_AUTO path still needs
+  acceptance. Finish validated double-bottom/top
   and candle confirmation adapters (#647); prove a new independent thesis
   after structural invalidation without resetting a live risk budget;
   pre-v26 STOP campaign attribution; further crash-during-open-or-pending
