@@ -288,7 +288,7 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                 )
                 matched = runtime.call(lambda owner: owner._match_limits_only(
                     Symbol(SYMBOL), partial_book, "reentry-retry-partial-before-crash",
-                    allowed_order_ids={second_order.order_id},
+                    allowed_order_ids={second_order.order_id.value},
                 ))
                 self.assertEqual(matched, 1)
                 partially_filled = limit(new_id)
