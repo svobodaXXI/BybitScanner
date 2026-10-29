@@ -47,3 +47,8 @@ This prototype intentionally does not declare Telegram READY and does not solve 
 - `UNKNOWN` and crash-left `IN_FLIGHT` **must not be automatically retried** until Gateway-side durable idempotency is implemented: a Telegram send may have succeeded despite a lost response. State is retained for explicit reconciliation.
 - This is only durable evidence, **not yet a completed retry queue**. No Worker KV/Durable Object dedup is installed, no delivery SLA established, and local photo delivery remains outside outbox.
 - The Gateway transport now fails closed if the outbox is not configured; it is not appropriate to merge/deploy as a drop-in Telegram fix yet.
+
+## Atomic outbox state (2026-10-30)
+- Added `claim_pending(event_id)` as one SQL compare-and-set transition from `PENDING` to `IN_FLIGHT`, plus guarded terminal transitions and bounded `pending()` inspection.
+- Two competing local workers cannot claim the same unsent event. `IN_FLIGHT` and `UNKNOWN` **never reenter** the automated pending queue: remote Telegram delivery may have occurred even if acknowledgement was lost.
+- This does **not** provide exactly-once Telegram delivery, automatic crash recovery or durable Worker dedup; those need separate end-to-end implementation and validation. No automatic retry daemon is started.
