@@ -96,6 +96,11 @@ def send_photo(
     Поддерживает optional inline keyboard.
     """
 
+    if telegram_gateway_client.configured():
+        return telegram_gateway_client.send_photo_upload(
+            chat_id, photo_path, caption=caption, reply_markup=reply_markup
+        )
+
     url = (
         f"https://api.telegram.org/"
         f"bot{token}/sendPhoto"
