@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from geometry.double_extremum import detect_confirmed_double_extremum
+from tests.test_stop_reentry_reservation import prepared
 
 
 def bar(h, l, c):
