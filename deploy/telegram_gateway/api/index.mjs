@@ -1,6 +1,9 @@
 import worker from "../worker.mjs";
 
+export const config = { api: { bodyParser: false } };
+
 export default async function handler(req, res) {
+  try {
   const origin = "https://gateway.internal";
   const path = req.url || "/";
   const body = ["GET", "HEAD"].includes(req.method) ? undefined : await new Promise((resolve, reject) => {
@@ -17,7 +20,6 @@ export default async function handler(req, res) {
   const request = new Request(origin + path, {
     method: req.method, headers: req.headers, body
   });
-  try {
     const response = await worker.fetch(request, process.env);
     res.status(response.status);
     for (const [key,value] of response.headers) {
@@ -25,6 +27,6 @@ export default async function handler(req, res) {
     }
     res.end(Buffer.from(await response.arrayBuffer()));
   } catch (_) {
-    res.status(503).json({ok:false,error:"gateway_unavailable"});
+    if (!res.headersSent) res.status(503).json({ok:false,error:"gateway_unavailable"});
   }
 }
