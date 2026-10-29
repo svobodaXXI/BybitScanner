@@ -103,37 +103,48 @@ def test_paper_auto_mirror_opt_in_creates_real_candidate_and_diary_link_atomical
     from terminal.application.robot_autopilot_shadow import (
         SOURCE_SCANNER, admit_arrived_auto_candidate,
     )
-    from tests.test_robot_autopilot_shadow import _Db, ACCOUNT
+    from terminal.persistence.sqlite_store import SQLiteStore
 
     monkeypatch.setenv("BYBITSCANNER_STOP_REENTRY_AUTO", "1")
     monkeypatch.setenv("BYBITSCANNER_MIRROR_STANDALONE_ROBOT", "1")
-    db = _Db(tmp_path, autopilot="PAPER_AUTO")
-    try:
+    db_path = tmp_path / "paper.sqlite3"
+    directory = tmp_path / "candidates"
+    account = TradingAccountId("paper")
+    with SQLiteStore.open(db_path) as store:
+        store.initialize_paper_account(account, Decimal("5000"), updated_at_ms=1)
+        robot = store.initialize_robot_runtime_state(account, updated_at_ms=1000)
+        store.update_robot_runtime_state(
+            account, mode="ROBOT_RUNNING", recovery_status="READY",
+            reason=None, expected_version=robot.version, updated_at_ms=1001,
+        )
+        ap = store.initialize_robot_autopilot_state(account, updated_at_ms=1000)
+        store.update_robot_autopilot_state(
+            account, mode="PAPER_AUTO", expected_version=ap.version,
+            updated_at_ms=1001,
+        )
         create_signal_snapshot(
-            mirror(), timeframe="1", store_dir=db.candidates,
+            mirror(), timeframe="1", store_dir=directory,
             candidate_id="mirror-auto-initial",
             created_at="2026-10-29T12:00:00+00:00",
         )
         admitted = admit_arrived_auto_candidate(
-            db.store, ACCOUNT, source=SOURCE_SCANNER,
+            store, account, source=SOURCE_SCANNER,
             candidate_ref="mirror-auto-initial",
             protection_healthy=lambda: True,
             candidate_fresh=lambda *_: True,
-            candidate_store_dir=db.candidates,
+            candidate_store_dir=directory,
             clock_ms=lambda: 1_200_000,
             daily_loss_gate_enabled=False,
         )
         assert admitted is not None
         assert admitted.result.outcome == "ALLOW", admitted.result
         assert admitted.candidate.candidate_id == "mirror-auto-initial"
-        assert db.store._connection.execute(
+        assert store._connection.execute(
             "SELECT COUNT(*) FROM robot_reentry_campaigns"
         ).fetchone()[0] == 1
-        assert db.store._connection.execute(
+        assert store._connection.execute(
             "SELECT COUNT(*) FROM robot_reentry_attempts"
         ).fetchone()[0] == 1
-        assert db.store._connection.execute(
+        assert store._connection.execute(
             "SELECT COUNT(*) FROM robot_trades"
         ).fetchone()[0] == 0  # Admission does NOT place or fill an order
-    finally:
-        db.store.close()
