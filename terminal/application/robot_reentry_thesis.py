@@ -1,10 +1,13 @@
 """Conservative structural/lineage evidence for post-STOP cross-pattern retries.
 
 No symbol-only or direction-only campaign inheritance. A previous STOP
-candidate's *canonical immutable* snapshot hash and identity must be
-explicitly cited by the new signal, and both independently frozen patterns
-must have compatible directional price corridors. This is an admission
-precondition, not a claim of profitability and not a pattern detector.
+candidate's *canonical immutable* snapshot hash and identity are loaded
+from PAPER DB inside Robot Admission. Both independently frozen patterns
+must have compatible directional price corridors. An optional explicit
+parent hint in a new signal may further constrain identity but can NEVER
+override canonical evidence. No user annotation is required for automatic
+matching; this narrow structural matching rule is a risk-conservative
+CAMPAIGN POLICY, not an assertion of market prediction accuracy.
 """
 from __future__ import annotations
 
@@ -97,23 +100,27 @@ def verified_same_thesis(
     previous_snapshot: Mapping[str, Any],
     new_snapshot: Mapping[str, Any], direction: str,
 ) -> bool:
-    """Require explicit immutable source lineage PLUS price context overlap.
+    """Match canonical last STOP source by directional frozen structure.
 
-    Broad correlation is NOT proof. This narrow test deliberately rejects
-    unlinked/distant continuation setups until their detectors provide
-    stronger structure attribution. The stored STOP execution is verified
-    separately by canonical SQLiteStore in the same admission transaction.
+    Previous id and SHA come from the DB, not a guessed symbol. An optional
+    parent hint may only narrow the match; it cannot create an alternative
+    identity. Missing/disjoint structures must WAIT instead of opening another
+    initial campaign. Actual STOP and FLAT are re-proven by SQLiteStore.
     """
     if not isinstance(previous_candidate_id, str) or not previous_candidate_id:
         return False
     if (not isinstance(previous_snapshot_sha256, str)
             or len(previous_snapshot_sha256) != 64):
         return False
-    source = new_snapshot.get("reentry_parent") if isinstance(new_snapshot, Mapping) else None
-    if (not isinstance(source, Mapping) or set(source) != {
-        "candidate_id", "snapshot_sha256",
-    } or source.get("candidate_id") != previous_candidate_id
-            or source.get("snapshot_sha256") != previous_snapshot_sha256):
+    if not isinstance(new_snapshot, Mapping):
+        return False
+    source = new_snapshot.get("reentry_parent")
+    if source is not None and (
+        not isinstance(source, Mapping)
+        or set(source) != {"candidate_id", "snapshot_sha256"}
+        or source.get("candidate_id") != previous_candidate_id
+        or source.get("snapshot_sha256") != previous_snapshot_sha256
+    ):
         return False
     previous = frozen_corridor(previous_snapshot)
     current = frozen_corridor(new_snapshot)
