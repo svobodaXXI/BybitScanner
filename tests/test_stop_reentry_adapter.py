@@ -196,9 +196,9 @@ def test_paper_auto_mirror_opt_in_creates_real_candidate_and_diary_link_atomical
         ).fetchone()[0] == 0  # Admission does NOT place or fill an order
 
 
-@pytest.mark.parametrize("parent_proven", [True, False])
+@pytest.mark.parametrize("structure_compatible", [True, False])
 def test_actual_paper_auto_stop_then_fresh_lshape_reserves_second_attempt(
-    prepared, tmp_path, monkeypatch, parent_proven,
+    prepared, tmp_path, monkeypatch, structure_compatible,
 ):
     """The old trade has a real canonical STOP; no order is issued by admission."""
     from robot_candidate_store import create_signal_snapshot
@@ -241,11 +241,13 @@ def test_actual_paper_auto_stop_then_fresh_lshape_reserves_second_attempt(
     monkeypatch.setenv("BYBITSCANNER_MIRROR_STANDALONE_ROBOT", "1")
     directory = tmp_path / "candidates"
     fresh = lshape(breakout_ms=360_000)
-    if parent_proven:
-        fresh["reentry_parent"] = {
-            "candidate_id": parent.candidate_id,
-            "snapshot_sha256": parent.snapshot_sha256,
-        }
+    if not structure_compatible:
+        # Correct symbol, direction, and post-STOP candle are NOT enough:
+        # the new structure is 10x farther away than the previous thesis.
+        fresh["l_shape"].update(
+            reference="1000", target="1100",
+            stop="990", structural_stop="990",
+        )
     create_signal_snapshot(
         fresh, timeframe="1", store_dir=directory,
         candidate_id="second", created_at="2026-10-29T12:00:00+00:00",
@@ -257,7 +259,7 @@ def test_actual_paper_auto_stop_then_fresh_lshape_reserves_second_attempt(
         daily_loss_gate_enabled=False,
     )
     assert admission is not None
-    if not parent_proven:
+    if not structure_compatible:
         assert admission.result.outcome == "WAIT", admission.result
         assert admission.result.reason_code == "REENTRY_THESIS_UNPROVEN"
         assert admission.candidate is None
