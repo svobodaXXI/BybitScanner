@@ -62,6 +62,47 @@ def test_mirror_requires_next_completed_candle_of_correct_type():
     assert proven_pattern_entry(wrong, now_ms=1_060_000) is None
 
 
+def wedge(*, close_open_ms=1_020_000, direction="LONG"):
+    from scanner_geometry_cursor import CURSOR_VERSION
+
+    pattern = "Falling Wedge" if direction == "LONG" else "Rising Wedge"
+    return {
+        "symbol": "LABUSDT", "pattern": pattern,
+        "geometry": {
+            "current_index": 10, "apex": {"index": 30},
+            "upper_line": {"slope": -0.1, "intercept": 20},
+            "lower_line": {"slope": 0.1, "intercept": 10},
+        },
+        "scanner_geometry_cursor": {
+            "version": CURSOR_VERSION, "timeframe": "1",
+            "geometry_index": 10, "source_candle_time_ms": close_open_ms,
+        },
+    }
+
+
+def test_wedge_1m_uses_real_frozen_candle_cursor_and_own_robot_geometry():
+    assert proven_pattern_entry(wedge(), now_ms=1_079_999) is None
+    valid = proven_pattern_entry(wedge(), now_ms=1_080_000)
+    assert valid is not None
+    assert valid.pattern == "Falling Wedge"
+    assert valid.direction == "LONG"
+    assert valid.confirmed_at_ms == 1_080_000
+    assert proven_pattern_entry(wedge(direction="SHORT"), now_ms=1_080_000).direction == "SHORT"
+
+
+def test_wedge_cursor_must_not_be_guessed_from_candle_age_or_candidate_arrival():
+    assert proven_pattern_entry({"pattern": "Falling Wedge"}, now_ms=10**15) is None
+    snap = wedge()
+    snap["scanner_geometry_cursor"]["geometry_index"] = 9
+    assert proven_pattern_entry(snap, now_ms=1_200_000) is None
+    snap = wedge()
+    snap["scanner_geometry_cursor"]["timeframe"] = "5"
+    assert proven_pattern_entry(snap, now_ms=1_200_000) is None
+    snap = wedge()
+    snap["geometry"]["apex"]["valid_intersection"] = False
+    assert proven_pattern_entry(snap, now_ms=1_200_000) is None
+
+
 def test_ordinary_wedge_and_box_do_not_forge_stop_or_confirmation_proof():
     for name in ("Falling Wedge", "Rising Wedge", "IKIGAI_BOX"):
         snap = lshape()
