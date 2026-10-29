@@ -146,7 +146,15 @@ def proven_pattern_entry(
         terms = robot_l_shape.frozen_terms(snapshot)
         # For MIRROR, initialize_state verifies that the NEXT candle closed
         # exactly one source-TF later with a supported Nison formation.
-        if robot_l_shape.is_mirror_snapshot(snapshot):
+        if pattern in robot_l_shape.DOUBLE_PATTERNS:
+            # The immutable neckline-close identity is verified by the SAME
+            # L-shape-backed protected LIMIT path, with no new executor.
+            state, _ = robot_l_shape.initialize_state({
+                "candidate_id": "reentry-neckline-proof",
+                "status": "APPROVED", "signal_snapshot": dict(snapshot),
+            })
+            confirmed_at = int(state["last_candle_time_ms"])
+        elif robot_l_shape.is_mirror_snapshot(snapshot):
             robot_l_shape.initialize_state({
                 "candidate_id": "reentry-proof", "status": "APPROVED",
                 "signal_snapshot": dict(snapshot),
