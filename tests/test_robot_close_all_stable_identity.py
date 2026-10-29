@@ -52,8 +52,8 @@ def _runtime_for_symbols(*symbols):
         # position after a COMPLETED chunk; already flat here, so these
         # tests see exactly the one chunk they expect.
         get_position_projection=Mock(side_effect=[
-            SimpleNamespace(quantity=SimpleNamespace(value=Decimal("2"))),
-            *[SimpleNamespace(quantity=SimpleNamespace(value=Decimal(0))) for _ in range(20)],
+            SimpleNamespace(quantity=SimpleNamespace(value=Decimal(q)))
+            for _ in range(20) for q in ("2", "0")
         ]),
     )
     close = Mock(side_effect=lambda request, *, identity: CommandResult(
