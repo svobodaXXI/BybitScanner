@@ -237,7 +237,13 @@ export class TelegramEvent {
         text:event.text,reply_markup:event.reply_markup ?? null
       })));
     const digest = Array.from(new Uint8Array(fingerprint), b => b.toString(16).padStart(2,"0")).join("");
-    const existing = await this.state.storage.get("delivery");
+    // Serialize claim including the first persistence write.
+    let existing;
+    await this.state.blockConcurrencyWhile(async () => {
+      existing = await this.state.storage.get("delivery");
+      if (!existing) await this.state.storage.put("delivery",
+        {digest,status:"UNKNOWN",message_id:null});
+    });
     if (existing) {
       if (existing.digest !== digest)
         return reply(409,{ok:false,error:"event_id_payload_conflict"});
@@ -248,7 +254,6 @@ export class TelegramEvent {
         deduplicated:true
       });
     }
-    await this.state.storage.put("delivery",{digest,status:"UNKNOWN",message_id:null});
     try {
       const result = await fetch("https://api.telegram.org/bot" +
         this.env.TELEGRAM_BOT_TOKEN + "/sendMessage",{
