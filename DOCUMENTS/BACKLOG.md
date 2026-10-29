@@ -1,3 +1,17 @@
+## P0 — OWNER ONE-ACTION PAPER 24/7 LIFECYCLE (2026-10-29)
+
+**Authoritative owner outcome:** «Одна команда владельца — робот сам безопасно закрывает, сверяет, обновляет и восстанавливает PAPER_AUTO 24/7». This is a queued **implementation and VPS acceptance requirement**, not a claim of completion. Highest priority until actual VPS confirmation; no parallel feature drift.
+
+- One explicit owner action coordinates: freeze all new admissions/re-entries; safely cancel pending ENTRY; MARKET-close owner-authorized PAPER exposure through the one shared executor; prove FLAT, ledger/fees, no working orders and no unresolved STOP/TAKE obligations; reconcile stale candidates (including missing Box baseline AXTI); canonical safe-stop / approved stable fast-forward; restart, protection recovery, Scanner RUNNING, Robot READY, PAPER_AUTO and STOP reentry enabled.
+- **Unified operation, durable idempotent state:** interruption/restart resumes the same action; no blind close retry, duplicate close, synthetic fill, concurrent SQLite owner, or false READY. If anything cannot be proven, report one actionable BLOCKED cause and retain protection. LIVE absolutely prohibited.
+- **One reusable backend authority:** existing Telegram «Закрыть все позиции» and future Terminal button dispatch the same command/status interface. No second position-close implementation. Marker `UNIFIED_PAPER_CLOSE_ALL_TERMINAL_REUSE`; details in `DOCUMENTS/CHANGE_REQUESTS/UNIFIED_PAPER_CLOSE_ALL_TERMINAL_REUSE.md` (PR #675).
+- Reuse stable #672 post-fill Net RR, #673 Box reconciliation, and #674 guarded maintenance; do not equate merged PRs with running VPS. Owner-approved immediate MARKET close of stale PAPER positions is distinct from safe process stop and must be proven by executor.
+- **Acceptance:** actual VPS updated from old `d6555455` to approved stable and observed sustained PAPER 24/7, Robot READY, Scanner RUNNING, PAPER_AUTO, reentry=1, protection healthy, positions/ledger reconciled. Verify automatic safe restart and blocked/ambiguous-close recovery with minimal targeted checks. No additional user commands in normal flow.
+
+**Queue:** P0 implementation → focused CI → GitHub merge → one owner-authorized VPS execution/acceptance; Terminal UI wiring later reuses this exact backend endpoint. Related: PR #675; stable #674.
+
+---
+
 ## CURRENT OWNER GOAL — 2026-10-27 — INTERNAL PAPER CONTOUR CONSOLIDATION
 
 Owner requests one automatically self-checking PAPER lifecycle across Scanner,
