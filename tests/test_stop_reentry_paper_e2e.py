@@ -157,7 +157,15 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                         if d.resulting_candidate_id != first_id and d.outcome == OUTCOME_ALLOW:
                             return d.resulting_candidate_id
                     return None
-                new_id = _wait_until(admitted_retry)
+                try:
+                    new_id = _wait_until(admitted_retry)
+                except AssertionError:
+                    decisions = runtime.call(
+                        lambda owner: owner.store.load_robot_auto_decisions(ACCOUNT)
+                    )
+                    summary = [(d.candidate_ref, d.outcome, d.reason_code)
+                               for d in decisions]
+                    self.fail(f"Scanner pipe delivered but PAPER_AUTO denied: {summary}")
                 self.assertEqual(candidate(new_id).status, "APPROVED")
                 rows = runtime.call(lambda owner: owner.store._connection.execute(
                     """SELECT attempt_index,candidate_id,previous_stop_exec_id
