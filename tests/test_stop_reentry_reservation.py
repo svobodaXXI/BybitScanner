@@ -30,7 +30,21 @@ def prepared(tmp_path):
     store.create_robot_candidate(
         candidate_id="first", trading_account_id=ACCOUNT,
         symbol=Symbol("LABUSDT"), status="APPROVED",
-        signal_snapshot={"pattern": "MIRROR", "test": "first"},
+        signal_snapshot={
+            "symbol": "LABUSDT", "pattern": "MIRROR",
+            "robot_handoff_ready": True,
+            "mirror_entry": {
+                "direction": "LONG", "source_timeframe": "1",
+                "breakout_time_ms": 60_000,
+                "reference": "100", "stop": "99", "target": "110",
+                "structural_stop": "99", "stop_kind": "STRUCTURAL",
+                "potential_percent": "10", "reward_risk": "5",
+                "confirmation": {
+                    "close_time_ms": 120_000, "timeframe": "1",
+                    "kind": "ENGULFING",
+                },
+            },
+        },
         approved_at_ms=100, updated_at_ms=100,
     )
     with store.robot_admission_transaction():
