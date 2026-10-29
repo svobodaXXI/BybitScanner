@@ -274,6 +274,36 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                 second_protection = _wait_until(protection)
                 self.assertGreater(second_protection.take_profit, second_trade.average_entry)
 
+                # Crash/restart WHILE retry #2 is OPEN and STOP/TAKE-armed:
+                # the canonical PAPER DB must retain one trade, same STOP/TAKE,
+                # same attempt slot and no duplicated entry execution.
+                entry_executions = runtime.call(
+                    lambda owner: owner.store.load_executions_for_symbol(
+                        ACCOUNT, Symbol(SYMBOL),
+                    ),
+                )
+                runtime.close()
+                runtime, _ = self.runtime(closed_candle, book)
+                recovered_trade = runtime.call(
+                    lambda owner: owner.store.get_open_robot_trade_for_symbol(
+                        ACCOUNT, Symbol(SYMBOL),
+                    ),
+                )
+                self.assertIsNotNone(recovered_trade)
+                self.assertEqual(recovered_trade.trade_id, second_trade.trade_id)
+                recovered_protection = _wait_until(protection)
+                self.assertEqual(recovered_protection.stop_loss, second_protection.stop_loss)
+                self.assertEqual(recovered_protection.take_profit, second_protection.take_profit)
+                self.assertEqual(
+                    len(runtime.call(lambda owner: owner.store.load_executions_for_symbol(
+                        ACCOUNT, Symbol(SYMBOL),
+                    ))),
+                    len(entry_executions),
+                )
+                self.assertEqual(runtime.call(lambda owner: owner.store._connection.execute(
+                    "SELECT count(*) FROM robot_reentry_attempts"
+                ).fetchone()[0]), 2)
+
                 # Canonical TAKE closes the retry; the Trading Diary derives
                 # all financial values from real executions, not duplicates.
                 exit_bid = second_protection.take_profit + instrument.tick_size
