@@ -261,13 +261,58 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                         (ACCOUNT.value,),
                     ).fetchone()[0],
                 ), 2)
-                book.set(SYMBOL, bid=second_order.price - instrument.tick_size,
-                         ask=second_order.price)
+                # The post-restart Robot epoch must admit this exact order
+                # before its first fill. Require a live, BUY-side LIMIT and
+                # match against executable partial ask depth.
+                from dataclasses import replace
+                from terminal.market_data.models import PriceLevel
+                from terminal.domain.models import Price, Quantity
+                def admissible_order():
+                    return runtime.call(lambda owner: (
+                        lambda active, fenced: active if active is not None and
+                        active.status == "open" and
+                        active.order_id.value not in fenced else None
+                    )(
+                        owner.store.get_paper_limit(second_order.order_id.value, ACCOUNT),
+                        owner._robot_entry_limit_ids_fenced_by_admission(
+                            Symbol(SYMBOL),
+                            owner.store.load_active_paper_limits(ACCOUNT, Symbol(SYMBOL)),
+                        ),
+                    ))
+                actual_order = _wait_until(admissible_order)
+                self.assertEqual(actual_order.side.value, "Buy")
+                partial_qty = min(Decimal("0.1"), actual_order.quantity / 2)
+                partial_book = replace(
+                    _event_book(SYMBOL, bid=actual_order.price - instrument.tick_size,
+                                ask=actual_order.price),
+                    asks=(PriceLevel(Price(actual_order.price), Quantity(partial_qty)),),
+                )
+                matched = runtime.call(lambda owner: owner._match_limits_only(
+                    Symbol(SYMBOL), partial_book, "retry-partial-fill-then-crash",
+                    allowed_order_ids={actual_order.order_id.value},
+                ))
+                self.assertEqual(matched, 1)
+                partial_order = limit(new_id)
+                self.assertEqual(partial_order.status, "partially_filled")
+                self.assertEqual(partial_order.filled_quantity, partial_qty)
+                self.assertIsNone(runtime.call(
+                    lambda owner: owner.store.get_open_robot_trade_for_symbol(
+                        ACCOUNT, Symbol(SYMBOL),
+                    ),
+                ))
+                runtime.close()
+                book.set(SYMBOL, bid=actual_order.price + instrument.tick_size,
+                         ask=actual_order.price + 2 * instrument.tick_size)
+                runtime, _ = self.runtime(cache, book)
+                _start_robot_monitor(runtime)
                 second_trade = _wait_until(lambda: (
                     lambda t: t if t is not None and t.candidate_id == new_id else None
                 )(runtime.call(lambda owner: owner.store.get_open_robot_trade_for_symbol(
                     ACCOUNT, Symbol(SYMBOL),
                 ))))
+                self.assertEqual(second_trade.entry_quantity, partial_qty)
+                self.assertEqual(limit(new_id).filled_quantity, partial_qty)
+                self.assertEqual(limit(new_id).status, "cancelled")
                 self.assertNotEqual(first_trade.trade_id, second_trade.trade_id)
                 self.assertEqual((second_trade.pattern, second_trade.entry_path),
                                  ("L-shape", "LIMIT"))
