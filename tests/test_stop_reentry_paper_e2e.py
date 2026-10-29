@@ -262,6 +262,15 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                         (ACCOUNT.value,),
                     ).fetchone()[0],
                 ), 2)
+                # Restart increments the canonical admission epoch. Wait for
+                # the production monitor to revalidate this retained LIMIT;
+                # matching before that is correctly fenced (no fill).
+                _wait_until(lambda: runtime.call(lambda owner: (
+                    second_order.order_id not in owner._robot_entry_limit_ids_fenced_by_admission(
+                        Symbol(SYMBOL),
+                        owner.store.load_active_paper_limits(ACCOUNT, Symbol(SYMBOL)),
+                    )
+                )))
                 # Preserve a REAL partial fill before any Robot ownership
                 # finalization, then lose the process. The existing PAPER
                 # matching executor writes order, execution and projection;
