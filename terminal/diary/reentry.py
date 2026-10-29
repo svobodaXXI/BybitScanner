@@ -28,6 +28,7 @@ class ReentryDiaryAttempt:
     reserved_risk_usdt: Decimal
     previous_stop_exec_id: str | None
     trade_id: str | None
+    exit_time_ms: int | None
     pattern: str | None
     status: str
     exit_reason: str | None
@@ -101,7 +102,7 @@ class ReentryDiaryReader:
                 raise ReentryDiaryReadError("reentry lineage schema unavailable")
             rows = connection.execute(
                 """SELECT c.campaign_id, c.trading_account_id, c.symbol,
-                          c.direction, c.frozen_thesis_sha256,
+                          c.direction, c.first_candidate_id, c.frozen_thesis_sha256,
                           c.original_risk_budget_usdt, a.attempt_index,
                           a.candidate_id, a.reserved_risk_usdt,
                           a.previous_stop_exec_id, a.reserved_at_ms,
@@ -124,13 +125,35 @@ class ReentryDiaryReader:
                 if name not in groups:
                     groups[name] = (row, [])
                 if row["candidate_id"] is None:
-                    continue
+                    raise ReentryDiaryReadError("campaign has no initial attempt")
+                index = int(row["attempt_index"])
+                previous = groups[name][1][-1] if groups[name][1] else None
+                if index != len(groups[name][1]) + 1 or index > 3:
+                    raise ReentryDiaryReadError("non-contiguous or duplicate attempt indexes")
+                if index == 1 and row["candidate_id"] != row["first_candidate_id"]:
+                    raise ReentryDiaryReadError("first attempt contradicts campaign identity")
+                if previous is not None:
+                    if previous.status != "CLOSED" or previous.exit_reason != "STOP":
+                        raise ReentryDiaryReadError("retry requires prior closed STOP")
+                    if previous.exit_time_ms is None or int(row["reserved_at_ms"]) <= previous.exit_time_ms:
+                        raise ReentryDiaryReadError("retry reservation must follow STOP close")
                 trade = completed.get(row["candidate_id"])
                 if row["trade_id"] is not None and row["exit_time_ms"] is not None and trade is None:
                     raise ReentryDiaryReadError("completed attempt has unproven Robot statistics")
                 if trade is not None and trade.trade_id != row["trade_id"]:
                     raise ReentryDiaryReadError("campaign trade attribution conflicts")
                 if trade is not None:
+                    if (trade.symbol != row["symbol"]
+                            or trade.direction != row["direction"]
+                            or trade.trading_account_id != trading_account_id):
+                        raise ReentryDiaryReadError("trade differs from campaign account/symbol/direction")
+                    if trade.exit_time_ms < trade.entry_time_ms:
+                        raise ReentryDiaryReadError("trade exit precedes entry")
+                    if previous is not None and (
+                        trade.signal_time_ms <= previous.exit_time_ms
+                        or trade.entry_time_ms <= previous.exit_time_ms
+                    ):
+                        raise ReentryDiaryReadError("trade signal or entry predates prior STOP")
                     status = "CLOSED"
                 elif row["trade_id"] is not None:
                     status = "OPEN"
@@ -141,9 +164,10 @@ class ReentryDiaryReader:
                     attempt_index=int(row["attempt_index"]),
                     candidate_id=str(row["candidate_id"]),
                     reserved_at_ms=int(row["reserved_at_ms"]),
-                    reserved_risk_usdt=_money(row["reserved_risk_usdt"], "reserved risk"),
+                    reserved_risk_usdt=_money(row["reserved_risk_usdt"], "reserved risk", positive=True),
                     previous_stop_exec_id=row["previous_stop_exec_id"],
                     trade_id=str(row["trade_id"]) if row["trade_id"] is not None else None,
+                    exit_time_ms=trade.exit_time_ms if trade else None,
                     pattern=trade.pattern if trade else None,
                     status=status,
                     exit_reason=trade.exit_reason if trade else None,
