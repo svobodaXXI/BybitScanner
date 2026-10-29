@@ -52,3 +52,9 @@ This prototype intentionally does not declare Telegram READY and does not solve 
 - Added `claim_pending(event_id)` as one SQL compare-and-set transition from `PENDING` to `IN_FLIGHT`, plus guarded terminal transitions and bounded `pending()` inspection.
 - Two competing local workers cannot claim the same unsent event. `IN_FLIGHT` and `UNKNOWN` **never reenter** the automated pending queue: remote Telegram delivery may have occurred even if acknowledgement was lost.
 - This does **not** provide exactly-once Telegram delivery, automatic crash recovery or durable Worker dedup; those need separate end-to-end implementation and validation. No automatic retry daemon is started.
+
+## Gateway-side event idempotency (Draft)
+- Added Cloudflare Durable Object binding `TELEGRAM_EVENTS` in `wrangler.toml`: one object identity per incoming `event_id`; claim is serialized and persisted **before** Telegram HTTP send.
+- Repeated requests with the same event ID and matching payload return the recorded `ACCEPTED` result, or a fail-closed uncertain status, without resending. A conflicting payload with the same event ID receives HTTP 409.
+- An uncertain response, transport timeout or crash remains `UNKNOWN`; no blind replay. The implementation prioritizes **at-most-once attempt** over guaranteed delivery. It does **not** promise exactly-once external delivery, and it does **not** turn `UNKNOWN` into `ACCEPTED`.
+- Retention/cleanup, durable retry semantics, image parity, provider deployment and actual Telegram acceptance remain unverified. Durable Objects require an authorized Cloudflare account/plan and approved provisioning; no live resource has been created here.
