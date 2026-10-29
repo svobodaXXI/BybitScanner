@@ -41,20 +41,9 @@ This prototype intentionally does not declare Telegram READY and does not solve 
 - The Gateway returns the Telegram API response; successful API acceptance does not certify owner-visible delivery. Photo keyboards are still unsupported, and durable outbox/retry/dedup is not implemented.
 - **Do not deploy yet:** Worker/Gateway reachability and actual message delivery remain unverified; security review and complete tests outstanding.
 
-## Independent persistent text outbox — current scope
-- Opt-in gateway text sends now require `BYBITSCANNER_TELEGRAM_OUTBOX_DB` pointing to a separate SQLite file, **never the PAPER runtime database**. Provision its parent directory and permissions separately before deployment.
-- An event is recorded before network send as `PENDING`, then `IN_FLIGHT`; confirmed API acceptance becomes `ACCEPTED`, transport failures or ambiguous responses become `UNKNOWN`.
-- `UNKNOWN` and crash-left `IN_FLIGHT` **must not be automatically retried** until Gateway-side durable idempotency is implemented: a Telegram send may have succeeded despite a lost response. State is retained for explicit reconciliation.
-- This is only durable evidence, **not yet a completed retry queue**. No Worker KV/Durable Object dedup is installed, no delivery SLA established, and local photo delivery remains outside outbox.
-- The Gateway transport now fails closed if the outbox is not configured; it is not appropriate to merge/deploy as a drop-in Telegram fix yet.
 
-## Atomic outbox state (2026-10-30)
-- Added `claim_pending(event_id)` as one SQL compare-and-set transition from `PENDING` to `IN_FLIGHT`, plus guarded terminal transitions and bounded `pending()` inspection.
-- Two competing local workers cannot claim the same unsent event. `IN_FLIGHT` and `UNKNOWN` **never reenter** the automated pending queue: remote Telegram delivery may have occurred even if acknowledgement was lost.
-- This does **not** provide exactly-once Telegram delivery, automatic crash recovery or durable Worker dedup; those need separate end-to-end implementation and validation. No automatic retry daemon is started.
-
-## Gateway-side event idempotency (Draft)
-- Added Cloudflare Durable Object binding `TELEGRAM_EVENTS` in `wrangler.toml`: one object identity per incoming `event_id`; claim is serialized and persisted **before** Telegram HTTP send.
-- Repeated requests with the same event ID and matching payload return the recorded `ACCEPTED` result, or a fail-closed uncertain status, without resending. A conflicting payload with the same event ID receives HTTP 409.
-- An uncertain response, transport timeout or crash remains `UNKNOWN`; no blind replay. The implementation prioritizes **at-most-once attempt** over guaranteed delivery. It does **not** promise exactly-once external delivery, and it does **not** turn `UNKNOWN` into `ACCEPTED`.
-- Retention/cleanup, durable retry semantics, image parity, provider deployment and actual Telegram acceptance remain unverified. Durable Objects require an authorized Cloudflare account/plan and approved provisioning; no live resource has been created here.
+## Current minimal MVP decision (owner-approved)
+- Text notifications use a single authenticated HTTPS Worker relay and at most **two immediate attempts** using the same event_id. A rare duplicate may occur after ambiguous responses; this is acceptable for notifications, **never for trading commands**.
+- No mandatory SQLite outbox, manual UNKNOWN reconciliation, Durable Object, or paid durable storage on the critical send path. Previous outbox module exists only as an unused experiment and is **not configured or required**.
+- Telegram outages cannot stop Backend, Robot, Scanner, PAPER_AUTO or protected closes. Trading commands are still processed only by existing owner authorization and safety gates; do not automatically replay trading commands.
+- Gateway must be deployed and both network legs and an actual owner-received message verified before claiming READY. Unit tests and security validation still required; this branch is NOT deployed.
