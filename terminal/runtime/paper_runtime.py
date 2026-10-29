@@ -4618,7 +4618,38 @@ class PaperRuntime:
                 try:
                     proof = self.store.prove_box_owned_position(source_id.strip())
                 except Exception:
-                    unresolved_candidate_ids.append(record.candidate_id)
+                    # A linked, never-started Box can lack its immutable
+                    # baseline. Only retire after proving *no* owned orders,
+                    # symbol fills, working orders or exposure; otherwise
+                    # preserve fail-closed reconciliation.
+                    try:
+                        never_started = (
+                            record.robot_state.get("phase") == "BOX_ENTRY_READY"
+                            and self.store.prove_box_never_started_flat(source_id.strip())
+                        )
+                    except Exception:
+                        never_started = False
+                    if not never_started:
+                        unresolved_candidate_ids.append(record.candidate_id)
+                        continue
+                    state = dict(record.robot_state or {})
+                    box_execution = dict(state.get("execution") or {})
+                    box_execution["stopped_without_entry_reason"] = (
+                        "RECONCILED_NEVER_STARTED_BOX_NO_BASELINE_FLAT"
+                    )
+                    state["execution"] = box_execution
+                    try:
+                        self.store.save_robot_candidate_state(
+                            record.candidate_id,
+                            status="INVALIDATED",
+                            robot_state=state,
+                            expected_revision=record.state_revision,
+                            updated_at_ms=int(time.time() * 1000),
+                        )
+                    except Exception:
+                        unresolved_candidate_ids.append(record.candidate_id)
+                        continue
+                    terminalized_candidate_ids.append(record.candidate_id)
                     continue
                 if proof.remaining_quantity > 0:
                     still_pending_protection.append(record.candidate_id)
