@@ -30,3 +30,8 @@ This prototype intentionally does not declare Telegram READY and does not solve 
 - Restricted `POST /v1/bot-method` supports only `answerCallbackQuery`, `setMyCommands`, `getChatMenuButton`, `setChatMenuButton`; it does not permit arbitrary Telegram methods or trading API operations.
 - `telegram_monitoring._telegram_request` uses the gateway only when opted in; existing direct behavior remains the default.
 - **Not a deployed or accepted solution:** callbacks and full workflows still depend on additional direct Telegram API uses, photos remain direct, durable delivery is absent, Worker hosting and endpoint are unverified. No production rollout.
+
+## Expanded transport slice
+- The existing Telegram Web App menu setter now uses the constrained `setChatMenuButton` Gateway method when enabled.
+- `send_photo_by_file_id` now supports Gateway transport for a known Telegram file ID without uploading new media. This path rejects photo keyboards until the full supported contract is implemented.
+- Uploads of local image files remain direct and cannot work through the blocked VPS network. The durable outbox/deduplication and deployment remain outstanding. No production acceptance yet.
