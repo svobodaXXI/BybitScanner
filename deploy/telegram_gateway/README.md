@@ -35,3 +35,8 @@ This prototype intentionally does not declare Telegram READY and does not solve 
 - The existing Telegram Web App menu setter now uses the constrained `setChatMenuButton` Gateway method when enabled.
 - `send_photo_by_file_id` now supports Gateway transport for a known Telegram file ID without uploading new media. This path rejects photo keyboards until the full supported contract is implemented.
 - Uploads of local image files remain direct and cannot work through the blocked VPS network. The durable outbox/deduplication and deployment remain outstanding. No production acceptance yet.
+
+## Image upload (GitHub-only implementation)
+- `telegram_bot.send_photo` now routes PNG/JPEG uploads through authenticated `POST /v1/photo-upload` when Gateway is enabled. Maximum payload is 2,000,000 bytes; other formats and larger charts fail closed, without retrying via blocked direct API.
+- The Gateway returns the Telegram API response; successful API acceptance does not certify owner-visible delivery. Photo keyboards are still unsupported, and durable outbox/retry/dedup is not implemented.
+- **Do not deploy yet:** Worker/Gateway reachability and actual message delivery remain unverified; security review and complete tests outstanding.
