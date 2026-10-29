@@ -101,25 +101,107 @@ class ReentryDiaryTests(unittest.TestCase):
         self.assertEqual(item.attempts[0].exit_reason, "STOP")
         self.assertEqual(str(item.attempts[0].fees_costs_usdt), "0.5")
 
-    def test_unfilled_candidates_do_not_count_as_filled_entry(self):
-        con = self._connect()
-        self._campaign(con)
-        self._candidate(con, "unfilled-retry", "b")
-        # An unfilled/cancelled reservation may reuse the same *potential*
-        # slot, but can never be mistaken for an executed trade.
+    def _second_attempt(self, con, *, attempt_index=2, reserved_at_ms=360):
+        self._candidate(con, "retry-candidate", "b")
         con.execute(
             """INSERT INTO robot_reentry_attempts (
-                trading_account_id,campaign_id,attempt_index,candidate_id,
-                reserved_risk_usdt,previous_stop_exec_id,reserved_at_ms)
-                VALUES ('paper','campaign-1',2,'unfilled-retry','2','exec-stop-1',360)"""
+               trading_account_id,campaign_id,attempt_index,candidate_id,
+               reserved_risk_usdt,previous_stop_exec_id,reserved_at_ms)
+               VALUES ('paper','campaign-1',?,'retry-candidate','2',
+                       'exec-stop-1',?)""", (attempt_index, reserved_at_ms),
         )
+
+    def _second_closed_trade(self, con, *, signal_at=350, direction="LONG"):
+        con.execute(
+            """INSERT INTO robot_trades (
+               trade_id,trading_account_id,candidate_id,symbol,direction,
+               pattern,source_timeframe,signal_time_ms,entry_time_ms,entry_path,
+               actual_wv,average_entry,stop_price,take_price,
+               exit_time_ms,exit_price,exit_reason,realized_pnl_usdt,
+               realized_pnl_pct,fees_costs_usdt,version,created_at_ms,
+               updated_at_ms,entry_quantity,entry_position_version
+            ) VALUES ('trade-2','paper','retry-candidate','LABUSDT',?,
+                      'L-shape','1',?,400,'LIMIT','1','1','0.9','1.2',
+                      500,'0.95','TAKE','2','2','0.3',2,400,510,'30',3)""",
+            (direction, signal_at),
+        )
+
+    def test_unfilled_first_candidate_does_not_count_as_filled_entry(self):
+        con = self._connect()
+        self._campaign(con)
         con.commit()
         con.close()
         campaign = ReentryDiaryReader(self.path).load()[0]
         self.assertEqual(campaign.filled_attempt_count, 0)
         self.assertIsNone(campaign.known_net_pnl_usdt)
         self.assertEqual([a.status for a in campaign.attempts],
-                         ["RESERVED_OR_UNFILLED", "RESERVED_OR_UNFILLED"])
+                         ["RESERVED_OR_UNFILLED"])
+
+    def test_second_attempt_can_use_new_pattern_after_proven_stop(self):
+        con = self._connect()
+        self._campaign(con)
+        self._closed_trade(con)
+        self._second_attempt(con)
+        self._second_closed_trade(con)
+        con.commit()
+        con.close()
+        campaign = ReentryDiaryReader(self.path).load()[0]
+        self.assertEqual(campaign.filled_attempt_count, 2)
+        self.assertEqual([a.pattern for a in campaign.attempts], ["MIRROR", "L-shape"])
+        self.assertEqual([a.exit_reason for a in campaign.attempts], ["STOP", "TAKE"])
+        self.assertEqual(str(campaign.known_net_pnl_usdt), "-0.3")
+
+    def test_retry_without_closed_stop_must_not_be_reported_valid(self):
+        con = self._connect()
+        self._campaign(con)
+        self._second_attempt(con)
+        con.commit()
+        con.close()
+        with self.assertRaisesRegex(Exception, "prior closed STOP"):
+            ReentryDiaryReader(self.path).load()
+
+    def test_non_stop_exit_cannot_support_retry(self):
+        con = self._connect()
+        self._campaign(con)
+        self._closed_trade(con)
+        con.execute("UPDATE robot_trades SET exit_reason='TAKE' WHERE trade_id='trade-1'")
+        self._second_attempt(con)
+        con.commit()
+        con.close()
+        with self.assertRaisesRegex(Exception, "prior closed STOP"):
+            ReentryDiaryReader(self.path).load()
+
+    def test_attempt_index_duplicate_fails_closed(self):
+        con = self._connect()
+        self._campaign(con)
+        self._closed_trade(con)
+        self._second_attempt(con, attempt_index=1)
+        con.commit()
+        con.close()
+        with self.assertRaisesRegex(Exception, "attempt indexes"):
+            ReentryDiaryReader(self.path).load()
+
+    def test_retry_trade_direction_conflict_fails_closed(self):
+        con = self._connect()
+        self._campaign(con)
+        self._closed_trade(con)
+        self._second_attempt(con)
+        self._second_closed_trade(con, direction="SHORT")
+        con.commit()
+        con.close()
+        with self.assertRaisesRegex(Exception, "differs from campaign"):
+            ReentryDiaryReader(self.path).load()
+
+    def test_retry_signal_cannot_predate_stop(self):
+        con = self._connect()
+        self._campaign(con)
+        self._closed_trade(con)
+        self._second_attempt(con)
+        self._second_closed_trade(con, signal_at=300)
+        con.commit()
+        con.close()
+        with self.assertRaisesRegex(Exception, "predates prior STOP"):
+            ReentryDiaryReader(self.path).load()
 
     def test_read_only_diary_does_not_create_missing_database(self):
         missing = self.path.with_name("missing.sqlite3")
