@@ -22,5 +22,5 @@ This prototype intentionally does not declare Telegram READY and does not solve 
 ## Current integration slice
 - `telegram_bot.send_message` opts into the gateway only when `BYBITSCANNER_TELEGRAM_GATEWAY_URL` is set; otherwise original direct Bot API transport remains unchanged.
 - Set `BYBITSCANNER_TELEGRAM_GATEWAY_SECRET` (same bearer key as Worker) and `TELEGRAM_CHAT_ID` in the Telegram service's protected environment. No secrets in repository. The client excludes inherited system SOCKS proxies for the Gateway HTTPS hop.
-- Only plain-text messages are supported; `reply_markup` fails closed and photo, menu, and `getUpdates` calls still use direct Telegram API and remain blocked on this VPS. **Do not deploy this slice as an operational fix.**
+- Text messages now support a constrained subset of inline keyboards (`callback_data`, HTTPS `url` and HTTPS `web_app`); photo, menu configuration, and `getUpdates` calls still use direct Telegram API and remain blocked on this VPS. **Do not deploy this slice as an operational fix.**
 - Existing owner commands and monitoring require an authenticated inbound relay and expanded Bot API coverage before this can replace current Telegram transport.
