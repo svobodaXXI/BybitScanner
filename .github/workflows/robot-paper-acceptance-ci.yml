@@ -29,6 +29,7 @@ on:
       - "terminal/api/**"
       - "tests/test_robot_paper_acceptance.py"
       - "tests/test_stop_reentry_paper_e2e.py"
+      - "tests/test_stop_reentry_scanner_lshape.py"
       - "tests/runtime_replay.py"
       - "tests/test_runtime_replay.py"
       - "tests/fixtures/runtime_replays/**"
@@ -161,6 +162,8 @@ jobs:
           tests/test_retest_account_risk.py
       - name: Real STOP retry PAPER LIMIT fill, TAKE, Trading Diary and restart
         run: python -m pytest -q tests/test_stop_reentry_paper_e2e.py
+      - name: Real Scanner L-shape reentry signal and stale-breakout rejection
+        run: python -m pytest -q tests/test_stop_reentry_scanner_lshape.py
       - name: Run Runtime Replay contract
         run: python -m unittest -v tests.test_runtime_replay
       - name: Run deterministic Robot PAPER acceptance
