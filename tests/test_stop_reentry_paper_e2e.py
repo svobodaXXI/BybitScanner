@@ -23,6 +23,8 @@ from terminal.application.robot_autopilot_shadow import (
 )
 from terminal.application.robot_control import start_robot
 from terminal.diary.reentry import ReentryDiaryReader
+from terminal.runtime.closed_candle_cache import CachedClosedCandleProvider
+from terminal.runtime.scanner_process import run_scan_pass_in_child_process
 from terminal.domain.models import Category, PositionKey, Symbol
 from terminal.persistence.sqlite_store import SQLiteStore
 from tests.test_mirror_standalone_paper_e2e import (
@@ -47,7 +49,7 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
             closed_candle = _RobotCandle()
             book = _MutableBookProvider()
             book.set(SYMBOL, bid=Decimal("105.3"), ask=Decimal("105.4"))
-            runtime, instrument = self.runtime(closed_candle, book)
+            runtime, instrument = self.runtime(CachedClosedCandleProvider(fetch=closed_candle, max_age_s=0), book)
             try:
                 self.assertEqual(start_robot(database_path=self.db).recovery_status, "READY")
                 store = SQLiteStore.open(self.db)
@@ -119,65 +121,51 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                     ACCOUNT, Symbol(SYMBOL),
                 )))
 
-                # Real L-shape Scanner detector, using a fresh *closed* 5m
-                # breakout after the authoritative STOP. Formation candles
-                # may precede STOP, but the last confirming close must follow.
-                new_id = "reentry-l-shape-after-stop"
-                closed = _long_shape().copy()
+                # Spawn the actual Scanner child. It persists the newly
+                # detected post-STOP L-shape and relays its ID through the
+                # production pipe to PaperRuntime's PAPER_AUTO dispatcher.
                 breakout_open = stopped.exit_time_ms - FIVE + 1
-                closed["time"] = [
-                    breakout_open - FIVE * (len(closed) - 1 - i)
-                    for i in range(len(closed))
+                candles = _long_shape().copy()
+                candles["time"] = [
+                    breakout_open - FIVE * (len(candles) - 1 - i)
+                    for i in range(len(candles))
                 ]
-                open_bar = closed.iloc[-1:].copy()
-                open_bar["time"] += FIVE
-                open_bar[["open", "high", "low", "close"]] = 9999.0
-                observation = l_shape_scanner.observe_l_shape(
-                    SYMBOL, pd.concat([closed, open_bar], ignore_index=True),
-                    timeframe="5", chart_dir=self.root,
-                )
-                self.assertIsNotNone(observation)
-                self.assertEqual(
-                    observation["source_candle_time_ms"], breakout_open,
-                )
-                new_snapshot = l_shape_scanner._robot_signal_snapshot(
-                    SYMBOL, "5", observation,
-                )
-                self.assertEqual(
-                    new_snapshot["l_shape"]["breakout_time_ms"] + FIVE,
-                    stopped.exit_time_ms + 1,
-                )
-                robot_candidate_store.create_signal_snapshot(
-                    new_snapshot, timeframe="5", store_dir=self.candidates,
-                    candidate_id=new_id,
+                runtime.call(lambda owner: owner.bind_autopilot_protection_health(
+                    lambda: True
+                ))
+                dispatcher = runtime.call(
+                    lambda owner: owner._dispatch_autopilot_shadow_scanner_candidate
                 )
                 book.set(SYMBOL, bid=Decimal("109.3"), ask=Decimal("109.4"))
-                # Confirmed candle must already be closed when admitted.
-                time.sleep(0.03)
-                runtime.call(lambda owner: None)
-                store = SQLiteStore.open(self.db)
-                try:
-                    admitted = admit_arrived_auto_candidate(
-                        store, ACCOUNT, source=SOURCE_SCANNER, candidate_ref=new_id,
-                        protection_healthy=lambda: True,
-                        candidate_fresh=lambda *_: True,
-                        candidate_store_dir=self.candidates,
-                        clock_ms=lambda: int(time.time() * 1000),
-                        daily_loss_gate_enabled=False,
+                def scanner_candles(symbol, timeframe, limit, minimum=2):
+                    return candles
+                with mock.patch("analyzer.candles.load_candles", scanner_candles), \
+                        mock.patch.dict(os.environ, {
+                            "REENTRY_CHILD_CANDIDATES": str(self.candidates),
+                            "REENTRY_CHILD_CHARTS": str(self.root),
+                            "REENTRY_CHILD_BREAKOUT": str(breakout_open),
+                        }):
+                    run_scan_pass_in_child_process(
+                        target="tests.test_stop_reentry_child_ipc:_child_scan_lshape",
+                        robot_candidate_observer=dispatcher,
                     )
-                    self.assertIsNotNone(admitted)
-                    self.assertEqual(admitted.result.outcome, OUTCOME_ALLOW, admitted.result)
-                    self.assertTrue(admitted.candidate_created)
-                    rows = store._connection.execute(
-                        """SELECT attempt_index,candidate_id,previous_stop_exec_id
-                           FROM robot_reentry_attempts ORDER BY attempt_index"""
-                    ).fetchall()
-                    self.assertEqual([(r[0], r[1]) for r in rows], [
-                        (1, first_id), (2, new_id),
-                    ])
-                    self.assertIsNotNone(rows[1]["previous_stop_exec_id"])
-                finally:
-                    store.close()
+                def admitted_retry():
+                    decisions = runtime.call(
+                        lambda owner: owner.store.load_robot_auto_decisions(ACCOUNT)
+                    )
+                    for d in reversed(decisions):
+                        if d.resulting_candidate_id != first_id and d.outcome == OUTCOME_ALLOW:
+                            return d.resulting_candidate_id
+                    return None
+                new_id = _wait_until(admitted_retry)
+                self.assertEqual(candidate(new_id).status, "APPROVED")
+                rows = runtime.call(lambda owner: owner.store._connection.execute(
+                    """SELECT attempt_index,candidate_id,previous_stop_exec_id
+                       FROM robot_reentry_attempts ORDER BY attempt_index"""
+                ).fetchall())
+                self.assertEqual([(r[0], r[1]) for r in rows],
+                                 [(1, first_id), (2, new_id)])
+                self.assertIsNotNone(rows[1]["previous_stop_exec_id"])
 
                 # Real L-shape Robot monitor must see its own new retest,
                 # then submit a new one-WV LIMIT. No extra open position existed
