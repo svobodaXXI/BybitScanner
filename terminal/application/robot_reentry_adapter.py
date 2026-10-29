@@ -14,6 +14,7 @@ from typing import Mapping, Any
 import robot_l_shape
 import robot_state_machine
 from scanner_geometry_cursor import CURSOR_VERSION
+from terminal.application.robot_reentry_thesis import verified_same_thesis
 from terminal.application.robot_admission import RobotReentryAdmissionRequest
 from terminal.application.robot_portfolio import RO_USDT
 from terminal.domain.models import TradingAccountId, Symbol
@@ -235,6 +236,18 @@ def automatic_reentry_proposal(
         if last["exit_reason"] == "STOP":
             if last["exec_id"] is None:
                 raise PersistenceError("STOP protection execution not proven")
+            previous = store.get_robot_candidate(last["candidate_id"])
+            if (previous is None
+                    or previous.trading_account_id != account
+                    or previous.symbol != symbol
+                    or not verified_same_thesis(
+                        previous_candidate_id=previous.candidate_id,
+                        previous_snapshot_sha256=previous.snapshot_sha256,
+                        previous_snapshot=previous.signal_snapshot,
+                        new_snapshot=snapshot,
+                        direction=evidence.direction,
+                    )):
+                raise PersistenceError("cross-pattern frozen thesis lineage unproven")
             if len(rows) >= CAMPAIGN_MAX_TRADES:
                 raise PersistenceError("STOP reentry campaign exhausted")
             return RobotReentryAdmissionRequest(
