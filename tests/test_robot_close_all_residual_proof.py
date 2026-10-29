@@ -50,6 +50,14 @@ def fake_runtime(*, robot_symbols=("BOTUSDT",), remaining=(),
             mode="ROBOT_RUNNING", recovery_status="READY", version=7,
         )),
         update_robot_runtime_state=Mock(),
+        # CR-ROBOT-CLOSE-ALL-MAX-QTY-001: robot_close_all() re-reads the
+        # position after a COMPLETED chunk to decide whether to submit
+        # another one. Already flat here, so it stops after the one chunk
+        # these tests expect.
+        get_position_projection=Mock(side_effect=[
+            SimpleNamespace(quantity=SimpleNamespace(value=Decimal("2"))),
+            *[SimpleNamespace(quantity=SimpleNamespace(value=Decimal(0))) for _ in range(20)],
+        ]),
     )
     close = Mock(side_effect=lambda request, *, identity=None: CommandResult(
         request.client_action_id.value, status, "test", "test",
@@ -65,8 +73,11 @@ def fake_runtime(*, robot_symbols=("BOTUSDT",), remaining=(),
         _account_id=ACCOUNT,
         store=store,
         _robot_full_close=close,
-        _robot_prepare_manual_close=Mock(side_effect=lambda candidate, request, identity: (
+        _robot_prepare_manual_close=Mock(side_effect=lambda candidate, request, identity, chunk_index=0: (
             request, identity,
+        )),
+        _instrument_provider=Mock(return_value=SimpleNamespace(
+            max_market_order_quantity=Decimal("999999"), quantity_step=Decimal("0.0001"),
         )),
         _robot_finalize_manual_close=Mock(side_effect=lambda candidate: (
             close.call_count > 0
@@ -86,6 +97,25 @@ def perform_close(runtime):
 
 
 class RobotCloseAllResidualProofTests(unittest.TestCase):
+    def test_oversized_position_chunks_from_first_order(self):
+        runtime, store, close, inventory = fake_runtime()
+        runtime._instrument_provider.return_value = SimpleNamespace(
+            max_market_order_quantity=Decimal("5000"),
+            quantity_step=Decimal("1"),
+        )
+        runtime.store.get_position_projection = Mock(side_effect=[
+            SimpleNamespace(quantity=SimpleNamespace(value=Decimal("5410"))),
+            SimpleNamespace(quantity=SimpleNamespace(value=Decimal("410"))),
+            SimpleNamespace(quantity=SimpleNamespace(value=Decimal(0))),
+        ])
+        response = perform_close(runtime)
+        self.assertEqual(close.call_count, 2)
+        self.assertEqual(
+            [call.args[0].quantity for call in close.call_args_list],
+            [Decimal("5000"), Decimal("410")],
+        )
+        self.assertEqual(response.positions, ())
+
     def test_completed_command_with_remaining_owned_position_requires_reconcile(self):
         runtime, store, close, inventory = fake_runtime(
             remaining=(("BOTUSDT", "2.50"),),

@@ -70,7 +70,9 @@ from terminal.application.live_account_reconciliation import (
     LiveAccountReconciliationError,
 )
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
-from terminal.application.robot_manual_close_proof import prove_robot_manual_close
+from terminal.application.robot_manual_close_proof import (
+    manual_close_intent_links, prove_robot_manual_close,
+)
 from terminal.application.paper_close_all_report import (
     paper_close_all_market_link, unproven, verified_manual_close,
     verified_robot_close,
@@ -3959,12 +3961,25 @@ class PaperRuntime:
 
     def _robot_prepare_manual_close(
         self, candidate, request: FullCloseCommandRequest,
-        identity: CommandIdentityCandidate,
+        identity: CommandIdentityCandidate, *, chunk_index: int = 0,
     ) -> tuple[FullCloseCommandRequest, CommandIdentityCandidate]:
         """Latch the exact non-Box close identity before any Market dispatch.
 
-        A subsequent confirmation or restart reuses the first durable intent,
-        never a new execution identity while this candidate remains OPEN.
+        CR-ROBOT-CLOSE-ALL-MAX-QTY-001: a position whose confirmed quantity
+        exceeds the instrument's own maximum Market order quantity closes as
+        an ordered sequence of chunks instead of one order. ``chunk_index``
+        selects which chunk this call latches/reuses. Chunk 0 performs the
+        original one-time attestation against the trade's entry, unchanged
+        from before chunking existed. A later chunk only extends the
+        already-attested sequence -- it never re-attests entry_quantity or
+        entry_position_version, since the position has legitimately moved by
+        this same close's own prior chunks, not by anything else.
+
+        A subsequent confirmation or restart reuses each chunk's first
+        durable intent, never a new execution identity for the same chunk
+        while this candidate remains OPEN. A pre-chunking (single-link)
+        intent from an older build is read as an already-latched chunk 0 and
+        extended from there, never re-derived.
         """
         trade = self.store.get_open_robot_trade_for_symbol(
             self._paper_account_id, candidate.symbol,
@@ -3989,21 +4004,67 @@ class PaperRuntime:
                 or intent.get("symbol") != trade.symbol.value
                 or intent.get("entry_quantity") != str(trade.entry_quantity)
                 or intent.get("entry_position_version") != trade.entry_position_version
-                or not isinstance(intent.get("client_action_id"), str)
-                or not isinstance(intent.get("command_id"), str)
-                or not isinstance(intent.get("order_link_id"), str)
             ):
                 raise RuntimeError("durable Robot manual close intent conflicts with trade")
-            return (
-                FullCloseCommandRequest(
-                    ClientActionId(intent["client_action_id"]), trade.symbol.value,
-                ),
-                CommandIdentityCandidate(
-                    CommandId(intent["command_id"]), intent["order_link_id"],
-                ),
+            chunks = intent.get("chunks")
+            if chunks is None:
+                legacy_link = intent.get("order_link_id")
+                if (
+                    not isinstance(intent.get("client_action_id"), str)
+                    or not isinstance(intent.get("command_id"), str)
+                    or not isinstance(legacy_link, str)
+                ):
+                    raise RuntimeError("Robot manual close intent is corrupt")
+                chunks = [{
+                    "client_action_id": intent["client_action_id"],
+                    "command_id": intent["command_id"],
+                    "order_link_id": legacy_link,
+                }]
+            elif not isinstance(chunks, list):
+                raise RuntimeError("Robot manual close intent is corrupt")
+            if chunk_index < len(chunks):
+                existing = chunks[chunk_index]
+                if (
+                    not isinstance(existing, Mapping)
+                    or not isinstance(existing.get("client_action_id"), str)
+                    or not isinstance(existing.get("command_id"), str)
+                    or not isinstance(existing.get("order_link_id"), str)
+                ):
+                    raise RuntimeError("Robot manual close intent is corrupt")
+                return (
+                    FullCloseCommandRequest(
+                        ClientActionId(existing["client_action_id"]), trade.symbol.value,
+                        quantity=request.quantity,
+                    ),
+                    CommandIdentityCandidate(
+                        CommandId(existing["command_id"]), existing["order_link_id"],
+                    ),
+                )
+            if chunk_index != len(chunks):
+                raise RuntimeError("Robot manual close chunk sequence is out of order")
+            execution["robot_close_all_manual_intent"] = {
+                "trade_id": trade.trade_id,
+                "candidate_id": fresh.candidate_id,
+                "symbol": trade.symbol.value,
+                "entry_quantity": str(trade.entry_quantity),
+                "entry_position_version": trade.entry_position_version,
+                "chunks": [*chunks, {
+                    "client_action_id": request.client_action_id.value,
+                    "command_id": identity.command_id.value,
+                    "order_link_id": identity.order_link_id,
+                }],
+            }
+            state["execution"] = execution
+            self.store.save_robot_candidate_state(
+                fresh.candidate_id, status="OPEN", robot_state=state,
+                expected_revision=fresh.state_revision,
+                updated_at_ms=int(time.time() * 1000),
             )
+            return request, identity
         if intent is not None:
             raise RuntimeError("Robot manual close intent is corrupt")
+        if chunk_index != 0:
+            raise RuntimeError("Robot manual close chunk sequence must start at 0")
         position = self.store.get_position_projection(PositionKey(
             self._paper_account_id, Category.LINEAR, trade.symbol, 0,
         ))
@@ -4023,9 +4084,11 @@ class PaperRuntime:
             "symbol": trade.symbol.value,
             "entry_quantity": str(trade.entry_quantity),
             "entry_position_version": trade.entry_position_version,
-            "client_action_id": request.client_action_id.value,
-            "command_id": identity.command_id.value,
-            "order_link_id": identity.order_link_id,
+            "chunks": [{
+                "client_action_id": request.client_action_id.value,
+                "command_id": identity.command_id.value,
+                "order_link_id": identity.order_link_id,
+            }],
         }
         state["execution"] = execution
         self.store.save_robot_candidate_state(
@@ -4036,7 +4099,7 @@ class PaperRuntime:
         return request, identity
 
     def _robot_finalize_manual_close(self, candidate) -> bool:
-        """Finalize one MANUAL Robot trade only from its persisted PAPER fill."""
+        """Finalize one MANUAL Robot trade only from its persisted PAPER fill(s)."""
         fresh = self.store.get_robot_candidate(candidate.candidate_id)
         if fresh is None or fresh.status != "OPEN":
             return False
@@ -4044,8 +4107,8 @@ class PaperRuntime:
         intent = execution_state.get("robot_close_all_manual_intent")
         if not isinstance(intent, Mapping):
             return False
-        link = intent.get("order_link_id")
-        if not isinstance(link, str) or not link.startswith("tw_") or len(link) != 36:
+        links = manual_close_intent_links(intent)
+        if links is None:
             return False
         trade = self.store.get_open_robot_trade_for_symbol(
             self._paper_account_id, fresh.symbol,
@@ -4056,14 +4119,20 @@ class PaperRuntime:
             self._paper_account_id, Category.LINEAR, fresh.symbol, 0,
         )
         position = self.store.get_position_projection(position_key)
-        fill = self.store.get_execution(ExecutionDedupKey(
-            self._paper_account_id, Category.LINEAR,
-            ExecutionId("paper-exec-" + link),
-        ))
-        entry_fees = self._robot_entry_fees(trade) if fill is not None else None
+        fills = tuple(
+            self.store.get_execution(ExecutionDedupKey(
+                self._paper_account_id, Category.LINEAR,
+                ExecutionId("paper-exec-" + link),
+            ))
+            for link in links
+        )
+        entry_fees = (
+            self._robot_entry_fees(trade)
+            if all(fill is not None for fill in fills) else None
+        )
         proof = prove_robot_manual_close(
             trade=trade, candidate=fresh, position=position,
-            fill=fill, entry_fees=entry_fees,
+            fills=fills, entry_fees=entry_fees,
         )
         if proof is None:
             return False
@@ -4226,19 +4295,41 @@ class PaperRuntime:
                     # stable order/exec identity replay. Bind it to the same
                     # operator action + symbol instead of generating a fresh
                     # order on ambiguous HTTP retry.
+                    client_action_id = ClientActionId(f"robot-close-all-{digest}")
+                    # Cap chunk ZERO before latching its durable identity or
+                    # dispatching the first Market order. Otherwise an oversized
+                    # position fails above_maximum_quantity before the chunk loop.
+                    instrument = self._instrument_provider(symbol)
+                    position_key = PositionKey(
+                        self._account_id, Category.LINEAR, candidate.symbol, 0,
+                    )
+                    position = self.store.get_position_projection(position_key)
+                    if position is None or position.quantity.value <= 0:
+                        raise RuntimeError("Robot close quantity cannot be confirmed")
+                    first_quantity = min(
+                        position.quantity.value, instrument.max_market_order_quantity,
+                    )
+                    step = instrument.quantity_step
+                    if step <= 0:
+                        raise RuntimeError("invalid instrument quantity step")
+                    first_quantity = (first_quantity // step) * step
+                    if first_quantity <= 0:
+                        raise RuntimeError("Robot close chunk below quantity step")
                     order_link_id = f"tw_{digest}{sum(bytes.fromhex(digest)) & 0xF:x}"
                     manual_request, manual_identity = self._robot_prepare_manual_close(
                         candidate,
                         FullCloseCommandRequest(
-                            ClientActionId(f"robot-close-all-{digest}"), symbol,
+                            client_action_id, symbol, quantity=first_quantity,
                         ),
                         CommandIdentityCandidate(
                             CommandId(f"cmd_{digest}"), order_link_id,
                         ),
+                        chunk_index=0,
                     )
                     if self._robot_finalize_manual_close(candidate):
-                        # A previous HTTP delivery filled this exact durable
-                        # intent; prove it without submitting another order.
+                        # A previous HTTP delivery filled every chunk of this
+                        # exact durable intent; prove it without submitting
+                        # another order.
                         result = CommandResult(
                             manual_request.client_action_id.value,
                             CommandResultStatus.COMPLETED,
@@ -4249,6 +4340,72 @@ class PaperRuntime:
                         result = self._robot_full_close(
                             manual_request, identity=manual_identity,
                         )
+                        # CR-ROBOT-CLOSE-ALL-MAX-QTY-001: full_close() caps a
+                        # chunk at the confirmed position quantity; PreTradeGuard
+                        # separately caps it at the instrument's own maximum
+                        # Market order quantity. A position larger than that
+                        # maximum is therefore never fully closed by the chunk
+                        # above alone -- keep submitting further bounded chunks
+                        # of this SAME close while the position stays open and
+                        # every chunk keeps completing; stop at the first chunk
+                        # that does not (existing fail-closed escalation below
+                        # is unchanged either way).
+                        if result.status == CommandResultStatus.COMPLETED:
+                            instrument = self._instrument_provider(symbol)
+                            position_key = PositionKey(
+                                self._account_id, Category.LINEAR, candidate.symbol, 0,
+                            )
+                            chunk_index = 1
+                            # Bounded defensively; a real sequence is a handful
+                            # of chunks at most (position / instrument maximum).
+                            while chunk_index < 1000:
+                                position = self.store.get_position_projection(position_key)
+                                remaining = (
+                                    position.quantity.value if position is not None
+                                    else Decimal(0)
+                                )
+                                if remaining <= 0:
+                                    break
+                                chunk_quantity = (
+                                    remaining if remaining <= instrument.max_market_order_quantity
+                                    else instrument.max_market_order_quantity
+                                )
+                                step = instrument.quantity_step
+                                if step > 0:
+                                    chunk_quantity = (chunk_quantity // step) * step
+                                if chunk_quantity <= 0:
+                                    result = CommandResult(
+                                        manual_request.client_action_id.value,
+                                        CommandResultStatus.UNAVAILABLE,
+                                        "close_chunk_below_quantity_step",
+                                        "remaining quantity does not reach one quantity-step chunk",
+                                        None, True,
+                                    )
+                                    break
+                                chunk_digest = hashlib.sha256(
+                                    f"{request.client_action_id.value}\0{symbol}"
+                                    f"\0chunk{chunk_index}".encode("utf-8")
+                                ).hexdigest()[:32]
+                                chunk_link = (
+                                    f"tw_{chunk_digest}"
+                                    f"{sum(bytes.fromhex(chunk_digest)) & 0xF:x}"
+                                )
+                                chunk_request, chunk_identity = self._robot_prepare_manual_close(
+                                    candidate,
+                                    FullCloseCommandRequest(
+                                        client_action_id, symbol, quantity=chunk_quantity,
+                                    ),
+                                    CommandIdentityCandidate(
+                                        CommandId(f"cmd_{digest}_{chunk_index}"), chunk_link,
+                                    ),
+                                    chunk_index=chunk_index,
+                                )
+                                result = self._robot_full_close(
+                                    chunk_request, identity=chunk_identity,
+                                )
+                                if result.status != CommandResultStatus.COMPLETED:
+                                    break
+                                chunk_index += 1
                         if (
                             result.status == CommandResultStatus.COMPLETED
                             and not self._robot_finalize_manual_close(candidate)

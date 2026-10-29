@@ -145,6 +145,19 @@ class LiveMarketCommandResult:
 class FullCloseCommandRequest:
     client_action_id: ClientActionId
     symbol: str
+    # Caller-supplied cap for one chunk of a close that exceeds the
+    # instrument's own maximum Market order quantity (CR-ROBOT-CLOSE-ALL-
+    # MAX-QTY-001). None (default) means "close the entire confirmed
+    # position", exactly as before this field existed.
+    quantity: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        if self.quantity is not None and (
+            not isinstance(self.quantity, Decimal)
+            or not self.quantity.is_finite()
+            or self.quantity <= 0
+        ):
+            raise ValueError("quantity, if given, must be a positive finite Decimal")
 
 
 @dataclass(frozen=True, slots=True)

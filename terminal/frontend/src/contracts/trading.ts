@@ -39,6 +39,10 @@ export type LiveMarketCommandResponse = {
 export type FullCloseCommandRequest = {
   client_action_id: string;
   symbol: string;
+  // Caller-supplied cap for one chunk of a close that exceeds the
+  // instrument's own maximum Market order quantity. Backend-internal
+  // (CR-ROBOT-CLOSE-ALL-MAX-QTY-001); the frontend never sets it.
+  quantity?: string;
 };
 
 export type CloseAllCommandRequest = {

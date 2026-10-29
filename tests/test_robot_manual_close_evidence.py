@@ -42,9 +42,11 @@ def candidate(intent=True):
         "trade_id": "trade-one", "candidate_id": "candidate-one",
         "symbol": "BOTUSDT", "entry_quantity": "2",
         "entry_position_version": 3,
-        "client_action_id": "robot-close-all-first",
-        "command_id": "cmd_" + "a" * 32,
-        "order_link_id": LINK,
+        "chunks": [{
+            "client_action_id": "robot-close-all-first",
+            "command_id": "cmd_" + "a" * 32,
+            "order_link_id": LINK,
+        }],
     }
     return SimpleNamespace(
         candidate_id="candidate-one", symbol=SYMBOL, status="OPEN",
@@ -80,7 +82,7 @@ def fill():
 
 def proof(**overrides):
     values = dict(trade=trade(), candidate=candidate(), position=position(),
-                  fill=fill(), entry_fees=Decimal("0.02"))
+                  fills=(fill(),), entry_fees=Decimal("0.02"))
     values.update(overrides)
     return prove_robot_manual_close(**values)
 
@@ -111,18 +113,94 @@ class RobotManualCloseEvidenceTests(unittest.TestCase):
 
     def test_exec_id_and_order_id_must_match_first_durable_intent(self):
         bad = candidate()
-        bad.robot_state["execution"]["robot_close_all_manual_intent"]["order_link_id"] = (
-            "tw_" + "b" * 32 + "0"
-        )
+        bad.robot_state["execution"]["robot_close_all_manual_intent"]["chunks"][0][
+            "order_link_id"
+        ] = "tw_" + "b" * 32 + "0"
         self.assertIsNone(proof(candidate=bad))
         wrong_order = replace(fill(), order_id=OrderId("wrong-order"))
-        self.assertIsNone(proof(fill=wrong_order))
+        self.assertIsNone(proof(fills=(wrong_order,)))
 
     def test_neither_partial_fill_nor_mismatched_side_can_finalize(self):
+        # A single short chunk no longer sums to entry_quantity (2): this is
+        # exactly the CR-ROBOT-CLOSE-ALL-MAX-QTY-001 guard against accepting
+        # an incomplete chunk sequence as a finished close.
         bad_fill = replace(fill(), quantity=Quantity(Decimal("1")))
-        self.assertIsNone(proof(fill=bad_fill))
+        self.assertIsNone(proof(fills=(bad_fill,)))
         opposite = replace(fill(), side=OrderSide.BUY)
-        self.assertIsNone(proof(fill=opposite))
+        self.assertIsNone(proof(fills=(opposite,)))
+
+    def test_legacy_single_link_intent_schema_still_proves(self):
+        """A candidate latched by a pre-chunking build (singular order_link_id,
+        no 'chunks' list) must still prove its one already-filled close."""
+        legacy = candidate()
+        chunk = legacy.robot_state["execution"]["robot_close_all_manual_intent"].pop("chunks")[0]
+        legacy.robot_state["execution"]["robot_close_all_manual_intent"].update(chunk)
+        result = proof(candidate=legacy)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.realized_pnl_usdt, Decimal("4"))
+
+    def test_chunk_sequence_quantities_must_sum_to_exactly_entry_quantity(self):
+        # Two chunks that together exceed entry_quantity (2) must not prove,
+        # even if each chunk's own fields are individually well-formed.
+        two_chunks = candidate()
+        two_chunks.robot_state["execution"]["robot_close_all_manual_intent"]["chunks"].append({
+            "client_action_id": "robot-close-all-first",
+            "command_id": "cmd_" + "c" * 32,
+            "order_link_id": "tw_" + "c" * 32 + "0",
+        })
+        over_fill = Execution(
+            dedup_key=ExecutionDedupKey(
+                ACCOUNT, Category.LINEAR,
+                ExecutionId("paper-exec-tw_" + "c" * 32 + "0"),
+            ),
+            order_id=OrderId("paper-order-tw_" + "c" * 32 + "0"),
+            symbol=SYMBOL, side=OrderSide.SELL,
+            price=Price(Decimal("12")), quantity=Quantity(Decimal("1")),
+            fee=Decimal("0.01"), exchange_timestamp_ms=160,
+        )
+        over_flat = position()
+        over_flat.version = 5  # entry_position_version(3) + 2 chunks
+        over_flat.updated_at_ms = 160
+        self.assertIsNone(proof(
+            candidate=two_chunks, position=over_flat,
+            fills=(fill(), over_fill),
+        ))
+
+    def test_two_chunks_prove_one_close_with_volume_weighted_exit(self):
+        # CR-ROBOT-CLOSE-ALL-MAX-QTY-001: a position too large for one Market
+        # order closes as an ordered chunk sequence. Both chunks' fills must
+        # fold into one realized-economics proof, volume-weighted, not just
+        # the last chunk's own price.
+        two_chunks = candidate()
+        two_chunks.robot_state["execution"]["robot_close_all_manual_intent"]["chunks"].append({
+            "client_action_id": "robot-close-all-first",
+            "command_id": "cmd_" + "c" * 32,
+            "order_link_id": "tw_" + "c" * 32 + "0",
+        })
+        first_fill = replace(fill(), quantity=Quantity(Decimal("1")))
+        second_fill = Execution(
+            dedup_key=ExecutionDedupKey(
+                ACCOUNT, Category.LINEAR,
+                ExecutionId("paper-exec-tw_" + "c" * 32 + "0"),
+            ),
+            order_id=OrderId("paper-order-tw_" + "c" * 32 + "0"),
+            symbol=SYMBOL, side=OrderSide.SELL,
+            price=Price(Decimal("14")), quantity=Quantity(Decimal("1")),
+            fee=Decimal("0.02"), exchange_timestamp_ms=160,
+        )
+        flat_after_two = position()
+        flat_after_two.version = 5  # entry_position_version(3) + 2 chunks
+        flat_after_two.updated_at_ms = 160
+        result = proof(
+            candidate=two_chunks, position=flat_after_two,
+            fills=(first_fill, second_fill),
+        )
+        self.assertIsNotNone(result)
+        # Weighted exit: (1*12 + 1*14) / 2 = 13; gross = 2*(13-10) = 6.
+        self.assertEqual(result.exit_price, Decimal("13"))
+        self.assertEqual(result.realized_pnl_usdt, Decimal("6"))
+        self.assertEqual(result.fees_costs_usdt, Decimal("0.07"))  # 0.02 entry + 0.03 + 0.02
+        self.assertEqual(result.exit_time_ms, 160)
 
     def test_trade_owner_and_frozen_entry_quantity_must_match(self):
         bad = trade()
