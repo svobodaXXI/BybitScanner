@@ -13,6 +13,10 @@ import time
 from unittest import mock
 
 import robot_candidate_store
+import tests.test_telegram_delivery  # existing offline Scanner configuration stubs
+import l_shape_scanner
+import pandas as pd
+from tests.test_l_shape_detector import _long_shape
 from terminal.application.robot_autopilot import OUTCOME_ALLOW
 from terminal.application.robot_autopilot_shadow import (
     SOURCE_SCANNER, admit_arrived_auto_candidate,
@@ -115,30 +119,39 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                     ACCOUNT, Symbol(SYMBOL),
                 )))
 
-                # New, independently closed L-shape confirmation in the same
-                # directional structural corridor; NOT an automatic re-order
-                # of the old MIRROR signal. The mocked closed-candle clock is
-                # one moment after the confirmed STOP (no look-ahead).
+                # Real L-shape Scanner detector, using a fresh *closed* 5m
+                # breakout after the authoritative STOP. Formation candles
+                # may precede STOP, but the last confirming close must follow.
                 new_id = "reentry-l-shape-after-stop"
-                breakout = stopped.exit_time_ms - 60_000 + 1
-                new_snapshot = {
-                    "pattern": "L-shape", "symbol": SYMBOL,
-                    "scanner_source_timeframe": "1", "timeframe": "1",
-                    "robot_handoff_ready": True,
-                    "l_shape": {
-                        "direction": "LONG", "source_timeframe": "1",
-                        "breakout_time_ms": breakout,
-                        "reference": "105.2", "stop": "104.6",
-                        "structural_stop": "104.6", "stop_kind": "STRUCTURAL",
-                        "target": "109.9", "potential_percent": "4.4",
-                        "reward_risk": "5",
-                    },
-                }
+                closed = _long_shape().copy()
+                breakout_open = stopped.exit_time_ms - FIVE + 1
+                closed["time"] = [
+                    breakout_open - FIVE * (len(closed) - 1 - i)
+                    for i in range(len(closed))
+                ]
+                open_bar = closed.iloc[-1:].copy()
+                open_bar["time"] += FIVE
+                open_bar[["open", "high", "low", "close"]] = 9999.0
+                observation = l_shape_scanner.observe_l_shape(
+                    SYMBOL, pd.concat([closed, open_bar], ignore_index=True),
+                    timeframe="5", chart_dir=self.root,
+                )
+                self.assertIsNotNone(observation)
+                self.assertEqual(
+                    observation["source_candle_time_ms"], breakout_open,
+                )
+                new_snapshot = l_shape_scanner._robot_signal_snapshot(
+                    SYMBOL, "5", observation,
+                )
+                self.assertEqual(
+                    new_snapshot["l_shape"]["breakout_time_ms"] + FIVE,
+                    stopped.exit_time_ms + 1,
+                )
                 robot_candidate_store.create_signal_snapshot(
                     new_snapshot, timeframe="1", store_dir=self.candidates,
                     candidate_id=new_id,
                 )
-                book.set(SYMBOL, bid=Decimal("105.3"), ask=Decimal("105.4"))
+                book.set(SYMBOL, bid=Decimal("109.3"), ask=Decimal("109.4"))
                 # Confirmed candle must already be closed when admitted.
                 time.sleep(0.03)
                 runtime.call(lambda owner: None)
@@ -171,7 +184,7 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                 # at admission time and no direct order call is made here.
                 closed_candle.set({
                     "time_ms": stopped.exit_time_ms + 4,
-                    "high": "105.5", "low": "105.1", "close": "105.3",
+                    "high": "109.5", "low": "109.1", "close": "109.3",
                 })
                 second_order = _wait_until(lambda: limit(new_id))
                 self.assertNotEqual(first_order.order_id, second_order.order_id)
