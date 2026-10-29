@@ -169,10 +169,19 @@ structurally compatible with the same frozen thesis and direction.
   fees and known-cost net. The test restarts the exact same SQLite runtime
   after closure and proves no duplicate order/execution.
   The E2E is included in `robot-paper-acceptance-ci.yml`, not the thin
-  unit-only policy workflow.
-- **Remaining P0 blockers:** independently verify a real Scanner-emitted
-  *second* pattern after a STOP (the E2E uses a synthetic independently
-  confirmed L-shape candle/snapshot); finish validated double-bottom/top
+  unit-only policy workflow. A second test
+  `tests/test_stop_reentry_scanner_lshape.py` exercises the **actual**
+  `l_shape_scanner.observe_l_shape` detector on a fresh latest CLOSED
+  breakout and its immutable `_robot_signal_snapshot` to the canonical
+  previous STOP campaign. It separately proves that the same old breakout
+  is no longer emitted if a subsequent candle closes without a new signal.
+  Both tests passed together in GitHub Actions #40864436788; the full E2E
+  also proves per-trade fees and Diary aggregate net equal actual fills.
+- **Remaining P0 blockers:** the actual post-STOP second-pattern Scanner
+  process → callback/IPC → PAPER_AUTO → final fill must still be proven
+  end-to-end in a *single* replay (current tests separately prove the
+  Scanner detector/admission and the PAPER matcher lifecycle). Finish
+  validated double-bottom/top
   and candle confirmation adapters (#647); prove a new independent thesis
   after structural invalidation without resetting a live risk budget;
   pre-v26 STOP campaign attribution; further crash-during-open-or-pending
