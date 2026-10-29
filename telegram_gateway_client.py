@@ -35,33 +35,30 @@ def send_text(chat_id, text, *, reply_markup=None):
     if reply_markup is not None and not isinstance(reply_markup, dict):
         raise TelegramGatewayError("Invalid Gateway keyboard")
     event_id = secrets.token_urlsafe(24)
-    import telegram_gateway_outbox as outbox
-    outbox.enqueue(event_id, str(chat_id), text, reply_markup)
-    if not outbox.claim_pending(event_id):
-        raise TelegramGatewayError("Telegram event could not be claimed")
-    try:
-        session = requests.Session()
-        session.trust_env = False
-        response = session.post(
-            url.rstrip("/") if parsed.path.rstrip("/") == "/v1/send" else url.rstrip("/") + "/v1/send",
-            json={"event_id": event_id, "text": text, **({"reply_markup": reply_markup} if reply_markup is not None else {})},
-            headers={"Authorization": "Bearer " + key},
-            timeout=12,
-            allow_redirects=False,
-        )
-        result = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        outbox.mark(event_id, "UNKNOWN")
-        raise TelegramGatewayError("Gateway transport failed; delivery unknown") from exc
-    if not isinstance(result, dict) or response.status_code != 200 or result.get("ok") is not True:
-        outbox.mark(event_id, "UNKNOWN")
-        raise TelegramGatewayError("Gateway rejected message; delivery unknown")
-    if result.get("event_id") != event_id or result.get("stage") != "accepted_by_telegram_api":
-        outbox.mark(event_id, "UNKNOWN")
-        raise TelegramGatewayError("Gateway acknowledgement invalid")
-    outbox.mark(event_id, "ACCEPTED", result.get("telegram_message_id"))
-    return {"ok": True, "result": {"message_id": result.get("telegram_message_id")},
-            "delivery_stage": "accepted_by_telegram_api"}
+    last_error = None
+    for attempt in range(2):
+        try:
+            session = requests.Session()
+            session.trust_env = False
+            response = session.post(
+                url.rstrip("/") if parsed.path.rstrip("/") == "/v1/send" else url.rstrip("/") + "/v1/send",
+                json={"event_id": event_id, "text": text, **({"reply_markup": reply_markup} if reply_markup is not None else {})},
+                headers={"Authorization": "Bearer " + key},
+                timeout=12, allow_redirects=False,
+            )
+            result = response.json()
+            if (isinstance(result, dict) and response.status_code == 200 and
+                    result.get("ok") is True and result.get("event_id") == event_id and
+                    result.get("stage") == "accepted_by_telegram_api"):
+                return {"ok": True, "result": {"message_id": result.get("telegram_message_id")},
+                        "delivery_stage": "accepted_by_telegram_api"}
+            last_error = "gateway_rejected"
+            # Never retry a definite validation/authentication failure.
+            if response.status_code < 500:
+                break
+        except (requests.RequestException, ValueError):
+            last_error = "transport_unavailable"
+    raise TelegramGatewayError("Gateway delivery not confirmed: " + str(last_error))
 
 def get_updates(**params):
     """Relay polling through Gateway; VPS remains sole update consumer."""
