@@ -108,10 +108,13 @@ structurally compatible with the same frozen thesis and direction.
   Unique schema constraints forbid >3 slots or restarting the same frozen
   thesis to reset its risk budget.
 - **New opt-in slice:** `terminal.application.robot_reentry_adapter`
-  now derives a trusted admission request directly from immutable MIRROR and
-  L-shape frozen terms: MIRROR's *next* closed confirmation candle
+  now derives trusted admission proposals from immutable MIRROR, L-shape
+  and **1m Wedge** terms: MIRROR's *next* closed confirmation candle
   (`robot_l_shape.initialize_state` verifies the kind, identity and TF),
-  or L-shape's completed breakout candle. The adapter reserves the maximum
+  L-shape's completed breakout candle, or Wedge's exact 1m
+  `scanner_geometry_cursor` anchor + independently validated immutable
+  Robot geometry (not an envelope arrival timestamp). Wedge still waits
+  for its own breakout/retest before any actual order. The adapter reserves the maximum
   non-Box permitted STOP distance (1.5%) on the existing 250-USDT Robot RO
   plus two-sided fees and conservative adverse slippage. First admission
   freezes the three-attempt risk budget; subsequent matching direction STOP
@@ -124,13 +127,17 @@ structurally compatible with the same frozen thesis and direction.
   entry is refused. Existing unlinked Wedge/Box STOP cannot be treated as a
   first attempt in this opt-in slice: it fails closed until canonical
   backfill/adapters are built.
-- **Still missing P0:** Wedge and Box entry-ready closed-candle provenance,
-  exact instrument-specific risk plans and durable prior-campaign linkage.
+- **Still missing P0:** Box frozen-plan risk and closed-candle provenance;
+  5m-to-1m Wedge handoff assurance; unknown-cursor/stale Wedge candidates
+  remain outside this opt-in route. Generalized initial-campaign backfill
+  for already stopped pre-v26 Box/Wedge trades must be proven before
+  universal coverage. Exact instrument-specific loss/fees and durable
+  prior-campaign linkage still require PAPER acceptance.
   The standalone double-bottom/top detector and candle recognizer (#647)
   must independently produce verified candidates; no pattern guessing.
-  Wedge or Box arriving after a STOP currently uses its older normal
-  PAPER_AUTO path, so enabling the flag **is NOT safe or sufficient for
-  the owner's full universal 1+2 retry requirement**. Complete the universal
+  Wedge without the verified 1m cursor, or any Box plan, still uses its
+  older normal PAPER_AUTO path, so enabling the flag **is NOT safe or
+  sufficient for the owner's full universal 1+2 retry requirement**. Complete the universal
   dispatch enforcement and full PAPER replay/restart acceptance before
   enabling flag, merge or deploying to VPS.
 - **Reservation is not an executed attempt.** Preserve both identities:
@@ -148,8 +155,8 @@ structurally compatible with the same frozen thesis and direction.
   derived from existing statistics. Unknown funding/external costs stay
   unknown; known-cost net is not silently claimed to be complete net.
 
-- **Missing Wedge/Box and double-extremum adapters:** map their immutable
-  proven entry terms to the campaign without modifying detector geometry.
+- **Missing Box, higher-TF Wedge and double-extremum adapters:** map their
+  independently proven entry terms to the campaign without modifying geometry.
   Create #647 candle and double-bottom/top recognition only when verified;
   never infer a double-bottom from a STOP alone. For a new confirmed setup
   whose original structural thesis is no longer valid, create a separately
