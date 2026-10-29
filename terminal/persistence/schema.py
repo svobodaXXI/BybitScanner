@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -900,7 +900,61 @@ SCHEMA_V25_MIGRATION_STATEMENTS = (
     "ALTER TABLE robot_auto_decisions ADD COLUMN facts_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(facts_json) AND json_type(facts_json) = 'object')",
 )
 
-SCHEMA_STATEMENTS = (
+SCHEMA_V26_MIGRATION_STATEMENTS = (
+    # Same authoritative PAPER DB as Robot trades. The Diary reads these
+    # identities as a projection; no secondary journal or PnL ledger.
+    """
+    CREATE TABLE robot_reentry_campaigns (
+        trading_account_id TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        first_candidate_id TEXT NOT NULL,
+        frozen_thesis_sha256 TEXT NOT NULL,
+        original_risk_budget_usdt TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (trading_account_id, campaign_id),
+        UNIQUE (trading_account_id, first_candidate_id),
+        UNIQUE (trading_account_id, symbol, direction, frozen_thesis_sha256),
+        FOREIGN KEY (first_candidate_id) REFERENCES robot_candidates(candidate_id),
+        CHECK (direction IN ('LONG', 'SHORT')),
+        CHECK (length(frozen_thesis_sha256) = 64),
+        CHECK (created_at_ms >= 0)
+    ) WITHOUT ROWID
+    """,
+    """
+    CREATE TABLE robot_reentry_attempts (
+        trading_account_id TEXT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        attempt_index INTEGER NOT NULL,
+        candidate_id TEXT NOT NULL,
+        reserved_risk_usdt TEXT NOT NULL,
+        previous_stop_exec_id TEXT,
+        reserved_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (trading_account_id, campaign_id, candidate_id),
+        UNIQUE (trading_account_id, candidate_id),
+        UNIQUE (trading_account_id, campaign_id, attempt_index),
+        FOREIGN KEY (trading_account_id, campaign_id)
+            REFERENCES robot_reentry_campaigns(trading_account_id, campaign_id),
+        FOREIGN KEY (candidate_id) REFERENCES robot_candidates(candidate_id),
+        CHECK (attempt_index BETWEEN 1 AND 3),
+        CHECK ((attempt_index = 1 AND previous_stop_exec_id IS NULL)
+            OR (attempt_index > 1 AND length(previous_stop_exec_id) > 0)),
+        CHECK (reserved_at_ms >= 0)
+    ) WITHOUT ROWID
+    """,
+    """CREATE INDEX robot_reentry_attempts_campaign
+       ON robot_reentry_attempts(trading_account_id, campaign_id, attempt_index)""",
+    # Append-only attempt genealogy. Actual STOP/TAKE and financial costs
+    # remain in robot_trades, executions and protection obligations.
+    """CREATE TRIGGER robot_reentry_attempts_no_update BEFORE UPDATE
+       ON robot_reentry_attempts BEGIN SELECT RAISE(ABORT, 'attempt lineage immutable'); END""",
+    """CREATE TRIGGER robot_reentry_attempts_no_delete BEFORE DELETE
+       ON robot_reentry_attempts BEGIN SELECT RAISE(ABORT, 'attempt lineage immutable'); END""",
+)
+
+
+SCHEMA_STATEMENTS = ( 
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
     + SCHEMA_V3_MIGRATION_STATEMENTS
@@ -926,4 +980,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V23_MIGRATION_STATEMENTS
     + SCHEMA_V24_MIGRATION_STATEMENTS
     + SCHEMA_V25_MIGRATION_STATEMENTS
+    + SCHEMA_V26_MIGRATION_STATEMENTS
 )

@@ -60,8 +60,11 @@ class TerminalPersistenceTests(unittest.TestCase):
 
     @staticmethod
     def drop_v24_autopilot_objects(connection):
-        # Downgrade fixtures that start from today's schema must remove v24
-        # objects before replaying an older -> current migration chain.
+        # Downgrade fixtures built from the current schema must drop *all*
+        # newer objects before replaying an older-to-current migration chain.
+        # v26 attempt lineage is append-only metadata in the canonical DB.
+        connection.execute("DROP TABLE IF EXISTS robot_reentry_attempts")
+        connection.execute("DROP TABLE IF EXISTS robot_reentry_campaigns")
         connection.execute("DROP TABLE IF EXISTS robot_auto_decisions")
         connection.execute("DROP TABLE IF EXISTS robot_autopilot_state")
 

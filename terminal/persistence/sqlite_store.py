@@ -60,6 +60,7 @@ from .schema import (
     SCHEMA_V23_MIGRATION_STATEMENTS,
     SCHEMA_V24_MIGRATION_STATEMENTS,
     SCHEMA_V25_MIGRATION_STATEMENTS,
+    SCHEMA_V26_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -1321,6 +1322,10 @@ class SQLiteStore:
         if version == SCHEMA_VERSION:
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
+        if version == 25:
+            SQLiteStore._validate_required_tables(connection, version=25)
+            SQLiteStore._migrate_v25_to_v26(connection)
+            return
         if version == 24:
             SQLiteStore._validate_required_tables(connection, version=24)
             SQLiteStore._migrate_v24_to_v25(connection)
@@ -1790,6 +1795,20 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+        SQLiteStore._migrate_v25_to_v26(connection)
+
+    @staticmethod
+    def _migrate_v25_to_v26(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V26_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 26")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        SQLiteStore._validate_required_tables(connection, version=26)
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -1842,6 +1861,8 @@ class SQLiteStore:
             required.update({"box_attempt_ownership", "box_order_ownership"})
         if version >= 24:
             required.update({"robot_autopilot_state", "robot_auto_decisions"})
+        if version >= 26:
+            required.update({"robot_reentry_campaigns", "robot_reentry_attempts"})
         actual = {
             row[0]
             for row in connection.execute(
@@ -5161,6 +5182,228 @@ class SQLiteStore:
             except sqlite3.IntegrityError as exc:
                 raise DuplicateIdentity("Robot signal snapshot is already admitted") from exc
         return self.get_robot_candidate(candidate_id), True  # type: ignore[return-value]
+
+    def _require_reentry_admission_writer(self, account: TradingAccountId) -> None:
+        """All reentry reservations belong to the *existing* Robot transaction."""
+        self._assert_owner()
+        if not self.in_robot_admission_transaction() or not self._connection.in_transaction:
+            raise PersistenceError("reentry requires canonical Robot admission transaction")
+        runtime = self.get_robot_runtime_state(account)
+        if runtime is None or runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":
+            raise PersistenceError("Robot is not READY for a reentry reservation")
+
+    def create_robot_reentry_campaign(
+        self, *, account: TradingAccountId, campaign_id: str,
+        first_candidate_id: str, frozen_thesis_sha256: str, direction: str,
+        original_risk_budget_usdt: Decimal, reserved_risk_usdt: Decimal,
+        reserved_at_ms: int,
+    ) -> bool:
+        """Register original admission as attempt 1, atomically with its candidate.
+
+        The strategy supplies validated immutable thesis/risk from normal
+        Admission; this function never authorizes a trade on its own.
+        """
+        self._require_reentry_admission_writer(account)
+        if not isinstance(campaign_id, str) or not campaign_id.strip():
+            raise PersistenceError("reentry campaign identity missing")
+        if (not isinstance(frozen_thesis_sha256, str)
+                or len(frozen_thesis_sha256) != 64
+                or any(c not in "0123456789abcdef" for c in frozen_thesis_sha256)):
+            raise PersistenceError("frozen thesis fingerprint is invalid")
+        if direction not in ROBOT_DIRECTIONS:
+            raise PersistenceError("reentry direction is invalid")
+        if type(reserved_at_ms) is not int or reserved_at_ms < 0:
+            raise PersistenceError("reentry reservation timestamp invalid")
+        for value in (original_risk_budget_usdt, reserved_risk_usdt):
+            if not isinstance(value, Decimal) or not value.is_finite() or value <= 0:
+                raise PersistenceError("reentry risk amount is invalid")
+        if reserved_risk_usdt > original_risk_budget_usdt:
+            raise PersistenceError("initial attempt exceeds frozen risk budget")
+        candidate = self.get_robot_candidate(first_candidate_id)
+        if (candidate is None or candidate.trading_account_id != account
+                or candidate.status != "APPROVED" or candidate.approved_at_ms > reserved_at_ms):
+            raise PersistenceError("first admitted Robot candidate not proven")
+        existing = self._connection.execute(
+            "SELECT * FROM robot_reentry_campaigns WHERE trading_account_id=? AND campaign_id=?",
+            (account.value, campaign_id),
+        ).fetchone()
+        if existing is not None:
+            attempt = self._connection.execute(
+                """SELECT * FROM robot_reentry_attempts
+                   WHERE trading_account_id=? AND campaign_id=? AND attempt_index=1""",
+                (account.value, campaign_id),
+            ).fetchone()
+            if (existing["first_candidate_id"] != first_candidate_id
+                    or existing["symbol"] != candidate.symbol.value
+                    or existing["direction"] != direction
+                    or existing["frozen_thesis_sha256"] != frozen_thesis_sha256
+                    or Decimal(existing["original_risk_budget_usdt"]) != original_risk_budget_usdt
+                    or attempt is None or attempt["candidate_id"] != first_candidate_id
+                    or Decimal(attempt["reserved_risk_usdt"]) != reserved_risk_usdt):
+                raise PersistenceError("immutable reentry campaign identity conflicts")
+            return False
+        try:
+            self._connection.execute(
+                """INSERT INTO robot_reentry_campaigns
+                   (trading_account_id,campaign_id,symbol,direction,first_candidate_id,
+                    frozen_thesis_sha256,original_risk_budget_usdt,created_at_ms)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (account.value, campaign_id, candidate.symbol.value, direction,
+                 first_candidate_id, frozen_thesis_sha256,
+                 _decimal_text(original_risk_budget_usdt), reserved_at_ms),
+            )
+            self._connection.execute(
+                """INSERT INTO robot_reentry_attempts
+                   (trading_account_id,campaign_id,attempt_index,candidate_id,
+                    reserved_risk_usdt,previous_stop_exec_id,reserved_at_ms)
+                   VALUES (?,?,1,?,?,NULL,?)""",
+                (account.value, campaign_id, first_candidate_id,
+                 _decimal_text(reserved_risk_usdt), reserved_at_ms),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise PersistenceError("reentry campaign slot or candidate already reserved") from exc
+        return True
+
+    def reserve_robot_stop_reentry(
+        self, *, account: TradingAccountId, campaign_id: str,
+        candidate_id: str, frozen_thesis_sha256: str, direction: str,
+        previous_stop_exec_id: str, confirmed_at_ms: int,
+        reserved_risk_usdt: Decimal, reserved_at_ms: int,
+        strategy_confirmation_proven: bool,
+    ) -> bool:
+        """Reserve a *new* logical entry, never execute it.
+
+        This must run in the same BEGIN IMMEDIATE transaction as Robot
+        candidate admission. Canonical execution/STOP/financial rows are the
+        evidence; the Diary reads them, never re-writes them.
+        """
+        self._require_reentry_admission_writer(account)
+        if (type(confirmed_at_ms) is not int or type(reserved_at_ms) is not int
+                or confirmed_at_ms < 0 or reserved_at_ms < confirmed_at_ms):
+            raise PersistenceError("closed-candle confirmation time unverified")
+        if strategy_confirmation_proven is not True:
+            raise PersistenceError("new pattern confirmation not proven")
+        if (not isinstance(reserved_risk_usdt, Decimal)
+                or not reserved_risk_usdt.is_finite() or reserved_risk_usdt <= 0):
+            raise PersistenceError("retry risk not proven")
+        campaign = self._connection.execute(
+            "SELECT * FROM robot_reentry_campaigns WHERE trading_account_id=? AND campaign_id=?",
+            (account.value, campaign_id),
+        ).fetchone()
+        if (campaign is None or campaign["direction"] != direction
+                or campaign["frozen_thesis_sha256"] != frozen_thesis_sha256):
+            raise PersistenceError("reentry campaign thesis/direction unverified")
+        candidate = self.get_robot_candidate(candidate_id)
+        if (candidate is None or candidate.trading_account_id != account
+                or candidate.symbol.value != campaign["symbol"]
+                or candidate.status != "APPROVED"
+                or candidate.approved_at_ms < confirmed_at_ms):
+            raise PersistenceError("new admitted candidate ownership unverified")
+        rows = self._connection.execute(
+            """SELECT * FROM robot_reentry_attempts
+               WHERE trading_account_id=? AND campaign_id=?
+               ORDER BY attempt_index""",
+            (account.value, campaign_id),
+        ).fetchall()
+        if not rows or any(int(row["attempt_index"]) != i + 1 for i, row in enumerate(rows)):
+            raise PersistenceError("reentry attempt genealogy unverified")
+        for row in rows:
+            if row["candidate_id"] == candidate_id:
+                if (row["previous_stop_exec_id"] == previous_stop_exec_id
+                        and Decimal(row["reserved_risk_usdt"]) == reserved_risk_usdt):
+                    return False
+                raise PersistenceError("candidate already reserved with different evidence")
+        if len(rows) >= 3:
+            raise PersistenceError("maximum of two STOP retries reached")
+        if not isinstance(previous_stop_exec_id, str) or not previous_stop_exec_id:
+            raise PersistenceError("previous STOP execution id missing")
+        spent = Decimal("0")
+        previous_exit_ms: int | None = None
+        for row in rows:
+            parent = self.get_robot_candidate(row["candidate_id"])
+            trade = self._connection.execute(
+                """SELECT * FROM robot_trades WHERE trading_account_id=? AND candidate_id=?""",
+                (account.value, row["candidate_id"]),
+            ).fetchone()
+            if (parent is None or parent.status != "CLOSED" or trade is None
+                    or trade["exit_reason"] != "STOP" or trade["exit_time_ms"] is None
+                    or trade["realized_pnl_usdt"] is None or trade["fees_costs_usdt"] is None
+                    or trade["symbol"] != campaign["symbol"]
+                    or trade["direction"] != direction):
+                raise PersistenceError("prior attempt has no confirmed closed STOP")
+            obligation = self._connection.execute(
+                """SELECT * FROM paper_protection_obligations
+                   WHERE trading_account_id=? AND trade_id=? AND winning_leg='STOP'
+                     AND status='RESOLVED'""",
+                (account.value, trade["trade_id"]),
+            ).fetchone()
+            if obligation is None:
+                raise PersistenceError("authoritative STOP protection resolution missing")
+            execution = self._connection.execute(
+                """SELECT 1 FROM executions WHERE trading_account_id=?
+                   AND category='linear' AND exec_id=? AND order_id=? AND symbol=?""",
+                (account.value, obligation["exec_id"], obligation["order_id"],
+                 campaign["symbol"]),
+            ).fetchone()
+            if execution is None:
+                raise PersistenceError("STOP execution was not durably reconciled")
+            realized = _load_decimal(trade["realized_pnl_usdt"])
+            fees = _load_decimal(trade["fees_costs_usdt"])
+            if not realized.is_finite() or not fees.is_finite() or fees < 0:
+                raise PersistenceError("STOP financial facts incomplete")
+            spent += max(Decimal("0"), fees - realized)
+            previous_exit_ms = int(trade["exit_time_ms"])
+            if row is rows[-1] and obligation["exec_id"] != previous_stop_exec_id:
+                raise PersistenceError("previous STOP execution mismatches last attempt")
+        if previous_exit_ms is None or confirmed_at_ms <= previous_exit_ms:
+            raise PersistenceError("no newly confirmed closed candle after STOP")
+        budget = _load_decimal(campaign["original_risk_budget_usdt"])
+        if not budget.is_finite() or budget <= 0 or spent + reserved_risk_usdt > budget:
+            raise PersistenceError("frozen cumulative reentry risk budget exhausted")
+        symbol = campaign["symbol"]
+        position = self._connection.execute(
+            """SELECT side, quantity, sync_state FROM position_projections
+               WHERE trading_account_id=? AND category='linear'
+                 AND symbol=? AND position_idx=0""",
+            (account.value, symbol),
+        ).fetchone()
+        if (position is None or position["side"] != PositionSide.FLAT.value
+                or _load_decimal(position["quantity"]) != 0
+                or str(position["sync_state"]).lower() != "synced"):
+            raise PersistenceError("reentry symbol is not proven synchronized FLAT")
+        if self._connection.execute(
+            """SELECT 1 FROM protection_projections
+               WHERE trading_account_id=? AND category='linear'
+                 AND symbol=? AND pending_command_id IS NOT NULL LIMIT 1""",
+            (account.value, symbol),
+        ).fetchone():
+            raise PersistenceError("pending STOP/TAKE protection command blocks reentry")
+        for table, predicate in (
+            ("robot_trades", "exit_time_ms IS NULL"),
+            ("robot_candidates", "status IN ('APPROVED','OPEN') AND candidate_id<>?"),
+            ("paper_limit_orders", "status IN ('open','partially_filled')"),
+            ("paper_protection_obligations", "status<>'RESOLVED'"),
+        ):
+            params = (account.value, symbol, candidate_id) if table == "robot_candidates" else (
+                account.value, symbol)
+            if self._connection.execute(
+                f"SELECT 1 FROM {table} WHERE trading_account_id=? AND symbol=? AND {predicate} LIMIT 1",
+                params,
+            ).fetchone():
+                raise PersistenceError("existing or unresolved symbol exposure blocks reentry")
+        try:
+            self._connection.execute(
+                """INSERT INTO robot_reentry_attempts
+                   (trading_account_id,campaign_id,attempt_index,candidate_id,
+                    reserved_risk_usdt,previous_stop_exec_id,reserved_at_ms)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (account.value, campaign_id, len(rows) + 1, candidate_id,
+                 _decimal_text(reserved_risk_usdt), previous_stop_exec_id,
+                 reserved_at_ms),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise PersistenceError("concurrent or duplicate reentry reservation") from exc
+        return True
 
     def get_robot_candidate(self, candidate_id: str) -> RobotCandidateRecord | None:
         self._assert_owner()

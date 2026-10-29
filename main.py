@@ -263,6 +263,51 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
                         error_count += 1
                         print(f"{symbol:<15} {timeframe}m L-SHAPE ERROR: {observation_error}")
 
+                # #592: independently confirmed double TOP/BOTTOM after STOP.
+                # Reuse this pass's already fetched 1m/5m closed bars and
+                # the existing Scanner→Robot candidate observer/Admission.
+                # OFF unless the owner's STOP-reentry feature is opted in.
+                if (
+                    os.environ.get("BYBITSCANNER_STOP_REENTRY_AUTO") == "1"
+                    and analysis_result.get("data") is not None
+                    and timeframe in ("1", "5")
+                ):
+                    try:
+                        from geometry.double_extremum import frozen_neckline_snapshot
+                        from pattern_robot_integration import prepare_robot_handoff
+                        from signal_memory import load_memory, save_memory
+
+                        frame = analysis_result["data"]
+                        if len(frame) >= 8:
+                            closed_rows = frame.iloc[:-1].to_dict("records")
+                            candidate = frozen_neckline_snapshot(
+                                symbol, timeframe, closed_rows,
+                            )
+                            if candidate is not None:
+                                identity = (
+                                    f"neckline:{symbol}:{timeframe}:"
+                                    f"{candidate['pattern']}:"
+                                    f"{candidate['neckline_entry']['breakout_time_ms']}"
+                                )
+                                memory = load_memory()
+                                if identity not in memory:
+                                    result = prepare_robot_handoff(
+                                        candidate, timeframe=timeframe, enabled=True,
+                                    )
+                                    if result.candidate_id:
+                                        memory[identity] = {
+                                            "robot_candidate_id": result.candidate_id,
+                                            "pattern": candidate["pattern"],
+                                        }
+                                        save_memory(memory)
+                    except Exception as neckline_error:
+                        error_count += 1
+                        print(
+                            f"{symbol:<15} {timeframe}m NECKLINE ERROR: "
+                            f"{type(neckline_error).__name__}",
+                            flush=True,
+                        )
+
                 # Broadening («Рупор») is observation only: chart + evidence,
                 # no Robot/admission/orders. It runs next to Wedge and never
                 # suppresses it; its failure must not affect other delivery.
