@@ -1,5 +1,6 @@
 """Contract checks for the opt-in send-only Telegram Gateway."""
 import os
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -9,7 +10,9 @@ import telegram_gateway_client as gateway
 
 class TelegramGatewayTests(unittest.TestCase):
     def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
         self.env = patch.dict(os.environ, {
+            "BYBITSCANNER_TELEGRAM_OUTBOX_DB": self.tmp.name + "/telegram.sqlite3",
             "BYBITSCANNER_TELEGRAM_GATEWAY_URL": "https://relay.example.org/v1/send",
             "BYBITSCANNER_TELEGRAM_GATEWAY_SECRET": "x" * 48,
             "TELEGRAM_CHAT_ID": "12345",
@@ -19,6 +22,7 @@ class TelegramGatewayTests(unittest.TestCase):
 
     def tearDown(self):
         self.env.stop()
+        self.tmp.cleanup()
 
     @patch("telegram_gateway_client.requests.Session")
     def test_send_uses_gateway_without_legacy_proxy(self, session_cls):
