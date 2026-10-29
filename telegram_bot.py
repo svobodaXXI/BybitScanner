@@ -141,6 +141,11 @@ def send_photo_by_file_id(
     Повторная отправка уже загруженного Telegram изображения по file_id.
     """
 
+    if telegram_gateway_client.configured():
+        return telegram_gateway_client.send_photo_file_id(
+            chat_id, file_id, caption=caption, reply_markup=reply_markup
+        )
+
     url = (
         f"https://api.telegram.org/"
         f"bot{token}/sendPhoto"
