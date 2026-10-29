@@ -55,18 +55,18 @@ def evaluate_stop_reentry(evidence: ReentryEvidence) -> ReentryDecision:
         return ReentryDecision(DENY, "attempt_limit_reached")
     if evidence.previous_exit in {"TAKE", "INVALIDATED"}:
         return ReentryDecision(DENY, "campaign_terminal")
-    if not evidence.campaign_valid:
+    if evidence.campaign_valid is not True:
         return ReentryDecision(DENY, "campaign_invalid")
-    if evidence.previous_exit != "STOP" or not evidence.stop_closed:
+    if evidence.previous_exit != "STOP" or evidence.stop_closed is not True:
         return ReentryDecision(WAIT, "stop_execution_unverified")
-    if not evidence.same_campaign_and_direction:
+    if evidence.same_campaign_and_direction is not True:
         return ReentryDecision(WAIT, "campaign_identity_unverified")
-    if not evidence.fresh_confirmed_signal:
+    if evidence.fresh_confirmed_signal is not True:
         return ReentryDecision(WAIT, "new_signal_unconfirmed")
-    if not evidence.no_open_or_pending:
+    if evidence.no_open_or_pending is not True:
         return ReentryDecision(WAIT, "exposure_or_entry_pending")
-    if not evidence.robot_ready:
+    if evidence.robot_ready is not True:
         return ReentryDecision(WAIT, "robot_not_ready")
-    if not evidence.risk_budget_ok:
+    if evidence.risk_budget_ok is not True:
         return ReentryDecision(WAIT, "risk_budget_unverified")
     return ReentryDecision(ALLOW, "eligible_for_canonical_admission")
