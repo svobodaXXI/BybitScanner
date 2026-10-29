@@ -28,6 +28,7 @@ on:
       - "terminal/persistence/**"
       - "terminal/api/**"
       - "tests/test_robot_paper_acceptance.py"
+      - "tests/test_stop_reentry_paper_e2e.py"
       - "tests/runtime_replay.py"
       - "tests/test_runtime_replay.py"
       - "tests/fixtures/runtime_replays/**"
@@ -158,6 +159,8 @@ jobs:
           tests/test_mirror_linked_admission.py
           tests/test_mirror_paper_readiness.py
           tests/test_retest_account_risk.py
+      - name: Real STOP retry PAPER LIMIT fill, TAKE, Trading Diary and restart
+        run: python -m pytest -q tests/test_stop_reentry_paper_e2e.py
       - name: Run Runtime Replay contract
         run: python -m unittest -v tests.test_runtime_replay
       - name: Run deterministic Robot PAPER acceptance
