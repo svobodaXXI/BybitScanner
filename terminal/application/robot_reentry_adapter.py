@@ -262,17 +262,27 @@ def automatic_reentry_proposal(
         # formation starts a NEW independently frozen thesis and risk budget.
         if last["exit_reason"] != "TAKE":
             raise PersistenceError("previous campaign is not safely terminal")
-    else:
-        # A pre-v26 Wedge/Box STOP is NOT implicitly a fresh first attempt:
-        # without durable lineage it could bypass the owner's 1+2 cap.
-        prior = store._connection.execute(
-            """SELECT exit_reason FROM robot_trades
-               WHERE trading_account_id=? AND symbol=? AND direction=?
-                 AND exit_time_ms IS NOT NULL
-               ORDER BY exit_time_ms DESC LIMIT 1""",
-            (account.value, symbol.value, evidence.direction),
-        ).fetchone()
-        if prior is not None and prior["exit_reason"] == "STOP":
+    # Prevent even a *historical* unlinked STOP from being silently turned
+    # into a brand-new budget merely because the most recent campaign took
+    # profit. The latest actual executed trade must be the terminal TAKE of
+    # that campaign; when no campaign exists, a STOP requires a canonical
+    # migration/lineage proof rather than resetting attempts.
+    newest_trade = store._connection.execute(
+        """SELECT candidate_id, exit_reason, exit_time_ms
+           FROM robot_trades
+           WHERE trading_account_id=? AND symbol=? AND direction=?
+           ORDER BY COALESCE(exit_time_ms, entry_time_ms) DESC LIMIT 1""",
+        (account.value, symbol.value, evidence.direction),
+    ).fetchone()
+    if newest_trade is not None:
+        if newest_trade["exit_time_ms"] is None:
+            raise PersistenceError("unresolved Robot trade blocks new campaign")
+        if matches:
+            terminal = rows[-1]
+            if (newest_trade["candidate_id"] != terminal["candidate_id"]
+                    or newest_trade["exit_reason"] != "TAKE"):
+                raise PersistenceError("unlinked trade after campaign requires lineage proof")
+        elif newest_trade["exit_reason"] == "STOP":
             raise PersistenceError("unlinked prior STOP requires canonical lineage proof")
     # New independent idea only when the last campaign closed at TAKE or no
     # unlinked STOP exists. Freeze the budget for all three allowed attempts.
