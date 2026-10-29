@@ -37,7 +37,8 @@ def send_text(chat_id, text, *, reply_markup=None):
     event_id = secrets.token_urlsafe(24)
     import telegram_gateway_outbox as outbox
     outbox.enqueue(event_id, str(chat_id), text, reply_markup)
-    outbox.mark(event_id, "IN_FLIGHT")
+    if not outbox.claim_pending(event_id):
+        raise TelegramGatewayError("Telegram event could not be claimed")
     try:
         session = requests.Session()
         session.trust_env = False
