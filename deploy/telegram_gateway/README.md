@@ -40,3 +40,10 @@ This prototype intentionally does not declare Telegram READY and does not solve 
 - `telegram_bot.send_photo` now routes PNG/JPEG uploads through authenticated `POST /v1/photo-upload` when Gateway is enabled. Maximum payload is 2,000,000 bytes; other formats and larger charts fail closed, without retrying via blocked direct API.
 - The Gateway returns the Telegram API response; successful API acceptance does not certify owner-visible delivery. Photo keyboards are still unsupported, and durable outbox/retry/dedup is not implemented.
 - **Do not deploy yet:** Worker/Gateway reachability and actual message delivery remain unverified; security review and complete tests outstanding.
+
+## Independent persistent text outbox — current scope
+- Opt-in gateway text sends now require `BYBITSCANNER_TELEGRAM_OUTBOX_DB` pointing to a separate SQLite file, **never the PAPER runtime database**. Provision its parent directory and permissions separately before deployment.
+- An event is recorded before network send as `PENDING`, then `IN_FLIGHT`; confirmed API acceptance becomes `ACCEPTED`, transport failures or ambiguous responses become `UNKNOWN`.
+- `UNKNOWN` and crash-left `IN_FLIGHT` **must not be automatically retried** until Gateway-side durable idempotency is implemented: a Telegram send may have succeeded despite a lost response. State is retained for explicit reconciliation.
+- This is only durable evidence, **not yet a completed retry queue**. No Worker KV/Durable Object dedup is installed, no delivery SLA established, and local photo delivery remains outside outbox.
+- The Gateway transport now fails closed if the outbox is not configured; it is not appropriate to merge/deploy as a drop-in Telegram fix yet.
