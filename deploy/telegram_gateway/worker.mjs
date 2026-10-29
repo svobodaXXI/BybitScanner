@@ -42,10 +42,15 @@ export default {
       input = JSON.parse(raw);
     } catch (_) { return reply(400, {ok:false,error:"invalid_json"}); }
     if (!input || typeof input !== "object" || Array.isArray(input) ||
-        Object.keys(input).sort().join(",") !== "event_id,text" ||
+        !["event_id,text", "event_id,reply_markup,text"].includes(Object.keys(input).sort().join(",")) ||
         typeof input.event_id !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(input.event_id) ||
         typeof input.text !== "string" || input.text.length < 1 || input.text.length > 4096) {
       return reply(400, {ok:false,error:"invalid_payload"});
+    }
+    if (input.reply_markup !== undefined &&
+        (!input.reply_markup || typeof input.reply_markup !== "object" ||
+         !Array.isArray(input.reply_markup.inline_keyboard))) {
+      return reply(400, {ok:false,error:"invalid_reply_markup"});
     }
     let response;
     try {
@@ -53,7 +58,7 @@ export default {
         env.TELEGRAM_BOT_TOKEN + "/sendMessage", {
         method:"POST",
         headers:{"content-type":"application/json"},
-        body:JSON.stringify({chat_id:env.TELEGRAM_CHAT_ID,text:input.text}),
+        body:JSON.stringify({chat_id:env.TELEGRAM_CHAT_ID,text:input.text, ...input.reply_markup === undefined ? {} : {reply_markup:input.reply_markup}}),
         signal:AbortSignal.timeout(10000)
       });
     } catch (_) {
