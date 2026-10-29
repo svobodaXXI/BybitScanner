@@ -311,3 +311,86 @@ def test_third_fresh_pattern_allowed_fourth_denied_without_new_budget(prepared):
             reserved_risk_usdt=Decimal("1"),
         )
     assert count(path) == 3
+
+
+def test_restart_with_outstanding_retry_limit_preserves_slot_and_blocks_new_order(prepared):
+    """Crash/reopen after attempt 2 approval never loses its pending LIMIT.
+
+    The authoritative PAPER SQLite remains the only ledger. An outstanding
+    limit cannot be treated as a STOP, a flat ready slot, or a new campaign.
+    """
+    store, path = prepared
+    with store.robot_admission_transaction():
+        assert reserve(store)
+    # Simulated durable resting order, exactly the existing PAPER schema.
+    with sqlite3.connect(path) as con:
+        con.execute(
+            """INSERT INTO paper_limit_orders
+               (order_id,order_link_id,trading_account_id,symbol,side,price,
+                quantity,filled_quantity,time_in_force,status,created_at_ms,updated_at_ms)
+               VALUES ('retry-limit','retry-link','paper','LABUSDT','Buy','1',
+                       '1','0','GTC','open',470,470)"""
+        )
+    # Closing the owner connection models a process failure while the order
+    # is outstanding; the new owner must observe the same durable state.
+    store.close()
+    with SQLiteStore.open(path) as recovered:
+        rows = recovered._connection.execute(
+            "SELECT attempt_index,candidate_id FROM robot_reentry_attempts "
+            "ORDER BY attempt_index"
+        ).fetchall()
+        assert [(r[0], r[1]) for r in rows] == [(1, "first"), (2, "second")]
+        order = recovered._connection.execute(
+            "SELECT status,filled_quantity FROM paper_limit_orders "
+            "WHERE order_id='retry-limit'"
+        ).fetchone()
+        assert tuple(order) == ("open", "0")
+        with recovered.robot_admission_transaction():
+            assert reserve(recovered) is False  # idempotent: no new slot
+        recovered.create_robot_candidate(
+            candidate_id="third", trading_account_id=ACCOUNT,
+            symbol=Symbol("LABUSDT"), status="APPROVED",
+            signal_snapshot={"pattern": "L-shape", "test": "third"},
+            approved_at_ms=570, updated_at_ms=570,
+        )
+        with pytest.raises(PersistenceError), recovered.robot_admission_transaction():
+            reserve(
+                recovered, candidate_id="third", reserved_at_ms=580,
+                confirmed_at_ms=540,
+            )
+    assert count(path) == 2
+
+
+def test_restart_with_partially_filled_retry_blocks_new_attempt(prepared):
+    """Partial entry after restart is exposure, never a fresh STOP attempt."""
+    store, path = prepared
+    with store.robot_admission_transaction():
+        assert reserve(store)
+    with sqlite3.connect(path) as con:
+        con.execute(
+            """INSERT INTO paper_limit_orders
+               (order_id,order_link_id,trading_account_id,symbol,side,price,
+                quantity,filled_quantity,time_in_force,status,created_at_ms,updated_at_ms)
+               VALUES ('retry-partial','retry-partial-link','paper','LABUSDT',
+                       'Buy','1','1','0.4','GTC','partially_filled',470,490)"""
+        )
+    store.close()
+    with SQLiteStore.open(path) as recovered:
+        with recovered.robot_admission_transaction():
+            assert reserve(recovered) is False
+        recovered.create_robot_candidate(
+            candidate_id="third", trading_account_id=ACCOUNT,
+            symbol=Symbol("LABUSDT"), status="APPROVED",
+            signal_snapshot={"pattern": "L-shape", "test": "third"},
+            approved_at_ms=570, updated_at_ms=570,
+        )
+        with pytest.raises(PersistenceError), recovered.robot_admission_transaction():
+            reserve(
+                recovered, candidate_id="third", reserved_at_ms=580,
+                confirmed_at_ms=540,
+            )
+        assert recovered._connection.execute(
+            "SELECT filled_quantity FROM paper_limit_orders "
+            "WHERE order_id='retry-partial'"
+        ).fetchone()[0] == "0.4"
+    assert count(path) == 2
