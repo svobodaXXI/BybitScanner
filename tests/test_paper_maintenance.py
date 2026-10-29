@@ -1,7 +1,23 @@
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
 from tools.paper_maintenance import run_maintenance
+
+
+@pytest.fixture(autouse=True)
+def fake_ready_api(monkeypatch):
+    def get(url, _timeout):
+        if url.endswith("/api/health"):
+            data = {"mode": "paper", "paper_live_safe": True}
+        elif url.endswith("/api/robot/protection-health"):
+            data = {"healthy": True}
+        elif url.endswith("/api/scanner/status"):
+            data = {"mode": "SCANNER_RUNNING"}
+        else:
+            data = {"mode": "PAPER_AUTO"}
+        return SimpleNamespace(status=200, json=lambda: data)
+    monkeypatch.setattr("tools.runtime_intent.http_get", get)
 
 
 def fake_runner(calls, *, fail=None):
@@ -39,7 +55,7 @@ def test_approved_target_only_after_safe_stop():
     target = "a" * 40
     result = run_maintenance(target, stop=lambda _: stopped,
         runner=fake_runner(calls), root=Path("/opt/BybitScanner"))
-    assert result.startswith("CORE_STARTED:")
+    assert result.startswith("READY:")
     assert ("git", "merge-base", "--is-ancestor", target, "origin/stable/adfb50b-forward") in calls
     assert calls[-1] == ("sudo", "-n", "systemctl", "start", "bybitscanner-paper-start.service")
 
@@ -66,7 +82,7 @@ def test_waits_for_canonical_safe_stop_before_mutating_runtime():
     result = run_maintenance("a" * 40, stop=stop,
         runner=fake_runner(calls), wait_seconds=60, poll_seconds=10,
         clock=lambda: now[0], sleep=sleep)
-    assert result.startswith("CORE_STARTED:")
+    assert result.startswith("READY:")
     assert len(attempts) == 2
 
 
