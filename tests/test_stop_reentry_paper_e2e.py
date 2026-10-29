@@ -233,6 +233,34 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                     )
                 self.assertNotEqual(first_order.order_id, second_order.order_id)
                 self.assertEqual(second_order.filled_quantity, 0)
+                # Simulate process loss while the SECOND (retry) LIMIT is
+                # resting. Recovery must retain the same durable order/slot
+                # and must never place an extra retry before any fill.
+                pending_count = runtime.call(lambda owner: owner.store._connection.execute(
+                    "SELECT COUNT(*) FROM paper_limit_orders "
+                    "WHERE trading_account_id=? AND symbol=?",
+                    (ACCOUNT.value, SYMBOL),
+                ).fetchone()[0])
+                runtime.close()
+                runtime, _ = self.runtime(cache, book)
+                _start_robot_monitor(runtime)
+                reopened_order = _wait_until(lambda: limit(new_id))
+                self.assertEqual(reopened_order.order_id, second_order.order_id)
+                self.assertEqual(reopened_order.filled_quantity, 0)
+                self.assertEqual(runtime.call(
+                    lambda owner: owner.store._connection.execute(
+                        "SELECT COUNT(*) FROM paper_limit_orders "
+                        "WHERE trading_account_id=? AND symbol=?",
+                        (ACCOUNT.value, SYMBOL),
+                    ).fetchone()[0],
+                ), pending_count)
+                self.assertEqual(runtime.call(
+                    lambda owner: owner.store._connection.execute(
+                        "SELECT COUNT(*) FROM robot_reentry_attempts "
+                        "WHERE trading_account_id=?",
+                        (ACCOUNT.value,),
+                    ).fetchone()[0],
+                ), 2)
                 book.set(SYMBOL, bid=second_order.price - instrument.tick_size,
                          ask=second_order.price)
                 second_trade = _wait_until(lambda: (
