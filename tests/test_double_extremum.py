@@ -84,3 +84,29 @@ def test_real_neckline_signal_uses_existing_robot_limit_and_reentry_proof():
     bad = [dict(c) for c in bars]
     bad[-1]["close"] = "95.5"
     assert frozen_neckline_snapshot("LABUSDT", "1", bad) is None
+
+
+def test_double_bottom_new_closed_neckline_can_reenter_prior_stopped_campaign(prepared):
+    from geometry.double_extremum import frozen_neckline_snapshot
+    from terminal.application.robot_reentry_adapter import automatic_reentry_proposal
+    from terminal.domain.models import TradingAccountId, Symbol
+
+    store, _ = prepared
+    candles = [
+        bar(102, 98, 100), bar(101, 94, 96), bar(98, 90, 92),
+        bar(101, 95, 99), bar(106, 99, 104), bar(102, 97, 99),
+        bar(99, 90.2, 92), bar(104, 96, 100), bar(107, 105.5, 106.5),
+    ]
+    for i, row in enumerate(candles):
+        row["time"] = 360_000 + i * 60_000
+    new_snapshot = frozen_neckline_snapshot("LABUSDT", "1", candles)
+    assert new_snapshot is not None
+    with store.robot_admission_transaction():
+        proposed = automatic_reentry_proposal(
+            store, TradingAccountId("paper"), candidate_id="second",
+            symbol=Symbol("LABUSDT"), snapshot=new_snapshot,
+            now_ms=900_000,
+        )
+    assert proposed is not None
+    assert proposed.previous_stop_exec_id == "stop-exec-1"
+    assert proposed.strategy_confirmation_proven is True
