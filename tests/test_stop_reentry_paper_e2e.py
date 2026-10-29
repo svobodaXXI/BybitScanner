@@ -211,7 +211,15 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                 # A source feed alone is insufficient; warm it off-owner as
                 # the production candle ingress does before a monitor tick.
                 cache.warm([SYMBOL])
-                second_order = _wait_until(lambda: limit(new_id))
+                try:
+                    second_order = _wait_until(lambda: limit(new_id))
+                except AssertionError:
+                    record = candidate(new_id)
+                    self.fail(
+                        "L-shape monitor did not produce LIMIT: "
+                        f"status={record.status} state={record.robot_state} "
+                        f"cache={cache.metrics()}"
+                    )
                 self.assertNotEqual(first_order.order_id, second_order.order_id)
                 self.assertEqual(second_order.filled_quantity, 0)
                 book.set(SYMBOL, bid=second_order.price - instrument.tick_size,
