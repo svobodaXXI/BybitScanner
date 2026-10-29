@@ -17,6 +17,8 @@ telegram_bot.py
 
 import json
 
+import telegram_gateway_client
+
 import requests
 
 
@@ -45,6 +47,11 @@ def send_message(
     """
     Отправка текстового сообщения Telegram.
     """
+
+    if telegram_gateway_client.configured():
+        return telegram_gateway_client.send_text(
+            chat_id, text, reply_markup=reply_markup
+        )
 
     url = (
         f"https://api.telegram.org/"
