@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import pandas as pd
 
+# Reuse the project's existing offline Scanner/Telegram test stubs, including
+# the intentionally absent production-only config.py. Do not invent config.
+import tests.test_telegram_delivery
 import l_shape_scanner
 from terminal.application.robot_reentry_adapter import automatic_reentry_proposal
 from terminal.domain.models import Symbol, TradingAccountId
