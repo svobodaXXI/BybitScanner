@@ -33,8 +33,10 @@ def test_mirror_stop_then_new_lshape_with_explicit_parent_and_matching_corridor(
     assert compatible(mirror(), linked(lshape(breakout_ms=1_200_000)))
 
 
-def test_same_symbol_direction_without_immutable_parent_never_suffices():
-    assert not compatible(mirror(), lshape(breakout_ms=1_200_000))
+def test_auto_parent_uses_canonical_stop_source_and_frozen_matching_levels():
+    # The Robot owns previous id/hash and immutable data. A new Scanner
+    # candidate does NOT need to be mutated or annotated after creation.
+    assert compatible(mirror(), lshape(breakout_ms=1_200_000))
 
 
 def test_wrong_parent_id_or_sha_cannot_steal_another_stop_campaign():
