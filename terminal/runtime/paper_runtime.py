@@ -3679,7 +3679,8 @@ class PaperRuntime:
                 if not recovery.success:
                     raise PaperCloseAllRejected("robot_reconciliation_required")
                 runtime = self.store.get_robot_runtime_state(account_id)
-                if runtime is None or runtime.recovery_status != "PAUSED":
+                if (runtime is None or runtime.mode != "ROBOT_RUNNING"
+                        or runtime.recovery_status != "PAUSED"):
                     raise PaperCloseAllRejected("robot_reconciliation_required")
             if runtime.recovery_status == "READY":
                 runtime = self.store.update_robot_runtime_state(
