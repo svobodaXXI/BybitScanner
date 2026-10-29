@@ -111,8 +111,8 @@ def automatic_reentry_proposal(
            ORDER BY created_at_ms DESC""",
         (account.value, symbol.value, evidence.direction),
     ).fetchall()
-    if len(matches) > 1:
-        raise PersistenceError("ambiguous active reentry campaign lineage")
+    # Only the latest campaign is eligible. Older campaigns can exist after
+    # independently completed TAKE closures; they are historical Diary rows.
     if matches:
         parent = matches[0]
         rows = store._connection.execute(
@@ -129,26 +129,39 @@ def automatic_reentry_proposal(
         if not rows:
             raise PersistenceError("campaign has no original attempt")
         last = rows[-1]
-        # Terminal TAKE ends the directional campaign. No new attempt is
-        # attached and no risk budget is silently reset.
-        if last["exit_reason"] == "TAKE":
-            return None
-        if (last["exit_reason"] != "STOP" or last["exit_time_ms"] is None
-                or last["exec_id"] is None or
-                evidence.confirmed_at_ms <= int(last["exit_time_ms"])):
-            raise PersistenceError("new pattern is not confirmed after reconciled STOP")
-        if len(rows) >= CAMPAIGN_MAX_TRADES:
-            raise PersistenceError("STOP reentry campaign exhausted")
-        return RobotReentryAdmissionRequest(
-            campaign_id=parent["campaign_id"], direction=evidence.direction,
-            frozen_thesis_sha256=parent["frozen_thesis_sha256"],
-            reserved_risk_usdt=evidence.risk_reservation_usdt,
-            previous_stop_exec_id=last["exec_id"],
-            confirmed_at_ms=evidence.confirmed_at_ms,
-            strategy_confirmation_proven=True,
-        )
-    # New independent idea, no previous outstanding reentry campaign. Freeze
-    # all possible STOP-risk across the initial attempt and two retries.
+        if last["exit_time_ms"] is None or evidence.confirmed_at_ms <= int(last["exit_time_ms"]):
+            raise PersistenceError("new pattern was not confirmed after previous close")
+        if last["exit_reason"] == "STOP":
+            if last["exec_id"] is None:
+                raise PersistenceError("STOP protection execution not proven")
+            if len(rows) >= CAMPAIGN_MAX_TRADES:
+                raise PersistenceError("STOP reentry campaign exhausted")
+            return RobotReentryAdmissionRequest(
+                campaign_id=parent["campaign_id"], direction=evidence.direction,
+                frozen_thesis_sha256=parent["frozen_thesis_sha256"],
+                reserved_risk_usdt=evidence.risk_reservation_usdt,
+                previous_stop_exec_id=last["exec_id"],
+                confirmed_at_ms=evidence.confirmed_at_ms,
+                strategy_confirmation_proven=True,
+            )
+        # A verified TAKE closes the old directional campaign; a later new
+        # formation starts a NEW independently frozen thesis and risk budget.
+        if last["exit_reason"] != "TAKE":
+            raise PersistenceError("previous campaign is not safely terminal")
+    else:
+        # A pre-v26 Wedge/Box STOP is NOT implicitly a fresh first attempt:
+        # without durable lineage it could bypass the owner's 1+2 cap.
+        prior = store._connection.execute(
+            """SELECT exit_reason FROM robot_trades
+               WHERE trading_account_id=? AND symbol=? AND direction=?
+                 AND exit_time_ms IS NOT NULL
+               ORDER BY exit_time_ms DESC LIMIT 1""",
+            (account.value, symbol.value, evidence.direction),
+        ).fetchone()
+        if prior is not None and prior["exit_reason"] == "STOP":
+            raise PersistenceError("unlinked prior STOP requires canonical lineage proof")
+    # New independent idea only when the last campaign closed at TAKE or no
+    # unlinked STOP exists. Freeze the budget for all three allowed attempts.
     origin = json.dumps(
         [account.value, symbol.value, evidence.direction, candidate_id],
         separators=(",", ":"), ensure_ascii=False,
