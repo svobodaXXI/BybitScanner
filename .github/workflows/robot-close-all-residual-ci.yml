@@ -16,6 +16,7 @@ on:
       - "tests/test_robot_manual_close_evidence.py"
       - "tests/test_paper_close_all_stable_identity.py"
       - "tests/test_paper_close_all_owner_coordination.py"
+      - "tests/test_box_pristine_baseline.py"
       - "tests/test_paper_close_all_economics.py"
       - "tests/test_robot_close_all_owner_preflight.py"
       - "tests/test_robot_close_all_pending_work_preflight.py"
@@ -63,6 +64,7 @@ jobs:
           tests/test_robot_manual_close_evidence.py
           tests/test_paper_close_all_stable_identity.py
           tests/test_paper_close_all_owner_coordination.py
+          tests/test_box_pristine_baseline.py
           tests/test_paper_close_all_economics.py
           tests/test_robot_close_all_owner_preflight.py
           tests/test_robot_close_all_pending_work_preflight.py
@@ -76,6 +78,7 @@ jobs:
           tests.test_robot_manual_close_evidence
           tests.test_paper_close_all_stable_identity
           tests.test_paper_close_all_owner_coordination
+          tests.test_box_pristine_baseline
           tests.test_paper_close_all_economics
           tests.test_robot_close_all_owner_preflight
           tests.test_robot_close_all_pending_work_preflight
