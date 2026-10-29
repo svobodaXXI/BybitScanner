@@ -206,3 +206,78 @@ def test_conflicting_original_reservation_is_not_silently_reset(prepared):
             reserved_risk_usdt=Decimal("4"), reserved_at_ms=460,
         )
     assert count(path) == 1
+
+
+def test_same_frozen_thesis_cannot_restart_as_new_campaign_to_reset_budget(prepared):
+    store, path = prepared
+    with pytest.raises(PersistenceError, match="already reserved"), store.robot_admission_transaction():
+        store.create_robot_reentry_campaign(
+            account=ACCOUNT, campaign_id="new-budget-reset",
+            first_candidate_id="second", frozen_thesis_sha256=THESIS,
+            direction="LONG", original_risk_budget_usdt=Decimal("1000"),
+            reserved_risk_usdt=Decimal("1"), reserved_at_ms=460,
+        )
+    assert count(path) == 1
+
+
+def test_third_fresh_pattern_allowed_fourth_denied_without_new_budget(prepared):
+    store, path = prepared
+    with store.robot_admission_transaction():
+        assert reserve(store)
+    with sqlite3.connect(path) as con:
+        con.execute("UPDATE robot_candidates SET status='CLOSED',updated_at_ms=610 WHERE candidate_id='second'")
+        con.execute(
+            """INSERT INTO robot_trades (
+               trade_id,trading_account_id,candidate_id,symbol,direction,
+               pattern,source_timeframe,signal_time_ms,entry_time_ms,entry_path,
+               actual_wv,average_entry,stop_price,take_price,
+               exit_time_ms,exit_price,exit_reason,realized_pnl_usdt,
+               realized_pnl_pct,fees_costs_usdt,version,created_at_ms,
+               updated_at_ms,entry_quantity,entry_position_version)
+              VALUES ('trade-2','paper','second','LABUSDT','LONG',
+                      'L-shape','1',420,470,'LIMIT','1','1','0.9','1.2',
+                      600,'0.9','STOP','-1.5','-1.5','0.2',2,470,610,'10',4)"""
+        )
+        con.execute(
+            """INSERT INTO paper_protection_obligations (
+              obligation_id,trade_id,trading_account_id,symbol,protection_version,
+              winning_leg,trigger_price,observed_exit_price,observed_quantity,
+              market_event_id,source_received_at_ms,latched_at_ms,order_id,
+              exec_id,status,version,updated_at_ms)
+              VALUES ('obligation-2','trade-2','paper','LABUSDT',1,'STOP',
+                      '0.9','0.9','10','tick-2',620,630,'stop-order-2',
+                      'stop-exec-2','RESOLVED',1,640)"""
+        )
+        con.execute(
+            """INSERT INTO executions (
+               trading_account_id,category,exec_id,order_id,symbol,side,
+               price,quantity,fee,exchange_timestamp_ms)
+               VALUES ('paper','linear','stop-exec-2','stop-order-2',
+                       'LABUSDT','Sell','0.9','10','0.1',600)"""
+        )
+    store.create_robot_candidate(
+        candidate_id="third", trading_account_id=ACCOUNT,
+        symbol=Symbol("LABUSDT"), status="APPROVED",
+        signal_snapshot={"pattern": "Falling Wedge", "test": "third"},
+        approved_at_ms=750, updated_at_ms=750,
+    )
+    with store.robot_admission_transaction():
+        assert reserve(
+            store, candidate_id="third", previous_stop_exec_id="stop-exec-2",
+            confirmed_at_ms=700, reserved_at_ms=760,
+            reserved_risk_usdt=Decimal("5"),
+        )
+    assert count(path) == 3
+    store.create_robot_candidate(
+        candidate_id="fourth", trading_account_id=ACCOUNT,
+        symbol=Symbol("LABUSDT"), status="APPROVED",
+        signal_snapshot={"pattern": "MIRROR", "test": "fourth"},
+        approved_at_ms=850, updated_at_ms=850,
+    )
+    with pytest.raises(PersistenceError, match="maximum"), store.robot_admission_transaction():
+        reserve(
+            store, candidate_id="fourth", previous_stop_exec_id="stop-exec-3",
+            confirmed_at_ms=800, reserved_at_ms=860,
+            reserved_risk_usdt=Decimal("1"),
+        )
+    assert count(path) == 3
