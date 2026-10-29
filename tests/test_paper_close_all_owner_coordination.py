@@ -185,6 +185,15 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
         runtime.robot_close_all.assert_not_called()
         runtime.close_all.assert_not_called()
 
+    def test_reconcile_exception_preserves_fence_and_protection(self):
+        runtime, _ = fixture(status="RECONCILIATION_REQUIRED", robot=True)
+        runtime.robot_reconcile.side_effect = RuntimeError("unexpected recovery failure")
+        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_reconciliation_required"):
+            run(runtime)
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+        runtime.store.update_robot_runtime_state.assert_not_called()
+
     def test_orphan_trade_fails_closed_before_any_market_order(self):
         runtime, _ = fixture()
         runtime.store.load_open_robot_trades.return_value = (trade(),)
