@@ -94,3 +94,46 @@ def test_existing_mirror_stopped_campaign_can_accept_fresh_lshape(prepared):
         )
         assert plan.previous_stop_exec_id == "stop-exec-1"
         assert plan.confirmed_at_ms == 119_000
+
+
+def test_paper_auto_mirror_opt_in_creates_real_candidate_and_diary_link_atomically(
+    tmp_path, monkeypatch,
+):
+    from robot_candidate_store import create_signal_snapshot
+    from terminal.application.robot_autopilot_shadow import (
+        SOURCE_SCANNER, admit_arrived_auto_candidate,
+    )
+    from tests.test_robot_autopilot_shadow import _Db, ACCOUNT
+
+    monkeypatch.setenv("BYBITSCANNER_STOP_REENTRY_AUTO", "1")
+    monkeypatch.setenv("BYBITSCANNER_MIRROR_STANDALONE_ROBOT", "1")
+    db = _Db(tmp_path, autopilot="PAPER_AUTO")
+    try:
+        create_signal_snapshot(
+            mirror(), timeframe="1", store_dir=db.candidates,
+            candidate_id="mirror-auto-initial",
+            created_at="2026-10-29T12:00:00+00:00",
+        )
+        admitted = admit_arrived_auto_candidate(
+            db.store, ACCOUNT, source=SOURCE_SCANNER,
+            candidate_ref="mirror-auto-initial",
+            protection_healthy=lambda: True,
+            candidate_fresh=lambda *_: True,
+            candidate_store_dir=db.candidates,
+            clock_ms=lambda: 1_200_000,
+            daily_loss_gate_enabled=False,
+        )
+        assert admitted is not None
+        assert admitted.result.outcome == "ALLOW", admitted.result
+        assert admitted.candidate.candidate_id == "mirror-auto-initial"
+        assert db.store._connection.execute(
+            "SELECT COUNT(*) FROM robot_reentry_campaigns"
+        ).fetchone()[0] == 1
+        assert db.store._connection.execute(
+            "SELECT COUNT(*) FROM robot_reentry_attempts"
+        ).fetchone()[0] == 1
+        assert db.store._connection.execute(
+            "SELECT COUNT(*) FROM robot_trades"
+        ).fetchone()[0] == 0  # Admission does NOT place or fill an order
+    finally:
+        db.store.close()
