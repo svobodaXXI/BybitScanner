@@ -214,7 +214,7 @@ class ReentryDiaryTests(unittest.TestCase):
         self._closed_trade(con)
         self._second_attempt(con)
         self._second_closed_trade(con)
-        con.execute("UPDATE robot_trades SET entry_time_ms=300 WHERE trade_id='trade-2'")
+        con.execute("UPDATE robot_trades SET signal_time_ms=250, entry_time_ms=300 WHERE trade_id='trade-2'")
         con.commit()
         con.close()
         with self.assertRaisesRegex(Exception, "entry predates prior STOP"):
