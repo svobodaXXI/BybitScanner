@@ -124,7 +124,11 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                 # Spawn the actual Scanner child. It persists the newly
                 # detected post-STOP L-shape and relays its ID through the
                 # production pipe to PaperRuntime's PAPER_AUTO dispatcher.
-                breakout_open = stopped.exit_time_ms - FIVE + 1
+                # Real 5m exchange candles open on a strict grid. The prior
+                # STOP can happen inside this candle; it becomes a valid
+                # post-STOP confirmation only at the next aligned close.
+                breakout_open = (stopped.exit_time_ms // FIVE) * FIVE
+                self.assertLess(stopped.exit_time_ms, breakout_open + FIVE)
                 candles = _long_shape().copy()
                 candles["time"] = [
                     breakout_open - FIVE * (len(candles) - 1 - i)
