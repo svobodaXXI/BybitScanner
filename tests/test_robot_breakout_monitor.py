@@ -1732,7 +1732,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         )
         with patch.object(
             RobotBreakoutMonitor, "_frozen_prices",
-            return_value=(Decimal("100"), Decimal("81")),
+            return_value=(Decimal("80"), Decimal("82")),
         ):
             self.monitor.tick()
         record = self.store.get_robot_candidate("candidate-1")
