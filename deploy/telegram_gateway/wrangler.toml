@@ -2,15 +2,6 @@ name = "bybitscanner-telegram-gateway"
 main = "worker.mjs"
 compatibility_date = "2026-10-01"
 
-[durable_objects]
-bindings = [{ name = "TELEGRAM_EVENTS", class_name = "TelegramEvent" }]
-
-[[migrations]]
-tag = "v1-telegram-event"
-new_sqlite_classes = ["TelegramEvent"]
-
-# Required secrets (set through platform secret manager, never commit):
-# GATEWAY_SHARED_SECRET
-# TELEGRAM_BOT_TOKEN
-# TELEGRAM_CHAT_ID
-# This file does not authorize deployment or create a Worker resource.
+# Required Worker secrets are configured out of band:
+# GATEWAY_SHARED_SECRET, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
+# Do not commit credentials or deploy without owner authorization.
