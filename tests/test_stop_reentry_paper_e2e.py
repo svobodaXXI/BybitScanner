@@ -215,10 +215,15 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                     second_order = _wait_until(lambda: limit(new_id))
                 except AssertionError:
                     record = candidate(new_id)
+                    diagnostics = runtime.call(lambda owner: (
+                        owner._robot_breakout_monitor._thread.is_alive(),
+                        owner._robot_breakout_monitor._get_closed_candle(SYMBOL),
+                        owner.store.get_robot_runtime_state(ACCOUNT).mode,
+                    ))
                     self.fail(
                         "L-shape monitor did not produce LIMIT: "
                         f"status={record.status} state={record.robot_state} "
-                        f"cache={cache.metrics()}"
+                        f"cache={cache.metrics()} monitor={diagnostics}"
                     )
                 self.assertNotEqual(first_order.order_id, second_order.order_id)
                 self.assertEqual(second_order.filled_quantity, 0)
