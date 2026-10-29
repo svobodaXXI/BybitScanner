@@ -32,4 +32,5 @@ jobs:
             tests/test_stop_reentry_policy.py \
             tests/test_stop_reentry_campaign.py \
             tests/test_stop_reentry_setup.py \
-            tests/test_stop_reentry_diary.py
+            tests/test_stop_reentry_diary.py \
+            tests/test_stop_reentry_reservation.py
