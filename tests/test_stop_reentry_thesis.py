@@ -3,6 +3,8 @@
 Tests exercise frozen canonical pattern values only. The policy has no
 authority to execute positions; actual STOP fill is checked in SQLiteStore.
 """
+from decimal import Decimal
+
 from terminal.application.robot_reentry_thesis import (
     frozen_corridor, verified_same_thesis,
 )
@@ -62,9 +64,9 @@ def test_box_corridor_is_from_frozen_stop_take_and_full_grid_average():
     prior["plan"].update(stop_price="89.6", take_price="99.2")
     p = frozen_corridor(prior)
     assert p is not None
-    assert p.low == 89.6
-    assert p.high == 99.2
-    assert p.reference == 92.8
+    assert p.low == Decimal('89.6')
+    assert p.high == Decimal('99.2')
+    assert p.reference == Decimal('92.8')
 
 
 def test_missing_or_invalid_original_candle_structure_fails_closed():
