@@ -61,8 +61,12 @@ def candle(open_ms, o, h, low, c):
 class Timeline:
     """Closed 5m history around the real clock (the Robot's campaign freshness uses wall time)."""
 
-    def __init__(self):
-        self.t = int(time.time() * 1000) // FIVE * FIVE            # latest closed 5m candle closes here
+    def __init__(self, t=None):
+        # ``t`` lets a caller running outside this process (e.g. a spawned
+        # Scanner child, PROCESS-ISOLATION-1) reconstruct the identical
+        # timeline deterministically instead of re-deriving it from its own
+        # wall clock, which could cross a 5m boundary independently.
+        self.t = t if t is not None else int(time.time() * 1000) // FIVE * FIVE  # latest closed 5m candle closes here
         start = self.t - 40 * FIVE
         self.breakout_open = self.t - 6 * FIVE
         self.coarse = [candle(o, 112, 113, 111, 112) for o in range(start, self.breakout_open, FIVE)]
@@ -138,8 +142,6 @@ class MirrorStandaloneHarness(unittest.TestCase):
     def state(self):
         return ms.load_state(SYMBOL, "5", self.mirror_root)
 
-
-class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
     def runtime(self, robot_candle, book):
         # At the next confirmation close (105.2), a coarse 0.1 tick makes
         # LIMIT=105.4 and buffered STOP=103.8 fail the Robot's net RR/R0 gate.
@@ -160,6 +162,8 @@ class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
                 robot_tick_interval_s=0.02,
             )), instrument
 
+
+class MirrorStandalonePaperE2E(MirrorStandaloneHarness):
     def test_target_touch_cancels_unfilled_mirror_limit_inside_open_candle(self):
         # A confirmed reversal arms a LIMIT at 105.22. The first MIRROR
         # retest at 110 is seen in an authoritative BOOK event, not a CLOSED
