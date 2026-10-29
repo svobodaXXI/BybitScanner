@@ -18,6 +18,33 @@ export default {
     if (url.pathname === "/health" && request.method === "GET") {
       return reply(200, {component:"bybitscanner-telegram-gateway",status:"up",delivery_verified:false});
     }
+    // Existing VPS monitoring remains the sole getUpdates consumer.
+    if (url.pathname === "/v1/get-updates" && request.method === "POST") {
+      if (!env.GATEWAY_SHARED_SECRET || env.GATEWAY_SHARED_SECRET.length < 32 || !env.TELEGRAM_BOT_TOKEN)
+        return reply(503, {ok:false,error:"not_configured"});
+      const auth = request.headers.get("authorization") || "";
+      if (!auth.startsWith("Bearer ") || !matches(auth.slice(7), env.GATEWAY_SHARED_SECRET))
+        return reply(401, {ok:false,error:"unauthorized"});
+      let args;
+      try { args = await request.json(); } catch (_) { return reply(400, {ok:false,error:"invalid_json"}); }
+      if (!args || typeof args !== "object" || Array.isArray(args) ||
+          Object.keys(args).some(k => !["offset","timeout","allowed_updates"].includes(k)) ||
+          (args.offset !== undefined && (!Number.isSafeInteger(args.offset) || args.offset < 0)) ||
+          (args.timeout !== undefined && (!Number.isInteger(args.timeout) || args.timeout < 0 || args.timeout > 30)) ||
+          (args.allowed_updates !== undefined && !Array.isArray(args.allowed_updates)))
+        return reply(400, {ok:false,error:"invalid_params"});
+      const params = new URLSearchParams();
+      if (args.offset !== undefined) params.set("offset", String(args.offset));
+      params.set("timeout", String(args.timeout ?? 0));
+      params.set("allowed_updates", JSON.stringify(["callback_query","message"]));
+      try {
+        const remote = await fetch("https://api.telegram.org/bot" + env.TELEGRAM_BOT_TOKEN + "/getUpdates?" + params, {
+          signal: AbortSignal.timeout(38000)
+        });
+        const payload = await remote.json();
+        return reply(remote.ok ? 200 : 502, payload);
+      } catch (_) { return reply(503, {ok:false,error:"telegram_poll_unavailable"}); }
+    }
     if (url.pathname !== "/v1/send" || request.method !== "POST") {
       return reply(404, {ok:false,error:"not_found"});
     }
