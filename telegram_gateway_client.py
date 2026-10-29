@@ -115,3 +115,40 @@ def bot_method(method, **params):
     if response.status_code != 200 or not isinstance(result, dict):
         raise TelegramGatewayError("Gateway method rejected")
     return result
+
+def send_photo_file_id(chat_id, file_id, caption="", reply_markup=None):
+    """Relay an already-uploaded Telegram image; no direct fallback."""
+    if reply_markup is not None:
+        raise TelegramGatewayError("photo keyboard not yet supported")
+    if not isinstance(file_id, str) or not file_id or len(file_id) > 1024:
+        raise TelegramGatewayError("invalid photo file ID")
+    if not isinstance(caption, str) or len(caption) > 1024:
+        raise TelegramGatewayError("invalid photo caption")
+    owner = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not owner or str(chat_id) != owner:
+        raise TelegramGatewayError("Gateway photo recipient mismatch")
+    url = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_URL", "").strip()
+    secret = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_SECRET", "").strip()
+    parsed = urlsplit(url)
+    if (parsed.scheme != "https" or not parsed.netloc or parsed.username or
+            parsed.password or parsed.query or parsed.fragment or
+            parsed.path.rstrip("/") not in ("", "/v1/send") or len(secret) < 32):
+        raise TelegramGatewayError("invalid Gateway photo configuration")
+    endpoint = url.rstrip("/")
+    if endpoint.endswith("/v1/send"):
+        endpoint = endpoint[:-len("/v1/send")]
+    try:
+        session = requests.Session()
+        session.trust_env = False
+        response = session.post(
+            endpoint + "/v1/photo-file-id",
+            json={"file_id": file_id, "caption": caption},
+            headers={"Authorization": "Bearer " + secret},
+            timeout=20, allow_redirects=False,
+        )
+        result = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        raise TelegramGatewayError("Gateway photo transport unavailable") from exc
+    if response.status_code != 200 or not isinstance(result, dict):
+        raise TelegramGatewayError("Gateway photo rejected")
+    return result
