@@ -144,17 +144,15 @@ def proven_pattern_entry(
         return None
     try:
         terms = robot_l_shape.frozen_terms(snapshot)
+        # Detection and Robot state-machine parsing alone are not acceptance
+        # evidence.  Double-extremum retries have no independent protected
+        # Scanner->retry->STOP/TAKE E2E yet, so the opt-in dispatcher must keep
+        # them on its existing WAIT:REENTRY_THESIS_UNPROVEN path.
+        if pattern in robot_l_shape.DOUBLE_PATTERNS:
+            return None
         # For MIRROR, initialize_state verifies that the NEXT candle closed
         # exactly one source-TF later with a supported Nison formation.
-        if pattern in robot_l_shape.DOUBLE_PATTERNS:
-            # The immutable neckline-close identity is verified by the SAME
-            # L-shape-backed protected LIMIT path, with no new executor.
-            state, _ = robot_l_shape.initialize_state({
-                "candidate_id": "reentry-neckline-proof",
-                "status": "APPROVED", "signal_snapshot": dict(snapshot),
-            })
-            confirmed_at = int(state["last_candle_time_ms"])
-        elif robot_l_shape.is_mirror_snapshot(snapshot):
+        if robot_l_shape.is_mirror_snapshot(snapshot):
             robot_l_shape.initialize_state({
                 "candidate_id": "reentry-proof", "status": "APPROVED",
                 "signal_snapshot": dict(snapshot),
@@ -290,8 +288,15 @@ def automatic_reentry_proposal(
             if (newest_trade["candidate_id"] != terminal["candidate_id"]
                     or newest_trade["exit_reason"] != "TAKE"):
                 raise PersistenceError("unlinked trade after campaign requires lineage proof")
-        elif newest_trade["exit_reason"] == "STOP":
-            raise PersistenceError("unlinked prior STOP requires canonical lineage proof")
+        elif newest_trade["exit_reason"] != "TAKE":
+            # A pre-v26/unlinked trade has no durable campaign identity.  Only
+            # an authoritative TAKE proves that the old idea ended without a
+            # STOP retry budget to preserve.  MANUAL/TAKEOVER/emergency exits
+            # (and any future terminal reason) are ambiguous for automatic
+            # lineage and must never mint a fresh three-attempt budget.
+            raise PersistenceError(
+                "unlinked prior trade requires canonical TAKE or lineage proof"
+            )
     # New independent idea only when the last campaign closed at TAKE or no
     # unlinked STOP exists. Freeze the budget for all three allowed attempts.
     origin = json.dumps(

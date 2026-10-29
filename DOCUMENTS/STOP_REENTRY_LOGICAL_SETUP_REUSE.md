@@ -1,9 +1,11 @@
 # ROBOT STOP-reentry: logical next setup and mature-engine reuse
 
-Status: **optional PAPER_AUTO linkage and strict admission gate under PR #668; feature OFF by default, not production-ready**.
-Owner priority: complete cross-pattern STOP retries, then deploy to VPS after
-targeted CI and PAPER acceptance; Codex is used only for authorized VPS/SSH
-operations, not software development. **PAPER only. LIVE prohibited.**
+Status: **bounded PAPER_AUTO linkage merged by PR #668; feature OFF by default
+and eligible for owner-approved PAPER activation only with the fail-closed
+limits below. It is not universal pattern support.**
+Owner priority: operate only the accepted bounded retry path and keep every
+unproved pattern/context on the canonical WAIT path. **PAPER only. LIVE
+prohibited.**
 
 ## Research: reuse architecture, not engines
 
@@ -122,8 +124,8 @@ structurally compatible with the same frozen thesis and direction.
   same canonical SQLite. No selection by symbol alone without direction,
   completed pattern and uniquely outstanding durable campaign.
   **Existing `PAPER_AUTO` calls this adapter when and only when environment
-  `BYBITSCANNER_STOP_REENTRY_AUTO=1`.** OFF by default; no production rollout
-  approved. A later TAKE permits a new independent frozen idea; a fourth STOP
+  `BYBITSCANNER_STOP_REENTRY_AUTO=1`.** OFF by default. A later authoritative
+  TAKE permits a new independent frozen idea; a fourth STOP
   entry is refused. Existing unlinked Wedge/Box STOP cannot be treated as a
   first attempt in this opt-in slice: it fails closed until canonical
   backfill/adapters are built.
@@ -158,6 +160,9 @@ structurally compatible with the same frozen thesis and direction.
   The definition is intentionally conservative: distant continuation
   formations, older incompatible snapshots and unlinked historical STOPs
   remain WAIT until a more specific strategy-context bridge exists.
+  Pre-v26/unlinked terminal trades also fail closed unless the last canonical
+  exit is TAKE: STOP, MANUAL, TAKEOVER and emergency/unknown lineage cannot
+  mint a fresh three-attempt budget.
 - **Actual protected retry E2E now demonstrated (isolated DB):**
   `tests/test_stop_reentry_paper_e2e.py` reuses the production
   `MirrorStandaloneHarness`. The real MIRROR Scanner candidate receives a
@@ -229,17 +234,21 @@ structurally compatible with the same frozen thesis and direction.
   protected STOP/TAKE, PAPER_AUTO campaign lineage and risk are reused;
   `main.py` emits deduplicated Scanner candidates only when STOP-reentry
   feature is opted in. Focused detector/lineage policy and standard PAPER
-  suites passed at commit `452fcb9`. This demonstrates executable
-  integration, NOT yet an independent live-market acceptance or crash
-  during outstanding open/pending double-neckline order.
-- **Remaining P0 before universal activation:** the double-extremum LIVE Scanner→retry LIMIT→STOP/TAKE test
-  for each direction, continued movement beyond initial corridor with proved strategy context,
-  new independent thesis after structural invalidation without resetting
-  a live campaign's risk budget, pre-v26 STOP attribution, and partial-fill
-  / crash-while-OPEN-or-pending recovery. The passing E2E is a synthetic
-  deterministic acceptance of one scenario, NOT VPS forward testing or
-  universal proof for every pattern. Do not enable the flag, merge as
-  universal or deploy to VPS before the remaining acceptance and approval.
+  suites passed at commit `452fcb9`. This demonstrates executable parsing and
+  integration, NOT an accepted automatic retry path. Double Top/Bottom now
+  deliberately return no trusted reentry proposal, so opt-in PAPER_AUTO
+  records `WAIT:REENTRY_THESIS_UNPROVEN` instead of reserving or ordering.
+- **Bounded activation status (issue #592):** partial-fill plus
+  crash/restart while retry #2 is OPEN and STOP/TAKE-armed passed in the
+  protected PAPER acceptance workflow
+  [#40892336459](https://github.com/svobodaXXI/BybitScanner/actions/runs/40892336459).
+  Pre-v26/unlinked STOP and every non-TAKE terminal reason are now explicitly
+  fail-closed and cannot reset risk. Remaining work is for broader support,
+  not a prerequisite for this bounded activation: independent protected
+  Double Top and Double Bottom retry E2E, continuation beyond the frozen
+  corridor, and an explicit new-thesis transition after structural
+  invalidation. Until those are implemented, each stays WAIT; do not claim
+  universal support.
 - **Reservation is not an executed attempt.** Preserve both identities:
   queued/cancelled/no-fill candidates are Diary observations, but do not count
   as verified filled STOP losses. A retry needs an earlier executed-and-closed
@@ -276,14 +285,16 @@ structurally compatible with the same frozen thesis and direction.
   DB. Historical backtests must avoid look-ahead and include fees/slippage.
   No real VPS runtime start without separate owner approval.
 
-## Boundary of PR #668
+## Bounded PAPER activation boundary after PR #668
 
 This PR includes **canonical PAPER campaign identity/reservations,
 atomic Robot Admission, bounded Box/Wedge/MIRROR/L-shape entry proofs and a
 passing single-run spawned Scanner→actual runtime dispatcher→protected
 post-STOP L-shape LIMIT fill→TAKE→Diary→restart E2E**. The same test exercises
 the production-shaped IPC and monitoring route on synthetic market inputs.
-Independent double-extremum neckline candidates, continued-trend structural
-context and crash/partial-fill recovery remain incomplete. It is **not
-production-ready universal reentry**; keep the opt-in flag OFF, VPS stopped
-and LIVE prohibited until full acceptance and owner-approved deployment.
+Independent double-extremum neckline retries and continued-trend structural
+context remain outside the accepted boundary and fail closed. Partial-fill /
+crash recovery is accepted by Actions `40892336459`; unlinked non-TAKE exits
+cannot create a campaign or reset risk. This remains **bounded PAPER reentry,
+not universal reentry**. Enable the opt-in flag only for an owner-approved
+PAPER runtime after integration and preflight; LIVE remains prohibited.

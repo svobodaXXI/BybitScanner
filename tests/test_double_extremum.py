@@ -56,7 +56,7 @@ def test_unequal_extrema_or_old_confirmation_rejected():
     assert detect_confirmed_double_extremum(candles) is None
 
 
-def test_real_neckline_signal_uses_existing_robot_limit_and_reentry_proof():
+def test_real_neckline_signal_parses_but_reentry_fails_closed_without_e2e():
     import robot_l_shape
     from geometry.double_extremum import frozen_neckline_snapshot
     from terminal.application.robot_reentry_adapter import proven_pattern_entry
@@ -78,8 +78,7 @@ def test_real_neckline_signal_uses_existing_robot_limit_and_reentry_proof():
     assert state["phase"] == robot_l_shape.PHASE_RETEST_DETECTED
     confirmation = frozen["neckline_entry"]["confirmation"]["close_time_ms"]
     proof = proven_pattern_entry(frozen, now_ms=confirmation)
-    assert proof is not None
-    assert proof.confirmed_at_ms == confirmation
+    assert proof is None
     assert proven_pattern_entry(frozen, now_ms=confirmation - 1) is None
     # A wick penetrating the neck without the candle body's close is rejected.
     bad = [dict(c) for c in bars]
@@ -87,7 +86,7 @@ def test_real_neckline_signal_uses_existing_robot_limit_and_reentry_proof():
     assert frozen_neckline_snapshot("LABUSDT", "1", bad) is None
 
 
-def test_double_bottom_new_closed_neckline_can_reenter_prior_stopped_campaign(prepared):
+def test_double_bottom_new_closed_neckline_cannot_reenter_without_e2e(prepared):
     from geometry.double_extremum import frozen_neckline_snapshot
     from terminal.application.robot_reentry_adapter import automatic_reentry_proposal
     from terminal.domain.models import TradingAccountId, Symbol
@@ -108,6 +107,4 @@ def test_double_bottom_new_closed_neckline_can_reenter_prior_stopped_campaign(pr
             symbol=Symbol("LABUSDT"), snapshot=new_snapshot,
             now_ms=900_000,
         )
-    assert proposed is not None
-    assert proposed.previous_stop_exec_id == "stop-exec-1"
-    assert proposed.strategy_confirmation_proven is True
+    assert proposed is None
