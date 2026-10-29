@@ -100,6 +100,21 @@ structurally compatible with the same frozen thesis and direction.
   Unique constraints must fence dual callbacks, restart and duplicate signals.
   Do not silently auto-migrate a production VPS until isolated migration and
   recovery acceptance pass.
+- **Reservation is not an executed attempt.** Preserve both identities:
+  queued/cancelled/no-fill candidates are Diary observations, but do not count
+  as verified filled STOP losses. A retry needs an earlier executed-and-closed
+  position. No-fill reservation reuse requires authoritative cancellation
+  evidence and concurrency fencing, not just the absence of a trade row.
+- **Formation time is not confirmation time.** An emerging double bottom may
+  begin before the preceding STOP; only its *new confirming closed candle*
+  must be after STOP. `robot_trades.signal_time_ms` can refer to earlier
+  formation evidence. The Diary proves trade non-overlap, whereas canonical
+  Admission independently proves post-STOP confirmation.
+- **Diary analytics:** campaign, chronological pattern/attempt lineage,
+  STOP/TAKE, realized gross/fees/known-cost net, and data coverage must be
+  derived from existing statistics. Unknown funding/external costs stay
+  unknown; known-cost net is not silently claimed to be complete net.
+
 - **Missing adapter wiring:** map immutable existing Wedge/Box/MIRROR/L-shape
   snapshots to the campaign without modifying their detector geometry.
   Create #647 candle and double-bottom/top recognition only when verified;
