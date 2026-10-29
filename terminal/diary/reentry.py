@@ -149,11 +149,12 @@ class ReentryDiaryReader:
                         raise ReentryDiaryReadError("trade differs from campaign account/symbol/direction")
                     if trade.exit_time_ms < trade.entry_time_ms:
                         raise ReentryDiaryReadError("trade exit precedes entry")
-                    if previous is not None and (
-                        trade.signal_time_ms <= previous.exit_time_ms
-                        or trade.entry_time_ms <= previous.exit_time_ms
-                    ):
-                        raise ReentryDiaryReadError("trade signal or entry predates prior STOP")
+                    # A multi-candle pattern may begin forming before STOP.
+                    # Its confirmation is checked by the owning admission
+                    # adapter; signal_time_ms is NOT necessarily that close.
+                    # The Diary only proves non-overlapping observed trades.
+                    if previous is not None and trade.entry_time_ms <= previous.exit_time_ms:
+                        raise ReentryDiaryReadError("trade entry predates prior STOP")
                     status = "CLOSED"
                 elif row["trade_id"] is not None:
                     status = "OPEN"
