@@ -122,6 +122,12 @@ def fixture(
             runtime, request, before, trades,
         )
     )
+    runtime._robot_linked_entry_limits = Mock(return_value={})
+    runtime._cancel_robot_entries_for_account_flatten = (
+        lambda action_id: PaperRuntime._cancel_robot_entries_for_account_flatten(
+            runtime, action_id,
+        )
+    )
     return runtime, current
 
 
@@ -239,15 +245,81 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
         self.assertEqual(runtime.store.get_robot_runtime_state(ACCOUNT).recovery_status,
                          "RECONCILIATION_REQUIRED")
 
-    def test_robot_entry_limit_remaining_after_sync_blocks_even_opposite_side(self):
-        runtime, _ = fixture(robot=True)
-        runtime.store.load_active_robot_entry_orders.return_value = {
-            "robot-reverse-entry": (Symbol("BOTUSDT"), 4),
-        }
-        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_entry_limit_remaining_after_sync"):
+    def _open_box_with_remaining_entries(self, *, status="READY"):
+        entry = limit("box-entry", symbol="BOTUSDT", side=OrderSide.BUY)
+        take = limit("box-exit", symbol="BOTUSDT", side=OrderSide.SELL)
+        runtime, state = fixture(
+            robot=True, manual=False, status=status, orders=(entry, take),
+        )
+        orders = {"box-entry": "open", "box-exit": "open"}
+        runtime._robot_linked_entry_limits.return_value = {"box-entry": 4}
+        runtime.store.load_active_robot_entry_orders.side_effect = lambda account: (
+            {"box-entry": (Symbol("BOTUSDT"), 4)}
+            if orders["box-entry"] == "open" else {}
+        )
+        runtime.store.get_paper_limit = Mock(side_effect=lambda order_id, account: (
+            SimpleNamespace(symbol=Symbol("BOTUSDT"), status=orders[order_id])
+            if order_id in orders else None
+        ))
+        def cancel(request):
+            orders[request.order_id] = "cancelled"
+            state["limits"] = [
+                item for item in state["limits"]
+                if item.order_id.value != request.order_id
+            ]
+            return SimpleNamespace(status=CommandResultStatus.COMPLETED)
+        runtime._robot_cancel_limit.side_effect = cancel
+        return runtime, state, orders
+
+    def test_open_box_remaining_entry_is_cancelled_before_market_and_exit_survives_until_flat(self):
+        runtime, state, orders = self._open_box_with_remaining_entries()
+        def close_robot(request):
+            self.assertEqual(orders["box-entry"], "cancelled")
+            self.assertEqual(orders["box-exit"], "open")
+            state["trades"] = ()
+            return response((completed(),))
+        runtime.robot_close_all.side_effect = close_robot
+        result = run(runtime)
+        self.assertFalse(result.positions)
+        self.assertEqual(orders["box-exit"], "cancelled")
+        self.assertEqual(
+            [x.args[0].order_id for x in runtime._robot_cancel_limit.call_args_list],
+            ["box-entry", "box-exit"],
+        )
+
+    def test_reconciliation_required_cancels_open_box_entry_before_reconcile(self):
+        runtime, state, orders = self._open_box_with_remaining_entries(
+            status="RECONCILIATION_REQUIRED",
+        )
+        def reconcile():
+            self.assertEqual(orders["box-entry"], "cancelled")
+            previous = state["robot"]
+            state["robot"] = SimpleNamespace(
+                mode="ROBOT_RUNNING", recovery_status="PAUSED",
+                version=previous.version + 1, updated_at_ms=1,
+            )
+            return SimpleNamespace(success=True)
+        runtime.robot_reconcile.side_effect = reconcile
+        result = run(runtime)
+        self.assertFalse(result.positions)
+        runtime.robot_reconcile.assert_called_once()
+        runtime.robot_close_all.assert_called_once()
+
+    def test_unconfirmed_open_box_entry_cancel_never_dispatches_market(self):
+        runtime, state, orders = self._open_box_with_remaining_entries()
+        runtime._robot_cancel_limit.return_value = SimpleNamespace(
+            status=CommandResultStatus.UNKNOWN,
+        )
+        runtime._robot_cancel_limit.side_effect = None
+        with self.assertRaisesRegex(
+            PaperCloseAllRejected, "robot_entry_limit_cancel_unconfirmed",
+        ):
             run(runtime)
+        self.assertEqual(orders["box-entry"], "open")
+        self.assertEqual(orders["box-exit"], "open")
         runtime.robot_close_all.assert_not_called()
         runtime.close_all.assert_not_called()
+        self.assertEqual(state["robot"].recovery_status, "RECONCILIATION_REQUIRED")
 
     def test_unresolved_protection_never_dispatches_market_close(self):
         runtime, _ = fixture(robot=True, obligations=(
