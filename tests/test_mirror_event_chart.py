@@ -8,10 +8,13 @@ from mirror_scanner import _frozen_event_chart, mirror_source_token
 
 
 class Level:
-    def __init__(self, level_id, origin, side="upper"):
+    def __init__(self, level_id, origin, side="upper", decision=None):
         self.level_id = level_id
-        self.provenance = {"parent_formation_id": origin}
+        self.provenance = {"parent_formation_id": origin, "decision_index": decision}
         self.side = side
+        self.source = "PATTERN_BOUNDARY"
+        self.pattern = "Rising Wedge"
+        self.confirmed_at_ms = 600_000
 
     def to_dict(self):
         return {
@@ -48,6 +51,22 @@ def test_snapshot_contains_only_exact_source_boundaries():
     assert snapshot["event_open_time_ms"] == 124 * 300_000
     assert mirror_source_token("TESTUSDT", "5", "selected") != mirror_source_token(
         "TESTUSDT", "5", "unrelated")
+
+
+def test_boundary_pair_without_formation_id_requires_same_engine_decision():
+    registry = SimpleNamespace(levels={
+        "selected": Level("selected", None, decision=12),
+        "paired": Level("paired", None, side="lower", decision=12),
+        "other-decision": Level("other-decision", None, decision=11),
+    })
+    rows = [{"open_time_ms": i * 300_000, "open": 0.95,
+             "high": 1.02, "low": 0.88, "close": 0.97} for i in range(4)]
+    snapshot = _frozen_event_chart(
+        "TESTUSDT", "5", rows, registry, "selected",
+        {"sources": [{"parent_formation_id": None}], "naked_retest": {}},
+        "breakout",
+    )
+    assert {item["level_id"] for item in snapshot["levels"]} == {"selected", "paired"}
 
 
 def test_frozen_chart_renders_without_market_data(tmp_path):
