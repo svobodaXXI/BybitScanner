@@ -863,7 +863,7 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                         render_mirror_chart(frozen, chart_path)
                         owner_id = get_telegram_owner_chat_id()
                         source_token = mirror_source_token(symbol, timeframe, item["level_id"])
-                        source_ids = [str(source["parent_formation_id"])
+                        source_ids = [f"origin:{symbol}:{timeframe}:{source['parent_formation_id']}"
                                       for source in row.get("sources", ())
                                       if source.get("parent_formation_id")]
                         source_id = f"mirror-origin:{source_token}"
