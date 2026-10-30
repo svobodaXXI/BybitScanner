@@ -798,10 +798,11 @@ def _process_mirror_source_callback(callback_query) -> bool:
     explicitly labelled as a MIRROR level chart, not the missing original.
     """
     data = str(callback_query.get("data") or "")
-    prefix = "mirror:source:"
-    if not data.startswith(prefix):
+    mirror_prefix, signal_prefix = "mirror:source:", "signal:source:"
+    is_mirror = data.startswith(mirror_prefix)
+    if not (is_mirror or data.startswith(signal_prefix)):
         return False
-    token = data[len(prefix):]
+    token = data[len(mirror_prefix if is_mirror else signal_prefix):]
     if len(token) != 24 or any(char not in "0123456789abcdef" for char in token):
         return False
     callback_id = callback_query.get("id")
@@ -813,6 +814,13 @@ def _process_mirror_source_callback(callback_query) -> bool:
         _answer_callback(callback_id, "Только личный чат владельца")
         return True
     _answer_callback(callback_id)
+    if not is_mirror:
+        original = signal_archive.load_original_signal([f"source-original:{token}"])
+        if original is None:
+            _send_text(chat_id, "Исходная карточка сигнала недоступна: архив не найден.")
+        elif not _repost_original_signal(chat_id, original):
+            _send_text(chat_id, "Не удалось отправить сохранённый график исходного сигнала.")
+        return True
     mirror = signal_archive.load_original_signal([f"mirror-origin:{token}"])
     if mirror is None:
         _send_text(chat_id, "Исходная MIRROR-карточка недоступна: архив не найден.")
