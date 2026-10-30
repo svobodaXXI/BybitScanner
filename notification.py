@@ -509,7 +509,9 @@ def send_signal(
             f"[TELEGRAM] Chart not found: "
             f"{chart_path}"
         )
-        return all_delivered
+        # A text-only message is not a completed Scanner signal card.
+        # Preserve a failed delivery result for the bounded retry path.
+        return False
 
     owner_chat_id = get_telegram_owner_chat_id()
     handoff = prepare_robot_handoff(
