@@ -3870,7 +3870,7 @@ class PaperRuntime:
         # ordinary PAPER manual path close the remaining (manual) symbols.
         robot_results: tuple[CommandResult, ...] = ()
         if candidates:
-            robot_close = self.robot_close_all(request)
+            robot_close = self.robot_close_all(request, evidence=evidence)
             robot_results = robot_close.results
             if any(item.status is not CommandResultStatus.COMPLETED for item in robot_results):
                 fail("robot_owned_close_unconfirmed")
@@ -3922,7 +3922,26 @@ class PaperRuntime:
             self._paper_close_all_symbol_reports(request, positions, initial_trades),
         )
 
-    def _robot_close_box_candidate(self, candidate) -> CommandResult:
+    def _fresh_box_close_book(
+        self, symbol: Symbol, evidence: NormalizedOrderBook | None = None,
+    ) -> NormalizedOrderBook | None:
+        """Prefer fresh handler-thread evidence over a stale local stream.
+
+        Validate with the SAME PAPER Market executor/clock before touching
+        protective EXIT LIMITs. Never issue a REST read on the owner thread.
+        """
+        streamed = self._streamed_book(symbol)
+        for book in (evidence, streamed):
+            try:
+                self._market_executor.validate_book(symbol, book)
+            except (RuntimeError, ValueError):
+                continue
+            return book
+        return None
+
+    def _robot_close_box_candidate(
+        self, candidate, *, evidence: NormalizedOrderBook | None = None,
+    ) -> CommandResult:
         """Close one OPEN Box through durable EXIT-slot-0 ownership."""
         trade = self.store.get_open_robot_trade_for_symbol(
             self._paper_account_id, candidate.symbol,
@@ -3939,14 +3958,23 @@ class PaperRuntime:
         if proof.remaining_quantity <= 0:
             raise RuntimeError("OPEN Box has no owned exposure to close")
 
+        # When evidence is missing/stale, keep all protective EXITs and STOP
+        # intact. The old path cancelled EXITs before discovering Market could
+        # not execute; the HTTP handler already supplies off-owner evidence.
+        book = self._fresh_box_close_book(candidate.symbol, evidence)
+        if book is None:
+            return CommandResult(
+                "box-close-book-" + candidate.candidate_id,
+                CommandResultStatus.UNAVAILABLE,
+                "box_close_fresh_book_unavailable",
+                "PAPER Box Market close needs a book within the execution freshness limit",
+                None, True,
+            )
         execution = dict((candidate.robot_state or {}).get("execution") or {})
         raw_intent = execution.get("box_manual_close_intent")
         if isinstance(raw_intent, Mapping):
             plan = restore_box_market_plan(raw_intent)
         else:
-            book = self._robot_execution_book(candidate.symbol.value)
-            if book is None:
-                raise RuntimeError("authoritative Box book is unavailable")
             plan = build_box_manual_close_market_plan(
                 source, book, quantity=proof.remaining_quantity,
             )
@@ -4011,8 +4039,7 @@ class PaperRuntime:
             )
 
         result = self._robot_api.market(
-            plan.request, identity=plan.identity,
-            market_book=self._robot_execution_book(candidate.symbol.value),
+            plan.request, identity=plan.identity, market_book=book,
         )
         if result.status is not CommandResultStatus.COMPLETED:
             return result
@@ -4244,7 +4271,10 @@ class PaperRuntime:
         self.store.clear_paper_protection_for_flat(position_key)
         return True
 
-    def robot_close_all(self, request: CloseAllCommandRequest) -> CloseAllCommandResponse:
+    def robot_close_all(
+        self, request: CloseAllCommandRequest, *,
+        evidence: Mapping[str, NormalizedOrderBook] | None = None,
+    ) -> CloseAllCommandResponse:
         """Market-close exclusively Robot-owned open positions (close_all_now()).
 
         Unlike close_all(), which is account-wide, this filters strictly to
@@ -4384,7 +4414,9 @@ class PaperRuntime:
                         reason, message, None, True,
                     )
                 elif is_box:
-                    result = self._robot_close_box_candidate(candidate)
+                    result = self._robot_close_box_candidate(
+                        candidate, evidence=(evidence or {}).get(symbol),
+                    )
                 else:
                     # The existing PAPER Market engine already guarantees
                     # stable order/exec identity replay. Bind it to the same
