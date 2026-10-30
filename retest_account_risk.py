@@ -109,6 +109,7 @@ def daily_loss_headroom_usdt(daily_gate: Any) -> tuple[str, str, Decimal | None]
 
 def account_risk_limit(
     *, daily_gate: Any, committed_worst_case_usdt: Iterable[Any] | None,
+    paper_test: bool = False, paper_test_budget_usdt: Any = None,
 ) -> AccountRiskLimit:
     """Available account risk budget after current obligations.
 
@@ -118,9 +119,16 @@ def account_risk_limit(
     adjusted equity, so subtracting the full worst case is deliberately conservative.
     """
 
-    decision, reason, headroom = daily_loss_headroom_usdt(daily_gate)
-    if decision != DECISION_OK:
-        return AccountRiskLimit(decision, reason)
+    if paper_test:
+        # Explicit PAPER-only test budget. Never infer unlimited headroom from
+        # an unavailable/disabled daily gate; malformed input still fails closed.
+        headroom = _decimal(paper_test_budget_usdt)
+        if headroom is None or headroom <= 0:
+            return AccountRiskLimit(DECISION_WAIT, "paper_test_budget_invalid")
+    else:
+        decision, reason, headroom = daily_loss_headroom_usdt(daily_gate)
+        if decision != DECISION_OK:
+            return AccountRiskLimit(decision, reason)
     if committed_worst_case_usdt is None:
         return AccountRiskLimit(DECISION_WAIT, "obligations_unknown", headroom_usdt=headroom)
     total = Decimal(0)

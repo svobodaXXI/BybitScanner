@@ -177,3 +177,41 @@ def test_position_worst_case_loss_is_unknown_for_unusable_inputs(kwargs):
     base.update(kwargs)
 
     assert position_worst_case_loss_usdt(**base) is None
+
+
+@pytest.mark.parametrize("budget", [None, "", "0", "-1", "NaN", "Infinity", "broken", 123.5])
+def test_paper_test_invalid_budget_waits_without_daily_gate(budget):
+    result = account_risk_limit(
+        daily_gate=gate(enabled=False), committed_worst_case_usdt=[],
+        paper_test=True, paper_test_budget_usdt=budget,
+    )
+    assert (result.decision, result.reason) == (DECISION_WAIT, "paper_test_budget_invalid")
+
+
+def test_paper_test_budget_ignores_disabled_daily_gate_but_subtracts_obligations():
+    result = account_risk_limit(
+        daily_gate=gate(enabled=False, data_available=False),
+        committed_worst_case_usdt=["12", D("8")],
+        paper_test=True, paper_test_budget_usdt="100",
+    )
+    assert result.decision == DECISION_OK
+    assert result.limit_usdt == D("80")
+    assert result.committed_usdt == D("20")
+    # The identical disabled gate must still block normal PAPER.
+    ordinary = account_risk_limit(
+        daily_gate=gate(enabled=False), committed_worst_case_usdt=["12", "8"],
+    )
+    assert (ordinary.decision, ordinary.reason) == (DECISION_WAIT, "daily_gate_disabled")
+
+
+def test_paper_test_never_ignores_unknown_or_exhausted_obligations():
+    for obligations, decision, reason in (
+        (None, DECISION_WAIT, "obligations_unknown"),
+        (["5", None], DECISION_WAIT, "obligation_unknown"),
+        (["100"], DECISION_DENY, "account_risk_exhausted"),
+    ):
+        result = account_risk_limit(
+            daily_gate=gate(enabled=False), committed_worst_case_usdt=obligations,
+            paper_test=True, paper_test_budget_usdt="100",
+        )
+        assert (result.decision, result.reason) == (decision, reason)
