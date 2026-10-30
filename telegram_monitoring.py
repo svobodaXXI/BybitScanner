@@ -461,6 +461,11 @@ PHASE_LABELS = {
 
 
 def _telegram_request(method: str, **params):
+    import telegram_gateway_client
+    if telegram_gateway_client.configured():
+        if method == "getUpdates":
+            return telegram_gateway_client.get_updates(**params)
+        return telegram_gateway_client.bot_method(method, **params)
     url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/{method}"
     response = requests.get(url, params=params, timeout=40)
     return response.json()
