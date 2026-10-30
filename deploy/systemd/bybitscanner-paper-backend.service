@@ -36,6 +36,8 @@ User=bybitscanner
 Group=bybitscanner
 WorkingDirectory=/opt/BybitScanner
 EnvironmentFile=/etc/bybitscanner/paper.env
+# Shared Gateway transport; deploy secret only through protected VPS configuration.
+EnvironmentFile=-/etc/bybitscanner/telegram-gateway.env
 # Optional, root-only (600): the Autopilot owner token for PAPER_AUTO (owner.env.example).
 EnvironmentFile=-/etc/bybitscanner/owner.env
 # PAPER DB and its side files live here (created by systemd for User= on a start only).
