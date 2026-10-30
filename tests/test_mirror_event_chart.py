@@ -50,8 +50,10 @@ def test_snapshot_contains_only_exact_source_boundaries():
     assert {level["level_id"] for level in snapshot["levels"]} == {"selected", "other-side"}
     assert sum(bool(level["selected"]) for level in snapshot["levels"]) == 1
     assert snapshot["event_open_time_ms"] == 124 * 300_000
-    assert mirror_source_token("TESTUSDT", "5", "selected") != mirror_source_token(
-        "TESTUSDT", "5", "unrelated")
+    assert mirror_source_token("TESTUSDT", "5", "selected", "breakout", 1000) != mirror_source_token(
+        "TESTUSDT", "5", "unrelated", "breakout", 1000)
+    assert mirror_source_token("TESTUSDT", "5", "selected", "breakout", 1000) != mirror_source_token(
+        "TESTUSDT", "5", "selected", "first_retest", 2000)
 
 
 def test_boundary_pair_without_formation_id_requires_same_engine_decision():
