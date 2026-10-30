@@ -643,7 +643,9 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                 record["freshness"] = "STALE" if rejection and rejection.startswith("stale") else "FRESH"
                 if record["candidate"]:
                     record["robot"] = _robot_handoff(level, record)
-                    pending.append({"level_id": level_id, "kind": "breakout"})
+                    pending.append({"level_id": level_id, "kind": "breakout",
+                                    "chart": _frozen_event_chart(symbol, timeframe, rows, registry,
+                                                                 level_id, record, "breakout")})
                 journal.append({"event": "mirror_breakout", **base, "level_id": level_id,
                                 "breakout": record["naked_retest"]["breakout"],
                                 "evidence": record["breakout_evidence"], "candidate": record["candidate"],
@@ -652,7 +654,9 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                 record["lifecycle"] = LIFECYCLE_DONE
                 if record.get("candidate"):
                     record["robot"] = _robot_handoff(level, record)
-                    pending.append({"level_id": level_id, "kind": "first_retest"})
+                    pending.append({"level_id": level_id, "kind": "first_retest",
+                                    "chart": _frozen_event_chart(symbol, timeframe, rows, registry,
+                                                                 level_id, record, "first_retest")})
                 journal.append({"event": "mirror_first_retest", **base, "level_id": level_id,
                                 "status": status, "retest": record["naked_retest"]["retest"],
                                 "candidate": record.get("candidate")})
@@ -742,6 +746,33 @@ def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) 
     return handed
 
 
+def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str, Any]],
+                        registry: LevelRegistry, level_id: str,
+                        record: Mapping[str, Any], kind: str) -> dict[str, Any]:
+    """Freeze the event OHLC and provably related boundaries before Telegram delivery."""
+    selected = registry.levels[level_id]
+    origin_ids = {s.get("parent_formation_id") for s in record.get("sources", ())
+                  if s.get("parent_formation_id")}
+    levels = []
+    for level in registry.levels.values():
+        is_selected = level.level_id == level_id
+        same_origin = bool(origin_ids and level.provenance.get("parent_formation_id") in origin_ids)
+        if not (is_selected or same_origin):
+            continue
+        item = level.to_dict()
+        item["selected"] = is_selected
+        levels.append(item)
+    event = ((record.get("naked_retest") or {}).get("retest") if kind == "first_retest"
+             else (record.get("naked_retest") or {}).get("breakout")) or {}
+    return {
+        "symbol": symbol, "timeframe": timeframe, "level_id": level_id,
+        "candles": [{k: row[k] for k in ("open_time_ms", "open", "high", "low", "close")}
+                    for row in rows[-120:]],
+        "levels": levels,
+        "event_open_time_ms": event.get("open_time_ms"),
+    }
+
+
 # --- Telegram -----------------------------------------------------------------------------------
 
 def _utc(ms) -> str:
@@ -784,14 +815,20 @@ def mirror_caption(row: Mapping[str, Any], kind: str) -> str:
 
 
 def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = False, root=None) -> int:
-    """Deliver pending MIRROR cards through the Scanner's Telegram interface; returns cards sent.
+    """Deliver immutable event charts; never substitute a newer symbol chart.
 
-    A card leaves the pending list only after delivery to every recipient (or when
-    Telegram is disabled), and the state is saved after each one.
+    Old pending cards without frozen evidence retain their text-only delivery.
+    Only fully delivered cards leave the durable pending list.
     """
 
     import config
-    from notification import build_tradingview_keyboard, send_message_to_recipients
+    from notification import (
+        build_tradingview_keyboard, get_telegram_chat_ids,
+        get_telegram_owner_chat_id, send_message_to_recipients,
+    )
+    from telegram_bot import send_photo
+    from mirror_event_chart import render_mirror_chart
+    import tempfile
 
     try:
         state = load_state(symbol, timeframe, root)
@@ -810,12 +847,32 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
             delivered = "telegram_disabled"
         else:
             text = mirror_caption(row, item["kind"]) + ("\n🧪 TEST MODE" if test_mode else "")
-            markup = build_tradingview_keyboard(symbol, timeframe, include_review_actions=False)
-            delivered = bool(send_message_to_recipients(text, reply_markup=markup))
+            frozen = item.get("chart")
+            if frozen:
+                try:
+                    with tempfile.TemporaryDirectory(prefix="mirror_event_") as directory:
+                        chart_path = Path(directory) / "event.png"
+                        render_mirror_chart(frozen, chart_path)
+                        owner_id = get_telegram_owner_chat_id()
+                        delivered = True
+                        for chat_id in get_telegram_chat_ids():
+                            markup = build_tradingview_keyboard(
+                                symbol, timeframe, include_review_actions=bool(owner_id and chat_id == owner_id))
+                            response = send_photo(config.TELEGRAM_TOKEN, chat_id, chart_path,
+                                                  caption=text[:1024], reply_markup=markup)
+                            if not (isinstance(response, dict) and response.get("ok")):
+                                delivered = False
+                except Exception as exc:
+                    print(f"[MIRROR CHART DELIVERY ERROR] {symbol} {timeframe}m {type(exc).__name__}: {exc}",
+                          flush=True)
+                    delivered = False
+            else:
+                markup = build_tradingview_keyboard(symbol, timeframe, include_review_actions=False)
+                delivered = bool(send_message_to_recipients(text, reply_markup=markup))
         append_event({"event": "mirror_delivery", "symbol": symbol, "timeframe": timeframe, **item,
                       "delivered": delivered, "test_mode": bool(test_mode)}, root)
         if delivered is False:
-            continue                              # stays pending; retried on the next pass
+            continue
         sent += delivered is True
         state["pending_notifications"].remove(item)
         record = state["records"].get(item["level_id"])
@@ -823,7 +880,6 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
             record["notified"] = [*record.get("notified", []), {"kind": item["kind"], "result": delivered}]
         save_state(state, root)
     return sent
-
 
 # --- Terminal projection (read-only) ------------------------------------------------------------
 
