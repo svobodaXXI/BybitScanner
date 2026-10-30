@@ -23,7 +23,7 @@ from bybit_api import get_symbols
 from config import MODE, MIN_SCORE, MAX_SYMBOLS
 
 from signal_adapter import prepare_signal
-from signal_memory import update_signal
+from signal_memory import update_signal, record_telegram_delivery
 from scanner_diary import record_scanner_diary_observation
 from scanner_diary_factors import record_scanner_p0_factors
 from telegram_labels import SCANNER_EMOJI
@@ -500,6 +500,10 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
                     telegram_sent = send_signal(
                         telegram_payload
                     )
+                    # The old update_signal() persisted NEW before Telegram
+                    # delivery; if Gateway failed, unchanged scores became
+                    # STABLE and the missed chart was never retried.
+                    record_telegram_delivery(signal, telegram_sent)
 
                 if telegram_sent:
                     sent_to_telegram_count += 1
