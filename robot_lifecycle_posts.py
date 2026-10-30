@@ -123,7 +123,10 @@ def format_lifecycle_caption(event: LifecycleEvent, view: PositionView) -> str:
             phase = f"Сделка закрыта · {exit_reason_label(event.exit_reason)}"
         return f"{first_line}\n{source_line}\n{phase}"[:CAPTION_LIMIT]
     if event.kind == EVENT_OPENED:
-        header = f"{ROBOT_EMOJI} Сделка открыта"
+        retry = view.reentry_attempt_index
+        header = (f"{ROBOT_EMOJI} Повторный перезаход №{retry - 1}"
+                  if retry is not None and retry > 1
+                  else f"{ROBOT_EMOJI} Сделка открыта")
     else:
         header = f"{ROBOT_EMOJI} Сделка закрыта · {exit_reason_label(event.exit_reason)}"
     return f"{header}\n\n{format_position_card(view)}"[:CAPTION_LIMIT]
