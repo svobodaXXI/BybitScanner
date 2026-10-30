@@ -117,7 +117,7 @@ def format_lifecycle_caption(event: LifecycleEvent, view: PositionView) -> str:
                        else "Зеркальный уровень")
         if event.kind == EVENT_OPENED:
             attempt = view.reentry_attempt_index
-            phase = (f"Повторный вход №{attempt}" if attempt is not None and attempt > 1
+            phase = (f"Повторный перезаход №{attempt - 1}" if attempt is not None and attempt > 1
                      else "Сделка открыта")
         else:
             phase = f"Сделка закрыта · {exit_reason_label(event.exit_reason)}"
