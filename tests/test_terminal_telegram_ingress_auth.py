@@ -3,9 +3,10 @@ import hashlib
 import hmac
 import json
 import unittest
+from types import SimpleNamespace
 from urllib.parse import urlencode
 from deploy.terminal_ingress.auth_server import (
-    INITDATA_MAX_AGE, SESSION_TTL, sign_session, verify_init_data, verify_session
+    Handler, INITDATA_MAX_AGE, SESSION_TTL, sign_session, verify_init_data, verify_session
 )
 
 TOKEN = "123456:TEST_TOKEN"
@@ -56,6 +57,27 @@ class TelegramIngressAuthTests(unittest.TestCase):
         secret = b"x" * 32
         session = sign_session(OWNER, secret, now=1700000000)
         self.assertFalse(verify_session(session + "a", OWNER, secret, now=1700000010))
+
+    def test_http_guard_denies_missing_cookie_and_cross_origin_writes(self):
+        secret = b"x" * 32
+        origin = "https://owner.example.test"
+        session = sign_session(OWNER, secret)
+        cfg = ("token", OWNER, origin, secret)
+        def authorized(headers):
+            request = SimpleNamespace(headers=headers, config=cfg)
+            return Handler._auth(request)
+        self.assertFalse(authorized({"X-Original-Method": "GET"}))
+        cookie = {"Cookie": "__Host-terminal=" + session}
+        self.assertTrue(authorized({**cookie, "X-Original-Method": "GET"}))
+        for method in ("POST", "PUT", "PATCH", "DELETE"):
+            self.assertFalse(authorized({**cookie, "X-Original-Method": method}))
+            self.assertTrue(authorized({**cookie, "X-Original-Method": method,
+                                        "X-Original-Origin": origin}))
+        self.assertFalse(authorized({**cookie, "X-Original-Method": "GET",
+                                     "X-Original-Upgrade": "websocket"}))
+        self.assertTrue(authorized({**cookie, "X-Original-Method": "GET",
+                                    "X-Original-Upgrade": "websocket",
+                                    "X-Original-Origin": origin}))
 
 if __name__ == "__main__":
     unittest.main()
