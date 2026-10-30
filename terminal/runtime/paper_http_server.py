@@ -1503,8 +1503,20 @@ class SerializedPaperRuntime:
 
         def read(symbol: str):
             try:
-                book = streamed(Symbol(symbol)) if streamed is not None else None
-                return symbol, book if book is not None else provider.get_book(Symbol(symbol))
+                key = Symbol(symbol)
+                book = streamed(key) if streamed is not None else None
+                # A stream can be present yet too old for the PAPER Market
+                # executor's 1000ms limit. Refresh OFF the owner thread,
+                # rather than sending a stale non-None book and never trying
+                # the existing provider fallback.
+                now_ms = int(time.time() * 1000)
+                if (
+                    book is not None
+                    and book.symbol == key
+                    and 0 <= now_ms - book.received_at_ms <= 1000
+                ):
+                    return symbol, book
+                return symbol, provider.get_book(key)
             except Exception:
                 LOGGER.warning("manual PAPER evidence read failed symbol=%s", symbol, exc_info=True)
                 return symbol, None
