@@ -778,7 +778,7 @@ def mirror_caption(row: Mapping[str, Any], kind: str) -> str:
         f"Ретест: {row['first_retest_text']}",
         f"FVG: {row['imbalance_text']}",
         f"Источники: {row['sources_text']}",
-        "Робот: только наблюдение — PAPER-допуск MIRROR не авторизован",
+        "Робот: событие наблюдения — PAPER-допуск и исполнение проверяются отдельно",
     ]
     return "\n".join(lines)
 
