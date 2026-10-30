@@ -20,8 +20,6 @@ User=bybitscanner
 Group=bybitscanner
 WorkingDirectory=/opt/BybitScanner
 EnvironmentFile=/etc/bybitscanner/paper.env
-# Same Gateway transport file as Scanner/backend; do not duplicate secrets.
-EnvironmentFile=-/etc/bybitscanner/telegram-gateway.env
 # PAPER DB and its side files live here (created by systemd for User= on a start only).
 StateDirectory=bybitscanner
 StateDirectoryMode=0750
