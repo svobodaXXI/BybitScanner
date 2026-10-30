@@ -110,8 +110,23 @@ def build_lifecycle_keyboard() -> dict[str, list[list[dict[str, str]]]]:
 
 
 def format_lifecycle_caption(event: LifecycleEvent, view: PositionView) -> str:
+    if view.mirror_campaign:
+        timeframe = view.mirror_timeframe or str(view.chart_candle_minutes)
+        first_line = f"🪞 MIRROR · {view.symbol} · {timeframe}m"
+        source_line = ("Граница паттерна" if view.mirror_level_source == "pattern_boundary"
+                       else "Зеркальный уровень")
+        if event.kind == EVENT_OPENED:
+            attempt = view.reentry_attempt_index
+            phase = (f"Повторный перезаход №{attempt - 1}" if attempt is not None and attempt > 1
+                     else "Сделка открыта")
+        else:
+            phase = f"Сделка закрыта · {exit_reason_label(event.exit_reason)}"
+        return f"{first_line}\n{source_line}\n{phase}"[:CAPTION_LIMIT]
     if event.kind == EVENT_OPENED:
-        header = f"{ROBOT_EMOJI} Сделка открыта"
+        retry = view.reentry_attempt_index
+        header = (f"{ROBOT_EMOJI} Повторный перезаход №{retry - 1}"
+                  if retry is not None and retry > 1
+                  else f"{ROBOT_EMOJI} Сделка открыта")
     else:
         header = f"{ROBOT_EMOJI} Сделка закрыта · {exit_reason_label(event.exit_reason)}"
     return f"{header}\n\n{format_position_card(view)}"[:CAPTION_LIMIT]

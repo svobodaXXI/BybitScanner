@@ -91,7 +91,7 @@ def test_level_without_parent_fresh_breakout_becomes_candidate_and_first_retest_
     bars = breakout_bars()
     summary = observe(frame(bars), root)
     assert summary["new_candidates"] == 1
-    assert summary["pending"] == [{"level_id": level.level_id, "kind": "breakout"}]
+    assert [item["kind"] for item in summary["pending"]] == ["breakout"]
     record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
     assert record["status"] == STATUS_UNTESTED and record["candidate"] is True
     assert record["freshness"] == "FRESH" and record["rejection"] is None
@@ -103,7 +103,7 @@ def test_level_without_parent_fresh_breakout_becomes_candidate_and_first_retest_
     record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
     assert record["status"] == STATUS_RETESTED and record["lifecycle"] == ms.LIFECYCLE_DONE
     assert record["naked_retest"]["retest"]["open_time_ms"] == (len(bars) - 1) * M
-    assert [p["kind"] for p in summary["pending"]] == ["breakout", "first_retest"]
+    assert [p["kind"] for p in summary["pending"]] == ["breakout"]  # terminal retest is durable, not a card
 
     # Repeated retests never re-arm the level or produce new events.
     bars += [(101.5, 102.0, 100.5, 101.0), (101.0, 104.0, 100.8, 103.5), (103.5, 103.6, 100.7, 101.2)]
@@ -259,11 +259,21 @@ def telegram(monkeypatch, config_stub):
     sent = []
     monkeypatch.setattr(config_stub, "TELEGRAM_ENABLED", True, raising=False)
     import notification
+    import mirror_event_chart
+    import telegram_bot
 
     outcome = {"ok": True}
-    monkeypatch.setattr(notification, "send_message_to_recipients",
-                        lambda text, reply_markup=None: (sent.append(text), outcome["ok"])[1])
     monkeypatch.setattr(notification, "build_tradingview_keyboard", lambda *a, **k: {"inline_keyboard": []})
+    monkeypatch.setattr(notification, "get_telegram_chat_ids", lambda: ("42",))
+    monkeypatch.setattr(notification, "get_telegram_owner_chat_id", lambda: "42")
+
+    def fake_render(snapshot, output_path):
+        Path(output_path).write_bytes(b"fake-png")
+    monkeypatch.setattr(mirror_event_chart, "render_mirror_chart", fake_render)
+    def fake_photo(*args, **kwargs):
+        sent.append(kwargs["caption"])
+        return {"ok": outcome["ok"]}
+    monkeypatch.setattr(telegram_bot, "send_photo", fake_photo)
     return sent, outcome
 
 
@@ -274,23 +284,29 @@ def test_pending_card_survives_a_failed_send_and_is_delivered_exactly_once(root,
                        provenance={"parent_pattern": "Rising Wedge", "parent_formation_id": "0:60000"})
     fixed_levels["levels"] = [level]
     bars = [(c + 0.5, c + 0.7, c + 0.3, c + 0.5) for c in (100 + 0.05 * i for i in range(30))]
-    bars.append((101.9, 102.0, 97.5, 97.8))                                # full-body breakdown
+    bars.append((101.9, 102.0, 97.5, 97.8))
     observe(frame(bars), root)
 
     outcome["ok"] = False
     assert ms.send_mirror_notifications("TESTUSDT", "1", root=root) == 0
-    assert ms.load_state("TESTUSDT", "1", root)["pending_notifications"]  # still pending after failure
+    assert ms.load_state("TESTUSDT", "1", root)["pending_notifications"]
     outcome["ok"] = True
     assert ms.send_mirror_notifications("TESTUSDT", "1", root=root) == 1
     assert ms.send_mirror_notifications("TESTUSDT", "1", root=root) == 0
     assert len(sent) == 2
-    card = sent[-1]
-    assert "MIRROR · TESTUSDT 1m · пробой" in card and "Пробой вниз (ретест-кампания LONG)" in card
-    assert "Rising Wedge lower — наклонная A1" in card and "→ A2" in card     # both anchors
-    assert "Ретест: ещё не было" in card and "PAPER-допуск MIRROR не авторизован" in card
+    assert sent[-1] == "🪞 MIRROR · TESTUSDT · 1m\nГраница паттерна"
     state = ms.load_state("TESTUSDT", "1", root)
     assert state["pending_notifications"] == []
     assert state["records"][level.level_id]["notified"] == [{"kind": "breakout", "result": True}]
+
+
+def test_mirror_caption_has_only_level_or_pattern_and_no_diagnostics():
+    level = {"source": "swing_zone"}
+    row = {"symbol": "TESTUSDT", "timeframe": "5", "level": level, "sources": []}
+    assert ms.mirror_caption(row, "breakout") == "🪞 MIRROR · TESTUSDT · 5m\nЗеркальный уровень"
+    row["level"] = {"source": "pattern_boundary"}
+    assert ms.mirror_caption(row, "breakout") == "🪞 MIRROR · TESTUSDT · 5m\nГраница паттерна"
+    assert ms.mirror_caption(row, "first_retest") == ms.mirror_caption(row, "breakout")
 
 
 def test_terminal_route_projects_mirror_levels_read_only(root, fixed_levels):
