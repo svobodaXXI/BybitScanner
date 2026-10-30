@@ -3870,7 +3870,10 @@ class PaperRuntime:
         # ordinary PAPER manual path close the remaining (manual) symbols.
         robot_results: tuple[CommandResult, ...] = ()
         if candidates:
-            robot_close = self.robot_close_all(request)
+            robot_close = (
+                self.robot_close_all(request, evidence=evidence)
+                if evidence else self.robot_close_all(request)
+            )
             robot_results = robot_close.results
             if any(item.status is not CommandResultStatus.COMPLETED for item in robot_results):
                 fail("robot_owned_close_unconfirmed")
@@ -3922,7 +3925,9 @@ class PaperRuntime:
             self._paper_close_all_symbol_reports(request, positions, initial_trades),
         )
 
-    def _robot_close_box_candidate(self, candidate) -> CommandResult:
+    def _robot_close_box_candidate(
+        self, candidate, *, evidence: NormalizedOrderBook | None = None,
+    ) -> CommandResult:
         """Close one OPEN Box through durable EXIT-slot-0 ownership."""
         trade = self.store.get_open_robot_trade_for_symbol(
             self._paper_account_id, candidate.symbol,
@@ -3985,7 +3990,16 @@ class PaperRuntime:
         # Check the EXACT execution evidence with PAPER's canonical freshness
         # validator before touching any protective Box EXIT. In particular,
         # a persisted intent does not imply the book is still executable.
+        # The HTTP Close-All handler prepares an independent off-owner book
+        # for every OPEN PAPER position. Prefer that fresh evidence if the
+        # owner's streamed snapshot has aged while pending entries/reconcile
+        # were processed. Both sources must pass the same PAPER validator.
         book = self._robot_execution_book(candidate.symbol.value)
+        try:
+            self._market_executor.validate_book(candidate.symbol, book)
+        except Exception:
+            if evidence is not None and evidence.symbol == candidate.symbol:
+                book = evidence
         try:
             self._market_executor.validate_book(candidate.symbol, book)
         except Exception as exc:
@@ -4266,7 +4280,10 @@ class PaperRuntime:
         self.store.clear_paper_protection_for_flat(position_key)
         return True
 
-    def robot_close_all(self, request: CloseAllCommandRequest) -> CloseAllCommandResponse:
+    def robot_close_all(
+        self, request: CloseAllCommandRequest, *,
+        evidence: Mapping[str, NormalizedOrderBook] | None = None,
+    ) -> CloseAllCommandResponse:
         """Market-close exclusively Robot-owned open positions (close_all_now()).
 
         Unlike close_all(), which is account-wide, this filters strictly to
@@ -4406,7 +4423,12 @@ class PaperRuntime:
                         reason, message, None, True,
                     )
                 elif is_box:
-                    result = self._robot_close_box_candidate(candidate)
+                    box_book = (evidence or {}).get(symbol)
+                    result = (
+                        self._robot_close_box_candidate(candidate, evidence=box_book)
+                        if box_book is not None
+                        else self._robot_close_box_candidate(candidate)
+                    )
                 else:
                     # The existing PAPER Market engine already guarantees
                     # stable order/exec identity replay. Bind it to the same
