@@ -456,5 +456,87 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
         self.assertEqual(result.positions, ())
 
 
+class TriggeredStopRetryEvidenceTests(unittest.TestCase):
+    """A latched STOP must consume current quotes and preserve EXITs on stale data."""
+
+    def test_latched_stop_for_open_trade_passes_current_book(self):
+        from terminal.domain.models import TradingAccountId
+        symbol = Symbol("API3USDT")
+        book = object()
+        obligation = SimpleNamespace(status="TRIGGERED")
+        runtime = SimpleNamespace(
+            _paper_account_id=TradingAccountId("paper"),
+            store=SimpleNamespace(
+                get_open_robot_trade_for_symbol=Mock(
+                    return_value=SimpleNamespace(trade_id="api3-trade"),
+                ),
+                get_paper_protection_obligation_for_trade=Mock(return_value=obligation),
+            ),
+            _dispatch_paper_protection_obligation=Mock(return_value=obligation),
+        )
+        PaperRuntime.evaluate_robot_protection_crossing(
+            runtime, symbol.value, book, event_id="new-book", received_at_ms=10000,
+        )
+        runtime._dispatch_paper_protection_obligation.assert_called_once_with(
+            obligation, now_ms=10000, recovery_book=book,
+        )
+
+    def test_latched_stop_without_open_trade_passes_current_book(self):
+        from terminal.domain.models import TradingAccountId
+        symbol = Symbol("API3USDT")
+        book = object()
+        obligation = SimpleNamespace(symbol=symbol, status="DISPATCHING")
+        runtime = SimpleNamespace(
+            _paper_account_id=TradingAccountId("paper"),
+            store=SimpleNamespace(
+                get_open_robot_trade_for_symbol=Mock(return_value=None),
+                load_unresolved_paper_protection_obligations=Mock(
+                    return_value=(obligation,),
+                ),
+            ),
+            _dispatch_paper_protection_obligation=Mock(return_value=obligation),
+        )
+        PaperRuntime.evaluate_robot_protection_crossing(
+            runtime, symbol.value, book, event_id="new-book", received_at_ms=10000,
+        )
+        runtime._dispatch_paper_protection_obligation.assert_called_once_with(
+            obligation, now_ms=10000, recovery_book=book,
+        )
+
+    def test_stale_book_fences_stop_without_cancelling_exit(self):
+        from terminal.domain.models import TradingAccountId, ExecutionId
+        account = TradingAccountId("paper")
+        obligation = SimpleNamespace(
+            obligation_id="api3-triggered-stop",
+            trade_id="api3-trade", status="TRIGGERED",
+            exec_id=ExecutionId("api3-exec"),
+        )
+        runtime = SimpleNamespace(
+            store=SimpleNamespace(
+                get_robot_trade=Mock(return_value=SimpleNamespace(
+                    trading_account_id=account, symbol=Symbol("API3USDT"),
+                    trade_id="api3-trade",
+                )),
+                get_execution=Mock(return_value=None),
+                reserve_box_order_identity=Mock(),
+                cancel_paper_limit=Mock(),
+                transition_paper_protection_obligation=Mock(),
+            ),
+            _streamed_book=Mock(return_value=None),
+            _market_executor=SimpleNamespace(
+                validate_book=Mock(side_effect=RuntimeError("stale")),
+                execute=Mock(),
+            ),
+        )
+        result = PaperRuntime._dispatch_paper_protection_obligation(
+            runtime, obligation, now_ms=10000,
+        )
+        self.assertIs(result, obligation)
+        runtime.store.reserve_box_order_identity.assert_not_called()
+        runtime.store.cancel_paper_limit.assert_not_called()
+        runtime.store.transition_paper_protection_obligation.assert_not_called()
+        runtime._market_executor.execute.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
