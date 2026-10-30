@@ -909,6 +909,16 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                                                   caption=text[:1024], reply_markup=markup)
                             if not (isinstance(response, dict) and response.get("ok")):
                                 delivered = False
+                except (ValueError, KeyError, TypeError) as exc:
+                    # Invalid historic evidence must not be reconstructed from
+                    # live data, but should not suppress the observation notice.
+                    print(f"[MIRROR CHART EVIDENCE ERROR] {symbol} {timeframe}m {type(exc).__name__}: {exc}",
+                          flush=True)
+                    markup = build_tradingview_keyboard(
+                        symbol, timeframe, include_review_actions=False)
+                    delivered = bool(send_message_to_recipients(
+                        text + "\\n⚠️ График события недоступен: исторические данные неполны.",
+                        reply_markup=markup))
                 except Exception as exc:
                     print(f"[MIRROR CHART DELIVERY ERROR] {symbol} {timeframe}m {type(exc).__name__}: {exc}",
                           flush=True)
