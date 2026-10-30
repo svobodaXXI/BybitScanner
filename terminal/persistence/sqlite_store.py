@@ -5462,6 +5462,26 @@ class SQLiteStore:
         ).fetchone()
         return int(row["attempt_index"]) if row is not None else None
 
+    def load_robot_reentry_campaign_trades(
+        self, account: TradingAccountId, candidate_id: str,
+    ) -> tuple[RobotTradeRecord, ...]:
+        """Read only fills/trades in the same exact durable STOP reentry campaign."""
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT t.* FROM robot_trades t
+               JOIN robot_reentry_attempts a
+                 ON a.trading_account_id=t.trading_account_id
+                AND a.candidate_id=t.candidate_id
+               WHERE a.trading_account_id=?
+                 AND a.campaign_id=(
+                   SELECT campaign_id FROM robot_reentry_attempts
+                   WHERE trading_account_id=? AND candidate_id=?
+                 )
+               ORDER BY t.entry_time_ms, t.trade_id""",
+            (account.value, account.value, candidate_id),
+        ).fetchall()
+        return tuple(_robot_trade_from_row(row) for row in rows)
+
     def get_robot_candidate(self, candidate_id: str) -> RobotCandidateRecord | None:
         self._assert_owner()
         row = self._connection.execute(
