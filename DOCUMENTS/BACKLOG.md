@@ -1,3 +1,9 @@
+## VERIFIED TELEGRAM TRANSPORT UPDATE — 2026-10-30
+
+VPS `d1329214` deployed; PAPER DB FLAT/synced and processes inactive. VPS → Cloudflare Worker → Vercel Telegram Gateway → Telegram **real text and PNG delivery confirmed by owner**; Cloudflare URL recorded in `/etc/bybitscanner/paper.env`. This closes the earlier HTTP transport reachability blocker for text/PNG only. Inline keyboard/callback, service startup and full Scanner delivery/coverage remain unverified. Gateway secret exposed in owner screenshot; rotation declined, risk outstanding. Source of truth: `DOCUMENTS/TELEGRAM_CLOUDFLARE_VPS_PROVEN_ROUTE_20261030.md`. Do not restart/autotrade merely for transport proof; Scanner owner-manual policy persists.
+
+---
+
 ## CURRENT OWNER FEEDBACK QUEUE — 2026-10-30 — MIRROR / TELEGRAM / PAPER VISUAL ACCEPTANCE
 
 **Authority:** latest direct owner instructions (2026-10-30), preceding dated backlog priorities. **Outcome:** Telegram cards show intelligible charts and only actionable MIRROR/Robot lifecycle events, while ordinary Scanner signals reliably arrive with their original charts. End-to-end PAPER/runtime acceptance is NOT established by a merged PR or CI alone. GitHub development by ChatGPT; Codex only read-only VPS operational mediator. LIVE forbidden; no admission/STOP/TAKE/ownership/reconciliation/protection bypass; preserve running PAPER DB, Telegram Gateway and user files.
