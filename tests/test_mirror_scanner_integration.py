@@ -294,7 +294,7 @@ def test_pending_card_survives_a_failed_send_and_is_delivered_exactly_once(root,
     assert ms.send_mirror_notifications("TESTUSDT", "1", root=root) == 1
     assert ms.send_mirror_notifications("TESTUSDT", "1", root=root) == 0
     assert len(sent) == 2
-    assert sent[-1] == "🪞 MIRROR · TESTUSDT · 1m\\nГраница паттерна"
+    assert sent[-1] == "🪞 MIRROR · TESTUSDT · 1m\nГраница паттерна"
     state = ms.load_state("TESTUSDT", "1", root)
     assert state["pending_notifications"] == []
     assert state["records"][level.level_id]["notified"] == [{"kind": "breakout", "result": True}]
@@ -303,9 +303,9 @@ def test_pending_card_survives_a_failed_send_and_is_delivered_exactly_once(root,
 def test_mirror_caption_has_only_level_or_pattern_and_no_diagnostics():
     level = {"source": "swing_zone"}
     row = {"symbol": "TESTUSDT", "timeframe": "5", "level": level, "sources": []}
-    assert ms.mirror_caption(row, "breakout") == "🪞 MIRROR · TESTUSDT · 5m\\nЗеркальный уровень"
+    assert ms.mirror_caption(row, "breakout") == "🪞 MIRROR · TESTUSDT · 5m\nЗеркальный уровень"
     row["level"] = {"source": "pattern_boundary"}
-    assert ms.mirror_caption(row, "breakout") == "🪞 MIRROR · TESTUSDT · 5m\\nГраница паттерна"
+    assert ms.mirror_caption(row, "breakout") == "🪞 MIRROR · TESTUSDT · 5m\nГраница паттерна"
     assert ms.mirror_caption(row, "first_retest") == ms.mirror_caption(row, "breakout")
 
 
