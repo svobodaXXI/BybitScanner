@@ -63,10 +63,31 @@ def test_boundary_pair_without_formation_id_requires_same_engine_decision():
              "high": 1.02, "low": 0.88, "close": 0.97} for i in range(4)]
     snapshot = _frozen_event_chart(
         "TESTUSDT", "5", rows, registry, "selected",
-        {"sources": [{"parent_formation_id": None}], "naked_retest": {}},
+        {"sources": [{"parent_formation_id": None}],
+         "naked_retest": {"breakout": {"open_time_ms": 3 * 300_000}}},
         "breakout",
     )
     assert {item["level_id"] for item in snapshot["levels"]} == {"selected", "paired"}
+
+
+def test_delayed_event_does_not_include_future_candles_or_levels():
+    selected = Level("selected", "formation-1")
+    late = Level("late", "formation-1", side="lower")
+    late.confirmed_at_ms = 10 * 300_000
+    registry = SimpleNamespace(levels={"selected": selected, "late": late})
+    rows = [{"open_time_ms": i * 300_000, "close_time_ms": (i + 1) * 300_000,
+             "open": 0.95, "high": 1.02, "low": 0.88, "close": 0.97}
+            for i in range(20)]
+    event_index = 3
+    snapshot = _frozen_event_chart(
+        "TESTUSDT", "5", rows, registry, "selected",
+        {"sources": [{"parent_formation_id": "formation-1"}],
+         "naked_retest": {"breakout": {"open_time_ms": event_index * 300_000}}},
+        "breakout",
+    )
+    assert len(snapshot["candles"]) == 4
+    assert snapshot["candles"][-1]["open_time_ms"] == event_index * 300_000
+    assert [level["level_id"] for level in snapshot["levels"]] == ["selected"]
 
 
 def test_frozen_chart_renders_without_market_data(tmp_path):
