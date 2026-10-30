@@ -2,9 +2,11 @@
 #     systemctl start bybitscanner-paper-start.service
 # Backend is mandatory. Telegram is best-effort: an unreachable Telegram API
 # must not prevent safe Scanner + Robot admission or the core runtime intent.
-# A successful oneshot confirms PAPER core only, NOT Telegram delivery or
-# Autopilot PAPER_AUTO. LIVE gates, reconciliation and STOP/TAKE stay enforced.
-# No boot enable/restart or automatic Autopilot escalation.
+# Successful oneshot requires canonical runtime intent ALL and authorized
+# PAPER_AUTO convergence; unavailable/unsafe components fail closed.
+# Telegram remains optional; no boot enable/restart or LIVE escalation.
+# Owner must set BYBITSCANNER_VPS_PAPER_AUTO_ON_START=1 and a dedicated
+# BYBITSCANNER_AUTOPILOT_OWNER_TOKEN in /etc/bybitscanner/owner.env (root-protected).
 
 [Unit]
 Description=BybitScanner PAPER core start (backend, optional Telegram, runtime intent ALL)
@@ -18,7 +20,9 @@ User=bybitscanner
 Group=bybitscanner
 WorkingDirectory=/opt/BybitScanner
 EnvironmentFile=/etc/bybitscanner/paper.env
+EnvironmentFile=-/etc/bybitscanner/owner.env
 ExecStart=/opt/BybitScanner/venv/bin/python -m tools.runtime_intent --no-telegram ALL
+ExecStart=/opt/BybitScanner/venv/bin/python -m tools.vps_paper_auto_start
 Restart=no
 TimeoutStartSec=300
 NoNewPrivileges=true

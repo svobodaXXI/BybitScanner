@@ -42,6 +42,8 @@ ENV = {
     "BYBITSCANNER_PAPER_BACKEND_URL": f"http://127.0.0.1:{BACKEND_PORT}",
     "BYBITSCANNER_TELEGRAM_MONITORING_PORT": str(TELEGRAM_PORT),
     "LIVE_MARKET_MUTATIONS_ENABLED": "false",
+    "BYBITSCANNER_VPS_PAPER_AUTO_ON_START": "1",
+    "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN": "probe-dedicated-owner-token-not-production-12345",
 }
 IDENTITY = expected_database_identity(REPO, ENV)
 SCENARIO_START = 0
@@ -74,6 +76,7 @@ SERVER = textwrap.dedent('''
 
     if reply == "mismatch":
         identity = "wrong-database"
+    autopilot = "OFF"
     log("process_started")
     time.sleep(delay)                                   # a backend needs time before it listens
 
@@ -93,13 +96,23 @@ SERVER = textwrap.dedent('''
             if kind == "backend" and self.path == "/api/health":
                 log("health_probe")
                 return self._json(200, {"ok": True, "component": "paper_backend", "mode": "paper",
-                                        "database_identity": identity})
+                                        "database_identity": identity,
+                                        "paper_live_safe": True, "robot_admission_ready": True,
+                                        "scanner_acceptance_ready": True})
+            if kind == "backend" and self.path == "/api/scanner/status":
+                return self._json(200, {"ok": True, "mode": "SCANNER_RUNNING"})
+            if kind == "backend" and self.path == "/api/robot/protection-health":
+                return self._json(200, {"ok": True, "healthy": True})
+            if kind == "backend" and self.path == "/api/robot/autopilot":
+                return self._json(200, {"ok": True, "mode": autopilot,
+                                        "trading_account_id": {"value": "paper"}})
             if kind == "telegram" and self.path == "/health":
                 return self._json(200, {"component": "telegram_monitoring", "status": "ready",
                                         "database_identity": identity})
             self._json(404, {"ok": False})
 
         def do_POST(self):
+            global autopilot
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             if kind == "backend" and self.path == "/api/runtime/intent":
                 log("intent", body=body)
@@ -111,6 +124,14 @@ SERVER = textwrap.dedent('''
                                         "changed": ["robot:resume", "scanner:start"],
                                         "final": {"robot": "READY", "protection": "HEALTHY", "scanner": "RUNNING"},
                                         "blocked_by": []})
+            if kind == "backend" and self.path == "/api/robot/autopilot":
+                if self.headers.get("X-BybitScanner-Autopilot-Owner-Token") != "probe-dedicated-owner-token-not-production-12345":
+                    return self._json(403, {"ok": False})
+                if body != {"mode": "PAPER_AUTO", "confirm_paper_auto": True}:
+                    return self._json(409, {"ok": False})
+                autopilot = "PAPER_AUTO"
+                log("paper_auto", mode=autopilot)
+                return self._json(200, {"ok": True, "mode": autopilot})
             self._json(404, {"ok": False})
 
     log("listening")
@@ -220,6 +241,7 @@ def main() -> int:
         "S1: start unit succeeded": s1["start_rc"] == 0 and s1["units"][start_unit].get("Result") == "success",
         "S1: Telegram started only after the backend proved its identity": s1["telegram_after_backend_listening"],
         "S1: exactly one intent ALL": s1["intents"] == [{"intent": "ALL"}],
+        "S1: owner-authorized PAPER_AUTO confirmed": "backend:paper_auto" in s1["order"],
         "S1: intent sent after backend and Telegram were READY": s1["intent_after_both"],
         "S1: backend and Telegram stay active after the oneshot": all(
             s1["units"][u].get("ActiveState") == "active" for u in UNITS[:2]),
