@@ -11,6 +11,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 BASE = "http://127.0.0.1:8765"
 HEADER = "X-BybitScanner-Autopilot-Owner-Token"
@@ -24,8 +25,12 @@ def request(path: str, *, data: dict | None = None, token: str | None = None) ->
     headers = {"Content-Type": "application/json"}
     if token is not None:
         headers[HEADER] = token
+    base = os.environ.get("BYBITSCANNER_PAPER_BACKEND_URL", BASE).rstrip("/")
+    parsed = urlsplit(base)
+    if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
+        raise StartupBlocked("Backend URL must be local PAPER loopback")
     req = urllib.request.Request(
-        BASE + path,
+        base + path,
         data=None if data is None else json.dumps(data).encode("utf-8"),
         headers=headers,
         method="GET" if data is None else "POST",
