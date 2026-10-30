@@ -917,7 +917,7 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                     markup = build_tradingview_keyboard(
                         symbol, timeframe, include_review_actions=False)
                     delivered = bool(send_message_to_recipients(
-                        text + "\\n⚠️ График события недоступен: исторические данные неполны.",
+                        text + "\n⚠️ График события недоступен: исторические данные неполны.",
                         reply_markup=markup))
                 except Exception as exc:
                     print(f"[MIRROR CHART DELIVERY ERROR] {symbol} {timeframe}m {type(exc).__name__}: {exc}",
