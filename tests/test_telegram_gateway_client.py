@@ -72,6 +72,20 @@ class TelegramGatewayTests(unittest.TestCase):
         self.assertEqual(calls[1].kwargs["json"]["reply_markup"], markup)
 
     @patch("telegram_gateway_client.requests.Session")
+    def test_archived_photo_file_id_allows_separate_keyboard(self, session_cls):
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"ok": True, "result": {"message_id": 55}}
+        session_cls.return_value.post.return_value = response
+        markup = {"inline_keyboard": [[{"text": "TradingView", "url": "https://example.org"}]]}
+        with patch.object(gateway, "send_text", return_value={"ok": True}) as send_menu:
+            sent = gateway.send_photo_file_id("12345", "existing-file-id", reply_markup=markup)
+        self.assertTrue(sent["ok"])
+        self.assertTrue(sent["keyboard_delivered"])
+        send_menu.assert_called_once_with("12345", "📎 Действия к графику выше",
+                                          reply_markup=markup)
+        self.assertEqual(session_cls.return_value.post.call_count, 1)
+
+    @patch("telegram_gateway_client.requests.Session")
     def test_photo_success_menu_failure_does_not_retry_photo(self, session_cls):
         from tempfile import TemporaryDirectory
         from pathlib import Path
