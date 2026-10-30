@@ -134,6 +134,38 @@ class LifecycleCaptionTests(unittest.TestCase):
                      "Паттерн: Falling Wedge"):
             self.assertIn(text, caption)
 
+    def test_first_and_two_stop_reentries_are_numbered_for_any_pattern(self):
+        from dataclasses import replace
+        view = PositionView(
+            symbol="SAGAUSDT", direction="LONG", is_open=True, quantity=Decimal("100"),
+            average_entry=Decimal("0.0254"), stop_price=Decimal("0.0249"),
+            take_price=Decimal("0.0284"), pattern="Falling Wedge",
+            trade=SimpleNamespace(),
+        )
+        opened = LifecycleEvent(EVENT_OPENED, "t1", "SAGAUSDT", 1)
+        self.assertIn("Сделка открыта", format_lifecycle_caption(opened, view))
+        self.assertNotIn("перезаход", format_lifecycle_caption(opened, view))
+        for attempt, expected in ((2, "Повторный перезаход №1"), (3, "Повторный перезаход №2")):
+            caption = format_lifecycle_caption(opened, replace(view, reentry_attempt_index=attempt))
+            self.assertTrue(caption.startswith(f"🤖 {expected}"))
+
+    def test_mirror_trade_caption_is_compact_and_retry_numbered(self):
+        from dataclasses import replace
+        view = PositionView(
+            symbol="SAGAUSDT", direction="SHORT", is_open=True, quantity=Decimal("100"),
+            average_entry=Decimal("0.0254"), stop_price=Decimal("0.0249"),
+            take_price=Decimal("0.0284"), pattern="MIRROR",
+            mirror_campaign=True, mirror_timeframe="5",
+            mirror_level_source="swing_zone", reentry_attempt_index=2,
+            trade=SimpleNamespace(),
+        )
+        opened = LifecycleEvent(EVENT_OPENED, "t1", "SAGAUSDT", 1)
+        caption = format_lifecycle_caption(opened, view)
+        self.assertEqual(caption, "🪞 MIRROR · SAGAUSDT · 5m\nЗеркальный уровень\nПовторный перезаход №1")
+        closed = LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 2, "STOP")
+        self.assertEqual(format_lifecycle_caption(closed, replace(view, is_open=False)),
+                         "🪞 MIRROR · SAGAUSDT · 5m\nЗеркальный уровень\nСделка закрыта · по стопу")
+
     def test_closed_caption_reason_and_result(self):
         for reason, label in (
             ("STOP", "по стопу"), ("TAKE", "по тейку"),
