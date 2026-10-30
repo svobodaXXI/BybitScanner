@@ -161,8 +161,8 @@ def send_photo_file_id(chat_id, file_id, caption="", reply_markup=None):
 def send_photo_upload(chat_id, photo_path, caption="", reply_markup=None):
     """Upload a bounded PNG/JPEG through the fixed-owner Gateway."""
     from pathlib import Path
-    if reply_markup is not None:
-        raise TelegramGatewayError("photo keyboard not supported")
+    if reply_markup is not None and not isinstance(reply_markup, dict):
+        raise TelegramGatewayError("invalid photo keyboard")
     if str(chat_id) != os.getenv("TELEGRAM_CHAT_ID", "").strip():
         raise TelegramGatewayError("Gateway photo recipient mismatch")
     path = Path(photo_path)
@@ -203,4 +203,18 @@ def send_photo_upload(chat_id, photo_path, caption="", reply_markup=None):
         raise TelegramGatewayError("Gateway photo upload unavailable") from exc
     if response.status_code != 200 or not isinstance(result, dict) or result.get("ok") is not True:
         raise TelegramGatewayError("Gateway photo upload rejected")
+    if reply_markup is not None:
+        # The deployed Gateway photo endpoint does not accept inline keyboards.
+        # Send a *separate owner menu* through the supported text route only
+        # after a confirmed photo upload; never silently drop the image.
+        # This is an explicit compatibility mode until photo markup is supported
+        # server-side. No direct Telegram fallback or invented message IDs.
+        try:
+            menu = send_text(chat_id, "📎 Действия к графику выше", reply_markup=reply_markup)
+        except TelegramGatewayError as exc:
+            # Do not trigger automatic photo retry after an accepted image:
+            # reupload would create duplicate chart messages.
+            print(f"[TELEGRAM GATEWAY PHOTO MENU ERROR] {type(exc).__name__}: {exc}", flush=True)
+            return {**result, "keyboard_delivered": False}
+        return {**result, "keyboard_delivered": bool(menu.get("ok"))}
     return result
