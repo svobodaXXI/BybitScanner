@@ -28,3 +28,19 @@ Telegram bot `/terminal` already sends an inline `web_app` button. Once approved
 4. Only after explicit permission, assign an actual HTTPS hostname and ingress provider, set secrets in protected configuration, install sidecar/nginx, and set workspace URL. Do not restart backend/Robot/Scanner or mutate PAPER DB. LIVE prohibited.
 
 No provider/hostname has been verified yet; **do not infer a publicly accessible Terminal from this PR**.
+
+## Public HTTPS route selected: Tailscale Funnel (deployment still prohibited)
+
+Tailscale Funnel supplies a stable `*.ts.net` HTTPS hostname on all plans without purchasing a domain or opening VPS public ports. Its **public URL is reachable by anyone**, so the Telegram signature/session guard above is still mandatory. Tailscale requires the owner to enroll the VPS into a tailnet and approve Funnel in the admin console. The actual hostname is not known until enrollment; never invent one.
+
+After separately approved VPS installation and isolated security acceptance, the intended sole Funnel backend is `http://127.0.0.1:8081` (the protected Nginx listener), **not** `8080` or `8765`. The documented CLI syntax for supported Tailscale versions is `tailscale funnel --bg http://127.0.0.1:8081`; do not run this until Nginx and the auth sidecar pass local fail-closed tests. Verify `tailscale funnel status` and inspect any pre-existing routes before enabling, so as not to overwrite another user's Funnel configuration.
+
+The final public URL comes from the actual Tailscale output, not guessed DNS. Set `BYBITSCANNER_TERMINAL_PUBLIC_ORIGIN` to that HTTPS origin, then set Telegram `BYBITSCANNER_WORKSPACE_URL` to `<origin>/login` **only after** successful phone acceptance. For positions requests, the existing Telegram code appends `?view=positions`.
+
+Tailscale docs (verified October 2026):
+- https://tailscale.com/docs/features/tailscale-funnel
+- https://tailscale.com/docs/reference/tailscale-cli/funnel
+
+Operational stop/rollback: disable **only** this Funnel route using the running Tailscale CLI's route-specific `off` option; unset the workspace URL, and shut down the sidecar/protected Nginx site, leaving existing services unchanged. Do not use global Funnel reset or stop the existing Terminal/backend.
+
+Before accepting: test expired session, absent session and malicious Origin against GET/POST/DELETE and WebSocket; test the single protected public hostname from an unauthenticated device; then one authenticated Telegram Mini App session from the owner's phone. No development CI can substitute for this live ingress acceptance.
