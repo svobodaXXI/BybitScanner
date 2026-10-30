@@ -58,9 +58,11 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
                     color=color, linewidth=1.9 if selected else 1.4,
                     linestyle="-" if selected else "--",
                     label=("MIRROR " if selected else "Источник ") + str(level.get("side", "")))
-            anchor_idx = next((i for i, t in enumerate(times) if t >= anchor_t), None)
-            if anchor_idx is not None:
-                ax.scatter([anchor_idx], [anchor_p + slope * (times[anchor_idx] - anchor_t)],
+            # Mark the actual extremum only when its candle is visible.
+            # Otherwise the line continues from an off-chart historic anchor.
+            if anchor_t in times:
+                anchor_idx = times.index(anchor_t)
+                ax.scatter([anchor_idx], [anchor_p],
                            color=color, s=20, zorder=5)
         event_t = snapshot.get("event_open_time_ms")
         if event_t is not None:
