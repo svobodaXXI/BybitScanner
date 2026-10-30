@@ -1,11 +1,16 @@
-# Scanner → Telegram Gateway: shared systemd environment
+# Scanner → Telegram Gateway: единое окружение PAPER
 
-**Confirmed 2026-10-30:** the running PAPER backend/Scanner had neither `BYBITSCANNER_TELEGRAM_GATEWAY_URL` nor `BYBITSCANNER_TELEGRAM_GATEWAY_SECRET`, while the Telegram service had both. Scanner fell back to direct Telegram SOCKS and failed with connection refused. The running backend and PAPER_AUTO must **not** be restarted to fix notifications.
+**Подтверждено 2026-10-30:** запущенный backend/Scanner не содержит `BYBITSCANNER_TELEGRAM_GATEWAY_URL` и `BYBITSCANNER_TELEGRAM_GATEWAY_SECRET`; Telegram-служба обе переменные содержит. Поэтому отправка сигнала Scanner шла напрямую через недоступный SOCKS, несмотря на работающий Gateway.
 
-Both systemd unit source files now include optional `EnvironmentFile=-/etc/bybitscanner/telegram-gateway.env`. This is a **configuration contract for the next separately authorized canonical PAPER start**, not a hot reload or a claim that delivery is already fixed.
+**Каноническая точка конфигурации уже существует:** обе systemd-службы используют `EnvironmentFile=/etc/bybitscanner/paper.env`. Нельзя менять список EnvironmentFile в unit-файлах: его охраняют `tools.vps_check` и регрессионные тесты. Специальный новый unit или перезапуск торгового backend не нужен.
 
-The VPS operator must reuse the already working Telegram Gateway URL/secret from the existing secured Telegram service configuration without printing them, and provision a **single protected** shared environment file readable by service user `bybitscanner` (directory permissions must also allow access). The existing `TELEGRAM_CHAT_ID` must be the same authorized recipient. Do not copy credentials into GitHub, terminal output or process arguments. Avoid leaving conflicting overrides from other systemd drop-ins and verify the actual effective environment safely before the next start. The optional file does not replace validation; if absent, Gateway won't be enabled for Scanner.
+## Действие при следующем отдельно разрешённом безопасном запуске
 
-**Deployment gate:** systemd `daemon-reload` alone does not update an already-running process environment. Do not run `systemctl restart bybitscanner-paper-backend`, kill the process, restart Scanner independently, or change PAPER_AUTO/DB. Enable new environment only on the next owner-approved **canonical safe stop/start** after protection and positions permit it. No automatic trading runtime restart. After that, verify one **real** Scanner signal through Gateway to the owner's Telegram; do not inject artificial trading signals.
+1. VPS-оператор переносит из **уже защищённой и работающей конфигурации Telegram-службы** три согласованных значения: `BYBITSCANNER_TELEGRAM_GATEWAY_URL`, `BYBITSCANNER_TELEGRAM_GATEWAY_SECRET`, `TELEGRAM_CHAT_ID` — в существующий `/etc/bybitscanner/paper.env`. Секреты не выводить, не включать в shell-командную строку и не сохранять в GitHub. Перед изменением сделать защищённую точечную резервную копию и не трогать остальные переменные.
+2. Проверить только синтаксис env-файла и отсутствие конфликтующих drop-in overrides. Не вызывать сервисный restart или kill. Изменение env-файла **не меняет окружение уже работающего процесса**.
+3. При отдельно разрешённом **каноническом safe stop/start** PAPER-контура подтвердить admission/protection/positions и только тогда разрешить новый backend-процесс со штатным общим `paper.env`. Запрещён `systemctl restart bybitscanner-paper-backend`.
+4. Подтвердить, что **новый** backend/Scanner имеет обе Gateway-переменные (не раскрывая секреты), и дождаться одного настоящего Scanner-сигнала в Telegram без генерации ложных торговых сигналов.
 
-No LIVE. No change to trading logic, admission, STOP/TAKE or ledger.
+**Текущее состояние:** исправление сигнального пути пока **не активировано**; рабочий Scanner остаётся без Gateway-настроек. Нельзя заявлять восстановление доставки по одному только merge или правке env-файла.
+
+PAPER-only; никакого LIVE. Robot, Scanner, PAPER_AUTO, STOP/TAKE, Admission и PAPER DB не менять без отдельного разрешения владельца.
