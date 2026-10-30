@@ -259,13 +259,14 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             .kwargs["reply_markup"]["inline_keyboard"]
         )
 
-        self.assertEqual(len(owner_keyboard), 3)
-        self.assertEqual(owner_keyboard[0][0]["text"], "↩️ К сигналу")
-        self.assertTrue(owner_keyboard[0][0]["callback_data"].startswith("signal:source:"))
+        self.assertEqual(len(owner_keyboard), 2)
+        self.assertFalse(any(
+            button.get("callback_data", "").startswith("signal:source:")
+            for row in owner_keyboard for button in row
+        ))
         self.assertEqual(
             [button["text"] for row in owner_keyboard for button in row],
             [
-                "↩️ К сигналу",
                 "📈 TradingView",
                 "📊 MetaScalp",
                 "✏️ Редактор",

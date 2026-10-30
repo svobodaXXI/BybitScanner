@@ -548,12 +548,6 @@ def send_signal(
                 )
             )
 
-            if is_owner and source_token:
-                reply_markup["inline_keyboard"].insert(0, [{
-                    "text": "↩️ К сигналу",
-                    "callback_data": f"signal:source:{source_token}",
-                }])
-
             response = send_photo(
                 config.TELEGRAM_TOKEN,
                 chat_id,
