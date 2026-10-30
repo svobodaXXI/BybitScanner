@@ -791,6 +791,7 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
         levels.append(item)
     return {
         "symbol": symbol, "timeframe": timeframe, "level_id": level_id,
+        "event_kind": kind,
         "candles": [{k: row[k] for k in ("open_time_ms", "open", "high", "low", "close")}
                     for row in event_rows[-120:]],
         "levels": levels,
