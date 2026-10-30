@@ -45,6 +45,49 @@ class TelegramGatewayTests(unittest.TestCase):
         session_cls.assert_not_called()
 
     @patch("telegram_gateway_client.requests.Session")
+    def test_photo_with_keyboard_delivers_image_then_separate_actions(self, session_cls):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+
+        response = MagicMock(status_code=200)
+        def result():
+            call = session_cls.return_value.post.call_args
+            if call.args[0].endswith("/v1/photo-upload"):
+                return {"ok": True, "result": {"message_id": 11}}
+            return {"ok": True, "event_id": call.kwargs["json"]["event_id"],
+                    "stage": "accepted_by_telegram_api", "telegram_message_id": 12}
+        response.json.side_effect = result
+        session_cls.return_value.post.return_value = response
+        with TemporaryDirectory() as root:
+            path = Path(root) / "signal.png"
+            path.write_bytes(b"PNG")
+            markup = {"inline_keyboard": [[{"text": "К сигналу", "callback_data": "signal:123"}]]}
+            sent = gateway.send_photo_upload("12345", path, caption="Scanner", reply_markup=markup)
+        self.assertTrue(sent["ok"])
+        self.assertTrue(sent["keyboard_delivered"])
+        calls = session_cls.return_value.post.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(calls[0].args[0].endswith("/v1/photo-upload"))
+        self.assertTrue(calls[1].args[0].endswith("/v1/send"))
+        self.assertEqual(calls[1].kwargs["json"]["reply_markup"], markup)
+
+    @patch("telegram_gateway_client.requests.Session")
+    def test_photo_success_menu_failure_does_not_retry_photo(self, session_cls):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"ok": True, "result": {"message_id": 11}}
+        session_cls.return_value.post.return_value = response
+        with TemporaryDirectory() as root:
+            path = Path(root) / "signal.png"
+            path.write_bytes(b"PNG")
+            with patch.object(gateway, "send_text", side_effect=gateway.TelegramGatewayError("offline")):
+                sent = gateway.send_photo_upload("12345", path, reply_markup={"inline_keyboard": []})
+        self.assertTrue(sent["ok"])
+        self.assertFalse(sent["keyboard_delivered"])
+        self.assertEqual(session_cls.return_value.post.call_count, 1)
+
+    @patch("telegram_gateway_client.requests.Session")
     def test_fail_closed_no_direct_fallback(self, session_cls):
         session_cls.return_value.post.side_effect = gateway.requests.ConnectionError()
         with self.assertRaises(gateway.TelegramGatewayError):
