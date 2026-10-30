@@ -188,7 +188,7 @@ def _unit_sections(text: str) -> dict[str, dict[str, str]]:
     return sections
 
 
-_REPEATABLE = {"EnvironmentFile", "Environment", "ExecStartPre", "Requires", "After"}
+_REPEATABLE = {"EnvironmentFile", "Environment", "ExecStartPre", "ExecStart", "Requires", "After"}
 
 
 def unit_problems(text: str, entry: str, *, check_interpreter: bool) -> list[str]:
@@ -200,15 +200,25 @@ def unit_problems(text: str, entry: str, *, check_interpreter: bool) -> list[str
         problems.append("has [Install] (could be enabled)")
     if service.get("Restart", "no") != "no":
         problems.append(f"Restart={service.get('Restart')}")
+    starts = [item.strip() for item in service.get("ExecStart", "").split("\n") if item.strip()]
     if entry not in service.get("ExecStart", ""):
         problems.append("unexpected ExecStart")
+    if "tools.runtime_intent --no-telegram ALL" in entry:
+        expected = [
+            "/opt/BybitScanner/venv/bin/python -m tools.runtime_intent --no-telegram ALL",
+            "/opt/BybitScanner/venv/bin/python -m tools.vps_paper_auto_start",
+        ]
+        if starts != expected:
+            problems.append("unified PAPER startup sequence missing or out of order")
     env_files = [item.strip() for item in service.get("EnvironmentFile", "").split("\n") if item.strip()]
     if env_files[:1] != [ENV_FILE.as_posix()] or any(
             item not in {ENV_FILE.as_posix(), "-" + OWNER_ENV_FILE.as_posix()} for item in env_files):
         problems.append(f"EnvironmentFile={env_files}")
-    interpreter = (service.get("ExecStart", "").split() or [""])[0]
-    if check_interpreter and not Path(interpreter).exists():
-        problems.append(f"interpreter {interpreter} not found on this host")
+    interpreters = [(line.split() or [""])[0] for line in starts]
+    if check_interpreter:
+        for interpreter in interpreters:
+            if not Path(interpreter).exists():
+                problems.append(f"interpreter {interpreter} not found on this host")
     problems += stop_contract_problems(service, entry, unit=sections.get("Unit", {}))
     return problems
 
