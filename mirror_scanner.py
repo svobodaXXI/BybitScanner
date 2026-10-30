@@ -897,7 +897,7 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                             # chart, never attribute it to an arbitrary pattern.
                             source_ids = []
                         source_id = f"mirror-origin:{source_token}"
-                        source_ready = record_original_signal(
+                        source_ready = False if test_mode else record_original_signal(
                             source_id, symbol=symbol, timeframe=timeframe,
                             pattern=row.get("level_label", "MIRROR"), text=text,
                             image_bytes=chart_path.read_bytes(), source_formation_ids=source_ids)
