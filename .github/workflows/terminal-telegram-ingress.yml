@@ -1,0 +1,29 @@
+name: Terminal Telegram ingress auth
+on:
+  pull_request:
+    paths:
+      - 'deploy/terminal_ingress/**'
+      - 'tests/test_terminal_telegram_ingress_auth.py'
+      - '.github/workflows/terminal-telegram-ingress.yml'
+  workflow_dispatch:
+jobs:
+  auth-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline Telegram HMAC/session tests
+        run: python -m unittest discover -s tests -p 'test_terminal_telegram_ingress_auth.py' -v
+      - name: Validate Nginx auth boundary statically
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          config = Path('deploy/terminal_ingress/nginx-authenticated.conf').read_text()
+          assert 'listen 127.0.0.1:8081;' in config
+          assert config.count('auth_request /_auth;') == 2
+          assert 'internal;' in config
+          assert '127.0.0.1:8765' in config
+          assert 'proxy_pass http://127.0.0.1:8091;' in config
+          PY
