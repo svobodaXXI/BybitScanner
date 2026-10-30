@@ -847,6 +847,13 @@ def mirror_caption(row: Mapping[str, Any], kind: str) -> str:
     return "\n".join(lines)
 
 
+# Observation-delivery backpressure: Scanner coverage takes precedence over
+# retrying a Telegram Gateway outage. Pending events remain durable.
+_MIRROR_SEND_NEXT_AT = 0.0
+_MIRROR_SEND_MIN_GAP_SEC = 10.0
+_MIRROR_SEND_FAILURE_COOLDOWN_SEC = 300.0
+
+
 def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = False, root=None) -> int:
     """Deliver immutable event charts; never substitute a newer symbol chart.
 
@@ -864,6 +871,9 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
     from mirror_event_chart import render_mirror_chart
     import tempfile
 
+    global _MIRROR_SEND_NEXT_AT
+    if not test_mode and time.monotonic() < _MIRROR_SEND_NEXT_AT:
+        return 0
     try:
         state = load_state(symbol, timeframe, root)
     except MirrorStateError:
@@ -873,6 +883,10 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
     rows = {row["level_id"]: row for row in project_state(state)}
     sent = 0
     for item in list(state["pending_notifications"]):
+        # At most one network delivery per (symbol, timeframe) call; an outage
+        # must not hold the Scanner behind thousands of old MIRROR cards.
+        if not test_mode:
+            _MIRROR_SEND_NEXT_AT = time.monotonic() + _MIRROR_SEND_MIN_GAP_SEC
         row = rows.get(item["level_id"])
         delivered: bool | str
         if row is None:
@@ -937,13 +951,17 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                       "chart_frozen": bool(item.get("chart")),
                       "delivered": delivered, "test_mode": bool(test_mode)}, root)
         if delivered is False:
-            continue
+            if not test_mode:
+                _MIRROR_SEND_NEXT_AT = time.monotonic() + _MIRROR_SEND_FAILURE_COOLDOWN_SEC
+            break
         sent += delivered is True
         state["pending_notifications"].remove(item)
         record = state["records"].get(item["level_id"])
         if record is not None:
             record["notified"] = [*record.get("notified", []), {"kind": item["kind"], "result": delivered}]
         save_state(state, root)
+        if not test_mode:
+            break
     return sent
 
 # --- Terminal projection (read-only) ------------------------------------------------------------
