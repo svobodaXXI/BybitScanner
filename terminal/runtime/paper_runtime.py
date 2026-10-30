@@ -3645,6 +3645,70 @@ class PaperRuntime:
             reports.append(report)
         return tuple(reports)
 
+    def _cancel_robot_entries_for_account_flatten(self, action_id: str) -> None:
+        """Retire proven Robot ENTRY work, including still-working OPEN Box slots.
+
+        Pending-entry synchronization handles APPROVED candidates only. An OPEN
+        Box can retain unfilled ENTRY slots alongside protected exposure; these
+        must be cancelled before reconciliation or Market flatten, without
+        touching its protective EXIT LIMITs or STOP.
+        """
+        account = self._paper_account_id
+        active_limits = {
+            order.order_id.value: order
+            for order in self.store.load_active_paper_limits_for_account(account)
+        }
+        entries = {
+            order_id: symbol
+            for order_id, (symbol, _epoch) in
+            self.store.load_active_robot_entry_orders(account).items()
+        }
+        for candidate in self.store.load_active_robot_candidate_states(account):
+            if candidate.status not in {"APPROVED", "OPEN"}:
+                continue
+            for order_id in self._robot_linked_entry_limits(candidate.symbol):
+                if order_id not in active_limits:
+                    continue
+                prior_symbol = entries.setdefault(order_id, candidate.symbol)
+                if prior_symbol != candidate.symbol:
+                    raise PaperCloseAllRejected("robot_entry_limit_ownership_conflict")
+
+        for order_id, symbol in sorted(entries.items()):
+            order = self.store.get_paper_limit(order_id, account)
+            if order is None or order.symbol != symbol:
+                raise PaperCloseAllRejected("robot_entry_limit_identity_unproven")
+            if order.status in INACTIVE_LIMIT_STATUSES:
+                continue
+            digest = hashlib.sha256(
+                f"{action_id}\\0robot-entry\\0{order_id}".encode("utf-8")
+            ).hexdigest()[:32]
+            try:
+                result = self._robot_cancel_limit(PaperLimitCancelRequest(
+                    ClientActionId(f"paper-flatten-robot-entry-{digest}"),
+                    symbol.value, order_id,
+                ))
+            except Exception as exc:
+                raise PaperCloseAllRejected("robot_entry_limit_cancel_failed") from exc
+            if result.status is not CommandResultStatus.COMPLETED:
+                raise PaperCloseAllRejected("robot_entry_limit_cancel_unconfirmed")
+            after = self.store.get_paper_limit(order_id, account)
+            if after is None or after.status not in INACTIVE_LIMIT_STATUSES:
+                raise PaperCloseAllRejected("robot_entry_limit_cancel_unconfirmed")
+
+        if self.store.load_active_robot_entry_orders(account):
+            raise PaperCloseAllRejected("robot_entry_limit_remaining_after_cancel")
+        # Legacy entries can be linked by candidate state without a registry
+        # row. Do not silently declare them safe on the second check.
+        remaining = {
+            order.order_id.value
+            for order in self.store.load_active_paper_limits_for_account(account)
+        }
+        for candidate in self.store.load_active_robot_candidate_states(account):
+            if candidate.status in {"APPROVED", "OPEN"} and (
+                remaining.intersection(self._robot_linked_entry_limits(candidate.symbol))
+            ):
+                raise PaperCloseAllRejected("robot_entry_limit_remaining_after_cancel")
+
     def coordinated_paper_close_all(
         self, request: CloseAllCommandRequest, *,
         evidence: Mapping[str, NormalizedOrderBook] | None = None,
@@ -3682,6 +3746,12 @@ class PaperRuntime:
                 # This is fail-closed: any unresolved entry, trade, ownership or
                 # protection keeps the original guards and existing EXITs alive.
                 try:
+                    # A protected OPEN Box may still own unfilled ENTRY slots.
+                    # Reconcile cannot retire OPEN entries on its own; cancel
+                    # their proven remainder before the canonical recovery.
+                    self._cancel_robot_entries_for_account_flatten(
+                        request.client_action_id.value,
+                    )
                     recovery = self.robot_reconcile()
                 except Exception as exc:
                     raise PaperCloseAllRejected(
@@ -3723,6 +3793,12 @@ class PaperRuntime:
             raise PaperCloseAllRejected(reason)
 
         if runtime.mode == "ROBOT_RUNNING":
+            try:
+                self._cancel_robot_entries_for_account_flatten(
+                    request.client_action_id.value,
+                )
+            except Exception:
+                fail("robot_entry_limit_cancel_unconfirmed")
             try:
                 sync = self.robot_synchronize_pending_entries()
             except Exception:
