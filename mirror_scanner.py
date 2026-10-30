@@ -761,10 +761,21 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
     origin_ids = {s.get("parent_formation_id") for s in record.get("sources", ())
                   if s.get("parent_formation_id")}
     levels = []
+    # Some older pattern snapshots lack a formation ID. A paired boundary
+    # still belongs to the same frozen geometry only when its engine decision
+    # index, confirmation time, pattern and source all agree. Never pair levels
+    # merely because they share a symbol or pattern name.
+    selected_decision = selected.provenance.get("decision_index")
     for level in registry.levels.values():
         is_selected = level.level_id == level_id
         same_origin = bool(origin_ids and level.provenance.get("parent_formation_id") in origin_ids)
-        if not (is_selected or same_origin):
+        same_frozen_geometry = bool(
+            not origin_ids and selected_decision is not None
+            and level.provenance.get("decision_index") == selected_decision
+            and level.confirmed_at_ms == selected.confirmed_at_ms
+            and level.source == selected.source and level.pattern == selected.pattern
+        )
+        if not (is_selected or same_origin or same_frozen_geometry):
             continue
         item = level.to_dict()
         item["selected"] = is_selected
