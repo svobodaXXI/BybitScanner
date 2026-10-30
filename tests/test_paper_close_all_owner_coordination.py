@@ -92,7 +92,7 @@ def fixture(
     )
     # A successful Robot close removes that one durable owner before manual
     # close, as the production close_robot_trade transaction does.
-    def close_robot(request):
+    def close_robot(request, **kwargs):
         current["trades"] = ()
         return response((completed(),))
     runtime = SimpleNamespace(
@@ -140,7 +140,7 @@ def run(runtime):
 class CoordinatedPaperCloseAllTests(unittest.TestCase):
     def test_ready_robot_is_paused_and_autopilot_off_before_market_dispatch(self):
         runtime, state = fixture(robot=True, manual=True)
-        def close_robot(request):
+        def close_robot(request, **kwargs):
             self.assertEqual(state["robot"].recovery_status, "PAUSED")
             runtime.store.update_robot_autopilot_state.assert_called_once()
             state["trades"] = ()
@@ -152,6 +152,62 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
         runtime.robot_close_all.assert_called_once()
         runtime.close_all.assert_called_once()
         self.assertEqual(runtime.store.update_robot_runtime_state.call_args.kwargs["recovery_status"], "PAUSED")
+
+    def test_robot_box_close_receives_off_owner_execution_evidence(self):
+        runtime, state = fixture(robot=True, manual=False)
+        book = object()
+        run_request = CloseAllCommandRequest(ClientActionId("confirmed-owner-action"))
+        PaperRuntime.coordinated_paper_close_all(
+            runtime, run_request, evidence={"BOTUSDT": book},
+        )
+        self.assertIs(runtime.robot_close_all.call_args.kwargs["evidence"]["BOTUSDT"], book)
+
+    def test_box_missing_fresh_book_preserves_exit_before_market_dispatch(self):
+        runtime = SimpleNamespace(
+            _paper_account_id=ACCOUNT,
+            store=SimpleNamespace(
+                get_open_robot_trade_for_symbol=Mock(return_value=SimpleNamespace(
+                    candidate_id="box-child",
+                )),
+                get_robot_candidate=Mock(return_value=SimpleNamespace(
+                    status="BOX_PLAN_ONLY", candidate_id="box-source",
+                )),
+                prove_box_owned_position=Mock(return_value=SimpleNamespace(
+                    remaining_quantity=Decimal("519.2"),
+                )),
+                reserve_box_order_identity=Mock(),
+                cancel_paper_limit=Mock(),
+            ),
+            _fresh_box_close_book=Mock(return_value=None),
+            _robot_api=SimpleNamespace(market=Mock()),
+        )
+        box = SimpleNamespace(
+            candidate_id="box-child", symbol=Symbol("BOTUSDT"),
+            signal_snapshot={"source_box_candidate_id": "box-source"},
+        )
+        result = PaperRuntime._robot_close_box_candidate(runtime, box)
+        self.assertEqual(result.status, CommandResultStatus.UNAVAILABLE)
+        self.assertEqual(result.reason_code, "box_close_fresh_book_unavailable")
+        runtime.store.reserve_box_order_identity.assert_not_called()
+        runtime.store.cancel_paper_limit.assert_not_called()
+        runtime._robot_api.market.assert_not_called()
+
+    def test_box_prefers_fresh_handler_evidence_over_stale_stream(self):
+        symbol = Symbol("BOTUSDT")
+        stale = SimpleNamespace(symbol=symbol, received_at_ms=5000)
+        fresh = SimpleNamespace(symbol=symbol, received_at_ms=9900)
+        def validate(request_symbol, book):
+            if book is None or book.symbol != request_symbol:
+                raise RuntimeError("unavailable")
+            if not 0 <= 10000 - book.received_at_ms <= 1000:
+                raise RuntimeError("stale")
+        runtime = SimpleNamespace(
+            _streamed_book=Mock(return_value=stale),
+            _market_executor=SimpleNamespace(validate_book=Mock(side_effect=validate)),
+        )
+        selected = PaperRuntime._fresh_box_close_book(runtime, symbol, fresh)
+        self.assertIs(selected, fresh)
+        self.assertIsNone(PaperRuntime._fresh_box_close_book(runtime, symbol))
 
     def test_stop_mode_manual_only_uses_original_paper_path(self):
         runtime, _ = fixture(mode="ROBOT_STOPPED", status="ROBOT_STOPPED")
