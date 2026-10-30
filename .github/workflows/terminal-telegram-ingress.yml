@@ -26,4 +26,12 @@ jobs:
           assert 'internal;' in config
           assert '127.0.0.1:8765' in config
           assert 'proxy_pass http://127.0.0.1:8091;' in config
+          direct = Path('deploy/terminal_ingress/nginx-direct-ip-https.conf').read_text()
+          assert 'listen 443 ssl;' in direct
+          assert 'listen 80;' in direct
+          assert 'location ^~ /.well-known/acme-challenge/' in direct
+          assert 'location / { return 404; }' in direct
+          assert 'proxy_pass http://127.0.0.1:8081;' in direct
+          assert '127.0.0.1:8765' not in direct
+          assert '127.0.0.1:8080' not in direct
           PY
