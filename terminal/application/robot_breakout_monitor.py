@@ -1332,6 +1332,14 @@ class RobotBreakoutMonitor:
                     return True
                 decision = self._mirror_standalone_attachment(record, plan)
                 if decision.get("decision") == mirror.DEFERRED:
+                    # Keep transient failures retryable, but do not discard the only
+                    # diagnostic explaining why an APPROVED MIRROR has no order.
+                    # Persist only on reason changes to avoid a write per monitor tick.
+                    reason = str(decision.get("reason") or "unknown")
+                    if execution.get("mirror_deferred_reason") != reason:
+                        execution["mirror_deferred_reason"] = reason
+                        execution["mirror_deferred_at_ms"] = self._now_ms()
+                        self._persist_execution(record, execution)
                     return False
                 if decision.get("decision") != mirror.ATTACHED:
                     execution["mirror"] = decision
