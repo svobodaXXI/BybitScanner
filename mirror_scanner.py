@@ -747,9 +747,10 @@ def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) 
     return handed
 
 
-def mirror_source_token(symbol: str, timeframe: str, level_id: str) -> str:
-    """Opaque deterministic Telegram callback for one level, not just its ticker."""
-    key = f"{symbol}|{timeframe}|{level_id}"
+def mirror_source_token(symbol: str, timeframe: str, level_id: str,
+                        kind: str, event_open_time_ms: int) -> str:
+    """Opaque callback for the exact breakout/retest event, not just the level."""
+    key = f"{symbol}|{timeframe}|{level_id}|{kind}|{int(event_open_time_ms)}"
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
 
 
@@ -792,6 +793,12 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
     return {
         "symbol": symbol, "timeframe": timeframe, "level_id": level_id,
         "event_kind": kind,
+        "source_formation_ids": sorted({
+            f"origin:{symbol}:{timeframe}:{source['parent_formation_id']}"
+            for source in record.get("sources", ())
+            if source.get("parent_formation_id")
+            and int(source.get("confirmed_at_ms") or 0) <= event_close_ms
+        }),
         "candles": [{k: row[k] for k in ("open_time_ms", "open", "high", "low", "close")}
                     for row in event_rows[-120:]],
         "levels": levels,
@@ -881,16 +888,10 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                         chart_path = Path(directory) / "event.png"
                         render_mirror_chart(frozen, chart_path)
                         owner_id = get_telegram_owner_chat_id()
-                        source_token = mirror_source_token(symbol, timeframe, item["level_id"])
-                        source_ids = sorted({
-                            f"origin:{symbol}:{timeframe}:{source['parent_formation_id']}"
-                            for source in row.get("sources", ())
-                            if source.get("parent_formation_id")
-                        })
-                        # Several independent parents may support one merged level.
-                        # Do not arbitrarily choose one as *the* source pattern.
-                        if len(source_ids) != 1:
-                            source_ids = []
+                        source_token = mirror_source_token(
+                            symbol, timeframe, item["level_id"], item["kind"],
+                            frozen["event_open_time_ms"])
+                        source_ids = frozen.get("source_formation_ids") or []
                         source_id = f"mirror-origin:{source_token}"
                         source_ready = record_original_signal(
                             source_id, symbol=symbol, timeframe=timeframe,
