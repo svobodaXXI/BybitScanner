@@ -329,7 +329,7 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
 
     def test_open_box_remaining_entry_is_cancelled_before_market_and_exit_survives_until_flat(self):
         runtime, state, orders = self._open_box_with_remaining_entries()
-        def close_robot(request):
+        def close_robot(request, **kwargs):
             self.assertEqual(orders["box-entry"], "cancelled")
             self.assertEqual(orders["box-exit"], "open")
             state["trades"] = ()
