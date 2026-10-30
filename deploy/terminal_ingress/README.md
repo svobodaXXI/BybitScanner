@@ -6,13 +6,13 @@ This is **development-only**. No public URL is assigned, no VPS deployment is au
 
 ### Request path
 
-Telegram bot `/terminal` already sends an inline `web_app` button. Once approved, set `BYBITSCANNER_WORKSPACE_URL=https://<approved-host>/login` so Telegram supplies signed Mini App `initData`. The public HTTPS tunnel routes **only** to `127.0.0.1:8081`, the protected Nginx listener (never to legacy `:8080`, PAPER `:8765` or auth sidecar `:8091`).
+Telegram bot `/terminal` already sends an inline `web_app` button. Once approved, set `BYBITSCANNER_WORKSPACE_URL=https://<approved-host>/login` so Telegram supplies signed Mini App `initData`. The direct VPS TLS Nginx listener routes **only** to `127.0.0.1:8081`, the protected Nginx listener (never to legacy `:8080`, PAPER `:8765` or auth sidecar `:8091`).
 
 - `/login` serves a small bootstrap page. It submits signed `Telegram.WebApp.initData` with a same-origin POST.
 - `/_telegram_auth` validates Telegram HMAC SHA-256 against bot token, allowed **numeric** owner user ID, `auth_date` within five minutes, no duplicate query keys, then sets a signed 1-hour Secure HttpOnly SameSite=Strict `__Host-terminal` cookie.
 - Nginx requires `auth_request /_auth` for every static path and `/api/` path, across all HTTP methods. For unsafe methods/WebSocket upgrades, the sidecar also enforces the expected `Origin`; no token/cookie grants direct ingress access without checks.
 - Invalid/expired signatures and sessions fail closed. Sidecar down means auth_request error, never backend access.
-- An ingress must additionally use TLS with an authenticated, pinned hostname and transport between cloud edge and VPS. **Do not enable a random unauthenticated tunnel or port-forward**. Keep ports 80/443/8080/8081/8091/8765 blocked externally. Do not expose `/api/` on a second route.
+- Use the direct TLS listener on the known VPS IP with an automatically renewed trusted IP certificate. **Do not enable a random unauthenticated tunnel or port-forward**. Keep ports 80/443/8080/8081/8091/8765 blocked externally. Do not expose `/api/` on a second route.
 - The Nginx `auth_request` module must be present. Review static frontend relative paths, API verbs, SSE and WebSocket usage before live acceptance.
 - All secrets are deployment-only; never commit bot token, session HMAC secret, owner user ID as a secret, or Cloudflare credentials.
 
@@ -29,18 +29,21 @@ Telegram bot `/terminal` already sends an inline `web_app` button. Once approved
 
 No provider/hostname has been verified yet; **do not infer a publicly accessible Terminal from this PR**.
 
-## Public HTTPS route selected: Tailscale Funnel (deployment still prohibited)
 
-Tailscale Funnel supplies a stable `*.ts.net` HTTPS hostname on all plans without purchasing a domain or opening VPS public ports. Its **public URL is reachable by anyone**, so the Telegram signature/session guard above is still mandatory. Tailscale requires the owner to enroll the VPS into a tailnet and approve Funnel in the admin console. The actual hostname is not known until enrollment; never invent one.
+## Direct IP HTTPS — no Tailscale, no domain, no Cloudflare
 
-After separately approved VPS installation and isolated security acceptance, the intended sole Funnel backend is `http://127.0.0.1:8081` (the protected Nginx listener), **not** `8080` or `8765`. The documented CLI syntax for supported Tailscale versions is `tailscale funnel --bg http://127.0.0.1:8081`; do not run this until Nginx and the auth sidecar pass local fail-closed tests. Verify `tailscale funnel status` and inspect any pre-existing routes before enabling, so as not to overwrite another user's Funnel configuration.
+The approved architectural direction avoids a third-party tunnel. Public HTTPS terminates on the **existing VPS** at `https://83.217.213.181`, directly in Nginx. The gateway for Telegram messages remains a separate existing service. This PR is **code only**, not a deployed/configured endpoint.
 
-The final public URL comes from the actual Tailscale output, not guessed DNS. Set `BYBITSCANNER_TERMINAL_PUBLIC_ORIGIN` to that HTTPS origin, then set Telegram `BYBITSCANNER_WORKSPACE_URL` to `<origin>/login` **only after** successful phone acceptance. For positions requests, the existing Telegram code appends `?view=positions`.
+1. Only after owner-authorized VPS work, preflight: verify the exact VPS IP, Nginx socket inventory, current upstream config, firewall restrictions, `nginx -V` auth_request, available RAM/disk, and no existing service bound to :80/:443. Never overwrite another owner's Nginx site. Save an isolated rollback copy.
+2. Run **127.0.0.1-only** auth sidecar (`:8091`) and protected Nginx listener (`:8081`) from PR #687. Validate no-cookie denial, forged owner, stale/invalid Telegram `initData`, cross-origin unsafe methods, WebSocket upgrades, sidecar outage fail-closed, and no accidental unprotected route. Do not touch `:8080` or `:8765`.
+3. Use Certbot **5.4+** (required for IP + webroot) with Let's Encrypt `shortlived` profile. Place ACME webroot in a dedicated path `/var/lib/bybitscanner/acme-challenge`. Open public port 80 only for `/.well-known/acme-challenge/`; all other HTTP paths return 404. Use `--ip-address 83.217.213.181 --preferred-profile shortlived --webroot --webroot-path /var/lib/bybitscanner/acme-challenge` and **first** `--staging` to avoid production rate limits. The first certificate is untrusted; then issue without `--staging` to receive trusted TLS. If issuance fails, do not start public :443.
+4. After obtaining the real trusted cert, install isolated `nginx-direct-ip-https.conf`: public :443 forwards **only** to protected `:8081`; legacy terminal and backend ports remain loopback and blocked externally. Validate `nginx -t` then reload Nginx, without restarting trading.
+5. Configure verified Certbot auto-renew + deploy-hook `nginx -t && systemctl reload nginx`; test a *dry-run renewal* and alert/monitor failures, because IP certs expire every ~6 days. Never claim persistence from a one-time cert.
+6. Set sidecar `BYBITSCANNER_TERMINAL_PUBLIC_ORIGIN=https://83.217.213.181`. Test `https://83.217.213.181/` and `/api/` unauthenticated from outside (denied), forged auth and bad Origin (denied), valid owner Mini App (works) before adding `BYBITSCANNER_WORKSPACE_URL=https://83.217.213.181/login` to the **Telegram** service only. Only its restart is permitted.
+7. Rollback only the new :80/:443 Nginx site, sidecar, ACME renewal hook and Telegram workspace URL if ingress fails. Never restart/alter backend, Scanner, Robot, PAPER_AUTO, PAPER DB, Admission or STOP/TAKE. LIVE forbidden. Any IP/firewall opening requires owner-authorized scoped change; do not disable global firewall.
 
-Tailscale docs (verified October 2026):
-- https://tailscale.com/docs/features/tailscale-funnel
-- https://tailscale.com/docs/reference/tailscale-cli/funnel
+**Corrected trust boundary:** Direct HTTPS removes Tailscale but :443 itself becomes a public listener. Nginx must never serve any Terminal/API content except through guarded :8081. Dependence on the CA for *renewal* remains, but a transient CA outage does not affect the running PAPER robot.
 
-Operational stop/rollback: disable **only** this Funnel route using the running Tailscale CLI's route-specific `off` option; unset the workspace URL, and shut down the sidecar/protected Nginx site, leaving existing services unchanged. Do not use global Funnel reset or stop the existing Terminal/backend.
-
-Before accepting: test expired session, absent session and malicious Origin against GET/POST/DELETE and WebSocket; test the single protected public hostname from an unauthenticated device; then one authenticated Telegram Mini App session from the owner's phone. No development CI can substitute for this live ingress acceptance.
+Official references:
+- https://letsencrypt.org/2026/03/11/shorter-certs-certbot
+- https://core.telegram.org/bots/webapps
