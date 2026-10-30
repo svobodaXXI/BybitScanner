@@ -892,6 +892,10 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                             symbol, timeframe, item["level_id"], item["kind"],
                             frozen["event_open_time_ms"])
                         source_ids = frozen.get("source_formation_ids") or []
+                        if len(source_ids) != 1:
+                            # Ambiguous or absent parent: show the exact level
+                            # chart, never attribute it to an arbitrary pattern.
+                            source_ids = []
                         source_id = f"mirror-origin:{source_token}"
                         source_ready = record_original_signal(
                             source_id, symbol=symbol, timeframe=timeframe,
