@@ -123,8 +123,8 @@ def bot_method(method, **params):
 
 def send_photo_file_id(chat_id, file_id, caption="", reply_markup=None):
     """Relay an already-uploaded Telegram image; no direct fallback."""
-    if reply_markup is not None:
-        raise TelegramGatewayError("photo keyboard not yet supported")
+    if reply_markup is not None and not isinstance(reply_markup, dict):
+        raise TelegramGatewayError("invalid photo keyboard")
     if not isinstance(file_id, str) or not file_id or len(file_id) > 1024:
         raise TelegramGatewayError("invalid photo file ID")
     if not isinstance(caption, str) or len(caption) > 1024:
@@ -156,6 +156,13 @@ def send_photo_file_id(chat_id, file_id, caption="", reply_markup=None):
         raise TelegramGatewayError("Gateway photo transport unavailable") from exc
     if response.status_code != 200 or not isinstance(result, dict) or result.get("ok") is not True:
         raise TelegramGatewayError("Gateway photo rejected")
+    if reply_markup is not None:
+        try:
+            menu = send_text(chat_id, "📎 Действия к графику выше", reply_markup=reply_markup)
+        except TelegramGatewayError as exc:
+            print(f"[TELEGRAM GATEWAY PHOTO MENU ERROR] {type(exc).__name__}: {exc}", flush=True)
+            return {**result, "keyboard_delivered": False}
+        return {**result, "keyboard_delivered": bool(menu.get("ok"))}
     return result
 
 def send_photo_upload(chat_id, photo_path, caption="", reply_markup=None):
