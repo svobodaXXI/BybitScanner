@@ -66,7 +66,11 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
         if event_t is not None:
             event_idx = next((i for i, t in enumerate(times) if t >= int(event_t)), None)
             if event_idx is not None:
-                ax.axvline(event_idx, color="#e5e7eb", alpha=0.5, linestyle=":", label="Пробой / ретест")
+                event_name = ("Первый ретест" if snapshot.get("event_kind") == "first_retest"
+                              else "Пробой")
+                ax.axvline(event_idx, color="#e5e7eb", alpha=0.5, linestyle=":", label=event_name)
+                ax.scatter([event_idx], [float(rows[event_idx]["close"])],
+                           color="#ffffff", s=28, marker="o", zorder=6)
         ax.set_xlim(-0.8, len(rows) + 0.2)
         ticks = sorted(set([0, len(rows) // 4, len(rows) // 2, 3 * len(rows) // 4, len(rows) - 1]))
         ax.set_xticks(ticks, [datetime.fromtimestamp(times[i] / 1000, timezone.utc).strftime("%d.%m %H:%M")
