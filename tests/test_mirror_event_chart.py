@@ -35,7 +35,8 @@ def test_snapshot_contains_only_exact_source_boundaries():
         "unrelated": Level("unrelated", "formation-2"),
     })
     rows = [
-        {"open_time_ms": i * 300_000, "open": 0.95, "high": 1.02,
+        {"open_time_ms": i * 300_000, "close_time_ms": (i + 1) * 300_000,
+         "open": 0.95, "high": 1.02,
          "low": 0.88, "close": 0.97}
         for i in range(125)
     ]
@@ -59,8 +60,8 @@ def test_boundary_pair_without_formation_id_requires_same_engine_decision():
         "paired": Level("paired", None, side="lower", decision=12),
         "other-decision": Level("other-decision", None, decision=11),
     })
-    rows = [{"open_time_ms": i * 300_000, "open": 0.95,
-             "high": 1.02, "low": 0.88, "close": 0.97} for i in range(4)]
+    rows = [{"open_time_ms": i * 300_000, "close_time_ms": (i + 1) * 300_000,
+             "open": 0.95, "high": 1.02, "low": 0.88, "close": 0.97} for i in range(4)]
     snapshot = _frozen_event_chart(
         "TESTUSDT", "5", rows, registry, "selected",
         {"sources": [{"parent_formation_id": None}],
@@ -99,7 +100,8 @@ def test_frozen_chart_renders_without_market_data(tmp_path):
         "symbol": "TESTUSDT",
         "timeframe": "5",
         "candles": [
-            {"open_time_ms": i * 300_000, "open": 0.95, "high": 1.02,
+            {"open_time_ms": i * 300_000, "close_time_ms": (i + 1) * 300_000,
+         "open": 0.95, "high": 1.02,
              "low": 0.88, "close": 0.97}
             for i in range(8)
         ],
