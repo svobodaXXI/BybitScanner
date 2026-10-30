@@ -19,6 +19,7 @@ notification.py
 """
 
 import os
+import hashlib
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from telegram_bot import (
@@ -123,6 +124,40 @@ def signal_stage_circle(result):
 
 
 CHARTS_DIR = "charts"
+
+
+def archive_source_chart(*, symbol, timeframe, pattern, text, chart_path,
+                         formation_id=None):
+    """Archive the exact original chart for identity-based Telegram navigation.
+
+    Returns (callback token or None, PNG bytes or None). This is presentation
+    state only; failures never alter Robot admission or Scanner decisions.
+    Call only for real owner-deliverable signals, never synthetic TEST MODE.
+    """
+    try:
+        with open(chart_path, "rb") as chart_file:
+            image = chart_file.read()
+    except OSError:
+        return None, None
+    if not image:
+        return None, None
+    token = hashlib.sha256(
+        f"{symbol}|{timeframe}|".encode("utf-8") + image
+        + str(text).encode("utf-8")
+    ).hexdigest()[:24]
+    if not record_original_signal(
+        f"source-original:{token}", symbol=symbol, timeframe=timeframe,
+        pattern=pattern, text=text, image_bytes=image,
+    ):
+        return None, image
+    if formation_id:
+        record_original_signal(
+            f"origin:{symbol}:{timeframe}:{formation_id}",
+            symbol=symbol, timeframe=timeframe,
+            pattern=pattern, text=text, image_bytes=image,
+        )
+    return token, image
+
 
 
 def get_telegram_chat_ids():
@@ -485,15 +520,11 @@ def send_signal(
     robot_candidate_id = handoff.candidate_id
     robot_candidate_failed = handoff.persistence_failed
 
-    # The chart file is overwritten by the next signal for this symbol: keep the
-    # exact bytes about to be sent so "К сигналу" can repost the original.
-    archived_image = None
-    if robot_candidate_id:
-        try:
-            with open(chart_path, "rb") as chart_file:
-                archived_image = chart_file.read()
-        except OSError:
-            archived_image = None
+    source_token, archived_image = archive_source_chart(
+        symbol=symbol, timeframe=timeframe, pattern=result.get("pattern", ""),
+        text=message, chart_path=chart_path,
+        formation_id=result.get("scanner_formation_id"),
+    ) if owner_chat_id and not test_mode else (None, None)
     owner_photo_response = None
 
     for chat_id in get_telegram_chat_ids():
@@ -514,6 +545,12 @@ def send_signal(
                     ),
                 )
             )
+
+            if is_owner and source_token:
+                reply_markup["inline_keyboard"].insert(0, [{
+                    "text": "↩️ К сигналу",
+                    "callback_data": f"signal:source:{source_token}",
+                }])
 
             response = send_photo(
                 config.TELEGRAM_TOKEN,

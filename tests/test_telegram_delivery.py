@@ -259,10 +259,13 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             .kwargs["reply_markup"]["inline_keyboard"]
         )
 
-        self.assertEqual(len(owner_keyboard), 2)
+        self.assertEqual(len(owner_keyboard), 3)
+        self.assertEqual(owner_keyboard[0][0]["text"], "↩️ К сигналу")
+        self.assertTrue(owner_keyboard[0][0]["callback_data"].startswith("signal:source:"))
         self.assertEqual(
             [button["text"] for row in owner_keyboard for button in row],
             [
+                "↩️ К сигналу",
                 "📈 TradingView",
                 "📊 MetaScalp",
                 "✏️ Редактор",
@@ -442,7 +445,11 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
                 notification,
                 "send_photo",
                 return_value={"ok": True},
-            ) as photo_mock:
+            ) as photo_mock, patch.object(
+                notification,
+                "record_original_signal",
+                return_value=True,
+            ):
                 delivered = notification.send_signal(self.signal())
 
         self.assertTrue(delivered)
