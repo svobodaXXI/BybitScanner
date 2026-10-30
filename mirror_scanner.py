@@ -43,6 +43,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -746,6 +747,12 @@ def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) 
     return handed
 
 
+def mirror_source_token(symbol: str, timeframe: str, level_id: str) -> str:
+    """Opaque deterministic Telegram callback for one level, not just its ticker."""
+    key = f"{symbol}|{timeframe}|{level_id}"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+
+
 def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str, Any]],
                         registry: LevelRegistry, level_id: str,
                         record: Mapping[str, Any], kind: str) -> dict[str, Any]:
@@ -827,6 +834,7 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
         get_telegram_owner_chat_id, send_message_to_recipients,
     )
     from telegram_bot import send_photo
+    from signal_archive import record_original_signal
     from mirror_event_chart import render_mirror_chart
     import tempfile
 
@@ -854,10 +862,25 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                         chart_path = Path(directory) / "event.png"
                         render_mirror_chart(frozen, chart_path)
                         owner_id = get_telegram_owner_chat_id()
+                        source_token = mirror_source_token(symbol, timeframe, item["level_id"])
+                        source_ids = [str(source["parent_formation_id"])
+                                      for source in row.get("sources", ())
+                                      if source.get("parent_formation_id")]
+                        source_id = f"mirror-origin:{source_token}"
+                        source_ready = record_original_signal(
+                            source_id, symbol=symbol, timeframe=timeframe,
+                            pattern=row.get("level_label", "MIRROR"), text=text,
+                            image_bytes=chart_path.read_bytes(), source_formation_ids=source_ids)
                         delivered = True
                         for chat_id in get_telegram_chat_ids():
+                            is_owner = bool(owner_id and chat_id == owner_id)
                             markup = build_tradingview_keyboard(
-                                symbol, timeframe, include_review_actions=bool(owner_id and chat_id == owner_id))
+                                symbol, timeframe, include_review_actions=is_owner)
+                            if is_owner and source_ready:
+                                markup["inline_keyboard"].insert(0, [{
+                                    "text": "↩️ К сигналу",
+                                    "callback_data": f"mirror:source:{source_token}",
+                                }])
                             response = send_photo(config.TELEGRAM_TOKEN, chat_id, chart_path,
                                                   caption=text[:1024], reply_markup=markup)
                             if not (isinstance(response, dict) and response.get("ok")):
@@ -869,7 +892,9 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
             else:
                 markup = build_tradingview_keyboard(symbol, timeframe, include_review_actions=False)
                 delivered = bool(send_message_to_recipients(text, reply_markup=markup))
-        append_event({"event": "mirror_delivery", "symbol": symbol, "timeframe": timeframe, **item,
+        append_event({"event": "mirror_delivery", "symbol": symbol, "timeframe": timeframe,
+                      "level_id": item["level_id"], "kind": item["kind"],
+                      "chart_frozen": bool(item.get("chart")),
                       "delivered": delivered, "test_mode": bool(test_mode)}, root)
         if delivered is False:
             continue
