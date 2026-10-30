@@ -1,6 +1,8 @@
-# Terminal Telegram Mini App ingress (not deployed)
+# Terminal Telegram Mini App ingress — phone verified
 
-## Status and boundaries
+> **CURRENT VERIFIED STATUS — 2026-10-30:** Direct IP HTTPS Terminal was deployed on the VPS and the owner successfully opened Workspace from the Telegram /terminal Mini App on a phone. The first Telegram attempt timed out; a direct phone-browser visit to /login (which correctly requested Telegram) followed by a Telegram retry succeeded. Current deployment details, constraints and recovery are preserved in [DOCUMENTS/TERMINAL_PHONE_WORKING_CONNECTION_20261030.md](../../DOCUMENTS/TERMINAL_PHONE_WORKING_CONNECTION_20261030.md). The historical pre-deployment sections below remain as implementation guidance, **not current status**. Do not deploy Tailscale.
+
+## Historical implementation and deployment gates
 
 This is **development-only**. No public URL is assigned, no VPS deployment is authorized, and `BYBITSCANNER_WORKSPACE_URL` must remain unset until security acceptance. The existing internal Terminal (`127.0.0.1:8080`) and PAPER API (`127.0.0.1:8765`) remain loopback-only. No runtime or trading modules are changed.
 
