@@ -81,6 +81,7 @@ class PositionView:
     mirror_campaign: bool = False
     mirror_level_id: str | None = None
     mirror_timeframe: str | None = None
+    mirror_level_source: str | None = None
     reentry_attempt_index: int | None = None
 
     @property
@@ -309,6 +310,8 @@ def load_position_view(
                         and mirror.get("mirror_level_id") else None,
         mirror_timeframe=str(mirror["mirror_timeframe"]) if isinstance(mirror, Mapping)
                          and mirror.get("mirror_timeframe") else None,
+        mirror_level_source=str(mirror["mirror_level_source"]) if isinstance(mirror, Mapping)
+                            and mirror.get("mirror_level_source") else None,
         reentry_attempt_index=reentry_index,
         chart_candle_minutes=signal_chart_candle_minutes(snapshot),
     )
