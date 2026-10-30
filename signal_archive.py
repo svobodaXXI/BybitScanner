@@ -56,6 +56,7 @@ def _message_id(response) -> int | None:
 def record_original_signal(
     candidate_id, *, symbol, timeframe, pattern, text, image_bytes,
     photo_response=None, text_response=None, sent_at_ms=None, directory=None,
+    source_formation_ids=None,
 ) -> bool:
     """Persist the original signal for ``candidate_id``. Never raises; True if stored."""
     try:
@@ -79,6 +80,7 @@ def record_original_signal(
             "timeframe": str(timeframe),
             "pattern": str(pattern),
             "text": str(text or ""),
+            "source_formation_ids": sorted({str(v) for v in (source_formation_ids or ()) if v}),
             "sent_at_ms": int(time.time() * 1000) if sent_at_ms is None else int(sent_at_ms),
             "image_sha256": hashlib.sha256(image).hexdigest(),
             "image_file": image_path.name,
