@@ -1,3 +1,9 @@
+## 🏰 Задача в очереди — 2026-10-31 — «Автосинхронизация GitHub → VPS»
+
+По команде владельца добавить в разработку автоматическое получение проверенных изменений GitHub на VPS с безопасным поэтапным применением. **Статус: очередь, не реализовано, VPS не изменён.** Сначала актуальные P0 Scanner → Telegram и MIRROR-карточки; подробные границы и приёмка — в первом разделе `DOCUMENTS/BACKLOG.md` «QUEUED OWNER REQUEST — 2026-10-31». Защищённый PAPER runtime, DB, STOP/TAKE, owner approval и запрет LIVE сохраняются. XP/ачивок за документацию нет.
+
+---
+
 ## Проверенное достижение сети — 2026-10-30 — Telegram Gateway
 
 PAPER VPS на `d1329214`: БД integrity OK, все позиции FLAT/synced, pending/obligations 0, торговые сервисы остановлены. Вручную установлен Cloudflare Worker `bybitscanner-gateway` → существующий Vercel Gateway; на VPS `paper.env` переведён на `https://bybitscanner-gateway.svoboda21vekaru.workers.dev`. VPS GET `/health` через Cloudflare успешен; владелец реально получил текст «Gateway test» и PNG «Gateway PNG test». **Сетевой путь текста и PNG доказан**, inline-кнопки/callback и полный Scanner/PAPER E2E пока нет. Пароль/секрет Gateway попал на скриншот и не был ротирован по решению владельца: риск открыт. Каноническая документация: `DOCUMENTS/TELEGRAM_CLOUDFLARE_VPS_PROVEN_ROUTE_20261030.md`. XP не начислять за сеть/документы.
