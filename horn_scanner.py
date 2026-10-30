@@ -21,7 +21,10 @@ import time
 import config
 from geometry.broadening import detect_broadening
 from geometry.broadening_chart import broadening_caption, render_broadening_chart
-from notification import build_tradingview_keyboard, get_telegram_chat_ids, send_photo
+from notification import (
+    archive_source_chart, build_tradingview_keyboard, get_telegram_chat_ids,
+    get_telegram_owner_chat_id, send_photo,
+)
 from signal_memory import load_memory, save_memory
 
 _SAFE_SYMBOL = re.compile(r"^[A-Z0-9]+$")
@@ -181,7 +184,14 @@ def send_broadening_observation(symbol, observation, *, timeframe, test_mode=Fal
     caption = broadening_caption(symbol, timeframe, observation["formation"])
     if test_mode:
         caption += "\n🧪 TEST MODE"
-    markup = build_tradingview_keyboard(symbol, timeframe, include_review_actions=False)
+    owner_id = get_telegram_owner_chat_id()
+    source_token = None
+    if owner_id and not test_mode:
+        source_token, _ = archive_source_chart(
+            symbol=symbol, timeframe=timeframe, pattern="Broadening",
+            text=caption, chart_path=observation["chart_path"],
+            formation_id=observation.get("identity"),
+        )
 
     all_ok, sent_new = True, False
     for chat_id in recipients:
@@ -190,6 +200,14 @@ def send_broadening_observation(symbol, observation, *, timeframe, test_mode=Fal
         result = {"event": "horn_delivery", "identity": key, "stage": stage,
                   "chat_id": str(chat_id), "test_mode": bool(test_mode)}
         try:
+            is_owner = bool(owner_id and chat_id == owner_id)
+            markup = build_tradingview_keyboard(
+                symbol, timeframe, include_review_actions=is_owner)
+            if is_owner and source_token:
+                markup["inline_keyboard"].insert(0, [{
+                    "text": "↩️ К сигналу",
+                    "callback_data": f"signal:source:{source_token}",
+                }])
             response = send_photo(config.TELEGRAM_TOKEN, chat_id, observation["chart_path"],
                                   caption=caption, reply_markup=markup)
             ok = isinstance(response, dict) and bool(response.get("ok"))
