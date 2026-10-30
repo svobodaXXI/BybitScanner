@@ -82,6 +82,7 @@ class PositionView:
     mirror_level_id: str | None = None
     mirror_timeframe: str | None = None
     mirror_level_source: str | None = None
+    mirror_boundary: Mapping[str, Any] | None = None
     reentry_attempt_index: int | None = None
 
     @property
@@ -285,10 +286,10 @@ def load_position_view(
         state = candidate.robot_state if candidate is not None else None
         execution = state.get("execution") if isinstance(state, Mapping) else None
         mirror = execution.get("mirror") if isinstance(execution, Mapping) else None
-        if isinstance(mirror, Mapping):
-            lookup = getattr(store, "get_robot_reentry_attempt_index", None)
-            if callable(lookup):
-                reentry_index = lookup(account, trade.candidate_id)
+        # Re-entry genealogy applies to every pattern, not just MIRROR.
+        lookup = getattr(store, "get_robot_reentry_attempt_index", None)
+        if callable(lookup):
+            reentry_index = lookup(account, trade.candidate_id)
         markers, fees = _trade_markers(store, account, trade, candidate, now_ms=now_ms)
 
     return PositionView(
@@ -312,6 +313,8 @@ def load_position_view(
                          and mirror.get("mirror_timeframe") else None,
         mirror_level_source=str(mirror["mirror_level_source"]) if isinstance(mirror, Mapping)
                             and mirror.get("mirror_level_source") else None,
+        mirror_boundary=mirror.get("boundary") if isinstance(mirror, Mapping)
+                        and isinstance(mirror.get("boundary"), Mapping) else None,
         reentry_attempt_index=reentry_index,
         chart_candle_minutes=signal_chart_candle_minutes(snapshot),
     )
