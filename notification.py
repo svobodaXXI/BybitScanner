@@ -126,6 +126,40 @@ def signal_stage_circle(result):
 CHARTS_DIR = "charts"
 
 
+def archive_source_chart(*, symbol, timeframe, pattern, text, chart_path,
+                         formation_id=None):
+    """Archive the exact original chart for identity-based Telegram navigation.
+
+    Returns (callback token or None, PNG bytes or None). This is presentation
+    state only; failures never alter Robot admission or Scanner decisions.
+    Call only for real owner-deliverable signals, never synthetic TEST MODE.
+    """
+    try:
+        with open(chart_path, "rb") as chart_file:
+            image = chart_file.read()
+    except OSError:
+        return None, None
+    if not image:
+        return None, None
+    token = hashlib.sha256(
+        f"{symbol}|{timeframe}|".encode("utf-8") + image
+        + str(text).encode("utf-8")
+    ).hexdigest()[:24]
+    if not record_original_signal(
+        f"source-original:{token}", symbol=symbol, timeframe=timeframe,
+        pattern=pattern, text=text, image_bytes=image,
+    ):
+        return None, image
+    if formation_id:
+        record_original_signal(
+            f"origin:{symbol}:{timeframe}:{formation_id}",
+            symbol=symbol, timeframe=timeframe,
+            pattern=pattern, text=text, image_bytes=image,
+        )
+    return token, image
+
+
+
 def get_telegram_chat_ids():
     """Return configured Telegram recipients in stable, deduplicated order."""
 
@@ -486,37 +520,11 @@ def send_signal(
     robot_candidate_id = handoff.candidate_id
     robot_candidate_failed = handoff.persistence_failed
 
-    # Freeze the exact bytes displayed on this signal: later Scanner passes
-    # overwrite the symbol chart. The archive is immutable and identity-scoped.
-    archived_image = None
-    try:
-        with open(chart_path, "rb") as chart_file:
-            archived_image = chart_file.read()
-    except OSError:
-        archived_image = None
-    source_token = None
-    source_formation_id = result.get("scanner_formation_id")
-    if archived_image:
-        digest = hashlib.sha256(
-            f"{symbol}|{timeframe}|".encode("utf-8") + archived_image
-            + message.encode("utf-8")
-        ).hexdigest()[:24]
-        source_id = f"source-original:{digest}"
-        if record_original_signal(
-            source_id, symbol=symbol, timeframe=timeframe,
-            pattern=result.get("pattern", ""), text=message,
-            image_bytes=archived_image,
-        ):
-            source_token = digest
-            # The MIRROR parent ID must resolve to this exact archived
-            # formation, never to some later chart for the same ticker.
-            if source_formation_id:
-                record_original_signal(
-                    f"origin:{symbol}:{timeframe}:{source_formation_id}",
-                    symbol=symbol, timeframe=timeframe,
-                    pattern=result.get("pattern", ""), text=message,
-                    image_bytes=archived_image,
-                )
+    source_token, archived_image = archive_source_chart(
+        symbol=symbol, timeframe=timeframe, pattern=result.get("pattern", ""),
+        text=message, chart_path=chart_path,
+        formation_id=result.get("scanner_formation_id"),
+    ) if owner_chat_id and not test_mode else (None, None)
     owner_photo_response = None
 
     for chat_id in get_telegram_chat_ids():
