@@ -13,6 +13,7 @@ signal_memory.py
 
 import os
 import json
+import time
 from datetime import datetime
 
 
@@ -77,6 +78,38 @@ def save_memory(memory):
 
 
 
+def _signal_key(signal):
+    """The exact same scoped identity used by update_signal."""
+    symbol = signal["symbol"]
+    timeframe = signal.get("timeframe")
+    pattern = signal["pattern"]
+    formation_id = signal.get("formation_id")
+    if timeframe is not None and not str(timeframe).strip():
+        raise ValueError("signal timeframe must not be empty")
+    return (
+        f"scanner:{symbol}:{str(timeframe).strip()}:{pattern}"
+        + (f":{formation_id}" if formation_id is not None else "")
+        if timeframe is not None else symbol
+    )
+
+
+def record_telegram_delivery(signal, delivered, *, retry_delay_seconds=300):
+    """Record an attempted signal delivery, not a trading decision.
+
+    A failed attempt re-arms the same signal after a cooldown, even when its
+    score stays unchanged. Preexisting signals without this flag are not replayed.
+    """
+    memory = load_memory()
+    record = memory.get(_signal_key(signal))
+    if not isinstance(record, dict):
+        return
+    if delivered:
+        record.pop("telegram_retry_after_epoch", None)
+    else:
+        record["telegram_retry_after_epoch"] = int(time.time()) + retry_delay_seconds
+    save_memory(memory)
+
+
 def update_signal(signal):
 
     """
@@ -94,13 +127,7 @@ def update_signal(signal):
     formation_id = signal.get("formation_id")
     # Existing callers retain their symbol-only memory until they explicitly
     # opt into timeframe-scoped identities.
-    key = (
-        f"scanner:{symbol}:{str(timeframe).strip()}:{pattern}"
-        + (f":{formation_id}" if formation_id is not None else "")
-        if timeframe is not None else symbol
-    )
-    if timeframe is not None and not str(timeframe).strip():
-        raise ValueError("signal timeframe must not be empty")
+    key = _signal_key(signal)
     # Preserve the previous 5m score when migrating the same pattern.
     prior_scoped = any(
         existing.startswith(f"scanner:{symbol}:5:{pattern}:")
@@ -173,6 +200,11 @@ def update_signal(signal):
             status = "STABLE"
 
 
+
+        if (status not in ("NEW", "STRENGTHENING")
+                and memory[key].get("telegram_retry_after_epoch") is not None
+                and int(time.time()) >= int(memory[key]["telegram_retry_after_epoch"])):
+            status = "NEW"
 
         memory[key].update({
 
