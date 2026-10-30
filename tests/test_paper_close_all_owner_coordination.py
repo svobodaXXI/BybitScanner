@@ -426,7 +426,7 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
 
     def test_failed_robot_close_blocks_manual_market_dispatch(self):
         runtime, state = fixture(robot=True)
-        runtime.robot_close_all.side_effect = lambda request: response((
+        runtime.robot_close_all.side_effect = lambda request, **kwargs: response((
             CommandResult("robot", CommandResultStatus.UNKNOWN, "stale", "unconfirmed"),
         ))
         with self.assertRaisesRegex(PaperCloseAllRejected, "robot_owned_close_unconfirmed"):
