@@ -838,7 +838,7 @@ def mirror_caption(row: Mapping[str, Any], kind: str) -> str:
     has_pattern = level.get("source") == "pattern_boundary" or any(
         source.get("parent_pattern") for source in sources)
     title = f"🪞 MIRROR · {row['symbol']} · {row['timeframe']}m"
-    return title + ("\\nГраница паттерна" if has_pattern else "\\nЗеркальный уровень")
+    return title + ("\nГраница паттерна" if has_pattern else "\nЗеркальный уровень")
 
 
 
