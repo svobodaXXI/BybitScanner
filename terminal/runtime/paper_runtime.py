@@ -3982,6 +3982,24 @@ class PaperRuntime:
         ):
             raise RuntimeError("durable Box manual close conflicts with current owned lot")
 
+        # Check the EXACT execution evidence with PAPER's canonical freshness
+        # validator before touching any protective Box EXIT. In particular,
+        # a persisted intent does not imply the book is still executable.
+        book = self._robot_execution_book(candidate.symbol.value)
+        try:
+            self._market_executor.validate_book(candidate.symbol, book)
+        except Exception as exc:
+            from terminal.paper.executor import PaperBookStale
+            reason = (
+                "paper_market_book_stale" if isinstance(exc, PaperBookStale)
+                else "paper_market_book_unavailable"
+            )
+            return CommandResult(
+                plan.request.client_action_id.value,
+                CommandResultStatus.UNAVAILABLE, reason,
+                str(exc) or type(exc).__name__, None, True,
+            )
+
         self.store.reserve_box_order_identity(
             source.candidate_id,
             order_id=plan.order_id,
@@ -3989,6 +4007,32 @@ class PaperRuntime:
             slot=0,
         )
         now_ms = int(time.time() * 1000)
+        # The serialized PAPER owner excludes concurrent market matching. Do
+        # not cancel working protective EXITs yet: a Market rejection (e.g.
+        # evidence aged during validation) must leave protection in place.
+        result = self._robot_api.market(
+            plan.request, identity=plan.identity, market_book=book,
+        )
+        if result.status is not CommandResultStatus.COMPLETED:
+            return result
+
+        closed_proof = self.store.prove_box_owned_position(source.candidate_id)
+        if (
+            closed_proof.remaining_quantity != 0
+            or closed_proof.average_exit is None
+            or closed_proof.last_execution_at_ms is None
+            or closed_proof.entry_notional <= 0
+        ):
+            return CommandResult(
+                plan.request.client_action_id.value,
+                CommandResultStatus.UNKNOWN,
+                "box_manual_close_unproven",
+                "Box manual close requires reconciliation",
+                getattr(result, "command_id", None),
+                True,
+            )
+
+        # Only a proven FLAT Box may retire its former protective EXIT LIMITs.
         for owner in self.store.load_box_order_ownership(source.candidate_id):
             if owner.order_id == plan.order_id:
                 continue
@@ -4010,28 +4054,6 @@ class PaperRuntime:
                 updated_at_ms=now_ms,
             )
 
-        result = self._robot_api.market(
-            plan.request, identity=plan.identity,
-            market_book=self._robot_execution_book(candidate.symbol.value),
-        )
-        if result.status is not CommandResultStatus.COMPLETED:
-            return result
-
-        closed_proof = self.store.prove_box_owned_position(source.candidate_id)
-        if (
-            closed_proof.remaining_quantity != 0
-            or closed_proof.average_exit is None
-            or closed_proof.last_execution_at_ms is None
-            or closed_proof.entry_notional <= 0
-        ):
-            return CommandResult(
-                plan.request.client_action_id.value,
-                CommandResultStatus.UNKNOWN,
-                "box_manual_close_unproven",
-                "Box manual close requires reconciliation",
-                getattr(result, "command_id", None),
-                True,
-            )
         realized_pct = (
             (closed_proof.realized_pnl - closed_proof.accumulated_fee)
             / closed_proof.entry_notional
