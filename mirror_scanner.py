@@ -757,6 +757,12 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
                         registry: LevelRegistry, level_id: str,
                         record: Mapping[str, Any], kind: str) -> dict[str, Any]:
     """Freeze the event OHLC and provably related boundaries before Telegram delivery."""
+    event = ((record.get("naked_retest") or {}).get("retest") if kind == "first_retest"
+             else (record.get("naked_retest") or {}).get("breakout")) or {}
+    event_open_ms = int(event["open_time_ms"])
+    event_close_ms = event_open_ms + timeframe_ms(timeframe)
+    # A delayed delivery must never show bars that closed after this event.
+    event_rows = [row for row in rows if int(row["close_time_ms"]) <= event_close_ms]
     selected = registry.levels[level_id]
     origin_ids = {s.get("parent_formation_id") for s in record.get("sources", ())
                   if s.get("parent_formation_id")}
@@ -777,15 +783,16 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
         )
         if not (is_selected or same_origin or same_frozen_geometry):
             continue
+        # Never draw a later pattern boundary on a historical MIRROR event.
+        if int(level.confirmed_at_ms) > event_close_ms:
+            continue
         item = level.to_dict()
         item["selected"] = is_selected
         levels.append(item)
-    event = ((record.get("naked_retest") or {}).get("retest") if kind == "first_retest"
-             else (record.get("naked_retest") or {}).get("breakout")) or {}
     return {
         "symbol": symbol, "timeframe": timeframe, "level_id": level_id,
         "candles": [{k: row[k] for k in ("open_time_ms", "open", "high", "low", "close")}
-                    for row in rows[-120:]],
+                    for row in event_rows[-120:]],
         "levels": levels,
         "event_open_time_ms": event.get("open_time_ms"),
     }
@@ -874,9 +881,15 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                         render_mirror_chart(frozen, chart_path)
                         owner_id = get_telegram_owner_chat_id()
                         source_token = mirror_source_token(symbol, timeframe, item["level_id"])
-                        source_ids = [f"origin:{symbol}:{timeframe}:{source['parent_formation_id']}"
-                                      for source in row.get("sources", ())
-                                      if source.get("parent_formation_id")]
+                        source_ids = sorted({
+                            f"origin:{symbol}:{timeframe}:{source['parent_formation_id']}"
+                            for source in row.get("sources", ())
+                            if source.get("parent_formation_id")
+                        })
+                        # Several independent parents may support one merged level.
+                        # Do not arbitrarily choose one as *the* source pattern.
+                        if len(source_ids) != 1:
+                            source_ids = []
                         source_id = f"mirror-origin:{source_token}"
                         source_ready = record_original_signal(
                             source_id, symbol=symbol, timeframe=timeframe,
