@@ -19,6 +19,7 @@ notification.py
 """
 
 import os
+import hashlib
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from telegram_bot import (
@@ -485,15 +486,37 @@ def send_signal(
     robot_candidate_id = handoff.candidate_id
     robot_candidate_failed = handoff.persistence_failed
 
-    # The chart file is overwritten by the next signal for this symbol: keep the
-    # exact bytes about to be sent so "К сигналу" can repost the original.
+    # Freeze the exact bytes displayed on this signal: later Scanner passes
+    # overwrite the symbol chart. The archive is immutable and identity-scoped.
     archived_image = None
-    if robot_candidate_id:
-        try:
-            with open(chart_path, "rb") as chart_file:
-                archived_image = chart_file.read()
-        except OSError:
-            archived_image = None
+    try:
+        with open(chart_path, "rb") as chart_file:
+            archived_image = chart_file.read()
+    except OSError:
+        archived_image = None
+    source_token = None
+    source_formation_id = result.get("scanner_formation_id")
+    if archived_image:
+        digest = hashlib.sha256(
+            f"{symbol}|{timeframe}|".encode("utf-8") + archived_image
+            + message.encode("utf-8")
+        ).hexdigest()[:24]
+        source_id = f"source-original:{digest}"
+        if record_original_signal(
+            source_id, symbol=symbol, timeframe=timeframe,
+            pattern=result.get("pattern", ""), text=message,
+            image_bytes=archived_image,
+        ):
+            source_token = digest
+            # The MIRROR parent ID must resolve to this exact archived
+            # formation, never to some later chart for the same ticker.
+            if source_formation_id:
+                record_original_signal(
+                    f"origin:{symbol}:{timeframe}:{source_formation_id}",
+                    symbol=symbol, timeframe=timeframe,
+                    pattern=result.get("pattern", ""), text=message,
+                    image_bytes=archived_image,
+                )
     owner_photo_response = None
 
     for chat_id in get_telegram_chat_ids():
@@ -514,6 +537,12 @@ def send_signal(
                     ),
                 )
             )
+
+            if is_owner and source_token:
+                reply_markup["inline_keyboard"].insert(0, [{
+                    "text": "↩️ К сигналу",
+                    "callback_data": f"signal:source:{source_token}",
+                }])
 
             response = send_photo(
                 config.TELEGRAM_TOKEN,
