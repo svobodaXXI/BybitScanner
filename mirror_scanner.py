@@ -655,9 +655,9 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                 record["lifecycle"] = LIFECYCLE_DONE
                 if record.get("candidate"):
                     record["robot"] = _robot_handoff(level, record)
-                    pending.append({"level_id": level_id, "kind": "first_retest",
-                                    "chart": _frozen_event_chart(symbol, timeframe, rows, registry,
-                                                                 level_id, record, "first_retest")})
+                    # First retest updates durable state, but is not a new owner
+                    # notification. Only the initial campaign and real Robot
+                    # trade lifecycle generate Telegram cards.
                 journal.append({"event": "mirror_first_retest", **base, "level_id": level_id,
                                 "status": status, "retest": record["naked_retest"]["retest"],
                                 "candidate": record.get("candidate")})
@@ -832,26 +832,15 @@ def level_geometry_text(level: Mapping[str, Any]) -> str:
 
 
 def mirror_caption(row: Mapping[str, Any], kind: str) -> str:
-    """Owner card for one MIRROR event, from the Terminal projection row."""
+    """Concise owner-facing campaign card; diagnostic detail stays in durable state."""
+    level = row["level"]
+    sources = row.get("sources") or ()
+    has_pattern = level.get("source") == "pattern_boundary" or any(
+        source.get("parent_pattern") for source in sources)
+    title = f"🪞 MIRROR · {row['symbol']} · {row['timeframe']}m"
+    return title + ("\\nГраница паттерна" if has_pattern else "\\nЗеркальный уровень")
 
-    breakout = row.get("breakout") or {}
-    evidence = row.get("breakout_evidence") or {}
-    direction = {"UP": "вверх", "DOWN": "вниз"}.get(breakout.get("direction"), "—")
-    lines = [
-        f"🪞 MIRROR · {row['symbol']} {row['timeframe']}m"
-        + (" · первый ретест" if kind == "first_retest" else " · пробой"),
-        f"Пробой {direction} (ретест-кампания {breakout.get('campaign_direction', '—')}), "
-        f"{evidence.get('kind', '—')}"
-        + (f", тело {evidence['body_atr']:.2f} ATR" if evidence.get("body_atr") is not None else ""),
-        f"Уровень: {row['level_label']} — {level_geometry_text(row['level'])}",
-        f"Свеча пробоя: {_utc(breakout['open_time_ms'])} O {_price(breakout['open'])} "
-        f"C {_price(breakout['close'])}" if breakout else "Свеча пробоя: —",
-        f"Ретест: {row['first_retest_text']}",
-        f"FVG: {row['imbalance_text']}",
-        f"Источники: {row['sources_text']}",
-        "Робот: событие наблюдения — PAPER-допуск и исполнение проверяются отдельно",
-    ]
-    return "\n".join(lines)
+
 
 
 def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = False, root=None) -> int:
@@ -880,6 +869,12 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
     rows = {row["level_id"]: row for row in project_state(state)}
     sent = 0
     for item in list(state["pending_notifications"]):
+        if item.get("kind") != "breakout":
+            # Drain older pending retest cards too, otherwise a restart on
+            # this version would emit the retired notification category.
+            state["pending_notifications"].remove(item)
+            save_state(state, root)
+            continue
         row = rows.get(item["level_id"])
         delivered: bool | str
         if row is None:
