@@ -72,6 +72,20 @@ class BoxCloseEvidenceBeforeExitCancel(unittest.TestCase):
         runtime.store.cancel_paper_limit.assert_not_called()
         runtime._robot_api.market.assert_not_called()
 
+    def test_prepared_off_owner_book_replaces_stale_stream_and_reaches_market(self):
+        runtime, candidate, plan = fixture()
+        prepared = SimpleNamespace(symbol=candidate.symbol, received_at_ms=100)
+        def validate(symbol, book):
+            if book is not prepared:
+                raise PaperBookStale("normalized book is stale")
+        runtime._market_executor.validate_book.side_effect = validate
+        with patch("terminal.runtime.paper_runtime.restore_box_market_plan", return_value=plan):
+            result = PaperRuntime._robot_close_box_candidate(
+                runtime, candidate, evidence=prepared,
+            )
+        self.assertEqual(result.status, CommandResultStatus.COMPLETED)
+        self.assertIs(runtime._robot_api.market.call_args.kwargs["market_book"], prepared)
+
     def test_market_unavailable_after_validation_preserves_exit(self):
         runtime, candidate, plan = fixture()
         runtime._robot_api.market.return_value = CommandResult(
