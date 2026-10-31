@@ -3033,7 +3033,9 @@ class PaperRuntime:
         if trade is not None:
             obligation = self.store.get_paper_protection_obligation_for_trade(trade.trade_id)
             if obligation is not None and obligation.status != "RESOLVED":
-                return self._dispatch_paper_protection_obligation(obligation, now_ms=received_at_ms)
+                return self._dispatch_paper_protection_obligation(
+                    obligation, now_ms=received_at_ms, recovery_book=book,
+                )
             return self._evaluate_fresh_protection_crossing(
                 trade, book, event_id=event_id, received_at_ms=received_at_ms,
             )
@@ -3046,7 +3048,9 @@ class PaperRuntime:
             self._paper_account_id,
         ):
             if obligation.symbol == normalized:
-                return self._dispatch_paper_protection_obligation(obligation, now_ms=received_at_ms)
+                return self._dispatch_paper_protection_obligation(
+                    obligation, now_ms=received_at_ms, recovery_book=book,
+                )
         return None
 
     def _evaluate_fresh_protection_crossing(
@@ -3144,6 +3148,26 @@ class PaperRuntime:
         dedup_key = ExecutionDedupKey(trade.trading_account_id, Category.LINEAR, obligation.exec_id)
         execution = self.store.get_execution(dedup_key)
         if execution is None:
+            # A latched STOP/TAKE is retryable, but no Box EXIT cancellation or
+            # DISPATCHING transition may precede fresh execution evidence.
+            # Prefer the actual book delivered with this event to a potentially
+            # stale owner-thread snapshot; enforce the executor's same 1000ms
+            # clock/identity checks, with no network read on the owner thread.
+            execution_book = None
+            for candidate_book in (recovery_book, self._streamed_book(trade.symbol)):
+                try:
+                    self._market_executor.validate_book(trade.symbol, candidate_book)
+                except (RuntimeError, ValueError):
+                    continue
+                execution_book = candidate_book
+                break
+            if execution_book is None:
+                LOGGER.warning(
+                    "Robot protection close lacks fresh execution book; preserving "
+                    "obligation and Box EXIT work for retry; obligation=%s symbol=%s",
+                    obligation.obligation_id, trade.symbol.value,
+                )
+                return obligation
             if trade.exit_time_ms is not None:
                 # The lifecycle already ended without our stable exec -- a
                 # manual/replacement close won the race. Never attribute a
@@ -3232,21 +3256,6 @@ class PaperRuntime:
                     updated_at_ms=now_ms,
                 )
             close_side = OrderSide.SELL if expected_side is PositionSide.LONG else OrderSide.BUY
-            execution_book = self._streamed_book(trade.symbol)
-            if (
-                execution_book is None
-                and recovery_book is not None
-                and recovery_book.symbol == trade.symbol
-            ):
-                execution_book = recovery_book
-            if execution_book is None:
-                LOGGER.error(
-                    "Robot protection close has no streamed execution book; "
-                    "not dispatching, will resume on the next quote/restart; "
-                    "obligation=%s symbol=%s",
-                    obligation.obligation_id, trade.symbol.value,
-                )
-                return obligation
             try:
                 self._market_executor.execute(
                     trading_account_id=trade.trading_account_id,
