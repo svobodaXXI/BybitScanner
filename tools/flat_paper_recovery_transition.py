@@ -84,6 +84,22 @@ def _process_start_token(pid: int) -> str:
     return start
 
 
+def _send_exact_sigint(pid: int, start_token: str) -> None:
+    """Pin the Linux task before signaling; PID reuse must never retarget SIGINT."""
+    try:
+        fd = os.pidfd_open(pid, 0)
+    except (OSError, AttributeError) as exc:
+        raise FlatRecoveryBlocked("linux_pidfd_unavailable") from exc
+    try:
+        _assert(
+            _service_pid() == pid and _process_start_token(pid) == start_token,
+            "backend_process_changed_before_signal",
+        )
+        signal.pidfd_send_signal(fd, signal.SIGINT, None, 0)
+    finally:
+        os.close(fd)
+
+
 @contextmanager
 def _frozen_snapshot(path: Path):
     _assert(path.is_file(), "paper_database_missing")
@@ -107,7 +123,7 @@ def execute_flat_handoff(
     *, db_path: Path, expected_identity: str, expected_pid: int,
     expected_build_sha: str, execute: bool, snapshots=None,
     service_pid=_service_pid, start_token=_process_start_token,
-    send_interrupt=os.kill, is_alive=None, writer_guard=_frozen_snapshot,
+    send_interrupt=None, is_alive=None, writer_guard=_frozen_snapshot,
     monotonic=time.monotonic, sleep=time.sleep,
 ) -> str:
     """One-shot SIGINT, not a systemd override and never a SIGKILL fallback."""
@@ -136,7 +152,10 @@ def execute_flat_handoff(
             return "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
         # SIGINT allows Python main() to unwind its finally: server, market
         # data, protection manager and owner runtime. Never send twice.
-        send_interrupt(expected_pid, signal.SIGINT)
+        if send_interrupt is None:
+            _send_exact_sigint(expected_pid, token)
+        else:
+            send_interrupt(expected_pid, signal.SIGINT)
         probe = is_alive if is_alive is not None else (
             lambda pid: Path(f"/proc/{pid}/stat").exists()
         )
