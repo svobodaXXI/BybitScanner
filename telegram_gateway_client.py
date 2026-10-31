@@ -122,15 +122,14 @@ def bot_method(method, **params):
     return result
 
 def send_photo_file_id(chat_id, file_id, caption="", reply_markup=None):
-    """Relay an already-uploaded Telegram image; no direct fallback."""
+    """Send an archived photo and keyboard in one Telegram message."""
     if reply_markup is not None and not isinstance(reply_markup, dict):
         raise TelegramGatewayError("invalid photo keyboard")
     if not isinstance(file_id, str) or not file_id or len(file_id) > 1024:
         raise TelegramGatewayError("invalid photo file ID")
     if not isinstance(caption, str) or len(caption) > 1024:
         raise TelegramGatewayError("invalid photo caption")
-    owner = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-    if not owner or str(chat_id) != owner:
+    if str(chat_id) != os.getenv("TELEGRAM_CHAT_ID", "").strip():
         raise TelegramGatewayError("Gateway photo recipient mismatch")
     url = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_URL", "").strip()
     secret = os.getenv("BYBITSCANNER_TELEGRAM_GATEWAY_SECRET", "").strip()
@@ -146,28 +145,29 @@ def send_photo_file_id(chat_id, file_id, caption="", reply_markup=None):
         session = requests.Session()
         session.trust_env = False
         response = session.post(
-            endpoint + "/v1/photo-file-id",
-            json={"file_id": file_id, "caption": caption},
+            endpoint + "/v1/photo-card",
+            json={"file_id": file_id, "caption": caption,
+                  **({"reply_markup": reply_markup} if reply_markup is not None else {})},
             headers={"Authorization": "Bearer " + secret},
-            timeout=20, allow_redirects=False,
+            timeout=25, allow_redirects=False,
         )
         result = response.json()
     except (requests.RequestException, ValueError) as exc:
         raise TelegramGatewayError("Gateway photo transport unavailable") from exc
     if response.status_code != 200 or not isinstance(result, dict) or result.get("ok") is not True:
         raise TelegramGatewayError("Gateway photo rejected")
-    if reply_markup is not None:
-        try:
-            menu = send_text(chat_id, "🔗 Навигация", reply_markup=reply_markup)
-        except TelegramGatewayError as exc:
-            print(f"[TELEGRAM GATEWAY PHOTO MENU ERROR] {type(exc).__name__}: {exc}", flush=True)
-            return {**result, "keyboard_delivered": False}
-        return {**result, "keyboard_delivered": bool(menu.get("ok"))}
     return result
 
+
 def send_photo_upload(chat_id, photo_path, caption="", reply_markup=None):
-    """Upload a bounded PNG/JPEG through the fixed-owner Gateway."""
+    """Upload PNG/JPEG with its UTF-8 caption and keyboard as ONE Telegram card.
+
+    Requires the v2 photo-card endpoint deployed through the Cloudflare
+    allowlist and the Gateway origin before the VPS client is updated.
+    A failed request never falls back to text-only or to a second photo send.
+    """
     from pathlib import Path
+    import json
     if reply_markup is not None and not isinstance(reply_markup, dict):
         raise TelegramGatewayError("invalid photo keyboard")
     if str(chat_id) != os.getenv("TELEGRAM_CHAT_ID", "").strip():
@@ -197,17 +197,13 @@ def send_photo_upload(chat_id, photo_path, caption="", reply_markup=None):
         media_type = "image/png" if suffix == ".png" else "image/jpeg"
         session = requests.Session()
         session.trust_env = False
-        # HTTP headers cannot encode MIRROR's Cyrillic/emoji caption.
-        # The current Gateway accepts only X-Telegram-Caption, not a
-        # UTF-8 caption body. Upload the photo without a Unicode header,
-        # then send its caption via the existing UTF-8 text route.
-        inline_caption = caption if caption.isascii() else ""
         response = session.post(
-            endpoint + "/v1/photo-upload",
-            data=photo,
-            headers={"Authorization": "Bearer " + key,
-                     "Content-Type": media_type,
-                     "X-Telegram-Caption": inline_caption},
+            endpoint + "/v1/photo-card",
+            files={"photo": ("chart.png", photo, media_type)},
+            data={"caption": caption,
+                  **({"reply_markup": json.dumps(reply_markup, ensure_ascii=False)}
+                     if reply_markup is not None else {})},
+            headers={"Authorization": "Bearer " + key},
             timeout=25, allow_redirects=False,
         )
         result = response.json()
@@ -215,16 +211,4 @@ def send_photo_upload(chat_id, photo_path, caption="", reply_markup=None):
         raise TelegramGatewayError("Gateway photo upload unavailable") from exc
     if response.status_code != 200 or not isinstance(result, dict) or result.get("ok") is not True:
         raise TelegramGatewayError("Gateway photo upload rejected")
-    if reply_markup is not None or (caption and not inline_caption):
-        # The deployed Gateway cannot attach a UTF-8 caption or keyboard
-        # to the uploaded photo. Send one separate owner text/menu *only*
-        # after accepted upload; a failed follow-up must not reupload it.
-        text = caption if caption and not inline_caption else "🔗 Навигация"
-        try:
-            menu = send_text(chat_id, text, reply_markup=reply_markup)
-        except TelegramGatewayError as exc:
-            print(f"[TELEGRAM GATEWAY PHOTO MENU ERROR] {type(exc).__name__}", flush=True)
-            return {**result, "keyboard_delivered": False, "caption_delivered": bool(inline_caption or not caption)}
-        return {**result, "keyboard_delivered": bool(menu.get("ok")), "caption_delivered": bool(menu.get("ok") or inline_caption or not caption)}
     return result
-

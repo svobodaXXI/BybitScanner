@@ -101,6 +101,96 @@ export default {
         return reply(200,payload);
       } catch (_) { return reply(503,{ok:false,error:"telegram_method_unavailable"}); }
     }
+    // v2 photo card: one Telegram sendPhoto request owns image, UTF-8 caption
+    // and inline keyboard. No separate text message can interleave.
+    if (url.pathname === "/v1/photo-card" && request.method === "POST") {
+      if (!env.GATEWAY_SHARED_SECRET || env.GATEWAY_SHARED_SECRET.length < 32 ||
+          !env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID)
+        return reply(503,{ok:false,error:"not_configured"});
+      const auth = request.headers.get("authorization") || "";
+      if (!auth.startsWith("Bearer ") || !matches(auth.slice(7),env.GATEWAY_SHARED_SECRET))
+        return reply(401,{ok:false,error:"unauthorized"});
+      const type = (request.headers.get("content-type") || "").toLowerCase();
+      const contentLength = Number(request.headers.get("content-length") || 0);
+      if (contentLength > 2200000) return reply(413,{ok:false,error:"too_large"});
+      let caption, markup, photo, photoType, photoBytes;
+      if (type.startsWith("multipart/form-data;")) {
+        let form;
+        try { form = await request.formData(); }
+        catch (_) { return reply(400,{ok:false,error:"invalid_form"}); }
+        if (Array.from(form.keys()).some(k => !["photo","caption","reply_markup"].includes(k)))
+          return reply(400,{ok:false,error:"invalid_photo_card"});
+        caption = form.get("caption") ?? "";
+        markup = form.get("reply_markup");
+        photo = form.get("photo");
+        if (!(photo instanceof Blob) || typeof photo.name !== "string")
+          return reply(400,{ok:false,error:"invalid_photo"});
+        photoType = photo.type;
+        if (!["image/png","image/jpeg"].includes(photoType))
+          return reply(415,{ok:false,error:"unsupported_image_type"});
+        if (!photo.size || photo.size > 2000000)
+          return reply(413,{ok:false,error:"photo_too_large"});
+        photoBytes = await photo.arrayBuffer();
+      } else if (type.startsWith("application/json")) {
+        let body;
+        try {
+          const raw = await request.text();
+          if (raw.length > 8192) return reply(413,{ok:false,error:"too_large"});
+          body = JSON.parse(raw);
+        } catch (_) { return reply(400,{ok:false,error:"invalid_json"}); }
+        if (!body || typeof body !== "object" || Array.isArray(body) ||
+            Object.keys(body).some(k => !["file_id","caption","reply_markup"].includes(k)) ||
+            typeof body.file_id !== "string" || !body.file_id || body.file_id.length > 1024)
+          return reply(400,{ok:false,error:"invalid_photo_card"});
+        photo = body.file_id;
+        caption = body.caption ?? "";
+        markup = body.reply_markup === undefined ? null : JSON.stringify(body.reply_markup);
+      } else return reply(415,{ok:false,error:"unsupported_content_type"});
+      if (typeof caption !== "string" || caption.length > 1024)
+        return reply(400,{ok:false,error:"invalid_caption"});
+      let keyboard;
+      if (markup !== null) {
+        if (typeof markup !== "string" || markup.length > 8192)
+          return reply(400,{ok:false,error:"invalid_reply_markup"});
+        try { keyboard = JSON.parse(markup); }
+        catch (_) { return reply(400,{ok:false,error:"invalid_reply_markup"}); }
+        if (!keyboard || typeof keyboard !== "object" || Array.isArray(keyboard) ||
+            Object.keys(keyboard).join(",") !== "inline_keyboard" ||
+            !Array.isArray(keyboard.inline_keyboard) || keyboard.inline_keyboard.length > 20 ||
+            !keyboard.inline_keyboard.every(row =>
+              Array.isArray(row) && row.length <= 8 && row.every(button =>
+                button && typeof button === "object" && !Array.isArray(button) &&
+                typeof button.text === "string" && button.text.length <= 64 &&
+                Object.keys(button).length === 2 &&
+                ((typeof button.callback_data === "string" && button.callback_data.length <= 64) ||
+                 (typeof button.url === "string" && button.url.startsWith("https://") && button.url.length <= 2048) ||
+                 (button.web_app && typeof button.web_app.url === "string" &&
+                  button.web_app.url.startsWith("https://") && button.web_app.url.length <= 2048)))))
+          return reply(400,{ok:false,error:"invalid_reply_markup"});
+      }
+      let body, headers;
+      if (photoBytes) {
+        const form = new FormData();
+        form.set("chat_id",String(env.TELEGRAM_CHAT_ID));
+        form.set("caption",caption);
+        form.set("photo",new Blob([photoBytes],{type:photoType}),"chart.png");
+        if (keyboard) form.set("reply_markup",JSON.stringify(keyboard));
+        body = form;
+      } else {
+        headers = {"content-type":"application/json"};
+        body = JSON.stringify({chat_id:env.TELEGRAM_CHAT_ID,photo,caption,
+          ...(keyboard ? {reply_markup:keyboard} : {})});
+      }
+      try {
+        const tg = await fetch("https://api.telegram.org/bot"+env.TELEGRAM_BOT_TOKEN+"/sendPhoto",{
+          method:"POST",...(headers ? {headers} : {}),body,signal:AbortSignal.timeout(20000)
+        });
+        const payload = await tg.json();
+        if (!tg.ok || payload.ok !== true)
+          return reply(502,{ok:false,error:"telegram_photo_rejected"});
+        return reply(200,{ok:true,result:payload.result});
+      } catch (_) { return reply(503,{ok:false,error:"telegram_photo_unavailable"}); }
+    }
     if (url.pathname === "/v1/photo-upload" && request.method === "POST") {
       if (!env.GATEWAY_SHARED_SECRET || env.GATEWAY_SHARED_SECRET.length < 32 ||
           !env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID)

@@ -12,6 +12,7 @@ export default {
       "/health": "GET",
       "/v1/send": "POST",
       "/v1/photo-upload": "POST",
+      "/v1/photo-card": "POST",
       "/v1/photo-file-id": "POST",
       "/v1/get-updates": "POST",
       "/v1/bot-method": "POST"
