@@ -227,6 +227,47 @@ class MirrorChartDeliveryTests(unittest.TestCase):
             text_sender.assert_not_called()
 
 
+class CampaignHistoryMarkerTests(unittest.TestCase):
+    def test_only_closed_prior_same_campaign_fills_are_added(self):
+        from unittest.mock import patch
+        from robot_position_view import TradeMarker, load_position_view
+
+        current = SimpleNamespace(
+            trade_id="current", candidate_id="candidate-2", symbol=Symbol("SAGAUSDT"),
+            entry_time_ms=3000, exit_time_ms=4000, direction="LONG", pattern="MIRROR",
+            entry_quantity=Decimal("1"), average_entry=Decimal("101"),
+            stop_price=Decimal("99"), take_price=Decimal("105"), exit_price=Decimal("102"))
+        prior = SimpleNamespace(
+            trade_id="prior", candidate_id="candidate-1", symbol=Symbol("SAGAUSDT"),
+            entry_time_ms=1000, exit_time_ms=2000)
+        unfinished = SimpleNamespace(
+            trade_id="unfinished", candidate_id="candidate-3", symbol=Symbol("SAGAUSDT"),
+            entry_time_ms=1500, exit_time_ms=None)
+        source = SimpleNamespace(robot_state={"execution": {"mirror": {
+            "mirror_level_source": "swing_zone", "mirror_timeframe": "5"}}},
+            signal_snapshot=None)
+        store = SimpleNamespace(
+            get_position_projection=lambda key: None,
+            get_robot_trade=lambda trade_id: current,
+            get_robot_candidate=lambda candidate_id: source,
+            get_robot_reentry_attempt_index=lambda account, candidate_id: 2,
+            load_robot_reentry_campaign_trades=lambda account, candidate_id:
+                (prior, current, unfinished),
+        )
+        filled_old = TradeMarker(1200, Decimal("100"), "Buy", True)
+        hollow_old = TradeMarker(1250, Decimal("99"), "Buy", False)
+        filled_current = TradeMarker(3100, Decimal("101"), "Buy", True)
+        def fake_markers(store, account, trade, candidate, *, now_ms):
+            if trade.trade_id == "prior":
+                return (filled_old, hollow_old), Decimal("0.1")
+            return (filled_current,), Decimal("0.2")
+
+        with patch("robot_position_view._trade_markers", side_effect=fake_markers):
+            view = load_position_view(store, "SAGAUSDT", trade_id="current", now_ms=4000)
+        self.assertEqual(view.markers, (filled_old, filled_current))
+        self.assertEqual(view.fees_usdt, Decimal("0.2"))  # no prior fees in current trade PnL
+
+
 class LifecycleStoreQueryTests(unittest.TestCase):
     """The new read-only store query against a real SQLite schema."""
 
