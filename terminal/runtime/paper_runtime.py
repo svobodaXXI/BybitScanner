@@ -3211,11 +3211,20 @@ class PaperRuntime:
                         slot=0,
                     )
                 except Exception:
-                    LOGGER.exception(
-                        "Robot STOP EXIT-0 ownership cannot be proven; "
-                        "preserving obligation=%s", obligation.obligation_id,
-                    )
-                    return obligation
+                    # EXIT-0 may already be immutably reserved by a manual
+                    # Market close that never reached command persistence.
+                    # Accept only the STOP's own latched durable identity as
+                    # an additional virtual EXIT-0 owner, and only after the
+                    # store proves the old identity was NEVER submitted.
+                    # No ownership row is deleted, overwritten or adopted.
+                    if not self.store.prove_box_latched_stop_successor(
+                        source_id.strip(), obligation.order_id,
+                    ):
+                        LOGGER.exception(
+                            "Robot STOP EXIT-0 ownership cannot be proven; "
+                            "preserving obligation=%s", obligation.obligation_id,
+                        )
+                        return obligation
 
                 # STOP/EMERGENCY_CLOSE wins the lifecycle. No resting Box entry
                 # or paired TAKE may survive and later reverse the flat position.

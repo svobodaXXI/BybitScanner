@@ -5002,12 +5002,19 @@ class SQLiteStore:
             "ORDER BY CASE role WHEN 'ENTRY' THEN 0 ELSE 1 END, slot, order_id",
             (candidate_id,),
         ).fetchall()
-        return tuple(
+        result = [
             BoxOrderOwnershipRecord(
                 OrderId(row["order_id"]), row["candidate_id"], row["role"], row["slot"],
             )
             for row in rows
-        )
+        ]
+        successor = self._box_latched_stop_shadow_owner(candidate_id)
+        if successor is not None:
+            result.append(BoxOrderOwnershipRecord(
+                OrderId(successor["order_id"]), successor["candidate_id"],
+                successor["role"], successor["slot"],
+            ))
+        return tuple(result)
 
     def reserve_box_order_identity(
         self, candidate_id: str, *, order_id: OrderId, role: str, slot: int,
@@ -5075,6 +5082,98 @@ class SQLiteStore:
         with self._transaction():
             return self._prove_box_owned_position(candidate_id)
 
+    def _box_latched_stop_shadow_owner(
+        self, source_candidate_id: str,
+    ) -> dict[str, object] | None:
+        """Read-only attribution for a latched STOP superseding unused EXIT-0.
+
+        Immutable Box ownership and the original abandoned reservation remain
+        untouched. A second EXIT-0 *execution identity* is accepted only when
+        it is already the durable STOP obligation of this Box's sole open Robot
+        trade, and the earlier reserved manual close demonstrably never made
+        it into any order, command or execution journal. The STOP obligation
+        is the durable, unique successor record (not mutable runtime state).
+        """
+        original = self._connection.execute(
+            """SELECT order_id FROM box_order_ownership
+               WHERE candidate_id=? AND role='EXIT' AND slot=0""",
+            (source_candidate_id,),
+        ).fetchone()
+        if original is None:
+            return None
+        trade_row = self._connection.execute(
+            """SELECT t.trade_id, t.candidate_id, t.trading_account_id, t.symbol
+               FROM robot_trades t JOIN robot_candidates c
+                 ON c.candidate_id=t.candidate_id
+               WHERE t.pattern='IKIGAI_BOX'
+                 AND c.status IN ('OPEN', 'CLOSED')
+                 AND json_extract(c.signal_snapshot_json,
+                                  '$.source_box_candidate_id')=?""",
+            (source_candidate_id,),
+        ).fetchall()
+        if len(trade_row) != 1:
+            return None
+        trade = trade_row[0]
+        obligation = self._connection.execute(
+            """SELECT obligation_id, order_id, status, winning_leg FROM
+               paper_protection_obligations
+               WHERE trade_id=? AND trading_account_id=? AND symbol=?""",
+            (trade["trade_id"], trade["trading_account_id"], trade["symbol"]),
+        ).fetchone()
+        if (
+            obligation is None or obligation["status"] not in
+            ("TRIGGERED", "DISPATCHING", "RESOLVED")
+            or obligation["winning_leg"] not in
+            ("STOP", "TAKE", "EMERGENCY_CLOSE")
+            or obligation["order_id"] == original["order_id"]
+        ):
+            return None
+        candidate = self.get_robot_candidate(trade["candidate_id"])
+        execution = (candidate.robot_state or {}).get("execution") or {}
+        intent = execution.get("box_manual_close_intent")
+        if (
+            not isinstance(intent, dict)
+            or intent.get("order_id") != original["order_id"]
+            or intent.get("slot") != 0
+            or not isinstance(intent.get("command_id"), str)
+            or not isinstance(intent.get("order_link_id"), str)
+            or not intent["command_id"] or not intent["order_link_id"]
+        ):
+            return None
+        old_order_id = original["order_id"]
+        if (
+            self._connection.execute(
+                """SELECT 1 FROM trading_commands
+                   WHERE command_id=? OR exchange_order_id=? OR order_link_id=?""",
+                (intent["command_id"], old_order_id, intent["order_link_id"]),
+            ).fetchone()
+            or self._connection.execute(
+                "SELECT 1 FROM executions WHERE order_id=?", (old_order_id,),
+            ).fetchone()
+            or self._connection.execute(
+                "SELECT 1 FROM paper_limit_orders WHERE order_id=?", (old_order_id,),
+            ).fetchone()
+            or self._connection.execute(
+                "SELECT 1 FROM box_order_ownership WHERE order_id=?",
+                (obligation["order_id"],),
+            ).fetchone()
+        ):
+            return None
+        return {
+            "order_id": obligation["order_id"],
+            "candidate_id": source_candidate_id,
+            "role": "EXIT",
+            "slot": 0,
+        }
+
+    def prove_box_latched_stop_successor(
+        self, source_candidate_id: str, order_id: OrderId,
+    ) -> bool:
+        """Proof only: do not modify/delete an immutable EXIT-0 reservation."""
+        self._assert_owner()
+        successor = self._box_latched_stop_shadow_owner(source_candidate_id)
+        return bool(successor and successor["order_id"] == order_id.value)
+
     def _prove_box_owned_position(self, candidate_id: str):
         from terminal.paper.box_ownership import BoxOwnershipError, prove_box_exposure
 
@@ -5085,9 +5184,12 @@ class SQLiteStore:
         if (baseline is None or baseline["symbol"] != candidate.symbol.value
                 or baseline["trading_account_id"] != candidate.trading_account_id.value):
             raise BoxOwnershipError("Box ownership baseline is missing or conflicts with plan")
-        ownership = self._connection.execute(
+        ownership = list(self._connection.execute(
             "SELECT * FROM box_order_ownership WHERE candidate_id=?", (candidate_id,),
-        ).fetchall()
+        ).fetchall())
+        successor = self._box_latched_stop_shadow_owner(candidate_id)
+        if successor is not None:
+            ownership.append(successor)
         for owner in ownership:
             if any(fill.symbol != candidate.symbol or fill.dedup_key.category is not Category.LINEAR
                    for fill in self.load_executions_for_order(

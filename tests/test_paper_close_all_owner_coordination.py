@@ -543,5 +543,28 @@ class TriggeredStopRetryEvidenceTests(unittest.TestCase):
         runtime._market_executor.execute.assert_not_called()
 
 
+class BoxStopImmutableExitZeroIntegrationTests(unittest.TestCase):
+    """Run real SQLite stop-supersession proofs in the Close-All safety CI."""
+
+    def _run_box_store_case(self, name):
+        from tests.test_box_order_ownership import BoxOrderOwnershipTests
+        case = BoxOrderOwnershipTests(methodName=name)
+        case.setUp()
+        try:
+            getattr(case, name)()
+        finally:
+            case.tearDown()
+
+    def test_latched_stop_closes_proven_box_lot_without_changing_original_slot(self):
+        self._run_box_store_case(
+            "test_latched_stop_successor_is_proven_without_mutating_immutable_box_owner"
+        )
+
+    def test_submitted_manual_order_blocks_stop_successor(self):
+        self._run_box_store_case(
+            "test_submitted_manual_exit_prevents_stop_successor_attribution"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
