@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - "mirror_scanner.py"
+      - "tests/test_mirror_scanner_integration.py"
       - "pattern_freshness.py"
       - "tests/test_pattern_freshness.py"
       - "tests/test_mirror_standalone_paper_e2e.py"
@@ -38,6 +39,7 @@ jobs:
           numpy==2.5.1
           matplotlib==3.11.1
           mplfinance==0.12.10b0
+          pytest==9.1.1
       - name: Compile MIRROR source and acceptance
         run: >-
           python -m py_compile
@@ -45,5 +47,7 @@ jobs:
           pattern_freshness.py
           tests/test_pattern_freshness.py
           tests/test_mirror_standalone_paper_e2e.py
+      - name: Verify causal wick-extremum supersession
+        run: python -m pytest -q tests/test_mirror_scanner_integration.py -k "extremum or wick_sweep"
       - name: Full synthetic MIRROR standalone PAPER E2E and regression suite
         run: python -m unittest -v tests.test_pattern_freshness tests.test_mirror_standalone_paper_e2e
