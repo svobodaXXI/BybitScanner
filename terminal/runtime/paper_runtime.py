@@ -3378,16 +3378,41 @@ class PaperRuntime:
                 / proof.entry_notional
                 * Decimal("100")
             )
-            self.store.close_robot_trade(
-                trade.trade_id,
-                exit_time_ms=proof.last_execution_at_ms,
-                exit_price=proof.average_exit,
-                exit_reason=obligation.winning_leg,
-                realized_pnl_usdt=proof.realized_pnl,
-                realized_pnl_pct=realized_pct,
-                fees_costs_usdt=proof.accumulated_fee,
-                updated_at_ms=now_ms,
-            )
+            # A prior Box monitor may have labelled this already-executed
+            # STOP as TAKE before the obligation finalizer ran. Only the
+            # exact, zero-exposure, matching-economics race may be corrected.
+            if trade.exit_time_ms is not None and trade.exit_reason != obligation.winning_leg:
+                corrected = self.store.correct_box_take_race_from_proven_stop(
+                    trade_id=trade.trade_id,
+                    obligation_id=obligation.obligation_id,
+                    exit_time_ms=proof.last_execution_at_ms,
+                    exit_price=proof.average_exit,
+                    realized_pnl_usdt=proof.realized_pnl,
+                    realized_pnl_pct=realized_pct,
+                    fees_costs_usdt=proof.accumulated_fee,
+                    updated_at_ms=now_ms,
+                )
+                if not corrected:
+                    LOGGER.error(
+                        "Box STOP/TAKE race cannot be proved; reconciliation required: obligation=%s",
+                        obligation.obligation_id,
+                    )
+                    return obligation
+                LOGGER.warning(
+                    "Corrected proven Box STOP/TAKE reason race: obligation=%s trade=%s",
+                    obligation.obligation_id, trade.trade_id,
+                )
+            else:
+                self.store.close_robot_trade(
+                    trade.trade_id,
+                    exit_time_ms=proof.last_execution_at_ms,
+                    exit_price=proof.average_exit,
+                    exit_reason=obligation.winning_leg,
+                    realized_pnl_usdt=proof.realized_pnl,
+                    realized_pnl_pct=realized_pct,
+                    fees_costs_usdt=proof.accumulated_fee,
+                    updated_at_ms=now_ms,
+                )
             self.store.clear_paper_protection_for_flat(position_key)
             if obligation.status == "DISPATCHING":
                 obligation = self.store.transition_paper_protection_obligation(
