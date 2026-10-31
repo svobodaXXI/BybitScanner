@@ -753,6 +753,12 @@ def mirror_source_token(symbol: str, timeframe: str, level_id: str,
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
 
 
+def mirror_first_card_archive_id(symbol: str, timeframe: str, level_id: str) -> str:
+    """Stable first-card key for this exact level campaign, never its ticker."""
+    key = f"{symbol}|{timeframe}|{level_id}"
+    return "mirror-first:" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+
+
 def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str, Any]],
                         registry: LevelRegistry, level_id: str,
                         record: Mapping[str, Any], kind: str) -> dict[str, Any]:
@@ -922,10 +928,20 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                             # chart, never attribute it to an arbitrary pattern.
                             source_ids = []
                         source_id = f"mirror-origin:{source_token}"
+                        first_id = mirror_first_card_archive_id(symbol, timeframe, item["level_id"])
+                        image_bytes = chart_path.read_bytes()
+                        if not test_mode and item["kind"] == "breakout":
+                            # Preserve the immutable first campaign card; retries
+                            # never overwrite it with a retest or later chart.
+                            record_original_signal(
+                                first_id, symbol=symbol, timeframe=timeframe,
+                                pattern=row.get("level_label", "MIRROR"), text=text,
+                                image_bytes=image_bytes)
                         source_ready = False if test_mode else record_original_signal(
                             source_id, symbol=symbol, timeframe=timeframe,
                             pattern=row.get("level_label", "MIRROR"), text=text,
-                            image_bytes=chart_path.read_bytes(), source_formation_ids=source_ids)
+                            image_bytes=image_bytes, source_formation_ids=source_ids,
+                            source_campaign_first_id=first_id)
                         delivered = True
                         for chat_id in get_telegram_chat_ids():
                             is_owner = bool(owner_id and chat_id == owner_id)

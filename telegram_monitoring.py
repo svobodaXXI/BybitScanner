@@ -844,8 +844,18 @@ def _process_mirror_source_callback(callback_query) -> bool:
             return True
         _send_text(chat_id, "Исходный паттерн найден, но его график не удалось отправить.")
         return True
-    _send_text(chat_id, "Исходная карточка паттерна не сохранена. Показываю зафиксированный "
-                        "график зеркального уровня и его проверяемую геометрию.")
+    # A bare level has no source pattern. Return the first card of this
+    # exact persisted MIRROR campaign; never substitute a newer same-ticker
+    # observation or fabricate an original source-pattern archive.
+    first_id = mirror.get("source_campaign_first_id")
+    first = signal_archive.load_original_signal([first_id]) if first_id else None
+    if first is not None:
+        if _repost_original_signal(chat_id, first):
+            return True
+        _send_text(chat_id, "Первую карточку MIRROR-кампании не удалось отправить.")
+        return True
+    _send_text(chat_id, "Первая карточка MIRROR-кампании не сохранена. "
+                        "Показываю архивный график этого события без подмены источника.")
     if not _repost_original_signal(chat_id, mirror):
         _send_text(chat_id, "Не удалось отправить архивный MIRROR-график.")
     return True
