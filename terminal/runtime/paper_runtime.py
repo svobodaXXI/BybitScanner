@@ -3204,6 +3204,27 @@ class PaperRuntime:
                 ):
                     return obligation
                 try:
+                    # A prior manual Box Close-All may have reserved EXIT-0
+                    # before failing the Market book validation, with no
+                    # command or execution ever submitted. A latched STOP now
+                    # owns the closing decision. Retire ONLY that provably
+                    # unused manual intent + slot atomically, then reserve the
+                    # STOP's immutable order identity. Submitted identities
+                    # and actual fills can never be superseded.
+                    old_intent = ((candidate.robot_state or {}).get("execution") or {}).get(
+                        "box_manual_close_intent"
+                    )
+                    if isinstance(old_intent, Mapping):
+                        old_plan = restore_box_market_plan(old_intent)
+                        if old_plan.order_id != obligation.order_id:
+                            self.store.retire_unsubmitted_box_manual_close_slot(
+                                source_candidate_id=source_id.strip(),
+                                robot_candidate_id=candidate.candidate_id,
+                                order_id=old_plan.order_id,
+                                command_id=old_plan.identity.command_id,
+                                expected_revision=candidate.state_revision,
+                                updated_at_ms=int(time.time() * 1000),
+                            )
                     self.store.reserve_box_order_identity(
                         source_id.strip(),
                         order_id=obligation.order_id,
@@ -3211,6 +3232,10 @@ class PaperRuntime:
                         slot=0,
                     )
                 except Exception:
+                    LOGGER.exception(
+                        "Robot STOP EXIT-0 ownership cannot be proven; "
+                        "preserving obligation=%s", obligation.obligation_id,
+                    )
                     return obligation
 
                 # STOP/EMERGENCY_CLOSE wins the lifecycle. No resting Box entry
