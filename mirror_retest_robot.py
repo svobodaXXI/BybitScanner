@@ -441,7 +441,7 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
         step = _decimal(policy.quantity_step(symbol), "quantity step")
     except (KeyError, TypeError, MirrorRobotError):
         return no("box_terms_unavailable")
-    if len(quantities) != 4 or step <= 0 or worst_case < 0:
+    if len(quantities) != 4 or step <= 0 or worst_case < 0 or average <= 0:
         return no("box_terms_unavailable")
     boundary: Boundary = campaign["boundary"]
     target = Decimal(str(boundary.price_at(now_ms)))
