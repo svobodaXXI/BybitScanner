@@ -7,6 +7,10 @@ on:
     paths:
       - 'deploy/telegram_gateway/cloudflare_proxy_worker.mjs'
       - '.github/workflows/cloudflare-telegram-gateway-deploy.yml'
+  pull_request:
+    paths:
+      - 'deploy/telegram_gateway/cloudflare_proxy_worker.mjs'
+      - '.github/workflows/cloudflare-telegram-gateway-deploy.yml'
   workflow_dispatch:
 
 permissions:
@@ -17,7 +21,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify Worker syntax and new route
+        run: |
+          node --check deploy/telegram_gateway/cloudflare_proxy_worker.mjs
+          grep -Fq '"/v1/photo-card": "POST"' deploy/telegram_gateway/cloudflare_proxy_worker.mjs
   deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/stable/adfb50b-forward' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: cloudflare-telegram-gateway
