@@ -287,7 +287,11 @@ def load_position_view(
         snapshot = candidate.signal_snapshot if candidate is not None else None
         state = candidate.robot_state if candidate is not None else None
         execution = state.get("execution") if isinstance(state, Mapping) else None
-        mirror = execution.get("mirror") if isinstance(execution, Mapping) else None
+        mirror_meta = execution.get("mirror") if isinstance(execution, Mapping) else None
+        # MIRROR metadata can also record a rejected/non-attached decision.
+        # Only the exact ATTACHED attestation identifies a MIRROR trade.
+        mirror = (mirror_meta if isinstance(mirror_meta, Mapping)
+                  and mirror_meta.get("decision") == "ATTACHED" else None)
         # Canonical reentry genealogy, not a guessed same-symbol/send counter.
         lookup = getattr(store, "get_robot_reentry_attempt_index", None)
         if callable(lookup):
