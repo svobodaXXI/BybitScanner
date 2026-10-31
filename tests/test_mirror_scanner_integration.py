@@ -168,7 +168,22 @@ def test_confirmed_wick_extremum_annuls_unbroken_mirror_ray(root, fixed_levels):
     assert record["rejection"] == "superseded_by_confirmed_extremum"
     assert record["superseding_extremum"]["price"] == 100.2
     assert record["candidate"] is False
-    assert ms.load_state("TESTUSDT", "1", root)["pending_notifications"] == []
+    state = ms.load_state("TESTUSDT", "1", root)
+    assert state["pending_notifications"] == []
+    successor = record["superseded_by_level_id"]
+    assert successor != level.level_id
+    new_ray = ms.LevelRegistry.from_dict(state["registry"]).levels[successor]
+    assert new_ray.boundary.anchor_price == 100.2
+    assert new_ray.boundary.anchor_time_ms == 25 * M
+    assert new_ray.confirmed_at_ms == 29 * M
+    assert new_ray.provenance["supersedes_level_id"] == level.level_id
+    assert state["records"][successor]["candidate"] is None
+
+    # Restart / re-scan must not create another successor or re-arm old ray.
+    observe(frame(bars), root)
+    repeated = ms.load_state("TESTUSDT", "1", root)
+    assert repeated["records"][level.level_id]["lifecycle"] == ms.LIFECYCLE_REJECTED
+    assert repeated["records"][level.level_id]["superseded_by_level_id"] == successor
 
 
 def test_wick_sweep_before_confirmation_does_not_cancel_existing_level(root, fixed_levels):
