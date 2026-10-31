@@ -5025,6 +5025,89 @@ class SQLiteStore:
                 candidate_id, order_id=order_id, role=role, slot=slot,
             )
 
+    def retire_unsubmitted_box_manual_close_slot(
+        self, *, source_candidate_id: str, robot_candidate_id: str,
+        order_id: OrderId, command_id: CommandId, expected_revision: int,
+        updated_at_ms: int,
+    ) -> bool:
+        """Atomically release an unsubmitted manual EXIT-0 superseded by STOP.
+
+        Only an exactly matching persisted Box manual intent can authorize
+        retirement. Any command, limit or execution for its identity blocks
+        this path; there is never a transfer/adoption of a real order. Both
+        the durable intent and reservation are retired together so a restart
+        cannot re-submit the obsolete Market identity.
+        """
+        self._assert_owner()
+        if expected_revision < 0 or updated_at_ms < 0:
+            raise ValueError("invalid Box supersession revision/timestamp")
+        with self._transaction():
+            robot = self.get_robot_candidate(robot_candidate_id)
+            if (
+                robot is None or robot.status != "OPEN"
+                or robot.state_revision != expected_revision
+                or robot.signal_snapshot.get("source_box_candidate_id") != source_candidate_id
+            ):
+                raise ConcurrentUpdate("Box manual close owner changed")
+            state = dict(robot.robot_state or {})
+            execution = dict(state.get("execution") or {})
+            intent = execution.get("box_manual_close_intent")
+            if (
+                not isinstance(intent, dict)
+                or intent.get("order_id") != order_id.value
+                or intent.get("command_id") != command_id.value
+                or intent.get("slot") != 0
+            ):
+                raise ConcurrentUpdate("Box manual close identity changed")
+            owner = self._connection.execute(
+                """SELECT role, slot FROM box_order_ownership
+                   WHERE candidate_id=? AND order_id=?""",
+                (source_candidate_id, order_id.value),
+            ).fetchone()
+            if owner is None or (owner["role"], owner["slot"]) != ("EXIT", 0):
+                raise ConcurrentUpdate("Box manual close EXIT-0 ownership is unproven")
+            # Do not abandon any submitted/persisted or externally filled identity.
+            if (
+                self._connection.execute(
+                    """SELECT 1 FROM trading_commands WHERE
+                       command_id=? OR exchange_order_id=? OR order_link_id=?""",
+                    (command_id.value, order_id.value,
+                     str(intent.get("order_link_id") or "")),
+                ).fetchone()
+                or self._connection.execute(
+                    "SELECT 1 FROM executions WHERE order_id=?", (order_id.value,),
+                ).fetchone()
+                or self._connection.execute(
+                    "SELECT 1 FROM paper_limit_orders WHERE order_id=?", (order_id.value,),
+                ).fetchone()
+            ):
+                raise DuplicateIdentity("Box manual close may already have submitted")
+            # Keep an audit marker but never retain a retryable intent.
+            execution.pop("box_manual_close_intent")
+            execution["box_manual_close_superseded"] = {
+                "order_id": order_id.value,
+                "reason": "TRIGGERED_STOP_PRIORITY_NO_MARKET_COMMAND",
+            }
+            state["execution"] = execution
+            cursor = self._connection.execute(
+                """UPDATE robot_candidates SET robot_state_json=?,
+                   state_revision=state_revision+1, updated_at_ms=?
+                   WHERE candidate_id=? AND status='OPEN'
+                     AND state_revision=? AND updated_at_ms<=?""",
+                (_canonical_json(state), updated_at_ms, robot_candidate_id,
+                 expected_revision, updated_at_ms),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("Box manual close state changed during supersession")
+            removed = self._connection.execute(
+                """DELETE FROM box_order_ownership
+                   WHERE candidate_id=? AND order_id=? AND role='EXIT' AND slot=0""",
+                (source_candidate_id, order_id.value),
+            )
+            if removed.rowcount != 1:
+                raise ConcurrentUpdate("Box manual EXIT-0 reservation changed")
+            return True
+
     def prove_box_never_started_flat(self, candidate_id: str) -> bool:
         """Strict read-only evidence for a Box attempt never admitted to execution.
 
