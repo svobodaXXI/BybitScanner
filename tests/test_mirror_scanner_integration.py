@@ -83,6 +83,68 @@ def breakout_bars(n_before=30, level=101.0, body=3.0):
     return bars
 
 
+def test_mirror_retest_potential_threshold_uses_closed_breakout_price():
+    from types import SimpleNamespace
+
+    record = {
+        "naked_retest": {"breakout": {"close_time_ms": 60000, "close": 100.0}},
+        "breakout_evidence": {"body_atr": 1.0},
+    }
+    for level_price, rejected in ((100.2, True), (100.6999, True), (100.7, False),
+                                  (100.8, False)):
+        level = SimpleNamespace(boundary=SimpleNamespace(price_at=lambda _t, p=level_price: p))
+        result = ms._judge_breakout(level, record, 60000, 60000)
+        assert (result == "retest_potential_below_0_7_percent") if rejected else result is None
+
+
+def test_weak_mirror_potential_does_not_become_telegram_or_robot_candidate(root, fixed_levels):
+    # A genuine full-body breakout can have too little distance left to the
+    # frozen mirror line to justify an actionable return-to-level campaign.
+    boundary = level_at(100.8, 5 * M)
+    fixed_levels["levels"] = [boundary]
+    bars = flat_bars(30) + [(100.0, 101.1, 99.9, 101.0)]
+    summary = observe(frame(bars), root)
+    row = ms.load_state("TESTUSDT", "1", root)
+    record = row["records"][boundary.level_id]
+    assert summary["new_candidates"] == 0
+    assert record["status"] == STATUS_UNTESTED
+    assert record["candidate"] is False
+    assert record["rejection"] == "retest_potential_below_0_7_percent"
+    assert row["pending_notifications"] == []
+
+
+def test_mirror_entry_rechecks_potential_on_confirmation_close(monkeypatch):
+    from types import SimpleNamespace
+    import robot_l_shape
+
+    monkeypatch.setattr(robot_l_shape, "net_reward_risk", lambda *a, **kw: 3)
+    record = {"naked_retest": {"breakout": {
+        "campaign_direction": "LONG", "close_time_ms": 60000,
+    }}}
+    confirmation = {
+        "open_time_ms": 120000, "close_time_ms": 180000,
+        "open": 100.0, "high": 100.1, "low": 99.8, "close": 100.0,
+    }
+    formation = [{
+        "open_time_ms": 60000, "close_time_ms": 120000,
+        "open": 99.5, "high": 100.0, "low": 99.0, "close": 99.7,
+    }]
+    def terms_for(price):
+        level = SimpleNamespace(
+            boundary=SimpleNamespace(price_at=lambda _: price),
+            level_id="frozen-level", timeframe="5", source="SWING_ZONE", pattern=None,
+        )
+        return ms._entry_terms(level, record, confirmation, "1",
+                               confirmation_kind="ENGULFING", formation=formation)
+
+    terms, rejection = terms_for(100.2)
+    assert terms is None and rejection == "entry_retest_potential_below_0_7_percent"
+    terms, rejection = terms_for(100.7)
+    assert rejection is None
+    assert terms["potential_percent"] == "0.700"
+    assert terms["target"] == "100.7"
+
+
 # --- lifecycle --------------------------------------------------------------------------------------
 
 def test_level_without_parent_fresh_breakout_becomes_candidate_and_first_retest_is_terminal(root, fixed_levels):
