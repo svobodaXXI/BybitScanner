@@ -158,7 +158,7 @@ def send_photo_file_id(chat_id, file_id, caption="", reply_markup=None):
         raise TelegramGatewayError("Gateway photo rejected")
     if reply_markup is not None:
         try:
-            menu = send_text(chat_id, "📎 Действия к графику выше", reply_markup=reply_markup)
+            menu = send_text(chat_id, "🔗 Навигация", reply_markup=reply_markup)
         except TelegramGatewayError as exc:
             print(f"[TELEGRAM GATEWAY PHOTO MENU ERROR] {type(exc).__name__}: {exc}", flush=True)
             return {**result, "keyboard_delivered": False}
@@ -219,7 +219,7 @@ def send_photo_upload(chat_id, photo_path, caption="", reply_markup=None):
         # The deployed Gateway cannot attach a UTF-8 caption or keyboard
         # to the uploaded photo. Send one separate owner text/menu *only*
         # after accepted upload; a failed follow-up must not reupload it.
-        text = caption if caption and not inline_caption else "📎 Действия к графику выше"
+        text = caption if caption and not inline_caption else "🔗 Навигация"
         try:
             menu = send_text(chat_id, text, reply_markup=reply_markup)
         except TelegramGatewayError as exc:
