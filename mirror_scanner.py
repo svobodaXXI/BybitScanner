@@ -868,8 +868,8 @@ _MIRROR_SEND_FAILURE_COOLDOWN_SEC = 300.0
 def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = False, root=None) -> int:
     """Deliver immutable event charts; never substitute a newer symbol chart.
 
-    Old pending cards without frozen evidence retain their text-only delivery.
-    Only fully delivered cards leave the durable pending list.
+    Legacy cards without frozen evidence are retired without text-only spam.
+    Only image-backed cards count as delivered; failed uploads stay pending.
     """
 
     import config
@@ -957,22 +957,19 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                             if not (isinstance(response, dict) and response.get("ok")):
                                 delivered = False
                 except (ValueError, KeyError, TypeError) as exc:
-                    # Invalid historic evidence must not be reconstructed from
-                    # live data, but should not suppress the observation notice.
+                    # Invalid frozen evidence cannot be repaired with current
+                    # candles; never disguise a text message as a delivered card.
                     print(f"[MIRROR CHART EVIDENCE ERROR] {symbol} {timeframe}m {type(exc).__name__}: {exc}",
                           flush=True)
-                    markup = build_tradingview_keyboard(
-                        symbol, timeframe, include_review_actions=False)
-                    delivered = bool(send_message_to_recipients(
-                        text + "\n⚠️ График события недоступен: исторические данные неполны.",
-                        reply_markup=markup))
+                    delivered = "invalid_frozen_chart"
                 except Exception as exc:
                     print(f"[MIRROR CHART DELIVERY ERROR] {symbol} {timeframe}m {type(exc).__name__}: {exc}",
                           flush=True)
                     delivered = False
             else:
-                markup = build_tradingview_keyboard(symbol, timeframe, include_review_actions=False)
-                delivered = bool(send_message_to_recipients(text, reply_markup=markup))
+                # Old pending records predate frozen chart snapshots. Retire
+                # them without sending misleading text-only notifications.
+                delivered = "legacy_chart_unavailable"
         append_event({"event": "mirror_delivery", "symbol": symbol, "timeframe": timeframe,
                       "level_id": item["level_id"], "kind": item["kind"],
                       "chart_frozen": bool(item.get("chart")),
