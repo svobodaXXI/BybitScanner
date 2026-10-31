@@ -42,7 +42,8 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
                                    facecolor=color, edgecolor=color, linewidth=0.5))
         from mirror_scanner import mirror_subtype
         subtype = mirror_subtype(snapshot.get("source"), snapshot.get("pattern"),
-                                 snapshot.get("event_kind", "breakout"))
+                                 snapshot.get("event_kind", "breakout"),
+                                 retest_confirmed=snapshot.get("retest_confirmed") is True)
         for level in levels:
             boundary = level["boundary"]
             anchor_t = int(boundary["anchor_time_ms"])
@@ -84,7 +85,7 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
         for spine in ax.spines.values():
             spine.set_color("#4b5563")
         ax.grid(alpha=0.12)
-        ax.set_title(f"MIRROR · {snapshot.get('symbol', '—')} · {snapshot.get('timeframe', '—')}m\\n{subtype}",
+        ax.set_title(f"MIRROR · {snapshot.get('symbol', '—')} · {snapshot.get('timeframe', '—')}m\n{subtype}",
                      color="white")
         ax.legend(loc="best", fontsize=8, facecolor="#1f2937", labelcolor="white")
         fig.tight_layout()
