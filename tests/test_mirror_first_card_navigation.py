@@ -90,6 +90,45 @@ def test_parent_pattern_archive_has_priority_over_first_mirror_card():
     assert not texts
 
 
+def test_missing_parent_archive_warns_before_exact_first_mirror_fallback():
+    first_id = mirror_scanner.mirror_first_card_archive_id("TESTUSDT", "5", "A")
+    parent_id = "origin:TESTUSDT:5:missing-pattern"
+    mirror = {"source_campaign_first_id": first_id, "source_formation_ids": [parent_id]}
+    first = {"candidate_id": first_id, "text": "first MIRROR card"}
+
+    def lookup(ids):
+        if ids == ["mirror-origin:" + "a" * 24]:
+            return mirror
+        if ids == [parent_id]:
+            return None
+        if ids == [first_id]:
+            return first
+        raise AssertionError(f"unexpected archive lookup: {ids}")
+
+    reposted, texts = _run_callback(lookup)
+    assert reposted is first
+    assert len(texts) == 1
+    assert "Исходная карточка паттерна не сохранена" in texts[0].args[1]
+    assert "не оригинал паттерна" in texts[0].args[1]
+
+
+def test_missing_parent_and_first_archive_warns_without_fabricating_origin():
+    parent_id = "origin:TESTUSDT:5:missing-pattern"
+    mirror = {"source_formation_ids": [parent_id], "text": "frozen MIRROR event"}
+
+    def lookup(ids):
+        if ids == ["mirror-origin:" + "a" * 24]:
+            return mirror
+        if ids == [parent_id]:
+            return None
+        raise AssertionError(f"unexpected archive lookup: {ids}")
+
+    reposted, texts = _run_callback(lookup)
+    assert reposted is mirror
+    assert len(texts) == 1
+    assert "Исходная карточка паттерна не сохранена" in texts[0].args[1]
+
+
 def test_legacy_missing_first_uses_original_event_with_explicit_warning():
     mirror = {"source_formation_ids": [], "text": "old frozen event"}
 
