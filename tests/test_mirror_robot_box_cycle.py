@@ -524,6 +524,37 @@ class MirrorPolicyUnitTests(unittest.TestCase):
         self.assertIsNone(mirror.build_runtime_policy(database_path="x", account_id=ACCOUNT_ID,
                                                       quantity_step=lambda s: Decimal("1"), environ={}))
 
+    def test_mirror_box_rejects_less_than_point_seven_percent_to_boundary(self):
+        plan = box_snapshot()
+        plan["plan"]["take_price"] = "92.9"
+        boundary = mirror.boundary_from_dict({
+            "boundary_id": "test:level", "anchor_time_ms": 0, "anchor_price": 93.0,
+            "slope_per_ms": 0.0, "as_of_time_ms": 0,
+        })
+        campaign = {"campaign_id": "test:level@1", "boundary": boundary,
+                    "campaign_direction": "LONG", "state": {"phase": PHASE_CAMPAIGN_ACTIVE}}
+        decision = mirror.plan_attachment(
+            self.policy(), box_snapshot=plan, symbol=SYMBOL, campaign=campaign,
+            prior_attempts=[], now_ms=NOW,
+        )
+        self.assertEqual(decision["decision"], mirror.BLOCKED)
+        self.assertEqual(decision["reason"], "retest_potential_below_0_7_percent")
+
+    def test_standalone_robot_attachment_rechecks_point_seven_percent(self):
+        campaign = {"campaign_id": "test:level@1", "campaign_direction": "LONG"}
+        blocked = mirror.plan_standalone_attachment(
+            self.policy(), direction="LONG", entry_price="100", stop_price="99",
+            target_price="100.2", campaign=campaign, prior_attempts=[], now_ms=NOW,
+        )
+        self.assertEqual(blocked["decision"], mirror.BLOCKED)
+        self.assertEqual(blocked["reason"], "retest_potential_below_0_7_percent")
+        allowed_past_threshold = mirror.plan_standalone_attachment(
+            self.policy(), direction="LONG", entry_price="100", stop_price="99",
+            target_price="100.7", campaign=campaign, prior_attempts=[], now_ms=NOW,
+        )
+        self.assertEqual(allowed_past_threshold["reason"], "one_wv_unavailable")
+        self.assertEqual(allowed_past_threshold["decision"], mirror.DEFERRED)
+
     def test_prior_attempt_losses_consume_the_campaign_budget(self):
         boundary = mirror.boundary_from_dict({"boundary_id": "w:lower", "anchor_time_ms": 0, "anchor_price": 110.0,
                                               "slope_per_ms": 0.0, "as_of_time_ms": 0})
