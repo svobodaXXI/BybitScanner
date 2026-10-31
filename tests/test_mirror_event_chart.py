@@ -127,6 +127,39 @@ def test_delayed_event_does_not_include_future_candles_or_levels():
     assert [level["level_id"] for level in snapshot["levels"]] == ["selected"]
 
 
+def test_initial_mirror_card_is_concise_and_provenance_driven():
+    from mirror_scanner import mirror_caption
+    assert mirror_caption({
+        "symbol": "TESTUSDT", "timeframe": "5",
+        "level": {"source": "pattern_boundary", "pattern": "Rising Wedge"},
+        "status": "UNTESTED", "breakout": {"direction": "UP"},
+    }, "breakout") == "🪞 MIRROR · TESTUSDT · 5m\\nГраница паттерна · Rising Wedge"
+    assert mirror_caption({
+        "symbol": "TESTUSDT", "timeframe": "5",
+        "level": {"source": "swing_zone", "pattern": None},
+        "status": "UNTESTED",
+    }, "breakout") == (
+        "🪞 MIRROR · TESTUSDT · 5m\\n"
+        "Горизонтальный уровень · смена роли не подтверждена"
+    )
+
+
+def test_old_pending_retest_is_retired_without_telegram_send(tmp_path, monkeypatch):
+    import mirror_scanner as scanner
+    state = scanner.empty_state("TESTUSDT", "5")
+    state["pending_notifications"] = [{"level_id": "old", "kind": "first_retest"}]
+    monkeypatch.setattr(scanner, "load_state", lambda *a, **kw: state)
+    saved = []
+    monkeypatch.setattr(scanner, "save_state", lambda value, root: saved.append(
+        list(value["pending_notifications"])
+    ))
+    monkeypatch.setattr(scanner, "project_state", lambda value: [])
+    monkeypatch.setattr(scanner, "append_event", lambda *a, **kw: None)
+    assert scanner.send_mirror_notifications("TESTUSDT", "5", test_mode=True, root=tmp_path) == 0
+    assert saved == [[]]
+    assert state["pending_notifications"] == []
+
+
 def test_frozen_chart_renders_without_market_data(tmp_path):
     pytest.importorskip("matplotlib")
     from mirror_event_chart import render_mirror_chart
