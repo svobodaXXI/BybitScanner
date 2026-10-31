@@ -160,11 +160,15 @@ class RobotTelegramFeedTests(unittest.TestCase):
         callbacks = [button["callback_data"] for button in buttons]
         self.assertEqual(callbacks, ["robot:cmd:resume", "robot:cmd:close_all", "robot:cmd:stop", "robot:cmd:paper_close_all"])
 
-    def test_control_keyboard_reconciliation_required_offers_no_buttons(self):
+    def test_control_keyboard_reconciliation_required_offers_only_operator_close(self):
         stopped = build_robot_control_keyboard("ROBOT_STOPPED", "RECONCILIATION_REQUIRED")
         running = build_robot_control_keyboard("ROBOT_RUNNING", "RECONCILIATION_REQUIRED")
-        self.assertEqual(stopped["inline_keyboard"], [])
-        self.assertEqual(running["inline_keyboard"], [])
+        expected = [[{
+            "text": "🚨 Закрыть ВСЕ PAPER по рынку",
+            "callback_data": "robot:cmd:paper_close_all",
+        }]]
+        self.assertEqual(stopped["inline_keyboard"], expected)
+        self.assertEqual(running["inline_keyboard"], expected)
 
     def test_paper_confirmation_is_separate_from_robot_only_keyboard(self):
         keyboard = build_paper_close_all_confirmation_keyboard()["inline_keyboard"]
