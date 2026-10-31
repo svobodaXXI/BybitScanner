@@ -268,6 +268,11 @@ class HimsOwnerThreadFillTests(unittest.TestCase):
             received_at_ms=entry_book.received_at_ms,
         )
         crossed = _crossing_book("HIMSUSDT", bid="27.97", ask="27.98")
+        crossed = replace(
+            crossed,
+            bids=(PriceLevel(Price(D("27.97")), Quantity(D("5"))),),
+            asks=(PriceLevel(Price(D("27.98")), Quantity(D("5"))),),
+        )
         obligation = self.runtime.evaluate_robot_protection_crossing(
             "HIMSUSDT", crossed, event_id="HIMSUSDT:stop",
             received_at_ms=crossed.received_at_ms,
