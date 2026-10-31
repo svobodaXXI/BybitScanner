@@ -54,7 +54,8 @@ from typing import Any, Mapping, Sequence
 from geometry.naked_retest import NakedRetestError, PHASE_CAMPAIGN_ACTIVE
 from mirror_levels.imbalance import detect_fvgs, replay as replay_fvg
 from mirror_levels.levels import (
-    LevelRegistry, MirrorLevel, MirrorLevelError, levels_from_geometry, levels_from_horn_event,
+    LevelRegistry, MirrorLevel, MirrorLevelError, SOURCE_SWING_ZONE, horizontal_level,
+    levels_from_geometry, levels_from_horn_event,
     levels_from_ikigai_box, levels_from_l_shape, timeframe_ms,
 )
 from mirror_levels.swing import confirmed_pivots, swing_levels
@@ -706,9 +707,40 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                 # the superseded, still-unbroken level. Keep its evidence.
                 record["candidate"] = False
                 pending[:] = [item for item in pending if item["level_id"] != level_id]
+                pivot = record["superseding_extremum"]
+                # This is a NEW confirmed swing-extremum ray, not a retroactive
+                # mutation of the pattern boundary or its campaign. Preserve
+                # the historical source and derive a new independent identity
+                # from the exact price/time of the wick extremum.
+                replacement = horizontal_level(
+                    symbol=symbol, timeframe=timeframe, source=SOURCE_SWING_ZONE,
+                    pattern=None, side=level.side, price=float(pivot["price"]),
+                    anchor_time_ms=int(pivot["pivot_at_ms"]),
+                    confirmed_at_ms=int(pivot["confirmed_at_ms"]), touches=1,
+                    provenance={"supersedes_level_id": level_id,
+                                "source": "confirmed_wick_extremum"},
+                )
+                registry.add(replacement, merge_tolerance=0.0)
+                if replacement.level_id not in records:
+                    records[replacement.level_id] = {
+                        **new_record(replacement), "registered_at_ms": latest_close,
+                        "sources": [_source_entry(replacement)],
+                        "lifecycle": LIFECYCLE_TRACKING, "candidate": None,
+                        "rejection": None, "freshness": None, "robot": None,
+                        "last_event_ms": latest_close, "notified": [],
+                    }
+                    journal.append({"event": "mirror_level_registered", **base,
+                                    "level_id": replacement.level_id,
+                                    "source": replacement.source, "pattern": replacement.pattern,
+                                    "side": replacement.side,
+                                    "anchors": [list(a) for a in replacement.anchors],
+                                    "confirmed_at_ms": replacement.confirmed_at_ms,
+                                    "supersedes_level_id": level_id})
+                record["superseded_by_level_id"] = replacement.level_id
                 journal.append({"event": "mirror_level_rejected", **base, "level_id": level_id,
                                 "reason": record["rejection"],
-                                "superseding_extremum": record["superseding_extremum"]})
+                                "superseded_by_level_id": replacement.level_id,
+                                "superseding_extremum": pivot})
             elif status == STATUS_UNTESTED:
                 rejection = _judge_breakout(level, record, latest_close, step) \
                     or _duplicate_breakout(level_id, level, record, records, registry)
