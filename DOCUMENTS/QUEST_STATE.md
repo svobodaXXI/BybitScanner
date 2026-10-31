@@ -1,3 +1,11 @@
+## 🏰 Босс «Неверифицированный SHA старого PAPER backend» — 2026-11-01
+
+Последний READ-ONLY отчёт Codex VPS: официальный `FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY` PASS, все позиции FLAT/0; BUSDT единственная `DISPATCHING` obligation; armed AUSDT/KMNOUSDT без APPROVED/OPEN кандидатов. Но `BYBITSCANNER_BUILD_SHA` у реально работающего PID `500879` UNSET, `/api/health.build_sha=""`; исполняемый Git SHA строго не подтверждён. Независимо доказаны PID=listener `127.0.0.1:8765`, systemd unit/cgroup, Python module, /proc start tick `52729568` (31 Oct 15:50:21.680 MSK), process_instance_id `367ef560-cd92-4dc2-8029-0b56a3540428`, PAPER DB identity `e0cbafb1…ff0ad`, integrity OK, marker `d345411c` датируется раньше старта; .git отсутствует, исходный tree digest `777f36628b737e42d9a7de042c5ccf366083bea309c1b423d5ea3656677ca1f8`. Marker и mtime **не** считаются доказательством SHA. Никаких сигналов, deploy, SQL-изменений или запуска торговли.
+
+PR #738 предлагает отдельную крайне узкую аттестацию только **этого единственного unversioned процесса** по строго известным PID/start tick/process_instance_id, UNSET окружению SHA, точному локальному LISTEN fd и systemd provenance, при сохранении всех FLAT/DB/cover gates и однократного pidfd SIGINT. Обычная аттестация SHA остаётся строгой; legacy режим **не доказывает commit** и требует явной owner runtime authority после merge + нового preflight. Не подменять неизвестное доказанным. LIVE запрещён; XP нет.
+
+---
+
 ## 🏰 Босс защиты ENTRY_PENDING — 2026-11-01
 
 Новый фактический VPS отчёт Codex: официальный FLAT Recovery Gate на неизменённом backend `d345411c` ответил `BLOCKED: protection_not_quiescent`. Причина: `BUSDT: OBLIGATION`, `AUSDT: ENTRY_PENDING`, `KMNOUSDT: ENTRY_PENDING`; armed `AUSDT,KMNOUSDT`. При этом позиции FLAT/0, Scanner STOPPED, Autopilot OFF, Robot RECONCILIATION_REQUIRED, BUSDT obligation DISPATCHING; backend PID 500879 и Telegram активны, DB identity та же, integrity OK. **SIGINT не отправлялся, release не переключён, DB не менялась.**
