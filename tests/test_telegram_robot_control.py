@@ -49,6 +49,66 @@ def _state(mode, recovery_status):
     )
 
 
+class TelegramGatewayReviewCallbackTransportTests(unittest.TestCase):
+    def test_configured_gateway_ack_uses_bot_method_not_direct_socks(self):
+        with patch.object(
+            telegram_review.telegram_gateway_client, "configured", return_value=True,
+        ), patch.object(
+            telegram_review.telegram_gateway_client, "bot_method",
+            return_value={"ok": True, "result": True},
+        ) as gateway, patch.object(
+            telegram_review.requests, "get",
+        ) as direct:
+            accepted = telegram_review._answer_callback("cb-gateway", "PAPER FLAT")
+        self.assertTrue(accepted)
+        gateway.assert_called_once_with(
+            "answerCallbackQuery", callback_query_id="cb-gateway",
+            text="PAPER FLAT",
+        )
+        direct.assert_not_called()
+
+    def test_configured_gateway_ack_never_falls_back_on_error(self):
+        from telegram_gateway_client import TelegramGatewayError
+        with patch.object(
+            telegram_review.telegram_gateway_client, "configured", return_value=True,
+        ), patch.object(
+            telegram_review.telegram_gateway_client, "bot_method",
+            side_effect=TelegramGatewayError("poll unavailable"),
+        ), patch.object(
+            telegram_review.requests, "get",
+        ) as direct:
+            accepted = telegram_review._answer_callback("cb-gateway", "PAPER FLAT")
+        self.assertFalse(accepted)
+        direct.assert_not_called()
+
+    def test_gateway_malformed_ack_is_not_claimed_accepted(self):
+        with patch.object(
+            telegram_review.telegram_gateway_client, "configured", return_value=True,
+        ), patch.object(
+            telegram_review.telegram_gateway_client, "bot_method",
+            return_value={"ok": False},
+        ), patch.object(
+            telegram_review.requests, "get",
+        ) as direct:
+            accepted = telegram_review._answer_callback("cb-gateway", "PAPER FLAT")
+        self.assertFalse(accepted)
+        direct.assert_not_called()
+
+    def test_no_gateway_keeps_legacy_transport(self):
+        with patch.object(
+            telegram_review.telegram_gateway_client, "configured", return_value=False,
+        ), patch.object(
+            telegram_review.requests, "get",
+        ) as direct, patch.object(
+            telegram_review.telegram_gateway_client, "bot_method",
+        ) as gateway:
+            direct.return_value.json.return_value = {"ok": True, "result": True}
+            accepted = telegram_review._answer_callback("cb-direct", "PAPER FLAT")
+        self.assertTrue(accepted)
+        direct.assert_called_once()
+        gateway.assert_not_called()
+
+
 class TelegramRobotControlDispatchTests(unittest.TestCase):
     def test_control_callback_parser_is_separate_from_other_parsers(self):
         self.assertIsNone(telegram_review._parse_callback("robot:cmd:pause"))
