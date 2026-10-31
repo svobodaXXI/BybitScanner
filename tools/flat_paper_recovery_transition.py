@@ -71,7 +71,7 @@ def _process_start_token(pid: int) -> str:
         # proc stat field 22 is starttime; comm may contain whitespace or ')'.
         stat = Path(f"/proc/{pid}/stat").read_text()
         start = stat.rsplit(")", 1)[1].strip().split()[19]
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\\0")
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
         cgroup = Path(f"/proc/{pid}/cgroup").read_text()
     except (OSError, IndexError, ValueError) as exc:
         raise FlatRecoveryBlocked("backend_process_provenance_missing") from exc
