@@ -62,6 +62,61 @@ class TransitionCase(unittest.TestCase):
             "SELECT status FROM paper_protection_obligations"
         ).fetchone(), ("DISPATCHING",))
 
+    def test_live_http_snapshots_finish_before_writer_barrier(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(build_sha=SHA, process_instance_id="old-paper-process")
+        events = []
+        @contextmanager
+        def barrier(_):
+            events.append("barrier:enter")
+            try:
+                yield conn
+            finally:
+                events.append("barrier:exit")
+        def fetch():
+            # Deliberately fails if the old deadlocking ordering returns.
+            self.assertNotIn("barrier:enter", events)
+            events.append("http")
+            return snapshots
+        with mock.patch("tools.flat_paper_recovery_transition.get_snapshots", side_effect=fetch):
+            result = execute_flat_handoff(
+                db_path=Path("/no-vps-access"),
+                expected_identity=IDENTITY, expected_pid=PID,
+                expected_build_sha=SHA, execute=False,
+                service_pid=lambda: PID, start_token=lambda p: "start-77",
+                writer_guard=barrier,
+            )
+        self.assertTrue(result.startswith("PRECHECK_ONLY:"))
+        self.assertEqual(events, ["http", "http", "barrier:enter", "barrier:exit"])
+
+    def test_live_protection_changes_block_before_writer_barrier_and_signal(self):
+        conn, first = fixture()
+        first.pop("expected_identity")
+        first["backend"].update(build_sha=SHA, process_instance_id="old-paper-process")
+        second = {**first, "protection": {
+            **first["protection"], "armed_symbols": ["UNEXPECTEDUSDT"]}}
+        events = []
+        @contextmanager
+        def barrier(_):
+            events.append("barrier:enter")
+            try:
+                yield conn
+            finally:
+                events.append("barrier:exit")
+        with mock.patch("tools.flat_paper_recovery_transition.get_snapshots",
+                        side_effect=[first, second]):
+            with self.assertRaises(FlatRecoveryBlocked):
+                execute_flat_handoff(
+                    db_path=Path("/no-vps-access"),
+                    expected_identity=IDENTITY, expected_pid=PID,
+                    expected_build_sha=SHA, execute=True,
+                    service_pid=lambda: PID, start_token=lambda p: "start-77",
+                    send_interrupt=lambda *args: events.append("signal"),
+                    writer_guard=barrier,
+                )
+        self.assertEqual(events, ["barrier:enter", "barrier:exit"])
+
     def test_one_signal_only_inside_barrier_after_proof(self):
         result, events, _ = self.case(execute=True)
         self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
