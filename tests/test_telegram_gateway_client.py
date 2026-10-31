@@ -124,7 +124,7 @@ class TelegramGatewayTests(unittest.TestCase):
             sent = gateway.send_photo_file_id("12345", "existing-file-id", reply_markup=markup)
         self.assertTrue(sent["ok"])
         self.assertTrue(sent["keyboard_delivered"])
-        send_menu.assert_called_once_with("12345", "📎 Действия к графику выше",
+        send_menu.assert_called_once_with("12345", "🔗 Навигация",
                                           reply_markup=markup)
         self.assertEqual(session_cls.return_value.post.call_count, 1)
 
