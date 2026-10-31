@@ -64,6 +64,15 @@ class BoxFirstFillStopTests(unittest.TestCase):
         self.assertEqual(plan.actual_fill_net_rr, net_rr("28.25", "27.98"))
         self.assertLess(plan.actual_fill_net_rr, 2)
 
+    def test_later_box_topup_preserves_first_armed_stop_price(self):
+        # AAVE regression: P4 fill must not reprice an existing STOP.
+        snapshot = hims_snapshot()
+        first = stop_plan(snapshot, entry="28.25")
+        topup = stop_plan(snapshot, entry="28.19", quantity="6.63",
+                          existing_stop=str(first.stop_price))
+        self.assertEqual(topup.stop_price, first.stop_price)
+        self.assertGreater(topup.actual_fill_net_rr, D("0"))
+
     def test_the_strict_actual_fill_function_still_reports_the_shortfall(self):
         with self.assertRaises(rp.BoxActualFillRRUnsatisfied):
             rp.box_stop_for_actual_entry(hims_snapshot(), average_entry=D("28.25"))
