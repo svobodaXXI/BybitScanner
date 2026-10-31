@@ -61,6 +61,91 @@ class BoxOrderOwnershipTests(unittest.TestCase):
     def proof(self):
         return self.store.prove_box_owned_position(self.plan.candidate_id)
 
+    def _latched_stop_with_abandoned_exit_zero(self):
+        from terminal.domain.models import CommandId
+        self.fill("entry-fill-shadow", "entry-1", OrderSide.BUY,
+                  "2", "94", "2", "94", 5000)
+        robot, _ = self.store.handoff_box_plan_to_robot(
+            self.plan.candidate_id, symbol=Symbol("BTCUSDT"),
+            expected_snapshot_sha256=self.plan.snapshot_sha256,
+            approved_at_ms=4001,
+        )
+        args = trade_args(robot.candidate_id)
+        args.update(
+            trade_id="shadow-stop-trade", pattern="IKIGAI_BOX",
+            entry_time_ms=5000, entry_quantity=D("2"),
+            entry_position_version=self.store.get_position_projection(self.key).version,
+            created_at_ms=5000,
+        )
+        self.store.create_robot_trade(**args)
+        robot = self.store.get_robot_candidate(robot.candidate_id)
+        self.store.save_robot_candidate_state(
+            robot.candidate_id, status="OPEN",
+            robot_state={"execution": {"box_manual_close_intent": {
+                "slot": 0, "order_id": "stop",
+                "command_id": "command-abandoned",
+                "order_link_id": "link-abandoned",
+            }}},
+            expected_revision=robot.state_revision, updated_at_ms=5001,
+        )
+        obligation, _ = self.store.latch_paper_protection_obligation(
+            trade_id="shadow-stop-trade", protection_version=1,
+            winning_leg="STOP", trigger_price=D("90"),
+            observed_exit_price=D("89.5"), observed_quantity=D("2"),
+            market_event_id="book-stop-shadow", source_received_at_ms=5100,
+            source_generation=1, source_sequence=5, source_update_id=5,
+            source_event_at_ms=5099, source_matching_engine_cts_ms=None,
+            observed_bid_price=D("89.4"), observed_ask_price=D("89.5"),
+            latched_at_ms=5100,
+        )
+        return obligation
+
+    def test_latched_stop_successor_is_proven_without_mutating_immutable_box_owner(self):
+        obligation = self._latched_stop_with_abandoned_exit_zero()
+        self.assertTrue(self.store.prove_box_latched_stop_successor(
+            self.plan.candidate_id, obligation.order_id,
+        ))
+        owners = self.store.load_box_order_ownership(self.plan.candidate_id)
+        self.assertEqual(
+            {owner.order_id.value for owner in owners if owner.role == "EXIT" and owner.slot == 0},
+            {"stop", obligation.order_id.value},
+        )
+        self.assertEqual(
+            self.store._connection.execute(
+                "SELECT order_id FROM box_order_ownership WHERE candidate_id=? AND role='EXIT' AND slot=0",
+                (self.plan.candidate_id,),
+            ).fetchone()[0], "stop",
+        )
+        self.assertEqual(self.proof().remaining_quantity, D("2"))
+        self.fill(
+            obligation.exec_id.value, obligation.order_id.value,
+            OrderSide.SELL, "2", "89.5", "0", None, 5200,
+        )
+        self.assertEqual(self.proof().remaining_quantity, D("0"))
+
+    def test_submitted_manual_exit_prevents_stop_successor_attribution(self):
+        obligation = self._latched_stop_with_abandoned_exit_zero()
+        self.store.create_paper_limit(
+            client_action_id="abandoned-submitted", request_fingerprint="abandoned-submitted",
+            order_id=OrderId("stop"), order_link_id="link-abandoned",
+            trading_account_id=self.account, symbol=self.key.symbol,
+            side=OrderSide.SELL, price=D("96"), quantity=D("2"),
+            created_at_ms=5101,
+        )
+        self.assertFalse(self.store.prove_box_latched_stop_successor(
+            self.plan.candidate_id, obligation.order_id,
+        ))
+        self.assertNotIn(
+            obligation.order_id.value,
+            {owner.order_id.value for owner in
+             self.store.load_box_order_ownership(self.plan.candidate_id)},
+        )
+        with self.assertRaises(BoxOwnershipError):
+            self.fill(
+                obligation.exec_id.value, obligation.order_id.value,
+                OrderSide.SELL, "2", "89.5", "0", None, 5200,
+            )
+
     def test_first_grid_is_all_or_nothing(self):
         data = snapshot()
         data["identity"]["a_time_ms"] = 997
