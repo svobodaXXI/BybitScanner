@@ -85,8 +85,17 @@ def render_mirror_chart(snapshot: Mapping, output_path: str | Path) -> None:
         for spine in ax.spines.values():
             spine.set_color("#4b5563")
         ax.grid(alpha=0.12)
-        ax.set_title(f"MIRROR · {snapshot.get('symbol', '—')} · {snapshot.get('timeframe', '—')}m\n{subtype}",
-                     color="white")
+        title = f"MIRROR · {snapshot.get('symbol', '—')} · {snapshot.get('timeframe', '—')}m\n{subtype}"
+        if snapshot.get("event_kind") == "breakout":
+            close = snapshot.get("breakout_close")
+            boundary = snapshot.get("breakout_boundary_at_close")
+            if close is not None and boundary is not None:
+                from mirror_scanner import _retest_potential_percent
+                potential = _retest_potential_percent(boundary, close)
+                if potential.is_finite() and float(close) > 0 and math.isfinite(float(boundary)):
+                    title += (f"\nПробой: свеча закрыта за уровнем · Close {float(close):.8g}"
+                              f" · до ретеста {potential:.2f}%")
+        ax.set_title(title, color="white")
         ax.legend(loc="best", fontsize=8, facecolor="#1f2937", labelcolor="white")
         fig.tight_layout()
         fig.savefig(str(output_path), format="png", facecolor=fig.get_facecolor())

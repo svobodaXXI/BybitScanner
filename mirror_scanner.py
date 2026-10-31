@@ -42,6 +42,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+from decimal import Decimal
 import json
 import hashlib
 import os
@@ -75,6 +76,7 @@ ATR_PERIOD = 14
 MERGE_TOLERANCE_ATR = 0.25          # same real level: within 0.25 ATR (the swing-zone tolerance)
 FRESH_BREAKOUT_CANDLES = 2          # a live breakout closed at most 2 closed candles ago
 MIN_BREAKOUT_BODY_ATR = 0.5         # provisional observation threshold; not a trading rule
+MIN_MIRROR_RETEST_POTENTIAL_PERCENT = Decimal("0.7")  # owner: minimum gross distance to first retest
 WAITING_EXPIRY_CANDLES = 400        # an unbroken level whose last anchor left two Scanner windows
 RETENTION_MS = 3 * 86_400_000       # finished records are kept 3 days for the Terminal
 
@@ -275,7 +277,20 @@ def _robot_handoff(level: MirrorLevel, record: Mapping[str, Any]) -> dict[str, A
             "paper_admission": "NOT_AUTHORIZED", "paper_blockers": list(PAPER_BLOCKERS)}
 
 
-def _judge_breakout(record: Mapping[str, Any], latest_close_ms: int, step: int) -> str | None:
+def _retest_potential_percent(target: float | Decimal, reference: float | Decimal) -> Decimal:
+    """Gross retest distance relative to the confirmed close, in percent.
+
+    The target is the frozen boundary at the relevant candle CLOSE. This
+    measures geometry only; Robot net RR / fees / slippage still gate entries.
+    """
+    price = Decimal(str(reference))
+    level = Decimal(str(target))
+    if not price.is_finite() or not level.is_finite() or price <= 0 or level <= 0:
+        return Decimal("0")
+    return abs(level - price) * Decimal("100") / price
+
+
+def _judge_breakout(level: MirrorLevel, record: Mapping[str, Any], latest_close_ms: int, step: int) -> str | None:
     """Rejection reason of a naked breakout as a live MIRROR candidate, or None (candidate)."""
 
     breakout = record["naked_retest"]["breakout"]
@@ -288,6 +303,16 @@ def _judge_breakout(record: Mapping[str, Any], latest_close_ms: int, step: int) 
         return "breakout_atr_unavailable"
     if body_atr < MIN_BREAKOUT_BODY_ATR:
         return f"weak_breakout_body:{body_atr:.2f}_atr"
+    # The first MIRROR retest is the target, not the wick excursion.
+    # Compare the CLOSED breakout candle with the frozen level at its close.
+    # Keep rejected breakouts in durable history, but do not publish a weak
+    # campaign as a candidate or hand it to PAPER.
+    potential = _retest_potential_percent(
+        level.boundary.price_at(int(breakout["close_time_ms"])),
+        breakout["close"],
+    )
+    if potential < MIN_MIRROR_RETEST_POTENTIAL_PERCENT:
+        return "retest_potential_below_0_7_percent"
     return None
 
 
@@ -418,6 +443,10 @@ def _entry_terms(level: MirrorLevel, record: Mapping[str, Any], candle: Mapping[
     sign = 1 if direction == "LONG" else -1
     if not ((reference - stop) * sign > 0 and (target - reference) * sign > 0):
         return None, "entry_geometry_invalid"
+    # Price may approach the retest boundary after the breakout; recheck
+    # the actual confirmation close, not only the campaign's original signal.
+    if _retest_potential_percent(target, reference) < MIN_MIRROR_RETEST_POTENTIAL_PERCENT:
+        return None, "entry_retest_potential_below_0_7_percent"
     try:
         rr = robot_l_shape.net_reward_risk(direction, entry_price=reference, stop_price=stop,
                                            target_price=target, fee_rate=PAPER_FEE_RATE,
@@ -637,7 +666,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
         for status in transitions:
             record["last_event_ms"] = latest_close
             if status == STATUS_UNTESTED:
-                rejection = _judge_breakout(record, latest_close, step) \
+                rejection = _judge_breakout(level, record, latest_close, step) \
                     or _duplicate_breakout(level_id, level, record, records, registry)
                 record["candidate"] = rejection is None
                 record["rejection"] = rejection
@@ -812,6 +841,12 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
                     for row in event_rows[-120:]],
         "levels": levels,
         "event_open_time_ms": event.get("open_time_ms"),
+        # The breakout OHLC and level are frozen at event time: do not infer
+        # the visual label from current market data during delayed delivery.
+        "breakout_close": event.get("close") if kind == "breakout" else None,
+        "breakout_boundary_at_close": (
+            event.get("boundary_at_close") if kind == "breakout" else None
+        ),
     }
 
 

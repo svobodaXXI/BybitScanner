@@ -84,6 +84,7 @@ PLAIN_BOX_REASONS = frozenset({"no_active_campaign", "direction_mismatch", "boun
 EXIT_REASON_RETEST = "MIRROR_RETEST"
 PAPER_FEE_RATE = Decimal("0.0006")    # documented PAPER per-side fee (robot_l_shape.PAPER_ROBOT_FEE_RATE)
 STOP_SLIPPAGE_FRACTION = Decimal("0.005")   # documented 0.5 % adverse-move ceiling (robot_late_admission)
+MIN_MIRROR_RETEST_POTENTIAL_PERCENT = Decimal("0.7")  # owner: gross target distance at each entry
 
 
 class MirrorRobotError(RuntimeError):
@@ -440,13 +441,17 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
         step = _decimal(policy.quantity_step(symbol), "quantity step")
     except (KeyError, TypeError, MirrorRobotError):
         return no("box_terms_unavailable")
-    if len(quantities) != 4 or step <= 0 or worst_case < 0:
+    if len(quantities) != 4 or step <= 0 or worst_case < 0 or average <= 0:
         return no("box_terms_unavailable")
     boundary: Boundary = campaign["boundary"]
     target = Decimal(str(boundary.price_at(now_ms)))
     beyond = target > take if direction == CAMPAIGN_LONG else target < take
     if not beyond:
         return no("boundary_not_beyond_box_take")
+    # A Box attaching to a MIRROR retest must still have sufficient distance
+    # from its own frozen planned average entry to the current boundary.
+    if abs(target - average) * Decimal("100") / average < MIN_MIRROR_RETEST_POTENTIAL_PERCENT:
+        return no("retest_potential_below_0_7_percent")
 
     partial = [_floor(q * Decimal(str(PARTIAL_TAKE_FRACTION)), step) for q in quantities]
     if not any(p > 0 for p in partial):
@@ -519,6 +524,10 @@ def plan_standalone_attachment(policy: MirrorRobotPolicy, *, direction: str, ent
     sign = Decimal(1) if direction == CAMPAIGN_LONG else Decimal(-1)
     if entry <= 0 or (entry - stop) * sign <= 0 or (target - entry) * sign <= 0:
         return no("entry_terms_invalid")
+    # Robot independently revalidates the actual proposed entry terms. The
+    # earlier Scanner candle is not a substitute for entry-time potential.
+    if abs(target - entry) * Decimal("100") / entry < MIN_MIRROR_RETEST_POTENTIAL_PERCENT:
+        return no("retest_potential_below_0_7_percent")
     one_wv = policy.one_wv_usdt() if policy.one_wv_usdt is not None else None
     if one_wv is None:
         return defer("one_wv_unavailable")
