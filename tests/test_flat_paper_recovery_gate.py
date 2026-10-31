@@ -72,6 +72,69 @@ class FlatRecoveryGateTests(unittest.TestCase):
         self.assertEqual(row, ("DISPATCHING",))
         conn.close()
 
+    def test_only_exact_incident_roles_can_replace_empty_coverage(self):
+        conn, payload = fixture()
+        payload["protection"].update(
+            covered_symbols=["BUSDT", "AUSDT", "KMNOUSDT"],
+            coverage_roles={
+                "BUSDT": "OBLIGATION",
+                "AUSDT": "ENTRY_PENDING",
+                "KMNOUSDT": "ENTRY_PENDING",
+            },
+            armed_symbols=["AUSDT", "KMNOUSDT"],
+        )
+        self.assertEqual(prove_flat_recovery(conn, **payload),
+                         "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY")
+        self.assertEqual(conn.execute(
+            "SELECT status FROM paper_protection_obligations"
+        ).fetchone(), ("DISPATCHING",))
+
+    def test_wrong_incident_role_or_extra_cover_blocks(self):
+        changes = (
+            ("coverage_roles", {
+                "BUSDT": "EXPOSURE", "AUSDT": "ENTRY_PENDING",
+                "KMNOUSDT": "ENTRY_PENDING"}),
+            ("armed_symbols", ["AUSDT"]),
+            ("armed_symbols", ["AUSDT", "KMNOUSDT", "NEWUSDT"]),
+            ("covered_symbols", ["BUSDT", "AUSDT", "KMNOUSDT", "NEWUSDT"]),
+            ("covered_symbols", ["BUSDT", "AUSDT"]),
+        )
+        for field, value in changes:
+            with self.subTest(field=field, value=value):
+                conn, payload = fixture()
+                payload["protection"].update(
+                    covered_symbols=["BUSDT", "AUSDT", "KMNOUSDT"],
+                    coverage_roles={
+                        "BUSDT": "OBLIGATION",
+                        "AUSDT": "ENTRY_PENDING",
+                        "KMNOUSDT": "ENTRY_PENDING",
+                    },
+                    armed_symbols=["AUSDT", "KMNOUSDT"],
+                )
+                payload["protection"][field] = value
+                assert_blocked(self, conn, payload)
+
+    def test_incident_roles_do_not_override_active_entry_or_exposure(self):
+        for statement in (
+            "INSERT INTO trading_commands VALUES ('paper','submitting')",
+            "INSERT INTO paper_limit_orders VALUES ('paper','open')",
+            "INSERT INTO robot_candidates VALUES ('paper','OPEN')",
+            "UPDATE position_projections SET side='Short',quantity='2' WHERE symbol='BUSDT'",
+        ):
+            with self.subTest(statement=statement):
+                conn, payload = fixture()
+                payload["protection"].update(
+                    covered_symbols=["BUSDT", "AUSDT", "KMNOUSDT"],
+                    coverage_roles={
+                        "BUSDT": "OBLIGATION",
+                        "AUSDT": "ENTRY_PENDING",
+                        "KMNOUSDT": "ENTRY_PENDING",
+                    },
+                    armed_symbols=["AUSDT", "KMNOUSDT"],
+                )
+                conn.execute(statement)
+                assert_blocked(self, conn, payload)
+
     def test_open_position_blocks_even_if_apis_report_healthy(self):
         conn, payload = fixture()
         conn.execute("UPDATE position_projections SET side='Short',quantity='422' "
