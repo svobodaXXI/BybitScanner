@@ -184,6 +184,17 @@ def prove_flat_recovery(
         "busdt_historical_stop_evidence_unproven",
     )
     if known_incident_coverage:
+        # An APPROVED but not yet OPEN candidate on an armed symbol could still
+        # be awaiting its entry submission. Do not treat this as a stale arm.
+        _require(
+            conn.execute(
+                "SELECT COUNT(*) FROM robot_candidates "
+                "WHERE trading_account_id='paper' "
+                "AND symbol IN ('AUSDT', 'KMNOUSDT') "
+                "AND status IN ('APPROVED','OPEN')",
+            ).fetchone()[0] == 0,
+            "armed_entry_candidate_still_owned",
+        )
         # No other unresolved obligation, open Robot trade/candidate, working
         # limit or unsettled command passed above. The BUSDT subscription is
         # only for this exact historical STOP; entry arms have no durable work.
