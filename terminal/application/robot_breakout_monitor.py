@@ -1241,6 +1241,12 @@ class RobotBreakoutMonitor:
         trade = self._store().get_open_robot_trade_for_symbol(
             self._account_id, record.symbol,
         )
+        # STOP/EMERGENCY_CLOSE evidence must win over Box's generic TAKE
+        # finalizer when its own market execution has just made the lot FLAT.
+        if trade is not None:
+            obligation = self._store().get_paper_protection_obligation_for_trade(trade.trade_id)
+            if obligation is not None and obligation.status != "RESOLVED":
+                return False
         if trade is None or trade.candidate_id != record.candidate_id:
             self._escalate_reconciliation(
                 "ROBOT_BOX_TAKE_TRADE_MISSING "
