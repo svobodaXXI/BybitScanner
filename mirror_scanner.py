@@ -845,8 +845,7 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
         # the visual label from current market data during delayed delivery.
         "breakout_close": event.get("close") if kind == "breakout" else None,
         "breakout_boundary_at_close": (
-            selected.boundary.price_at(int(event["close_time_ms"]))
-            if kind == "breakout" else None
+            event.get("boundary_at_close") if kind == "breakout" else None
         ),
     }
 
