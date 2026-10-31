@@ -78,6 +78,11 @@ class FlatRecoveryGateTests(unittest.TestCase):
                      "WHERE symbol='VIRTUALUSDT'")
         assert_blocked(self, conn, payload)
 
+    def test_missing_virtual_flat_projection_blocks(self):
+        conn, payload = fixture()
+        conn.execute("DELETE FROM position_projections WHERE symbol='VIRTUALUSDT'")
+        assert_blocked(self, conn, payload)
+
     def test_missing_busdt_flat_projection_blocks(self):
         conn, payload = fixture()
         conn.execute("DELETE FROM position_projections WHERE symbol='BUSDT'")
