@@ -275,7 +275,14 @@ def render_position_chart(
         ]
         prices = [float(df["low"].min()), float(df["high"].max())]
         if view.pattern == "IKIGAI_BOX" and view.trade is not None and view.exit_time_ms is None:
-            for level, label in _frozen_box_levels(view):
+            # Shade only the immutable, validated originating Fibonacci Box grid.
+            box_levels = _frozen_box_levels(view)
+            ordered = sorted({float(price) for price, _ in box_levels})
+            zone_colors = ("#e4f4e8", "#fff1d9", "#e4eef9", "#f1e7f9")
+            for index, (bottom, top) in enumerate(zip(ordered, ordered[1:])):
+                ax.axhspan(bottom, top, color=zone_colors[index % len(zone_colors)],
+                           alpha=0.46, zorder=0)
+            for level, label in box_levels:
                 _draw_level(ax, float(level), label, LINE_COLOR, ":")
                 prices.append(float(level))
         for price, label, color, style in levels:
