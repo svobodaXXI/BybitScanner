@@ -427,6 +427,14 @@ def box_stop_for_actual_entry(
         if existing_stop is not None and current > frozen_stop:
             raise RobotProtectionError("existing SHORT Box STOP widens frozen risk")
 
+    # Price of an armed Box STOP is frozen for the whole attempt. Top-ups
+    # change quantity/VWAP, never STOP price (AAVE incident). Actual-fill
+    # net RR remains recorded separately and may be below the full-grid RR.
+    if existing_stop is not None:
+        if current % tick != 0:
+            raise RobotProtectionError("existing Box STOP is not tick-aligned")
+        return current
+
     reward = sign * (take - entry) - entry * entry_fee - take * target_fee
     if reward <= 0:
         raise RobotProtectionError("actual Box entry leaves no positive net reward")
