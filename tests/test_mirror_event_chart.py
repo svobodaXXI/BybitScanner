@@ -42,7 +42,10 @@ def test_mirror_subtype_uses_canonical_detector_source_not_horizontal_appearance
     assert "смена роли не подтверждена" in mirror_subtype(
         SOURCE_SWING_ZONE, None, "breakout"
     )
-    assert mirror_subtype(SOURCE_SWING_ZONE, None, "first_retest") == "Зеркальный уровень"
+    assert "не подтверждена" in mirror_subtype(SOURCE_SWING_ZONE, None, "first_retest")
+    assert mirror_subtype(
+        SOURCE_SWING_ZONE, None, "first_retest", retest_confirmed=True
+    ) == "Зеркальный уровень"
     assert mirror_subtype(None, None, "breakout") == "Источник уровня не подтверждён"
 
 
