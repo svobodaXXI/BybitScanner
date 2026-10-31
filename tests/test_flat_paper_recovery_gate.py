@@ -18,7 +18,7 @@ def fixture():
             trade_id TEXT, trading_account_id TEXT, symbol TEXT, pattern TEXT,
             exit_reason TEXT, exit_time_ms INTEGER, exit_price TEXT
         );
-        CREATE TABLE robot_candidates (trading_account_id TEXT, status TEXT);
+        CREATE TABLE robot_candidates (trading_account_id TEXT, symbol TEXT, status TEXT);
         CREATE TABLE paper_limit_orders (trading_account_id TEXT, status TEXT);
         CREATE TABLE trading_commands (trading_account_id TEXT, current_state TEXT);
         CREATE TABLE paper_protection_obligations (
@@ -89,6 +89,19 @@ class FlatRecoveryGateTests(unittest.TestCase):
             "SELECT status FROM paper_protection_obligations"
         ).fetchone(), ("DISPATCHING",))
 
+    def test_approved_armed_entry_candidate_is_not_stale(self):
+        conn, payload = fixture()
+        payload["protection"].update(
+            covered_symbols=["BUSDT", "AUSDT", "KMNOUSDT"],
+            coverage_roles={"BUSDT": "OBLIGATION", "AUSDT": "ENTRY_PENDING",
+                            "KMNOUSDT": "ENTRY_PENDING"},
+            armed_symbols=["AUSDT", "KMNOUSDT"],
+        )
+        conn.execute(
+            "INSERT INTO robot_candidates VALUES ('paper','AUSDT','APPROVED')"
+        )
+        assert_blocked(self, conn, payload)
+
     def test_wrong_incident_role_or_extra_cover_blocks(self):
         changes = (
             ("coverage_roles", {
@@ -118,7 +131,7 @@ class FlatRecoveryGateTests(unittest.TestCase):
         for statement in (
             "INSERT INTO trading_commands VALUES ('paper','submitting')",
             "INSERT INTO paper_limit_orders VALUES ('paper','open')",
-            "INSERT INTO robot_candidates VALUES ('paper','OPEN')",
+            "INSERT INTO robot_candidates VALUES ('paper','KMNOUSDT','OPEN')",
             "UPDATE position_projections SET side='Short',quantity='2' WHERE symbol='BUSDT'",
         ):
             with self.subTest(statement=statement):
@@ -168,7 +181,7 @@ class FlatRecoveryGateTests(unittest.TestCase):
     def test_open_robot_trade_or_candidate_blocks(self):
         for table, values in (
             ("robot_trades", ("pending","paper","NEWUSDT","WEDGE",None,None,None)),
-            ("robot_candidates", ("paper","OPEN")),
+            ("robot_candidates", ("paper","NEWUSDT","OPEN")),
         ):
             with self.subTest(table=table):
                 conn, payload = fixture()
