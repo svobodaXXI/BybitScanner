@@ -45,103 +45,54 @@ class TelegramGatewayTests(unittest.TestCase):
         session_cls.assert_not_called()
 
     @patch("telegram_gateway_client.requests.Session")
-    def test_photo_with_keyboard_delivers_image_then_separate_actions(self, session_cls):
-        from tempfile import TemporaryDirectory
-        from pathlib import Path
-
-        response = MagicMock(status_code=200)
-        def result():
-            call = session_cls.return_value.post.call_args
-            if call.args[0].endswith("/v1/photo-upload"):
-                return {"ok": True, "result": {"message_id": 11}}
-            return {"ok": True, "event_id": call.kwargs["json"]["event_id"],
-                    "stage": "accepted_by_telegram_api", "telegram_message_id": 12}
-        response.json.side_effect = result
-        session_cls.return_value.post.return_value = response
-        with TemporaryDirectory() as root:
-            path = Path(root) / "signal.png"
-            path.write_bytes(b"PNG")
-            markup = {"inline_keyboard": [[{"text": "К сигналу", "callback_data": "signal:123"}]]}
-            sent = gateway.send_photo_upload("12345", path, caption="Scanner", reply_markup=markup)
-        self.assertTrue(sent["ok"])
-        self.assertTrue(sent["keyboard_delivered"])
-        calls = session_cls.return_value.post.call_args_list
-        self.assertEqual(len(calls), 2)
-        self.assertTrue(calls[0].args[0].endswith("/v1/photo-upload"))
-        self.assertTrue(calls[1].args[0].endswith("/v1/send"))
-        self.assertEqual(calls[1].kwargs["json"]["reply_markup"], markup)
-
-    @patch("telegram_gateway_client.requests.Session")
-    def test_mirror_unicode_caption_uploads_png_and_uses_utf8_text(self, session_cls):
-        from tempfile import TemporaryDirectory
-        from pathlib import Path
-        response = MagicMock(status_code=200)
-        def result():
-            call = session_cls.return_value.post.call_args
-            if call.args[0].endswith("/v1/photo-upload"):
-                return {"ok": True, "result": {"message_id": 11}}
-            return {"ok": True, "event_id": call.kwargs["json"]["event_id"],
-                    "stage": "accepted_by_telegram_api", "telegram_message_id": 12}
-        response.json.side_effect = result
-        session_cls.return_value.post.return_value = response
-        caption = "🪞 MIRROR · BTCUSDT · 5m\\nЗеркальный уровень"
-        markup = {"inline_keyboard": [[{"text": "К сигналу", "callback_data": "signal:123"}]]}
-        with TemporaryDirectory() as root:
-            path = Path(root) / "mirror.png"
-            path.write_bytes(b"PNG")
-            sent = gateway.send_photo_upload("12345", path, caption=caption, reply_markup=markup)
-        self.assertTrue(sent["ok"])
-        self.assertTrue(sent["caption_delivered"])
-        calls = session_cls.return_value.post.call_args_list
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0].kwargs["headers"]["X-Telegram-Caption"], "")
-        self.assertEqual(calls[1].kwargs["json"]["text"], caption)
-        self.assertEqual(calls[1].kwargs["json"]["reply_markup"], markup)
-
-    @patch("telegram_gateway_client.requests.Session")
-    def test_mirror_unicode_caption_failed_text_does_not_reupload_png(self, session_cls):
+    def test_photo_with_keyboard_is_one_gateway_request(self, session_cls):
         from tempfile import TemporaryDirectory
         from pathlib import Path
         response = MagicMock(status_code=200)
         response.json.return_value = {"ok": True, "result": {"message_id": 11}}
         session_cls.return_value.post.return_value = response
+        markup = {"inline_keyboard": [[{"text": "К сигналу", "callback_data": "signal:123"}]]}
         with TemporaryDirectory() as root:
-            path = Path(root) / "mirror.png"
+            path = Path(root) / "signal.png"
             path.write_bytes(b"PNG")
-            with patch.object(gateway, "send_text", side_effect=gateway.TelegramGatewayError("offline")):
-                sent = gateway.send_photo_upload("12345", path, caption="🪞 MIRROR")
-        self.assertTrue(sent["ok"])
-        self.assertFalse(sent["caption_delivered"])
+            result = gateway.send_photo_upload("12345", path, caption="🪞 MIRROR · ALCHUSDT · 5m", reply_markup=markup)
+        self.assertTrue(result["ok"])
         self.assertEqual(session_cls.return_value.post.call_count, 1)
+        args = session_cls.return_value.post.call_args
+        self.assertTrue(args.args[0].endswith("/v1/photo-card"))
+        self.assertEqual(args.kwargs["data"]["caption"], "🪞 MIRROR · ALCHUSDT · 5m")
+        self.assertEqual(args.kwargs["files"]["photo"][1], b"PNG")
+        import json
+        self.assertEqual(json.loads(args.kwargs["data"]["reply_markup"]), markup)
 
     @patch("telegram_gateway_client.requests.Session")
-    def test_archived_photo_file_id_allows_separate_keyboard(self, session_cls):
+    def test_file_id_repost_with_keyboard_is_one_gateway_request(self, session_cls):
         response = MagicMock(status_code=200)
         response.json.return_value = {"ok": True, "result": {"message_id": 55}}
         session_cls.return_value.post.return_value = response
         markup = {"inline_keyboard": [[{"text": "TradingView", "url": "https://example.org"}]]}
-        with patch.object(gateway, "send_text", return_value={"ok": True}) as send_menu:
-            sent = gateway.send_photo_file_id("12345", "existing-file-id", reply_markup=markup)
-        self.assertTrue(sent["ok"])
-        self.assertTrue(sent["keyboard_delivered"])
-        send_menu.assert_called_once_with("12345", "🔗 Навигация",
-                                          reply_markup=markup)
+        result = gateway.send_photo_file_id("12345", "existing-file-id", caption="🔁 ДУБЛИРОВАНИЕ", reply_markup=markup)
+        self.assertTrue(result["ok"])
         self.assertEqual(session_cls.return_value.post.call_count, 1)
+        args = session_cls.return_value.post.call_args
+        self.assertTrue(args.args[0].endswith("/v1/photo-card"))
+        self.assertEqual(args.kwargs["json"]["caption"], "🔁 ДУБЛИРОВАНИЕ")
+        self.assertEqual(args.kwargs["json"]["reply_markup"], markup)
 
     @patch("telegram_gateway_client.requests.Session")
-    def test_photo_success_menu_failure_does_not_retry_photo(self, session_cls):
+    def test_photo_failure_has_no_split_fallback_or_duplicate_upload(self, session_cls):
         from tempfile import TemporaryDirectory
         from pathlib import Path
-        response = MagicMock(status_code=200)
-        response.json.return_value = {"ok": True, "result": {"message_id": 11}}
+        response = MagicMock(status_code=404)
+        response.json.return_value = {"ok": False, "error": "not_found"}
         session_cls.return_value.post.return_value = response
         with TemporaryDirectory() as root:
             path = Path(root) / "signal.png"
             path.write_bytes(b"PNG")
-            with patch.object(gateway, "send_text", side_effect=gateway.TelegramGatewayError("offline")):
-                sent = gateway.send_photo_upload("12345", path, reply_markup={"inline_keyboard": []})
-        self.assertTrue(sent["ok"])
-        self.assertFalse(sent["keyboard_delivered"])
+            with patch.object(gateway, "send_text") as send_text:
+                with self.assertRaises(gateway.TelegramGatewayError):
+                    gateway.send_photo_upload("12345", path, caption="🪞 MIRROR", reply_markup={"inline_keyboard": []})
+                send_text.assert_not_called()
         self.assertEqual(session_cls.return_value.post.call_count, 1)
 
     @patch("telegram_gateway_client.requests.Session")
