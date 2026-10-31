@@ -138,6 +138,61 @@ def run(runtime):
 
 
 class CoordinatedPaperCloseAllTests(unittest.TestCase):
+    def test_operator_close_ignores_workspace_gate_for_paper_only(self):
+        """UI may select LIVE without taking authority over PAPER exit."""
+        paper_api = SimpleNamespace(full_close=Mock(return_value=completed()))
+        workspace_api = SimpleNamespace(full_close=Mock())
+        store = SimpleNamespace(
+            load_open_position_projections=Mock(
+                return_value=(position("MANUALUSDT"),),
+            ),
+        )
+        runtime = SimpleNamespace(
+            _paper_account_id=ACCOUNT,
+            _account_id=ACCOUNT,
+            store=store,
+            api=workspace_api,
+            _robot_api=paper_api,
+            require_paper_mutations=Mock(
+                side_effect=RuntimeError("live_mutations_disabled"),
+            ),
+            _robot_execution_book=Mock(return_value=object()),
+            open_positions=Mock(return_value=SimpleNamespace(positions=())),
+        )
+        request = CloseAllCommandRequest(ClientActionId("confirmed-owner-action"))
+        result = PaperRuntime.close_all(
+            runtime, request, operator_paper_exit=True,
+        )
+        self.assertFalse(result.positions)
+        self.assertEqual(len(result.results), 1)
+        runtime.require_paper_mutations.assert_not_called()
+        store.load_open_position_projections.assert_called_once_with(ACCOUNT)
+        paper_api.full_close.assert_called_once()
+        workspace_api.full_close.assert_not_called()
+
+    def test_normal_manual_close_still_requires_workspace_paper_gate(self):
+        runtime = SimpleNamespace(
+            require_paper_mutations=Mock(
+                side_effect=RuntimeError("live_mutations_disabled"),
+            ),
+        )
+        with self.assertRaisesRegex(RuntimeError, "live_mutations_disabled"):
+            PaperRuntime.close_all(
+                runtime,
+                CloseAllCommandRequest(ClientActionId("confirmed-owner-action")),
+            )
+        runtime.require_paper_mutations.assert_called_once()
+
+    def test_coordinated_operator_close_is_independent_of_workspace_gate(self):
+        runtime, _ = fixture(mode="ROBOT_STOPPED", status="ROBOT_STOPPED")
+        runtime.require_paper_mutations.side_effect = RuntimeError(
+            "live_mutations_disabled",
+        )
+        result = run(runtime)
+        self.assertFalse(result.positions)
+        runtime.require_paper_mutations.assert_not_called()
+        self.assertTrue(runtime.close_all.call_args.kwargs["operator_paper_exit"])
+
     def test_ready_robot_is_paused_and_autopilot_off_before_market_dispatch(self):
         runtime, state = fixture(robot=True, manual=True)
         def close_robot(request, **kwargs):
