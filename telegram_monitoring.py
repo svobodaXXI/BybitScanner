@@ -357,8 +357,8 @@ def _delivered(response) -> bool:
     return isinstance(response, Mapping) and bool(response.get("ok"))
 
 
-def _send_chart_card(chat_id, view, candles, caption, reply_markup) -> bool:
-    """Photo card; a chart or sendPhoto failure falls back to text. True if delivered."""
+def _send_chart_card(chat_id, view, candles, caption, reply_markup, *, require_chart=False) -> bool:
+    """For MIRROR lifecycle, an absent PNG is NOT successful delivery."""
 
     # pyplot is not thread-safe and the chart path is per symbol: one render+send at a time.
     with _CHART_LOCK:
@@ -366,6 +366,8 @@ def _send_chart_card(chat_id, view, candles, caption, reply_markup) -> bool:
             chart_path = render_position_chart(view, candles)
         except Exception as exc:
             print("[POSITION CHART ERROR]", view.symbol, exc)
+            if require_chart:
+                return False
             return _delivered(
                 _send_text(chat_id, caption + "\nГрафик недоступен", reply_markup=reply_markup)
             )
@@ -379,6 +381,8 @@ def _send_chart_card(chat_id, view, candles, caption, reply_markup) -> bool:
             raise RuntimeError(f"sendPhoto failed: {response}")
         except Exception as exc:
             print("[POSITION CARD PHOTO ERROR]", view.symbol, exc)
+    if require_chart:
+        return False
     return _delivered(_send_text(chat_id, caption, reply_markup=reply_markup))
 
 
@@ -388,6 +392,7 @@ def _send_lifecycle_post(chat_id, event, view) -> bool:
     return _send_chart_card(
         chat_id, view, candles, caption,
         _with_signal_button(build_lifecycle_keyboard(), getattr(getattr(view, "trade", None), "candidate_id", None)),
+        require_chart=view.mirror_campaign,
     )
 
 

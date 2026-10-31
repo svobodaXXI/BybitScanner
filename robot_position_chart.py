@@ -131,6 +131,28 @@ def _pattern_lines(view: PositionView, times: np.ndarray) -> list[np.ndarray]:
     return lines
 
 
+def _mirror_boundary_line(view: PositionView, times: np.ndarray) -> np.ndarray | None:
+    """Draw only the frozen original MIRROR boundary, never reconstruct it."""
+    boundary = view.mirror_boundary
+    if not isinstance(boundary, Mapping):
+        return None
+    try:
+        anchor_time = int(boundary["anchor_time_ms"])
+        anchor_price = float(boundary["anchor_price"])
+        slope = float(boundary["slope_per_ms"])
+        confirmed = int(boundary["as_of_time_ms"])
+        if not all(math.isfinite(v) for v in (anchor_price, slope)):
+            return None
+        result = np.array([
+            anchor_price + slope * (int(t) - anchor_time)
+            if int(t) >= anchor_time and int(t) >= confirmed else np.nan
+            for t in times
+        ], dtype=float)
+        return result if np.isfinite(result).any() else None
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+
 def _candle_position(times: np.ndarray, time_ms: int, candle_ms: int) -> int | None:
     """Index of the candle whose [open, open + candle_ms) span contains ``time_ms``."""
     position = int(np.searchsorted(times, time_ms, side="right")) - 1
@@ -226,6 +248,9 @@ def render_position_chart(
         mpf.make_addplot(values, color=LINE_COLOR, width=2)
         for values in _pattern_lines(view, times)
     ]
+    mirror_line = _mirror_boundary_line(view, times)
+    if mirror_line is not None:
+        addplots.append(mpf.make_addplot(mirror_line, color=LINE_COLOR, width=2))
     title = f"{view.symbol} | {view.pattern or '—'} | {view.direction} | {candle_minutes}m"
     wide = len(df) > WIDE_WINDOW_CANDLES
     plot_kwargs = dict(

@@ -134,6 +134,41 @@ class LifecycleCaptionTests(unittest.TestCase):
                      "Паттерн: Falling Wedge"):
             self.assertIn(text, caption)
 
+    def test_all_patterns_number_only_proven_filled_trade_attempts(self):
+        from dataclasses import replace
+        view = PositionView(
+            symbol="SAGAUSDT", direction="LONG", is_open=True, quantity=Decimal("100"),
+            average_entry=Decimal("0.0254"), stop_price=Decimal("0.0249"),
+            take_price=Decimal("0.0284"), pattern="Falling Wedge", trade=SimpleNamespace(),
+        )
+        event = LifecycleEvent(EVENT_OPENED, "t1", "SAGAUSDT", 1)
+        self.assertTrue(format_lifecycle_caption(event, view).startswith("🤖 Сделка открыта"))
+        for index, label in ((2, "Повторный перезаход №1"), (3, "Повторный перезаход №2")):
+            caption = format_lifecycle_caption(event, replace(view, reentry_attempt_index=index))
+            self.assertTrue(caption.startswith("🤖 " + label))
+        self.assertNotIn("Повторный", format_lifecycle_caption(
+            event, replace(view, reentry_attempt_index=None)))
+
+    def test_mirror_lifecycle_uses_source_type_and_no_unproven_role_switch(self):
+        from dataclasses import replace
+        view = PositionView(
+            symbol="SAGAUSDT", direction="SHORT", is_open=True, quantity=Decimal("100"),
+            average_entry=Decimal("0.0254"), stop_price=Decimal("0.0249"),
+            take_price=Decimal("0.0284"), pattern="MIRROR", trade=SimpleNamespace(),
+            mirror_campaign=True, mirror_timeframe="5", mirror_level_source="swing_zone",
+            reentry_attempt_index=2,
+        )
+        opened = LifecycleEvent(EVENT_OPENED, "t1", "SAGAUSDT", 1)
+        self.assertEqual(format_lifecycle_caption(opened, view),
+            "🪞 MIRROR · SAGAUSDT · 5m\nГоризонтальный уровень · смена роли не подтверждена\nПовторный перезаход №1")
+        closed = LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 2, "STOP")
+        self.assertIn("Сделка закрыта · по стопу", format_lifecycle_caption(closed, view))
+        self.assertIn("Зеркальный уровень", format_lifecycle_caption(opened,
+            replace(view, mirror_retest_confirmed=True)))
+        pattern = replace(view, mirror_level_source="pattern_boundary",
+                          mirror_pattern="Rising Wedge", mirror_retest_confirmed=False)
+        self.assertIn("Граница паттерна · Rising Wedge", format_lifecycle_caption(opened, pattern))
+
     def test_closed_caption_reason_and_result(self):
         for reason, label in (
             ("STOP", "по стопу"), ("TAKE", "по тейку"),
@@ -157,6 +192,39 @@ class LifecycleCaptionTests(unittest.TestCase):
         event = LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 1, "TAKE")
         caption = format_lifecycle_caption(event, self._view(fees_usdt=None))
         self.assertIn("комиссии — (вход + выход), — (после комиссий)", caption)
+
+
+class MirrorChartDeliveryTests(unittest.TestCase):
+    def test_missing_mirror_chart_is_not_marked_delivered(self):
+        from unittest.mock import patch
+        import telegram_monitoring as monitoring
+        view = PositionView(
+            symbol="SAGAUSDT", direction="LONG", is_open=True, quantity=Decimal("1"),
+            average_entry=Decimal("1"), stop_price=Decimal("0.9"),
+            take_price=Decimal("1.2"), pattern="MIRROR",
+            trade=SimpleNamespace(), mirror_campaign=True,
+        )
+        with patch.object(monitoring, "render_position_chart", side_effect=ValueError("no candles")), \
+             patch.object(monitoring, "_send_text") as text_sender:
+            self.assertFalse(monitoring._send_chart_card(
+                "123", view, None, "card", {"inline_keyboard": []}, require_chart=True))
+            text_sender.assert_not_called()
+
+    def test_failed_mirror_photo_is_not_counted_as_successful_text(self):
+        from unittest.mock import patch
+        import telegram_monitoring as monitoring
+        view = PositionView(
+            symbol="SAGAUSDT", direction="LONG", is_open=True, quantity=Decimal("1"),
+            average_entry=Decimal("1"), stop_price=Decimal("0.9"),
+            take_price=Decimal("1.2"), pattern="MIRROR",
+            trade=SimpleNamespace(), mirror_campaign=True,
+        )
+        with patch.object(monitoring, "render_position_chart", return_value="chart.png"), \
+             patch.object(monitoring.telegram_bot, "send_photo", side_effect=RuntimeError("gateway")), \
+             patch.object(monitoring, "_send_text") as text_sender:
+            self.assertFalse(monitoring._send_chart_card(
+                "123", view, None, "card", {"inline_keyboard": []}, require_chart=True))
+            text_sender.assert_not_called()
 
 
 class LifecycleStoreQueryTests(unittest.TestCase):
