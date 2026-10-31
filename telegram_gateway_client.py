@@ -197,12 +197,17 @@ def send_photo_upload(chat_id, photo_path, caption="", reply_markup=None):
         media_type = "image/png" if suffix == ".png" else "image/jpeg"
         session = requests.Session()
         session.trust_env = False
+        # HTTP headers cannot encode MIRROR's Cyrillic/emoji caption.
+        # The current Gateway accepts only X-Telegram-Caption, not a
+        # UTF-8 caption body. Upload the photo without a Unicode header,
+        # then send its caption via the existing UTF-8 text route.
+        inline_caption = caption if caption.isascii() else ""
         response = session.post(
             endpoint + "/v1/photo-upload",
             data=photo,
             headers={"Authorization": "Bearer " + key,
                      "Content-Type": media_type,
-                     "X-Telegram-Caption": caption},
+                     "X-Telegram-Caption": inline_caption},
             timeout=25, allow_redirects=False,
         )
         result = response.json()
@@ -210,18 +215,16 @@ def send_photo_upload(chat_id, photo_path, caption="", reply_markup=None):
         raise TelegramGatewayError("Gateway photo upload unavailable") from exc
     if response.status_code != 200 or not isinstance(result, dict) or result.get("ok") is not True:
         raise TelegramGatewayError("Gateway photo upload rejected")
-    if reply_markup is not None:
-        # The deployed Gateway photo endpoint does not accept inline keyboards.
-        # Send a *separate owner menu* through the supported text route only
-        # after a confirmed photo upload; never silently drop the image.
-        # This is an explicit compatibility mode until photo markup is supported
-        # server-side. No direct Telegram fallback or invented message IDs.
+    if reply_markup is not None or (caption and not inline_caption):
+        # The deployed Gateway cannot attach a UTF-8 caption or keyboard
+        # to the uploaded photo. Send one separate owner text/menu *only*
+        # after accepted upload; a failed follow-up must not reupload it.
+        text = caption if caption and not inline_caption else "📎 Действия к графику выше"
         try:
-            menu = send_text(chat_id, "📎 Действия к графику выше", reply_markup=reply_markup)
+            menu = send_text(chat_id, text, reply_markup=reply_markup)
         except TelegramGatewayError as exc:
-            # Do not trigger automatic photo retry after an accepted image:
-            # reupload would create duplicate chart messages.
-            print(f"[TELEGRAM GATEWAY PHOTO MENU ERROR] {type(exc).__name__}: {exc}", flush=True)
-            return {**result, "keyboard_delivered": False}
-        return {**result, "keyboard_delivered": bool(menu.get("ok"))}
+            print(f"[TELEGRAM GATEWAY PHOTO MENU ERROR] {type(exc).__name__}", flush=True)
+            return {**result, "keyboard_delivered": False, "caption_delivered": bool(inline_caption or not caption)}
+        return {**result, "keyboard_delivered": bool(menu.get("ok")), "caption_delivered": bool(menu.get("ok") or inline_caption or not caption)}
     return result
+
