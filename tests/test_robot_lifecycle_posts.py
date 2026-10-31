@@ -237,7 +237,9 @@ class MirrorAttachmentClassificationTests(unittest.TestCase):
             entry_time_ms=1000, exit_time_ms=2000, direction="LONG",
             pattern="IKIGAI_BOX", entry_quantity=Decimal("1"),
             average_entry=Decimal("100"), stop_price=Decimal("98"),
-            take_price=Decimal("105"), exit_price=Decimal("103"))
+            take_price=Decimal("105"), exit_price=Decimal("103"),
+            exit_reason="TAKE", realized_pnl_usdt=Decimal("3"),
+            fees_costs_usdt=Decimal("0.1"))
         metadata = {
             "decision": "NOT_ATTACHED", "mirror_level_source": "swing_zone",
             "mirror_timeframe": "5", "boundary": {"anchor_price": "100"},
