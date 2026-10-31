@@ -534,7 +534,7 @@ class MirrorPolicyUnitTests(unittest.TestCase):
         campaign = {"campaign_id": "test:level@1", "boundary": boundary,
                     "campaign_direction": "LONG", "state": {"phase": PHASE_CAMPAIGN_ACTIVE}}
         decision = mirror.plan_attachment(
-            self.policy(), box_snapshot=plan, symbol=SYMBOL, campaign=campaign,
+            mirror.MirrorRobotPolicy(candles=None, account_risk_limit_usdt=lambda now: Decimal("1000"), quantity_step=lambda symbol: Decimal("0.1")), box_snapshot=plan, symbol=SYMBOL, campaign=campaign,
             prior_attempts=[], now_ms=NOW,
         )
         self.assertEqual(decision["decision"], mirror.BLOCKED)
@@ -543,13 +543,13 @@ class MirrorPolicyUnitTests(unittest.TestCase):
     def test_standalone_robot_attachment_rechecks_point_seven_percent(self):
         campaign = {"campaign_id": "test:level@1", "campaign_direction": "LONG"}
         blocked = mirror.plan_standalone_attachment(
-            self.policy(), direction="LONG", entry_price="100", stop_price="99",
+            mirror.MirrorRobotPolicy(candles=None, account_risk_limit_usdt=lambda now: Decimal("1000"), quantity_step=lambda symbol: Decimal("0.1")), direction="LONG", entry_price="100", stop_price="99",
             target_price="100.2", campaign=campaign, prior_attempts=[], now_ms=NOW,
         )
         self.assertEqual(blocked["decision"], mirror.BLOCKED)
         self.assertEqual(blocked["reason"], "retest_potential_below_0_7_percent")
         allowed_past_threshold = mirror.plan_standalone_attachment(
-            self.policy(), direction="LONG", entry_price="100", stop_price="99",
+            mirror.MirrorRobotPolicy(candles=None, account_risk_limit_usdt=lambda now: Decimal("1000"), quantity_step=lambda symbol: Decimal("0.1")), direction="LONG", entry_price="100", stop_price="99",
             target_price="100.7", campaign=campaign, prior_attempts=[], now_ms=NOW,
         )
         self.assertEqual(allowed_past_threshold["reason"], "one_wv_unavailable")
