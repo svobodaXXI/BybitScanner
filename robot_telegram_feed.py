@@ -135,16 +135,19 @@ def build_robot_control_keyboard(
     callback_data flip with current state, per
     AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.2 Rationale) so a
     rejected transition is structurally unreachable from this keyboard.
-    RECONCILIATION_REQUIRED offers no buttons: recovering out of it is a
-    separate, unresolved problem this control surface does not attempt.
+    Even during RECONCILIATION_REQUIRED the owner can still request
+    account-wide PAPER closure; ordinary Robot start/resume stays gated.
     """
     if recovery_status == "RECONCILIATION_REQUIRED":
-        return {"inline_keyboard": []}
+        return {"inline_keyboard": [[
+            {"text": "🚨 Закрыть ВСЕ PAPER по рынку",
+             "callback_data": f"robot:cmd:{CONTROL_PAPER_CLOSE_ALL}"},
+        ]]}
     if mode == "ROBOT_STOPPED":
         return {
             "inline_keyboard": [
                 [{"text": "▶ Старт", "callback_data": f"robot:cmd:{CONTROL_START}"}],
-                [{"text": "❌ Все PAPER-позиции", "callback_data": f"robot:cmd:{CONTROL_PAPER_CLOSE_ALL}"}],
+                [{"text": "🚨 Закрыть ВСЕ PAPER по рынку", "callback_data": f"robot:cmd:{CONTROL_PAPER_CLOSE_ALL}"}],
             ]
         }
     toggle = (
@@ -159,7 +162,7 @@ def build_robot_control_keyboard(
                 {"text": "❌ Закрыть всё", "callback_data": f"robot:cmd:{CONTROL_CLOSE_ALL}"},
                 {"text": "⏹ Стоп", "callback_data": f"robot:cmd:{CONTROL_STOP}"},
             ],
-            [{"text": "❌ Все PAPER-позиции", "callback_data": f"robot:cmd:{CONTROL_PAPER_CLOSE_ALL}"}],
+            [{"text": "🚨 Закрыть ВСЕ PAPER по рынку", "callback_data": f"robot:cmd:{CONTROL_PAPER_CLOSE_ALL}"}],
         ]
     }
 
