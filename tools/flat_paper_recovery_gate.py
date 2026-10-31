@@ -157,10 +157,11 @@ def prove_flat_recovery(
         and Decimal(str(exit_price)) == Decimal(str(execution_price)),
         "busdt_historical_stop_evidence_unproven",
     )
-    _require(
-        any(row[0] == "BUSDT" and row[1] == "Flat" for row in positions),
-        "busdt_flat_projection_missing",
-    )
+    for required_symbol in ("BUSDT", "VIRTUALUSDT"):
+        _require(
+            any(row[0] == required_symbol and row[1] == "Flat" for row in positions),
+            "required_flat_projection_missing",
+        )
     return "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY"
 
 
