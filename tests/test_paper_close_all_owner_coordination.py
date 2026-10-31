@@ -500,10 +500,12 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
         runtime.robot_close_all.assert_not_called()
         runtime.close_all.assert_not_called()
 
-    def test_paper_only_account_gate_is_mandatory(self):
+    def test_paper_only_account_identity_is_mandatory(self):
         runtime, _ = fixture()
-        runtime.require_paper_mutations.side_effect = RuntimeError("live_mutations_disabled")
-        with self.assertRaisesRegex(RuntimeError, "live_mutations_disabled"):
+        runtime._paper_account_id = TradingAccountId("not-paper")
+        with self.assertRaisesRegex(
+            PaperCloseAllRejected, "operator_close_paper_account_unavailable",
+        ):
             run(runtime)
         runtime.store.update_robot_runtime_state.assert_not_called()
         runtime.close_all.assert_not_called()
