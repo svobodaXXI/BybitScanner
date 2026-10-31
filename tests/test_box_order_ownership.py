@@ -140,11 +140,15 @@ class BoxOrderOwnershipTests(unittest.TestCase):
             {owner.order_id.value for owner in
              self.store.load_box_order_ownership(self.plan.candidate_id)},
         )
+        # Raw execution journal ingestion is not an ownership assertion.
+        # With a submitted predecessor, the Box proof must reject any
+        # unrelated successor fill rather than accepting a fake close.
+        self.fill(
+            obligation.exec_id.value, obligation.order_id.value,
+            OrderSide.SELL, "2", "89.5", "0", None, 5200,
+        )
         with self.assertRaises(BoxOwnershipError):
-            self.fill(
-                obligation.exec_id.value, obligation.order_id.value,
-                OrderSide.SELL, "2", "89.5", "0", None, 5200,
-            )
+            self.proof()
 
     def test_first_grid_is_all_or_nothing(self):
         data = snapshot()
