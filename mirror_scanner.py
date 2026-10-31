@@ -57,7 +57,7 @@ from mirror_levels.levels import (
     LevelRegistry, MirrorLevel, MirrorLevelError, levels_from_geometry, levels_from_horn_event,
     levels_from_ikigai_box, levels_from_l_shape, timeframe_ms,
 )
-from mirror_levels.swing import swing_levels
+from mirror_levels.swing import confirmed_pivots, swing_levels
 from mirror_levels.tracker import (
     STATUS_DATA_BLOCKED, STATUS_RETESTED, STATUS_UNPROVEN, STATUS_UNTESTED, STATUS_WAITING,
     new_record, track,
@@ -564,7 +564,7 @@ def _imbalance_quality(record: Mapping[str, Any], gaps, rows) -> list[dict[str, 
 
 
 def _advance(level: MirrorLevel, record: dict[str, Any], rows, *, atr_at, gaps, tolerance,
-             fine_candles) -> tuple[dict[str, Any], list[str]]:
+             fine_candles, confirmed_extrema=()) -> tuple[dict[str, Any], list[str]]:
     """Feed unconsumed closed candles one at a time; returns the record and its status transitions."""
 
     cursor = record["naked_retest"].get("cursor_close_time_ms")
@@ -572,6 +572,28 @@ def _advance(level: MirrorLevel, record: dict[str, Any], rows, *, atr_at, gaps, 
     for row in rows:
         if cursor is not None and row["close_time_ms"] <= cursor:
             continue
+        # A subsequently CONFIRMED higher high / lower low invalidates an
+        # unbroken horizontal mirror ray, even when only its wick crosses.
+        # Wait until the right-hand pivot candles CLOSE: never look ahead.
+        # A breakout already proven before confirmation remains historical;
+        # it must not be rewritten using future pivot evidence.
+        if level.is_horizontal and record["status"] == STATUS_WAITING:
+            for pivot in confirmed_extrema:
+                if (int(pivot["confirmed_at_ms"]) != int(row["close_time_ms"])
+                        or int(pivot["pivot_at_ms"]) < level.confirmed_at_ms):
+                    continue
+                new_price = float(pivot["price"])
+                old_price = level.price_at(int(pivot["pivot_at_ms"]))
+                superseded = ((level.side == "upper" and new_price > old_price)
+                              or (level.side == "lower" and new_price < old_price))
+                if superseded:
+                    record.update(lifecycle=LIFECYCLE_REJECTED,
+                                  rejection="superseded_by_confirmed_extremum",
+                                  superseding_extremum={"pivot_at_ms": int(pivot["pivot_at_ms"]),
+                                                        "confirmed_at_ms": int(pivot["confirmed_at_ms"]),
+                                                        "price": new_price})
+                    transitions.append("SUPERSEDED_EXTREMUM")
+                    return record, transitions
         resolver = None
         state = record["naked_retest"]
         if fine_candles and state["phase"] == PHASE_CAMPAIGN_ACTIVE:
@@ -616,6 +638,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
     atr_series = causal_atr_series(rows, ATR_PERIOD)
     atr_by_close = {row["close_time_ms"]: value for row, value in zip(rows, atr_series)}
     tolerance = MERGE_TOLERANCE_ATR * (atr_series[-1] or 0.0)
+    highs, lows = confirmed_pivots(rows)
     registry = LevelRegistry.from_dict(state["registry"])
     records: dict[str, dict[str, Any]] = state["records"]
     journal: list[dict[str, Any]] = []
@@ -626,7 +649,19 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                                        l_shape_observation=l_shape_observation,
                                        box_source=box_source),
                         key=lambda x: (x.confirmed_at_ms, x.level_id)):
-        primary = registry.add(level, merge_tolerance=tolerance, prefer_existing=True)
+        # Do not alias a newly confirmed replacement to an invalidated
+        # historical ray merely because both prices fit the ATR merge zone.
+        excluded = any(
+            previous.get("rejection") == "superseded_by_confirmed_extremum"
+            and registered.side == level.side
+            and registered.is_horizontal and level.is_horizontal
+            and abs(registered.boundary.anchor_price - level.boundary.anchor_price) <= tolerance
+            for old_id, previous in records.items()
+            for registered in (registry.levels.get(old_id),)
+            if registered is not None
+        )
+        primary = registry.add(level, merge_tolerance=0.0 if excluded else tolerance,
+                               prefer_existing=True)
         record = records.get(primary.level_id)
         if record is None:
             records[primary.level_id] = {
@@ -654,7 +689,8 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
             continue
         try:
             record, transitions = _advance(level, record, rows, atr_at=atr_by_close.get, gaps=gaps,
-                                           tolerance=tolerance, fine_candles=fine_candles)
+                                           tolerance=tolerance, fine_candles=fine_candles,
+                                           confirmed_extrema=(highs if level.side == "upper" else lows))
         except (NakedRetestError, ValueError) as error:
             record.update(lifecycle=LIFECYCLE_REJECTED, rejection=f"invalid_history:{error}"[:200],
                           last_event_ms=latest_close)
@@ -665,7 +701,15 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
         record["imbalance"] = _imbalance_quality(record, gaps, rows)
         for status in transitions:
             record["last_event_ms"] = latest_close
-            if status == STATUS_UNTESTED:
+            if status == "SUPERSEDED_EXTREMUM":
+                # Candidate/Telegram/Robot eligibility is never granted to
+                # the superseded, still-unbroken level. Keep its evidence.
+                record["candidate"] = False
+                pending[:] = [item for item in pending if item["level_id"] != level_id]
+                journal.append({"event": "mirror_level_rejected", **base, "level_id": level_id,
+                                "reason": record["rejection"],
+                                "superseding_extremum": record["superseding_extremum"]})
+            elif status == STATUS_UNTESTED:
                 rejection = _judge_breakout(level, record, latest_close, step) \
                     or _duplicate_breakout(level_id, level, record, records, registry)
                 record["candidate"] = rejection is None
