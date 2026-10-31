@@ -377,12 +377,60 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
         runtime.close_all.assert_not_called()
         self.assertEqual(state["robot"].recovery_status, "RECONCILIATION_REQUIRED")
 
-    def test_unresolved_protection_never_dispatches_market_close(self):
+    def test_unproven_protection_never_dispatches_market_close(self):
         runtime, _ = fixture(robot=True, obligations=(
-            SimpleNamespace(trade_id="trade-bot"),
+            SimpleNamespace(trade_id="trade-bot", status="UNKNOWN"),
         ))
-        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_protection_obligation_unresolved"):
+        with self.assertRaisesRegex(
+            PaperCloseAllRejected, "operator_close_protection_state_unproven",
+        ):
             run(runtime)
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+
+    def test_operator_triggered_stop_closes_before_reconcile_even_when_required(self):
+        obligation = SimpleNamespace(
+            trade_id="trade-bot", symbol=Symbol("BOTUSDT"), status="TRIGGERED",
+        )
+        runtime, current = fixture(
+            status="RECONCILIATION_REQUIRED", robot=True, manual=False,
+        )
+        unresolved = [obligation]
+        runtime.store.load_unresolved_paper_protection_obligations.side_effect = (
+            lambda account: tuple(unresolved)
+        )
+        def dispatch(item, *, now_ms, recovery_book):
+            self.assertIs(item, obligation)
+            current["trades"] = ()
+            unresolved.clear()
+            return SimpleNamespace(status="RESOLVED")
+        runtime._dispatch_paper_protection_obligation = Mock(side_effect=dispatch)
+        result = PaperRuntime.coordinated_paper_close_all(
+            runtime,
+            CloseAllCommandRequest(ClientActionId("confirmed-owner-action")),
+            evidence={"BOTUSDT": object()},
+        )
+        self.assertFalse(result.positions)
+        runtime.robot_reconcile.assert_not_called()
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+        runtime._dispatch_paper_protection_obligation.assert_called_once()
+        runtime.store.update_robot_autopilot_state.assert_called_once()
+
+    def test_operator_triggered_stop_without_fill_remains_fenced(self):
+        obligation = SimpleNamespace(
+            trade_id="trade-bot", symbol=Symbol("BOTUSDT"), status="TRIGGERED",
+        )
+        runtime, _ = fixture(
+            status="RECONCILIATION_REQUIRED", robot=True, manual=False,
+            obligations=(obligation,),
+        )
+        runtime._dispatch_paper_protection_obligation = Mock(return_value=obligation)
+        with self.assertRaisesRegex(
+            PaperCloseAllRejected, "operator_close_triggered_stop_unconfirmed",
+        ):
+            run(runtime)
+        runtime.robot_reconcile.assert_not_called()
         runtime.robot_close_all.assert_not_called()
         runtime.close_all.assert_not_called()
 
