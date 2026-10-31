@@ -3,10 +3,11 @@ from contextlib import contextmanager
 from pathlib import Path
 import signal
 import unittest
+from unittest import mock
 
 from tests.test_flat_paper_recovery_gate import fixture, IDENTITY
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
-from tools.flat_paper_recovery_transition import execute_flat_handoff
+from tools.flat_paper_recovery_transition import execute_flat_handoff, _send_exact_sigint
 
 
 SHA = "d345411c95a079a2c8ac3cd02d9f875700ba8ca3"
@@ -107,6 +108,28 @@ class TransitionCase(unittest.TestCase):
             [event for event in events if isinstance(event, tuple) and event[0] == "signal"],
             [("signal", PID, signal.SIGINT)],
         )
+
+    def test_linux_pidfd_pins_process_before_signal(self):
+        with (mock.patch("tools.flat_paper_recovery_transition.os.pidfd_open", return_value=19) as open_fd,
+              mock.patch("tools.flat_paper_recovery_transition._service_pid", return_value=PID),
+              mock.patch("tools.flat_paper_recovery_transition._process_start_token", return_value="start-77"),
+              mock.patch("tools.flat_paper_recovery_transition.signal.pidfd_send_signal") as send,
+              mock.patch("tools.flat_paper_recovery_transition.os.close") as close):
+            _send_exact_sigint(PID, "start-77")
+            open_fd.assert_called_once_with(PID, 0)
+            send.assert_called_once_with(19, signal.SIGINT, None, 0)
+            close.assert_called_once_with(19)
+
+    def test_reused_pidfd_blocks_signal_and_closes_handle(self):
+        with (mock.patch("tools.flat_paper_recovery_transition.os.pidfd_open", return_value=19),
+              mock.patch("tools.flat_paper_recovery_transition._service_pid", return_value=PID),
+              mock.patch("tools.flat_paper_recovery_transition._process_start_token", return_value="new-instance"),
+              mock.patch("tools.flat_paper_recovery_transition.signal.pidfd_send_signal") as send,
+              mock.patch("tools.flat_paper_recovery_transition.os.close") as close):
+            with self.assertRaisesRegex(FlatRecoveryBlocked, "backend_process_changed"):
+                _send_exact_sigint(PID, "old-instance")
+            send.assert_not_called()
+            close.assert_called_once_with(19)
 
     def test_owner_authorization_requires_exact_pid(self):
         with self.assertRaisesRegex(FlatRecoveryBlocked, "expected_pid_invalid"):
