@@ -70,8 +70,10 @@ class TransitionCase(unittest.TestCase):
         @contextmanager
         def barrier(_):
             events.append("barrier:enter")
-            yield conn
-            events.append("barrier:exit")
+            try:
+                yield conn
+            finally:
+                events.append("barrier:exit")
         def fetch():
             # Deliberately fails if the old deadlocking ordering returns.
             self.assertNotIn("barrier:enter", events)
@@ -98,8 +100,10 @@ class TransitionCase(unittest.TestCase):
         @contextmanager
         def barrier(_):
             events.append("barrier:enter")
-            yield conn
-            events.append("barrier:exit")
+            try:
+                yield conn
+            finally:
+                events.append("barrier:exit")
         with mock.patch("tools.flat_paper_recovery_transition.get_snapshots",
                         side_effect=[first, second]):
             with self.assertRaises(FlatRecoveryBlocked):
