@@ -6037,6 +6037,70 @@ class SQLiteStore:
                 raise ConcurrentUpdate("Robot candidate changed before trade close")
         return self.get_robot_trade(trade_id), True  # type: ignore[return-value]
 
+    def correct_box_take_race_from_proven_stop(
+        self, *, trade_id: str, obligation_id: str,
+        exit_time_ms: int, exit_price: Decimal, realized_pnl_usdt: Decimal,
+        realized_pnl_pct: Decimal, fees_costs_usdt: Decimal,
+        updated_at_ms: int,
+    ) -> bool:
+        """One narrowly proven Box STOP/TAKE race correction, never a general rewrite.
+
+        Only the misclassified reason may change. All persisted economics and
+        timestamps must EXACTLY agree with the independently reconstructed Box
+        journal. The durable STOP obligation's own execution must exist and
+        match the last exit. FLAT/zero is mandatory. All other conflicts fail.
+        The obligation stays DISPATCHING until the caller separately finalizes.
+        """
+        self._assert_owner()
+        with self._transaction():
+            trade = self.get_robot_trade(trade_id)
+            obligation = self.get_paper_protection_obligation(obligation_id)
+            if (
+                trade is None or obligation is None
+                or trade.pattern != "IKIGAI_BOX"
+                or trade.exit_reason != "TAKE"
+                or trade.exit_time_ms != exit_time_ms
+                or trade.exit_price != exit_price
+                or trade.realized_pnl_usdt != realized_pnl_usdt
+                or trade.realized_pnl_pct != realized_pnl_pct
+                or trade.fees_costs_usdt != fees_costs_usdt
+                or obligation.trade_id != trade_id
+                or obligation.trading_account_id != trade.trading_account_id
+                or obligation.symbol != trade.symbol
+                or obligation.winning_leg != "STOP"
+                or obligation.status != "DISPATCHING"
+                or updated_at_ms < trade.updated_at_ms
+                or updated_at_ms < obligation.updated_at_ms
+            ):
+                return False
+            execution = self.get_execution(ExecutionDedupKey(
+                trade.trading_account_id, Category.LINEAR, obligation.exec_id,
+            ))
+            if (
+                execution is None or execution.symbol != trade.symbol
+                or execution.order_id != obligation.order_id
+                or execution.exchange_timestamp_ms != exit_time_ms
+            ):
+                return False
+            position = self.get_position_projection(PositionKey(
+                trade.trading_account_id, Category.LINEAR, trade.symbol, 0,
+            ))
+            if (
+                position is None or position.side is not PositionSide.FLAT
+                or position.quantity.value != Decimal("0")
+            ):
+                return False
+            cursor = self._connection.execute(
+                """UPDATE robot_trades
+                   SET exit_reason='STOP', version=version+1, updated_at_ms=?
+                   WHERE trade_id=? AND version=? AND exit_reason='TAKE'
+                     AND exit_time_ms=? AND updated_at_ms<=?""",
+                (updated_at_ms, trade_id, trade.version, exit_time_ms, updated_at_ms),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("Box STOP/TAKE race correction revision changed")
+            return True
+
     def load_open_robot_trades(
         self, trading_account_id: TradingAccountId,
     ) -> tuple[RobotTradeRecord, ...]:

@@ -256,6 +256,57 @@ class HimsOwnerThreadFillTests(unittest.TestCase):
         self.assertLess(D(first["actual_fill_net_rr"]), 2)
         self.assertNotIn("box_emergency_close_intent", record.robot_state["execution"])
 
+    def test_busdt_style_stop_take_race_reconciles_only_matching_execution(self):
+        # Recreate the exact historical race in a disposable test DB:
+        # the real STOP execution exists, but another Box finalizer has
+        # labelled the immutable close TAKE before obligation finalization.
+        from tests.test_terminal_paper_runtime import _crossing_book
+        store = self.runtime.store
+        entry_book = _p1_book()
+        self.runtime.process_robot_market_event(
+            "HIMSUSDT", entry_book, event_id="HIMSUSDT:entry",
+            received_at_ms=entry_book.received_at_ms,
+        )
+        crossed = _crossing_book("HIMSUSDT", bid="27.97", ask="27.98")
+        crossed = replace(
+            crossed,
+            bids=(PriceLevel(Price(D("27.97")), Quantity(D("5"))),),
+            asks=(PriceLevel(Price(D("27.98")), Quantity(D("5"))),),
+        )
+        obligation = self.runtime.evaluate_robot_protection_crossing(
+            "HIMSUSDT", crossed, event_id="HIMSUSDT:stop",
+            received_at_ms=crossed.received_at_ms,
+        )
+        self.assertIsNotNone(obligation)
+        self.assertEqual(obligation.winning_leg, "STOP")
+        self.assertEqual(obligation.status, "RESOLVED")
+        trade = store.get_robot_trade(obligation.trade_id)
+        self.assertEqual(trade.exit_reason, "STOP")
+        # Only the test fixture may simulate pre-fix corruption via SQL.
+        store._connection.execute(
+            "UPDATE robot_trades SET exit_reason='TAKE' WHERE trade_id=?",
+            (trade.trade_id,),
+        )
+        store._connection.execute(
+            "UPDATE paper_protection_obligations SET status='DISPATCHING' "
+            "WHERE obligation_id=?",
+            (obligation.obligation_id,),
+        )
+        pending = store.get_paper_protection_obligation(obligation.obligation_id)
+        recovered = self.runtime._dispatch_paper_protection_obligation(
+            pending, now_ms=int(time.time() * 1000),
+        )
+        self.assertEqual(recovered.status, "RESOLVED")
+        self.assertEqual(store.get_robot_trade(trade.trade_id).exit_reason, "STOP")
+        self.assertEqual(
+            store.get_robot_trade(trade.trade_id).realized_pnl_usdt,
+            trade.realized_pnl_usdt,
+        )
+        self.assertEqual(
+            store.get_robot_trade(trade.trade_id).fees_costs_usdt,
+            trade.fees_costs_usdt,
+        )
+
     def test_the_first_fill_record_is_not_overwritten_by_a_later_pass(self):
         store = self.runtime.store
         book = _p1_book()
