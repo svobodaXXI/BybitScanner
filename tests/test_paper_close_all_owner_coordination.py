@@ -551,7 +551,7 @@ class BoxExitZeroPersistenceRegressionTests(unittest.TestCase):
         from pathlib import Path
         from terminal.persistence.sqlite_store import SQLiteStore
         from terminal.domain.models import CommandId
-        from tests.test_box_plan_persistence import snapshot
+        from tests.test_box_plan_persistence import snapshot, trade_args
 
         with tempfile.TemporaryDirectory() as tmp:
             store = SQLiteStore.open(Path(tmp) / "paper.sqlite3")
@@ -565,6 +565,12 @@ class BoxExitZeroPersistenceRegressionTests(unittest.TestCase):
                     expected_snapshot_sha256=source.snapshot_sha256,
                     approved_at_ms=4001,
                 )
+                args = trade_args(robot.candidate_id)
+                args.update(trade_id="box-trade-supersession", pattern="IKIGAI_BOX",
+                            signal_time_ms=3000, entry_time_ms=4002,
+                            created_at_ms=4002)
+                store.create_robot_trade(**args)
+                robot = store.get_robot_candidate(robot.candidate_id)
                 robot = store.save_robot_candidate_state(
                     robot.candidate_id, status="OPEN",
                     robot_state={"execution": {"box_manual_close_intent": {
@@ -572,7 +578,7 @@ class BoxExitZeroPersistenceRegressionTests(unittest.TestCase):
                         "command_id": "cmd-abandoned",
                         "order_link_id": "link-abandoned",
                     }}},
-                    expected_revision=robot.state_revision, updated_at_ms=4002,
+                    expected_revision=robot.state_revision, updated_at_ms=4003,
                 )
                 store.reserve_box_order_identity(
                     source.candidate_id, order_id=OrderId("abandoned-market"),
@@ -583,7 +589,7 @@ class BoxExitZeroPersistenceRegressionTests(unittest.TestCase):
                     robot_candidate_id=robot.candidate_id,
                     order_id=OrderId("abandoned-market"),
                     command_id=CommandId("cmd-abandoned"),
-                    expected_revision=robot.state_revision, updated_at_ms=4003,
+                    expected_revision=robot.state_revision, updated_at_ms=4004,
                 ))
                 self.assertTrue(store.reserve_box_order_identity(
                     source.candidate_id, order_id=OrderId("stop-market"),
