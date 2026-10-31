@@ -3592,10 +3592,22 @@ class PaperRuntime:
     def close_all(
         self, request: CloseAllCommandRequest, *,
         evidence: Mapping[str, NormalizedOrderBook] | None = None,
+        operator_paper_exit: bool = False,
     ) -> CloseAllCommandResponse:
-        self.require_paper_mutations()
+        # Only the explicitly authorized account-wide PAPER emergency exit
+        # bypasses the Workspace-selected account. Opening/manual trading and
+        # ordinary close_all retain their existing active-account gate.
+        # The Robot context is hard-bound to the PAPER trading account;
+        # do not route this operation through any LIVE account/API.
+        if operator_paper_exit:
+            if self._paper_account_id != TradingAccountId("paper"):
+                raise PaperCloseAllRejected("operator_close_paper_account_unavailable")
+        else:
+            self.require_paper_mutations()
         evidence = evidence or {}
-        source_positions = self.store.load_open_position_projections(self._account_id)
+        account_id = self._paper_account_id if operator_paper_exit else self._account_id
+        command_api = self._robot_api if operator_paper_exit else self.api
+        source_positions = self.store.load_open_position_projections(account_id)
         results = []
         for position in source_positions:
             symbol = position.position_key.symbol.value
@@ -3615,7 +3627,7 @@ class PaperRuntime:
             order_link_id = (
                 f"tw_{market_digest}{sum(bytes.fromhex(market_digest)) & 0xF:x}"
             )
-            results.append(self.api.full_close(
+            results.append(command_api.full_close(
                 FullCloseCommandRequest(ClientActionId(f"paper-close-all-{digest}"), symbol),
                 market_book=self._robot_execution_book(symbol, evidence.get(symbol)),
                 identity=CommandIdentityCandidate(
@@ -3744,7 +3756,10 @@ class PaperRuntime:
         """
         from terminal.application.robot_trade_ledger import prove_robot_open_trade_ledger
 
-        self.require_paper_mutations()  # Explicit PAPER-only account gate.
+        # Explicit operator command targets the always-PAPER account; it
+        # must not be vetoed by a different Workspace-selected UI account.
+        if self._paper_account_id != TradingAccountId("paper"):
+            raise PaperCloseAllRejected("operator_close_paper_account_unavailable")
         account_id = self._paper_account_id
         runtime = self.store.get_robot_runtime_state(account_id)
         if runtime is None:
@@ -3803,10 +3818,14 @@ class PaperRuntime:
                     reason="paper_close_all", expected_version=runtime.version,
                     updated_at_ms=max(int(time.time() * 1000), runtime.updated_at_ms),
                 )
-            elif runtime.recovery_status not in ("PAUSED", "RECONCILIATION_REQUIRED"):
-                raise PaperCloseAllRejected("robot_reconciliation_in_progress")
-        elif (runtime.mode, runtime.recovery_status) != ("ROBOT_STOPPED", "ROBOT_STOPPED"):
-            raise PaperCloseAllRejected("robot_reconciliation_required")
+            elif runtime.recovery_status not in (
+                "PAUSED", "RECONCILIATION_REQUIRED", "RECONCILING",
+            ):
+                raise PaperCloseAllRejected("robot_recovery_state_unknown")
+        elif runtime.mode != "ROBOT_STOPPED" or runtime.recovery_status not in (
+            "ROBOT_STOPPED", "RECONCILIATION_REQUIRED",
+        ):
+            raise PaperCloseAllRejected("robot_recovery_state_unknown")
 
 
         def fail(reason: str) -> None:
@@ -3862,8 +3881,9 @@ class PaperRuntime:
                 if item.symbol == symbol
             ):
                 fail("robot_owner_unproven")
-        if runtime.mode == "ROBOT_STOPPED" and robot_symbols:
-            raise PaperCloseAllRejected("stopped_robot_has_open_exposure")
+        # A STOPPED Robot has no entry authority, but the owner still retains
+        # PAPER exit authority for positively attested Robot-owned positions.
+        # Do not require Robot start/resume just to close its exposure.
         if self.store.load_unresolved_paper_protection_obligations(account_id):
             fail("robot_protection_obligation_unresolved")
 
@@ -3916,7 +3936,9 @@ class PaperRuntime:
             ):
                 fail("robot_position_close_unconfirmed")
 
-        manual = self.close_all(request, evidence=evidence)
+        manual = self.close_all(
+            request, evidence=evidence, operator_paper_exit=True,
+        )
         combined = robot_results + manual.results
 
         # A Market result alone is not enough: leave pending EXIT limits
