@@ -147,6 +147,58 @@ def test_mirror_entry_rechecks_potential_on_confirmation_close(monkeypatch):
 
 # --- lifecycle --------------------------------------------------------------------------------------
 
+def test_confirmed_wick_extremum_annuls_unbroken_mirror_ray(root, fixed_levels):
+    # A newer pivot HIGH pierces the old horizontal resistance by wick only.
+    # The right-three confirmation is necessary: no future information is
+    # used to withdraw the level at the pivot candle.
+    level = level_at(100.0, 5 * M)
+    fixed_levels["levels"] = [level]
+    bars = [(99.5, 99.7, 99.2, 99.5)] * 25
+    bars += [(99.5, 100.2, 99.3, 99.6)]
+    for _ in range(2):
+        bars.append((99.6, 99.8, 99.3, 99.6))
+    observe(frame(bars), root)
+    before = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert before["lifecycle"] == ms.LIFECYCLE_TRACKING
+    # A pivot needs THREE closed bars to its right; confirmation is causal.
+    bars.append((99.6, 99.8, 99.3, 99.6))
+    observe(frame(bars), root)
+    record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert record["lifecycle"] == ms.LIFECYCLE_REJECTED
+    assert record["rejection"] == "superseded_by_confirmed_extremum"
+    assert record["superseding_extremum"]["price"] == 100.2
+    assert record["candidate"] is False
+    assert ms.load_state("TESTUSDT", "1", root)["pending_notifications"] == []
+
+
+def test_wick_sweep_before_confirmation_does_not_cancel_existing_level(root, fixed_levels):
+    # An unconfirmed spike can be revised by later bars. Never anticipate
+    # the new pivot at the moment of the wick.
+    level = level_at(100.0, 5 * M)
+    fixed_levels["levels"] = [level]
+    bars = [(99.5, 99.7, 99.2, 99.5)] * 25
+    bars += [(99.5, 100.2, 99.3, 99.6), (99.6, 99.8, 99.3, 99.6)]
+    observe(frame(bars), root)
+    record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert record["lifecycle"] == ms.LIFECYCLE_TRACKING
+    assert record["status"] == STATUS_WAITING
+
+
+def test_completed_naked_breakout_is_not_retroactively_revoked_by_later_pivot(root, fixed_levels):
+    level = level_at(101.0, 5 * M)
+    fixed_levels["levels"] = [level]
+    bars = breakout_bars()
+    observe(frame(bars), root)
+    initial = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert initial["candidate"] is True
+    # A later spike cannot use future pivot evidence to retroactively erase
+    # a breakout that was already confirmed on its own candle.
+    bars += [(103.0, 105.0, 102.9, 103.1)] + [(103.1, 104.0, 102.9, 103.2)] * 3
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert state["rejection"] != "superseded_by_confirmed_extremum"
+
+
 def test_level_without_parent_fresh_breakout_becomes_candidate_and_first_retest_is_terminal(root, fixed_levels):
     level = level_at(101.0, 5 * M)
     fixed_levels["levels"] = [level]
