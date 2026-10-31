@@ -334,19 +334,29 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         callback["message"]["chat"]["type"] = "private"
         return callback
 
-    def test_paper_close_requires_its_own_confirmation_without_dispatch(self):
+    def test_owner_paper_close_is_one_tap_with_no_confirmation(self):
         callback = self._private_paper_callback("paper-offer", "paper_close_all")
+        action_id = telegram_review._paper_close_all_callback_action_id(callback)
+        response = {
+            "ok": True, "client_action_id": action_id,
+            "results": [{"status": "completed"}], "positions": [],
+        }
         with patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "42"), \
-             patch.object(telegram_review, "_post_paper_close_all") as post, \
+             patch.object(telegram_review, "_post_paper_close_all", return_value=response) as post, \
              patch.object(telegram_review.telegram_bot, "send_message") as send, \
+             patch.object(telegram_review, "_send_robot_status_panel") as panel, \
              patch.object(telegram_review, "_answer_callback") as answer:
             telegram_review._process_callback(callback)
-        post.assert_not_called()
-        self.assertIn("ВСЕХ PAPER-позиций", answer.call_args.args[1])
-        self.assertIn("ручные + Robot", send.call_args.args[2])
-        markup = send.call_args.kwargs["reply_markup"]
-        self.assertEqual(markup["inline_keyboard"][0][0]["callback_data"],
-                         "robot:cmd:paper_close_all_confirm")
+        post.assert_called_once_with({"client_action_id": action_id})
+        self.assertIn("PAPER FLAT", answer.call_args.args[1])
+        panel.assert_called_once()
+
+    def test_reconciliation_required_panel_still_offers_operator_close(self):
+        from robot_telegram_feed import build_robot_control_keyboard
+        panel = build_robot_control_keyboard("ROBOT_RUNNING", "RECONCILIATION_REQUIRED")
+        self.assertEqual(panel["inline_keyboard"][0][0]["callback_data"],
+                         "robot:cmd:paper_close_all")
+        self.assertEqual(len(panel["inline_keyboard"]), 1)
 
     def test_paper_confirm_success_uses_single_route_scoped_action(self):
         callback = self._private_paper_callback("paper-confirm", "paper_close_all_confirm")
