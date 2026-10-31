@@ -838,15 +838,25 @@ def _process_mirror_source_callback(callback_query) -> bool:
     if mirror is None:
         _send_text(chat_id, "Исходная MIRROR-карточка недоступна: архив не найден.")
         return True
-    original = signal_archive.load_original_signal(mirror.get("source_formation_ids") or [])
+    parent_ids = mirror.get("source_formation_ids") or []
+    original = signal_archive.load_original_signal(parent_ids)
     if original is not None:
         if _repost_original_signal(chat_id, original):
             return True
         _send_text(chat_id, "Исходный паттерн найден, но его график не удалось отправить.")
         return True
-    # A bare level has no source pattern. Return the first card of this
-    # exact persisted MIRROR campaign; never substitute a newer same-ticker
-    # observation or fabricate an original source-pattern archive.
+    if parent_ids:
+        # An established parent lineage is not an archived parent signal.
+        # Never silently present the MIRROR campaign as that missing pattern.
+        _send_text(
+            chat_id,
+            "⚠️ Исходная карточка паттерна не сохранена. "
+            "Ниже доступна только архивная MIRROR-карточка этой кампании, "
+            "не оригинал паттерна.",
+        )
+    # A bare level has no source pattern. With an unavailable parent,
+    # the following first-card fallback is explicitly disclosed above.
+    # Never substitute a newer same-ticker observation.
     first_id = mirror.get("source_campaign_first_id")
     first = signal_archive.load_original_signal([first_id]) if first_id else None
     if first is not None:
@@ -854,8 +864,9 @@ def _process_mirror_source_callback(callback_query) -> bool:
             return True
         _send_text(chat_id, "Первую карточку MIRROR-кампании не удалось отправить.")
         return True
-    _send_text(chat_id, "Первая карточка MIRROR-кампании не сохранена. "
-                        "Показываю архивный график этого события без подмены источника.")
+    if not parent_ids:
+        _send_text(chat_id, "Первая карточка MIRROR-кампании не сохранена. "
+                            "Показываю архивный график этого события без подмены источника.")
     if not _repost_original_signal(chat_id, mirror):
         _send_text(chat_id, "Не удалось отправить архивный MIRROR-график.")
     return True
