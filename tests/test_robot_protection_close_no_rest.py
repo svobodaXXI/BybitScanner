@@ -244,6 +244,8 @@ class OwnerThreadProtectionCloseTests(unittest.TestCase):
             finally:
                 fixture.runtime.close()
 
+
+class ContinuityRecoveryCloseTests(unittest.TestCase):
     def _recover(self, fixture: _Fixture, book):
         return fixture.runtime.recover_robot_protection_continuity_loss(
             SYMBOL, book, event_id=f"{SYMBOL}:rest-recovery:{book.source_sequence}",
