@@ -61,12 +61,38 @@ def prove_flat_recovery(
         autopilot.get("mode") == "OFF",
         "autopilot_not_off",
     )
+    # The old backend cannot retire temporary entry arms while reconciliation
+    # is REQUIRED. Accept *only* the incident-specific, independently proven
+    # non-exposure subscriptions, not arbitrary active protection.
     _require(
         protection.get("healthy") is True
-        and protection.get("covered_symbols") == []
-        and protection.get("armed_symbols") == []
         and protection.get("unhealthy_symbols") == {},
-        "protection_not_quiescent",
+        "protection_unhealthy",
+    )
+    covered = protection.get("covered_symbols")
+    armed = protection.get("armed_symbols")
+    roles = protection.get("coverage_roles", {})
+    _require(
+        isinstance(covered, (list, tuple))
+        and isinstance(armed, (list, tuple))
+        and isinstance(roles, dict),
+        "protection_coverage_unproven",
+    )
+    strictly_quiescent = covered == [] and armed == [] and roles == {}
+    known_incident_coverage = (
+        len(covered) == 3
+        and set(covered) == {"BUSDT", "AUSDT", "KMNOUSDT"}
+        and len(armed) == 2
+        and set(armed) == {"AUSDT", "KMNOUSDT"}
+        and roles == {
+            "BUSDT": "OBLIGATION",
+            "AUSDT": "ENTRY_PENDING",
+            "KMNOUSDT": "ENTRY_PENDING",
+        }
+    )
+    _require(
+        strictly_quiescent or known_incident_coverage,
+        "unexpected_or_unsafe_protection_coverage",
     )
     _require(
         conn.execute("PRAGMA integrity_check").fetchone() == ("ok",),
@@ -157,6 +183,14 @@ def prove_flat_recovery(
         and Decimal(str(exit_price)) == Decimal(str(execution_price)),
         "busdt_historical_stop_evidence_unproven",
     )
+    if known_incident_coverage:
+        # No other unresolved obligation, open Robot trade/candidate, working
+        # limit or unsettled command passed above. The BUSDT subscription is
+        # only for this exact historical STOP; entry arms have no durable work.
+        _require(
+            symbol == "BUSDT" and status == "DISPATCHING",
+            "incident_obligation_proof_missing",
+        )
     for required_symbol in ("BUSDT", "VIRTUALUSDT"):
         _require(
             any(row[0] == required_symbol and row[1] == "Flat" for row in positions),
