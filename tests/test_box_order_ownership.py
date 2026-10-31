@@ -72,9 +72,15 @@ class BoxOrderOwnershipTests(unittest.TestCase):
             "order_link_id": "tw-unused",
         }
         state = {"execution": {"box_manual_close_intent": manual_intent}}
+        args = trade_args(robot.candidate_id)
+        args.update(trade_id="box-trade-supersession", pattern="IKIGAI_BOX",
+                    signal_time_ms=3000, entry_time_ms=4002,
+                    created_at_ms=4002)
+        self.store.create_robot_trade(**args)
+        robot = self.store.get_robot_candidate(robot.candidate_id)
         robot = self.store.save_robot_candidate_state(
             robot.candidate_id, status="OPEN", robot_state=state,
-            expected_revision=robot.state_revision, updated_at_ms=4002,
+            expected_revision=robot.state_revision, updated_at_ms=4003,
         )
         return robot
 
@@ -85,7 +91,7 @@ class BoxOrderOwnershipTests(unittest.TestCase):
             source_candidate_id=self.plan.candidate_id,
             robot_candidate_id=robot.candidate_id,
             order_id=OrderId("stop"), command_id=CommandId("cmd-unused"),
-            expected_revision=robot.state_revision, updated_at_ms=4003,
+            expected_revision=robot.state_revision, updated_at_ms=4004,
         ))
         refreshed = self.store.get_robot_candidate(robot.candidate_id)
         execution = refreshed.robot_state["execution"]
@@ -117,7 +123,7 @@ class BoxOrderOwnershipTests(unittest.TestCase):
                 source_candidate_id=self.plan.candidate_id,
                 robot_candidate_id=robot.candidate_id,
                 order_id=OrderId("stop"), command_id=CommandId("cmd-unused"),
-                expected_revision=robot.state_revision, updated_at_ms=4004,
+                expected_revision=robot.state_revision, updated_at_ms=4005,
             )
         refreshed = self.store.get_robot_candidate(robot.candidate_id)
         self.assertIn("box_manual_close_intent", refreshed.robot_state["execution"])
