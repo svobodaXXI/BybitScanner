@@ -293,6 +293,28 @@ def load_position_view(
         if callable(lookup):
             reentry_index = lookup(account, trade.candidate_id)
         markers, fees = _trade_markers(store, account, trade, candidate, now_ms=now_ms)
+        # Draw past filled executions only when both candidate IDs belong to
+        # the same persisted STOP-reentry campaign. No ticker-based joins.
+        if isinstance(mirror, Mapping) and reentry_index is not None:
+            siblings = store.load_robot_reentry_campaign_trades(account, trade.candidate_id)
+            prior_markers = []
+            for earlier in siblings:
+                if (earlier.trade_id == trade.trade_id
+                        or earlier.symbol != trade.symbol
+                        or earlier.entry_time_ms >= trade.entry_time_ms
+                        or earlier.exit_time_ms is None
+                        or earlier.exit_time_ms > trade.entry_time_ms):
+                    continue
+                previous_candidate = store.get_robot_candidate(earlier.candidate_id)
+                previous_markers, _ = _trade_markers(
+                    store, account, earlier, previous_candidate, now_ms=earlier.exit_time_ms)
+                prior_markers.extend(item for item in previous_markers if item.filled)
+            if prior_markers:
+                # Exact duplicate fill evidence can be returned by overlapping
+                # windows; retain a single visible triangle for that fact.
+                unique = {(m.time_ms, m.price, m.side, m.filled): m
+                          for m in (*prior_markers, *markers)}
+                markers = tuple(sorted(unique.values(), key=lambda m: (m.time_ms, m.side)))
 
     return PositionView(
         symbol=sym.value,
