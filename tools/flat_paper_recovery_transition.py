@@ -140,7 +140,7 @@ def _attest_legacy_unversioned(
         "legacy_unversioned_identity_mismatch",
     )
     try:
-        environment = Path(f"/proc/{pid}/environ").read_bytes().split(b"\\0")
+        environment = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
     except OSError as exc:
         raise FlatRecoveryBlocked("legacy_process_environment_unreadable") from exc
     _assert(
