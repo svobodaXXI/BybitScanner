@@ -103,7 +103,7 @@ def test_level_without_parent_fresh_breakout_becomes_candidate_and_first_retest_
     record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
     assert record["status"] == STATUS_RETESTED and record["lifecycle"] == ms.LIFECYCLE_DONE
     assert record["naked_retest"]["retest"]["open_time_ms"] == (len(bars) - 1) * M
-    assert [p["kind"] for p in summary["pending"]] == ["breakout", "first_retest"]
+    assert [p["kind"] for p in summary["pending"]] == ["breakout"]  # retest remains durable, not Telegram spam
 
     # Repeated retests never re-arm the level or produce new events.
     bars += [(101.5, 102.0, 100.5, 101.0), (101.0, 104.0, 100.8, 103.5), (103.5, 103.6, 100.7, 101.2)]
