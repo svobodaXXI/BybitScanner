@@ -194,6 +194,39 @@ class LifecycleCaptionTests(unittest.TestCase):
         self.assertIn("комиссии — (вход + выход), — (после комиссий)", caption)
 
 
+class MirrorChartDeliveryTests(unittest.TestCase):
+    def test_missing_mirror_chart_is_not_marked_delivered(self):
+        from unittest.mock import patch
+        import telegram_monitoring as monitoring
+        view = PositionView(
+            symbol="SAGAUSDT", direction="LONG", is_open=True, quantity=Decimal("1"),
+            average_entry=Decimal("1"), stop_price=Decimal("0.9"),
+            take_price=Decimal("1.2"), pattern="MIRROR",
+            trade=SimpleNamespace(), mirror_campaign=True,
+        )
+        with patch.object(monitoring, "render_position_chart", side_effect=ValueError("no candles")), \
+             patch.object(monitoring, "_send_text") as text_sender:
+            self.assertFalse(monitoring._send_chart_card(
+                "123", view, None, "card", {"inline_keyboard": []}, require_chart=True))
+            text_sender.assert_not_called()
+
+    def test_failed_mirror_photo_is_not_counted_as_successful_text(self):
+        from unittest.mock import patch
+        import telegram_monitoring as monitoring
+        view = PositionView(
+            symbol="SAGAUSDT", direction="LONG", is_open=True, quantity=Decimal("1"),
+            average_entry=Decimal("1"), stop_price=Decimal("0.9"),
+            take_price=Decimal("1.2"), pattern="MIRROR",
+            trade=SimpleNamespace(), mirror_campaign=True,
+        )
+        with patch.object(monitoring, "render_position_chart", return_value="chart.png"), \
+             patch.object(monitoring.telegram_bot, "send_photo", side_effect=RuntimeError("gateway")), \
+             patch.object(monitoring, "_send_text") as text_sender:
+            self.assertFalse(monitoring._send_chart_card(
+                "123", view, None, "card", {"inline_keyboard": []}, require_chart=True))
+            text_sender.assert_not_called()
+
+
 class LifecycleStoreQueryTests(unittest.TestCase):
     """The new read-only store query against a real SQLite schema."""
 
