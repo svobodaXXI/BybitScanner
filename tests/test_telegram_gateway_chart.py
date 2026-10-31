@@ -32,8 +32,9 @@ class GatewayChartTests(unittest.TestCase):
             result = telegram_bot.send_photo("token", "12345", str(path), caption="chart")
             self.assertTrue(result["ok"])
             args = session_factory.return_value.post.call_args
-            self.assertTrue(args.args[0].endswith("/v1/photo-upload"))
-            self.assertEqual(args.kwargs["data"], b"small-test-image")
+            self.assertTrue(args.args[0].endswith("/v1/photo-card"))
+            self.assertEqual(args.kwargs["files"]["photo"][1], b"small-test-image") 
+            self.assertEqual(args.kwargs["data"]["caption"], "chart")
             self.assertFalse(session_factory.return_value.trust_env)
 
     @patch("telegram_gateway_client.requests.Session")
