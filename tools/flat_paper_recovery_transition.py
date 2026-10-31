@@ -131,6 +131,7 @@ def execute_flat_handoff(
     _assert(len(expected_build_sha) == 40 and
             all(c in "0123456789abcdef" for c in expected_build_sha),
             "expected_build_sha_invalid")
+    snapshots_from_live = snapshots is None
     snapshots = snapshots if snapshots is not None else get_snapshots()
     _assert(snapshots["backend"].get("build_sha") == expected_build_sha,
             "installed_build_sha_changed")
@@ -146,6 +147,21 @@ def execute_flat_handoff(
         )
         _assert(proof == "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY",
                 "flat_recovery_evidence_missing")
+        # In production re-read in-process protection while the PAPER writer
+        # barrier is held. Never signal on a stale coverage snapshot.
+        if snapshots_from_live:
+            fresh = get_snapshots()
+            _assert(
+                fresh["backend"].get("process_instance_id")
+                == snapshots["backend"].get("process_instance_id"),
+                "backend_instance_changed",
+            )
+            _assert(
+                prove_flat_recovery(
+                    conn, expected_identity=expected_identity, **fresh,
+                ) == "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY",
+                "flat_recovery_evidence_changed",
+            )
         _assert(service_pid() == expected_pid and start_token(expected_pid) == token,
                 "backend_process_changed_during_proof")
         if not execute:
