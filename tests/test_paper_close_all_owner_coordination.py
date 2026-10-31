@@ -217,77 +217,41 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
         runtime.robot_synchronize_pending_entries.assert_not_called()
         runtime.close_all.assert_called_once()
 
-    def test_preexisting_reconciliation_fence_blocks_market_dispatch(self):
-        runtime, _ = fixture(status="RECONCILIATION_REQUIRED", robot=True)
-        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_reconciliation_required"):
-            run(runtime)
-        runtime.robot_close_all.assert_not_called()
-        runtime.close_all.assert_not_called()
-
-    def test_reconcile_failure_fences_autopilot_before_attempt(self):
-        runtime, _ = fixture(status="RECONCILIATION_REQUIRED", robot=True)
-        def reconcile():
-            runtime.store.update_robot_autopilot_state.assert_called_once()
-            return SimpleNamespace(success=False)
-        runtime.robot_reconcile.side_effect = reconcile
-        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_reconciliation_required"):
-            run(runtime)
-        runtime.robot_close_all.assert_not_called()
-        runtime.close_all.assert_not_called()
-
-    def test_reconciliation_success_allows_canonical_close(self):
+    def test_operator_close_works_under_reconciliation_fence_with_proven_ownership(self):
         runtime, state = fixture(status="RECONCILIATION_REQUIRED", robot=True)
-        def reconcile():
-            current = state["robot"]
-            state["robot"] = SimpleNamespace(
-                mode="ROBOT_RUNNING", recovery_status="PAUSED",
-                version=current.version + 1, updated_at_ms=1,
-            )
-            return SimpleNamespace(success=True)
-        runtime.robot_reconcile.side_effect = reconcile
         result = run(runtime)
         self.assertEqual(len(result.results), 2)
-        runtime.robot_reconcile.assert_called_once()
+        runtime.robot_reconcile.assert_not_called()
         runtime.robot_close_all.assert_called_once()
+        runtime.close_all.assert_called_once()
+        runtime.store.update_robot_autopilot_state.assert_called_once()
+        self.assertEqual(state["robot"].recovery_status, "RECONCILIATION_REQUIRED")
 
-    def test_reconcile_claim_without_paused_state_cannot_dispatch(self):
+    def test_operator_close_still_fences_unresolved_pending_entries(self):
         runtime, _ = fixture(status="RECONCILIATION_REQUIRED", robot=True)
-        runtime.robot_reconcile.return_value = SimpleNamespace(success=True)
-        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_reconciliation_required"):
+        runtime.robot_synchronize_pending_entries.return_value = SimpleNamespace(
+            unresolved_candidate_ids=("entry-unresolved",),
+            still_pending_protection=(),
+        )
+        with self.assertRaisesRegex(PaperCloseAllRejected, "pending_robot_entry_unresolved"):
             run(runtime)
         runtime.robot_close_all.assert_not_called()
         runtime.close_all.assert_not_called()
 
-    def test_reconcile_stopped_mode_cannot_dispatch(self):
-        runtime, state = fixture(status="RECONCILIATION_REQUIRED", robot=True)
-        def reconcile():
-            state["robot"] = SimpleNamespace(
-                mode="ROBOT_STOPPED", recovery_status="PAUSED",
-                version=5, updated_at_ms=1,
-            )
-            return SimpleNamespace(success=True)
-        runtime.robot_reconcile.side_effect = reconcile
-        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_reconciliation_required"):
-            run(runtime)
-        runtime.robot_close_all.assert_not_called()
-        runtime.close_all.assert_not_called()
-
-    def test_malformed_reconcile_reply_cannot_dispatch(self):
+    def test_operator_close_does_not_override_unproven_trade_ledger(self):
         runtime, _ = fixture(status="RECONCILIATION_REQUIRED", robot=True)
-        runtime.robot_reconcile.return_value = SimpleNamespace()
-        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_reconciliation_required"):
+        runtime.store.load_open_robot_trades.side_effect = lambda account: ()
+        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_trade_ledger_unproven"):
             run(runtime)
         runtime.robot_close_all.assert_not_called()
         runtime.close_all.assert_not_called()
 
-    def test_reconcile_exception_preserves_fence_and_protection(self):
-        runtime, _ = fixture(status="RECONCILIATION_REQUIRED", robot=True)
-        runtime.robot_reconcile.side_effect = RuntimeError("unexpected recovery failure")
-        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_reconciliation_required"):
+    def test_reconciliation_in_progress_is_not_operator_preemptible(self):
+        runtime, _ = fixture(status="RECONCILING", robot=True)
+        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_reconciliation_in_progress"):
             run(runtime)
         runtime.robot_close_all.assert_not_called()
         runtime.close_all.assert_not_called()
-        runtime.store.update_robot_runtime_state.assert_not_called()
 
     def test_orphan_trade_fails_closed_before_any_market_order(self):
         runtime, _ = fixture()
@@ -343,22 +307,15 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
             ["box-entry", "box-exit"],
         )
 
-    def test_reconciliation_required_cancels_open_box_entry_before_reconcile(self):
+    def test_reconciliation_required_cancels_box_entry_without_robot_reconcile(self):
         runtime, state, orders = self._open_box_with_remaining_entries(
             status="RECONCILIATION_REQUIRED",
         )
-        def reconcile():
-            self.assertEqual(orders["box-entry"], "cancelled")
-            previous = state["robot"]
-            state["robot"] = SimpleNamespace(
-                mode="ROBOT_RUNNING", recovery_status="PAUSED",
-                version=previous.version + 1, updated_at_ms=1,
-            )
-            return SimpleNamespace(success=True)
-        runtime.robot_reconcile.side_effect = reconcile
         result = run(runtime)
         self.assertFalse(result.positions)
-        runtime.robot_reconcile.assert_called_once()
+        self.assertEqual(orders["box-entry"], "cancelled")
+        self.assertEqual(orders["box-exit"], "cancelled")
+        runtime.robot_reconcile.assert_not_called()
         runtime.robot_close_all.assert_called_once()
 
     def test_unconfirmed_open_box_entry_cancel_never_dispatches_market(self):
