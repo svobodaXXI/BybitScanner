@@ -301,12 +301,13 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
         runtime.robot_close_all.assert_not_called()
         runtime.close_all.assert_not_called()
 
-    def test_reconciliation_in_progress_is_not_operator_preemptible(self):
+    def test_operator_exit_preempts_reconciling_state_when_owner_ledger_is_proven(self):
         runtime, _ = fixture(status="RECONCILING", robot=True)
-        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_reconciliation_in_progress"):
-            run(runtime)
-        runtime.robot_close_all.assert_not_called()
-        runtime.close_all.assert_not_called()
+        result = run(runtime)
+        self.assertFalse(result.positions)
+        runtime.robot_reconcile.assert_not_called()
+        runtime.robot_close_all.assert_called_once()
+        runtime.close_all.assert_called_once()
 
     def test_orphan_trade_fails_closed_before_any_market_order(self):
         runtime, _ = fixture()
@@ -493,9 +494,20 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
             run(runtime)
         runtime.close_all.assert_not_called()
 
-    def test_cannot_close_robot_owner_when_stopped(self):
+    def test_operator_closes_proven_robot_owner_even_when_robot_stopped(self):
         runtime, _ = fixture(mode="ROBOT_STOPPED", status="ROBOT_STOPPED", robot=True)
-        with self.assertRaisesRegex(PaperCloseAllRejected, "stopped_robot_has_open_exposure"):
+        result = run(runtime)
+        self.assertFalse(result.positions)
+        runtime.robot_close_all.assert_called_once()
+        runtime.close_all.assert_called_once()
+        runtime.robot_synchronize_pending_entries.assert_not_called()
+
+    def test_stopped_robot_with_unresolved_entry_cannot_close_unsafely(self):
+        runtime, _ = fixture(mode="ROBOT_STOPPED", status="ROBOT_STOPPED", robot=True)
+        runtime.store.load_active_robot_entry_orders.return_value = {
+            "live-entry": (Symbol("BOTUSDT"), 1),
+        }
+        with self.assertRaisesRegex(PaperCloseAllRejected, "stopped_robot_has_active_entry_orders"):
             run(runtime)
         runtime.robot_close_all.assert_not_called()
         runtime.close_all.assert_not_called()
