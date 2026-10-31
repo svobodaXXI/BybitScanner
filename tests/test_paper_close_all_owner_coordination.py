@@ -543,5 +543,64 @@ class TriggeredStopRetryEvidenceTests(unittest.TestCase):
         runtime._market_executor.execute.assert_not_called()
 
 
+class BoxExitZeroPersistenceRegressionTests(unittest.TestCase):
+    """Exact persisted slot-0 incident; run by the Close-All CI workflow."""
+
+    def test_unused_manual_slot_is_released_with_intent_atomically(self):
+        import tempfile
+        from pathlib import Path
+        from terminal.persistence.sqlite_store import SQLiteStore
+        from terminal.domain.models import CommandId
+        from tests.test_box_plan_persistence import snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLiteStore.open(Path(tmp) / "paper.sqlite3")
+            try:
+                source, _ = store.save_box_plan_only(
+                    snapshot=snapshot(), created_at_ms=3001,
+                )
+                self.assertTrue(store.begin_box_attempt_ownership(source.candidate_id))
+                robot, _ = store.handoff_box_plan_to_robot(
+                    source.candidate_id, symbol=Symbol("BTCUSDT"),
+                    expected_snapshot_sha256=source.snapshot_sha256,
+                    approved_at_ms=4001,
+                )
+                robot = store.save_robot_candidate_state(
+                    robot.candidate_id, status="OPEN",
+                    robot_state={"execution": {"box_manual_close_intent": {
+                        "slot": 0, "order_id": "abandoned-market",
+                        "command_id": "cmd-abandoned",
+                        "order_link_id": "link-abandoned",
+                    }}},
+                    expected_revision=robot.state_revision, updated_at_ms=4002,
+                )
+                store.reserve_box_order_identity(
+                    source.candidate_id, order_id=OrderId("abandoned-market"),
+                    role="EXIT", slot=0,
+                )
+                self.assertTrue(store.retire_unsubmitted_box_manual_close_slot(
+                    source_candidate_id=source.candidate_id,
+                    robot_candidate_id=robot.candidate_id,
+                    order_id=OrderId("abandoned-market"),
+                    command_id=CommandId("cmd-abandoned"),
+                    expected_revision=robot.state_revision, updated_at_ms=4003,
+                ))
+                self.assertTrue(store.reserve_box_order_identity(
+                    source.candidate_id, order_id=OrderId("stop-market"),
+                    role="EXIT", slot=0,
+                ))
+                saved = store.get_robot_candidate(robot.candidate_id)
+                self.assertNotIn(
+                    "box_manual_close_intent", saved.robot_state["execution"],
+                )
+                self.assertEqual(
+                    {owner.order_id.value for owner in
+                     store.load_box_order_ownership(source.candidate_id)},
+                    {"stop-market"},
+                )
+            finally:
+                store.close()
+
+
 if __name__ == "__main__":
     unittest.main()
