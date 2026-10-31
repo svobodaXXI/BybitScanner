@@ -7,6 +7,7 @@ import time
 
 import requests
 
+import telegram_gateway_client
 import config
 import telegram_bot
 import telegram_runtime_intent
@@ -98,40 +99,36 @@ def _save_offset(offset):
     )
 
 
-def _telegram_request(
-    method,
-    **params
-):
+def _telegram_request(method, **params):
+    # On VPS the Telegram API is not directly reachable. Route callback
+    # acknowledgement through the same authorized Gateway as the worker.
+    # A configured Gateway must never silently fall back to SOCKS/direct
+    # Telegram on error (which would hide transport failures).
+    if method == "answerCallbackQuery" and telegram_gateway_client.configured():
+        return telegram_gateway_client.bot_method(method, **params)
     url = (
         "https://api.telegram.org/"
         f"bot{config.TELEGRAM_TOKEN}/"
         f"{method}"
     )
-
-    response = requests.get(
-        url,
-        params=params,
-        timeout=40
-    )
-
+    response = requests.get(url, params=params, timeout=40)
     return response.json()
 
 
-def _answer_callback(
-    callback_id,
-    text
-):
+def _answer_callback(callback_id, text):
     try:
-        _telegram_request(
+        result = _telegram_request(
             "answerCallbackQuery",
             callback_query_id=callback_id,
-            text=text
+            text=text,
         )
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            raise RuntimeError("Telegram callback acknowledgement not accepted")
+        print("[TELEGRAM CALLBACK ACK] status=accepted", flush=True)
+        return True
     except Exception as exc:
-        print(
-            "[REVIEW] answer callback error:",
-            exc
-        )
+        print("[PAPER CALLBACK ACK] status=failed reason=" + type(exc).__name__, flush=True)
+        return False
 
 
 def _download_telegram_photo(
@@ -388,6 +385,13 @@ def _post_robot_backend_command(url, payload, *, command):
     """Shared Telegram transport: preserve each Robot command's wire contract."""
     response = requests.post(url, json=payload, timeout=15)
     body = response.json()
+    if command == "paper_close_all":
+        # Do not log payload, callback id, token, position data or PnL.
+        print(
+            f"[PAPER CLOSE ALL HTTP] status={response.status_code} "
+            f"accepted={response.status_code == 200 and isinstance(body, dict) and body.get('ok') is True}",
+            flush=True,
+        )
     if response.status_code != 200 or not body.get("ok", False):
         raise RobotControlRejected(f"PAPER backend rejected {command}: {body}")
     return body
@@ -499,6 +503,11 @@ def _paper_close_all_report_messages(result):
 
 
 def _confirm_paper_close_all(callback_query):
+    # Correlate this callback with the monitor's update number, never the
+    # raw Telegram user/chat/callback identifiers.
+    update_id = callback_query.get("_paper_monitor_update_id")
+    if isinstance(update_id, int) and update_id >= 0:
+        print(f"[PAPER CLOSE ALL CALLBACK] update_id={update_id} phase=received", flush=True)
     try:
         action_id = _paper_close_all_callback_action_id(callback_query)
         result = _post_paper_close_all({"client_action_id": action_id})

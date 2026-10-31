@@ -1224,6 +1224,15 @@ def poll_updates_once(offset):
 
         callback_query = update.get("callback_query")
         if callback_query:
+            # Private metadata for a non-sensitive PAPER close audit trail.
+            # The immutable callback id is used only for backend idempotence;
+            # never print it, chat/user IDs or the full update payload.
+            if str(callback_query.get("data") or "") in (
+                "robot:cmd:paper_close_all",
+                "robot:cmd:paper_close_all_confirm",
+            ):
+                callback_query = dict(callback_query)
+                callback_query["_paper_monitor_update_id"] = update_id
             if not (_process_metascalp_callback(callback_query)
                     or _process_positions_callback(callback_query)
                     or _process_mirror_source_callback(callback_query)
