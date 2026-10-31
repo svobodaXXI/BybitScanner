@@ -16,6 +16,7 @@ PID = 500879
 class TransitionCase(unittest.TestCase):
     def case(self, *, execute=False, mutate=None, token=None, pid=None, exit_after=True):
         conn, snapshots = fixture()
+        snapshots.pop("expected_identity")  # passed independently by handoff
         snapshots["backend"]["build_sha"] = SHA
         snapshots["backend"]["process_instance_id"] = "old-paper-process"
         if mutate:
