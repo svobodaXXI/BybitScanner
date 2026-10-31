@@ -138,3 +138,13 @@ D. **Prospective PAPER acceptance**: after safe recovery, verify a contiguous pr
 ## Source / provenance
 
 Owner-supplied Codex **"Полное READ-ONLY ревью PAPER VPS"**, 2026-11-01 00:00:33 MSK: 290 lines, sections A–H, DB-derived 128 executions/26 cycles, protection and infrastructure metrics. Owner-supplied preceding BUSDT forensic report and blocked deploy preflight, plus repository inspection of `terminal/runtime/paper_runtime.py` (`coordinated_paper_close_all`, `_finalize_paper_protection_obligation`), `terminal/application/robot_control.py`, and `terminal/runtime/paper_http_server.py`. Later Codex Close-All execution result not supplied. No external market backtest has been performed.
+
+
+## 🏰 Подтверждённый отказ Close-All — 2026-11-01
+
+**FACT (Codex VPS execution report):** выполнен ровно один авторизованный `POST /api/close-all` с `client_action_id=owner-close-all-c5f147d827cc43b79af139246b3e58bc`: HTTP **503** `{"ok":false,"error":"paper_close_all_unavailable"}`. Traceback: `ImmutableExecutionConflict: Robot trade already closed with different evidence` при попытке обработать BUSDT STOP obligation. Повторного вызова или Market для VIRTUAL не было. На итоговом срезе VIRTUALUSDT SHORT 422 @ 0.5924 **OPEN**, STOP/TAKE coverage `healthy/EXPOSURE`; BUSDT **FLAT/0** с исполненным STOP и `DISPATCHING` obligation; Robot `RECONCILIATION_REQUIRED`, Admission закрыт; Autopilot **OFF**, reason=`paper_close_all` (реальный побочный эффект preflight); active LIMIT и unfinished Market — 0, backend/Telegram действуют, PAPER DB identity `e0cbafb1c172b65f2db3a2c7cef2636b4164a4b1a229bd183bd907e7984ff0ad`, integrity OK, LIVE не использовался. Realized Net до VIRTUAL exit: −19.583020335 USDT.
+
+**Safety boundary:** известный Close-All на старом VPS повторять бесполезно; нельзя подменять его `/api/full-close`, сырым Market, ручным SQL или перезапуском backend под экспозицией. Исправление #731 уже в stable, но его установка при открытой локально защищаемой позиции не имеет подтверждённого безопасного механизма непрерывности защиты. Ближайший реальный переход: штатный STOP/TAKE VIRTUAL и подтверждённый FLAT → безопасная установка release → один reconcile BUSDT; либо отдельно доказанный, специально авторизованный защищённый exit-only/upgrade mechanism, не отключающий STOP/TAKE. **Ни один не выполнен.** Исходная команда владельца закрыть все позиции остаётся невыполненной. Без XP/достижений.
+
+---
+
