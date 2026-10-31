@@ -337,7 +337,15 @@ def _with_candles(view, now_ms: int | None = None):
 
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
     minutes = view.chart_candle_minutes
-    limit, entry_before_chart = chart_candle_limit(view.entry_time_ms, now_ms, minutes)
+    # Include older same-campaign filled executions when the exchange candle
+    # window can reach them; never fetch future or unrelated-symbol history.
+    earliest = view.entry_time_ms
+    if view.mirror_campaign:
+        historical = [m.time_ms for m in view.markers
+                      if m.filled and (earliest is None or m.time_ms < earliest)]
+        if historical:
+            earliest = min(historical)
+    limit, entry_before_chart = chart_candle_limit(earliest, now_ms, minutes)
     candles = None
     try:
         import bybit_api
