@@ -600,8 +600,10 @@ def _run_robot_control_command(
     # AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.2 Rationale and
     # CR-ROBOT-CONTROL-001's approved_scope for the one-tap confirmation.
     if command == "paper_close_all":
-        _request_paper_close_all_confirmation(callback_query)
-        return None
+        # Owner-only private-chat authorization is enforced by the callback
+        # dispatcher. The explicitly labelled emergency PAPER button is a
+        # direct one-tap close, never a Robot admission command.
+        return _confirm_paper_close_all(callback_query)
     if command == "paper_close_all_confirm":
         return _confirm_paper_close_all(callback_query)
     if command == "paper_close_all_cancel":

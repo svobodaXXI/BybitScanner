@@ -3211,6 +3211,10 @@ class PaperRuntime:
                         slot=0,
                     )
                 except Exception:
+                    LOGGER.exception(
+                        "Robot STOP EXIT-0 ownership cannot be proven; "
+                        "preserving obligation=%s", obligation.obligation_id,
+                    )
                     return obligation
 
                 # STOP/EMERGENCY_CLOSE wins the lifecycle. No resting Box entry
@@ -3747,39 +3751,51 @@ class PaperRuntime:
                 updated_at_ms=max(int(time.time() * 1000), autopilot.updated_at_ms),
             )
 
+        # Operator priority: a durable TRIGGERED STOP is already a closing
+        # instruction. Execute it before Robot reconciliation, which can
+        # otherwise deadlock while the obligation itself awaits a fresh book.
+        # Never issue a second competing Market identity: the existing
+        # obligation has the sole durable STOP execution identity.
+        pending_stops = tuple(self.store.load_unresolved_paper_protection_obligations(account_id))
+        if pending_stops:
+            for obligation in pending_stops:
+                if obligation.status not in {"TRIGGERED", "DISPATCHING"}:
+                    raise PaperCloseAllRejected("operator_close_protection_state_unproven")
+                current_book = (evidence or {}).get(obligation.symbol.value)
+                resumed = self._dispatch_paper_protection_obligation(
+                    obligation, now_ms=int(time.time() * 1000),
+                    recovery_book=current_book,
+                )
+                if resumed.status != "RESOLVED":
+                    raise PaperCloseAllRejected("operator_close_triggered_stop_unconfirmed")
+            # An already-triggered STOP may have closed the last open lot.
+            # Return success only after the authoritative account-wide proof.
+            if (
+                not self.store.load_open_position_projections(account_id)
+                and not self.store.load_active_paper_limits_for_account(account_id)
+                and not self.store.load_unresolved_paper_protection_obligations(account_id)
+                and not self.store.load_open_robot_trades(account_id)
+            ):
+                return CloseAllCommandResponse(
+                    request.client_action_id.value, (), (),
+                )
+            runtime = self.store.get_robot_runtime_state(account_id)
+
         if runtime.mode == "ROBOT_RUNNING":
-            if runtime.recovery_status == "RECONCILIATION_REQUIRED":
-                # The owner-requested flatten is itself a recovery opportunity.
-                # Reuse the canonical, serialized Robot reconciliation rather
-                # than leaving a provably inert pending candidate in a deadlock.
-                # This is fail-closed: any unresolved entry, trade, ownership or
-                # protection keeps the original guards and existing EXITs alive.
-                try:
-                    # A protected OPEN Box may still own unfilled ENTRY slots.
-                    # Reconcile cannot retire OPEN entries on its own; cancel
-                    # their proven remainder before the canonical recovery.
-                    self._cancel_robot_entries_for_account_flatten(
-                        request.client_action_id.value,
-                    )
-                    recovery = self.robot_reconcile()
-                except Exception as exc:
-                    raise PaperCloseAllRejected(
-                        "robot_reconciliation_required"
-                    ) from exc
-                if getattr(recovery, "success", None) is not True:
-                    raise PaperCloseAllRejected("robot_reconciliation_required")
-                runtime = self.store.get_robot_runtime_state(account_id)
-                if (runtime is None or runtime.mode != "ROBOT_RUNNING"
-                        or runtime.recovery_status != "PAUSED"):
-                    raise PaperCloseAllRejected("robot_reconciliation_required")
+            # Explicit owner Close-All is an exit-only PAPER authority, not a
+            # request to resume Robot trading. READY becomes PAUSED; an
+            # existing RECONCILIATION_REQUIRED fence already forbids entries
+            # and must not prevent cancelling entries or closing proven lots.
+            # Robot synchronization, owner/trade proof and Market execution
+            # validation below remain mandatory before any close is accepted.
             if runtime.recovery_status == "READY":
                 runtime = self.store.update_robot_runtime_state(
                     account_id, mode="ROBOT_RUNNING", recovery_status="PAUSED",
                     reason="paper_close_all", expected_version=runtime.version,
                     updated_at_ms=max(int(time.time() * 1000), runtime.updated_at_ms),
                 )
-            elif runtime.recovery_status != "PAUSED":
-                raise PaperCloseAllRejected("robot_reconciliation_required")
+            elif runtime.recovery_status not in ("PAUSED", "RECONCILIATION_REQUIRED"):
+                raise PaperCloseAllRejected("robot_reconciliation_in_progress")
         elif (runtime.mode, runtime.recovery_status) != ("ROBOT_STOPPED", "ROBOT_STOPPED"):
             raise PaperCloseAllRejected("robot_reconciliation_required")
 
