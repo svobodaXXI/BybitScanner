@@ -104,7 +104,7 @@ def _telegram_request(method, **params):
     # acknowledgement through the same authorized Gateway as the worker.
     # A configured Gateway must never silently fall back to SOCKS/direct
     # Telegram on error (which would hide transport failures).
-    if telegram_gateway_client.configured():
+    if method == "answerCallbackQuery" and telegram_gateway_client.configured():
         return telegram_gateway_client.bot_method(method, **params)
     url = (
         "https://api.telegram.org/"
@@ -124,7 +124,7 @@ def _answer_callback(callback_id, text):
         )
         if not isinstance(result, dict) or result.get("ok") is not True:
             raise RuntimeError("Telegram callback acknowledgement not accepted")
-        print("[PAPER CALLBACK ACK] status=accepted", flush=True)
+        print("[TELEGRAM CALLBACK ACK] status=accepted", flush=True)
         return True
     except Exception as exc:
         print("[PAPER CALLBACK ACK] status=failed reason=" + type(exc).__name__, flush=True)
