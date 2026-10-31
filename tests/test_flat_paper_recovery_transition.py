@@ -34,6 +34,10 @@ class TransitionCase(unittest.TestCase):
             events.append(("signal", p, signum))
             if exit_after:
                 live[0] = False
+        tick = [0]
+        def advancing_clock():
+            tick[0] += 1
+            return tick[0]
         result = execute_flat_handoff(
             db_path=Path("/no-vps-access"),
             expected_identity=IDENTITY, expected_pid=PID,
@@ -42,7 +46,7 @@ class TransitionCase(unittest.TestCase):
             start_token=token or (lambda p: "start-77"),
             send_interrupt=interrupt, is_alive=lambda p: live[0],
             writer_guard=barrier,
-            monotonic=(lambda: 0 if live[0] else 20),
+            monotonic=advancing_clock,
             sleep=lambda n: None,
         )
         return result, events, conn
@@ -95,6 +99,14 @@ class TransitionCase(unittest.TestCase):
             conn.execute("INSERT INTO trading_commands VALUES ('paper','unknown')")
         with self.assertRaises(FlatRecoveryBlocked):
             self.case(execute=True, mutate=mutate)
+
+    def test_unknown_exit_never_retries_signal(self):
+        result, events, _ = self.case(execute=True, exit_after=False)
+        self.assertTrue(result.startswith("OUTCOME_UNKNOWN:"))
+        self.assertEqual(
+            [event for event in events if isinstance(event, tuple) and event[0] == "signal"],
+            [("signal", PID, signal.SIGINT)],
+        )
 
     def test_owner_authorization_requires_exact_pid(self):
         with self.assertRaisesRegex(FlatRecoveryBlocked, "expected_pid_invalid"):
