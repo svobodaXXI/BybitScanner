@@ -621,6 +621,12 @@ def build_box_stop_only_plan(
                 "frozen Box STOP is not tick-aligned strictly beyond P4"
             ) from shortfall
         basis = "FROZEN_FIRST_FILL"
+    # Preserving an armed STOP can leave a partial/top-up position below net
+    # 2:1. Record the truthful basis; do not represent it as RR-compliant.
+    if (existing_stop is not None and box_actual_fill_net_rr(
+        snapshot, average_entry=entry, stop=stop,
+    ) < Decimal("2")):
+        basis = "FROZEN_FIRST_FILL"
     take = _decimal(snapshot["plan"].get("take_price"), "frozen Box TAKE")
     if direction == DIRECTION_LONG and not (stop < entry < take):
         raise RobotProtectionError("LONG Box protection geometry is invalid")
