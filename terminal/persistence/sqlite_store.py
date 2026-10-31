@@ -5552,6 +5552,18 @@ class SQLiteStore:
             raise PersistenceError("concurrent or duplicate reentry reservation") from exc
         return True
 
+    def get_robot_reentry_attempt_index(
+        self, account: TradingAccountId, candidate_id: str,
+    ) -> int | None:
+        """Read only exact durable STOP-reentry attempt, never infer from symbol."""
+        self._assert_owner()
+        row = self._connection.execute(
+            """SELECT attempt_index FROM robot_reentry_attempts
+               WHERE trading_account_id=? AND candidate_id=?""",
+            (account.value, candidate_id),
+        ).fetchone()
+        return int(row["attempt_index"]) if row is not None else None
+
     def get_robot_candidate(self, candidate_id: str) -> RobotCandidateRecord | None:
         self._assert_owner()
         row = self._connection.execute(
