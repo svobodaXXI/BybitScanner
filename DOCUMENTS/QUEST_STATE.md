@@ -1,3 +1,11 @@
+## 🏰 Босс защиты ENTRY_PENDING — 2026-11-01
+
+Новый фактический VPS отчёт Codex: официальный FLAT Recovery Gate на неизменённом backend `d345411c` ответил `BLOCKED: protection_not_quiescent`. Причина: `BUSDT: OBLIGATION`, `AUSDT: ENTRY_PENDING`, `KMNOUSDT: ENTRY_PENDING`; armed `AUSDT,KMNOUSDT`. При этом позиции FLAT/0, Scanner STOPPED, Autopilot OFF, Robot RECONCILIATION_REQUIRED, BUSDT obligation DISPATCHING; backend PID 500879 и Telegram активны, DB identity та же, integrity OK. **SIGINT не отправлялся, release не переключён, DB не менялась.**
+
+PR #737 вводит узкую проверку именно этих трёх ролей при обязательном отсутствии open exposure, LIMIT, unfinished commands и незавершённого/APPROVED кандидата на вооружённых символах; BUSDT STOP должен совпасть с immutable execution. При неизвестном символе, другой роли или двусмысленных доказательствах переход BLOCKED. Перед сигналом повторно считывается protection под SQLite writer barrier. Это не доказывает безопасность конкретного VPS и **не разрешает** повторить исключительное завершение по старому разрешению: нужна CI и отдельная санкция на изменённый контракт после проверки фактов. LIVE запрещён; XP не начислять.
+
+---
+
 ## 🏰 CURRENT VPS BLOCKER — 2026-11-01 — FLAT proven, old backend cannot safe-stop
 
 Owner-supplied bounded Codex VPS outcome (later than earlier Close-All HTTP 503): **all PAPER positions FLAT/0 including VIRTUALUSDT**; active LIMIT 0, unfinished Market 0. BUSDT historical STOP execution exists but obligation stays `DISPATCHING`; Robot `ROBOT_RUNNING/RECONCILIATION_REQUIRED`, Scanner `SCANNER_STOPPED`, Autopilot `OFF`, Telegram/backend active, protection `healthy=true`, PAPER DB identity `e0cbafb1c172b65f2db3a2c7cef2636b4164a4b1a229bd183bd907e7984ff0ad`, integrity OK, installed `d345411c`. Canonical safe-stop stopped Scanner then rejected at mandatory reconcile (no retry); target stable not deployed. **VIRTUAL exit fill/fee/reason/realized economics were not provided, so do not invent them.**
