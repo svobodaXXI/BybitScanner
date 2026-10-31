@@ -1,0 +1,58 @@
+name: Cloudflare Telegram Gateway deploy
+
+on:
+  push:
+    branches:
+      - stable/adfb50b-forward
+    paths:
+      - 'deploy/telegram_gateway/cloudflare_proxy_worker.mjs'
+      - '.github/workflows/cloudflare-telegram-gateway-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-telegram-gateway-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: cloudflare-telegram-gateway
+    steps:
+      - name: Checkout reviewed stable source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate Worker source
+        run: |
+          node --check deploy/telegram_gateway/cloudflare_proxy_worker.mjs
+          grep -Fq '"/v1/photo-card": "POST"' deploy/telegram_gateway/cloudflare_proxy_worker.mjs
+      - name: Require Cloudflare credentials
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CF_TOKEN" || { echo 'Missing CLOUDFLARE_API_TOKEN'; exit 1; }
+          test -n "$CF_ACCOUNT" || { echo 'Missing CLOUDFLARE_ACCOUNT_ID'; exit 1; }
+      - name: Check existing Vercel origin
+        run: |
+          curl --fail --silent --show-error --max-time 12 \
+            https://bybitscanner-telegram-gateway.vercel.app/health \
+            | grep -Fq '"status":"up"'
+      - name: Deploy to existing Cloudflare Worker
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            deploy deploy/telegram_gateway/cloudflare_proxy_worker.mjs
+            --name bybitscanner-gateway
+            --compatibility-date 2026-10-30
+      - name: Verify public Worker health
+        run: |
+          curl --fail --silent --show-error --max-time 12 \
+            https://bybitscanner-gateway.svoboda21vekaru.workers.dev/health \
+            | grep -Fq '"status":"up"'
