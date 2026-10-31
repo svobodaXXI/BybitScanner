@@ -655,9 +655,8 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                 record["lifecycle"] = LIFECYCLE_DONE
                 if record.get("candidate"):
                     record["robot"] = _robot_handoff(level, record)
-                    pending.append({"level_id": level_id, "kind": "first_retest",
-                                    "chart": _frozen_event_chart(symbol, timeframe, rows, registry,
-                                                                 level_id, record, "first_retest")})
+                    # Retest is durable for Robot/Terminal, but never a second
+                    # Telegram observation for the same MIRROR level campaign.
                 journal.append({"event": "mirror_first_retest", **base, "level_id": level_id,
                                 "status": status, "retest": record["naked_retest"]["retest"],
                                 "candidate": record.get("candidate")})
@@ -845,26 +844,12 @@ def mirror_subtype(source: str | None, pattern: str | None, kind: str,
 def mirror_caption(row: Mapping[str, Any], kind: str) -> str:
     """Owner card from selected level provenance; no guessed MIRROR subtype."""
 
-    breakout = row.get("breakout") or {}
-    evidence = row.get("breakout_evidence") or {}
-    direction = {"UP": "вверх", "DOWN": "вниз"}.get(breakout.get("direction"), "—")
-    lines = [
+    level = row.get("level") or {}
+    return "\n".join((
         f"🪞 MIRROR · {row['symbol']} · {row['timeframe']}m",
-        mirror_subtype((row.get("level") or {}).get("source"),
-                       (row.get("level") or {}).get("pattern"), kind,
+        mirror_subtype(level.get("source"), level.get("pattern"), kind,
                        retest_confirmed=row.get("status") == STATUS_RETESTED),
-        f"Пробой {direction} (ретест-кампания {breakout.get('campaign_direction', '—')}), "
-        f"{evidence.get('kind', '—')}"
-        + (f", тело {evidence['body_atr']:.2f} ATR" if evidence.get("body_atr") is not None else ""),
-        f"Уровень: {row['level_label']} — {level_geometry_text(row['level'])}",
-        f"Свеча пробоя: {_utc(breakout['open_time_ms'])} O {_price(breakout['open'])} "
-        f"C {_price(breakout['close'])}" if breakout else "Свеча пробоя: —",
-        f"Ретест: {row['first_retest_text']}",
-        f"FVG: {row['imbalance_text']}",
-        f"Источники: {row['sources_text']}",
-        "Робот: событие наблюдения — PAPER-допуск и исполнение проверяются отдельно",
-    ]
-    return "\n".join(lines)
+    ))
 
 
 # Observation-delivery backpressure: Scanner coverage takes precedence over
@@ -903,6 +888,12 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
     rows = {row["level_id"]: row for row in project_state(state)}
     sent = 0
     for item in list(state["pending_notifications"]):
+        if item.get("kind") == "first_retest":
+            # Retire old pending retest observations without sending or
+            # reclassifying a historical event. No retroactive Telegram spam.
+            state["pending_notifications"].remove(item)
+            save_state(state, root)
+            continue
         # At most one network delivery per (symbol, timeframe) call; an outage
         # must not hold the Scanner behind thousands of old MIRROR cards.
         if not test_mode:
