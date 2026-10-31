@@ -196,35 +196,34 @@ def execute_flat_handoff(
     else:
         _assert(snapshots["backend"].get("build_sha") == expected_build_sha,
                 "installed_build_sha_changed")
+    # IMPORTANT: all HTTP reads precede BEGIN IMMEDIATE. The backend's HTTP
+    # handler can itself need the PAPER SQLite writer slot; an HTTP request
+    # while holding that slot deadlocks the owner and times out.
+    # The second snapshot refreshes all in-process protection immediately before
+    # the barrier, which then fixes the durable state until the one signal.
+    if snapshots_from_live:
+        fresh = get_snapshots()
+        _assert(
+            fresh["backend"].get("process_instance_id")
+            == snapshots["backend"].get("process_instance_id"),
+            "backend_instance_changed",
+        )
+        if legacy_unversioned:
+            legacy_attestor(expected_pid, token, fresh["backend"])
+        else:
+            _assert(
+                fresh["backend"].get("build_sha") == expected_build_sha,
+                "installed_build_sha_changed_during_proof",
+            )
+        snapshots = fresh
     with writer_guard(db_path) as conn:
-        # Do not trust an earlier stand-alone FLAT snapshot.
+        # Hold the writer reservation only for durable attestation and
+        # the single process signal; NEVER call the backend HTTP API here.
         proof = prove_flat_recovery(
             conn, expected_identity=expected_identity, **snapshots,
         )
         _assert(proof == "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY",
                 "flat_recovery_evidence_missing")
-        # In production re-read in-process protection while the PAPER writer
-        # barrier is held. Never signal on a stale coverage snapshot.
-        if snapshots_from_live:
-            fresh = get_snapshots()
-            _assert(
-                fresh["backend"].get("process_instance_id")
-                == snapshots["backend"].get("process_instance_id"),
-                "backend_instance_changed",
-            )
-            if legacy_unversioned:
-                legacy_attestor(expected_pid, token, fresh["backend"])
-            else:
-                _assert(
-                    fresh["backend"].get("build_sha") == expected_build_sha,
-                    "installed_build_sha_changed_during_proof",
-                )
-            _assert(
-                prove_flat_recovery(
-                    conn, expected_identity=expected_identity, **fresh,
-                ) == "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY",
-                "flat_recovery_evidence_changed",
-            )
         _assert(service_pid() == expected_pid and start_token(expected_pid) == token,
                 "backend_process_changed_during_proof")
         if not execute:
