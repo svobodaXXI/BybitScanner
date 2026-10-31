@@ -474,16 +474,12 @@ def send_signal(
     if not message:
         return False
 
-    all_delivered = send_message_to_recipients(
-        message
-    )
-
     symbol = result.get(
         "symbol"
     )
 
     if not symbol:
-        return all_delivered
+        return False
 
     timeframe = str(
         result.get(
@@ -512,6 +508,12 @@ def send_signal(
         # A text-only message is not a completed Scanner signal card.
         # Preserve a failed delivery result for the bounded retry path.
         return False
+
+    # Do not emit an orphan text-only Scanner card when its image was
+    # missing at send time. The caller can retain/retry the same signal.
+    all_delivered = send_message_to_recipients(
+        message
+    )
 
     owner_chat_id = get_telegram_owner_chat_id()
     handoff = prepare_robot_handoff(

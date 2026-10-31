@@ -467,40 +467,38 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             )
 
     def test_first_recipient_failure_does_not_block_second(self):
-        with patch.object(
-            notification.config,
-            "TELEGRAM_CHAT_IDS",
-            ("owner", "friend"),
-        ), patch.object(
-            notification,
-            "send_message",
-            side_effect=[RuntimeError("owner unavailable"), {"ok": True}],
-        ) as message_mock, patch.object(
-            notification.os.path,
-            "exists",
-            return_value=False,
-        ):
-            delivered = notification.send_signal(self.signal())
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "BTCUSDT_analysis.png").write_bytes(b"test-image")
+            with patch.object(
+                notification.config, "TELEGRAM_CHAT_IDS", ("owner", "friend"),
+            ), patch.object(
+                notification, "CHARTS_DIR", directory,
+            ), patch.object(
+                notification, "send_message",
+                side_effect=[RuntimeError("owner unavailable"), {"ok": True}],
+            ) as message_mock, patch.object(
+                notification, "send_photo", return_value={"ok": True},
+            ):
+                delivered = notification.send_signal(self.signal())
 
         self.assertFalse(delivered)
         self.assertEqual(message_mock.call_count, 2)
         self.assertEqual(message_mock.call_args_list[1].args[1], "friend")
 
     def test_second_recipient_failure_does_not_cancel_first(self):
-        with patch.object(
-            notification.config,
-            "TELEGRAM_CHAT_IDS",
-            ("owner", "friend"),
-        ), patch.object(
-            notification,
-            "send_message",
-            side_effect=[{"ok": True}, {"ok": False, "description": "blocked"}],
-        ) as message_mock, patch.object(
-            notification.os.path,
-            "exists",
-            return_value=False,
-        ):
-            delivered = notification.send_signal(self.signal())
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "BTCUSDT_analysis.png").write_bytes(b"test-image")
+            with patch.object(
+                notification.config, "TELEGRAM_CHAT_IDS", ("owner", "friend"),
+            ), patch.object(
+                notification, "CHARTS_DIR", directory,
+            ), patch.object(
+                notification, "send_message",
+                side_effect=[{"ok": True}, {"ok": False, "description": "blocked"}],
+            ) as message_mock, patch.object(
+                notification, "send_photo", return_value={"ok": True},
+            ):
+                delivered = notification.send_signal(self.signal())
 
         self.assertFalse(delivered)
         self.assertEqual(message_mock.call_count, 2)
