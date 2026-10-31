@@ -3818,10 +3818,14 @@ class PaperRuntime:
                     reason="paper_close_all", expected_version=runtime.version,
                     updated_at_ms=max(int(time.time() * 1000), runtime.updated_at_ms),
                 )
-            elif runtime.recovery_status not in ("PAUSED", "RECONCILIATION_REQUIRED"):
-                raise PaperCloseAllRejected("robot_reconciliation_in_progress")
-        elif (runtime.mode, runtime.recovery_status) != ("ROBOT_STOPPED", "ROBOT_STOPPED"):
-            raise PaperCloseAllRejected("robot_reconciliation_required")
+            elif runtime.recovery_status not in (
+                "PAUSED", "RECONCILIATION_REQUIRED", "RECONCILING",
+            ):
+                raise PaperCloseAllRejected("robot_recovery_state_unknown")
+        elif runtime.mode != "ROBOT_STOPPED" or runtime.recovery_status not in (
+            "ROBOT_STOPPED", "RECONCILIATION_REQUIRED",
+        ):
+            raise PaperCloseAllRejected("robot_recovery_state_unknown")
 
 
         def fail(reason: str) -> None:
@@ -3877,8 +3881,9 @@ class PaperRuntime:
                 if item.symbol == symbol
             ):
                 fail("robot_owner_unproven")
-        if runtime.mode == "ROBOT_STOPPED" and robot_symbols:
-            raise PaperCloseAllRejected("stopped_robot_has_open_exposure")
+        # A STOPPED Robot has no entry authority, but the owner still retains
+        # PAPER exit authority for positively attested Robot-owned positions.
+        # Do not require Robot start/resume just to close its exposure.
         if self.store.load_unresolved_paper_protection_obligations(account_id):
             fail("robot_protection_obligation_unresolved")
 
