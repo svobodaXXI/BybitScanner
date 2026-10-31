@@ -227,6 +227,49 @@ class MirrorChartDeliveryTests(unittest.TestCase):
             text_sender.assert_not_called()
 
 
+class MirrorAttachmentClassificationTests(unittest.TestCase):
+    def test_only_attached_execution_is_mirror_not_not_attached_box(self):
+        from unittest.mock import patch
+        from robot_position_view import load_position_view
+
+        trade = SimpleNamespace(
+            trade_id="t1", candidate_id="c1", symbol=Symbol("SAGAUSDT"),
+            entry_time_ms=1000, exit_time_ms=2000, direction="LONG",
+            pattern="IKIGAI_BOX", entry_quantity=Decimal("1"),
+            average_entry=Decimal("100"), stop_price=Decimal("98"),
+            take_price=Decimal("105"), exit_price=Decimal("103"))
+        metadata = {
+            "decision": "NOT_ATTACHED", "mirror_level_source": "swing_zone",
+            "mirror_timeframe": "5", "boundary": {"anchor_price": "100"},
+        }
+        candidate = SimpleNamespace(
+            robot_state={"execution": {"mirror": metadata}},
+            signal_snapshot={"pattern": "IKIGAI_BOX"},
+        )
+        store = SimpleNamespace(
+            get_position_projection=lambda key: None,
+            get_robot_trade=lambda trade_id: trade,
+            get_robot_candidate=lambda candidate_id: candidate,
+            get_robot_reentry_attempt_index=lambda account, candidate_id: None,
+        )
+        with patch("robot_position_view._trade_markers", return_value=((), None)):
+            not_attached = load_position_view(store, "SAGAUSDT", trade_id="t1", now_ms=2000)
+            self.assertFalse(not_attached.mirror_campaign)
+            self.assertIsNone(not_attached.mirror_level_source)
+            self.assertIsNone(not_attached.mirror_boundary)
+            self.assertNotIn("🪞 MIRROR", format_lifecycle_caption(
+                LifecycleEvent(EVENT_OPENED, "t1", "SAGAUSDT", 1000), not_attached))
+            metadata["decision"] = "ATTACHED"
+            attached = load_position_view(store, "SAGAUSDT", trade_id="t1", now_ms=2000)
+            self.assertTrue(attached.mirror_campaign)
+            self.assertEqual(attached.mirror_level_source, "swing_zone")
+            self.assertIn("🪞 MIRROR", format_lifecycle_caption(
+                LifecycleEvent(EVENT_OPENED, "t1", "SAGAUSDT", 1000), attached))
+            metadata.pop("decision")
+            absent = load_position_view(store, "SAGAUSDT", trade_id="t1", now_ms=2000)
+            self.assertFalse(absent.mirror_campaign)
+
+
 class CampaignHistoryMarkerTests(unittest.TestCase):
     def test_only_closed_prior_same_campaign_fills_are_added(self):
         from unittest.mock import patch
@@ -244,7 +287,8 @@ class CampaignHistoryMarkerTests(unittest.TestCase):
             trade_id="unfinished", candidate_id="candidate-3", symbol=Symbol("SAGAUSDT"),
             entry_time_ms=1500, exit_time_ms=None)
         source = SimpleNamespace(robot_state={"execution": {"mirror": {
-            "mirror_level_source": "swing_zone", "mirror_timeframe": "5"}}},
+            "decision": "ATTACHED", "mirror_level_source": "swing_zone",
+            "mirror_timeframe": "5"}}},
             signal_snapshot=None)
         store = SimpleNamespace(
             get_position_projection=lambda key: None,
