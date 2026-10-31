@@ -1,3 +1,15 @@
+## CURRENT P0 — 2026-11-01 PAPER Close-All / BUSDT recovery / trading-loss analysis
+
+**Owner's latest command:** close all PAPER positions; then document new blockers and analyze losses. A post-command VPS execution receipt has **not** been supplied: account FLAT is **UNVERIFIED**, not assumed. Last read-only VPS snapshot (2026-11-01 00:00:33 MSK) showed VIRTUALUSDT SHORT 422 with confirmed STOP/TAKE, BUSDT STOP executed/Flat but obligation DISPATCHING, Robot RECONCILIATION_REQUIRED, Admission false, scanner operating on old release `d345411c`. Stable `a95a847f` contains merged #730/#731 but was not deployed.
+
+**Critical new blocker:** canonical `/api/close-all` first tries to resolve all STOP obligations. The installed version's BUSDT immutable STOP-vs-TAKE conflict prevents this and can reject before VIRTUAL Market close. Robot-only Close-All is illegal from RECONCILIATION_REQUIRED; do not fall back to generic `/api/full-close`/raw Market/SQL. Coordinated Close-All can set Autopilot OFF before failure, so no-op/rollback is not implied. This is a **code-path prediction**, not evidence that owner-requested Close-All actually failed. Get one actual operation receipt/state before deciding remediation.
+
+**Financial findings (same read-only snapshot, NOT a post-close total):** 26 closed cycles (2 wins, 24 losses), realized gross -13.910655 USDT, paid closed-cycle fees 5.672365335, realized net **-19.583020335 USDT**, profit factor 0.0587. All-strategy WEDGE 8/8 losses, -9.3119 net; MIRROR -5.0704; IKIGAI_BOX -2.8052. Last 20 exits include nine EMERGENCY; known AAVE STOP reprice, API3 ~56-minute late exit, BUSDT false TAKE classification distort evaluation. Do **not** claim all losses are signal defects or that patched runtime is accepted.
+
+**Owning forensic/causal document:** [PAPER_VPS_BLOCKERS_LOSS_REVIEW_20261101.md](PAPER_VPS_BLOCKERS_LOSS_REVIEW_20261101.md). Action order: (1) prove outcome of the explicitly authorized Close-All, fail closed on conflict; (2) safe release transition/one canonical reconcile after FLAT or independently proven protection continuity; (3) trade-by-trade post-recovery split of emergency/STOP/TAKE, execution delays, fees, signal validity. Earlier owner queue below remains intact and is not deleted or silently reprioritized. No LIVE, manual DB modifications or forced restarts. No XP for documentation, merges or CI.
+
+---
+
 ## OWNER QUEUE — 2026-10-31 — CURRENT UNFINISHED WORK (PAUSED BY OWNER)
 
 **Owner decision:** Queue every remaining issue from the 2026-10-31 MIRROR / Robot chart / Telegram feedback. **No further patches, PR merges, Gateway/Cloudflare/VPS deployment, trading mutations or owner prompts now.** Keep existing detailed backlog sections below; this is a single prioritized index, not a replacement. Development owner: ChatGPT via GitHub; Codex performs only bounded VPS operations, never code development. LIVE forbidden; never bypass PAPER Admission, STOP/TAKE, risk, protection, reconciliation, DB identity or dirty-worktree safety. CI and merges are not runtime acceptance.
