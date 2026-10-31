@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from mirror_scanner import _frozen_event_chart, mirror_source_token
+from mirror_scanner import _frozen_event_chart, mirror_source_token, mirror_subtype, mirror_caption
 
 
 class Level:
@@ -26,6 +26,40 @@ class Level:
                 "slope_per_ms": 0,
             },
         }
+
+
+
+
+def test_mirror_subtype_uses_canonical_detector_source_not_horizontal_appearance():
+    from mirror_levels.levels import SOURCE_PATTERN_BOUNDARY, SOURCE_SWING_ZONE
+
+    assert mirror_subtype(SOURCE_PATTERN_BOUNDARY, "Rising Wedge", "breakout") == (
+        "Граница паттерна · Rising Wedge"
+    )
+    assert mirror_subtype(SOURCE_PATTERN_BOUNDARY, "IKIGAI_BOX", "breakout") == (
+        "Граница паттерна · IKIGAI_BOX"
+    )
+    assert "смена роли не подтверждена" in mirror_subtype(
+        SOURCE_SWING_ZONE, None, "breakout"
+    )
+    assert "не подтверждена" in mirror_subtype(SOURCE_SWING_ZONE, None, "first_retest")
+    assert mirror_subtype(
+        SOURCE_SWING_ZONE, None, "first_retest", retest_confirmed=True
+    ) == "Зеркальный уровень"
+    assert mirror_subtype(None, None, "breakout") == "Источник уровня не подтверждён"
+
+
+def test_mirror_card_shows_source_not_merged_alias_or_visual_line():
+    row = {
+        "symbol": "TESTUSDT", "timeframe": "5",
+        "level": {"source": "pattern_boundary", "pattern": "Triangle Compression",
+                  "anchors": [[0, 1]], "boundary": {"slope_per_ms": 0, "anchor_price": 1}},
+        "level_label": "swing upper",
+        "sources_text": "swing", "first_retest_text": "—", "imbalance_text": "—",
+    }
+    card = mirror_caption(row, "breakout")
+    assert "Граница паттерна · Triangle Compression" in card
+    assert "Зеркальный уровень" not in card
 
 
 def test_snapshot_contains_only_exact_source_boundaries():
