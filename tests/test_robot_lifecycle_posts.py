@@ -160,7 +160,7 @@ class LifecycleCaptionTests(unittest.TestCase):
         )
         opened = LifecycleEvent(EVENT_OPENED, "t1", "SAGAUSDT", 1)
         self.assertEqual(format_lifecycle_caption(opened, view),
-            "🪞 MIRROR · SAGAUSDT · 5m\\nГоризонтальный уровень · смена роли не подтверждена\\nПовторный перезаход №1")
+            "🪞 MIRROR · SAGAUSDT · 5m\nГоризонтальный уровень · смена роли не подтверждена\nПовторный перезаход №1")
         closed = LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 2, "STOP")
         self.assertIn("Сделка закрыта · по стопу", format_lifecycle_caption(closed, view))
         self.assertIn("Зеркальный уровень", format_lifecycle_caption(opened,
