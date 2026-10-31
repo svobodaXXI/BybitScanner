@@ -5105,8 +5105,8 @@ class SQLiteStore:
             """SELECT t.trade_id, t.candidate_id, t.trading_account_id, t.symbol
                FROM robot_trades t JOIN robot_candidates c
                  ON c.candidate_id=t.candidate_id
-               WHERE t.pattern='IKIGAI_BOX' AND t.exit_time_ms IS NULL
-                 AND c.status='OPEN'
+               WHERE t.pattern='IKIGAI_BOX'
+                 AND c.status IN ('OPEN', 'CLOSED')
                  AND json_extract(c.signal_snapshot_json,
                                   '$.source_box_candidate_id')=?""",
             (source_candidate_id,),
@@ -5122,7 +5122,7 @@ class SQLiteStore:
         ).fetchone()
         if (
             obligation is None or obligation["status"] not in
-            ("TRIGGERED", "DISPATCHING")
+            ("TRIGGERED", "DISPATCHING", "RESOLVED")
             or obligation["winning_leg"] not in
             ("STOP", "TAKE", "EMERGENCY_CLOSE")
             or obligation["order_id"] == original["order_id"]
