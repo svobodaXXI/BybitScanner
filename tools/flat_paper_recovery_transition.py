@@ -2,8 +2,9 @@
 
 No trading or SQL mutation. Unlike canonical STOP this may interrupt the old
 backend while its reconciliation is stuck; it is NOT an ordinary operator stop.
-Requires explicit operator --execute and exact expected PID, build SHA, immutable
-process start token, and fresh FLAT proof under a SQLite writer barrier.
+Requires explicit operator --execute and exact expected PID, process identity,
+immutable process start token and fresh FLAT proof under a writer barrier.
+The incident-scoped legacy-unversioned case never claims to prove Git SHA.
 
 Does not deploy or restart anything. Never escalates to SIGKILL or retries an
 ambiguous interruption. Production use additionally requires owner approval.
@@ -24,6 +25,13 @@ from tools.runtime_intent import expected_database_identity, http_get
 from tools.stop_robot_runtime import _database_path, _environment
 
 UNIT = "bybitscanner-paper-backend.service"
+# One-off identity for the original unversioned, still-running PAPER process.
+# These are constraints, NOT proof of any Git commit or an authorization to signal.
+LEGACY_UNVERSIONED_PID = 500879
+LEGACY_UNVERSIONED_START = "52729568"
+LEGACY_UNVERSIONED_INSTANCE = "367ef560-cd92-4dc2-8029-0b56a3540428"
+LEGACY_UNVERSIONED_EXPECTED_MARKER = "d345411c95a079a2c8ac3cd02d9f875700ba8ca3"
+
 ROOT = Path("/opt/BybitScanner")
 PAPER_HTTP = "http://127.0.0.1:8765"
 ROUTES = {
@@ -100,6 +108,48 @@ def _send_exact_sigint(pid: int, start_token: str) -> None:
         os.close(fd)
 
 
+
+def _has_exact_local_listener(pid: int) -> bool:
+    """Prove the systemd MainPID itself owns the 127.0.0.1:8765 LISTEN fd."""
+    try:
+        listening = set()
+        for row in Path("/proc/net/tcp").read_text().splitlines()[1:]:
+            fields = row.split()
+            if fields[1].upper() == "0100007F:223D" and fields[3] == "0A":
+                listening.add(fields[9])
+        if len(listening) != 1:
+            return False
+        fds = Path(f"/proc/{pid}/fd")
+        return any(
+            fd.is_symlink() and os.readlink(fd) == f"socket:[{next(iter(listening))}]"
+            for fd in fds.iterdir()
+        )
+    except (OSError, IndexError, ValueError):
+        return False
+
+
+def _attest_legacy_unversioned(
+    pid: int, start_token: str, backend: dict,
+) -> None:
+    """Authorize only the *exact* legacy process identity, not its unproven SHA."""
+    _assert(
+        pid == LEGACY_UNVERSIONED_PID
+        and start_token == LEGACY_UNVERSIONED_START
+        and backend.get("process_instance_id") == LEGACY_UNVERSIONED_INSTANCE
+        and backend.get("build_sha") == "",
+        "legacy_unversioned_identity_mismatch",
+    )
+    try:
+        environment = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+    except OSError as exc:
+        raise FlatRecoveryBlocked("legacy_process_environment_unreadable") from exc
+    _assert(
+        not any(item.startswith(b"BYBITSCANNER_BUILD_SHA=") for item in environment),
+        "legacy_build_environment_changed",
+    )
+    _assert(_has_exact_local_listener(pid), "backend_listener_owner_unproven")
+
+
 @contextmanager
 def _frozen_snapshot(path: Path):
     _assert(path.is_file(), "paper_database_missing")
@@ -122,6 +172,7 @@ def _frozen_snapshot(path: Path):
 def execute_flat_handoff(
     *, db_path: Path, expected_identity: str, expected_pid: int,
     expected_build_sha: str, execute: bool, snapshots=None,
+    legacy_unversioned: bool = False, legacy_attestor=_attest_legacy_unversioned,
     service_pid=_service_pid, start_token=_process_start_token,
     send_interrupt=None, is_alive=None, writer_guard=_frozen_snapshot,
     monotonic=time.monotonic, sleep=time.sleep,
@@ -133,13 +184,18 @@ def execute_flat_handoff(
             "expected_build_sha_invalid")
     snapshots_from_live = snapshots is None
     snapshots = snapshots if snapshots is not None else get_snapshots()
-    _assert(snapshots["backend"].get("build_sha") == expected_build_sha,
-            "installed_build_sha_changed")
     _assert(snapshots["backend"].get("process_instance_id"),
             "backend_process_instance_unproven")
     _assert(service_pid() == expected_pid, "systemd_main_pid_changed")
     token = start_token(expected_pid)
     _assert(bool(token), "backend_start_token_missing")
+    if legacy_unversioned:
+        _assert(expected_build_sha == LEGACY_UNVERSIONED_EXPECTED_MARKER,
+                "legacy_expected_release_marker_mismatch")
+        legacy_attestor(expected_pid, token, snapshots["backend"])
+    else:
+        _assert(snapshots["backend"].get("build_sha") == expected_build_sha,
+                "installed_build_sha_changed")
     with writer_guard(db_path) as conn:
         # Do not trust an earlier stand-alone FLAT snapshot.
         proof = prove_flat_recovery(
@@ -156,6 +212,13 @@ def execute_flat_handoff(
                 == snapshots["backend"].get("process_instance_id"),
                 "backend_instance_changed",
             )
+            if legacy_unversioned:
+                legacy_attestor(expected_pid, token, fresh["backend"])
+            else:
+                _assert(
+                    fresh["backend"].get("build_sha") == expected_build_sha,
+                    "installed_build_sha_changed_during_proof",
+                )
             _assert(
                 prove_flat_recovery(
                     conn, expected_identity=expected_identity, **fresh,
@@ -188,6 +251,10 @@ def main(argv=None) -> int:
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
     parser.add_argument("--expected-pid", type=int, required=True)
     parser.add_argument("--expected-build-sha", required=True)
+    parser.add_argument(
+        "--legacy-unversioned-20261031", action="store_true",
+        help="Only known PID/starttime/instance with unset build SHA; Git SHA NOT proven",
+    )
     parser.add_argument("--execute", action="store_true",
                         help="One exceptional SIGINT; needs separate owner authorization")
     args = parser.parse_args(argv)
@@ -199,6 +266,7 @@ def main(argv=None) -> int:
             expected_pid=args.expected_pid,
             expected_build_sha=args.expected_build_sha,
             execute=args.execute,
+            legacy_unversioned=args.legacy_unversioned_20261031,
         )
     except (FlatRecoveryBlocked, OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"BLOCKED: {exc}; no new signal is authorized")

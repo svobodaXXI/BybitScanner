@@ -7,7 +7,9 @@ from unittest import mock
 
 from tests.test_flat_paper_recovery_gate import fixture, IDENTITY
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
-from tools.flat_paper_recovery_transition import execute_flat_handoff, _send_exact_sigint
+from tools.flat_paper_recovery_transition import (execute_flat_handoff, _send_exact_sigint,
+    _attest_legacy_unversioned, LEGACY_UNVERSIONED_PID,
+    LEGACY_UNVERSIONED_START, LEGACY_UNVERSIONED_INSTANCE)
 
 
 SHA = "d345411c95a079a2c8ac3cd02d9f875700ba8ca3"
@@ -130,6 +132,83 @@ class TransitionCase(unittest.TestCase):
                 _send_exact_sigint(PID, "old-instance")
             send.assert_not_called()
             close.assert_called_once_with(19)
+
+    def test_legacy_unversioned_identity_is_narrow_and_non_mutating(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(build_sha="", process_instance_id=LEGACY_UNVERSIONED_INSTANCE)
+        observed = []
+        @contextmanager
+        def barrier(_):
+            yield conn
+        result = execute_flat_handoff(
+            db_path=Path("/no-vps-access"), expected_identity=IDENTITY,
+            expected_pid=LEGACY_UNVERSIONED_PID, expected_build_sha=SHA,
+            execute=False, legacy_unversioned=True, snapshots=snapshots,
+            service_pid=lambda: LEGACY_UNVERSIONED_PID,
+            start_token=lambda p: LEGACY_UNVERSIONED_START,
+            legacy_attestor=lambda p, t, h: observed.append(
+                (p,t,h["process_instance_id"],h["build_sha"])),
+            writer_guard=barrier,
+        )
+        self.assertTrue(result.startswith("PRECHECK_ONLY:"))
+        self.assertEqual(observed, [(
+            LEGACY_UNVERSIONED_PID, LEGACY_UNVERSIONED_START,
+            LEGACY_UNVERSIONED_INSTANCE, "",
+        )])
+
+    def test_legacy_mode_rejects_other_expected_release(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(build_sha="", process_instance_id=LEGACY_UNVERSIONED_INSTANCE)
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "legacy_expected_release_marker_mismatch"):
+            execute_flat_handoff(
+                db_path=Path("/none"), expected_identity=IDENTITY,
+                expected_pid=LEGACY_UNVERSIONED_PID,
+                expected_build_sha="f"*40, execute=False,
+                legacy_unversioned=True, snapshots=snapshots,
+                service_pid=lambda: LEGACY_UNVERSIONED_PID,
+                start_token=lambda p: LEGACY_UNVERSIONED_START,
+            )
+
+    def test_legacy_attestation_rejects_changed_incident_identity(self):
+        examples = [
+            (LEGACY_UNVERSIONED_PID+1, LEGACY_UNVERSIONED_START,
+             LEGACY_UNVERSIONED_INSTANCE, ""),
+            (LEGACY_UNVERSIONED_PID, "52729569",
+             LEGACY_UNVERSIONED_INSTANCE, ""),
+            (LEGACY_UNVERSIONED_PID, LEGACY_UNVERSIONED_START,
+             "different-instance", ""),
+            (LEGACY_UNVERSIONED_PID, LEGACY_UNVERSIONED_START,
+             LEGACY_UNVERSIONED_INSTANCE, SHA),
+        ]
+        for pid, started, instance, sha in examples:
+            with self.subTest(pid=pid, started=started, instance=instance, sha=sha):
+                with self.assertRaisesRegex(FlatRecoveryBlocked,
+                                            "legacy_unversioned_identity_mismatch"):
+                    _attest_legacy_unversioned(
+                        pid, started,
+                        {"process_instance_id": instance, "build_sha": sha},
+                    )
+
+    def test_legacy_attestation_requires_unset_env_and_exact_listener(self):
+        backend = {"process_instance_id": LEGACY_UNVERSIONED_INSTANCE, "build_sha": ""}
+        with (mock.patch("tools.flat_paper_recovery_transition.Path.read_bytes",
+                         return_value=b"BYBITSCANNER_BUILD_SHA=other\\x00"),
+              mock.patch("tools.flat_paper_recovery_transition._has_exact_local_listener",
+                         return_value=True)):
+            with self.assertRaisesRegex(FlatRecoveryBlocked, "legacy_build_environment_changed"):
+                _attest_legacy_unversioned(
+                    LEGACY_UNVERSIONED_PID, LEGACY_UNVERSIONED_START, backend,
+                )
+        with (mock.patch("tools.flat_paper_recovery_transition.Path.read_bytes",
+                         return_value=b"BYBITSCANNER_PAPER_DB=/tmp/paper\\x00"),
+              mock.patch("tools.flat_paper_recovery_transition._has_exact_local_listener",
+                         return_value=False)):
+            with self.assertRaisesRegex(FlatRecoveryBlocked, "backend_listener_owner_unproven"):
+                _attest_legacy_unversioned(
+                    LEGACY_UNVERSIONED_PID, LEGACY_UNVERSIONED_START, backend,
+                )
 
     def test_owner_authorization_requires_exact_pid(self):
         with self.assertRaisesRegex(FlatRecoveryBlocked, "expected_pid_invalid"):
