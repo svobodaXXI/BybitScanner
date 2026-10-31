@@ -56,6 +56,7 @@ from terminal.application.robot_control import get_robot_runtime_status
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import RobotCandidateRecord, SQLiteStore
 from tradingview_bridge import create_tradingview_url
+from notification import build_tradingview_keyboard
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -709,13 +710,15 @@ def _format_signal_time(ms) -> str:
 
 
 def _repost_keyboard(symbol: str, timeframe: str) -> dict:
-    """Neutral keyboard: no Robot admission, review or MetaScalp actions on a repost."""
-    rows = []
+    """Restore normal navigation without reactivating Robot admission."""
     try:
-        rows.append([{"text": "📈 Open TradingView",
-                      "url": create_tradingview_url(symbol, timeframe)}])
+        rows = build_tradingview_keyboard(
+            symbol, timeframe, include_review_actions=True,
+            robot_candidate_id=None, robot_status_button=False,
+        )["inline_keyboard"]
     except Exception as exc:
-        print("[SIGNAL REPOST TV ERROR]", symbol, exc)
+        print("[SIGNAL REPOST NAV ERROR]", symbol, exc)
+        rows = []
     rows.append([{"text": "⬅️ К кандидатам", "callback_data": "monitor:list"}])
     return {"inline_keyboard": rows}
 
