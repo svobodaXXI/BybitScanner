@@ -64,6 +64,45 @@ class BoxFirstFillStopTests(unittest.TestCase):
         self.assertEqual(plan.actual_fill_net_rr, net_rr("28.25", "27.98"))
         self.assertLess(plan.actual_fill_net_rr, 2)
 
+    def test_later_box_topup_preserves_first_armed_stop_price(self):
+        # AAVE regression: P4 fill must not reprice an existing STOP.
+        snapshot = hims_snapshot()
+        first = stop_plan(snapshot, entry="28.25")
+        topup = stop_plan(snapshot, entry="28.19", quantity="6.63",
+                          existing_stop=str(first.stop_price))
+        self.assertEqual(topup.stop_price, first.stop_price)
+        self.assertGreater(topup.actual_fill_net_rr, D("0"))
+
+    def test_aave_real_fourth_fill_never_reprices_frozen_stop(self):
+        # AAVE 2026-10-31: P4 at 135.35 was immediately stopped only because
+        # the armed 135.44 STOP was wrongly tightened to 135.36.
+        snapshot = {
+            "pattern": "IKIGAI_BOX",
+            "identity": {"symbol": "AAVEUSDT"},
+            "plan": {
+                "direction": "SHORT",
+                "limit_prices": ["134.93", "135.07", "135.21", "135.35"],
+                "limit_quantities": ["1"] * 4,
+                "take_price": "134.04",
+                "stop_price": "135.44",
+            },
+            "inputs": {
+                "tick_size": "0.01",
+                "entry_fee_rate": "0.0006",
+                "target_fee_rate": "0.0006",
+                "stop_fee_rate": "0.0006",
+            },
+        }
+        candidate = {"candidate_id": "box-robot-aave",
+                     "status": "OPEN", "signal_snapshot": snapshot}
+        plan = rp.build_box_stop_only_plan(
+            candidate, {"direction": "SHORT"},
+            average_entry=D("135.14"), confirmed_position_quantity=D("4"),
+            existing_stop=D("135.44"),
+        )
+        self.assertEqual(plan.stop_price, D("135.44"))
+        self.assertEqual(plan.stop_request.trigger_price, D("135.44"))
+
     def test_the_strict_actual_fill_function_still_reports_the_shortfall(self):
         with self.assertRaises(rp.BoxActualFillRRUnsatisfied):
             rp.box_stop_for_actual_entry(hims_snapshot(), average_entry=D("28.25"))

@@ -3111,7 +3111,12 @@ class PaperRuntime:
             observed_ask_price=observed_ask,
             latched_at_ms=received_at_ms,
         )
-        return self._dispatch_paper_protection_obligation(record, now_ms=received_at_ms)
+        # The authoritative crossing event is itself valid execution evidence.
+        # Do not wait for a separate streamed snapshot: it may be missing or
+        # stale while the STOP has already triggered (API3 PAPER incident).
+        return self._dispatch_paper_protection_obligation(
+            record, now_ms=received_at_ms, recovery_book=book,
+        )
 
     def _dispatch_paper_protection_obligation(
         self, obligation: PaperProtectionObligationRecord, *, now_ms: int,
