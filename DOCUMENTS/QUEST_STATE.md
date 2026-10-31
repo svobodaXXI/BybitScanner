@@ -1,3 +1,9 @@
+## 🏰 Пауза активного квеста — 2026-10-31 — все незавершённые задачи в очереди
+
+Последняя команда владельца: **«все, незавершенные задачи поставь в очередь»**. Разработка и развёртывание приостановлены; список задач, доказательства, зависимости и очередность сохранены **в самом верху `DOCUMENTS/BACKLOG.md`**, раздел `OWNER QUEUE — 2026-10-31 — CURRENT UNFINISHED WORK`. В первую очередь: единая Telegram-карточка #726 (OPEN, CI PASS), аннулирование старого MIRROR-луча новым подтверждённым заколом #728 (OPEN, проверка последнего head была в процессе), вертикальная читаемость графиков #727 (OPEN, позиционная CI FAIL), проверка источников реальных входов ALCH/RAYDIUM/KMNO, автоматическая доставка графиков, полный цикл реальных перезаходов и guarded VPS acceptance. #724 и #725 уже merged, VPS-acceptance не доказана. ChatGPT отвечает за GitHub-разработку; Codex только VPS-операции. Не объединять PR и не менять VPS без отдельного разрешения; LIVE запрещён. XP не начислять.
+
+---
+
 ## Проверенное достижение сети — 2026-10-30 — Telegram Gateway
 
 PAPER VPS на `d1329214`: БД integrity OK, все позиции FLAT/synced, pending/obligations 0, торговые сервисы остановлены. Вручную установлен Cloudflare Worker `bybitscanner-gateway` → существующий Vercel Gateway; на VPS `paper.env` переведён на `https://bybitscanner-gateway.svoboda21vekaru.workers.dev`. VPS GET `/health` через Cloudflare успешен; владелец реально получил текст «Gateway test» и PNG «Gateway PNG test». **Сетевой путь текста и PNG доказан**, inline-кнопки/callback и полный Scanner/PAPER E2E пока нет. Пароль/секрет Gateway попал на скриншот и не был ротирован по решению владельца: риск открыт. Каноническая документация: `DOCUMENTS/TELEGRAM_CLOUDFLARE_VPS_PROVEN_ROUTE_20261030.md`. XP не начислять за сеть/документы.
