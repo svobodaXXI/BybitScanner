@@ -795,6 +795,7 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
         # Source identity is frozen from the selected detector level, never
         # inferred from the shape of a plotted line or merged source aliases.
         "source": selected.source, "pattern": selected.pattern,
+        "retest_confirmed": record.get("status") == STATUS_RETESTED,
         "event_kind": kind,
         "source_formation_ids": sorted({
             f"origin:{symbol}:{timeframe}:{source['parent_formation_id']}"
@@ -827,7 +828,8 @@ def level_geometry_text(level: Mapping[str, Any]) -> str:
     return f"наклонная A1 {_utc(t1)} {_price(p1)} → A2 {_utc(t2)} {_price(p2)}"
 
 
-def mirror_subtype(source: str | None, pattern: str | None, kind: str) -> str:
+def mirror_subtype(source: str | None, pattern: str | None, kind: str,
+                   *, retest_confirmed: bool = False) -> str:
     """Name only the selected detector's proven source, not its visual slope."""
     from mirror_levels.levels import SOURCE_PATTERN_BOUNDARY, SOURCE_SWING_ZONE
 
@@ -835,7 +837,7 @@ def mirror_subtype(source: str | None, pattern: str | None, kind: str) -> str:
         return "Граница паттерна · " + (str(pattern) if pattern else "тип не установлен")
     if source == SOURCE_SWING_ZONE:
         # A breakout is not yet proof that support/resistance switched roles.
-        return ("Зеркальный уровень" if kind == "first_retest"
+        return ("Зеркальный уровень" if kind == "first_retest" and retest_confirmed
                 else "Горизонтальный уровень · смена роли не подтверждена")
     return "Источник уровня не подтверждён"
 
@@ -849,7 +851,8 @@ def mirror_caption(row: Mapping[str, Any], kind: str) -> str:
     lines = [
         f"🪞 MIRROR · {row['symbol']} · {row['timeframe']}m",
         mirror_subtype((row.get("level") or {}).get("source"),
-                       (row.get("level") or {}).get("pattern"), kind),
+                       (row.get("level") or {}).get("pattern"), kind,
+                       retest_confirmed=row.get("status") == STATUS_RETESTED),
         f"Пробой {direction} (ретест-кампания {breakout.get('campaign_direction', '—')}), "
         f"{evidence.get('kind', '—')}"
         + (f", тело {evidence['body_atr']:.2f} ATR" if evidence.get("body_atr") is not None else ""),
