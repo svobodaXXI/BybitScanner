@@ -85,14 +85,14 @@ def create_manifest(root: Path, expected_sha: str) -> dict:
             ["git", "rev-parse", "--verify", "HEAD"], cwd=root,
             capture_output=True, check=True, timeout=15,
         ).stdout.decode("ascii").strip()
+        if head != expected_sha:
+            raise ReleaseIdentityBlocked("staging_commit_mismatch")
         tree = subprocess.run(
             ["git", "ls-tree", "-rz", "--full-tree", "HEAD"], cwd=root,
             capture_output=True, check=True, timeout=15,
         ).stdout
     except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
         raise ReleaseIdentityBlocked("staging_git_unavailable") from exc
-    if head != expected_sha:
-        raise ReleaseIdentityBlocked("staging_commit_mismatch")
     blobs = {}
     for row in tree.split(b"\0"):
         if not row:
