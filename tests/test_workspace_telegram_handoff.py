@@ -40,6 +40,35 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
         self.assertIn('target.searchParams.set("timeframe",timeframe)', LOGIN_HTML)
         self.assertNotIn("CF-Access", repr(send.call_args))
 
+    def test_signal_callback_reuses_configured_telegram_mini_app_url(self):
+        # Production /terminal uses BYBITSCANNER_WORKSPACE_URL; signal cards
+        # must not silently require a second environment variable.
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_WORKSPACE_URL": "https://83.217.213.181/login",
+            "TELEGRAM_CHAT_ID": "42",
+        }, clear=True), patch.object(handoff.requests, "get", side_effect=[
+            SimpleNamespace(status_code=200), SimpleNamespace(status_code=401),
+        ]), patch.object(handoff.telegram_gateway_client, "configured", return_value=True), \\
+                patch.object(handoff.telegram_gateway_client, "send_text", return_value={"ok": True}) as send:
+            handoff.deliver_workspace_link("42", mode="EDITOR", symbol="ETHUSDT", timeframe="15m")
+        button = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]
+        self.assertEqual(button["web_app"]["url"],
+                         "https://83.217.213.181/login?mode=EDITOR&symbol=ETHUSDT&timeframe=15m")
+
+    def test_malformed_mini_app_base_fails_before_delivery(self):
+        for bad in ("http://83.217.213.181/login",
+                    "https://83.217.213.181/login?token=secret",
+                    "https://83.217.213.181/other",
+                    "https://83.217.213.181/login#fragment"):
+            with self.subTest(base=bad), patch.dict("os.environ", {
+                "BYBITSCANNER_WORKSPACE_URL": bad, "TELEGRAM_CHAT_ID": "42",
+            }, clear=True), patch.object(handoff.requests, "get") as probe, \\
+                    patch.object(handoff.telegram_gateway_client, "send_text") as send:
+                with self.assertRaisesRegex(handoff.WorkspaceHandoffUnavailable, "invalid_workspace_link"):
+                    handoff.deliver_workspace_link("42", mode="EDITOR", symbol="ETHUSDT", timeframe="15m")
+                probe.assert_not_called()
+                send.assert_not_called()
+
     def test_missing_or_open_ingress_fails_closed(self):
         env = {"BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181",
                "TELEGRAM_CHAT_ID": "42"}
