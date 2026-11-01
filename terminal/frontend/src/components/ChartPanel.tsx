@@ -47,6 +47,7 @@ import {
 import { chartPriceFormat } from "../chart/priceFormat";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
+import { serializeReviewDrawings } from "../geometryFeedback/geometryReviewDraft";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
 import { normalizedLimitDraftPrice } from "../orders/limitDraft";
@@ -220,6 +221,25 @@ export function ChartPanel({
   const [drawings, setDrawings] = useState<DrawingObject[]>(
     historyRef.current.current,
   );
+  const [correctionExportStatus, setCorrectionExportStatus] = useState("");
+  const copyCorrectionDraft = async () => {
+    if (!editorMode || !signalIdentity) return;
+    try {
+      const corrected = serializeReviewDrawings(drawings, candles);
+      if (!corrected.length) throw new Error("Нет исправленных линий");
+      await navigator.clipboard.writeText(JSON.stringify({
+        schema_version: 1,
+        signal_id: signalIdentity,
+        label: "GEOMETRY_CORRECTED",
+        status: "DRAFT_ONLY",
+        corrected_boundaries: corrected,
+      }, null, 2));
+      setCorrectionExportStatus("Черновик коррекции скопирован. Scanner не обучен автоматически.");
+    } catch {
+      setCorrectionExportStatus("Не удалось скопировать черновик. Проверьте линии и доступ к буферу обмена.");
+    }
+  };
+
   const commit = useCallback((next: DrawingObject[]) => {
     historyRef.current.commit(next);
     setDrawings(next);
@@ -747,6 +767,14 @@ export function ChartPanel({
       aria-label="Candlestick chart"
     >
       <div className="chart-content-row">
+        {editorMode && signalIdentity && (
+          <div className="editor-correction-export">
+            <button type="button" onClick={() => void copyCorrectionDraft()}>
+              Скопировать исправленную геометрию
+            </button>
+            {correctionExportStatus && <output role="status" aria-live="polite">{correctionExportStatus}</output>}
+          </div>
+        )}
         <DrawingToolbar
           activeTool={tool}
           magnet={magnet}
