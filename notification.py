@@ -434,15 +434,39 @@ def build_tradingview_keyboard(
             ]
         )
 
-    # Owner callback targets the listener on the PC, not the phone browser.
-    # The listener prepares the local UI; HTTPS/QR are delivered separately.
+    # Scanner's raw Bybit intervals must map to the same chart timeframes as
+    # the Terminal. In particular 60/D are NOT 60m/Dm callback values.
     if include_review_actions:
-        tf = timeframe if timeframe.endswith(("s", "m", "h", "d")) else f"{timeframe}m"
+        tf = {
+            "1": "1m", "5": "5m", "15": "15m",
+            "60": "1h", "D": "1d",
+        }.get(timeframe, timeframe)
         if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
-            keyboard.append([
-                {"text": "✏️ Редактор", "callback_data": f"workspace:EDITOR:{symbol}:{tf}"},
-                {"text": "🖥 Терминал", "callback_data": f"workspace:TERMINAL:{symbol}:{tf}"},
-            ])
+            editor = {"text": "✏️ Редактор",
+                      "callback_data": f"workspace:EDITOR:{symbol}:{tf}"}
+            terminal = {"text": "🖥 Терминал",
+                        "callback_data": f"workspace:TERMINAL:{symbol}:{tf}"}
+            # Prefer the already accepted Telegram Mini App route on the VPS,
+            # avoiding an additional callback/Gateway hop per signal. Legacy
+            # cards and environments without a protected URL keep callbacks.
+            workspace_url = os.environ.get("BYBITSCANNER_WORKSPACE_URL", "").strip()
+            terminal_origin = os.environ.get("BYBITSCANNER_TERMINAL_HTTPS_URL", "").strip()
+            if workspace_url or terminal_origin:
+                try:
+                    from workspace_ready_link import workspace_link
+                    protected = workspace_url or terminal_origin
+                    parts = urlsplit(protected)
+                    if parts.path not in ("", "/", "/login"):
+                        raise ValueError("unexpected workspace path")
+                    origin = urlunsplit((parts.scheme, parts.netloc, "/login", "", ""))
+                    editor_link = workspace_link(origin, "EDITOR", symbol, tf)
+                    terminal_link = workspace_link(origin, "TERMINAL", symbol, tf)
+                    editor = {"text": "✏️ Редактор", "web_app": {"url": editor_link}}
+                    terminal = {"text": "🖥 Терминал", "web_app": {"url": terminal_link}}
+                except ValueError:
+                    # Never advertise an unsafe or malformed browser link.
+                    pass
+            keyboard.append([editor, terminal])
 
     return {
         "inline_keyboard": keyboard
