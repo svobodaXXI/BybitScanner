@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from pathlib import Path
 import signal
+import sqlite3
 import unittest
 from unittest import mock
 
@@ -58,14 +59,26 @@ class TransitionCase(unittest.TestCase):
         )
         return result, events, conn
 
-    def test_jasmy_incident_uses_separate_proof_inside_barrier_only(self):
+    def test_jasmy_incident_uses_named_rows_inside_barrier_only(self):
+        # Production _frozen_snapshot opens an ordinary sqlite3.Connection:
+        # unlike SQLiteStore.open(), it does not set sqlite3.Row. The legacy
+        # proof reuses SQLiteStore's mapping-based row parsers read-only.
+        def prove(conn, **_snapshots):
+            self.assertIs(conn.row_factory, sqlite3.Row)
+            self.assertEqual(
+                conn.execute("SELECT * FROM robot_runtime_state").fetchone()["mode"],
+                "ROBOT_RUNNING",
+            )
+            return JASMY_PROOF
+
         with mock.patch(
             "tools.flat_paper_recovery_transition.prove_jasmy_legacy_flat",
-            return_value=JASMY_PROOF,
+            side_effect=prove,
         ) as proof:
-            result, events, _ = self.case(jasmy_incident=True)
+            result, events, conn = self.case(jasmy_incident=True)
         self.assertTrue(result.startswith("PRECHECK_ONLY:"))
         self.assertEqual(events, ["barrier:enter", "barrier:exit"])
+        self.assertIs(conn.row_factory, sqlite3.Row)
         proof.assert_called_once()
 
     def test_jasmy_incident_one_pid_signal_only_after_proof(self):
