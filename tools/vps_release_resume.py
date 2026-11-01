@@ -69,6 +69,13 @@ def _verify_reviewed_dropins(
             raise ResumeBlocked("unexpected_systemd_dropin")
         names.add(path.name)
         try:
+            # An approved file in a writable/symlinked directory is not trusted.
+            for parent in (unit_dir, path.parent):
+                parent_stat = parent.lstat()
+                if (not parent.is_dir() or parent.is_symlink()
+                        or parent_stat.st_uid != trusted_uid
+                        or parent_stat.st_mode & 0o022):
+                    raise ResumeBlocked("unsafe_systemd_dropin_directory")
             stat = path.lstat()
             if (not path.is_file() or path.is_symlink() or stat.st_uid != trusted_uid
                     or stat.st_mode & 0o022):
