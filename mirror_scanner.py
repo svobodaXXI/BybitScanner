@@ -990,6 +990,7 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
     )
     from telegram_bot import send_photo
     from signal_archive import record_original_signal
+    from signal_mirror_geometry_producer import build_mirror_geometry_snapshot
     from mirror_event_chart import render_mirror_chart
     import tempfile
 
@@ -1047,17 +1048,20 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                             record_original_signal(
                                 first_id, symbol=symbol, timeframe=timeframe,
                                 pattern=row.get("level_label", "MIRROR"), text=text,
-                                image_bytes=image_bytes)
+                                image_bytes=image_bytes,
+                                geometry_snapshot=build_mirror_geometry_snapshot(first_id, frozen))
                         source_ready = False if test_mode else record_original_signal(
                             source_id, symbol=symbol, timeframe=timeframe,
                             pattern=row.get("level_label", "MIRROR"), text=text,
                             image_bytes=image_bytes, source_formation_ids=source_ids,
-                            source_campaign_first_id=first_id)
+                            source_campaign_first_id=first_id,
+                            geometry_snapshot=build_mirror_geometry_snapshot(source_id, frozen))
                         delivered = True
                         for chat_id in get_telegram_chat_ids():
                             is_owner = bool(owner_id and chat_id == owner_id)
                             markup = build_tradingview_keyboard(
-                                symbol, timeframe, include_review_actions=is_owner)
+                                symbol, timeframe, include_review_actions=is_owner,
+                                signal_id=source_id if is_owner and source_ready else None)
                             if is_owner and source_ready:
                                 markup["inline_keyboard"].insert(0, [{
                                     "text": "↩️ К сигналу",
