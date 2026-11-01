@@ -75,6 +75,7 @@ trading, runtime, Git/harness and secret-protection contracts intact.
 | Local/Codex edit, protected task, checkpoint or receipt | `DOCUMENTS/AGENT_GUIDE_FULL.md` → `Repository edits`, `Verification and publication`; `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `7.2 SCOPED_VERIFICATION_AND_CHECKPOINT_RULE` |
 | Tool/harness failure or redundant checks | `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `No harness recovery spiral`, `3.2.1a PROMPT BUDGET / NO TEST LOOPS`, `7.3 WORKFLOW_PROPORTIONALITY` |
 | Material architecture/governance/contract change | Applicable `DOCUMENTS/PROJECT_CONTRACTS.md`, `DOCUMENTS/PROJECT_RULES.md`, `DOCUMENTS/WORKFLOW_RULES.md`; `DOCUMENTS/AGENT_GUIDE_FULL.md` → `Trading / durable scope` where applicable |
+| AI-first / vibe-coding owner outcome, reusable tests, optional high-risk review | `DOCUMENTS/ASSISTANT_PROTOCOL.md` → `AI-FIRST RESULT DELIVERY`; `DOCUMENTS/DEVELOPMENT_VALIDATION_LOOP_PLAN.md` → §14; priorities: current `DOCUMENTS/BACKLOG.md` and `DOCUMENTS/ROADMAP.md` → `AI_FIRST_RESULT_ROADMAP_20261102` |
 | Repeated process friction | `.agents/references/workflow-improvement.md` → `Distill`, `Authority gate` |
 
 ## Trading, safety and product routes

@@ -610,3 +610,22 @@ For development planning purposes, v0.1 has two blocking quality gates:
 Once both gates are green, the feature freeze may be reviewed and queued
 Autopilot/dual-timeframe/secondary pattern work can be resumed in owner priority
 order. Green lower-tier tests alone do not declare v0.1 finished.
+
+## 14. AI-first / vibe-coding: proven practices (02.11.2026)
+
+**Use existing FAST → REPLAY → affected CI → owner acceptance.** No new
+phase, tool, agent fleet or mandatory review.
+
+| Open project / evidence | Adopt only |
+| --- | --- |
+| [Apache SkyWalking](https://skywalking.apache.org/blog/2026-03-08-agentic-vibe-coding/) — AI development with compatibility/E2E verification | Before risky changes, identify owner invariants; test old/new behavior independently. Do not optimize for lines or PR count. |
+| [OpenAI harness engineering](https://openai.com/index/harness-engineering/) — short repository instructions and cleanup | Reuse AGENTS routing; fix recurring problems in-place, via #766 only if proven. |
+| [Anthropic long-running agents](https://www.anthropic.com/research/effective-harnesses-for-long-running-agents) — checkpoints and end-to-end verification | Reuse Git/BACKLOG/QUEST_STATE, update only material state; no separate agent log. |
+| [aider repo map](https://aider.chat/docs/repomap.html) — relevant symbols first | Read owning path and affected tests, not a full repository dump. |
+| [GitHub Spec Kit](https://github.com/github/spec-kit) — different planning weight by change | Ordinary bug: small reproducible case. Material architecture: existing owning spec/CR. No mandatory ceremony. |
+
+**Application:** finish current protected PAPER P0 first. On the next normal
+task, apply the existing AI-FIRST RESULT DELIVERY guidance in ASSISTANT_PROTOCOL;
+after verified acceptance, use #766 to remove one *measured* source of owner
+actions, rework or repeated checks. If safety or effort worsens, defer or
+revert. Current priorities remain in BACKLOG/ROADMAP.

@@ -292,6 +292,31 @@ run, use `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` section
 incident playbook, not a new standing prerequisite for every launch.
 Existing owner-only runtime, PAPER/LIVE isolation and fail-closed rules prevail.
 
+### AI-FIRST RESULT DELIVERY — OWNER DECISION 2026-11-02
+
+Apply **inside** the existing Result-First workflow, not as a new gate,
+quest, agent role, approval or required document.
+
+- **One outcome:** owner specifies observable success and product constraints;
+  ChatGPT carries GitHub work through implementation, focused evidence and the
+  next authorized action. Codex handles VPS operations only. Internal PRs are
+  not separate user tasks; request only genuinely required owner approvals.
+- **Small context:** use AGENTS routing, current BACKLOG and owning code/spec;
+  load more only when a concrete dependency demands it. Do not duplicate state
+  or write progress logs without a significant verified change.
+- **Proportionate proof:** a routine bug needs a reproducible case and targeted
+  test; a material architecture/trading change needs its existing owning
+  contract, invariants and independent safety/compatibility checks. Reuse
+  FAST/REPLAY/affected CI, then actual owner acceptance. A green PR is not a
+  working PAPER result. Never adjust tests just to excuse a wrong design.
+- **Stop drift, not progress:** fix a proven ownership/design boundary instead
+  of patch loops. Optional independent review for high-risk changes only.
+  Remove repeating toil via issue #766 when measured, never by imposing a
+  new toolchain, dashboard, process stage or XP incentive.
+
+All protected trading, runtime, merge and fail-closed rules remain unchanged.
+Evidence and application examples: DEVELOPMENT_VALIDATION_LOOP_PLAN §14.
+
 ### Owner desktop launch surface — HARD UX CONTRACT (OWNER RULE 2026-09-27)
 
 The owner's canonical manual runtime UX is the existing desktop shortcut surface.
