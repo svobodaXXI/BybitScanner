@@ -73,8 +73,7 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
     def test_linux_callback_returns_truthful_result_and_no_pc_launch(self):
         callback = {"id": "callback-1", "message": {"chat": {"id": 42}}}
         parsed = {"mode": "EDITOR", "symbol": "BTCUSDT", "timeframe": "5m"}
-        with patch("telegram_review.os.name", "posix", create=True), \
-                patch.object(handoff, "deliver_workspace_link", return_value={"ok": True}) as deliver, \
+        with patch.object(handoff, "deliver_workspace_link", return_value={"ok": True}) as deliver, \
                 patch("workspace_owner_launcher.request_owner_workspace_open") as pc, \
                 patch.object(telegram_review, "_answer_callback") as answer:
             telegram_review._run_workspace_callback(callback, parsed)
@@ -85,8 +84,7 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
     def test_linux_callback_denies_unverified_connection(self):
         callback = {"id": "callback-1", "message": {"chat": {"id": 42}}}
         parsed = {"mode": "EDITOR", "symbol": "BTCUSDT", "timeframe": "5m"}
-        with patch("telegram_review.os.name", "posix", create=True), \
-                patch.object(handoff, "deliver_workspace_link", side_effect=handoff.WorkspaceHandoffUnavailable("missing")), \
+        with patch.object(handoff, "deliver_workspace_link", side_effect=handoff.WorkspaceHandoffUnavailable("missing")), \
                 patch.object(telegram_review, "_answer_callback") as answer:
             telegram_review._run_workspace_callback(callback, parsed)
         answer.assert_called_once_with("callback-1", "Редактор: защищённое HTTPS-соединение недоступно")
