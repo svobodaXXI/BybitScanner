@@ -20,7 +20,48 @@ import workspace_telegram_handoff as handoff
 from deploy.terminal_ingress.auth_server import LOGIN_HTML
 
 
+class ProbeSession:
+    """Preserve the existing transport mocks while inspecting session policy."""
+    instances = []
+
+    def __init__(self):
+        self.trust_env = True
+        self.instances.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def get(self, *args, **kwargs):
+        return handoff.requests.get(*args, **kwargs)
+
+
 class WorkspaceTelegramHandoffTests(unittest.TestCase):
+    def setUp(self):
+        ProbeSession.instances.clear()
+        session_patch = patch.object(handoff.requests, "Session", side_effect=ProbeSession)
+        session_patch.start()
+        self.addCleanup(session_patch.stop)
+
+    def test_dead_inherited_proxy_is_ignored_without_disabling_tls(self):
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181",
+            "TELEGRAM_CHAT_ID": "42",
+            "HTTP_PROXY": "socks5h://127.0.0.1:10809",
+            "HTTPS_PROXY": "socks5h://127.0.0.1:10809",
+        }, clear=True), patch.object(handoff.requests, "get", side_effect=[
+            SimpleNamespace(status_code=200), SimpleNamespace(status_code=401),
+        ]) as probe, patch.object(handoff.telegram_gateway_client, "configured", return_value=True), \
+                patch.object(handoff.telegram_gateway_client, "send_text", return_value={"ok": True}):
+            handoff.deliver_workspace_link("42", mode="EDITOR", symbol="ETHUSDT", timeframe="5m")
+        self.assertEqual(len(ProbeSession.instances), 1)
+        self.assertIs(ProbeSession.instances[0].trust_env, False)
+        self.assertEqual([call.args[0] for call in probe.call_args_list],
+                         ["https://83.217.213.181/login", "https://83.217.213.181/"])
+        self.assertTrue(all("verify" not in call.kwargs for call in probe.call_args_list))
+
     def test_linux_import_uses_installed_review_queue_not_windows_path(self):
         self.assertEqual(telegram_review.PROJECT_ROOT, Path(telegram_review.__file__).resolve().parent)
         self.assertEqual(telegram_review.REVIEW_QUEUE, telegram_review.PROJECT_ROOT / "review_queue")

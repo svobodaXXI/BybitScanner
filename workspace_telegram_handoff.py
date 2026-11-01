@@ -42,8 +42,12 @@ def deliver_workspace_link(chat_id: str, *, mode: str, symbol: str,
     # Direct HTTPS ingress from #687: real TLS and anonymous read denial.
     try:
         origin = f"{parts.scheme}://{parts.netloc}"
-        login = requests.get(origin + "/login", timeout=5, allow_redirects=False)
-        private = requests.get(origin + "/", timeout=5, allow_redirects=False)
+        # Telegram worker may inherit a dead SOCKS proxy. The approved HTTPS
+        # ingress is reached directly; keep Requests TLS verification enabled.
+        with requests.Session() as session:
+            session.trust_env = False
+            login = session.get(origin + "/login", timeout=5, allow_redirects=False)
+            private = session.get(origin + "/", timeout=5, allow_redirects=False)
         if login.status_code != 200 or private.status_code not in (401, 403):
             raise WorkspaceHandoffUnavailable("protected_terminal_ingress_unverified")
     except requests.RequestException as exc:
