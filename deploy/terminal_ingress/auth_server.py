@@ -87,8 +87,20 @@ LOGIN_HTML = """<!doctype html><html lang="ru"><meta charset="utf-8">
   const r=await fetch("/_telegram_auth",{method:"POST",credentials:"same-origin",
    headers:{"Content-Type":"text/plain"},body:w.initData,cache:"no-store"});
   if(!r.ok)throw Error("auth");
-  const next=new URLSearchParams(location.search).get("view");
-  location.replace(next==="positions"?"/?view=positions":"/");
+  const params=new URLSearchParams(location.search);
+  const view=params.get("view");
+  const mode=params.get("mode"), symbol=params.get("symbol"), timeframe=params.get("timeframe");
+  if(view==="positions" && !mode){location.replace("/?view=positions");return;}
+  if(!["EDITOR","TERMINAL"].includes(mode) ||
+     !/^[A-Z0-9]{2,32}USDT$/.test(symbol||"") ||
+     !["15s","1m","5m","15m","1h","1d"].includes(timeframe)){
+    location.replace("/");return;
+  }
+  const target=new URL("/",location.origin);
+  target.searchParams.set("mode",mode);
+  target.searchParams.set("symbol",symbol);
+  target.searchParams.set("timeframe",timeframe);
+  location.replace(target.pathname+target.search);
  }catch(e){document.getElementById("status").textContent="Доступ не разрешён.";}
 })();
 </script></body></html>"""
