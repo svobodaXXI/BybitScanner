@@ -546,6 +546,15 @@ def stop_robot(
                 "stop_robot is rejected while a Robot-owned position is open; "
                 "call pause_robot() and then close_all_now() first"
             )
+        # Candidate status is not trade ledger authority: a failed or partial
+        # close may leave an OPEN trade even after its candidate is terminal.
+        # Never commit STOPPED with unresolved durable ownership.
+        open_trades = store.load_open_robot_trades(PAPER_ACCOUNT_ID)
+        if open_trades:
+            raise RobotControlRejected(
+                "stop_robot is rejected while OPEN Robot trades remain: "
+                + ",".join(sorted(trade.trade_id for trade in open_trades))
+            )
         result = store.update_robot_runtime_state(
             PAPER_ACCOUNT_ID, mode=ROBOT_STOPPED, recovery_status=ROBOT_STOPPED, reason=None,
             expected_version=runtime.version, updated_at_ms=now,
