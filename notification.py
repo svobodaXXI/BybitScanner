@@ -366,6 +366,37 @@ def format_signal(
     return message.strip()
 
 
+
+def _owner_workspace_button(mode, symbol, timeframe):
+    """Direct Mini App for owner-only private signal cards.
+
+    Never embed credentials or degrade an invalid configured origin into an
+    unauthenticated URL. Without a configured origin, retain the old callback
+    so existing installations still have a working handoff.
+    """
+    from workspace_ready_link import workspace_link
+
+    base = (os.environ.get("BYBITSCANNER_TERMINAL_HTTPS_URL") or
+            os.environ.get("BYBITSCANNER_WORKSPACE_URL") or "").strip()
+    if base:
+        try:
+            parts = urlsplit(base)
+            if parts.path not in ("", "/", "/login") or parts.query or parts.fragment:
+                raise ValueError("Unexpected public workspace URL path")
+            url = workspace_link(
+                urlunsplit((parts.scheme, parts.netloc, "/login", "", "")),
+                mode, symbol, timeframe,
+            )
+            return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
+                    "web_app": {"url": url}}
+        except ValueError:
+            # Do not expose an unsafe URL. The callback path will verify HTTPS
+            # independently before offering a link.
+            pass
+    return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
+            "callback_data": f"workspace:{mode}:{symbol}:{timeframe}"}
+
+
 def build_tradingview_keyboard(
     symbol,
     timeframe,
@@ -440,8 +471,8 @@ def build_tradingview_keyboard(
         tf = timeframe if timeframe.endswith(("s", "m", "h", "d")) else f"{timeframe}m"
         if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
             keyboard.append([
-                {"text": "✏️ Редактор", "callback_data": f"workspace:EDITOR:{symbol}:{tf}"},
-                {"text": "🖥 Терминал", "callback_data": f"workspace:TERMINAL:{symbol}:{tf}"},
+                _owner_workspace_button("EDITOR", symbol, tf),
+                _owner_workspace_button("TERMINAL", symbol, tf),
             ])
 
     return {
