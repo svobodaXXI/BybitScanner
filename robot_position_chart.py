@@ -272,7 +272,9 @@ def render_position_chart(
 ) -> Path:
     candle_minutes = view.chart_candle_minutes
     candle_ms = candle_minutes * ONE_MINUTE_MS
-    df = _prepare_candles(candles_df).tail(VIEWPORT_CANDLES).copy()
+    # Retain the full immutable candle timeline for execution marker indexing;
+    # zoom the visible X window instead of discarding historical fills.
+    df = _prepare_candles(candles_df)
     times = df["time"].to_numpy(dtype="int64")
     out = Path(out_path) if out_path is not None else default_chart_path(view.symbol)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -306,18 +308,18 @@ def render_position_chart(
             (view.stop_price, "SL", STOP_COLOR, "-"),
             (view.take_price, "TP", TAKE_COLOR, "-"),
         ]
-        limits = _price_viewport(df, view)
+        limits = _price_viewport(df.tail(VIEWPORT_CANDLES), view)
         # Price axis is owned by candle visibility, not all frozen targets.
         # Preserve full Box grid labels without forcing the plotted range.
         offscreen = {"above": 0, "below": 0}
 
         def show_level(price: float, label: str, color: str, style: str) -> None:
-            # Retain every real frozen level and its existing line contract.
-            # Axes clipping hides out-of-viewport geometry at its actual
-            # price; an explicit edge label still shows the verified value.
-            # Never clamp a line to the viewport or expand the candle scale.
-            _draw_level(ax, price, label, color, style)
-            if not limits[0] <= price <= limits[1]:
+            # Drawing a data-coordinate label far outside the view makes
+            # bbox_inches="tight" explode image height. Plot actual levels
+            # only when visible; state distant verified values at the edge.
+            if limits[0] <= price <= limits[1]:
+                _draw_level(ax, price, label, color, style)
+            else:
                 edge = "above" if price > limits[1] else "below"
                 _draw_offscreen_level(ax, price, label, color, limits, offscreen[edge])
                 offscreen[edge] += 1
@@ -355,6 +357,10 @@ def render_position_chart(
                 # candle viewport; do not relocate them to an invented edge.
                 _draw_marker(ax, x, price, side, filled=filled)
 
+        # Zoom the last candles in X without reindexing or dropping any
+        # historic execution; older points stay at their true positions.
+        if len(df) > VIEWPORT_CANDLES:
+            ax.set_xlim(len(df) - VIEWPORT_CANDLES - 0.5, len(df) - 0.5)
         ax.set_ylim(*limits)
         fig.savefig(out, dpi=120 if wide else 100, bbox_inches="tight")
     finally:
