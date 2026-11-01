@@ -256,3 +256,23 @@ def test_unapproved_dropin_on_paper_start_is_rejected():
         with pytest.raises(ResumeBlocked, match="unexpected_systemd_dropin"):
             _systemd_state(unit, run=_mock_systemd(unit, unit_dir, [path]),
                 unit_dir=unit_dir, trusted_uid=os.getuid())
+
+
+def test_reviewed_dropin_in_writable_directory_is_rejected():
+    from tools.vps_release_resume import REVIEWED_DROPINS
+    unit = "bybitscanner-paper-backend.service"
+    with TemporaryDirectory() as tmp:
+        unit_dir = Path(tmp)
+        directory = unit_dir / (unit + ".d")
+        directory.mkdir(mode=0o755)
+        path = directory / "telegram-proxy.conf"
+        path.write_text("[Service]\n" + "\n".join(
+            REVIEWED_DROPINS[unit][path.name]
+        ) + "\n")
+        directory.chmod(0o777)
+        try:
+            with pytest.raises(ResumeBlocked, match="unsafe_systemd_dropin_directory"):
+                _systemd_state(unit, run=_mock_systemd(unit, unit_dir, [path]),
+                    unit_dir=unit_dir, trusted_uid=os.getuid())
+        finally:
+            directory.chmod(0o755)
