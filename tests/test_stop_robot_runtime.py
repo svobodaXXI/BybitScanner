@@ -47,6 +47,8 @@ class FakeRuntime:
         self.telegram_health = {"component": "telegram_monitoring", "status": "ready",
                                 "database_identity": IDENTITY}
         self.scanner_mode = "SCANNER_RUNNING"
+        self.autopilot_mode = "OFF"
+        self.autopilot_off_reply = (200, {"ok": True, "mode": "OFF"})
         self.protection = {
             "ok": True, "healthy": True, "covered_symbols": [], "coverage_roles": {},
             "armed_symbols": [], "unhealthy_symbols": {},
@@ -70,6 +72,8 @@ class FakeRuntime:
             return 200, dict(self.protection)
         if url == BACKEND + "/api/scanner/status":
             return 200, {"ok": True, "mode": self.scanner_mode}
+        if url == BACKEND + "/api/robot/autopilot":
+            return 200, {"ok": True, "mode": self.autopilot_mode}
         if url == TELEGRAM + "/health":
             if not self.telegram_alive:
                 raise shutdown.Unreachable("refused")
@@ -77,6 +81,15 @@ class FakeRuntime:
         raise AssertionError(f"unexpected GET {url}")
 
     def post(self, url, payload, timeout):
+        if url == BACKEND + "/api/robot/autopilot":
+            self.calls.append("autopilot:off")
+            assert payload == {"mode": "OFF"}
+            if isinstance(self.autopilot_off_reply, Exception):
+                raise self.autopilot_off_reply
+            status, body = self.autopilot_off_reply
+            if status == 200 and body.get("ok") is True:
+                self.autopilot_mode = body.get("mode", self.autopilot_mode)
+            return status, body
         if url == BACKEND + "/api/robot/reconcile":
             self.calls.append("robot:reconcile")
             assert payload == {}
@@ -166,6 +179,40 @@ class FakeRuntime:
 
 
 class FullShutdownTests(unittest.TestCase):
+    def test_all_freezes_autopilot_before_scanner_and_robot(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(runtime.autopilot_mode, "OFF")
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:stop",
+            "telegram:shutdown", "backend:shutdown",
+        ])
+        self.assertIn("autopilot:off", result.steps)
+
+    def test_all_does_not_stop_scanner_or_protection_on_rejected_autopilot_off(self):
+        for reply in ((409, {"ok": False, "error": "rejected"}),
+                      RuntimeError("unknown dispatch outcome")):
+            with self.subTest(reply=reply):
+                runtime = FakeRuntime(robot=READY)
+                runtime.autopilot_mode = "PAPER_AUTO"
+                runtime.autopilot_off_reply = reply
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertEqual(runtime.calls, ["autopilot:off"])
+                self.assertTrue(runtime.backend_alive)
+                self.assertEqual(runtime.scanner_mode, "SCANNER_RUNNING")
+                self.assertEqual(runtime.robot, READY)
+
+    def test_scanner_only_does_not_change_autopilot(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        result = runtime.orchestrator().run("scanner")
+        self.assertTrue(result.ok)
+        self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+
     def test_full_stop_orders_scanner_robot_telegram_backend(self):
         for robot in (READY, PAUSED):
             with self.subTest(robot=robot):
