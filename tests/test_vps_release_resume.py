@@ -139,9 +139,9 @@ def test_no_automatic_stop_start_sql_or_network_calls():
 
 def _mock_systemd(unit: str, unit_dir: Path, paths: list[Path]):
     output = (
-        f"LoadState=loaded\\nActiveState=inactive\\nMainPID=0\\n"
-        f"FragmentPath={unit_dir / unit}\\n"
-        f"DropInPaths={' '.join(str(p) for p in paths)}\\n"
+        f"LoadState=loaded\nActiveState=inactive\nMainPID=0\n"
+        f"FragmentPath={unit_dir / unit}\n"
+        f"DropInPaths={' '.join(str(p) for p in paths)}\n"
     )
     return lambda *args, **kw: SimpleNamespace(returncode=0, stdout=output)
 
@@ -156,7 +156,7 @@ def test_exact_reviewed_network_dropins_are_accepted_without_mutation():
             paths = []
             for name, lines in approved.items():
                 path = directory / name
-                path.write_text("[Service]\\n" + "\\n".join(lines) + "\\n")
+                path.write_text("[Service]\n" + "\n".join(lines) + "\n")
                 path.chmod(0o644)
                 paths.append(path)
             state = _systemd_state(
@@ -183,9 +183,9 @@ def test_reviewed_filename_does_not_authorize_extra_directives(tamper):
         directory = unit_dir / (unit + ".d")
         directory.mkdir()
         path = directory / "telegram-proxy.conf"
-        path.write_text("[Service]\\n" + "\\n".join(
+        path.write_text("[Service]\n" + "\n".join(
             REVIEWED_DROPINS[unit][path.name]
-        ) + "\\n" + tamper + "\\n")
+        ) + "\n" + tamper + "\n")
         with pytest.raises(ResumeBlocked, match="unreviewed_systemd_dropin_content"):
             _systemd_state(
                 unit, run=_mock_systemd(unit, unit_dir, [path]),
@@ -201,15 +201,15 @@ def test_reviewed_dropin_rejects_changed_proxy_and_untrusted_paths():
         directory = unit_dir / (unit + ".d")
         directory.mkdir()
         path = directory / "proxy.conf"
-        path.write_text("[Service]\\n" + "\\n".join(
+        path.write_text("[Service]\n" + "\n".join(
             REVIEWED_DROPINS[unit][path.name]
-        ).replace("127.0.0.1:10809", "127.0.0.1:10810") + "\\n")
+        ).replace("127.0.0.1:10809", "127.0.0.1:10810") + "\n")
         with pytest.raises(ResumeBlocked, match="unreviewed_systemd_dropin_content"):
             _systemd_state(unit, run=_mock_systemd(unit, unit_dir, [path]),
                 unit_dir=unit_dir, trusted_uid=os.getuid())
-        path.write_text("[Service]\\n" + "\\n".join(
+        path.write_text("[Service]\n" + "\n".join(
             REVIEWED_DROPINS[unit][path.name]
-        ) + "\\n")
+        ) + "\n")
         path.chmod(0o666)
         with pytest.raises(ResumeBlocked, match="unsafe_systemd_dropin_file"):
             _systemd_state(unit, run=_mock_systemd(unit, unit_dir, [path]),
@@ -231,9 +231,9 @@ def test_reviewed_dropin_symlink_and_wrong_owner_rejected():
         directory.mkdir()
         path = directory / "telegram-proxy.conf"
         target = unit_dir / "target.conf"
-        target.write_text("[Service]\\n" + "\\n".join(
+        target.write_text("[Service]\n" + "\n".join(
             REVIEWED_DROPINS[unit][path.name]
-        ) + "\\n")
+        ) + "\n")
         path.symlink_to(target)
         with pytest.raises(ResumeBlocked, match="unsafe_systemd_dropin_file"):
             _systemd_state(unit, run=_mock_systemd(unit, unit_dir, [path]),
@@ -252,7 +252,7 @@ def test_unapproved_dropin_on_paper_start_is_rejected():
         directory = unit_dir / (unit + ".d")
         directory.mkdir()
         path = directory / "proxy.conf"
-        path.write_text("[Service]\\nEnvironment=HTTP_PROXY=x\\n")
+        path.write_text("[Service]\nEnvironment=HTTP_PROXY=x\n")
         with pytest.raises(ResumeBlocked, match="unexpected_systemd_dropin"):
             _systemd_state(unit, run=_mock_systemd(unit, unit_dir, [path]),
                 unit_dir=unit_dir, trusted_uid=os.getuid())
