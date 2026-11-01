@@ -9,7 +9,8 @@ from decimal import Decimal
 from typing import Sequence
 
 from terminal.application.robot_manual_close_proof import RobotManualCloseEvidence
-from terminal.domain.models import Category, CommandState, Controller, OrderSide, PositionSide
+from terminal.domain.models import Category, Controller, OrderSide, PositionSide
+from terminal.domain.states import CommandState
 
 
 def prove_nonrobot_robot_close(
