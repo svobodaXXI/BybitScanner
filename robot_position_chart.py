@@ -49,6 +49,11 @@ LINE_COLOR = "#ff9800"
 # Windows up to CHART_MAX_CANDLES (see chart_candle_limit): above WIDE_WINDOW_CANDLES the
 # default canvas gives ~1 px per candle, so a wider, denser canvas keeps bodies visible.
 WIDE_WINDOW_CANDLES = 500
+# Telegram needs readable price action. A far-away TP is reported as an
+# off-screen value, not included in the price axis or allowed to flatten bars.
+VIEWPORT_CANDLES = 140
+VIEWPORT_PRICE_PAD = 0.12
+
 
 
 class PositionChartError(RuntimeError):
@@ -232,6 +237,34 @@ def _frozen_box_levels(view: PositionView) -> tuple[tuple[Decimal, str], ...]:
     )
 
 
+def _price_viewport(df: pd.DataFrame, view: PositionView) -> tuple[float, float]:
+    """Visible candle range with nearby entry/current price; distant exits never zoom out."""
+    low, high = float(df["low"].min()), float(df["high"].max())
+    span = high - low or abs(high) * 0.002 or 1.0
+    for value in (view.average_entry, view.last_price):
+        if value is not None:
+            price = float(value)
+            if math.isfinite(price) and low - span <= price <= high + span:
+                low, high = min(low, price), max(high, price)
+    span = high - low or abs(high) * 0.002 or 1.0
+    pad = span * VIEWPORT_PRICE_PAD
+    return low - pad, high + pad
+
+
+def _draw_offscreen_level(ax, price: float, label: str, color: str, limits: tuple[float, float], index: int) -> None:
+    """Label a distant verified level on the plot margin without modifying its Y range."""
+    direction = "выше" if price > limits[1] else "ниже"
+    edge_y = 0.985 if price > limits[1] else 0.015
+    offset = (-index * 0.045) if price > limits[1] else (index * 0.045)
+    ax.text(
+        0.985, edge_y + offset, f"{label} {direction} окна: {format_price(price)}",
+        transform=ax.transAxes, color=color, ha="right",
+        va="top" if price > limits[1] else "bottom", fontsize=9,
+        bbox={"facecolor":"white", "edgecolor":color, "alpha":0.92, "pad":2},
+        zorder=9,
+    )
+
+
 def render_position_chart(
     view: PositionView,
     candles_df,
@@ -239,7 +272,7 @@ def render_position_chart(
 ) -> Path:
     candle_minutes = view.chart_candle_minutes
     candle_ms = candle_minutes * ONE_MINUTE_MS
-    df = _prepare_candles(candles_df)
+    df = _prepare_candles(candles_df).tail(VIEWPORT_CANDLES).copy()
     times = df["time"].to_numpy(dtype="int64")
     out = Path(out_path) if out_path is not None else default_chart_path(view.symbol)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -273,7 +306,21 @@ def render_position_chart(
             (view.stop_price, "SL", STOP_COLOR, "-"),
             (view.take_price, "TP", TAKE_COLOR, "-"),
         ]
-        prices = [float(df["low"].min()), float(df["high"].max())]
+        limits = _price_viewport(df, view)
+        # Price axis is owned by candle visibility, not all frozen targets.
+        # Preserve full Box grid labels without forcing the plotted range.
+        offscreen = {"above": 0, "below": 0}
+
+        def show_level(price: float, label: str, color: str, style: str) -> None:
+            # Retain every real frozen level and its existing line contract.
+            # Axes clipping hides out-of-viewport geometry at its actual
+            # price; an explicit edge label still shows the verified value.
+            # Never clamp a line to the viewport or expand the candle scale.
+            _draw_level(ax, price, label, color, style)
+            if not limits[0] <= price <= limits[1]:
+                edge = "above" if price > limits[1] else "below"
+                _draw_offscreen_level(ax, price, label, color, limits, offscreen[edge])
+                offscreen[edge] += 1
         if view.pattern == "IKIGAI_BOX" and view.trade is not None and view.exit_time_ms is None:
             # Shade only the immutable, validated originating Fibonacci Box grid.
             box_levels = _frozen_box_levels(view)
@@ -283,12 +330,10 @@ def render_position_chart(
                 ax.axhspan(bottom, top, color=zone_colors[index % len(zone_colors)],
                            alpha=0.46, zorder=0)
             for level, label in box_levels:
-                _draw_level(ax, float(level), label, LINE_COLOR, ":")
-                prices.append(float(level))
+                show_level(float(level), label, LINE_COLOR, ":")
         for price, label, color, style in levels:
             if price is not None:
-                _draw_level(ax, float(price), label, color, style)
-                prices.append(float(price))
+                show_level(float(price), label, color, style)
 
         markers = [(m.time_ms, float(m.price), m.side, m.filled) for m in view.markers]
         if view.exit_time_ms is not None and view.exit_price is not None:
@@ -305,12 +350,12 @@ def render_position_chart(
         for time_ms, price, side, filled in markers:
             x = _candle_position(times, int(time_ms), candle_ms)
             if x is not None:
+                # Always preserve actual executions (filled and pending)
+                # at their TRUE prices. Matplotlib clips marks outside the
+                # candle viewport; do not relocate them to an invented edge.
                 _draw_marker(ax, x, price, side, filled=filled)
-                prices.append(price)
 
-        low, high = min(prices), max(prices)
-        pad = (high - low) * 0.05 or abs(high) * 0.01 or 1.0
-        ax.set_ylim(low - pad, high + pad)
+        ax.set_ylim(*limits)
         fig.savefig(out, dpi=120 if wide else 100, bbox_inches="tight")
     finally:
         plt.close(fig)
