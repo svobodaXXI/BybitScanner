@@ -159,6 +159,7 @@ jobs:
         run: >-
           python -m pytest -q
           tests/test_editor_frozen_mirror_geometry.py
+          tests/test_signal_geometry_producer.py
           tests/test_telegram_delivery.py
       - name: AAVE frozen Box STOP and API3 same-event protection close
         run: >-
