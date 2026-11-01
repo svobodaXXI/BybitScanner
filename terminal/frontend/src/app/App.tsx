@@ -23,6 +23,10 @@ import {
 } from "../marketData/workspaceSwitch";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
+import { projectSignalGeometry } from "../geometryFeedback/signalChartBridge";
+import type { TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
+import type { Candle } from "../contracts/marketData";
+import type { DrawingObject } from "../chart/drawingModel";
 import {
   createLimitDraft,
   EMPTY_LIMIT_DRAFT_STATE,
@@ -94,6 +98,55 @@ const sameProtectionPrice = (left: string | null, right: string | null) => {
 export function App() {
   const launchLink = useMemo(() => parseSignalWorkspaceLink(window.location.search), []);
   const [mode, setMode] = useState<WorkspaceMode>(launchLink?.mode ?? "TERMINAL");
+  const [frozenSignal, setFrozenSignal] = useState<{
+    candles: Candle[];
+    referenceDrawings: DrawingObject[];
+    editableDrawings: DrawingObject[];
+    signalId: string;
+  } | null>(null);
+  const [frozenGeometryStatus, setFrozenGeometryStatus] = useState<"loading" | "unavailable" | "ready">("loading");
+  useEffect(() => {
+    const link = launchLink;
+    if (!link || link.mode !== "EDITOR" || !link.signalId) return;
+    const controller = new AbortController();
+    const load = async () => {
+      try {
+        const response = await fetch(
+          `/api/workspace/signal-geometry?signal_id=${encodeURIComponent(link.signalId!)}`,
+          { signal: controller.signal, credentials: "same-origin" },
+        );
+        if (!response.ok) throw new Error("Source snapshot not found");
+        const payload = await response.json();
+        const snapshot = payload.snapshot;
+        const expectedTimeframe = ({ "15s": "15s", "1m": "1", "5m": "5", "15m": "15", "1h": "60", "1d": "D" } as Record<string, string>)[link.timeframe];
+        if (!payload.ok || !snapshot || snapshot.signal_id !== link.signalId ||
+            snapshot.symbol !== link.symbol || String(snapshot.timeframe) !== expectedTimeframe)
+          throw new Error("Source identity mismatch");
+        if (!Array.isArray(snapshot.bars) || !Array.isArray(snapshot.boundaries))
+          throw new Error("Incomplete immutable geometry");
+        const candles: Candle[] = snapshot.bars.map((bar: {
+          open_time_ms: number; open: number; high: number; low: number; close: number;
+        }) => ({
+          time: new Date(bar.open_time_ms).toISOString(),
+          open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+        }));
+        const boundaries: TimestampDrawing[] = snapshot.boundaries.map((line: {
+          boundary_id: string; kind: "ray" | "segment" | "horizontal" | "horizontal-ray";
+          anchors: { bar_open_time_ms: number; price: number }[];
+        }) => ({ id: line.boundary_id, type: line.kind, anchors: line.anchors }));
+        const projected = projectSignalGeometry(boundaries, candles);
+        if (!controller.signal.aborted) {
+          setFrozenSignal({ candles, ...projected, signalId: link.signalId! });
+          setFrozenGeometryStatus("ready");
+        }
+      } catch {
+        // No live-candle refit or symbol-only fallback for missing source lines.
+        if (!controller.signal.aborted) setFrozenGeometryStatus("unavailable");
+      }
+    };
+    void load();
+    return () => controller.abort();
+  }, [launchLink]);
   const [accountOpen, setAccountOpen] = useState(false);
   const [marketSidePanelOpen, setMarketSidePanelOpen] = useState(true);
   const [domCompression, setDomCompression] = useState(3);
@@ -1173,10 +1226,21 @@ export function App() {
         <div
           className={`workspace-market-row ${marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
         >
+          {mode === "EDITOR" && launchLink?.signalId &&
+           (!frozenSignal || launchLink.symbol !== market.book.symbol || launchLink.timeframe !== timeframe) ? (
+            <div role="status" aria-live="polite">
+              {frozenGeometryStatus === "loading"
+                ? "Загрузка сохранённых линий исходного сигнала…"
+                : "Исходная геометрия недоступна. Текущие свечи не заменяют исходный сигнал."}
+            </div>
+          ) : (
           <ChartPanel
-          key={`${market.book.symbol}:${timeframe}:${mode}`}
-          candles={market.candles}
+          key={`${market.book.symbol}:${timeframe}:${mode}:${frozenSignal?.signalId ?? ""}`}
+          candles={mode === "EDITOR" && frozenSignal && launchLink?.symbol === market.book.symbol && launchLink.timeframe === timeframe ? frozenSignal.candles : market.candles}
           editorMode={mode === "EDITOR"}
+          referenceDrawings={mode === "EDITOR" && launchLink?.symbol === market.book.symbol && launchLink.timeframe === timeframe ? frozenSignal?.referenceDrawings ?? [] : []}
+          editableSeedDrawings={mode === "EDITOR" && launchLink?.symbol === market.book.symbol && launchLink.timeframe === timeframe ? frozenSignal?.editableDrawings ?? [] : []}
+          signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
           tickSize={market.tickSize}
           symbol={market.book.symbol}
           timeframe={timeframe}
@@ -1244,6 +1308,7 @@ export function App() {
             />
           )}
           />
+          )}
           <button
             aria-expanded={marketSidePanelOpen}
             aria-label={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
