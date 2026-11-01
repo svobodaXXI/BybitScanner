@@ -1817,14 +1817,52 @@ class PaperRuntime:
         ):
             raise RuntimeError("live_mutations_disabled")
 
+    def _fence_flat_robot_ledger_after_paper_execution(self, symbol: Symbol) -> None:
+        """Hold admission if a filled PAPER mutation left Robot trade ownership stale.
+
+        This is a common PAPER execution postcondition, not a Terminal/UI
+        lifecycle hook. It never closes a trade, guesses exit economics or
+        dispatches another order. Reconciliation must prove the exit separately.
+        """
+        trade = self.store.get_open_robot_trade_for_symbol(self._paper_account_id, symbol)
+        if trade is None:
+            return
+        position = self.store.get_position_projection(PositionKey(
+            self._paper_account_id, Category.LINEAR, symbol, 0,
+        ))
+        if (
+            position is None or position.side is not PositionSide.FLAT
+            or position.quantity.value != 0
+        ):
+            return
+        state = self.store.get_robot_runtime_state(self._paper_account_id)
+        if state is None or state.mode != ROBOT_RUNNING:
+            return
+        if state.recovery_status in {RECONCILIATION_REQUIRED, RECONCILING}:
+            return
+        self.store.update_robot_runtime_state(
+            self._paper_account_id,
+            mode=ROBOT_RUNNING, recovery_status=RECONCILIATION_REQUIRED,
+            reason=(
+                "FLAT_ROBOT_TRADE_LEDGER_UNRESOLVED "
+                f"symbol={symbol.value} trade_id={trade.trade_id}"
+            ),
+            expected_version=state.version,
+            updated_at_ms=max(int(time.time() * 1000), state.updated_at_ms),
+        )
+
     def market(self, request, *, evidence: NormalizedOrderBook | None = None):
-        """Manual PAPER Market. ``evidence`` is the book the HTTP boundary read
-        off the owner thread; the owner uses the current streamed book first
-        and never the provider's REST fallback."""
+        """Manual PAPER Market; all outcomes use the canonical PAPER owner.
+
+        A confirmed net FLAT with an OPEN Robot trade holds admission, rather
+        than pretending that the Robot trade was finalized by this execution.
+        """
         self.require_paper_mutations()
-        return self.api.market(
+        result = self.api.market(
             request, market_book=self._robot_execution_book(request.symbol, evidence),
         )
+        self._fence_flat_robot_ledger_after_paper_execution(request.symbol)
+        return result
 
     def _robot_market(self, request, *, evidence: NormalizedOrderBook | None = None):
         return self._robot_api.market(
@@ -1881,9 +1919,11 @@ class PaperRuntime:
 
     def full_close(self, request, *, evidence: NormalizedOrderBook | None = None):
         self.require_paper_mutations()
-        return self.api.full_close(
+        result = self.api.full_close(
             request, market_book=self._robot_execution_book(request.symbol, evidence),
         )
+        self._fence_flat_robot_ledger_after_paper_execution(request.symbol)
+        return result
 
     def manual_open_symbols(self) -> tuple[str, ...]:
         """Symbols of open PAPER positions, in close_all's order (cheap owner read)."""
