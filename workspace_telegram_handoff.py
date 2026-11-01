@@ -21,7 +21,11 @@ class WorkspaceHandoffUnavailable(RuntimeError):
 
 def deliver_workspace_link(chat_id: str, *, mode: str, symbol: str,
                            timeframe: str) -> dict:
+    # Use the same approved Mini App address as the Telegram /terminal button.
+    # Keep the explicit HTTPS-origin override for existing installations.
     base = os.environ.get("BYBITSCANNER_TERMINAL_HTTPS_URL", "").strip()
+    if not base:
+        base = os.environ.get("BYBITSCANNER_WORKSPACE_URL", "").strip()
     owner = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not owner or str(chat_id) != owner:
         raise WorkspaceHandoffUnavailable("owner_mismatch")
@@ -30,8 +34,8 @@ def deliver_workspace_link(chat_id: str, *, mode: str, symbol: str,
     # Validate the complete URL and mode/symbol/timeframe before probing.
     try:
         parts = urlsplit(base)
-        if parts.path not in ("", "/"):
-            raise ValueError("The protected origin must have no path")
+        if parts.path not in ("", "/", "/login") or parts.query or parts.fragment:
+            raise ValueError("Expected a protected HTTPS origin or /login path without parameters")
         link = workspace_link(urlunsplit((parts.scheme, parts.netloc, "/login", "", "")), mode, symbol, timeframe)
     except ValueError as exc:
         raise WorkspaceHandoffUnavailable("invalid_workspace_link") from exc
