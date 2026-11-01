@@ -1,5 +1,6 @@
 """No host side effects: synthetic Gitless release and mocked unit/port state."""
 from pathlib import Path
+import os
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import mock
@@ -134,3 +135,124 @@ def test_no_automatic_stop_start_sql_or_network_calls():
             with mock.patch("tools.vps_release_resume._assert_no_listeners"):
                 assert check(root, installed).startswith("RESUME_READY:")
             run.assert_not_called()
+
+
+def _mock_systemd(unit: str, unit_dir: Path, paths: list[Path]):
+    output = (
+        f"LoadState=loaded\\nActiveState=inactive\\nMainPID=0\\n"
+        f"FragmentPath={unit_dir / unit}\\n"
+        f"DropInPaths={' '.join(str(p) for p in paths)}\\n"
+    )
+    return lambda *args, **kw: SimpleNamespace(returncode=0, stdout=output)
+
+
+def test_exact_reviewed_network_dropins_are_accepted_without_mutation():
+    from tools.vps_release_resume import REVIEWED_DROPINS
+    with TemporaryDirectory() as tmp:
+        unit_dir = Path(tmp)
+        for unit, approved in REVIEWED_DROPINS.items():
+            directory = unit_dir / (unit + ".d")
+            directory.mkdir()
+            paths = []
+            for name, lines in approved.items():
+                path = directory / name
+                path.write_text("[Service]\\n" + "\\n".join(lines) + "\\n")
+                path.chmod(0o644)
+                paths.append(path)
+            state = _systemd_state(
+                unit, run=_mock_systemd(unit, unit_dir, paths),
+                unit_dir=unit_dir, trusted_uid=os.getuid(),
+            )
+            assert state["ActiveState"] == "inactive"
+
+
+@pytest.mark.parametrize("tamper", [
+    "ExecStart=/bin/sh -c true",
+    "ExecStop=",
+    "Environment=BYBITSCANNER_PAPER_DB=/tmp/other.sqlite3",
+    "Environment=BYBITSCANNER_LIVE=1",
+    "Restart=always",
+    "[Unit]",
+    "# unexpected comment",
+])
+def test_reviewed_filename_does_not_authorize_extra_directives(tamper):
+    from tools.vps_release_resume import REVIEWED_DROPINS
+    unit = "bybitscanner-paper-backend.service"
+    with TemporaryDirectory() as tmp:
+        unit_dir = Path(tmp)
+        directory = unit_dir / (unit + ".d")
+        directory.mkdir()
+        path = directory / "telegram-proxy.conf"
+        path.write_text("[Service]\\n" + "\\n".join(
+            REVIEWED_DROPINS[unit][path.name]
+        ) + "\\n" + tamper + "\\n")
+        with pytest.raises(ResumeBlocked, match="unreviewed_systemd_dropin_content"):
+            _systemd_state(
+                unit, run=_mock_systemd(unit, unit_dir, [path]),
+                unit_dir=unit_dir, trusted_uid=os.getuid(),
+            )
+
+
+def test_reviewed_dropin_rejects_changed_proxy_and_untrusted_paths():
+    from tools.vps_release_resume import REVIEWED_DROPINS
+    unit = "bybitscanner-telegram.service"
+    with TemporaryDirectory() as tmp:
+        unit_dir = Path(tmp)
+        directory = unit_dir / (unit + ".d")
+        directory.mkdir()
+        path = directory / "proxy.conf"
+        path.write_text("[Service]\\n" + "\\n".join(
+            REVIEWED_DROPINS[unit][path.name]
+        ).replace("127.0.0.1:10809", "127.0.0.1:10810") + "\\n")
+        with pytest.raises(ResumeBlocked, match="unreviewed_systemd_dropin_content"):
+            _systemd_state(unit, run=_mock_systemd(unit, unit_dir, [path]),
+                unit_dir=unit_dir, trusted_uid=os.getuid())
+        path.write_text("[Service]\\n" + "\\n".join(
+            REVIEWED_DROPINS[unit][path.name]
+        ) + "\\n")
+        path.chmod(0o666)
+        with pytest.raises(ResumeBlocked, match="unsafe_systemd_dropin_file"):
+            _systemd_state(unit, run=_mock_systemd(unit, unit_dir, [path]),
+                unit_dir=unit_dir, trusted_uid=os.getuid())
+        path.chmod(0o644)
+        other = unit_dir / "unknown.conf"
+        other.write_text(path.read_text())
+        with pytest.raises(ResumeBlocked, match="unexpected_systemd_dropin"):
+            _systemd_state(unit, run=_mock_systemd(unit, unit_dir, [other]),
+                unit_dir=unit_dir, trusted_uid=os.getuid())
+
+
+def test_reviewed_dropin_symlink_and_wrong_owner_rejected():
+    from tools.vps_release_resume import REVIEWED_DROPINS
+    unit = "bybitscanner-paper-backend.service"
+    with TemporaryDirectory() as tmp:
+        unit_dir = Path(tmp)
+        directory = unit_dir / (unit + ".d")
+        directory.mkdir()
+        path = directory / "telegram-proxy.conf"
+        target = unit_dir / "target.conf"
+        target.write_text("[Service]\\n" + "\\n".join(
+            REVIEWED_DROPINS[unit][path.name]
+        ) + "\\n")
+        path.symlink_to(target)
+        with pytest.raises(ResumeBlocked, match="unsafe_systemd_dropin_file"):
+            _systemd_state(unit, run=_mock_systemd(unit, unit_dir, [path]),
+                unit_dir=unit_dir, trusted_uid=os.getuid())
+        path.unlink()
+        path.write_text(target.read_text())
+        with pytest.raises(ResumeBlocked, match="unsafe_systemd_dropin_file"):
+            _systemd_state(unit, run=_mock_systemd(unit, unit_dir, [path]),
+                unit_dir=unit_dir, trusted_uid=os.getuid() + 1)
+
+
+def test_unapproved_dropin_on_paper_start_is_rejected():
+    unit = "bybitscanner-paper-start.service"
+    with TemporaryDirectory() as tmp:
+        unit_dir = Path(tmp)
+        directory = unit_dir / (unit + ".d")
+        directory.mkdir()
+        path = directory / "proxy.conf"
+        path.write_text("[Service]\\nEnvironment=HTTP_PROXY=x\\n")
+        with pytest.raises(ResumeBlocked, match="unexpected_systemd_dropin"):
+            _systemd_state(unit, run=_mock_systemd(unit, unit_dir, [path]),
+                unit_dir=unit_dir, trusted_uid=os.getuid())
