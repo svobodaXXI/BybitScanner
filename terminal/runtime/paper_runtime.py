@@ -1599,6 +1599,10 @@ class PaperRuntime:
     def robot_runtime_state(self):
         return self.store.get_robot_runtime_state(self._paper_account_id)
 
+    def paper_shutdown_blocker(self) -> str | None:
+        # Called on the existing PAPER owner thread, with no external I/O.
+        return self.store.paper_shutdown_blocker(self._paper_account_id)
+
     def robot_start(self):
         return start_robot_in_store(
             self.store,
