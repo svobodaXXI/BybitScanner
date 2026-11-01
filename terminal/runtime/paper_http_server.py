@@ -3794,12 +3794,13 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     runtime.live_limit_acceptance_diagnostics()["database_identity"],
                     None if robot is None else (robot.mode, robot.recovery_status),
                     runtime.scanner_status().mode,
+                    runtime.paper_shutdown_blocker(),
                 )
 
             try:
                 if coverage is None:
                     raise RuntimeError("protection coverage is unavailable")
-                identity, robot, scanner = self.server.runtime.call(_shutdown_evidence)
+                identity, robot, scanner, durable_blocker = self.server.runtime.call(_shutdown_evidence)
                 protection = coverage.health()
             except Exception:
                 self._json_response(503, {"ok": False, "error": "runtime_shutdown_unavailable"})
@@ -3809,7 +3810,8 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 return
             # The backend is the last Robot/protection authority; never exit while it is needed.
             if (
-                robot != ("ROBOT_STOPPED", "ROBOT_STOPPED")
+                durable_blocker is not None
+                or                 robot != ("ROBOT_STOPPED", "ROBOT_STOPPED")
                 or scanner != "SCANNER_STOPPED"
                 or not isinstance(protection, Mapping)
                 or protection.get("healthy") is not True

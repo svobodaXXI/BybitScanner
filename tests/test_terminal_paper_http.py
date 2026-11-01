@@ -3112,3 +3112,62 @@ def test_protection_overflow_still_fails_closed_behind_one_overlong_ordinary_tas
     finally:
         release.set()
         runtime.close()
+
+def test_backend_shutdown_requires_durable_paper_quiescence():
+    """A clear subscription and stopped Robot cannot hide an unsettled order."""
+    from types import SimpleNamespace
+
+    class Owner:
+        def live_limit_acceptance_diagnostics(self):
+            return {"database_identity": "synthetic-paper-db"}
+
+        def robot_runtime_state(self):
+            return SimpleNamespace(mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
+
+        def scanner_status(self):
+            return SimpleNamespace(mode="SCANNER_STOPPED")
+
+        def paper_shutdown_blocker(self):
+            return "active_or_unknown_paper_limit"
+
+    class Runtime:
+        def call(self, fn):
+            return fn(Owner())
+
+    class Coverage:
+        def health(self):
+            return {
+                "healthy": True, "covered_symbols": [], "armed_symbols": [],
+                "unhealthy_symbols": {},
+            }
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.runtime = Runtime()
+    server.robot_protection_coverage = Coverage()
+    response = {}
+
+    def post():
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/runtime/shutdown",
+            data=b'{"database_identity":"synthetic-paper-db"}',
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request) as result:
+                response.update(status=result.status, body=json.load(result))
+        except urllib.error.HTTPError as exc:
+            response.update(status=exc.code, body=json.load(exc))
+
+    client = threading.Thread(target=post)
+    client.start()
+    try:
+        server.handle_request()
+        client.join(timeout=5)
+        assert not client.is_alive()
+        assert response == {
+            "status": 409,
+            "body": {"ok": False, "error": "runtime_still_required"},
+        }
+    finally:
+        server.server_close()
