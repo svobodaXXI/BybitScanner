@@ -1,0 +1,55 @@
+name: Deploy isolated Terminal Cloudflare Worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - stable/adfb50b-forward
+    paths:
+      - deploy/terminal_ingress/cloudflare_terminal_worker.mjs
+      - .github/workflows/deploy-terminal-cloudflare-worker.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bybitscanner-terminal-worker
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Worker source
+        run: |
+          node --check deploy/terminal_ingress/cloudflare_terminal_worker.mjs
+          grep -Fq 'https://83.217.213.181' deploy/terminal_ingress/cloudflare_terminal_worker.mjs
+          ! grep -Eq 'bybitscanner-gateway|8765|8080' deploy/terminal_ingress/cloudflare_terminal_worker.mjs
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require existing scoped Cloudflare credentials
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$CF_TOKEN"
+          test -n "$CF_ACCOUNT"
+      - name: Deploy separate Worker only
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy deploy/terminal_ingress/cloudflare_terminal_worker.mjs --name bybitscanner-terminal --compatibility-date 2026-11-01
+      - name: Verify public routing without credentials
+        run: |
+          set -eu
+          url=https://bybitscanner-terminal.svoboda21vekaru.workers.dev
+          # /login must pass via protected VPS origin; / must deny unauthenticated users.
+          test "$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' "$url/login")" = 200
+          code="$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' "$url/")"
+          test "$code" = 401 -o "$code" = 403
