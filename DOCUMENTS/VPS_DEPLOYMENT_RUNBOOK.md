@@ -2,6 +2,36 @@
 
 > **Актуальная приёмка 27.10.2026 после PR #638:** Telegram optional для запуска PAPER-ядра; доказанный SSH reverse tunnel, ошибки запуска и требования будущей кнопки описаны в [VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md](VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md). Начальные разделы этого runbook ниже описывают прежнее подготовительное состояние и не являются текущим runtime-статусом.
 
+## systemd unit preparation after an approved PAPER release switch (2026-11-01)
+
+On a host with an already safely stopped backend, **after** all three approved
+`deploy/systemd/bybitscanner-*.service` unit files have been installed, but
+**before** any PAPER backend/start-unit invocation, run the tracked command:
+
+```sh
+/opt/BybitScanner/venv/bin/python -m tools.vps_systemd_unit_prepare
+```
+
+The command performs only `systemctl daemon-reload`, then verifies
+`LoadState=loaded` and `ActiveState=inactive|failed` **for all three**
+backend/Telegram/PAPER-start units, then calls `reset-failed` on failed units
+only. A reset error is followed by **one read-only state recheck**: it is
+nonblocking only if the unit is now loaded/inactive. It never starts/stops any
+runtime, modifies a DB, bypasses admission, or installs systemd files.
+Exit 0/`READY` allows the **separately authorized** PAPER backend start;
+exit 2/`BLOCKED` forbids start until the exact missing state is known.
+Never run it as permission to stop a running/protected backend. Use root or
+a systemd-authorized operator account; do not change secrets/permissions.
+The existing `tools.paper_maintenance` path now invokes this gate after its
+canonical safe-stop and fast-forward, before PAPER core start. For the proven
+gitless VPS release switch, invoke this same helper after immutable content
+verification/staging activation; do not attempt `git merge` in `/opt`.
+
+Historical note: the 2026-11-01 `reset-failed` `Unit not loaded` was a
+partial-deploy ordering failure, *not* proof of a trading protection defect.
+See [PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md](PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md).
+This helper does not retroactively prove newer code is installed on the VPS.
+
 ## Linux contour integration (stacked on #628; no runtime acceptance)
 
 The start chain is now prepared as three static units:
