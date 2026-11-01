@@ -1573,34 +1573,22 @@ RULE-008:
 
 # AI_FIRST_RESULT_ROADMAP_20261102
 
-Status: **OWNER-DIRECTED DEVELOPMENT PRIORITY OVERLAY (02.11.2026)**.
-This process overlay does not create a new pipeline stage, ChangeRequest,
-permission or product milestone. The **latest owner command and top BACKLOG P0**
-govern active priority, regardless of archived CURRENT headings below.
+**Owner decision (02.11.2026):** fastest safe path to a *working* result.
+This is a priority overlay, not a new pipeline stage or approval.
 
-**Goal:** fastest economical path from owner intent to working, observed
-BybitScanner outcome. AI coding implements; owner retains product/architecture,
-merge and VPS/trading authorities. Maintain one active critical path; keep the
-GTD game optional presentation only, not a source of work decomposition.
+- **P0 now:** complete protected PAPER stop/FLAT/JASMY handoff, authorized
+  release and verified Robot/Telegram/Editor operation. On exposure or
+  uncertain identity, keep protection and report BLOCKED. CI ≠ acceptance.
+- **P1 after P0:** on real tasks, apply existing AI-FIRST RESULT DELIVERY
+  (ASSISTANT_PROTOCOL) and validation tiers (DEVELOPMENT_VALIDATION_LOOP_PLAN §14);
+  reduce unnecessary owner actions, repeated context and checks. Track only
+  verified savings in [#766](https://github.com/svobodaXXI/BybitScanner/issues/766).
+- **Later, only if proven useful:** remove duplicated helpers/docs/CI or reduce
+  coupling with minimal scoped patches. Monthly #766 review stays subordinate
+  to the active owner priority; no new quest or process.
 
-| Order | Roadmap commitment | Acceptance / no-go |
-| --- | --- | --- |
-| **P0 — NOW** | Complete monolithic PAPER stop → proven protection-preserving drain/FLAT → exact JASMY orphan handoff → approved immutable release/reconcile → verified working PAPER/Telegram/Editor path. Develop via GitHub within current owner authority; operate VPS only on distinct authorization. | Real protected PAPER outcome; no new entries during transition, no unfinished orders/obligations, exact process/DB identity; if exposure/unknown remains, BLOCKED with Backend protection alive. PR/CI alone are not completion. |
-| **P1 — AFTER P0** | Apply existing AI-first delivery loop to a normal defect and one critical-path integration task; reduce owner prompt/approval relays, duplicate context reads, repeated tests and document changes; use existing AGENTS routing and incident fixtures. Issue [#766](https://github.com/svobodaXXI/BybitScanner/issues/766) owns optimization backlog. | Compare available human steps, repeat loops, goal→accepted outcome time and regressions against recent baseline, without triggering extra trading/testing. One small evidenced improvement only; if no gain, keep code unchanged. |
-| **P2 — ON EVIDENCE** | Clean duplicated helpers, stale state pointers and overlapped CI only where measured cost and safe removal are established. Apply optional independent AI review for high-risk concurrency/ownership changes if it improves actual safety-to-effort. | Preserve contracts, required CI, prior work and safety; no automatic toolchain swaps, generic multi-agent fleet, new dashboard, massive refactor, or scripted destructive cleanup. |
-| **Recurring** | Monthly (existing #766 review) choose max 1–3 verified friction sources without interrupting higher-priority product delivery; fix in existing modules and docs. | Measure outcome savings and rework; no new standalone quest, PR quota or XP for paperwork. |
-
-**Practices incorporated:** mature OSS parity/test-contract/E2E and
-human architectural oversight ([Apache SkyWalking](https://skywalking.apache.org/blog/2026-03-08-agentic-vibe-coding/));
-short repo map and continuous cleanup ([OpenAI](https://openai.com/index/harness-engineering/));
-cross-context evidence without false DONE ([Anthropic](https://www.anthropic.com/research/effective-harnesses-for-long-running-agents));
-bounded symbol/context retrieval and focused tests ([aider](https://aider.chat/docs/repomap.html));
-optional—not mandatory—feature/spec/bug processes ([Spec Kit](https://github.com/github/spec-kit)).
-Implementation algorithm is owned by
-`DOCUMENTS/ASSISTANT_PROTOCOL.md` / `AI-FIRST RESULT DELIVERY`;
-validation mapping is owned by `DOCUMENTS/DEVELOPMENT_VALIDATION_LOOP_PLAN.md` §14.
-The existing STOP/TAKE, PAPER/LIVE, owner-only merge/runtime and fail-closed
-contracts retain full authority.
+PAPER/LIVE isolation, STOP/TAKE, fail-closed and owner-only merge/trading/VPS
+approvals remain unchanged.
 
 ---
 
