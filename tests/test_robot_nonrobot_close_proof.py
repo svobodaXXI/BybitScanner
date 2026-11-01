@@ -3,7 +3,7 @@
 All data synthetic; no runtime/DB/Market calls or production credentials.
 """
 import unittest
-from dataclasses import replace
+from unittest.mock import Mock
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -14,6 +14,7 @@ from terminal.domain.models import (
     Quantity, Symbol, TradingAccountId,
 )
 from terminal.domain.states import CommandState
+from terminal.runtime.paper_runtime import PaperRuntime
 
 ACCOUNT = TradingAccountId("paper")
 SYMBOL = Symbol("JASMYUSDT")
@@ -87,6 +88,50 @@ class NonRobotCloseProofTests(unittest.TestCase):
             Decimal("-0.000798") - Decimal("0.0018160884")
         ) / (Decimal("399") * Decimal("0.003792")) * 100
         self.assertEqual(result.realized_pnl_pct, expected_pct)
+
+    def test_owner_reconcile_finalizes_only_proven_existing_execution(self):
+        trade = SimpleNamespace(**{
+            **vars(self.trade), "entry_path": "LIMIT", "created_at_ms": 1793556278449,
+        })
+        candidate = SimpleNamespace(**{
+            **vars(self.candidate), "updated_at_ms": 1793556278449,
+            "robot_state": {"execution": {"limit_order_id": ENTRY_ORDER}},
+        })
+        store = SimpleNamespace(
+            load_robot_candidates_for_symbol=Mock(return_value=(candidate,)),
+            load_open_robot_trades=Mock(return_value=(trade,)),
+            load_active_paper_limits=Mock(return_value=()),
+            load_unresolved_paper_protection_obligations=Mock(return_value=()),
+            load_unfinished_commands=Mock(return_value=()),
+            load_executions_for_symbol=Mock(return_value=(self.entry, self.close)),
+            get_paper_command_by_order_link=Mock(return_value=self.command),
+            close_robot_trade=Mock(),
+            clear_paper_protection_for_flat=Mock(),
+        )
+        owner = SimpleNamespace(
+            _paper_account_id=ACCOUNT, store=store,
+            _robot_entry_fees=lambda candidate_trade: Decimal("0.0009078048"),
+        )
+        self.assertTrue(PaperRuntime._robot_finalize_nonrobot_close(
+            owner, candidate, trade, self.position,
+        ))
+        kwargs = store.close_robot_trade.call_args.kwargs
+        self.assertEqual(kwargs["exit_reason"], "MANUAL")
+        self.assertEqual(kwargs["realized_pnl_usdt"], Decimal("-0.000798"))
+        self.assertEqual(kwargs["fees_costs_usdt"], Decimal("0.0018160884"))
+        self.assertEqual(store.get_paper_command_by_order_link.call_args.args, (ACCOUNT, LINK))
+        store.clear_paper_protection_for_flat.assert_called_once()
+
+        store.close_robot_trade.reset_mock()
+        store.clear_paper_protection_for_flat.reset_mock()
+        store.get_paper_command_by_order_link.return_value = SimpleNamespace(
+            **{**vars(self.command), "controller": Controller.ROBOT},
+        )
+        self.assertFalse(PaperRuntime._robot_finalize_nonrobot_close(
+            owner, candidate, trade, self.position,
+        ))
+        store.close_robot_trade.assert_not_called()
+        store.clear_paper_protection_for_flat.assert_not_called()
 
     def test_mismatch_is_never_a_proven_robot_close(self):
         cases = [
