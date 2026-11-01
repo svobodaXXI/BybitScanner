@@ -84,6 +84,8 @@ test("EDITOR opens exact frozen signal, preserves source rays and exports a manu
   await expect.poll(async () => (await stored())?.drawings.length).toBe(3);
 
   await page.getByRole("button", { name: "Скопировать исправленную геометрию" }).click();
+  console.log("EDITOR_DRAWINGS", JSON.stringify(await stored()));
+  console.log("EDITOR_EXPORT_STATUS", await page.locator(".editor-correction-export").innerText());
   await expect(page.getByText("Черновик коррекции скопирован.", { exact: false })).toBeVisible();
   const copied = JSON.parse(await page.evaluate(() => navigator.clipboard.readText())) as {
     signal_id: string; label: string; status: string;
