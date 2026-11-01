@@ -164,5 +164,47 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
         answer.assert_called_once_with("callback-1", "Редактор: защищённое HTTPS-соединение недоступно")
 
 
+    def test_owner_signal_keyboard_maps_native_intervals_and_preserves_exact_signal(self):
+        from notification import build_tradingview_keyboard
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181/login",
+            "BYBITSCANNER_WORKSPACE_URL": "",
+        }, clear=True):
+            for native, expected in (("1", "1m"), ("5", "5m"), ("15", "15m"),
+                                     ("60", "1h"), ("D", "1d"), ("15s", "15s")):
+                with self.subTest(native=native):
+                    editor, terminal = build_tradingview_keyboard(
+                        "BTCUSDT", native, signal_id="signal-123",
+                    )["inline_keyboard"][-1]
+                    self.assertEqual(
+                        editor["web_app"]["url"],
+                        f"https://83.217.213.181/login?mode=EDITOR&symbol=BTCUSDT&timeframe={expected}&signal_id=signal-123",
+                    )
+                    self.assertEqual(
+                        terminal["web_app"]["url"],
+                        f"https://83.217.213.181/login?mode=TERMINAL&symbol=BTCUSDT&timeframe={expected}",
+                    )
+
+    def test_owner_keyboard_fallback_and_non_owner_do_not_leak_editor_link(self):
+        from notification import build_tradingview_keyboard
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "",
+            "BYBITSCANNER_WORKSPACE_URL": "",
+        }, clear=True):
+            editor, _ = build_tradingview_keyboard(
+                "BTCUSDT", "D", signal_id="signal-123",
+            )["inline_keyboard"][-1]
+            self.assertEqual(editor["callback_data"], "workspace:EDITOR:BTCUSDT:1d")
+            self.assertNotIn("web_app", editor)
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181/login",
+        }):
+            rows = build_tradingview_keyboard(
+                "BTCUSDT", "5", include_review_actions=False,
+                signal_id="signal-123",
+            )["inline_keyboard"]
+        self.assertFalse(any("web_app" in button for row in rows for button in row))
+
+
 if __name__ == "__main__":
     unittest.main()
