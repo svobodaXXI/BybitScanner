@@ -80,11 +80,13 @@ class FakeHost:
 
 
 class LinuxShutdownTests(unittest.TestCase):
-    def test_graceful_path_is_unchanged_and_ordered(self):
+    def test_graceful_path_verifies_backend_exit_before_telegram_shutdown(self):
         host = FakeHost()
         result = host.orchestrator().run("all")
         self.assertTrue(result.ok, result.message)
-        self.assertEqual(host.calls, ["/api/scanner/stop", "robot:stop", "tg/shutdown", "/api/runtime/shutdown"])
+        self.assertEqual(host.calls, [
+            "/api/scanner/stop", "robot:stop", "/api/runtime/shutdown", "tg/shutdown",
+        ])
         self.assertEqual(host.terminated, [])
 
     def test_missing_shutdown_endpoint_fails_closed_without_termination(self):
@@ -97,6 +99,9 @@ class LinuxShutdownTests(unittest.TestCase):
                 self.assertIn("unavailable on this platform", result.message)
                 self.assertEqual(host.terminated, [])
                 self.assertNotIn("SQLITE_BARRIER", host.calls)
+                if which == "backend":
+                    self.assertTrue(host.backend and host.telegram)
+                    self.assertNotIn("tg/shutdown", host.calls)
 
     def test_unreachable_health_with_a_live_listener_keeps_the_runtime_alive(self):
         host = FakeHost(health_up=False)
