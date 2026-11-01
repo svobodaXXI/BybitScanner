@@ -610,3 +610,49 @@ For development planning purposes, v0.1 has two blocking quality gates:
 Once both gates are green, the feature freeze may be reviewed and queued
 Autopilot/dual-timeframe/secondary pattern work can be resumed in owner priority
 order. Green lower-tier tests alone do not declare v0.1 finished.
+
+## 14. AI-first / vibe-coding: decisions for the existing delivery loop (02.11.2026)
+
+This section **uses** the existing Geometry/Robot Runtime Labs and
+FAST → REPLAY → affected CI → owner acceptance tiers. It adds **no new**
+lab, approval, phase or required PR. Authority and current P0 remain in
+BACKLOG; execution behavior is in ASSISTANT_PROTOCOL / AI-FIRST RESULT DELIVERY.
+
+| Publicly documented case (evidence, not a transferable speed guarantee) | BybitScanner decision |
+| --- | --- |
+| [Apache SkyWalking, mature OSS agentic vibe coding (2026)](https://skywalking.apache.org/blog/2026-03-08-agentic-vibe-coding/): maintainer reports ~77k lines/10 PRs/5 weeks under strict compatibility, 1,290+ cross-version test expressions, E2E and independent AI review; warns agents may tweak tests to excuse wrong design | **Adopt** owner-defined invariants before architecture edits; where replacing behavior, compare old/new results on existing fixtures; inspect test expectations independently; E2E is the final actual acceptance. **Do not** import multi-model staffing or PR-volume targets. |
+| [OpenAI harness engineering (2026)](https://openai.com/index/harness-engineering/): short AGENTS routing index, in-repo source of truth, executable user journeys and recurring small cleanup; notes AI copies bad patterns | **Already partly in place:** AGENTS routing + issue #766. Reinforce task-scoped context and small in-place cleanup; do not create giant prompts, a new docs hierarchy or automatic merge. |
+| [Anthropic long-running agent experiment](https://www.anthropic.com/research/effective-harnesses-for-long-running-agents): progress/evidence handoff and independent end-to-end tests avoid false completion | **Reuse** current Git history, BACKLOG/QUEST_STATE and owner acceptance. Update them only on meaningful active-quest/evidence change; **no new progress log** or initializer agent. |
+| [aider repository map and lint/test loop](https://aider.chat/docs/repomap.html): prioritize key code symbols for context; [targeted lint/test feedback](https://aider.chat/docs/usage/lint-test.html) | **Adopt behavior, not dependency:** search changed entry point → imported owner boundary → exact tests before broader reads; feed actual failing output into one minimal fix. No new full-repo indexing build until measured need. |
+| [GitHub Spec Kit](https://github.com/github/spec-kit): independently selectable feature/spec, bug-fix and idea assessment processes, not mandatory phases | **Selective use only:** ordinary bug = bounded failing case; material owner contract/architecture = existing owning Spec/CR. No `spec→plan→tasks→implement` ceremony for every PR. |
+
+**Operational application, under the SAME owner outcome:**
+
+1. Start with the latest owner outcome and authoritative repo/runtime state.
+   State only externally observable success criteria and any relevant immutable
+   safety/compatibility boundary. For known bug, first failing example/fixture.
+2. Agent identifies the shortest code/ownership path and handles implementation,
+   targeted proof and existing mandatory CI in one continuous work assignment.
+   Internal technical steps must not become separate user-facing quests.
+3. If a test passes but the implementation introduces an ad-hoc special case,
+   modifies expected values to fit the patch, or violates an ownership boundary,
+   stop and fix design at its real owner. Optional independent review for
+   concurrency/order identity/protection and other high-risk changes; no
+   default multi-agent team or another approval gate.
+4. PR and CI are evidence of changed code only. Proceed to approved real
+   PAPER/Telegram/Scanner acceptance as governing contracts require; do not
+   report DONE on code-only status.
+5. Once P0 is accepted, trial **one** bounded P1 improvement from issue #766
+   on already-occurring tasks: compare before/after **human owner actions,
+   repeat debug/PR turns, elapsed goal→real acceptance, and regressions**.
+   Do not create new dashboards or run trading merely to collect metrics.
+   If the gain is not observed or safety/review costs increase, revert/defer.
+
+**Roadmap routing:** immediate = finish authorized P0 monolithic PAPER
+stop/upgrade/JASMY and Editor recovery with real acceptance; next P1 =
+compact the current priority/context navigation and eliminate only measured
+duplicate work, using #766; recurring maintenance = monthly #766 review on
+changed evidence, max 1–3 candidates, subordinate to product P0. Detailed
+priority is in DOCUMENTS/ROADMAP.md and current BACKLOG, **not** determined
+by this older lab plan.
+
