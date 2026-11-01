@@ -74,6 +74,12 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
     installed = execute("git", "rev-parse", "--verify", "HEAD")
     if installed is None or installed.returncode != 0 or installed.stdout.strip() != target:
         return "BLOCKED: installed HEAD differs from approved target"
+    # The target release owns this narrow helper. Reload and prove all three
+    # installed units are loaded/stopped before any conditional reset-failed.
+    # Do not start the PAPER core after an ambiguous systemd preparation.
+    if not command(*PREFIX, str(root / "venv/bin/python"), "-m",
+                   "tools.vps_systemd_unit_prepare"):
+        return "BLOCKED: PAPER systemd units not proven ready; no start attempted"
     if not command(*PREFIX, "systemctl", "start", SERVICE):
         return "BLOCKED: PAPER core start failed; no admission bypass attempted"
     # The oneshot says only that startup was requested; do not report READY

@@ -60,6 +60,22 @@ def test_approved_target_only_after_safe_stop():
     assert calls[-1] == ("sudo", "-n", "systemctl", "start", "bybitscanner-paper-start.service")
 
 
+def test_unit_prepare_failure_blocks_paper_start_after_safe_stop():
+    calls = []
+    stopped = SimpleNamespace(ok=True, runtime_stopped=True)
+    failure = ("sudo", "-n", "/opt/BybitScanner/venv/bin/python",
+               "-m", "tools.vps_systemd_unit_prepare")
+    result = run_maintenance(
+        "a" * 40, stop=lambda _: stopped,
+        runner=fake_runner(calls, fail=failure), readiness=lambda: True,
+        root=Path("/opt/BybitScanner"),
+    )
+    assert result.startswith("BLOCKED: PAPER systemd units")
+    assert failure in calls
+    assert not any(cmd == ("sudo", "-n", "systemctl", "start",
+                           "bybitscanner-paper-start.service") for cmd in calls)
+
+
 def test_unapproved_target_never_updates_or_starts():
     calls = []
     stopped = SimpleNamespace(ok=True, runtime_stopped=True)
