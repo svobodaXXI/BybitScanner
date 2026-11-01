@@ -228,6 +228,13 @@ def execute_flat_handoff(
         # Hold the writer reservation only for durable attestation and
         # the single process signal; NEVER call the backend HTTP API here.
         if jasmy_incident_20261102:
+            # This exceptional proof reuses SQLiteStore's named-column row
+            # parsers. The writer guard uses sqlite3.connect() directly,
+            # unlike SQLiteStore.open(), and defaults to tuple rows. This
+            # changes only the row representation, never the durable state.
+            # Do not apply it to the generic legacy proof: that older gate
+            # deliberately compares raw sqlite tuples.
+            conn.row_factory = sqlite3.Row
             proof = prove_jasmy_legacy_flat(
                 conn, expected_identity=expected_identity, **snapshots,
             )
