@@ -194,7 +194,7 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.autopilot_mode, "OFF")
         self.assertEqual(runtime.calls, [
             "autopilot:off", "scanner:stop", "robot:stop",
-            "telegram:shutdown", "backend:shutdown",
+            "backend:shutdown", "telegram:shutdown",
         ])
         self.assertIn("autopilot:off", result.steps)
 
@@ -228,7 +228,7 @@ class FullShutdownTests(unittest.TestCase):
                 self.assertTrue(result.ok, result.message)
                 self.assertTrue(result.runtime_stopped)
                 self.assertEqual(runtime.calls, [
-                    "scanner:stop", "robot:stop", "telegram:shutdown", "backend:shutdown",
+                    "scanner:stop", "robot:stop", "backend:shutdown", "telegram:shutdown",
                 ])
                 self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
 
@@ -236,7 +236,7 @@ class FullShutdownTests(unittest.TestCase):
         runtime = FakeRuntime(robot=STOPPED)
         result = runtime.orchestrator().run("all")
         self.assertTrue(result.ok)
-        self.assertEqual(runtime.calls, ["scanner:stop", "telegram:shutdown", "backend:shutdown"])
+        self.assertEqual(runtime.calls, ["scanner:stop", "backend:shutdown", "telegram:shutdown"])
 
     def test_absent_processes_with_stopped_robot_are_idempotent_success(self):
         for robot in (STOPPED, None):
@@ -377,7 +377,7 @@ class ReconciliationShutdownTests(unittest.TestCase):
         self.assertTrue(result.runtime_stopped)
         self.assertEqual(runtime.calls, [
             "scanner:stop", "robot:reconcile", "robot:stop", "protection:quiescent",
-            "telegram:shutdown", "backend:shutdown",
+            "backend:shutdown", "telegram:shutdown",
         ])
         self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
 
@@ -504,7 +504,7 @@ class ShutdownArmRetirementTests(unittest.TestCase):
                     expected.append("robot:reconcile")
                 if state != STOPPED:
                     expected.append("robot:stop")
-                expected += ["protection:retire-entry-arms", "telegram:shutdown", "backend:shutdown"]
+                expected += ["protection:retire-entry-arms", "backend:shutdown", "telegram:shutdown"]
                 self.assertEqual(f.runtime.calls, expected)
                 self.assertEqual(f.manager.health()["armed_symbols"], ())
                 self.assertEqual(f.manager.health()["covered_symbols"], ())
@@ -1145,11 +1145,12 @@ class OwnershipTests(unittest.TestCase):
                 runtime.shutdown_replies["telegram"] = (status, None)
                 result = runtime.orchestrator().run("all")
                 self.assertFalse(result.ok)
-                self.assertIn("nothing was terminated", result.message)
+                self.assertIn("that legacy process was not terminated", result.message)
                 self.assertNotIn("close its window", result.message)
                 self.assertFalse(any(c.startswith("terminate") for c in runtime.calls))
-                self.assertNotIn("backend:shutdown", runtime.calls)
-                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+                self.assertEqual(runtime.calls.count("backend:shutdown"), 1)
+                self.assertFalse(runtime.backend_alive)
+                self.assertTrue(runtime.telegram_alive)
 
     def test_refused_backend_shutdown_is_not_retried(self):
         runtime = FakeRuntime(robot=STOPPED)
@@ -1157,6 +1158,8 @@ class OwnershipTests(unittest.TestCase):
         result = runtime.orchestrator().run("all")
         self.assertFalse(result.ok)
         self.assertEqual(runtime.calls.count("backend:shutdown"), 1)
+        self.assertNotIn("telegram:shutdown", runtime.calls)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
     def test_waits_boundedly_for_health_to_disappear(self):
         runtime = FakeRuntime(robot=STOPPED)
@@ -1174,7 +1177,9 @@ class OwnershipTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("did not exit", result.message)
         self.assertGreaterEqual(runtime.now, shutdown.EXIT_WAIT_S)
-        self.assertNotIn("backend:shutdown", runtime.calls)
+        self.assertEqual(runtime.calls.count("backend:shutdown"), 1)
+        self.assertFalse(runtime.backend_alive)
+        self.assertTrue(runtime.telegram_alive)
 
     def test_no_broad_process_kill_exists(self):
         source = Path(shutdown.__file__).read_text(encoding="utf-8").lower()
@@ -1344,7 +1349,7 @@ class LegacyOwnershipProofTests(unittest.TestCase):
 
 
 class LegacyFallbackOrchestrationTests(unittest.TestCase):
-    def test_legacy_telegram_then_backend_exact_chains_are_terminated_in_order(self):
+    def test_legacy_backend_then_telegram_exact_chains_are_terminated_in_order(self):
         for telegram_status, backend_status in ((501, 404), (501, 501)):
             with self.subTest(telegram=telegram_status, backend=backend_status):
                 runtime = FakeRuntime(robot=READY)
@@ -1355,10 +1360,10 @@ class LegacyFallbackOrchestrationTests(unittest.TestCase):
                 self.assertTrue(result.ok, result.message)
                 self.assertEqual(runtime.calls, [
                     "scanner:stop", "robot:stop",
-                    "telegram:shutdown", "resolve:telegram:127.0.0.1:8766", "terminate:[30, 20, 10]",
                     "backend:shutdown", "resolve:backend:127.0.0.1:8765", "terminate:[130, 120, 110, 105]",
+                    "telegram:shutdown", "resolve:telegram:127.0.0.1:8766", "terminate:[30, 20, 10]",
                 ])
-                self.assertEqual(result.steps[-2:], ("telegram:legacy-terminate", "backend:legacy-terminate"))
+                self.assertEqual(result.steps[-2:], ("backend:legacy-terminate", "telegram:legacy-terminate"))
                 self.assertFalse(runtime.telegram_alive or runtime.backend_alive)
 
     def test_legacy_telegram_with_graceful_backend(self):
@@ -1367,7 +1372,8 @@ class LegacyFallbackOrchestrationTests(unittest.TestCase):
         runtime.legacy_chains = {"telegram": (30, 20, 10)}
         result = runtime.orchestrator().run("all")
         self.assertTrue(result.ok, result.message)
-        self.assertEqual(runtime.calls[-2:], ["terminate:[30, 20, 10]", "backend:shutdown"])
+        self.assertEqual(runtime.calls[-2:], ["resolve:telegram:127.0.0.1:8766", "terminate:[30, 20, 10]"])
+        self.assertIn("backend:shutdown", runtime.calls)
 
     def test_non_legacy_refusals_never_reach_the_fallback(self):
         for reply in ((409, {"ok": False, "error": "database_identity_mismatch"}),
@@ -1389,7 +1395,8 @@ class LegacyFallbackOrchestrationTests(unittest.TestCase):
                 result = runtime.orchestrator().run("all")
                 self.assertFalse(result.ok)
                 self.assertFalse(any(c.startswith(("resolve", "terminate")) for c in runtime.calls))
-                self.assertTrue(runtime.telegram_alive and runtime.backend_alive)
+                self.assertTrue(runtime.telegram_alive)
+                self.assertFalse(runtime.backend_alive)
 
     def test_identity_mismatch_never_reaches_resolver_or_terminator(self):
         for target in ("backend", "telegram"):
@@ -1408,7 +1415,7 @@ class LegacyFallbackOrchestrationTests(unittest.TestCase):
         result = runtime.orchestrator().run("all")
         self.assertTrue(result.ok)
         self.assertFalse(any(c.startswith(("resolve", "terminate")) for c in runtime.calls))
-        self.assertEqual(result.steps[-2:], ("telegram:shutdown", "backend:shutdown"))
+        self.assertEqual(result.steps[-2:], ("backend:shutdown", "telegram:shutdown"))
 
     def test_legacy_process_that_survives_termination_is_reported(self):
         runtime = FakeRuntime(robot=STOPPED)
@@ -1418,16 +1425,18 @@ class LegacyFallbackOrchestrationTests(unittest.TestCase):
         result = runtime.orchestrator().run("all")
         self.assertFalse(result.ok)
         self.assertIn("did not exit", result.message)
-        self.assertNotIn("backend:shutdown", runtime.calls)
+        self.assertEqual(runtime.calls.count("backend:shutdown"), 1)
+        self.assertFalse(runtime.backend_alive)
+        self.assertTrue(runtime.telegram_alive)
 
 
 class ScannerScopeTests(unittest.TestCase):
-    def test_scanner_stop_with_stopped_robot_shuts_telegram_then_backend(self):
+    def test_scanner_stop_with_stopped_robot_shuts_backend_then_telegram(self):
         runtime = FakeRuntime(robot=STOPPED)
         result = runtime.orchestrator().run("scanner")
         self.assertTrue(result.ok)
         self.assertTrue(result.runtime_stopped)
-        self.assertEqual(runtime.calls, ["scanner:stop", "telegram:shutdown", "backend:shutdown"])
+        self.assertEqual(runtime.calls, ["scanner:stop", "backend:shutdown", "telegram:shutdown"])
 
     def test_scanner_stop_keeps_runtime_for_a_live_robot_and_never_stops_it(self):
         for robot in (READY, PAUSED, RECON):
