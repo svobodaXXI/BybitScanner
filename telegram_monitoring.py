@@ -709,12 +709,13 @@ def _format_signal_time(ms) -> str:
     return datetime.fromtimestamp(int(ms) / 1000, timezone.utc).strftime("%d.%m.%Y %H:%M:%S UTC")
 
 
-def _repost_keyboard(symbol: str, timeframe: str) -> dict:
+def _repost_keyboard(symbol: str, timeframe: str, signal_id: str | None = None) -> dict:
     """Restore normal navigation without reactivating Robot admission."""
     try:
         rows = build_tradingview_keyboard(
             symbol, timeframe, include_review_actions=True,
             robot_candidate_id=None, robot_status_button=False,
+            signal_id=signal_id,
         )["inline_keyboard"]
     except Exception as exc:
         print("[SIGNAL REPOST NAV ERROR]", symbol, exc)
@@ -739,7 +740,7 @@ def _repost_original_signal(chat_id, original: Mapping) -> bool:
     The original message is never edited or deleted.
     """
     caption = _repost_caption(original)
-    markup = _repost_keyboard(str(original.get("symbol", "")), str(original.get("timeframe", "")))
+    markup = _repost_keyboard(str(original.get("symbol", "")), str(original.get("timeframe", "")), str(original.get("candidate_id") or "") or None)
     file_id = original.get("photo_file_id")
     if file_id:
         try:
@@ -778,7 +779,7 @@ def _send_source_signal_card(chat_id, token: str) -> None:
             f"{SIGNAL_REPOST_MARK}\nОригинал отправлен: {_format_signal_time(original['sent_at_ms'])}\n\n"
             f"{original.get('text', '')}\n\n"
             "⚠️ Изображение оригинала не удалось отправить повторно.",
-            reply_markup=_repost_keyboard(symbol, str(original.get("timeframe", ""))),
+            reply_markup=_repost_keyboard(symbol, str(original.get("timeframe", "")), str(original.get("candidate_id") or "") or None),
         )
         return
     # No archived original (a candidate created before the archive existed, or it was
