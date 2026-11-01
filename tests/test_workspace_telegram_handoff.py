@@ -88,5 +88,51 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
         answer.assert_called_once_with("callback-1", "Редактор: защищённое HTTPS-соединение недоступно")
 
 
+    def test_signal_cards_use_direct_mini_app_for_supported_timeframes(self):
+        from notification import build_tradingview_keyboard
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_WORKSPACE_URL": "https://83.217.213.181/login",
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "",
+        }):
+            for raw, chart in (("1", "1m"), ("5", "5m"), ("15", "15m"),
+                               ("60", "1h"), ("D", "1d"), ("15s", "15s")):
+                with self.subTest(raw=raw):
+                    rows = build_tradingview_keyboard("BTCUSDT", raw)["inline_keyboard"]
+                    editor, terminal = rows[-1]
+                    self.assertEqual(
+                        editor["web_app"]["url"],
+                        f"https://83.217.213.181/login?mode=EDITOR&symbol=BTCUSDT&timeframe={chart}",
+                    )
+                    self.assertEqual(
+                        terminal["web_app"]["url"],
+                        f"https://83.217.213.181/login?mode=TERMINAL&symbol=BTCUSDT&timeframe={chart}",
+                    )
+
+    def test_signal_cards_retain_callback_when_https_unconfigured_or_unsafe(self):
+        from notification import build_tradingview_keyboard
+        for env in (
+            {"BYBITSCANNER_WORKSPACE_URL": "", "BYBITSCANNER_TERMINAL_HTTPS_URL": ""},
+            {"BYBITSCANNER_WORKSPACE_URL": "http://127.0.0.1:4173/login",
+             "BYBITSCANNER_TERMINAL_HTTPS_URL": ""},
+            {"BYBITSCANNER_WORKSPACE_URL": "https://83.217.213.181/unprotected",
+             "BYBITSCANNER_TERMINAL_HTTPS_URL": ""},
+        ):
+            with self.subTest(env=env), patch.dict("os.environ", env):
+                rows = build_tradingview_keyboard("ETHUSDT", "60")["inline_keyboard"]
+                editor, terminal = rows[-1]
+                self.assertEqual(editor["callback_data"], "workspace:EDITOR:ETHUSDT:1h")
+                self.assertEqual(terminal["callback_data"], "workspace:TERMINAL:ETHUSDT:1h")
+                self.assertNotIn("web_app", editor)
+
+    def test_signal_cards_without_owner_never_advertise_mini_app(self):
+        from notification import build_tradingview_keyboard
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_WORKSPACE_URL": "https://83.217.213.181/login",
+        }):
+            rows = build_tradingview_keyboard(
+                "ETHUSDT", "5", include_review_actions=False)["inline_keyboard"]
+        self.assertFalse(any(button.get("web_app") for row in rows for button in row))
+
+
 if __name__ == "__main__":
     unittest.main()
