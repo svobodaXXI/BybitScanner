@@ -46,6 +46,12 @@ class FlatRobotLedgerFenceTests(unittest.TestCase):
         self.assertEqual(position_key.symbol, SYMBOL)
         self.assertEqual(position_key.category, Category.LINEAR)
 
+    def test_symbol_string_normalizes_before_owner_lookup(self):
+        owner, store = _runtime()
+        PaperRuntime._fence_flat_robot_ledger_after_paper_execution(owner, "JASMYUSDT")
+        store.get_open_robot_trade_for_symbol.assert_called_once_with(ACCOUNT, SYMBOL)
+        store.update_robot_runtime_state.assert_called_once()
+
     def test_nonflat_and_no_open_trade_do_not_fence(self):
         for overrides in (
             {"position_side": PositionSide.SHORT, "quantity": 399},
