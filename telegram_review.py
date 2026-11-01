@@ -34,7 +34,7 @@ from terminal.application.robot_control import (
 from tools import stop_robot_runtime
 
 
-PROJECT_ROOT = Path(r"C:\BybitScanner")
+PROJECT_ROOT = Path(__file__).resolve().parent
 REVIEW_QUEUE = PROJECT_ROOT / "review_queue"
 OFFSET_FILE = REVIEW_QUEUE / ".telegram_offset"
 
