@@ -6359,6 +6359,63 @@ class SQLiteStore:
         )
         return tuple(_checkpoint_from_row(row) for row in rows)
 
+    def paper_shutdown_blocker(self, account: TradingAccountId) -> str | None:
+        """One owner-thread, read-only durable quiescence proof for full PAPER stop.
+
+        A healthy subscription is not proof of FLAT or no pending dispatch.
+        BEGIN IMMEDIATE prevents another SQLite writer from changing the
+        attestations *within* this check. No HTTP or external work under the
+        reservation. Unknown rows or schema failures abort the caller's stop.
+        This is not the exceptional, identity-bound JASMY handoff path.
+        """
+        self._assert_owner()
+        with self._transaction():
+            modes = self._connection.execute(
+                "SELECT mode FROM robot_autopilot_state WHERE trading_account_id=?",
+                (account.value,),
+            ).fetchall()
+            if len(modes) != 1 or modes[0][0] != "OFF":
+                return "autopilot_not_durably_off"
+
+            rows = self._connection.execute(
+                "SELECT side, quantity, sync_state FROM position_projections "
+                "WHERE trading_account_id=?",
+                (account.value,),
+            ).fetchall()
+            try:
+                if any(
+                    side != "Flat" or not Decimal(str(quantity)).is_finite()
+                    or Decimal(str(quantity)) != Decimal("0")
+                    or sync_state != "synced"
+                    for side, quantity, sync_state in rows
+                ):
+                    return "paper_position_not_flat_and_synced"
+            except (ArithmeticError, TypeError, ValueError):
+                return "paper_position_evidence_invalid"
+
+            # Every condition is account-scoped and fails closed for unknown
+            # statuses; no terminal-state inference from coverage alone.
+            checks = (
+                ("robot_trades", "exit_time_ms IS NULL", "open_robot_trade"),
+                ("robot_candidates", "status IN ('APPROVED','OPEN')", "active_robot_candidate"),
+                ("paper_limit_orders", "status NOT IN ('filled','cancelled')", "active_or_unknown_paper_limit"),
+                ("trading_commands",
+                 "current_state NOT IN ('filled','cancelled','amended','rejected','failed','owner_attested_closed')",
+                 "unfinished_or_unknown_command"),
+                ("paper_protection_obligations", "status!='RESOLVED'", "unresolved_protection_obligation"),
+                ("reconciliation_checkpoints", "completed_at_ms IS NULL", "unfinished_reconciliation"),
+            )
+            for table, predicate, reason in checks:
+                # Names/predicates are fixed source literals, never user data.
+                row = self._connection.execute(
+                    f"SELECT 1 FROM {table} WHERE trading_account_id=? "
+                    f"AND ({predicate}) LIMIT 1",
+                    (account.value,),
+                ).fetchone()
+                if row is not None:
+                    return reason
+        return None
+
     def create_cleanup_run(self, record: CleanupRunRecord) -> CleanupRunRecord:
         key = record.position_key
         try:
