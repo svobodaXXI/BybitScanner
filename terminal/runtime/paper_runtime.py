@@ -92,6 +92,7 @@ from terminal.application.robot_recovery import (
     RobotRecoveryCoordinator,
 )
 from robot_flat_closure import CandidateOwnership, prove_flat_closure
+from terminal.application.robot_nonrobot_close_proof import prove_nonrobot_robot_close
 from robot_failure_diagnostics import record_robot_incident
 import pattern_freshness
 from scanner_geometry_cursor import (
@@ -1817,14 +1818,53 @@ class PaperRuntime:
         ):
             raise RuntimeError("live_mutations_disabled")
 
+    def _fence_flat_robot_ledger_after_paper_execution(self, symbol: Symbol | str) -> None:
+        """Hold admission if a filled PAPER mutation left Robot trade ownership stale.
+
+        This is a common PAPER execution postcondition, not a Terminal/UI
+        lifecycle hook. It never closes a trade, guesses exit economics or
+        dispatches another order. Reconciliation must prove the exit separately.
+        """
+        normalized = symbol if isinstance(symbol, Symbol) else Symbol(symbol)
+        trade = self.store.get_open_robot_trade_for_symbol(self._paper_account_id, normalized)
+        if trade is None:
+            return
+        position = self.store.get_position_projection(PositionKey(
+            self._paper_account_id, Category.LINEAR, normalized, 0,
+        ))
+        if (
+            position is None or position.side is not PositionSide.FLAT
+            or position.quantity.value != 0
+        ):
+            return
+        state = self.store.get_robot_runtime_state(self._paper_account_id)
+        if state is None or state.mode != ROBOT_RUNNING:
+            return
+        if state.recovery_status in {RECONCILIATION_REQUIRED, RECONCILING}:
+            return
+        self.store.update_robot_runtime_state(
+            self._paper_account_id,
+            mode=ROBOT_RUNNING, recovery_status=RECONCILIATION_REQUIRED,
+            reason=(
+                "FLAT_ROBOT_TRADE_LEDGER_UNRESOLVED "
+                f"symbol={normalized.value} trade_id={trade.trade_id}"
+            ),
+            expected_version=state.version,
+            updated_at_ms=max(int(time.time() * 1000), state.updated_at_ms),
+        )
+
     def market(self, request, *, evidence: NormalizedOrderBook | None = None):
-        """Manual PAPER Market. ``evidence`` is the book the HTTP boundary read
-        off the owner thread; the owner uses the current streamed book first
-        and never the provider's REST fallback."""
+        """Manual PAPER Market; all outcomes use the canonical PAPER owner.
+
+        A confirmed net FLAT with an OPEN Robot trade holds admission, rather
+        than pretending that the Robot trade was finalized by this execution.
+        """
         self.require_paper_mutations()
-        return self.api.market(
+        result = self.api.market(
             request, market_book=self._robot_execution_book(request.symbol, evidence),
         )
+        self._fence_flat_robot_ledger_after_paper_execution(request.symbol)
+        return result
 
     def _robot_market(self, request, *, evidence: NormalizedOrderBook | None = None):
         return self._robot_api.market(
@@ -1881,9 +1921,11 @@ class PaperRuntime:
 
     def full_close(self, request, *, evidence: NormalizedOrderBook | None = None):
         self.require_paper_mutations()
-        return self.api.full_close(
+        result = self.api.full_close(
             request, market_book=self._robot_execution_book(request.symbol, evidence),
         )
+        self._fence_flat_robot_ledger_after_paper_execution(request.symbol)
+        return result
 
     def manual_open_symbols(self) -> tuple[str, ...]:
         """Symbols of open PAPER positions, in close_all's order (cheap owner read)."""
@@ -4306,6 +4348,87 @@ class PaperRuntime:
         )
         return request, identity
 
+    def _robot_finalize_nonrobot_close(self, candidate, trade, position) -> bool:
+        """Resolve an already-filled PAPER close without inventing Robot intent.
+
+        The proof binds exactly one active Robot lot to one durable non-Robot
+        FILLED Market command, its immutable execution, and the final Flat.
+        Never sends an order, revises a fill, or infers closure from Flat alone.
+        """
+        account = self._paper_account_id
+        symbol = trade.symbol
+        active_owners = tuple(
+            item for item in self.store.load_robot_candidates_for_symbol(account, symbol)
+            if item.status in {"APPROVED", "OPEN"}
+        )
+        open_trades = tuple(
+            item for item in self.store.load_open_robot_trades(account)
+            if item.symbol == symbol
+        )
+        unique_open_owner = (
+            len(active_owners) == 1
+            and active_owners[0].candidate_id == candidate.candidate_id
+            and active_owners[0].status == "OPEN"
+            and len(open_trades) == 1
+            and open_trades[0].trade_id == trade.trade_id
+        )
+        has_competing_work = (
+            bool(self.store.load_active_paper_limits(account, symbol))
+            or any(
+                item.symbol == symbol
+                for item in self.store.load_unresolved_paper_protection_obligations(account)
+            )
+            or any(
+                item.symbol == symbol and item.trading_account_id == account
+                for item in self.store.load_unfinished_commands()
+            )
+        )
+        if not unique_open_owner or has_competing_work:
+            return False
+        try:
+            entry_order_ids = robot_entry_order_ids(
+                self.store, account, candidate,
+                (candidate.robot_state or {}).get("execution") or {},
+                entry_path=trade.entry_path,
+            )
+        except RobotBreakoutMonitorError:
+            return False
+        history = self.store.load_executions_for_symbol(account, symbol)
+        if not history:
+            return False
+        last_order_id = history[-1].order_id.value
+        if not last_order_id.startswith("paper-order-tw_"):
+            return False
+        command = self.store.get_paper_command_by_order_link(
+            account, last_order_id[len("paper-order-"):],
+        )
+        proof = prove_nonrobot_robot_close(
+            trade=trade, candidate=candidate, position=position,
+            executions=history, command=command,
+            entry_order_ids=tuple(item.value for item in entry_order_ids),
+            entry_fees=self._robot_entry_fees(trade),
+            unique_open_owner=unique_open_owner,
+            has_competing_work=has_competing_work,
+        )
+        if proof is None:
+            return False
+        self.store.close_robot_trade(
+            trade.trade_id,
+            exit_time_ms=proof.exit_time_ms,
+            exit_price=proof.exit_price, exit_reason="MANUAL",
+            realized_pnl_usdt=proof.realized_pnl_usdt,
+            realized_pnl_pct=proof.realized_pnl_pct,
+            fees_costs_usdt=proof.fees_costs_usdt,
+            updated_at_ms=max(
+                int(time.time() * 1000), proof.exit_time_ms,
+                trade.created_at_ms, candidate.updated_at_ms,
+            ),
+        )
+        self.store.clear_paper_protection_for_flat(PositionKey(
+            account, Category.LINEAR, symbol, 0,
+        ))
+        return True
+
     def _robot_finalize_manual_close(self, candidate) -> bool:
         """Finalize one MANUAL Robot trade only from its persisted PAPER fill(s)."""
         fresh = self.store.get_robot_candidate(candidate.candidate_id)
@@ -5262,6 +5385,13 @@ class PaperRuntime:
                     # Resume only the exact proven execution; never dispatch
                     # a replacement close during operator reconciliation.
                     if self._robot_finalize_manual_close(candidate):
+                        closed_trade_ids.append(trade.trade_id)
+                        continue
+
+                    # Generic PAPER commands can flatten a Robot lot without
+                    # a previously committed Robot-specific manual intent.
+                    # Require independent command/fill/entry ownership proof.
+                    if self._robot_finalize_nonrobot_close(candidate, trade, position):
                         closed_trade_ids.append(trade.trade_id)
                         continue
 

@@ -30,6 +30,8 @@ on:
       - "terminal/persistence/**"
       - "terminal/api/**"
       - "tests/test_robot_paper_acceptance.py"
+      - "tests/test_paper_flat_robot_execution_fence.py"
+      - "tests/test_robot_nonrobot_close_proof.py"
       - "tests/test_stop_reentry_paper_e2e.py"
       - "tests/test_stop_reentry_scanner_lshape.py"
       - "tests/test_stop_reentry_child_ipc.py"
@@ -195,6 +197,8 @@ jobs:
         run: >-
           python -m unittest -v
           tests.test_robot_paper_acceptance
+          tests.test_paper_flat_robot_execution_fence
+          tests.test_robot_nonrobot_close_proof
           tests.test_robot_entry_limit
           tests.test_robot_breakout_monitor
           tests.test_robot_recovery_coordinator
