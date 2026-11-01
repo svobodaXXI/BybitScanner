@@ -239,7 +239,11 @@ def execute_flat_handoff(
         )
         deadline = monotonic() + 15
         while monotonic() < deadline:
-            if service_pid() != expected_pid or not probe(expected_pid):
+            # Do not call _service_pid after SIGINT: it requires ActiveState=active
+            # and raises backend_unit_not_active when the intended exit succeeds.
+            # Only disappearance of the exact previously attested /proc PID
+            # proves exit. A changed/failed unit alone cannot prove exit.
+            if not probe(expected_pid):
                 return "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
             sleep(0.25)
         return "OUTCOME_UNKNOWN: single SIGINT sent, do not retry or deploy"
