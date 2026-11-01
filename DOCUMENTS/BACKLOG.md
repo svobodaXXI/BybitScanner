@@ -8,6 +8,10 @@ Owner-confirmed READ-ONLY VPS evidence: installed backend `f100ef369a1105443332b
 
 **Safety:** Never stop Backend protecting positions, use raw Market/SQL or bypass STOP/TAKE; LIVE forbidden. No merge/deploy implicit authorization, no XP. After proof and safe-stop, resume Editor Telegram acceptance. Existing owner queue remains in force.
 
+## P1 — регулярное устранение неповоротливости и лишней сложности (owner 02.11.2026)
+
+**Единая отслеживаемая задача:** [GitHub #766](https://github.com/svobodaXXI/BybitScanner/issues/766). Примерно раз в 4 недели и после реально повторившегося торможения выявлять и устранять не более 1–3 **доказанных** источников toil: лишние запросы к владельцу и дробление квестов, дублированные статусы/документы, повторные проверки, CI setup, неиспользуемые tools и дорогостоящая связанность модулей. Сначала замерить, затем минимальный patch/reuse и проверка выигрыша; если эффекта нет — ничего не менять. **Не создавать дополнительный регламент/рейд/дашборд/параллельную очередь.** P1 не блокирует текущий P0 (монолитная PAPER остановка). Без изменения STOP/TAKE, admission, LIVE, DB, runtime полномочий и защищённых пользовательских артефактов.
+
 ---
 
 ## PAPER VPS recovery — итог RECOVERED и очередь профилактики (2026-11-01)
