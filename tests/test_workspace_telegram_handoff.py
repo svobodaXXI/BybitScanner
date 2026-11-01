@@ -1,10 +1,10 @@
-"""Telegram editor button on Linux: protected URL only, no fake PC launch."""
+"""Telegram Editor handoff through existing authenticated Mini App ingress."""
 import sys
 import types
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
-# The machine-local config.py contains secrets and must not exist in CI.
 config_stub = types.ModuleType("config")
 config_stub.TELEGRAM_TOKEN = "test-token"
 config_stub.TELEGRAM_CHAT_ID = "42"
@@ -16,52 +16,50 @@ sys.modules.setdefault("config", config_stub)
 
 import telegram_review
 import workspace_telegram_handoff as handoff
+from deploy.terminal_ingress.auth_server import LOGIN_HTML
 
 
 class WorkspaceTelegramHandoffTests(unittest.TestCase):
-    def test_editor_link_has_exact_context_without_secret_or_trading_control(self):
+    def test_editor_context_via_web_app_not_unprotected_url(self):
         with patch.dict("os.environ", {
-            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://terminal.example.com/",
-            "BYBITSCANNER_ACCESS_CLIENT_ID": "access-id",
-            "BYBITSCANNER_ACCESS_CLIENT_SECRET": "access-secret",
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181",
             "TELEGRAM_CHAT_ID": "42",
-        }), patch.object(handoff, "verify_workspace_gateway", return_value=True) as probe, \
-                patch.object(handoff.telegram_gateway_client, "configured", return_value=True), \
+        }), patch.object(handoff.requests, "get", side_effect=[
+            SimpleNamespace(status_code=200), SimpleNamespace(status_code=401),
+        ]) as probe, patch.object(handoff.telegram_gateway_client, "configured", return_value=True), \
                 patch.object(handoff.telegram_gateway_client, "send_text", return_value={"ok": True}) as send:
             self.assertTrue(handoff.deliver_workspace_link(
                 "42", mode="EDITOR", symbol="BTCUSDT", timeframe="5m")["ok"])
-        probe.assert_called_once()
-        args, kw = send.call_args
-        self.assertEqual(args[0], "42")
-        button = kw["reply_markup"]["inline_keyboard"][0][0]
-        self.assertEqual(button["url"], "https://terminal.example.com/?mode=EDITOR&symbol=BTCUSDT&timeframe=5m")
-        self.assertNotIn("access-secret", repr(send.call_args))
-        self.assertNotIn("robot:", repr(send.call_args))
+        self.assertEqual(probe.call_count, 2)
+        button = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]
+        self.assertNotIn("url", button)
+        self.assertEqual(button["web_app"]["url"],
+                         "https://83.217.213.181/login?mode=EDITOR&symbol=BTCUSDT&timeframe=5m")
+        self.assertIn('target.searchParams.set("mode",mode)', LOGIN_HTML)
+        self.assertIn('target.searchParams.set("symbol",symbol)', LOGIN_HTML)
+        self.assertIn('target.searchParams.set("timeframe",timeframe)', LOGIN_HTML)
+        self.assertNotIn("CF-Access", repr(send.call_args))
 
-    def test_unconfigured_or_unverified_ingress_never_sends(self):
-        env = {"BYBITSCANNER_TERMINAL_HTTPS_URL": "https://terminal.example.com/",
-               "BYBITSCANNER_ACCESS_CLIENT_ID": "id",
-               "BYBITSCANNER_ACCESS_CLIENT_SECRET": "secret",
+    def test_missing_or_open_ingress_fails_closed(self):
+        env = {"BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181",
                "TELEGRAM_CHAT_ID": "42"}
-        with patch.dict("os.environ", env), \
-                patch.object(handoff, "verify_workspace_gateway", return_value=False), \
-                patch.object(handoff.telegram_gateway_client, "send_text") as send:
-            with self.assertRaisesRegex(handoff.WorkspaceHandoffUnavailable, "unverified"):
-                handoff.deliver_workspace_link("42", mode="EDITOR", symbol="BTCUSDT", timeframe="5m")
-            send.assert_not_called()
-        with patch.dict("os.environ", {"TELEGRAM_CHAT_ID": "42"}, clear=True), \
-                patch.object(handoff.telegram_gateway_client, "send_text") as send:
+        for status in (200, 302, 503):
+            with self.subTest(private_status=status), patch.dict("os.environ", env), \
+                    patch.object(handoff.requests, "get", side_effect=[
+                        SimpleNamespace(status_code=200), SimpleNamespace(status_code=status)
+                    ]), patch.object(handoff.telegram_gateway_client, "send_text") as send:
+                with self.assertRaisesRegex(handoff.WorkspaceHandoffUnavailable, "unverified"):
+                    handoff.deliver_workspace_link("42", mode="EDITOR", symbol="BTCUSDT", timeframe="5m")
+                send.assert_not_called()
+        with patch.dict("os.environ", {"TELEGRAM_CHAT_ID": "42"}, clear=True):
             with self.assertRaisesRegex(handoff.WorkspaceHandoffUnavailable, "unconfigured"):
                 handoff.deliver_workspace_link("42", mode="EDITOR", symbol="BTCUSDT", timeframe="5m")
-            send.assert_not_called()
 
-    def test_wrong_owner_or_unsafe_url_never_delivers(self):
-        env = {"BYBITSCANNER_TERMINAL_HTTPS_URL": "http://127.0.0.1:4173/",
-               "BYBITSCANNER_ACCESS_CLIENT_ID": "id",
-               "BYBITSCANNER_ACCESS_CLIENT_SECRET": "secret",
-               "TELEGRAM_CHAT_ID": "42"}
-        with patch.dict("os.environ", env), \
-                patch.object(handoff, "verify_workspace_gateway") as probe, \
+    def test_wrong_owner_or_unsafe_origin_never_delivers(self):
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "http://127.0.0.1:4173/",
+            "TELEGRAM_CHAT_ID": "42",
+        }), patch.object(handoff.requests, "get") as probe, \
                 patch.object(handoff.telegram_gateway_client, "send_text") as send:
             with self.assertRaisesRegex(handoff.WorkspaceHandoffUnavailable, "owner_mismatch"):
                 handoff.deliver_workspace_link("43", mode="EDITOR", symbol="BTCUSDT", timeframe="5m")
