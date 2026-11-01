@@ -292,6 +292,68 @@ run, use `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` section
 incident playbook, not a new standing prerequisite for every launch.
 Existing owner-only runtime, PAPER/LIVE isolation and fail-closed rules prevail.
 
+### AI-FIRST RESULT DELIVERY — OWNER DECISION 2026-11-02
+
+**Scope:** refine execution of the existing Result-First and Strategic Execution
+contracts for owner-directed AI/vibe coding. This is **not** another phase,
+approval, agent team, quest, template, CI check, or permission to mutate runtime.
+
+- **One owner outcome / one continuous delivery thread.** Owner defines *what
+  must work*, observable acceptance and any product/strategy decisions.
+  ChatGPT owns GitHub development and integration preparation; Codex remains a
+  VPS-only operator when specifically authorized. An internal sequence of
+  small patches/PRs does not create new user-facing tasks or rewards. Continue
+  within the currently authorized scope until the outcome or a real approval/
+  safety boundary. One concise escalation at that boundary, not a series of
+  technical handoffs.
+- **Map before full text.** Use root `AGENTS.md` as the routing index,
+  current BACKLOG P0 and owning contract, then inspect only necessary code
+  symbols, impacted tests, and recent evidence. Expand context on a concrete
+  dependency; do not dump the entire repo, PROJECT_STATE, old Quest history or
+  every helper. Record a durable checkpoint in the **existing** owning file
+  only when the active outcome/critical proof actually changes.
+- **Right-size intent.** For an ordinary bug, source + reproducible failing
+  behavior + minimal intended delta + required check are enough. For a
+  material architectural/trading change, internally state the invariant,
+  interfaces that must remain compatible, and one decisive acceptance proof
+  *before coding*; reuse the owning Spec/ChangeRequest. Do not require a new
+  Spec Kit-style spec/plan/task bundle for every fix.
+- **AI builds; evidence judges.** Prefer an existing deterministic incident
+  fixture or test contract, reproduce RED where feasible, patch the smallest
+  owning boundary, run targeted GREEN and the mandatory affected CI once.
+  Tests must check independent behavior/invariants, not merely mirror the
+  generated implementation. A green test/PR is not proof that PAPER
+  protection, trade economics, Telegram flow or runtime acceptance works.
+- **Detect design drift.** If edits start violating owner UX, durable
+  authority, entry/exit/protection ownership, or the approved architecture,
+  stop that edit path, identify the first divergent assumption, and fix the
+  proven boundary. No repeated ad-hoc patch or test-chasing loops. Optional
+  independent AI code review applies only to high-risk changes (e.g.
+  concurrency, order identity, STOP/TAKE), using existing review/CI surfaces;
+  it cannot grant merge, trading, or VPS authority.
+- **Keep the feedback loop short.** Reuse checks on unchanged SHA and inputs,
+  avoid repeated manual commands and documentation churn. A successful
+  stage automatically advances to the next already-authorized dependency.
+  After an owner-approved release, obtain the required real user/PAPER
+  acceptance before declaring the product outcome done.
+- **Garbage collection in-place.** Treat repeating AI mistakes or duplicate
+  helpers/status text as candidate technical debt in existing issue #766.
+  Only codify a new guideline or guard after a repeated evidenced failure;
+  prefer fixing the current owner module/test over another harness. Measure
+  human actions per accepted outcome, rework, elapsed outcome-to-acceptance
+  time, and safety regressions; PR count, tests and XP are not proxies.
+
+**External precedents, adapted without importing their process stacks:**
+[Apache SkyWalking AI-assisted mature OSS](https://skywalking.apache.org/blog/2026-03-08-agentic-vibe-coding/),
+[OpenAI harness engineering](https://openai.com/index/harness-engineering/),
+[Anthropic long-running agents](https://www.anthropic.com/research/effective-harnesses-for-long-running-agents),
+[aider repository map](https://aider.chat/docs/repomap.html),
+[GitHub Spec Kit](https://github.com/github/spec-kit).
+The owning roadmap/application decisions are in
+`DOCUMENTS/DEVELOPMENT_VALIDATION_LOOP_PLAN.md` and current BACKLOG/#766.
+All existing fail-closed, trading, owner-only merge/VPS and verification
+contracts are unchanged.
+
 ### Owner desktop launch surface — HARD UX CONTRACT (OWNER RULE 2026-09-27)
 
 The owner's canonical manual runtime UX is the existing desktop shortcut surface.
