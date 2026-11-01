@@ -133,6 +133,12 @@ class FakeRuntime:
             raise RobotControlRejected("stop_robot is illegal")
         self.robot = STOPPED
 
+    def pause_robot(self):
+        self.calls.append("robot:pause")
+        if self.robot != READY:
+            raise RobotControlRejected("pause_robot is illegal")
+        self.robot = PAUSED
+
     def sleep(self, seconds):
         self.now += seconds
 
@@ -170,6 +176,7 @@ class FakeRuntime:
         return shutdown.RuntimeShutdown(
             root=ROOT, env={}, get=self.get, post=self.post,
             robot_state=lambda: self.robot, stop_robot_fn=self.stop_robot,
+            pause_robot_fn=self.pause_robot,
             sleep=self.sleep, monotonic=lambda: self.now,
             legacy_resolver=self.resolve_legacy, listener_probe=self.probe_listener,
             legacy_terminator=self.terminate_legacy,
@@ -298,13 +305,43 @@ class FullShutdownTests(unittest.TestCase):
                 self.assertEqual(runtime.calls, ["scanner:stop"])
                 self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
-    def test_rejected_robot_stop_keeps_runtime_alive(self):
+    def test_open_trade_stop_refusal_pauses_admission_and_keeps_protection(self):
         runtime = FakeRuntime(robot=READY)
-        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected("open Robot position"))
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
+            "stop_robot is rejected while OPEN Robot trades remain: jasmy-orphan"
+        ))
+        runtime.protection["covered_symbols"] = ["JASMYUSDT"]
         result = runtime.orchestrator().run("all")
         self.assertFalse(result.ok)
-        self.assertIn("open Robot position", result.message)
+        self.assertIn("Robot PAUSED with OPEN trade", result.message)
+        self.assertEqual(runtime.robot, PAUSED)
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:pause"])
+        self.assertEqual(result.steps, ("scanner:stop", "robot:pause"))
+        self.assertEqual(runtime.protection["covered_symbols"], ["JASMYUSDT"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_open_trade_pause_sync_failure_keeps_backend_alive(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
+            "stop_robot is rejected while a Robot-owned position is open; call pause_robot()"
+        ))
+        runtime.pause_robot = mock.Mock(side_effect=RobotControlRejected(
+            "pending entries unresolved; escalated to RECONCILIATION_REQUIRED"
+        ))
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("pending entries unresolved", result.message)
         self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_unrelated_stop_refusal_cannot_trigger_pause(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected("owner mismatch"))
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("owner mismatch", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.robot, READY)
         self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
     def test_active_protection_coverage_keeps_runtime_alive(self):
