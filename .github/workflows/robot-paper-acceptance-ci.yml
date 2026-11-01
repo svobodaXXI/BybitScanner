@@ -104,6 +104,7 @@ jobs:
           numpy==2.5.1
           matplotlib==3.11.1
           mplfinance==0.12.10b0
+          six==1.17.0
       - name: Compile acceptance surface
         run: >-
           python -m py_compile
