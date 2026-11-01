@@ -88,10 +88,19 @@ class FrozenBoxChartTests(unittest.TestCase):
     def test_open_box_draws_frozen_grid_and_entry_stop_take(self):
         view = _view(pattern="IKIGAI_BOX", signal_snapshot=box_snapshot(),
                      trade=_trade(pattern="IKIGAI_BOX"))
+        labels = []
+        def visible(ax, price, label, color, style):
+            labels.append(label)
+            return original_visible(ax, price, label, color, style)
+        def remote(ax, price, label, color, limits, index):
+            labels.append(label)
+            return original_remote(ax, price, label, color, limits, index)
+        original_visible = chart._draw_level
+        original_remote = chart._draw_offscreen_level
         with tempfile.TemporaryDirectory() as directory:
-            with patch.object(chart, "_draw_level", wraps=chart._draw_level) as drawn:
+            with patch.object(chart, "_draw_level", side_effect=visible), \
+                    patch.object(chart, "_draw_offscreen_level", side_effect=remote):
                 render_position_chart(view, _candles(20), Path(directory) / "box.png")
-        labels = [call.args[2] for call in drawn.call_args_list]
         self.assertEqual(labels[:7], ["F1.0", "F1.618", "F2.618", "P1", "P2", "P3", "P4"])
         self.assertEqual(labels[-3:], ["Entry", "SL", "TP"])
 
@@ -103,10 +112,20 @@ class FrozenBoxChartTests(unittest.TestCase):
                 render_position_chart(view, _candles(20), Path(directory) / "invalid.png")
 
     def test_non_box_does_not_draw_box_grid(self):
+        shown, remote = [], []
+        original_visible = chart._draw_level
+        original_remote = chart._draw_offscreen_level
+        def visible(ax, price, label, color, style):
+            shown.append(label)
+            return original_visible(ax, price, label, color, style)
+        def distant(ax, price, label, color, limits, index):
+            remote.append(label)
+            return original_remote(ax, price, label, color, limits, index)
         with tempfile.TemporaryDirectory() as directory:
-            with patch.object(chart, "_draw_level", wraps=chart._draw_level) as drawn:
+            with patch.object(chart, "_draw_level", side_effect=visible), \
+                    patch.object(chart, "_draw_offscreen_level", side_effect=distant):
                 render_position_chart(_view(), _candles(20), Path(directory) / "wedge.png")
-        self.assertEqual([call.args[2] for call in drawn.call_args_list], ["Entry", "SL", "TP"])
+        self.assertEqual(sorted(shown + remote), ["Entry", "SL", "TP"])
 
 
 if __name__ == "__main__":

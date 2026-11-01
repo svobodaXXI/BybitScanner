@@ -3,6 +3,8 @@ name: Robot PAPER acceptance
 on:
   pull_request:
     paths:
+      - "robot_position_chart.py"
+      - "tests/test_robot_chart_viewport.py"
       - "robot_candidate_store.py"
       - "mirror_retest_robot.py"
       - "retest_account_risk.py"
@@ -159,6 +161,8 @@ jobs:
           tests/test_box_first_fill_frozen_stop.py
           tests/test_robot_protection_close_no_rest.py
           tests/test_robot_protection.py
+      - name: Run Robot chart viewport acceptance
+        run: python -m pytest -q tests/test_robot_chart_viewport.py
       - name: Run MIRROR PAPER attachment and candle-source acceptance
         run: >-
           python -m pytest -q
