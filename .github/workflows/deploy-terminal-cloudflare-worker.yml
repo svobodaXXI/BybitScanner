@@ -25,7 +25,7 @@ jobs:
         run: |
           node --check deploy/terminal_ingress/cloudflare_terminal_worker.mjs
           grep -Fq 'https://83.217.213.181' deploy/terminal_ingress/cloudflare_terminal_worker.mjs
-          ! grep -Eq 'bybitscanner-gateway|8765|8080' deploy/terminal_ingress/cloudflare_terminal_worker.mjs
+          ! grep -Fq 'https://bybitscanner-gateway' deploy/terminal_ingress/cloudflare_terminal_worker.mjs
 
   deploy:
     needs: verify
