@@ -240,7 +240,8 @@ def test_reviewed_dropin_symlink_and_wrong_owner_rejected():
                 unit_dir=unit_dir, trusted_uid=os.getuid())
         path.unlink()
         path.write_text(target.read_text())
-        with pytest.raises(ResumeBlocked, match="unsafe_systemd_dropin_file"):
+        # A mismatched trusted UID first fails the parent-directory ownership gate.
+        with pytest.raises(ResumeBlocked, match="unsafe_systemd_dropin_directory"):
             _systemd_state(unit, run=_mock_systemd(unit, unit_dir, [path]),
                 unit_dir=unit_dir, trusted_uid=os.getuid() + 1)
 
