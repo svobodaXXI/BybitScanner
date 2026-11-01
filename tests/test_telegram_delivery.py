@@ -300,6 +300,23 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             )["inline_keyboard"]
             self.assertFalse(any("web_app" in button for row in public for button in row))
 
+    def test_one_tap_editor_preserves_exact_source_identity_only_for_owner(self):
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_WORKSPACE_URL": "https://83.217.213.181/login",
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "",
+        }):
+            owner = notification.build_tradingview_keyboard(
+                "HEIUSDT", "5m", include_review_actions=True,
+                signal_id="source-original:archive-abc",
+            )["inline_keyboard"]
+            public = notification.build_tradingview_keyboard(
+                "HEIUSDT", "5m", include_review_actions=False,
+                signal_id="source-original:archive-abc",
+            )["inline_keyboard"]
+        self.assertIn("signal_id=source-original%3Aarchive-abc", owner[-1][0]["web_app"]["url"])
+        self.assertNotIn("signal_id=", owner[-1][1]["web_app"]["url"])
+        self.assertFalse(any("web_app" in button for row in public for button in row))
+
     def test_invalid_editor_origin_never_exposed(self):
         with patch.dict("os.environ", {
             "BYBITSCANNER_TERMINAL_HTTPS_URL": "http://127.0.0.1:8080",
