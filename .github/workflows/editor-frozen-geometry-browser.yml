@@ -1,0 +1,42 @@
+name: Editor frozen-geometry browser acceptance
+
+on:
+  pull_request:
+    paths:
+      - "terminal/frontend/e2e/editor-frozen-geometry.spec.ts"
+      - ".github/workflows/editor-frozen-geometry-browser.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: terminal/frontend
+    env:
+      PAPER_FRONTEND_URL: http://127.0.0.1:4173
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: terminal/frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci --ignore-scripts
+      - name: Install isolated Chromium browser
+        run: npx playwright install --with-deps chromium
+      - name: Build exact frontend
+        run: npm run build
+      - name: Run isolated editor browser acceptance
+        run: |
+          npm run dev -- --host 127.0.0.1 --port 4173 --strictPort > /tmp/bybitscanner-editor-vite.log 2>&1 &
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:4173/ > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4173/ > /dev/null
+          npx playwright test e2e/editor-frozen-geometry.spec.ts
