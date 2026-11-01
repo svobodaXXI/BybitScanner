@@ -144,15 +144,21 @@ def proven_pattern_entry(
         return None
     try:
         terms = robot_l_shape.frozen_terms(snapshot)
-        # Detection and Robot state-machine parsing alone are not acceptance
-        # evidence.  Double-extremum retries have no independent protected
-        # Scanner->retry->STOP/TAKE E2E yet, so the opt-in dispatcher must keep
-        # them on its existing WAIT:REENTRY_THESIS_UNPROVEN path.
+        # Both double-extremum variants require the Scanner's exact CLOSED
+        # neckline BODY close, confirmed in the original source timeframe.
+        # initialize_state rejects mismatched direction, candle identity,
+        # neckline, entry close, or formation; an old signal may not be
+        # reclassified as a fresh attempt.
         if pattern in robot_l_shape.DOUBLE_PATTERNS:
-            return None
+            robot_l_shape.initialize_state({
+                "candidate_id": "reentry-neckline-proof", "status": "APPROVED",
+                "signal_snapshot": dict(snapshot),
+            })
+            confirmation = snapshot["neckline_entry"]["confirmation"]
+            confirmed_at = int(confirmation["close_time_ms"])
         # For MIRROR, initialize_state verifies that the NEXT candle closed
         # exactly one source-TF later with a supported Nison formation.
-        if robot_l_shape.is_mirror_snapshot(snapshot):
+        elif robot_l_shape.is_mirror_snapshot(snapshot):
             robot_l_shape.initialize_state({
                 "candidate_id": "reentry-proof", "status": "APPROVED",
                 "signal_snapshot": dict(snapshot),
