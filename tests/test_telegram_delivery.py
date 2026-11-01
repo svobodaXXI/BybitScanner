@@ -279,6 +279,36 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             ["📈 TradingView"],
         )
 
+    def test_owner_signal_card_opens_mini_app_in_one_tap(self):
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_WORKSPACE_URL": "https://83.217.213.181/login",
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "",
+        }):
+            keyboard = notification.build_tradingview_keyboard(
+                "HEIUSDT", "5m", include_review_actions=True,
+            )["inline_keyboard"]
+            self.assertEqual(keyboard[-1][0], {
+                "text": "✏️ Редактор",
+                "web_app": {"url": "https://83.217.213.181/login?mode=EDITOR&symbol=HEIUSDT&timeframe=5m"},
+            })
+            self.assertEqual(keyboard[-1][1], {
+                "text": "🖥 Терминал",
+                "web_app": {"url": "https://83.217.213.181/login?mode=TERMINAL&symbol=HEIUSDT&timeframe=5m"},
+            })
+            public = notification.build_tradingview_keyboard(
+                "HEIUSDT", "5m", include_review_actions=False,
+            )["inline_keyboard"]
+            self.assertFalse(any("web_app" in button for row in public for button in row))
+
+    def test_invalid_editor_origin_never_exposed(self):
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "http://127.0.0.1:8080",
+            "BYBITSCANNER_WORKSPACE_URL": "",
+        }):
+            keyboard = notification.build_tradingview_keyboard("HEIUSDT", "5m")["inline_keyboard"]
+        self.assertEqual(keyboard[-1][0]["callback_data"], "workspace:EDITOR:HEIUSDT:5m")
+        self.assertNotIn("web_app", keyboard[-1][0])
+
     def test_owner_workspace_buttons_request_pc_launch(self):
         keyboard = notification.build_tradingview_keyboard("XDPUSDT", "5m")["inline_keyboard"]
         self.assertEqual([item["text"] for item in keyboard[-1]], ["✏️ Редактор", "🖥 Терминал"])
