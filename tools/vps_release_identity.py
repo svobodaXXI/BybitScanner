@@ -62,10 +62,15 @@ def _validate_manifest(manifest: dict) -> tuple[str, dict[str, str]]:
     return commit, blobs
 
 
-def verify_release(root: Path = ROOT, manifest_path: Path = MANIFEST) -> str:
+def verify_release(root: Path = ROOT, manifest_path: Path = MANIFEST, *,
+                   require_protected_manifest: bool = True) -> str:
     try:
         if manifest_path.is_symlink() or not manifest_path.is_file():
             raise ReleaseIdentityBlocked("release_manifest_missing_or_symlink")
+        if require_protected_manifest:
+            stat = manifest_path.stat()
+            if stat.st_uid != 0 or stat.st_mode & 0o022:
+                raise ReleaseIdentityBlocked("release_manifest_not_root_protected")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         commit, blobs = _validate_manifest(manifest)
         for name, digest in blobs.items():
