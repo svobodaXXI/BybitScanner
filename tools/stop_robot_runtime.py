@@ -33,7 +33,7 @@ import requests
 
 from urllib.parse import urlsplit
 
-from terminal.application.robot_control import RobotControlRejected, stop_robot
+from terminal.application.robot_control import RobotControlRejected, pause_robot, stop_robot
 from tools.legacy_runtime_process import (
     BACKEND, TELEGRAM, LegacyOwnerUnproven, legacy_fallback_supported, probe_listener_pids,
     resolve_legacy_chain, terminate_exact_pids,
@@ -288,6 +288,7 @@ class RuntimeShutdown:
         post: Callable[[str, Mapping[str, object], float], tuple[int, object]] = _http_post,
         robot_state: Callable[[], tuple[str, str] | None] | None = None,
         stop_robot_fn: Callable[[], object] | None = None,
+        pause_robot_fn: Callable[[], object] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         legacy_resolver: Callable[[str, str, int, Path], tuple[int, ...]] = resolve_legacy_chain,
@@ -323,6 +324,9 @@ class RuntimeShutdown:
         self._post = post
         self._robot_state = robot_state or (lambda: read_robot_state(database_path))
         self._stop_robot = stop_robot_fn or (lambda: stop_robot(
+            http_post=_post_robot_json, database_path=database_path, backend_url=self._backend,
+        ))
+        self._pause_robot = pause_robot_fn or (lambda: pause_robot(
             http_post=_post_robot_json, database_path=database_path, backend_url=self._backend,
         ))
         self._sleep = sleep
@@ -387,7 +391,29 @@ class RuntimeShutdown:
                         )
                 if state in ROBOT_STOPPABLE:
                     self._mark("requesting Robot STOPPED")
-                    self._stop_robot()
+                    try:
+                        self._stop_robot()
+                    except RobotControlRejected as exc:
+                        # OPEN ownership permits admission freeze, not shutdown
+                        # or any forced liquidation of protected PAPER positions.
+                        known_open = (
+                            str(exc).startswith("stop_robot is rejected while OPEN Robot trades remain:")
+                            or str(exc).startswith(
+                                "stop_robot is rejected while a Robot-owned position is open;"
+                            )
+                        )
+                        if not known_open or state != ("ROBOT_RUNNING", "READY"):
+                            raise
+                        self._pause_robot()
+                        steps.append("robot:pause")
+                        if self._robot_state() != ("ROBOT_RUNNING", "PAUSED"):
+                            raise SafeStopError(
+                                "Robot PAUSED postcondition unproven; backend retained for protection"
+                            )
+                        raise SafeStopError(
+                            "Robot PAUSED with OPEN trade: protected exposure/orphan "
+                            "must resolve before shutdown; backend retained"
+                        ) from exc
                     steps.append("robot:stop")
                     self._mark("Robot STOPPED confirmed")
                 elif state != ROBOT_STOPPED_PAIR:
