@@ -274,7 +274,7 @@ def main(argv=None) -> int:
         help="Only known PID/starttime/instance with unset build SHA; Git SHA NOT proven",
     )
     parser.add_argument(
-        "--jasmy-incidence-20261102", action="store_true",
+        "--jasmy-incident-20261102", action="store_true",
         help="Only exact JASMY Flat/OPEN ledger on verified f100ef3 old release",
     )
     parser.add_argument("--execute", action="store_true",
@@ -289,7 +289,7 @@ def main(argv=None) -> int:
             expected_build_sha=args.expected_build_sha,
             execute=args.execute,
             legacy_unversioned=args.legacy_unversioned_20261031,
-            jasmy_incident_20261102=args.jasmy_incidence_20261102,
+            jasmy_incident_20261102=args.jasmy_incident_20261102,
         )
     except (FlatRecoveryBlocked, OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"BLOCKED: {exc}; no new signal is authorized")
