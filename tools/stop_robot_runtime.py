@@ -1001,7 +1001,7 @@ class RuntimeShutdown:
         except LegacyOwnerUnproven as exc:
             raise SafeStopError(
                 f"{name} is a legacy process without a shutdown endpoint and its ownership "
-                f"could not be proven ({exc}); nothing was terminated"
+                f"could not be proven ({exc}); that legacy process was not terminated"
             ) from exc
         try:
             self._legacy_terminator(tuple(chain))
