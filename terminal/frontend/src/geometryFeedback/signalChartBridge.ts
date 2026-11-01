@@ -37,6 +37,8 @@ export function projectSignalGeometry(
         throw new Error("Invalid source pivot price");
       return { logical, price: anchor.price };
     });
+    if (anchors.length === 2 && anchors[0].logical >= anchors[1].logical)
+      throw new Error("Source boundary pivots must advance in frozen candle time");
     return {
       id: boundary.id,
       type: boundary.type,
