@@ -31,7 +31,16 @@ def test_exact_blobs_verified_in_gitless_install():
     with TemporaryDirectory() as temp:
         root = Path(temp)
         manifest, _, _ = example(root)
-        assert verify_release(root, manifest) == "a" * 40
+        assert verify_release(root, manifest, require_protected_manifest=False) == "a" * 40
+
+
+def test_unprotected_manifest_is_rejected_before_reading_files():
+    with TemporaryDirectory() as temp:
+        root = Path(temp)
+        manifest, _, _ = example(root)
+        with mock.patch.object(Path, "stat", return_value=mock.Mock(st_uid=1001, st_mode=0o100644)):
+            with pytest.raises(ReleaseIdentityBlocked, match="release_manifest_not_root_protected"):
+                verify_release(root, manifest)
 
 
 def test_tampered_installed_code_rejected():
@@ -40,7 +49,7 @@ def test_tampered_installed_code_rejected():
         manifest, source, _ = example(root)
         source.write_bytes(b"other backend")
         with pytest.raises(ReleaseIdentityBlocked, match="tracked_content_mismatch"):
-            verify_release(root, manifest)
+            verify_release(root, manifest, require_protected_manifest=False)
 
 
 def test_missing_or_symlink_manifest_rejected():
@@ -49,12 +58,12 @@ def test_missing_or_symlink_manifest_rejected():
         manifest, _, _ = example(root)
         manifest.unlink()
         with pytest.raises(ReleaseIdentityBlocked, match="release_manifest_missing_or_symlink"):
-            verify_release(root, manifest)
+            verify_release(root, manifest, require_protected_manifest=False)
         other = root / "other.json"
         other.write_text("{}")
         manifest.symlink_to(other)
         with pytest.raises(ReleaseIdentityBlocked, match="release_manifest_missing_or_symlink"):
-            verify_release(root, manifest)
+            verify_release(root, manifest, require_protected_manifest=False)
 
 
 def test_traversal_and_symlinked_tracked_paths_rejected():
@@ -64,7 +73,7 @@ def test_traversal_and_symlinked_tracked_paths_rejected():
         blobs["../outside"] = git_blob_hash(b"x")
         manifest.write_text(json.dumps({"build_sha": "a" * 40, "blobs": blobs}))
         with pytest.raises(ReleaseIdentityBlocked, match="invalid_manifest_path"):
-            verify_release(root, manifest)
+            verify_release(root, manifest, require_protected_manifest=False)
         blobs.pop("../outside")
         external = root / "external"
         external.mkdir()
@@ -73,7 +82,7 @@ def test_traversal_and_symlinked_tracked_paths_rejected():
         blobs["external-link/file.py"] = git_blob_hash(b"x")
         manifest.write_text(json.dumps({"build_sha": "a" * 40, "blobs": blobs}))
         with pytest.raises(ReleaseIdentityBlocked, match="tracked_symlink_not_supported"):
-            verify_release(root, manifest)
+            verify_release(root, manifest, require_protected_manifest=False)
 
 
 def test_sha_without_complete_tracked_manifest_rejected():
@@ -83,7 +92,7 @@ def test_sha_without_complete_tracked_manifest_rejected():
         del blobs["tools/vps_release_identity.py"]
         manifest.write_text(json.dumps({"build_sha": "a" * 40, "blobs": blobs}))
         with pytest.raises(ReleaseIdentityBlocked, match="backend_or_verifier_not_tracked"):
-            verify_release(root, manifest)
+            verify_release(root, manifest, require_protected_manifest=False)
 
 
 def test_incorrect_sha_staging_ref_rejected_before_any_manifest_output():
