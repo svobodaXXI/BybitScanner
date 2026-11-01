@@ -3875,6 +3875,18 @@ class SQLiteStore:
         ).fetchone()
         return _command_from_row(row) if row is not None else None
 
+    def get_paper_command_by_order_link(
+        self, trading_account_id: TradingAccountId, order_link_id: str,
+    ) -> CommandRecord | None:
+        """Read only the exact immutable command behind a PAPER execution link."""
+        self._assert_owner()
+        row = self._connection.execute(
+            """SELECT * FROM trading_commands
+               WHERE trading_account_id=? AND order_link_id=?""",
+            (trading_account_id.value, order_link_id),
+        ).fetchone()
+        return _command_from_row(row) if row is not None else None
+
     def load_unfinished_commands(self) -> tuple[CommandRecord, ...]:
         self._assert_owner()
         final_states = (
