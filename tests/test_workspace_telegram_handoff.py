@@ -48,7 +48,7 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
             "TELEGRAM_CHAT_ID": "42",
         }, clear=True), patch.object(handoff.requests, "get", side_effect=[
             SimpleNamespace(status_code=200), SimpleNamespace(status_code=401),
-        ]), patch.object(handoff.telegram_gateway_client, "configured", return_value=True), \\
+        ]), patch.object(handoff.telegram_gateway_client, "configured", return_value=True), \
                 patch.object(handoff.telegram_gateway_client, "send_text", return_value={"ok": True}) as send:
             handoff.deliver_workspace_link("42", mode="EDITOR", symbol="ETHUSDT", timeframe="15m")
         button = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]
@@ -62,7 +62,7 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
                     "https://83.217.213.181/login#fragment"):
             with self.subTest(base=bad), patch.dict("os.environ", {
                 "BYBITSCANNER_WORKSPACE_URL": bad, "TELEGRAM_CHAT_ID": "42",
-            }, clear=True), patch.object(handoff.requests, "get") as probe, \\
+            }, clear=True), patch.object(handoff.requests, "get") as probe, \
                     patch.object(handoff.telegram_gateway_client, "send_text") as send:
                 with self.assertRaisesRegex(handoff.WorkspaceHandoffUnavailable, "invalid_workspace_link"):
                     handoff.deliver_workspace_link("42", mode="EDITOR", symbol="ETHUSDT", timeframe="15m")
