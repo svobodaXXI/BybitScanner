@@ -474,7 +474,7 @@ def build_tradingview_keyboard(
     # Owner callback targets the listener on the PC, not the phone browser.
     # The listener prepares the local UI; HTTPS/QR are delivered separately.
     if include_review_actions:
-        tf = timeframe if timeframe.endswith(("s", "m", "h", "d")) else f"{timeframe}m"
+        tf = {"1": "1m", "5": "5m", "15": "15m", "60": "1h", "D": "1d"}.get(timeframe, timeframe)
         if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
             keyboard.append([
                 _owner_workspace_button("EDITOR", symbol, tf, signal_id=signal_id),
