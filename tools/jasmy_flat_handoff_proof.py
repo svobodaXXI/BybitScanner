@@ -67,7 +67,7 @@ def prove_jasmy_legacy_flat(
         or coverage == ([], [], {}),
         "unexpected_protection_coverage",
     )
-    _require(conn.execute("PRAGMA quick_check").fetchone() == ("ok",),
+    _require(conn.execute("PRAGMA quick_check").fetchone()[0] == "ok",
              "paper_database_integrity_unproven")
     robot_states = conn.execute(
         "SELECT mode, recovery_status FROM robot_runtime_state "
