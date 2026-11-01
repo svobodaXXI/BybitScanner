@@ -115,3 +115,43 @@ def test_double_bottom_new_closed_neckline_is_same_campaign_proposal_after_stop(
     assert proposed.confirmed_at_ms == 900_000
     assert proposed.strategy_confirmation_proven is True
     assert proposed.original_risk_budget_usdt is None
+
+
+def test_neckline_retry_rejects_forged_and_stale_confirmation():
+    from copy import deepcopy
+    from geometry.double_extremum import frozen_neckline_snapshot
+    from terminal.application.robot_reentry_adapter import proven_pattern_entry
+
+    bars = [
+        bar(102, 98, 100), bar(101, 94, 96), bar(98, 90, 92),
+        bar(101, 95, 99), bar(106, 99, 104), bar(102, 97, 99),
+        bar(99, 90.2, 92), bar(104, 96, 100), bar(107, 105.5, 106.5),
+    ]
+    for i, item in enumerate(bars):
+        item["time"] = 360_000 + i * 60_000
+    valid = frozen_neckline_snapshot("LABUSDT", "1", bars)
+    assert valid is not None
+    confirmed_at = valid["neckline_entry"]["confirmation"]["close_time_ms"]
+    assert proven_pattern_entry(valid, now_ms=confirmed_at) is not None
+
+    for tamper in ("future", "wrong_kind", "wrong_timeframe", "bad_close",
+                   "bad_direction", "wrong_neckline", "no_handoff"):
+        broken = deepcopy(valid)
+        neckline = broken["neckline_entry"]
+        confirmation = neckline["confirmation"]
+        if tamper == "future":
+            assert proven_pattern_entry(broken, now_ms=confirmed_at - 1) is None
+            continue
+        if tamper == "wrong_kind":
+            confirmation["kind"] = "WICK_BREAK"
+        elif tamper == "wrong_timeframe":
+            confirmation["timeframe"] = "5"
+        elif tamper == "bad_close":
+            confirmation["close"] = "100"
+        elif tamper == "bad_direction":
+            neckline["direction"] = "SHORT"
+        elif tamper == "wrong_neckline":
+            neckline["neckline"] = "107"
+        else:
+            broken["robot_handoff_ready"] = False
+        assert proven_pattern_entry(broken, now_ms=confirmed_at) is None, tamper
