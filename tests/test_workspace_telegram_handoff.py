@@ -1,6 +1,18 @@
 """Telegram editor button on Linux: protected URL only, no fake PC launch."""
+import sys
+import types
 import unittest
 from unittest.mock import patch
+
+# The machine-local config.py contains secrets and must not exist in CI.
+config_stub = types.ModuleType("config")
+config_stub.TELEGRAM_TOKEN = "test-token"
+config_stub.TELEGRAM_CHAT_ID = "42"
+config_stub.TELEGRAM_CHAT_IDS = ("42",)
+config_stub.TELEGRAM_ENABLED = True
+config_stub.TELEGRAM_TEST_MODE = False
+config_stub.TIMEFRAME = "1"
+sys.modules.setdefault("config", config_stub)
 
 import telegram_review
 import workspace_telegram_handoff as handoff
