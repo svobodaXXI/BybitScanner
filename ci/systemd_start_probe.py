@@ -153,7 +153,7 @@ def render(unit: str, text: str, reply: str) -> str:
             line = "TimeoutStopSec=3"
         if line.startswith(("User=", "Group=", "StateDirectory", "EnvironmentFile=")):
             continue
-        if line.startswith("ExecStart=") and "paper_http_server" in line:
+        if line.startswith("ExecStart=") and ("paper_http_server" in line or "tools.vps_release_identity exec-backend" in line):
             line = f"ExecStart={PY} {WORK}/server.py backend {BACKEND_PORT} {IDENTITY} {WORK}/events.jsonl 3 {reply}"
         elif line.startswith("ExecStart=") and "telegram_monitoring.py" in line:
             line = f"ExecStart={PY} {WORK}/server.py telegram {TELEGRAM_PORT} {IDENTITY} {WORK}/events.jsonl 0 ok"
