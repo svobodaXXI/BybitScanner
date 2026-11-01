@@ -9,10 +9,11 @@ from types import SimpleNamespace
 
 from terminal.application.robot_nonrobot_close_proof import prove_nonrobot_robot_close
 from terminal.domain.models import (
-    Category, CommandState, Controller, Execution, ExecutionDedupKey,
+    Category, Controller, Execution, ExecutionDedupKey,
     ExecutionId, OrderId, OrderSide, PositionKey, PositionSide, Price,
     Quantity, Symbol, TradingAccountId,
 )
+from terminal.domain.states import CommandState
 
 ACCOUNT = TradingAccountId("paper")
 SYMBOL = Symbol("JASMYUSDT")
