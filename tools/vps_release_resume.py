@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import socket
 import subprocess
 import sys
 
@@ -63,6 +62,8 @@ def _assert_no_listeners() -> None:
                 port = int(fields[1].rsplit(":", 1)[1], 16)
                 if fields[3] == "0A" and port in PORTS:
                     raise ResumeBlocked("PAPER_port_owned_by_another_process")
+    except ResumeBlocked:
+        raise
     except (OSError, IndexError, ValueError) as exc:
         raise ResumeBlocked("tcp_snapshot_unavailable") from exc
 
