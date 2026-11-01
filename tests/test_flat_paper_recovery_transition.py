@@ -7,6 +7,7 @@ from unittest import mock
 
 from tests.test_flat_paper_recovery_gate import fixture, IDENTITY
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
+from tools.jasmy_flat_handoff_proof import OLD_SHA as JASMY_OLD_SHA, PROOF_LABEL as JASMY_PROOF
 from tools.flat_paper_recovery_transition import (execute_flat_handoff, _send_exact_sigint,
     _attest_legacy_unversioned, LEGACY_UNVERSIONED_PID,
     LEGACY_UNVERSIONED_START, LEGACY_UNVERSIONED_INSTANCE)
@@ -17,10 +18,11 @@ PID = 500879
 
 
 class TransitionCase(unittest.TestCase):
-    def case(self, *, execute=False, mutate=None, token=None, pid=None, exit_after=True):
+    def case(self, *, execute=False, mutate=None, token=None, pid=None, exit_after=True,
+             jasmy_incident=False):
         conn, snapshots = fixture()
         snapshots.pop("expected_identity")  # passed independently by handoff
-        snapshots["backend"]["build_sha"] = SHA
+        snapshots["backend"]["build_sha"] = JASMY_OLD_SHA if jasmy_incident else SHA
         snapshots["backend"]["process_instance_id"] = "old-paper-process"
         if mutate:
             mutate(conn, snapshots)
@@ -44,7 +46,9 @@ class TransitionCase(unittest.TestCase):
         result = execute_flat_handoff(
             db_path=Path("/no-vps-access"),
             expected_identity=IDENTITY, expected_pid=PID,
-            expected_build_sha=SHA, execute=execute, snapshots=snapshots,
+            expected_build_sha=JASMY_OLD_SHA if jasmy_incident else SHA,
+            execute=execute, snapshots=snapshots,
+            jasmy_incident_20261102=jasmy_incident,
             service_pid=pid or (lambda: PID if live[0] else 0),
             start_token=token or (lambda p: "start-77"),
             send_interrupt=interrupt, is_alive=lambda p: live[0],
@@ -53,6 +57,33 @@ class TransitionCase(unittest.TestCase):
             sleep=lambda n: None,
         )
         return result, events, conn
+
+    def test_jasmy_incident_uses_separate_proof_inside_barrier_only(self):
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_jasmy_legacy_flat",
+            return_value=JASMY_PROOF,
+        ) as proof:
+            result, events, _ = self.case(jasmy_incident=True)
+        self.assertTrue(result.startswith("PRECHECK_ONLY:"))
+        self.assertEqual(events, ["barrier:enter", "barrier:exit"])
+        proof.assert_called_once()
+
+    def test_jasmy_incident_one_pid_signal_only_after_proof(self):
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_jasmy_legacy_flat",
+            return_value=JASMY_PROOF,
+        ) as proof:
+            result, events, _ = self.case(jasmy_incident=True, execute=True)
+        self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
+        self.assertEqual(len([e for e in events if isinstance(e, tuple)
+                              and e[0] == "signal"]), 1)
+        self.assertEqual(events[0], "barrier:enter")
+        self.assertEqual(events[-1], "barrier:exit")
+        proof.assert_called_once()
+
+    def test_jasmy_incident_rejects_missing_proof_without_signal(self):
+        with self.assertRaises(FlatRecoveryBlocked):
+            self.case(jasmy_incident=True)
 
     def test_preflight_never_signals_and_does_not_modify_sqlite(self):
         result, events, conn = self.case()
