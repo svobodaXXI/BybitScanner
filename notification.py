@@ -367,7 +367,7 @@ def format_signal(
 
 
 
-def _owner_workspace_button(mode, symbol, timeframe):
+def _owner_workspace_button(mode, symbol, timeframe, signal_id=None):
     """Direct Mini App for owner-only private signal cards.
 
     Never embed credentials or degrade an invalid configured origin into an
@@ -386,6 +386,7 @@ def _owner_workspace_button(mode, symbol, timeframe):
             url = workspace_link(
                 urlunsplit((parts.scheme, parts.netloc, "/login", "", "")),
                 mode, symbol, timeframe,
+                signal_id=signal_id if mode == "EDITOR" else None,
             )
             return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
                     "web_app": {"url": url}}
@@ -403,6 +404,7 @@ def build_tradingview_keyboard(
     include_review_actions=True,
     robot_candidate_id=None,
     robot_status_button=False,
+    signal_id=None,
 ):
     """Telegram inline keyboard for TradingView, review, and Robot admission."""
 
@@ -471,7 +473,7 @@ def build_tradingview_keyboard(
         tf = timeframe if timeframe.endswith(("s", "m", "h", "d")) else f"{timeframe}m"
         if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
             keyboard.append([
-                _owner_workspace_button("EDITOR", symbol, tf),
+                _owner_workspace_button("EDITOR", symbol, tf, signal_id=signal_id),
                 _owner_workspace_button("TERMINAL", symbol, tf),
             ])
 
@@ -578,6 +580,7 @@ def send_signal(
                         if is_owner
                         else None
                     ),
+                    signal_id=(f"source-original:{source_token}" if is_owner and source_token else None),
                 )
             )
 
