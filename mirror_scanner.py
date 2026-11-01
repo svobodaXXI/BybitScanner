@@ -900,6 +900,17 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
         item = level.to_dict()
         item["selected"] = is_selected
         levels.append(item)
+    source_start_ms = min(
+        (int(anchor[0]) for level in levels
+         for anchor in level.get("anchors", ())
+         if int(anchor[0]) <= event_close_ms),
+        default=int(event_rows[max(0, len(event_rows) - 120)]["open_time_ms"]),
+    )
+    geometry_candles = [
+        {k: row[k] for k in ("open_time_ms", "open", "high", "low", "close")}
+        for row in event_rows
+        if int(row["open_time_ms"]) >= source_start_ms
+    ][-2000:]
     return {
         "symbol": symbol, "timeframe": timeframe, "level_id": level_id,
         # Source identity is frozen from the selected detector level, never
@@ -919,17 +930,7 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
         # separately preserves available bars from the detector's earliest
         # original source anchor, without reconstructing older OHLC or shifting
         # the anchor to the beginning of the chart.
-        "geometry_candles": [
-            {k: row[k] for k in ("open_time_ms", "open", "high", "low", "close")}
-            for row in event_rows
-            if int(row["open_time_ms"]) >= min(
-                (int(anchor[0]) for level in levels
-                 for anchor in level.get("anchors", ())
-                 if int(anchor[0]) <= event_close_ms),
-                default=event_rows[-120]["open_time_ms"] if len(event_rows) >= 120
-                else event_rows[0]["open_time_ms"],
-            )
-        ][-2000:],
+        "geometry_candles": geometry_candles,
         "levels": levels,
         "event_open_time_ms": event.get("open_time_ms"),
         # The breakout OHLC and level are frozen at event time: do not infer
