@@ -124,6 +124,60 @@ class TransitionCase(unittest.TestCase):
             "barrier:enter", ("signal", PID, signal.SIGINT), "barrier:exit",
         ])
 
+    def test_failed_systemd_unit_after_signal_is_successful_exit(self):
+        # In production _service_pid raises backend_unit_not_active once
+        # systemd marks the expected, now-dead owner process as failed.
+        observations = []
+        live = [True]
+        def service_pid():
+            observations.append("active" if live[0] else "failed")
+            if not live[0]:
+                raise FlatRecoveryBlocked("backend_unit_not_active")
+            return PID
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(build_sha=SHA, process_instance_id="old-paper-process")
+        signals = []
+        @contextmanager
+        def barrier(_):
+            yield conn
+        def interrupt(pid, sig):
+            signals.append((pid, sig))
+            live[0] = False
+        result = execute_flat_handoff(
+            db_path=Path("/no-vps-access"), expected_identity=IDENTITY,
+            expected_pid=PID, expected_build_sha=SHA, execute=True,
+            snapshots=snapshots, service_pid=service_pid,
+            start_token=lambda p: "start-77", writer_guard=barrier,
+            send_interrupt=interrupt, is_alive=lambda p: live[0],
+            monotonic=lambda: 0, sleep=lambda seconds: None,
+        )
+        self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
+        self.assertEqual(signals, [(PID, signal.SIGINT)])
+        self.assertEqual(observations, ["active", "active"])
+
+    def test_failed_unit_alone_does_not_prove_backend_exit(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(build_sha=SHA, process_instance_id="old-paper-process")
+        signals = []
+        @contextmanager
+        def barrier(_):
+            yield conn
+        ticks = iter([0, 16, 16])
+        result = execute_flat_handoff(
+            db_path=Path("/no-vps-access"), expected_identity=IDENTITY,
+            expected_pid=PID, expected_build_sha=SHA, execute=True,
+            snapshots=snapshots,
+            service_pid=lambda: PID,
+            start_token=lambda p: "start-77", writer_guard=barrier,
+            send_interrupt=lambda pid, sig: signals.append((pid, sig)),
+            is_alive=lambda pid: True,
+            monotonic=lambda: next(ticks), sleep=lambda seconds: None,
+        )
+        self.assertTrue(result.startswith("OUTCOME_UNKNOWN:"))
+        self.assertEqual(signals, [(PID, signal.SIGINT)])
+
     def test_any_open_exposure_blocks_without_signal(self):
         def mutate(conn, snapshots):
             conn.execute("UPDATE position_projections SET quantity='422',side='Short' "
