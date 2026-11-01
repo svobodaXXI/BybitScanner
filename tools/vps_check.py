@@ -233,7 +233,7 @@ def stop_contract_problems(service: Mapping[str, str], entry: str, *,
                            unit: Mapping[str, str] | None = None) -> list[str]:
     problems = []
     unit = unit or {}
-    if "paper_http_server" in entry:
+    if "paper_http_server" in entry or "tools.vps_release_identity exec-backend" in entry:
         if unit.get("RefuseManualStop", "no") not in {"yes", "true", "1", "on"}:
             problems.append("RefuseManualStop is not yes (a manual stop job could untrack a protected backend)")
         if _SAFE_STOP not in service.get("ExecStop", ""):
@@ -269,7 +269,7 @@ def stop_contract_problems(service: Mapping[str, str], entry: str, *,
     return problems
 
 
-_ENTRIES = {"bybitscanner-paper-backend.service": "-m terminal.runtime.paper_http_server",
+_ENTRIES = {"bybitscanner-paper-backend.service": "-m tools.vps_release_identity exec-backend",
             "bybitscanner-telegram.service": "telegram_monitoring.py",
             "bybitscanner-paper-start.service": "-m tools.runtime_intent --no-telegram ALL"}
 

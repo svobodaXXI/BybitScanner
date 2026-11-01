@@ -2,6 +2,47 @@
 
 > **Актуальная приёмка 27.10.2026 после PR #638:** Telegram optional для запуска PAPER-ядра; доказанный SSH reverse tunnel, ошибки запуска и требования будущей кнопки описаны в [VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md](VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md). Начальные разделы этого runbook ниже описывают прежнее подготовительное состояние и не являются текущим runtime-статусом.
 
+## PAPER runtime SHA provenance on Gitless VPS (2026-11-01)
+
+**Deployment contract — not an authorization to restart the live PAPER runtime.**
+The backend previously reported empty `build_sha` because its systemd
+environment did not supply `BYBITSCANNER_BUILD_SHA`. A release-marker file
+without checking the tracked source is not proof of the loaded build.
+
+For **future authorized releases only**, stage an approved exact Git commit
+outside the installed tree. In that checkout, `python -m
+tools.vps_release_identity generate --expected-sha <approved-40-char-SHA>`
+requires `HEAD` to match exactly and verifies the complete regular-file Git
+tree against bytes on disk (Git object hashes). Save its JSON output as the
+root-owned, non-symlink `/etc/bybitscanner/paper-release-manifest.json`, mode
+0644, **only as part of the same validated release activation**. Verify that
+the approved target is an authorized stable commit independently at staging;
+the manifest generator does not perform a remote signature or approval check.
+Preserve the manifest, source, DB/WAL, venv and user files as a matched
+deployment set, with a safe rollback/resume plan; do not modify the manifest
+of the currently running release or claim a hot-swap is safe.
+
+At the **separately authorized** backend start, the systemd `ExecStart`
+runs `python -m tools.vps_release_identity exec-backend`: it verifies each
+tracked installed file byte-for-byte against the protected staging manifest
+and then performs `os.execve` within the **same systemd PID**, replacing
+any inherited `BYBITSCANNER_BUILD_SHA` with the verified manifest SHA.
+Absent/mismatched manifests, changed source, unexpected symlinks or unreadable
+tracked files make start fail-closed. The backend then exposes the exact
+verified SHA via `/api/health.build_sha`; deployment acceptance must also
+compare it with the approved release and the actual systemd MainPID/listener.
+Do not treat metadata copied from an untrusted source or a manifest edited
+after process start as proof of already loaded Python modules. This is
+**startup content attestation** under root-owned deployment provenance, not
+a cryptographic proof of in-memory execution or a substitute for process
+identity, DB continuity, STOP/TAKE protection or canonical safe-stop.
+
+This new unit requires a generated manifest at the *next* approved start:
+never deploy the unit alone and then restart a working protected backend.
+The 2026-11-01 recovered VPS continues running its installed release until
+a separate safe-stop/deploy authorization; this document does not imply
+the new wrapper was executed on VPS.
+
 ## systemd unit preparation after an approved PAPER release switch (2026-11-01)
 
 On a host with an already safely stopped backend, **after** all three approved

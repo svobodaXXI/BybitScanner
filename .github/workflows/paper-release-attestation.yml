@@ -1,0 +1,25 @@
+name: PAPER Gitless release identity tests
+on:
+  pull_request:
+    paths:
+      - 'tools/vps_release_identity.py'
+      - 'tests/test_vps_release_identity.py'
+      - 'deploy/systemd/bybitscanner-paper-backend.service'
+      - '.github/workflows/paper-release-attestation.yml'
+  workflow_dispatch:
+
+jobs:
+  release-identity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install focused test runner
+        run: python -m pip install pytest
+      - name: Compile and test offline release attestation
+        run: |
+          python -m py_compile tools/vps_release_identity.py
+          python -m pytest -q tests/test_vps_release_identity.py
