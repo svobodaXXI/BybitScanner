@@ -8,6 +8,7 @@ already installed; then invoke the existing unit-preparation helper separately.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -20,12 +21,77 @@ MANIFEST = Path("/etc/bybitscanner/paper-release-manifest.json")
 UNIT_DIR = Path("/etc/systemd/system")
 PORTS = (8765, 8766)
 
+# These are the observed, owner-owned networking customizations on the PAPER VPS.
+# Only their precise Environment assignments are approved, not arbitrary
+# drop-ins with familiar names. No start/stop, DB or security directive is
+# eligible for override. Revisions require a reviewed code/release change.
+REVIEWED_DROPINS: dict[str, dict[str, tuple[str, ...]]] = {
+    "bybitscanner-paper-backend.service": {
+        "telegram-proxy.conf": (
+            'Environment="HTTPS_PROXY=socks5h://127.0.0.1:10809"',
+            'Environment="HTTP_PROXY=socks5h://127.0.0.1:10809"',
+            'Environment="NO_PROXY=127.0.0.1,localhost,::1,.bybit.com,.bybit.com.cn,.bybit-tr.com"',
+        ),
+    },
+    "bybitscanner-telegram.service": {
+        "proxy.conf": (
+            'Environment="HTTPS_PROXY=socks5h://127.0.0.1:10809"',
+            'Environment="HTTP_PROXY=socks5h://127.0.0.1:10809"',
+            'Environment="NO_PROXY=127.0.0.1,localhost,::1"',
+        ),
+        "terminal-ingress.conf": (
+            "Environment=BYBITSCANNER_TERMINAL_HTTPS_URL=https://83.217.213.181",
+        ),
+    },
+}
+
+
+def _verify_reviewed_dropins(
+    unit: str, reported: str, *,
+    unit_dir: Path = UNIT_DIR, trusted_uid: int = 0,
+) -> None:
+    """Fail closed on unreviewed origin/content, symlinks or weak ownership.
+
+    systemd's DropInPaths is authoritative for the loaded configuration. Reject
+    any directive besides the precise reviewed assignments; filenames alone
+    are never sufficient authorization.
+    """
+    paths = reported.split()
+    if not paths:
+        return
+    approved = REVIEWED_DROPINS.get(unit, {})
+    names: set[str] = set()
+    for name in paths:
+        path = Path(name)
+        if not path.is_absolute() or path.name not in approved or path.name in names:
+            raise ResumeBlocked("unexpected_systemd_dropin")
+        if path != unit_dir / (unit + ".d") / path.name:
+            raise ResumeBlocked("unexpected_systemd_dropin")
+        names.add(path.name)
+        try:
+            stat = path.lstat()
+            if (not path.is_file() or path.is_symlink() or stat.st_uid != trusted_uid
+                    or stat.st_mode & 0o022):
+                raise ResumeBlocked("unsafe_systemd_dropin_file")
+            lines = tuple(
+                line.strip() for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            )
+        except (OSError, UnicodeError) as exc:
+            raise ResumeBlocked("unreadable_systemd_dropin") from exc
+        # Only blank lines may differ; comments, extra sections and directives
+        # are not silently accepted, because systemd syntax is not an INI subset.
+        if lines != ("[Service]", *approved[path.name]):
+            raise ResumeBlocked("unreviewed_systemd_dropin_content")
+
+
+
 
 class ResumeBlocked(ValueError):
     pass
 
 
-def _systemd_state(unit: str, *, run=subprocess.run) -> dict[str, str]:
+def _systemd_state(unit: str, *, run=subprocess.run, unit_dir: Path = UNIT_DIR, trusted_uid: int = 0) -> dict[str, str]:
     try:
         reply = run(
             ["systemctl", "show", unit, "--property=LoadState,ActiveState,MainPID,FragmentPath,DropInPaths",
@@ -43,9 +109,8 @@ def _systemd_state(unit: str, *, run=subprocess.run) -> dict[str, str]:
         raise ResumeBlocked("unexpected_systemd_load_state")
     # A stale/non-reloaded unit may be not-found; the next authorized step
     # reloads units. Never accept a drop-in overriding safety or identity.
-    if state.get("DropInPaths"):
-        raise ResumeBlocked("unexpected_systemd_dropin")
-    if state["LoadState"] == "loaded" and state.get("FragmentPath") != str(UNIT_DIR / unit):
+    _verify_reviewed_dropins(unit, state.get("DropInPaths", ""), unit_dir=unit_dir, trusted_uid=trusted_uid)
+    if state["LoadState"] == "loaded" and state.get("FragmentPath") != str(unit_dir / unit):
         raise ResumeBlocked("unexpected_systemd_unit_origin")
     return state
 
