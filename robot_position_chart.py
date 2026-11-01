@@ -312,9 +312,12 @@ def render_position_chart(
         offscreen = {"above": 0, "below": 0}
 
         def show_level(price: float, label: str, color: str, style: str) -> None:
-            if limits[0] <= price <= limits[1]:
-                _draw_level(ax, price, label, color, style)
-            else:
+            # Retain every real frozen level and its existing line contract.
+            # Axes clipping hides out-of-viewport geometry at its actual
+            # price; an explicit edge label still shows the verified value.
+            # Never clamp a line to the viewport or expand the candle scale.
+            _draw_level(ax, price, label, color, style)
+            if not limits[0] <= price <= limits[1]:
                 edge = "above" if price > limits[1] else "below"
                 _draw_offscreen_level(ax, price, label, color, limits, offscreen[edge])
                 offscreen[edge] += 1
@@ -347,13 +350,10 @@ def render_position_chart(
         for time_ms, price, side, filled in markers:
             x = _candle_position(times, int(time_ms), candle_ms)
             if x is not None:
-                if limits[0] <= price <= limits[1]:
-                    _draw_marker(ax, x, price, side, filled=filled)
-                else:
-                    # An execution outside this price viewport is still
-                    # accounted for in the trade ledger, not fabricated at
-                    # the edge of the chart.
-                    pass
+                # Always preserve actual executions (filled and pending)
+                # at their TRUE prices. Matplotlib clips marks outside the
+                # candle viewport; do not relocate them to an invented edge.
+                _draw_marker(ax, x, price, side, filled=filled)
 
         ax.set_ylim(*limits)
         fig.savefig(out, dpi=120 if wide else 100, bbox_inches="tight")
