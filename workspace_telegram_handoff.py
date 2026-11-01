@@ -9,7 +9,9 @@ from __future__ import annotations
 import os
 
 import telegram_gateway_client
-from workspace_gateway_probe import verify_workspace_gateway
+from urllib.parse import urlsplit, urlunsplit
+
+import requests
 from workspace_ready_link import workspace_link
 
 
@@ -20,23 +22,31 @@ class WorkspaceHandoffUnavailable(RuntimeError):
 def deliver_workspace_link(chat_id: str, *, mode: str, symbol: str,
                            timeframe: str) -> dict:
     base = os.environ.get("BYBITSCANNER_TERMINAL_HTTPS_URL", "").strip()
-    client_id = os.environ.get("BYBITSCANNER_ACCESS_CLIENT_ID", "").strip()
-    client_secret = os.environ.get("BYBITSCANNER_ACCESS_CLIENT_SECRET", "").strip()
     owner = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not owner or str(chat_id) != owner:
         raise WorkspaceHandoffUnavailable("owner_mismatch")
-    if not base or not client_id or not client_secret:
+    if not base:
         raise WorkspaceHandoffUnavailable("protected_terminal_ingress_unconfigured")
     # Validate the complete URL and mode/symbol/timeframe before probing.
     try:
-        link = workspace_link(base, mode, symbol, timeframe)
+        parts = urlsplit(base)
+        if parts.path not in ("", "/"):
+            raise ValueError("The protected origin must have no path")
+        link = workspace_link(urlunsplit((parts.scheme, parts.netloc, "/login", "", "")), mode, symbol, timeframe)
     except ValueError as exc:
         raise WorkspaceHandoffUnavailable("invalid_workspace_link") from exc
-    if not verify_workspace_gateway(base, client_id=client_id, client_secret=client_secret):
-        raise WorkspaceHandoffUnavailable("protected_terminal_ingress_unverified")
+    # Direct HTTPS ingress from #687: real TLS and anonymous read denial.
+    try:
+        origin = f"{parts.scheme}://{parts.netloc}"
+        login = requests.get(origin + "/login", timeout=5, allow_redirects=False)
+        private = requests.get(origin + "/", timeout=5, allow_redirects=False)
+        if login.status_code != 200 or private.status_code not in (401, 403):
+            raise WorkspaceHandoffUnavailable("protected_terminal_ingress_unverified")
+    except requests.RequestException as exc:
+        raise WorkspaceHandoffUnavailable("protected_terminal_ingress_unverified") from exc
     title = "редактор" if mode == "EDITOR" else "терминал"
     markup = {"inline_keyboard": [[{"text": f"✏️ Открыть {title}" if mode == "EDITOR"
-                                      else "🖥 Открыть терминал", "url": link}]]}
+                                      else "🖥 Открыть терминал", "web_app": {"url": link}}]]}
     # The Gateway is the existing sole VPS transport. Do not attempt direct
     # Bot API or silently fall back on a failed delivery.
     if not telegram_gateway_client.configured():
@@ -44,7 +54,7 @@ def deliver_workspace_link(chat_id: str, *, mode: str, symbol: str,
     try:
         result = telegram_gateway_client.send_text(
             owner, f"{symbol} · {timeframe} · {title.capitalize()}\n"
-                   "Ссылка открывает соответствующий режим Terminal после входа.",
+                   "Открыть защищённый Terminal через Telegram.",
             reply_markup=markup,
         )
     except telegram_gateway_client.TelegramGatewayError as exc:
