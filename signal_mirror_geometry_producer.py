@@ -14,7 +14,7 @@ def build_mirror_geometry_snapshot(signal_id, frozen):
     if not isinstance(frozen, dict):
         return None
     try:
-        bars = frozen["candles"]
+        bars = frozen.get("geometry_candles") or frozen["candles"]
         symbol, timeframe = str(frozen["symbol"]), str(frozen["timeframe"])
         if not isinstance(bars, list) or not bars:
             return None
