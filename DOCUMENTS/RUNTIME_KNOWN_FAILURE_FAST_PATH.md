@@ -5,6 +5,10 @@ Date: 2026-09-27
 Purpose: compact evidence-first runbook for recurring Scanner / PAPER Robot / Telegram / desktop-launch failures.  
 Primary objective: minimize owner time. Known failure classes are diagnosed from repository authority and one bounded host snapshot before any exploratory sequence.
 
+## Stuck PAPER recovery / release switch — 2026-11-01
+
+For `RECONCILIATION_REQUIRED` with BUSDT-like `DISPATCHING` STOP, stale incident coverage, unversioned backend, or partially completed release transition, **do not rediscover this case**: read [PAPER VPS recovery postmortem and state-based runbook](PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md) and apply only the branch proven by the **current** host state. Especially: no HTTP inside SQLite writer barrier; an inactive systemd unit *after* authorized SIGINT may prove exit rather than failed preflight; when backend is already absent, do not repeat transition; release without `.git` needs exact tracked-content verification; load units after `daemon-reload` before `reset-failed`; canonical BUSDT reconcile comes **before** opening admission/PAPER_AUTO. Incident-specific legacy PID and flags must not be reused. The 2026-11-01 outcome was RECOVERED as reported by Codex, but post-SIGINT classification, systemd ordering and automatic build attestation still have open engineering debt. Preserve any new protected PAPER exposure on the running host.
+
 ## Universal principle
 
 **Known path before investigation.**
