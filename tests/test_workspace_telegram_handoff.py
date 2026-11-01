@@ -1,5 +1,6 @@
 """Telegram Editor handoff through existing authenticated Mini App ingress."""
 import sys
+from pathlib import Path
 import types
 import unittest
 from types import SimpleNamespace
@@ -20,6 +21,11 @@ from deploy.terminal_ingress.auth_server import LOGIN_HTML
 
 
 class WorkspaceTelegramHandoffTests(unittest.TestCase):
+    def test_linux_import_uses_installed_review_queue_not_windows_path(self):
+        self.assertEqual(telegram_review.PROJECT_ROOT, Path(telegram_review.__file__).resolve().parent)
+        self.assertEqual(telegram_review.REVIEW_QUEUE, telegram_review.PROJECT_ROOT / "review_queue")
+        self.assertEqual(telegram_review.OFFSET_FILE, telegram_review.REVIEW_QUEUE / ".telegram_offset")
+
     def test_editor_context_via_web_app_not_unprotected_url(self):
         with patch.dict("os.environ", {
             "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181",
