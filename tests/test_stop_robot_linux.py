@@ -43,6 +43,8 @@ class FakeHost:
             if not self.telegram:
                 raise shutdown.Unreachable("down")
             return 200, {"component": "telegram_monitoring", "database_identity": IDENTITY}
+        if url == BACKEND + "/api/robot/autopilot":
+            return 200, {"ok": True, "mode": "OFF"}
         if url == BACKEND + "/api/robot/protection-health":
             return 200, {"healthy": True, "covered_symbols": [], "unhealthy_symbols": {}, "armed_symbols": []}
         raise AssertionError(f"unexpected GET {url}")
