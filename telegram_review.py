@@ -205,15 +205,33 @@ def _parse_workspace_callback(data):
 
 
 def _run_workspace_callback(callback_query, parsed):
-    """Queue-only boundary: no shell execution or robot startup in listener."""
+    """Owner-only view handoff: Windows local launcher OR verified VPS HTTPS link."""
+    import os
+    callback_id = callback_query.get("id")
+    if os.name != "nt":
+        from workspace_telegram_handoff import (
+            WorkspaceHandoffUnavailable, deliver_workspace_link,
+        )
+        chat_id = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
+        try:
+            deliver_workspace_link(
+                str(chat_id), mode=parsed["mode"],
+                symbol=parsed["symbol"], timeframe=parsed["timeframe"],
+            )
+        except WorkspaceHandoffUnavailable as exc:
+            print("[WORKSPACE HANDOFF BLOCKED]", type(exc).__name__)
+            _answer_callback(callback_id, "Редактор: защищённое HTTPS-соединение недоступно")
+            return
+        _answer_callback(callback_id, "Ссылка на редактор/терминал отправлена в чат")
+        return
     from workspace_owner_launcher import request_owner_workspace_open
     try:
         request_owner_workspace_open(parsed["mode"], parsed["symbol"], parsed["timeframe"])
     except Exception as exc:
         print("[WORKSPACE OPEN FAILED]", type(exc).__name__)
-        _answer_callback(callback_query.get("id"), "Редактор/Терминал недоступен на ПК")
+        _answer_callback(callback_id, "Редактор/Терминал недоступен на ПК")
         return
-    _answer_callback(callback_query.get("id"), "Команда открытия передана на ПК")
+    _answer_callback(callback_id, "Команда открытия передана на ПК")
 
 
 def _parse_robot_callback(data):
