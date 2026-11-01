@@ -4,19 +4,19 @@ test("EDITOR opens exact frozen signal, preserves source rays and exports a manu
   page, context,
 }) => {
   const signalId = "source-original:browser-fixture-001";
-  const bars = [
-    { open_time_ms: 1792368000000, open: 100, high: 103, low: 98, close: 101 },
-    { open_time_ms: 1792368300000, open: 101, high: 104, low: 99, close: 102 },
-    { open_time_ms: 1792368600000, open: 102, high: 105, low: 100, close: 103 },
-  ];
+  const bars = Array.from({ length: 240 }, (_, index) => ({
+    open_time_ms: 1792368000000 + index * 300000,
+    open: 100 + index * 0.01, high: 103 + index * 0.01,
+    low: 98 + index * 0.01, close: 101 + index * 0.01,
+  }));
   const source = [
     { boundary_id: "upper", kind: "ray", anchors: [
-      { bar_open_time_ms: bars[0].open_time_ms, price: 103 },
-      { bar_open_time_ms: bars[2].open_time_ms, price: 105 },
+      { bar_open_time_ms: bars[150].open_time_ms, price: bars[150].high },
+      { bar_open_time_ms: bars[210].open_time_ms, price: bars[210].high },
     ] },
     { boundary_id: "lower", kind: "ray", anchors: [
-      { bar_open_time_ms: bars[0].open_time_ms, price: 98 },
-      { bar_open_time_ms: bars[2].open_time_ms, price: 100 },
+      { bar_open_time_ms: bars[150].open_time_ms, price: bars[150].low },
+      { bar_open_time_ms: bars[210].open_time_ms, price: bars[210].low },
     ] },
   ];
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -82,10 +82,11 @@ test("EDITOR opens exact frozen signal, preserves source rays and exports a manu
   if (!box) throw new Error("Missing interactive chart");
   await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.5);
   await expect.poll(async () => (await stored())?.drawings.length).toBe(3);
+  const added = (await stored())?.drawings[2] as { anchors: Array<{ logical: number; price: number }> };
+  expect(added.anchors[0].logical).toBeGreaterThanOrEqual(0);
+  expect(added.anchors[0].logical).toBeLessThan(bars.length);
 
   await page.getByRole("button", { name: "Скопировать исправленную геометрию" }).click();
-  console.log("EDITOR_DRAWINGS", JSON.stringify(await stored()));
-  console.log("EDITOR_EXPORT_STATUS", await page.locator(".editor-correction-export").innerText());
   await expect(page.getByText("Черновик коррекции скопирован.", { exact: false })).toBeVisible();
   const copied = JSON.parse(await page.evaluate(() => navigator.clipboard.readText())) as {
     signal_id: string; label: string; status: string;
