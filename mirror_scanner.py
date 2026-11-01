@@ -900,6 +900,17 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
         item = level.to_dict()
         item["selected"] = is_selected
         levels.append(item)
+    source_start_ms = min(
+        (int(anchor[0]) for level in levels
+         for anchor in level.get("anchors", ())
+         if int(anchor[0]) <= event_close_ms),
+        default=int(event_rows[max(0, len(event_rows) - 120)]["open_time_ms"]),
+    )
+    geometry_candles = [
+        {k: row[k] for k in ("open_time_ms", "open", "high", "low", "close")}
+        for row in event_rows
+        if int(row["open_time_ms"]) >= source_start_ms
+    ][-2000:]
     return {
         "symbol": symbol, "timeframe": timeframe, "level_id": level_id,
         # Source identity is frozen from the selected detector level, never
@@ -915,6 +926,11 @@ def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str,
         }),
         "candles": [{k: row[k] for k in ("open_time_ms", "open", "high", "low", "close")}
                     for row in event_rows[-120:]],
+        # The Telegram PNG keeps its 120-candle framing. The Editor evidence
+        # separately preserves available bars from the detector's earliest
+        # original source anchor, without reconstructing older OHLC or shifting
+        # the anchor to the beginning of the chart.
+        "geometry_candles": geometry_candles,
         "levels": levels,
         "event_open_time_ms": event.get("open_time_ms"),
         # The breakout OHLC and level are frozen at event time: do not infer
@@ -990,6 +1006,7 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
     )
     from telegram_bot import send_photo
     from signal_archive import record_original_signal
+    from signal_mirror_geometry_producer import build_mirror_geometry_snapshot
     from mirror_event_chart import render_mirror_chart
     import tempfile
 
@@ -1047,17 +1064,20 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                             record_original_signal(
                                 first_id, symbol=symbol, timeframe=timeframe,
                                 pattern=row.get("level_label", "MIRROR"), text=text,
-                                image_bytes=image_bytes)
+                                image_bytes=image_bytes,
+                                geometry_snapshot=build_mirror_geometry_snapshot(first_id, frozen))
                         source_ready = False if test_mode else record_original_signal(
                             source_id, symbol=symbol, timeframe=timeframe,
                             pattern=row.get("level_label", "MIRROR"), text=text,
                             image_bytes=image_bytes, source_formation_ids=source_ids,
-                            source_campaign_first_id=first_id)
+                            source_campaign_first_id=first_id,
+                            geometry_snapshot=build_mirror_geometry_snapshot(source_id, frozen))
                         delivered = True
                         for chat_id in get_telegram_chat_ids():
                             is_owner = bool(owner_id and chat_id == owner_id)
                             markup = build_tradingview_keyboard(
-                                symbol, timeframe, include_review_actions=is_owner)
+                                symbol, timeframe, include_review_actions=is_owner,
+                                signal_id=source_id if is_owner and source_ready else None)
                             if is_owner and source_ready:
                                 markup["inline_keyboard"].insert(0, [{
                                     "text": "↩️ К сигналу",

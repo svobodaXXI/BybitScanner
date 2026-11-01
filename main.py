@@ -483,6 +483,7 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
 
                 telegram_payload = {
                     **analysis,
+                    "_frozen_geometry_candles": analysis_result.get("data"),
                     "symbol": symbol,
                     "final_score": signal["score"]
                 }

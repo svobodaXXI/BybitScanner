@@ -34,6 +34,7 @@ from tradingview_bridge import (
 from pattern_robot_integration import prepare_robot_handoff
 
 from signal_archive import record_original_signal
+from signal_geometry_producer import build_wedge_geometry_snapshot
 
 from timeframe_format import format_timeframe_ru
 
@@ -127,7 +128,7 @@ CHARTS_DIR = "charts"
 
 
 def archive_source_chart(*, symbol, timeframe, pattern, text, chart_path,
-                         formation_id=None):
+                         formation_id=None, geometry=None, frozen_candles=None):
     """Archive the exact original chart for identity-based Telegram navigation.
 
     Returns (callback token or None, PNG bytes or None). This is presentation
@@ -148,6 +149,9 @@ def archive_source_chart(*, symbol, timeframe, pattern, text, chart_path,
     if not record_original_signal(
         f"source-original:{token}", symbol=symbol, timeframe=timeframe,
         pattern=pattern, text=text, image_bytes=image,
+        geometry_snapshot=build_wedge_geometry_snapshot(
+            f"source-original:{token}", symbol, timeframe, geometry, frozen_candles,
+        ),
     ):
         return None, image
     if formation_id:
@@ -367,7 +371,7 @@ def format_signal(
 
 
 
-def _owner_workspace_button(mode, symbol, timeframe):
+def _owner_workspace_button(mode, symbol, timeframe, signal_id=None):
     """Direct Mini App for owner-only private signal cards.
 
     Never embed credentials or degrade an invalid configured origin into an
@@ -386,6 +390,7 @@ def _owner_workspace_button(mode, symbol, timeframe):
             url = workspace_link(
                 urlunsplit((parts.scheme, parts.netloc, "/login", "", "")),
                 mode, symbol, timeframe,
+                signal_id=signal_id if mode == "EDITOR" else None,
             )
             return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
                     "web_app": {"url": url}}
@@ -403,6 +408,7 @@ def build_tradingview_keyboard(
     include_review_actions=True,
     robot_candidate_id=None,
     robot_status_button=False,
+    signal_id=None,
 ):
     """Telegram inline keyboard for TradingView, review, and Robot admission."""
 
@@ -471,7 +477,7 @@ def build_tradingview_keyboard(
         tf = timeframe if timeframe.endswith(("s", "m", "h", "d")) else f"{timeframe}m"
         if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
             keyboard.append([
-                _owner_workspace_button("EDITOR", symbol, tf),
+                _owner_workspace_button("EDITOR", symbol, tf, signal_id=signal_id),
                 _owner_workspace_button("TERMINAL", symbol, tf),
             ])
 
@@ -547,8 +553,12 @@ def send_signal(
     )
 
     owner_chat_id = get_telegram_owner_chat_id()
+    # A transient pandas DataFrame is used only by immutable presentation
+    # archive; never persist it in the durable Robot candidate JSON.
+    handoff_payload = {key: value for key, value in result.items()
+                       if key != "_frozen_geometry_candles"}
     handoff = prepare_robot_handoff(
-        result,
+        handoff_payload,
         timeframe=timeframe,
         enabled=bool(owner_chat_id) and not test_mode,
     )
@@ -559,6 +569,8 @@ def send_signal(
         symbol=symbol, timeframe=timeframe, pattern=result.get("pattern", ""),
         text=message, chart_path=chart_path,
         formation_id=result.get("scanner_formation_id"),
+        geometry=result.get("geometry"),
+        frozen_candles=result.get("_frozen_geometry_candles"),
     ) if owner_chat_id and not test_mode else (None, None)
     owner_photo_response = None
 
@@ -578,6 +590,7 @@ def send_signal(
                         if is_owner
                         else None
                     ),
+                    signal_id=(f"source-original:{source_token}" if is_owner and source_token else None),
                 )
             )
 

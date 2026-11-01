@@ -2934,6 +2934,24 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **projection})
             return
 
+        if parsed.path == "/api/workspace/signal-geometry":
+            # Read-only exact immutable source evidence, behind the same
+            # Nginx owner-auth gate as the other /api/workspace/ routes.
+            # Backend remains loopback-only; never expose :8765 publicly.
+            import re
+            from signal_archive import load_frozen_signal_geometry
+            ids = parse_qs(parsed.query).get("signal_id", [])
+            if (len(ids) != 1 or
+                    not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", ids[0])):
+                self._json_response(400, {"ok": False, "error": "signal_id_required"})
+                return
+            snapshot = load_frozen_signal_geometry(ids[0])
+            if snapshot is None:
+                self._json_response(404, {"ok": False, "error": "signal_geometry_not_found"})
+                return
+            self._json_response(200, {"ok": True, "snapshot": snapshot})
+            return
+
         if parsed.path == "/api/workspace/account":
             symbols = parse_qs(parsed.query).get("symbol", [])
             if len(symbols) != 1:

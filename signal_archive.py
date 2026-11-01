@@ -18,6 +18,8 @@ from pathlib import Path
 import time
 from typing import Iterable, Mapping
 
+from signal_geometry_snapshot import validate_snapshot
+
 ARCHIVE_VERSION = 1
 ARCHIVE_ENV = "BYBITSCANNER_SIGNAL_ARCHIVE_DIR"
 _DEFAULT_DIR = Path(__file__).resolve().parent / "review_queue" / "signal_archive"
@@ -57,6 +59,7 @@ def record_original_signal(
     candidate_id, *, symbol, timeframe, pattern, text, image_bytes,
     photo_response=None, text_response=None, sent_at_ms=None, directory=None,
     source_formation_ids=None, source_campaign_first_id=None,
+    geometry_snapshot=None,
 ) -> bool:
     """Persist the original signal for ``candidate_id``. Never raises; True if stored."""
     try:
@@ -73,6 +76,24 @@ def record_original_signal(
         tmp_image = root / f"{key}.png.tmp"
         tmp_image.write_bytes(image)
         os.replace(tmp_image, image_path)
+        geometry_meta = {}
+        if geometry_snapshot is not None:
+            try:
+                raw, geometry_sha = validate_snapshot(
+                    geometry_snapshot, candidate_id=candidate_id,
+                    symbol=str(symbol), timeframe=str(timeframe),
+                )
+                geometry_file = root / f"{key}.geometry.json"
+                tmp_geometry = root / f"{key}.geometry.json.tmp"
+                tmp_geometry.write_bytes(raw)
+                os.replace(tmp_geometry, geometry_file)
+                geometry_meta = {
+                    "geometry_file": geometry_file.name,
+                    "geometry_sha256": geometry_sha,
+                }
+            except (OSError, ValueError, TypeError):
+                # Invalid visual snapshot must not block Telegram delivery.
+                pass
         meta = {
             "version": ARCHIVE_VERSION,
             "candidate_id": candidate_id,
@@ -89,6 +110,7 @@ def record_original_signal(
             "photo_message_id": _message_id(photo_response),
             "text_message_id": _message_id(text_response),
         }
+        meta.update(geometry_meta)
         tmp_meta = root / f"{key}.json.tmp"
         tmp_meta.write_text(json.dumps(meta, ensure_ascii=False, sort_keys=True), encoding="utf-8")
         os.replace(tmp_meta, meta_path)  # the json is the commit marker
@@ -124,3 +146,28 @@ def load_original_signal(candidate_ids: Iterable, *, directory=None) -> dict | N
         except (OSError, ValueError, TypeError, KeyError):
             continue
     return None
+
+
+def load_frozen_signal_geometry(candidate_id: str, *, directory=None) -> dict | None:
+    """Read one integrity-checked detector snapshot by immutable source ID."""
+    original = load_original_signal([candidate_id], directory=directory)
+    if original is None:
+        return None
+    key = _key(candidate_id)
+    if original.get("geometry_file") != f"{key}.geometry.json" or not original.get("geometry_sha256"):
+        return None
+    path = archive_dir(directory) / original["geometry_file"]
+    try:
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != original["geometry_sha256"]:
+            return None
+        snapshot = json.loads(raw)
+        canonical, _ = validate_snapshot(
+            snapshot, candidate_id=str(candidate_id),
+            symbol=original["symbol"], timeframe=original["timeframe"],
+        )
+        if canonical != raw:
+            return None
+        return snapshot
+    except (OSError, ValueError, TypeError, KeyError):
+        return None

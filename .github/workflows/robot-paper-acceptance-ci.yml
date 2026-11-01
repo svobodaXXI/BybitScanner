@@ -155,6 +155,12 @@ jobs:
           terminal/api/rest.py
           terminal/runtime/paper_runtime.py
           terminal/runtime/paper_http_server.py
+      - name: Validate immutable Editor source geometry
+        run: >-
+          python -m pytest -q
+          tests/test_editor_frozen_mirror_geometry.py
+          tests/test_signal_geometry_producer.py
+          tests/test_telegram_delivery.py
       - name: AAVE frozen Box STOP and API3 same-event protection close
         run: >-
           python -m pytest -q

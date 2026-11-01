@@ -137,6 +137,8 @@ export function ChartPanel({
   workspaceControls,
   editorMode = false,
   referenceDrawings = [],
+  editableSeedDrawings = [],
+  signalIdentity = null,
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
@@ -175,6 +177,8 @@ export function ChartPanel({
   editorMode?: boolean;
   /** Read-only source geometry; only supplied from a verified signal snapshot. */
   referenceDrawings?: readonly DrawingObject[];
+  editableSeedDrawings?: readonly DrawingObject[];
+  signalIdentity?: string | null;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -198,10 +202,19 @@ export function ChartPanel({
     [clearConfirmationOpen, setClearConfirmationOpen] = useState(false),
     [confirmAllPendingOpen, setConfirmAllPendingOpen] = useState(false),
     [dismissAllPendingOpen, setDismissAllPendingOpen] = useState(false);
-  const storageKey = `bybitscanner:${editorMode ? "editor-drawings" : "drawings"}:v1:${symbol}:${timeframe}`;
+  const storageKey = `bybitscanner:${editorMode ? "editor-drawings" : "drawings"}:v1:${symbol}:${timeframe}${editorMode && signalIdentity ? `:${signalIdentity}` : ""}`;
   const historyRef = useRef(
     new DrawingHistory(
-      deserializeDrawings(globalThis.localStorage?.getItem(storageKey) ?? null),
+      (() => {
+        const stored = globalThis.localStorage?.getItem(storageKey);
+        // A saved empty array is an explicit owner's decision; do not reseed.
+        if (stored !== null && stored !== undefined) return deserializeDrawings(stored);
+        return editableSeedDrawings.map((drawing) => ({
+          ...drawing,
+          anchors: drawing.anchors.map((anchor) => ({ ...anchor })),
+          style: { ...drawing.style },
+        }));
+      })(),
     ),
   );
   const [drawings, setDrawings] = useState<DrawingObject[]>(
