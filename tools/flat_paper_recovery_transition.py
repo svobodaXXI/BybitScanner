@@ -21,6 +21,10 @@ import subprocess
 import time
 
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked, prove_flat_recovery
+from tools.jasmy_flat_handoff_proof import (
+    OLD_SHA as JASMY_OLD_SHA, PROOF_LABEL as JASMY_PROOF_LABEL,
+    prove_jasmy_legacy_flat,
+)
 from tools.runtime_intent import expected_database_identity, http_get
 from tools.stop_robot_runtime import _database_path, _environment
 
@@ -173,12 +177,16 @@ def execute_flat_handoff(
     *, db_path: Path, expected_identity: str, expected_pid: int,
     expected_build_sha: str, execute: bool, snapshots=None,
     legacy_unversioned: bool = False, legacy_attestor=_attest_legacy_unversioned,
+    jasmy_incident_20261102: bool = False,
     service_pid=_service_pid, start_token=_process_start_token,
     send_interrupt=None, is_alive=None, writer_guard=_frozen_snapshot,
     monotonic=time.monotonic, sleep=time.sleep,
 ) -> str:
     """One-shot SIGINT, not a systemd override and never a SIGKILL fallback."""
     _assert(expected_pid > 1, "expected_pid_invalid")
+    if jasmy_incident_20261102:
+        _assert(not legacy_unversioned and expected_build_sha == JASMY_OLD_SHA,
+                "jasmy_incident_old_sha_mismatch")
     _assert(len(expected_build_sha) == 40 and
             all(c in "0123456789abcdef" for c in expected_build_sha),
             "expected_build_sha_invalid")
@@ -219,11 +227,18 @@ def execute_flat_handoff(
     with writer_guard(db_path) as conn:
         # Hold the writer reservation only for durable attestation and
         # the single process signal; NEVER call the backend HTTP API here.
-        proof = prove_flat_recovery(
-            conn, expected_identity=expected_identity, **snapshots,
-        )
-        _assert(proof == "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY",
-                "flat_recovery_evidence_missing")
+        if jasmy_incident_20261102:
+            proof = prove_jasmy_legacy_flat(
+                conn, expected_identity=expected_identity, **snapshots,
+            )
+            _assert(proof == JASMY_PROOF_LABEL,
+                    "jasmy_flat_evidence_missing")
+        else:
+            proof = prove_flat_recovery(
+                conn, expected_identity=expected_identity, **snapshots,
+            )
+            _assert(proof == "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY",
+                    "flat_recovery_evidence_missing")
         _assert(service_pid() == expected_pid and start_token(expected_pid) == token,
                 "backend_process_changed_during_proof")
         if not execute:
@@ -258,6 +273,10 @@ def main(argv=None) -> int:
         "--legacy-unversioned-20261031", action="store_true",
         help="Only known PID/starttime/instance with unset build SHA; Git SHA NOT proven",
     )
+    parser.add_argument(
+        "--jasmy-incidence-20261102", action="store_true",
+        help="Only exact JASMY Flat/OPEN ledger on verified f100ef3 old release",
+    )
     parser.add_argument("--execute", action="store_true",
                         help="One exceptional SIGINT; needs separate owner authorization")
     args = parser.parse_args(argv)
@@ -270,6 +289,7 @@ def main(argv=None) -> int:
             expected_build_sha=args.expected_build_sha,
             execute=args.execute,
             legacy_unversioned=args.legacy_unversioned_20261031,
+            jasmy_incident_20261102=args.jasmy_incidence_20261102,
         )
     except (FlatRecoveryBlocked, OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"BLOCKED: {exc}; no new signal is authorized")
