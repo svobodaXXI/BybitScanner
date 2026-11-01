@@ -186,6 +186,36 @@ def test_confirmed_wick_extremum_annuls_unbroken_mirror_ray(root, fixed_levels):
     assert repeated["records"][level.level_id]["superseded_by_level_id"] == successor
 
 
+def test_confirmed_lower_wick_extremum_replaces_support_ray(root, fixed_levels):
+    # Mirror semantics must be symmetric: a lower LOW wick without a
+    # candle close below support invalidates the old, still-unbroken ray.
+    level = level_at(100.0, 5 * M, side="lower")
+    fixed_levels["levels"] = [level]
+    bars = [(100.5, 100.8, 100.3, 100.5)] * 25
+    bars.append((100.5, 100.7, 99.8, 100.4))
+    bars += [(100.4, 100.8, 100.3, 100.5)] * 2
+    observe(frame(bars), root)
+    before = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert before["lifecycle"] == ms.LIFECYCLE_TRACKING
+    bars.append((100.4, 100.8, 100.3, 100.5))
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    old = state["records"][level.level_id]
+    assert old["lifecycle"] == ms.LIFECYCLE_REJECTED
+    assert old["rejection"] == "superseded_by_confirmed_extremum"
+    assert old["candidate"] is False
+    assert state["pending_notifications"] == []
+    successor = old["superseded_by_level_id"]
+    ray = ms.LevelRegistry.from_dict(state["registry"]).levels[successor]
+    assert ray.side == "lower"
+    assert ray.boundary.anchor_price == 99.8
+    assert ray.boundary.anchor_time_ms == 25 * M
+    assert ray.provenance["supersedes_level_id"] == level.level_id
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    assert state["records"][level.level_id]["superseded_by_level_id"] == successor
+
+
 def test_wick_sweep_before_confirmation_does_not_cancel_existing_level(root, fixed_levels):
     # An unconfirmed spike can be revised by later bars. Never anticipate
     # the new pivot at the moment of the wick.
