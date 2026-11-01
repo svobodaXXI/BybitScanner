@@ -365,6 +365,10 @@ class RuntimeShutdown:
             return self._shutdown_starved_legacy_runtime(telegram, steps)
 
         if backend == PRESENT:
+            if scope == SCOPE_ALL:
+                self._mark("freezing Autopilot before Scanner/Robot shutdown")
+                if self._freeze_autopilot():
+                    steps.append("autopilot:off")
             self._mark("requesting Scanner STOPPED")
             self._stop_scanner()
             steps.append("scanner:stop")
@@ -531,6 +535,51 @@ class RuntimeShutdown:
         ):
             return PRESENT
         raise SafeStopError("Telegram monitoring identity does not match the configured PAPER DB")
+
+    def _freeze_autopilot(self) -> bool:
+        """Inside the existing ALL stop, close PAPER_AUTO entry decisions first.
+
+        Keep Scanner/Robot and their protection untouched on any unknown or
+        rejected transition. An already OFF Autopilot needs no write. A changed
+        postcondition blocks the shutdown; never retry an ambiguous mutation.
+        """
+        url = self._backend + "/api/robot/autopilot"
+
+        def read_mode() -> str:
+            try:
+                status, body = self._get(url, PROBE_TIMEOUT_S)
+            except Exception as exc:
+                raise SafeStopError(
+                    "Autopilot state unavailable; runtime kept alive"
+                ) from exc
+            if (
+                status != 200 or not isinstance(body, dict)
+                or body.get("ok") is not True
+                or body.get("mode") not in ("OFF", "SHADOW", "PAPER_AUTO")
+            ):
+                raise SafeStopError(
+                    "Autopilot state unproven; runtime kept alive"
+                )
+            return body["mode"]
+
+        mode = read_mode()
+        if mode == "OFF":
+            return False
+        try:
+            status, body = self._post(url, {"mode": "OFF"}, MUTATION_TIMEOUT_S)
+        except Exception as exc:
+            raise SafeStopError(
+                "Autopilot OFF outcome unknown; not retried; runtime kept alive"
+            ) from exc
+        if status != 200 or not isinstance(body, dict) or body.get("ok") is not True or body.get("mode") != "OFF":
+            raise SafeStopError(
+                "Autopilot OFF rejected or unconfirmed; runtime kept alive"
+            )
+        if read_mode() != "OFF":
+            raise SafeStopError(
+                "Autopilot OFF postcondition unproven; runtime kept alive"
+            )
+        return True
 
     def _stop_scanner(self) -> None:
         try:
