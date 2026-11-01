@@ -4405,7 +4405,7 @@ class PaperRuntime:
         proof = prove_nonrobot_robot_close(
             trade=trade, candidate=candidate, position=position,
             executions=history, command=command,
-            entry_order_ids=tuple(entry_order_ids),
+            entry_order_ids=tuple(item.value for item in entry_order_ids),
             entry_fees=self._robot_entry_fees(trade),
             unique_open_owner=unique_open_owner,
             has_competing_work=has_competing_work,
