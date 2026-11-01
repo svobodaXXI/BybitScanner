@@ -2,6 +2,52 @@
 
 > **Актуальная приёмка 27.10.2026 после PR #638:** Telegram optional для запуска PAPER-ядра; доказанный SSH reverse tunnel, ошибки запуска и требования будущей кнопки описаны в [VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md](VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md). Начальные разделы этого runbook ниже описывают прежнее подготовительное состояние и не являются текущим runtime-статусом.
 
+## Resuming a partially completed Gitless PAPER deployment — no repeated stop (2026-11-01)
+
+**Scope:** backend was **already safely stopped**, approved target files and root-owned
+release manifest are **already installed**, and an auxiliary systemd command
+failed before the authorized restart. This is not a general rollout installer,
+a stop authorization, a SQL repair, or permission to change live/protected PAPER
+positions. Use this path only after checking the operator's actual host result,
+not merely a prior script exit code.
+
+**Read-only stage checkpoint** from the installed target:
+
+```sh
+/opt/BybitScanner/venv/bin/python -m tools.vps_release_resume --expected-sha <approved-40-char-SHA>
+```
+
+The checkpoint independently proves: the root-protected tracked-blob manifest
+matches **every** installed tracked file and the requested exact SHA; all three
+installed systemd unit files match the tracked release bytes; backend,
+Telegram and PAPER-start units have stopped states (`inactive|failed` and
+`MainPID=0`), without alternate unit origins/drop-ins; and neither PAPER
+TCP port 8765 nor Telegram port 8766 has any listener (including IPv6). It
+does **not** trust a previous transition success message or require a repeat
+of SIGINT. It never starts, stops, resets systemd, writes DB or installs code.
+
+- `RESUME_READY`: the **already-installed** exact release is stopped. The
+  **next separately authorized** operator action is the existing
+  `tools.vps_systemd_unit_prepare` (daemon-reload / verify loaded /
+  conditional reset-failed) followed by canonical PAPER backend startup,
+  reconciliation and admission checks. Do **not** repeat safe-stop, exceptional
+  transition, staging or the release copy.
+- `BLOCKED`: preserve current state and report the exact missing evidence;
+  do not restart, repeat a prior signal, rebuild manifest to match unexpected
+  bytes, or remove unrelated user files. If target was *not yet installed*,
+  this checkpoint cannot authorize copying it: first follow the separate
+  immutable-release staging/safe-switch procedure.
+- If any service is **still active** or a listener remains, classify the
+  runtime as active/ambiguous, not a stopped-deployment checkpoint. Existing
+  protected positions require canonical protection and owner-safe-stop
+  authority. No automatic restart or LIVE escalation.
+
+For this incident the erroneous `Unit not loaded` after a successful target
+copy did **not** require another transition. Read-only proof of the installed
+release plus correct systemd unit order is the fast path. Note that adding the
+checkpoint does not prove an end-to-end unattended deploy: the actual
+Gitless release switch remains a separate guarded, operator-owned procedure.
+
 ## PAPER runtime SHA provenance on Gitless VPS (2026-11-01)
 
 **Deployment contract — not an authorization to restart the live PAPER runtime.**
