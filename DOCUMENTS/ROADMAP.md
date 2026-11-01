@@ -2,11 +2,11 @@
 
 Version:
 
-4.61
+4.62
 
 Date:
 
-2026-09-11
+2026-11-02
 
 Document Type:
 
@@ -1571,6 +1571,39 @@ RULE-008:
 
 ---
 
+# AI_FIRST_RESULT_ROADMAP_20261102
+
+Status: **OWNER-DIRECTED DEVELOPMENT PRIORITY OVERLAY (02.11.2026)**.
+This process overlay does not create a new pipeline stage, ChangeRequest,
+permission or product milestone. The **latest owner command and top BACKLOG P0**
+govern active priority, regardless of archived CURRENT headings below.
+
+**Goal:** fastest economical path from owner intent to working, observed
+BybitScanner outcome. AI coding implements; owner retains product/architecture,
+merge and VPS/trading authorities. Maintain one active critical path; keep the
+GTD game optional presentation only, not a source of work decomposition.
+
+| Order | Roadmap commitment | Acceptance / no-go |
+| --- | --- | --- |
+| **P0 — NOW** | Complete monolithic PAPER stop → proven protection-preserving drain/FLAT → exact JASMY orphan handoff → approved immutable release/reconcile → verified working PAPER/Telegram/Editor path. Develop via GitHub within current owner authority; operate VPS only on distinct authorization. | Real protected PAPER outcome; no new entries during transition, no unfinished orders/obligations, exact process/DB identity; if exposure/unknown remains, BLOCKED with Backend protection alive. PR/CI alone are not completion. |
+| **P1 — AFTER P0** | Apply existing AI-first delivery loop to a normal defect and one critical-path integration task; reduce owner prompt/approval relays, duplicate context reads, repeated tests and document changes; use existing AGENTS routing and incident fixtures. Issue [#766](https://github.com/svobodaXXI/BybitScanner/issues/766) owns optimization backlog. | Compare available human steps, repeat loops, goal→accepted outcome time and regressions against recent baseline, without triggering extra trading/testing. One small evidenced improvement only; if no gain, keep code unchanged. |
+| **P2 — ON EVIDENCE** | Clean duplicated helpers, stale state pointers and overlapped CI only where measured cost and safe removal are established. Apply optional independent AI review for high-risk concurrency/ownership changes if it improves actual safety-to-effort. | Preserve contracts, required CI, prior work and safety; no automatic toolchain swaps, generic multi-agent fleet, new dashboard, massive refactor, or scripted destructive cleanup. |
+| **Recurring** | Monthly (existing #766 review) choose max 1–3 verified friction sources without interrupting higher-priority product delivery; fix in existing modules and docs. | Measure outcome savings and rework; no new standalone quest, PR quota or XP for paperwork. |
+
+**Practices incorporated:** mature OSS parity/test-contract/E2E and
+human architectural oversight ([Apache SkyWalking](https://skywalking.apache.org/blog/2026-03-08-agentic-vibe-coding/));
+short repo map and continuous cleanup ([OpenAI](https://openai.com/index/harness-engineering/));
+cross-context evidence without false DONE ([Anthropic](https://www.anthropic.com/research/effective-harnesses-for-long-running-agents));
+bounded symbol/context retrieval and focused tests ([aider](https://aider.chat/docs/repomap.html));
+optional—not mandatory—feature/spec/bug processes ([Spec Kit](https://github.com/github/spec-kit)).
+Implementation algorithm is owned by
+`DOCUMENTS/ASSISTANT_PROTOCOL.md` / `AI-FIRST RESULT DELIVERY`;
+validation mapping is owned by `DOCUMENTS/DEVELOPMENT_VALIDATION_LOOP_PLAN.md` §14.
+The existing STOP/TAKE, PAPER/LIVE, owner-only merge/runtime and fail-closed
+contracts retain full authority.
+
+---
+
 # VERSION_UPDATE_REASON
 
 Full per-version reasons through v4.45 used to retell, checkpoint by
@@ -1579,6 +1612,7 @@ own revision history and by Git commit history. Per DECISION-007 ("Git owns
 detailed implementation history"), that retelling is not duplicated here;
 only a compact milestone index is kept, newest first.
 
+* v4.61→v4.62 — owner 02.11.2026: inserted one AI-first outcome-delivery priority overlay, with P0 protected PAPER acceptance before P1 measured toil cleanup (#766); no new runtime authority, stages or gates. Algorithms remain in the existing ASSISTANT_PROTOCOL and DEVELOPMENT_VALIDATION_LOOP_PLAN.
 * v4.59→v4.60 — implemented `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`
   (`Implementation authorization` NONE→APPROVED, 2026-09-11): ATR-normalized wedge containment
   replacing the old hard reject; see that document's own `IMPLEMENTATION_RECORD` (including the
