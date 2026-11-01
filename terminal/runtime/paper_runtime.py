@@ -1817,18 +1817,19 @@ class PaperRuntime:
         ):
             raise RuntimeError("live_mutations_disabled")
 
-    def _fence_flat_robot_ledger_after_paper_execution(self, symbol: Symbol) -> None:
+    def _fence_flat_robot_ledger_after_paper_execution(self, symbol: Symbol | str) -> None:
         """Hold admission if a filled PAPER mutation left Robot trade ownership stale.
 
         This is a common PAPER execution postcondition, not a Terminal/UI
         lifecycle hook. It never closes a trade, guesses exit economics or
         dispatches another order. Reconciliation must prove the exit separately.
         """
-        trade = self.store.get_open_robot_trade_for_symbol(self._paper_account_id, symbol)
+        normalized = symbol if isinstance(symbol, Symbol) else Symbol(symbol)
+        trade = self.store.get_open_robot_trade_for_symbol(self._paper_account_id, normalized)
         if trade is None:
             return
         position = self.store.get_position_projection(PositionKey(
-            self._paper_account_id, Category.LINEAR, symbol, 0,
+            self._paper_account_id, Category.LINEAR, normalized, 0,
         ))
         if (
             position is None or position.side is not PositionSide.FLAT
@@ -1845,7 +1846,7 @@ class PaperRuntime:
             mode=ROBOT_RUNNING, recovery_status=RECONCILIATION_REQUIRED,
             reason=(
                 "FLAT_ROBOT_TRADE_LEDGER_UNRESOLVED "
-                f"symbol={symbol.value} trade_id={trade.trade_id}"
+                f"symbol={normalized.value} trade_id={trade.trade_id}"
             ),
             expected_version=state.version,
             updated_at_ms=max(int(time.time() * 1000), state.updated_at_ms),
