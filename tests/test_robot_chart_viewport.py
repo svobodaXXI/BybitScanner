@@ -78,4 +78,4 @@ def test_recent_real_fill_marker_remains_visible():
     with TemporaryDirectory() as root:
         with patch.object(charts, "_draw_marker", capture):
             charts.render_position_chart(view(), candles(), Path(root) / "marker.png")
-    assert plotted == [(charts.VIEWPORT_CANDLES - 1, 0.03189, "Buy", True)]
+    assert plotted == [(len(candles()) - 1, 0.03189, "Buy", True)]
