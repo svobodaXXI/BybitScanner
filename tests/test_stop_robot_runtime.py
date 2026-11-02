@@ -993,6 +993,49 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
                 self.assertNotIn("backend:shutdown", runtime.calls)
 
+    def test_legacy_paths_never_call_http_under_sqlite_writer_barrier(self):
+        for starved in (False, True):
+            with self.subTest(starved=starved):
+                runtime = self.stale_arm_runtime()
+                if starved:
+                    runtime.protection.update({
+                        "healthy": False,
+                        "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+                        "ingress": {
+                            "capacity": 64, "current_pending": 63,
+                            "high_watermark": 64,
+                        },
+                    })
+                coordinator = runtime.orchestrator()
+                barrier_held = [False]
+                original_get = coordinator._get
+                original_post = coordinator._post
+
+                def get(url, timeout):
+                    self.assertFalse(barrier_held[0], f"HTTP under writer barrier: {url}")
+                    return original_get(url, timeout)
+
+                def post(url, payload, timeout):
+                    self.assertFalse(barrier_held[0], f"HTTP mutation under writer barrier: {url}")
+                    return original_post(url, payload, timeout)
+
+                @contextmanager
+                def guard():
+                    barrier_held[0] = True
+                    try:
+                        yield
+                    finally:
+                        barrier_held[0] = False
+
+                coordinator._get = get
+                coordinator._post = post
+                coordinator._legacy_paper_guard = guard
+                result = coordinator.run("all")
+                self.assertTrue(result.ok, result.message)
+                self.assertTrue(result.runtime_stopped)
+                self.assertFalse(barrier_held[0])
+                self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
     def test_failed_legacy_backend_termination_retains_telegram_control(self):
         for starved in (False, True):
             with self.subTest(starved=starved):
