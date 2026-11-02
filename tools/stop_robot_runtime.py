@@ -1149,7 +1149,11 @@ class RuntimeShutdown:
             try:
                 self._get(health_url, PROBE_TIMEOUT_S)
             except Unreachable:
-                return
+                # A saturated owner queue can make /health unreachable while
+                # the process and its protection listener are still alive.
+                # Never report Runtime STOPPED until the exact port is gone.
+                if not self._listener_pids(health_url, name):
+                    return
             self._sleep(POLL_INTERVAL_S)
         raise SafeStopError(f"{name} did not exit within {int(EXIT_WAIT_S)} s")
 
