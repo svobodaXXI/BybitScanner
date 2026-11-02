@@ -1727,6 +1727,41 @@ class PaperShutdownDurableQuiescenceTests(unittest.TestCase):
                 finally:
                     store.close()
 
+    def test_real_schema_converged_flat_from_authoritative_reconciliation_can_stop(self):
+        # The canonical reconciler writes 'synchronized'; ordinary PAPER
+        # execution writes 'synced'. Neither is an unfinished sync.
+        with tempfile.TemporaryDirectory() as temp:
+            with SQLiteStore.open(Path(temp) / "paper.sqlite3") as store:
+                db = store._connection
+                db.execute(
+                    "INSERT INTO robot_autopilot_state "
+                    "(trading_account_id, mode, version, updated_at_ms) "
+                    "VALUES ('paper', 'OFF', 1, 1)"
+                )
+                db.execute(
+                    "INSERT INTO position_projections "
+                    "(trading_account_id, category, symbol, position_idx, side, "
+                    "quantity, realized_pnl, accumulated_fee, engaged_notional, "
+                    "sync_state, version, updated_at_ms) "
+                    "VALUES ('paper','linear','JASMYUSDT',0,'Flat',"
+                    "'0','0','0','0','synchronized',1,1)"
+                )
+                before = db.total_changes
+                self.assertIsNone(store.paper_shutdown_blocker(TradingAccountId("paper")))
+                self.assertEqual(db.total_changes, before)
+                db.execute("UPDATE position_projections SET sync_state='synced'")
+                self.assertIsNone(store.paper_shutdown_blocker(TradingAccountId("paper")))
+                for not_converged in ("reconciliation_required", "unknown", ""):
+                    with self.subTest(sync_state=not_converged):
+                        db.execute(
+                            "UPDATE position_projections SET sync_state=?",
+                            (not_converged,),
+                        )
+                        self.assertEqual(
+                            store.paper_shutdown_blocker(TradingAccountId("paper")),
+                            "paper_position_not_flat_and_synced",
+                        )
+
     def test_foreign_account_work_does_not_block_paper(self):
         store, db = self.fixture()
         try:
