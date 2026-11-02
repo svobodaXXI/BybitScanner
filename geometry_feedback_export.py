@@ -40,8 +40,21 @@ def reviewed_example(signal_id: str, *, archive_directory=None, feedback_directo
         if review is None or review["submission"]["label"] == "UNCERTAIN":
             raise GeometryExportError("review_not_training_eligible")
         submitted = review["submission"]
-        validated = _normalize(submitted, snapshot)
-        if validated != submitted or review.get("source_boundaries") != snapshot["boundaries"]:
+        if review.get("source_boundaries") != snapshot["boundaries"]:
+            raise GeometryExportError("review_source_mismatch")
+        # The append-only store uses canonical boundary_id/kind fields, while
+        # the ingress validator accepts the UI's id/type names. Reconstruct
+        # the ingress shape for independent validation; never relax checks.
+        ingress = {
+            **submitted,
+            "corrected_boundaries": [
+                {"id": boundary["boundary_id"], "type": boundary["kind"],
+                 "anchors": boundary["anchors"]}
+                for boundary in submitted["corrected_boundaries"]
+            ],
+        }
+        validated = _normalize(ingress, snapshot)
+        if validated != submitted:
             raise GeometryExportError("review_source_mismatch")
         token = submitted["idempotency_key"]
         expected_review_id = hashlib.sha256((signal_id + "\0" + token).encode("utf-8")).hexdigest()
