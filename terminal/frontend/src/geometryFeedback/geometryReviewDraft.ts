@@ -32,6 +32,7 @@ export function matchesStoredGeometryReview(
   const isRecord = (value: unknown): value is Record<string, unknown> =>
     value !== null && typeof value === "object" && !Array.isArray(value);
   if (!isRecord(stored)) return false;
+  const savedBoundaries = stored.corrected_boundaries;
   if (stored.schema_version !== submitted.schema_version ||
       stored.signal_id !== submitted.signal_id ||
       stored.snapshot_revision !== submitted.snapshot_revision ||
@@ -39,17 +40,18 @@ export function matchesStoredGeometryReview(
       stored.label !== submitted.label ||
       stored.note !== submitted.note ||
       stored.idempotency_key !== submitted.idempotency_key ||
-      !Array.isArray(stored.corrected_boundaries) ||
-      stored.corrected_boundaries.length !== submitted.corrected_boundaries.length) return false;
+      !Array.isArray(savedBoundaries) ||
+      savedBoundaries.length !== submitted.corrected_boundaries.length) return false;
   return submitted.corrected_boundaries.every((original) => {
-    const matching = stored.corrected_boundaries.filter((item: unknown) =>
+    const matching = savedBoundaries.filter((item: unknown) =>
       isRecord(item) && item.boundary_id === original.id);
     if (matching.length !== 1) return false;
     const entry = matching[0] as Record<string, unknown>;
-    if (entry.kind !== original.type || !Array.isArray(entry.anchors) ||
-        entry.anchors.length !== original.anchors.length) return false;
+    const savedAnchors = entry.anchors;
+    if (entry.kind !== original.type || !Array.isArray(savedAnchors) ||
+        savedAnchors.length !== original.anchors.length) return false;
     return original.anchors.every((anchor, i) => {
-      const saved = entry.anchors[i];
+      const saved = savedAnchors[i];
       return isRecord(saved) && saved.bar_open_time_ms === anchor.bar_open_time_ms &&
         saved.price === anchor.price;
     });
