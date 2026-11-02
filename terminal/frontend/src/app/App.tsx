@@ -146,8 +146,8 @@ export function App() {
         const savedReview = payload.latest_review as {
           review_id?: string;
           submission?: {
-            signal_id?: string; snapshot_revision?: string; label?: GeometryReviewDraft["label"];
-            note?: string;
+            signal_id?: string; snapshot_revision?: string; bars_sha256?: string;
+            label?: GeometryReviewDraft["label"]; note?: string;
             corrected_boundaries?: Array<{
               boundary_id: string; kind: TimestampDrawing["type"]; anchors: TimestampDrawing["anchors"];
             }>;
@@ -155,8 +155,11 @@ export function App() {
         } | null;
         const savedReviewLabel = savedReview?.submission?.label ?? null;
         if (savedReview && (
-          savedReview.submission?.signal_id !== link.signalId
+          typeof savedReview.review_id !== "string"
+          || !/^[0-9a-f]{64}$/i.test(savedReview.review_id)
+          || savedReview.submission?.signal_id !== link.signalId
           || savedReview.submission?.snapshot_revision !== payload.snapshot_revision
+          || savedReview.submission?.bars_sha256 !== payload.bars_sha256
           || !["CONFIRMED", "GEOMETRY_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"].includes(savedReviewLabel ?? "")
           || typeof savedReview.submission?.note !== "string"
           || savedReview.submission.note.length > 1024
