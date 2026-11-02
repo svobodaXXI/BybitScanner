@@ -127,6 +127,7 @@ class BoxRetryRealPaperE2E(MirrorStandaloneHarness):
                 decision = (stopped.exit_time_ms // FIVE + 1) * FIVE
                 verified_now = decision + FIVE + 1000
                 snapshot = compatible_retry_box_plan()
+                snapshot["identity"]["symbol"] = SYMBOL
                 snapshot["decision_time_ms"] = decision
                 book.set(SYMBOL, bid=Decimal("106.5"), ask=Decimal("106.6"))
                 clock = mock.patch("time.time", lambda: verified_now / 1000)
