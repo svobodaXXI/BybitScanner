@@ -1892,6 +1892,7 @@ class OwnershipTests(unittest.TestCase):
     def test_exact_pid_termination_uses_one_pid_per_call_without_tree_or_name(self):
         # The exact-PID taskkill fallback is Windows-only (refusal off Windows: test_stop_robot_linux).
         with mock.patch.object(legacy.os, "name", "nt"), mock.patch.object(legacy.subprocess, "run") as run:
+            run.return_value.returncode = 0
             legacy.terminate_exact_pids((4321, 1234))
         self.assertEqual(
             [c.args[0] for c in run.call_args_list],
@@ -1899,6 +1900,18 @@ class OwnershipTests(unittest.TestCase):
         )
         for c in run.call_args_list:
             self.assertNotIn("shell", c.kwargs)
+
+
+    def test_unconfirmed_exact_pid_termination_fails_closed_without_next_kill(self):
+        with mock.patch.object(legacy.os, "name", "nt"), mock.patch.object(
+            legacy.subprocess, "run", return_value=SimpleNamespace(returncode=1),
+        ) as run:
+            with self.assertRaisesRegex(
+                LegacyOwnerUnproven, "exact legacy PID 4321 termination was not confirmed",
+            ):
+                legacy.terminate_exact_pids((4321, 1234))
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "4321", "/F"])
 
 
 def _p(pid, ppid, name, command_line, executable="", created=None):
