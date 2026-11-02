@@ -17,6 +17,7 @@ import math
 import time
 from terminal.protection_timing import capture_callback, protection_span
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1346,6 +1347,11 @@ class SerializedPaperRuntime:
         if protection_ingress_capacity <= 0:
             raise ValueError("protection_ingress_capacity must be positive")
         self._requests: queue.Queue = queue.Queue()
+        # A successful final shutdown proof seals *future* owner operations.
+        # Admission and the seal share this lock, so queued-but-not-yet-run
+        # requests cannot slip through the gap between proof and exit.
+        self._shutdown_gate = threading.Lock()
+        self._shutdown_sealed = False
         self._book_update_lock = threading.Lock()
         self._latest_book_update_id: str | None = None
         self._book_update_pending = False
@@ -1396,17 +1402,35 @@ class SerializedPaperRuntime:
             raise RuntimeError("PAPER runtime initialization failed") from self._initialization_error
 
     def call(self, operation, timeout: float = 15.0):
-        if not self._thread.is_alive():
-            raise RuntimeError("PAPER runtime owner is unavailable")
         completed = threading.Event()
         response: dict[str, object] = {}
-        self._requests.put((operation, completed, response))
+        with self._shutdown_gate:
+            if self._shutdown_sealed:
+                raise RuntimeError("PAPER shutdown sealed; new owner work refused")
+            if not self._thread.is_alive():
+                raise RuntimeError("PAPER runtime owner is unavailable")
+            self._requests.put((operation, completed, response))
         if not completed.wait(timeout):
             raise TimeoutError("PAPER runtime operation timed out")
         error = response.get("error")
         if isinstance(error, BaseException):
             raise error
         return response.get("result")
+
+    def seal_shutdown(self) -> None:
+        """Only the owner thread may seal after proving full PAPER quiescence.
+
+        Refuse if protected ingress arrived during the proof. All later owner
+        calls, including ones queued behind the proof callback, must fail.
+        The normal close() sentinel remains legal after sealing.
+        """
+        if threading.get_ident() != self._thread.ident:
+            raise RuntimeError("shutdown seal requires PAPER owner thread")
+        with self._shutdown_gate:
+            with self._protection_ingress_lock:
+                if self._protection_ingress_pending:
+                    raise RuntimeError("protection ingress pending during shutdown proof")
+                self._shutdown_sealed = True
 
     def start_robot_monitor(self) -> None:
         """Bind self.call as the owned PaperRuntime's Robot command dispatcher
@@ -1422,14 +1446,17 @@ class SerializedPaperRuntime:
     def enqueue_book_update(self, book_update_id: str) -> None:
         if not book_update_id:
             raise ValueError("book_update_id must be non-empty")
-        if not self._thread.is_alive():
-            raise RuntimeError("PAPER runtime owner is unavailable")
-        with self._book_update_lock:
-            self._latest_book_update_id = book_update_id
-            if self._book_update_pending:
-                return
-            self._book_update_pending = True
-        self._requests.put(_BookUpdateNotification(book_update_id))
+        with self._shutdown_gate:
+            if self._shutdown_sealed:
+                raise RuntimeError("PAPER shutdown sealed; book update refused")
+            if not self._thread.is_alive():
+                raise RuntimeError("PAPER runtime owner is unavailable")
+            with self._book_update_lock:
+                self._latest_book_update_id = book_update_id
+                if self._book_update_pending:
+                    return
+                self._book_update_pending = True
+            self._requests.put(_BookUpdateNotification(book_update_id))
 
     def enqueue(
         self,
@@ -1454,37 +1481,40 @@ class SerializedPaperRuntime:
         a fail-closed continuity-loss signal, never a silent drop -- this
         method never coalesces, drops, or blocks to paper over overload.
         """
-        if not self._thread.is_alive():
-            raise RuntimeError("PAPER runtime owner is unavailable")
         normalized_symbol = symbol.strip().upper()
         normalized_role = coverage_role.strip().upper() or "UNKNOWN"
-        with self._protection_ingress_lock:
-            if self._protection_ingress_pending >= self._protection_ingress_capacity:
-                self._protection_ingress_last_overflow_symbol = normalized_symbol or None
-                self._protection_ingress_last_overflow_role = normalized_role
-                raise ProtectionIngressOverflow(
-                    "Robot protection ingress is saturated "
-                    f"(capacity={self._protection_ingress_capacity}, "
-                    f"symbol={normalized_symbol or 'UNKNOWN'}, role={normalized_role})"
+        with self._shutdown_gate:
+            if self._shutdown_sealed:
+                raise RuntimeError("PAPER shutdown sealed; ingress refused")
+            if not self._thread.is_alive():
+                raise RuntimeError("PAPER runtime owner is unavailable")
+            with self._protection_ingress_lock:
+                if self._protection_ingress_pending >= self._protection_ingress_capacity:
+                    self._protection_ingress_last_overflow_symbol = normalized_symbol or None
+                    self._protection_ingress_last_overflow_role = normalized_role
+                    raise ProtectionIngressOverflow(
+                        "Robot protection ingress is saturated "
+                        f"(capacity={self._protection_ingress_capacity}, "
+                        f"symbol={normalized_symbol or 'UNKNOWN'}, role={normalized_role})"
+                    )
+                self._protection_ingress_pending += 1
+                self._protection_ingress_high_watermark = max(
+                    self._protection_ingress_high_watermark,
+                    self._protection_ingress_pending,
                 )
-            self._protection_ingress_pending += 1
-            self._protection_ingress_high_watermark = max(
-                self._protection_ingress_high_watermark,
-                self._protection_ingress_pending,
-            )
-            self._protection_ingress_last_symbol = normalized_symbol or None
-            self._protection_ingress_last_role = normalized_role
-            self._protection_tasks.append(_OwnerTask(
-                operation,
-                time.perf_counter(),
-                normalized_symbol,
-                normalized_role,
-                event_id,
-            ))
-            wake = not self._protection_wake_pending
-            self._protection_wake_pending = True
-        if wake:
-            self._requests.put(_PROTECTION_WAKE)
+                self._protection_ingress_last_symbol = normalized_symbol or None
+                self._protection_ingress_last_role = normalized_role
+                self._protection_tasks.append(_OwnerTask(
+                    operation,
+                    time.perf_counter(),
+                    normalized_symbol,
+                    normalized_role,
+                    event_id,
+                ))
+                wake = not self._protection_wake_pending
+                self._protection_wake_pending = True
+            if wake:
+                self._requests.put(_PROTECTION_WAKE)
 
     def fetch_manual_evidence(self, symbols) -> dict[str, object]:
         """Execution-time books for manual PAPER commands, read OFF the owner.
@@ -1712,9 +1742,23 @@ class SerializedPaperRuntime:
             while True:
                 request = self._requests.get()
                 # Strict priority: protection admitted before this point runs
-                # before the ordinary request just dequeued.
+                # before the ordinary request just dequeued. A final seal is
+                # legal only with no outstanding protection ingress.
                 self._drain_protection_tasks(runtime)
                 if request is _PROTECTION_WAKE:
+                    continue
+                if self._shutdown_sealed:
+                    if isinstance(request, _BookUpdateNotification):
+                        with self._book_update_lock:
+                            self._book_update_pending = False
+                        continue
+                    operation, completed, response = request
+                    if operation is None:
+                        completed.set()
+                        return
+                    response["error"] = RuntimeError(
+                        "PAPER shutdown sealed; queued owner work refused")
+                    completed.set()
                     continue
                 if isinstance(request, _BookUpdateNotification):
                     with self._book_update_lock:
@@ -2397,6 +2441,18 @@ class RobotProtectionCoverageManager:
         """End an arm whose entry LIMIT was not created; resync() drops the feed."""
         with self._lock:
             self._armed.discard(symbol.strip().upper())
+
+    @contextmanager
+    def shutdown_idle_guard(self):
+        """Exclude Robot ticks and subscription changes across the final proof.
+
+        Never acquire the monitor guard on the owner thread: its worker may
+        itself be waiting for the owner.
+        """
+        guard = self._runtime.call(lambda runtime: runtime.robot_shutdown_idle_guard())
+        with guard:
+            with self._subscription_lock:
+                yield
 
     def retire_shutdown_entry_arms(self, database_identity: str) -> dict[str, object]:
         """Shutdown only: prove no future entry ownership before retiring temporary arms."""
@@ -3789,44 +3845,54 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             coverage = getattr(self.server, "robot_protection_coverage", None)
 
             def _shutdown_evidence(runtime):
+                # All owner operations before this callback are drained first.
+                # With the monitor tick + subscription guard held externally,
+                # inspect durable and current protection evidence together.
+                identity = runtime.live_limit_acceptance_diagnostics()["database_identity"]
+                if not isinstance(identity, str) or not hmac.compare_digest(identity, claimed):
+                    return "database_identity_mismatch"
                 robot = runtime.robot_runtime_state()
-                return (
-                    runtime.live_limit_acceptance_diagnostics()["database_identity"],
-                    None if robot is None else (robot.mode, robot.recovery_status),
-                    runtime.scanner_status().mode,
-                    runtime.paper_shutdown_blocker(),
-                )
+                scanner = runtime.scanner_status().mode
+                durable_blocker = runtime.paper_shutdown_blocker()
+                protection = coverage.health()
+                if (
+                    durable_blocker is not None
+                    or robot is None
+                    or (robot.mode, robot.recovery_status) != ("ROBOT_STOPPED", "ROBOT_STOPPED")
+                    or scanner != "SCANNER_STOPPED"
+                    or not isinstance(protection, Mapping)
+                    or protection.get("healthy") is not True
+                    or protection.get("covered_symbols")
+                    or protection.get("armed_symbols")
+                    or protection.get("unhealthy_symbols")
+                ):
+                    return "runtime_still_required"
+                # Atomic with owner-call admission. Reject every later owner
+                # request (even one already queued behind this proof) before
+                # responding success and scheduling serve_forever() exit.
+                self.server.runtime.seal_shutdown()
+                return None
 
             try:
                 if coverage is None:
                     raise RuntimeError("protection coverage is unavailable")
-                identity, robot, scanner, durable_blocker = self.server.runtime.call(_shutdown_evidence)
-                protection = coverage.health()
+                with coverage.shutdown_idle_guard():
+                    blocked = self.server.runtime.call(_shutdown_evidence)
             except Exception:
                 self._json_response(503, {"ok": False, "error": "runtime_shutdown_unavailable"})
                 return
-            if not (isinstance(identity, str) and hmac.compare_digest(identity, claimed)):
-                self._json_response(409, {"ok": False, "error": "database_identity_mismatch"})
+            if blocked is not None:
+                self._json_response(409, {"ok": False, "error": blocked})
                 return
-            # The backend is the last Robot/protection authority; never exit while it is needed.
-            if (
-                durable_blocker is not None
-                or                 robot != ("ROBOT_STOPPED", "ROBOT_STOPPED")
-                or scanner != "SCANNER_STOPPED"
-                or not isinstance(protection, Mapping)
-                or protection.get("healthy") is not True
-                or protection.get("covered_symbols")
-                or protection.get("armed_symbols")
-                or protection.get("unhealthy_symbols")
-            ):
-                self._json_response(409, {"ok": False, "error": "runtime_still_required"})
-                return
-            self._json_response(200, {"ok": True, "shutdown": "scheduled"})
-            # serve_forever() must be stopped from outside this handler thread; main()'s
-            # finally then closes coverage, market data and the runtime normally.
-            threading.Thread(
-                target=self.server.shutdown, name="paper-runtime-shutdown", daemon=True,
-            ).start()
+            try:
+                self._json_response(200, {"ok": True, "shutdown": "scheduled"})
+            finally:
+                # The seal is irreversible for this process; even if the
+                # socket reply fails, continue shutdown rather than leaving
+                # a sealed backend running indefinitely.
+                threading.Thread(
+                    target=self.server.shutdown, name="paper-runtime-shutdown", daemon=True,
+                ).start()
             return
 
         if self.path == "/api/robot/autopilot":
