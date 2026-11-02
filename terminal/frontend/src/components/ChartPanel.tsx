@@ -222,9 +222,16 @@ export function ChartPanel({
   const historyRef = useRef(
     new DrawingHistory(
       (() => {
-        const stored = globalThis.localStorage?.getItem(storageKey);
-        // A saved empty array is an explicit owner's decision; do not reseed.
-        if (stored !== null && stored !== undefined) return deserializeDrawings(stored);
+        // For a server-confirmed review, the verified frozen source and
+        // reviewed rays are authoritative. Local drafts from an earlier session
+        // must never override those immutable UTC anchors.
+        // Unsaved initial Editor work and ordinary trading drawings retain
+        // their existing local draft recovery behavior.
+        if (!(editorMode && signalIdentity && savedReviewId)) {
+          const stored = globalThis.localStorage?.getItem(storageKey);
+          // A saved empty array is an explicit owner's decision; do not reseed.
+          if (stored !== null && stored !== undefined) return deserializeDrawings(stored);
+        }
         return editableSeedDrawings.map((drawing) => ({
           ...drawing,
           anchors: drawing.anchors.map((anchor) => ({ ...anchor })),
