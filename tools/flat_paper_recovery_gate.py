@@ -113,17 +113,18 @@ def prove_flat_recovery(
         "durable_autopilot_not_off",
     )
     positions = conn.execute(
-        "SELECT symbol, side, quantity FROM position_projections "
+        "SELECT symbol, side, quantity, sync_state FROM position_projections "
         "WHERE trading_account_id='paper'",
     ).fetchall()
-    for symbol, side, raw_quantity in positions:
+    for symbol, side, raw_quantity, sync_state in positions:
         try:
             quantity = Decimal(str(raw_quantity))
         except (InvalidOperation, TypeError, ValueError) as exc:
             raise FlatRecoveryBlocked("invalid_paper_position_quantity") from exc
         _require(
             bool(symbol) and side == "Flat" and quantity.is_finite()
-            and quantity == 0, "paper_position_not_proven_flat",
+            and quantity == 0 and sync_state in ("synced", "synchronized"),
+            "paper_position_not_proven_flat",
         )
     _require(
         conn.execute(
