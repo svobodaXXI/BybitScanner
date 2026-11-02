@@ -107,6 +107,7 @@ export function App() {
     barsSha256: string;
     savedReviewId: string | null;
     savedReviewLabel: GeometryReviewDraft["label"] | null;
+    savedReviewNote: string | null;
   } | null>(null);
   const [frozenGeometryStatus, setFrozenGeometryStatus] = useState<"loading" | "unavailable" | "ready">("loading");
   useEffect(() => {
@@ -146,6 +147,7 @@ export function App() {
           review_id?: string;
           submission?: {
             signal_id?: string; snapshot_revision?: string; label?: GeometryReviewDraft["label"];
+            note?: string;
             corrected_boundaries?: Array<{
               boundary_id: string; kind: TimestampDrawing["type"]; anchors: TimestampDrawing["anchors"];
             }>;
@@ -156,6 +158,8 @@ export function App() {
           savedReview.submission?.signal_id !== link.signalId
           || savedReview.submission?.snapshot_revision !== payload.snapshot_revision
           || !["CONFIRMED", "GEOMETRY_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"].includes(savedReviewLabel ?? "")
+          || typeof savedReview.submission?.note !== "string"
+          || savedReview.submission.note.length > 1024
         )) throw new Error("Saved review does not match source signal");
         let editableDrawings = projected.editableDrawings;
         if (savedReviewLabel === "GEOMETRY_CORRECTED") {
@@ -177,6 +181,7 @@ export function App() {
             snapshotRevision: payload.snapshot_revision, barsSha256: payload.bars_sha256,
             savedReviewId: typeof savedReview?.review_id === "string" ? savedReview.review_id : null,
             savedReviewLabel,
+            savedReviewNote: savedReview?.submission?.note ?? null,
           });
           setFrozenGeometryStatus("ready");
         }
@@ -1290,6 +1295,7 @@ export function App() {
           barsSha256={mode === "EDITOR" ? frozenSignal?.barsSha256 ?? null : null}
           savedReviewId={mode === "EDITOR" ? frozenSignal?.savedReviewId ?? null : null}
           savedReviewLabel={mode === "EDITOR" ? frozenSignal?.savedReviewLabel ?? null : null}
+          savedReviewNote={mode === "EDITOR" ? frozenSignal?.savedReviewNote ?? null : null}
           onSaveGeometryReview={mode === "EDITOR" && frozenSignal ? async (
             review: GeometryReviewDraft & { note: string; idempotency_key: string },
           ) => {
