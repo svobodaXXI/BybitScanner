@@ -192,8 +192,9 @@ def _parse_workspace_callback(data):
     """Only a verified owner callback may request local UI opening."""
     import re
     parts = str(data).split(":")
-    if len(parts) == 4 and parts[:3] == ["workspace", "EDITOR", "S"]:
-        return ({"kind": "workspace", "mode": "EDITOR", "source_token": parts[3]}
+    if len(parts) == 4 and parts[:2] == ["workspace", "EDITOR"] and parts[2] in ("S", "M"):
+        return ({"kind": "workspace", "mode": "EDITOR", "source_token": parts[3],
+                 "source_kind": parts[2]}
                 if re.fullmatch(r"[0-9a-f]{24}", parts[3]) else None)
     if len(parts) != 4 or parts[0] != "workspace":
         return None
