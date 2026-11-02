@@ -1187,13 +1187,13 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
             connection.executescript(
                 """
                 CREATE TABLE robot_candidates (
-                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT NOT NULL
+                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT
                 );
                 CREATE TABLE robot_trades (
                     trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, exit_time_ms INTEGER
                 );
                 CREATE TABLE paper_limit_orders (
-                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT NOT NULL
+                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT
                 );
                 CREATE TABLE position_projections (
                     trading_account_id TEXT NOT NULL, category TEXT NOT NULL,
@@ -1201,7 +1201,13 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                     side TEXT NOT NULL, quantity TEXT NOT NULL
                 );
                 CREATE TABLE paper_protection_obligations (
-                    trading_account_id TEXT NOT NULL, status TEXT NOT NULL
+                    trading_account_id TEXT NOT NULL, status TEXT
+                );
+                CREATE TABLE trading_commands (
+                    trading_account_id TEXT NOT NULL, current_state TEXT
+                );
+                CREATE TABLE reconciliation_checkpoints (
+                    trading_account_id TEXT NOT NULL, completed_at_ms INTEGER
                 );
                 """
             )
@@ -1268,6 +1274,52 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                     with self.assertRaisesRegex(shutdown.SafeStopError, phrase):
                         shutdown.prove_legacy_paper_quiescence(path)
 
+
+    def test_legacy_quiescence_rejects_unknown_and_inflight_ledgers(self):
+        # Legacy exact-process fallback must not accept work the canonical
+        # PAPER owner would reject. All fixtures are isolated from live DB.
+        cases = (
+            ("INSERT INTO robot_candidates VALUES ('paper','RISKUSDT','UNEXPECTED')",
+             "unknown Robot candidate status"),
+            ("INSERT INTO robot_candidates VALUES ('paper','RISKUSDT',NULL)",
+             "unknown Robot candidate status"),
+            ("INSERT INTO paper_limit_orders VALUES ('paper','RISKUSDT','unknown')",
+             "working PAPER limits"),
+            ("INSERT INTO paper_limit_orders VALUES ('paper','RISKUSDT',NULL)",
+             "working PAPER limits"),
+            ("INSERT INTO trading_commands VALUES ('paper','dispatching')",
+             "unfinished PAPER commands"),
+            ("INSERT INTO trading_commands VALUES ('paper',NULL)",
+             "unfinished PAPER commands"),
+            ("INSERT INTO paper_protection_obligations VALUES ('paper',NULL)",
+             "unresolved protection obligations"),
+            ("INSERT INTO reconciliation_checkpoints VALUES ('paper',NULL)",
+             "unfinished reconciliation checkpoints"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for i, (mutation, reason) in enumerate(cases):
+                with self.subTest(mutation=mutation):
+                    path = Path(directory) / f"blocked-{i}.sqlite3"
+                    self.make_db(path)
+                    with sqlite3.connect(path) as db:
+                        db.execute(mutation)
+                    with self.assertRaisesRegex(shutdown.SafeStopError, reason):
+                        shutdown.prove_legacy_paper_quiescence(path)
+
+    def test_legacy_quiescence_ignores_other_account_and_terminal_ledgers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "terminal.sqlite3"
+            self.make_db(path)
+            with sqlite3.connect(path) as db:
+                db.executescript("""
+                    INSERT INTO paper_limit_orders VALUES ('paper','DONEUSDT','filled');
+                    INSERT INTO paper_protection_obligations VALUES ('paper','RESOLVED');
+                    INSERT INTO trading_commands VALUES ('paper','filled');
+                    INSERT INTO reconciliation_checkpoints VALUES ('paper',1234);
+                    INSERT INTO trading_commands VALUES ('another','dispatching');
+                    INSERT INTO paper_limit_orders VALUES ('another','OTHERUSDT','unknown');
+                """)
+            shutdown.prove_legacy_paper_quiescence(path)
 
     def test_final_guard_blocks_competing_writes_without_editing_database(self):
         with tempfile.TemporaryDirectory() as directory:
