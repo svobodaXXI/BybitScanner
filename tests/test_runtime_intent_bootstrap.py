@@ -84,6 +84,7 @@ class FakeWorld:
             root=ROOT, env=env or {}, get=self.get, post=self.post, spawn=self.spawn,
             python="python.exe", sleep=self.sleep, monotonic=lambda: self.now,
             out=self.lines.append, require_telegram=require_telegram,
+            listener_probe=lambda host, port: (),
         )
 
 
