@@ -291,6 +291,22 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
         self.assertEqual(runtime.calls, ["scanner:stop"])
 
+    def test_scanner_only_with_stopped_robot_never_shuts_down_backend_or_telegram(self):
+        # Regression: the previous branch fell through when Robot was already
+        # STOPPED and shut down BOTH services for a Scanner-only request.
+        for robot in (STOPPED,):
+            with self.subTest(robot=robot):
+                runtime = FakeRuntime(robot=robot)
+                runtime.autopilot_mode = "PAPER_AUTO"
+                result = runtime.orchestrator().run("scanner")
+                self.assertTrue(result.ok, result.message)
+                self.assertFalse(result.runtime_stopped)
+                self.assertEqual(runtime.calls, ["scanner:stop"])
+                self.assertTrue(runtime.backend_alive)
+                self.assertTrue(runtime.telegram_alive)
+                self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
+                self.assertEqual(runtime.robot, robot)
+
     def test_full_stop_orders_scanner_robot_telegram_backend(self):
         for robot in (READY, PAUSED):
             with self.subTest(robot=robot):
