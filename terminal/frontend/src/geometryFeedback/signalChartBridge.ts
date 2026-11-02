@@ -59,3 +59,20 @@ export function projectSignalGeometry(
   }));
   return { referenceDrawings, editableDrawings };
 }
+
+
+/** Frame the original detector anchors when opening a historical Editor snapshot.
+ * The ordinary trading chart continues following the latest candle.
+ */
+export function initialSourceGeometryRange(
+  referenceDrawings: readonly DrawingObject[],
+): { from: number; to: number } | null {
+  const logicals = referenceDrawings.flatMap((drawing) =>
+    drawing.anchors.map((anchor) => anchor.logical));
+  if (!logicals.length || logicals.some((value) => !Number.isFinite(value) || value < 0))
+    return null;
+  const earliest = Math.min(...logicals);
+  const latest = Math.max(...logicals);
+  const margin = Math.max(12, Math.ceil((latest - earliest) * 0.2));
+  return { from: earliest - margin, to: latest + margin };
+}
