@@ -24,7 +24,7 @@ import {
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
 import { projectSignalGeometry } from "../geometryFeedback/signalChartBridge";
-import type { GeometryReviewDraft, TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
+import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
 import type { DrawingObject } from "../chart/drawingModel";
 import {
@@ -1308,11 +1308,7 @@ export function App() {
             if (!response.ok || result.ok !== true
                 || typeof record?.review_id !== "string"
                 || !/^[0-9a-f]{64}$/.test(record.review_id)
-                || stored?.signal_id !== review.signal_id
-                || stored?.snapshot_revision !== review.snapshot_revision
-                || stored?.bars_sha256 !== review.bars_sha256
-                || stored?.label !== review.label
-                || stored?.idempotency_key !== review.idempotency_key)
+                || !matchesStoredGeometryReview(review, stored))
               throw new Error(result.error || "Сервер не подтвердил точное сохранение отзыва");
             return { reviewId: record.review_id, label: review.label };
           } : undefined}
