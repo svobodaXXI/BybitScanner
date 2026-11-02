@@ -97,6 +97,11 @@ def test_geometry_feedback_owner_route_roundtrip_without_paper_db(monkeypatch, t
         with pytest.raises(HTTPError) as error:
             send({**body, "bars_sha256": "0" * 64})
         assert error.value.code == 409
+        unchanged = json.loads(json.dumps(body))
+        unchanged["corrected_boundaries"][0]["anchors"][0]["price"] = 13
+        with pytest.raises(HTTPError) as no_change:
+            send(unchanged)
+        assert no_change.value.code == 400
         assert len(list(tmp_path.rglob("*.json"))) == 1
     finally:
         server.shutdown()
