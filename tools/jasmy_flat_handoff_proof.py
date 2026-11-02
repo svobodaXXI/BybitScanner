@@ -96,7 +96,7 @@ def prove_jasmy_legacy_flat(
             bool(symbol) and side == "Flat"
             and Decimal(str(quantity)).is_finite()
             and Decimal(str(quantity)) == 0
-            and sync_state == "synced"
+            and sync_state in ("synced", "synchronized")
             for symbol, side, quantity, sync_state in rows
         ), "paper_position_not_proven_flat")
     except (InvalidOperation, TypeError, ValueError) as exc:
