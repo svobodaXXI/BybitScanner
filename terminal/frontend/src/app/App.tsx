@@ -1266,8 +1266,7 @@ export function App() {
         <div
           className={`workspace-market-row ${marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
         >
-          {mode === "EDITOR" && launchLink?.signalId &&
-           (!frozenSignal || launchLink.symbol !== market.book.symbol || launchLink.timeframe !== timeframe) ? (
+          {mode === "EDITOR" && launchLink?.signalId && !frozenSignal ? (
             <div role="status" aria-live="polite">
               {frozenGeometryStatus === "loading"
                 ? "Загрузка сохранённых линий исходного сигнала…"
@@ -1275,11 +1274,11 @@ export function App() {
             </div>
           ) : (
           <ChartPanel
-          key={`${market.book.symbol}:${timeframe}:${mode}:${frozenSignal?.signalId ?? ""}`}
-          candles={mode === "EDITOR" && frozenSignal && launchLink?.symbol === market.book.symbol && launchLink.timeframe === timeframe ? frozenSignal.candles : market.candles}
+          key={mode === "EDITOR" && frozenSignal ? `frozen:${frozenSignal.signalId}:${frozenSignal.savedReviewId ?? "initial"}` : `${market.book.symbol}:${timeframe}:${mode}`}
+          candles={mode === "EDITOR" && frozenSignal ? frozenSignal.candles : market.candles}
           editorMode={mode === "EDITOR"}
-          referenceDrawings={mode === "EDITOR" && launchLink?.symbol === market.book.symbol && launchLink.timeframe === timeframe ? frozenSignal?.referenceDrawings ?? [] : []}
-          editableSeedDrawings={mode === "EDITOR" && launchLink?.symbol === market.book.symbol && launchLink.timeframe === timeframe ? frozenSignal?.editableDrawings ?? [] : []}
+          referenceDrawings={mode === "EDITOR" ? frozenSignal?.referenceDrawings ?? [] : []}
+          editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
           signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
           snapshotRevision={mode === "EDITOR" ? frozenSignal?.snapshotRevision ?? null : null}
           barsSha256={mode === "EDITOR" ? frozenSignal?.barsSha256 ?? null : null}
@@ -1301,9 +1300,9 @@ export function App() {
                 || result.review?.submission?.signal_id !== frozenSignal.signalId)
               throw new Error(result.error || "Сервер не подтвердил сохранение");
           } : undefined}
-          tickSize={market.tickSize}
-          symbol={market.book.symbol}
-          timeframe={timeframe}
+          tickSize={mode === "EDITOR" && frozenSignal ? null : market.tickSize}
+          symbol={mode === "EDITOR" && frozenSignal ? launchLink?.symbol ?? market.book.symbol : market.book.symbol}
+          timeframe={mode === "EDITOR" && frozenSignal ? launchLink?.timeframe ?? timeframe : timeframe}
           activeLimitOrders={
             mode !== "EDITOR" && currentPaperState?.ok ? currentPaperState.active_limit_orders : []
           }
