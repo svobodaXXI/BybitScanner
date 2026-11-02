@@ -202,19 +202,24 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
   let savedReview: {
     review_id: string;
     submission: {
-      signal_id: string; snapshot_revision: string; label: string; note: string;
+      signal_id: string; snapshot_revision: string; bars_sha256: string;
+      label: string; note: string;
       corrected_boundaries: Array<{ boundary_id: string; kind: string; anchors: Array<{ bar_open_time_ms: number; price: number }> }>;
     };
   } | null = null;
   let writes = 0;
   let correctedPrice: number | null = null;
+  let corruptedReviewDigest = false;
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const { pathname } = new URL(request.url());
     if (pathname === "/api/workspace/signal-geometry") {
       await route.fulfill({ status: 200, contentType: "application/json",
         body: JSON.stringify({
-          ok: true, snapshot: frozen, latest_review: savedReview,
+          ok: true, snapshot: frozen, latest_review: savedReview && corruptedReviewDigest
+            ? { ...savedReview, submission: {
+              ...savedReview.submission, bars_sha256: "f".repeat(64),
+            } } : savedReview,
           snapshot_revision: "a".repeat(64), bars_sha256: "b".repeat(64),
         }) });
       return;
@@ -242,7 +247,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
         review_id: "d".repeat(64),
         submission: {
           signal_id: signalId, snapshot_revision: body.snapshot_revision,
-          label: body.label, note: body.note,
+          label: body.label, note: body.note, bars_sha256: body.bars_sha256,
           corrected_boundaries: body.corrected_boundaries.map((item) => ({
             boundary_id: item.id, kind: item.type, anchors: item.anchors,
           })),
@@ -380,4 +385,17 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
   ]);
   expect(original[0].anchors[0].price).toBe(115);
   expect(writes).toBe(1); // Reload is read-only, never resubmits a correction.
+
+  // A stale or corrupted latest review must not be applied to the immutable
+  // source chart when its candle digest differs, even if the signal ID matches.
+  corruptedReviewDigest = true;
+  await page.reload();
+  await expect(page.getByText("Исходная геометрия недоступна. Текущие свечи не заменяют исходный сигнал.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Передать исправление" })).toHaveCount(0);
+  expect(writes).toBe(1);
+  corruptedReviewDigest = false;
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "Комментарий к исправлению" }))
+    .toHaveValue("Upper anchor corrected after candle close");
+  expect(writes).toBe(1);
 });
