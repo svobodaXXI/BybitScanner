@@ -539,6 +539,17 @@ class RuntimeShutdown:
                             if not self._open_robot_ownership():
                                 break
                             if self._monotonic() >= deadline:
+                                # A legacy Flat/OPEN Robot ledger can never drain
+                                # naturally: no position remains to hit STOP/TAKE.
+                                # Only an explicitly opted-in, incident-scoped
+                                # immutable proof may take this alternate route.
+                                # The proof itself blocks any real exposure,
+                                # active candidates, LIMIT or unhealthy coverage.
+                                if self._dual_orphan_handoff is not None:
+                                    return self._finish_dual_orphan_handoff(
+                                        telegram, steps,
+                                        expected_robot_state=("ROBOT_RUNNING", "PAUSED"),
+                                    )
                                 raise SafeStopError(
                                     "Robot PAUSED with OPEN trade: natural drain incomplete; "
                                     "backend retained for STOP/TAKE protection"
@@ -815,8 +826,11 @@ class RuntimeShutdown:
                 "Robot reconcile did not confirm success; not retried; runtime kept alive"
             )
 
-    def _finish_dual_orphan_handoff(self, telegram: str, steps: list[str]) -> ShutdownResult:
-        """One guarded fallback only after confirmed unresolved reconciliation.
+    def _finish_dual_orphan_handoff(
+        self, telegram: str, steps: list[str], *,
+        expected_robot_state: tuple[str, str] = ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+    ) -> ShutdownResult:
+        """One guarded fallback after durable REQUIRED or proven PAUSED drain exhaustion.
 
         The separately owner-authorized callback performs the final immutable
         dual-lot proof, exact PID/listener check and single protected SIGINT.
@@ -826,8 +840,8 @@ class RuntimeShutdown:
             raise SafeStopError("dual orphan handoff was not authorized")
         self._require_scanner_stopped()
         self._require_autopilot_off()
-        if self._robot_state() != ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
-            raise SafeStopError("Robot REQUIRED state changed before dual orphan handoff")
+        if self._robot_state() != expected_robot_state:
+            raise SafeStopError("Robot state changed before dual orphan handoff")
         self._mark("checking exact JASMY/FLOW evidence before one-shot handoff")
         try:
             result = self._dual_orphan_handoff()

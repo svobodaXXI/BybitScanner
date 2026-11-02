@@ -392,6 +392,59 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.protection["covered_symbols"], ["JASMYUSDT"])
         self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
+    def test_ready_orphans_can_reach_only_explicit_handoff_after_paused_drain(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
+            "stop_robot is rejected while OPEN Robot trades remain: JASMY,FLOW"
+        ))
+        observed = []
+
+        def guarded_handoff():
+            observed.append("one-proven-handoff")
+            self.assertEqual(runtime.robot, PAUSED)
+            self.assertEqual(runtime.scanner_mode, "SCANNER_STOPPED")
+            self.assertEqual(runtime.autopilot_mode, "OFF")
+            self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+            runtime.backend_alive = False
+            return "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
+
+        result = runtime.orchestrator(
+            dual_orphan_handoff=guarded_handoff,
+        ).run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(observed, ["one-proven-handoff"])
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:pause", "telegram:shutdown",
+        ])
+        self.assertEqual(result.steps, (
+            "autopilot:off", "scanner:stop", "robot:pause",
+            "backend:dual-orphan-handoff", "telegram:shutdown",
+        ))
+
+    def test_ready_orphans_failed_proof_never_stop_backend_or_telegram(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
+            "stop_robot is rejected while OPEN Robot trades remain: JASMY,FLOW"
+        ))
+        attempts = []
+
+        def blocked_proof():
+            attempts.append("proof")
+            raise RuntimeError("unexpected_active_robot_candidate")
+
+        result = runtime.orchestrator(
+            dual_orphan_handoff=blocked_proof,
+        ).run("all")
+        self.assertFalse(result.ok)
+        self.assertFalse(result.runtime_stopped)
+        self.assertIn("unexpected_active_robot_candidate", result.message)
+        self.assertEqual(attempts, ["proof"])
+        self.assertEqual(runtime.robot, PAUSED)
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:pause"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_open_trade_natural_drain_resumes_same_full_stop_without_market(self):
         runtime = FakeRuntime(robot=READY)
         runtime.autopilot_mode = "PAPER_AUTO"
