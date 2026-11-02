@@ -53,7 +53,7 @@ class TransitionCase(unittest.TestCase):
             listener_owner=lambda p: listener_owned,
             service_pid=pid or (lambda: PID if live[0] else 0),
             start_token=token or (lambda p: "start-77"),
-            send_interrupt=interrupt, is_alive=lambda p: live[0],
+            send_interrupt=interrupt, is_alive=lambda p: live[0], listener_owner=lambda p: True,
             writer_guard=barrier,
             monotonic=advancing_clock,
             sleep=lambda n: None,
@@ -106,6 +106,21 @@ class TransitionCase(unittest.TestCase):
             ):
                 self.case(jasmy_incident=True, execute=True, listener_owned=False)
         proof.assert_called_once()
+
+    def test_generic_handoff_refuses_unowned_listener_before_sigint(self):
+        for jasmy in (False, True):
+            with self.subTest(jasmy=jasmy):
+                with self.assertRaisesRegex(
+                    FlatRecoveryBlocked, "backend_listener_owner_unproven",
+                ):
+                    self.case(execute=True, jasmy_incident=jasmy, listener_owned=False)
+
+    def test_generic_preflight_without_signal_does_not_claim_owner(self):
+        # Preflight proves FLAT only; execution must independently prove the
+        # listener after the final SQLite evidence check.
+        result, events, _ = self.case(execute=False, listener_owned=False)
+        self.assertTrue(result.startswith("PRECHECK_ONLY:"))
+        self.assertEqual(events, ["barrier:enter", "barrier:exit"])
 
     def test_jasmy_incident_refuses_unowned_listener_even_for_preflight(self):
         with mock.patch(
@@ -219,7 +234,7 @@ class TransitionCase(unittest.TestCase):
             expected_pid=PID, expected_build_sha=SHA, execute=True,
             snapshots=snapshots, service_pid=lambda: PID,
             start_token=lambda p: "start-77", writer_guard=barrier,
-            send_interrupt=interrupt, is_alive=probe,
+            send_interrupt=interrupt, is_alive=probe, listener_owner=lambda p: True,
             monotonic=lambda: 0, sleep=lambda seconds: None,
         )
         self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
@@ -275,7 +290,7 @@ class TransitionCase(unittest.TestCase):
             service_pid=lambda: PID,
             start_token=lambda p: "start-77", writer_guard=barrier,
             send_interrupt=lambda pid, sig: signals.append((pid, sig)),
-            is_alive=lambda pid: True,
+            listener_owner=lambda p: True, is_alive=lambda pid: True,
             monotonic=lambda: next(ticks), sleep=lambda seconds: None,
         )
         self.assertTrue(result.startswith("OUTCOME_UNKNOWN:"))
