@@ -56,7 +56,10 @@ def _signal_path(signal_id: str, directory=None) -> Path:
 def _valid_price(raw) -> float:
     if type(raw) not in (int, float, Decimal):
         raise GeometryFeedbackError("invalid_anchor_price")
-    price = float(raw)
+    try:
+        price = float(raw)
+    except (ValueError, OverflowError):
+        raise GeometryFeedbackError("invalid_anchor_price") from None
     if not math.isfinite(price) or price <= 0:
         raise GeometryFeedbackError("invalid_anchor_price")
     return price
