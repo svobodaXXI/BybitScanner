@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import signal
 import sqlite3
+import tempfile
 import unittest
 from unittest import mock
 
@@ -66,7 +67,14 @@ class TransitionCase(unittest.TestCase):
     def test_dual_orphan_attested_once_under_writer_barrier(self):
         conn, snapshots = fixture()
         snapshots.pop("expected_identity")
-        db_path = Path("/no-vps-access")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db_path = Path(tmp.name) / "paper.sqlite3"
+        with sqlite3.connect(db_path) as destination:
+            conn.backup(destination)
+        conn.close()
+        conn = sqlite3.connect(db_path)
+        self.addCleanup(conn.close)
         identity = expected_database_identity(
             ROOT, {"BYBITSCANNER_PAPER_DB": str(db_path)},
         )
@@ -110,7 +118,14 @@ class TransitionCase(unittest.TestCase):
         # query_only seal. Even BEGIN IMMEDIATE must not waive it.
         conn, snapshots = fixture()
         snapshots.pop("expected_identity")
-        path = Path("/no-vps-access")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "paper.sqlite3"
+        with sqlite3.connect(path) as destination:
+            conn.backup(destination)
+        conn.close()
+        conn = sqlite3.connect(path)
+        self.addCleanup(conn.close)
         identity = expected_database_identity(
             ROOT, {"BYBITSCANNER_PAPER_DB": str(path)},
         )
@@ -138,7 +153,14 @@ class TransitionCase(unittest.TestCase):
         self.assertEqual(signals, [])
 
     def test_dual_orphan_wrong_db_identity_or_ambiguous_proof_never_signals(self):
-        db_path = Path("/no-vps-access")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db_path = Path(tmp.name) / "paper.sqlite3"
+        with sqlite3.connect(db_path) as destination:
+            conn.backup(destination)
+        conn.close()
+        conn = sqlite3.connect(db_path)
+        self.addCleanup(conn.close)
         identity = expected_database_identity(
             ROOT, {"BYBITSCANNER_PAPER_DB": str(db_path)},
         )
