@@ -1321,7 +1321,8 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                 CREATE TABLE position_projections (
                     trading_account_id TEXT NOT NULL, category TEXT NOT NULL,
                     symbol TEXT NOT NULL, position_idx INTEGER NOT NULL,
-                    side TEXT NOT NULL, quantity TEXT NOT NULL
+                    side TEXT NOT NULL, quantity TEXT NOT NULL,
+                    sync_state TEXT
                 );
                 CREATE TABLE paper_protection_obligations (
                     trading_account_id TEXT NOT NULL, status TEXT
@@ -1357,7 +1358,7 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
             elif blocker == "manual_exposure":
                 connection.execute(
                     "INSERT INTO position_projections VALUES "
-                    "('paper', 'linear', 'MANUALUSDT', 0, 'Long', '1')"
+                    "('paper', 'linear', 'MANUALUSDT', 0, 'Long', '1','synced')"
                 )
             elif blocker == "approved_exposure":
                 connection.execute(
@@ -1365,7 +1366,7 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                 )
                 connection.execute(
                     "INSERT INTO position_projections VALUES "
-                    "('paper', 'linear', 'ROBOTUSDT', 0, 'Long', '1')"
+                    "('paper', 'linear', 'ROBOTUSDT', 0, 'Long', '1','synced')"
                 )
             elif blocker == "obligation":
                 connection.execute(
@@ -1467,7 +1468,7 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                     with sqlite3.connect(path) as db:
                         db.execute(
                             "INSERT INTO position_projections VALUES "
-                            "('paper',?,?,?, ?, ?)",
+                            "('paper',?,?,?, ?, ?,'synced')",
                             (category, "HEDGEUSDT", idx, side, qty),
                         )
                     with self.assertRaises(shutdown.SafeStopError):
@@ -1481,7 +1482,38 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
             with sqlite3.connect(path) as db:
                 db.execute(
                     "INSERT INTO position_projections VALUES "
-                    "('other','linear','OTHERUSDT',1,'Long','1')"
+                    "('other','linear','OTHERUSDT',1,'Long','1','synced')"
+                )
+            shutdown.prove_legacy_paper_quiescence(path)
+
+    def test_legacy_quiescence_requires_position_sync_for_every_paper_projection(self):
+        for status in (None, "", "stale", "unknown", "pending"):
+            with self.subTest(sync_state=status):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "paper.sqlite3"
+                    self.make_db(path)
+                    with sqlite3.connect(path) as db:
+                        db.execute(
+                            "INSERT INTO position_projections VALUES "
+                            "('paper','linear','BUSDT',0,'Flat','0',?)",
+                            (status,),
+                        )
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "inconsistent position projection",
+                    ):
+                        shutdown.prove_legacy_paper_quiescence(path)
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "inconsistent position projection",
+                    ):
+                        with shutdown.hold_legacy_paper_quiescence(path):
+                            pass
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "paper.sqlite3"
+            self.make_db(path)
+            with sqlite3.connect(path) as db:
+                db.execute(
+                    "INSERT INTO position_projections VALUES "
+                    "('paper','linear','BUSDT',0,'Flat','0','synchronized')"
                 )
             shutdown.prove_legacy_paper_quiescence(path)
 
@@ -1502,7 +1534,7 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                     with sqlite3.connect(path) as db:
                         db.execute(
                             "INSERT INTO position_projections VALUES "
-                            "('paper','linear','MANUALUSDT',0,?,?)",
+                            "('paper','linear','MANUALUSDT',0,?,?,'synced')",
                             (side, qty),
                         )
                     with self.assertRaisesRegex(
