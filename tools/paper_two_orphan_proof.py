@@ -30,7 +30,6 @@ PROOF_LABEL = "TWO_ORPHANS_IMMUTABLE_CLOSE_EVIDENCE_ONLY"
 def prove_two_flat_orphans(
     conn: sqlite3.Connection, *, expected_identity: str,
     backend: dict, scanner: dict, autopilot: dict, protection: dict,
-    writer_barrier_held: bool = False,
 ) -> str:
     """Read one stable SQLite snapshot; never call HTTP, migrate or write.
 
@@ -42,12 +41,10 @@ def prove_two_flat_orphans(
     # Reading independently committed rows can falsely pair a Flat projection
     # with a close execution or candidate from another runtime generation.
     _require(conn.in_transaction, "stable_snapshot_transaction_required")
-    # A separately attested BEGIN IMMEDIATE writer barrier is the only
-    # permitted exception to query_only: it prevents concurrent PAPER writes
-    # during the final one-shot lifecycle handoff, without writing here.
-    if not writer_barrier_held:
-        _require(tuple(conn.execute("PRAGMA query_only").fetchone()) == (1,),
-                 "read_only_snapshot_required")
+    # Even an explicit BEGIN IMMEDIATE writer barrier must be query-only;
+    # its reservation pins evidence but cannot authorize SQL mutations.
+    _require(tuple(conn.execute("PRAGMA query_only").fetchone()) == (1,),
+             "read_only_snapshot_required")
     _require(
         backend.get("ok") is True
         and backend.get("component") == "paper_backend"
