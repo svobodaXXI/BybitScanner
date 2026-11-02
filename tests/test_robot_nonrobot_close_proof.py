@@ -155,10 +155,10 @@ class NonRobotCloseProofTests(unittest.TestCase):
                 **vars(self.trade), "entry_time_ms": self.trade.entry_time_ms + 1,
             })},
             {"executions": (
-                Execution(
-                    dedup_key=ExecutionDedupKey(
-                        ACCOUNT, Category.SPOT,
-                        ExecutionId(self.entry.dedup_key.exec_id.value),
+                SimpleNamespace(
+                    dedup_key=SimpleNamespace(
+                        trading_account_id=ACCOUNT, category="spot",
+                        exec_id=self.entry.dedup_key.exec_id,
                     ),
                     order_id=self.entry.order_id, symbol=SYMBOL,
                     side=OrderSide.SELL, quantity=self.entry.quantity,
