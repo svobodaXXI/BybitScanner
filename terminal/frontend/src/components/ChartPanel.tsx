@@ -47,7 +47,7 @@ import {
 import { chartPriceFormat } from "../chart/priceFormat";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
-import { buildEditorGeometryReview, serializeReviewDrawings, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
+import { buildEditorGeometryReview, compareEditorRayChanges, serializeReviewDrawings, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
 import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
@@ -231,6 +231,17 @@ export function ChartPanel({
   const [drawings, setDrawings] = useState<DrawingObject[]>(
     historyRef.current.current,
   );
+  const rayComparison = useMemo(() => {
+    if (!editorMode || !signalIdentity || !referenceDrawings.length) return null;
+    try {
+      return compareEditorRayChanges({
+        referenceDrawings, editableDrawings: drawings, frozenCandles: candles,
+      });
+    } catch {
+      // Incomplete/stale coordinates must never produce misleading deltas.
+      return null;
+    }
+  }, [editorMode, signalIdentity, referenceDrawings, drawings, candles]);
   const [correctionExportStatus, setCorrectionExportStatus] = useState("");
   const [reviewLabel, setReviewLabel] = useState<GeometryReviewDraft["label"]>("GEOMETRY_CORRECTED");
   const [reviewNote, setReviewNote] = useState("");
@@ -841,6 +852,17 @@ export function ChartPanel({
               {reviewPending ? "Сохранение…" : "Передать исправление"}
             </button>
             {savedReviewId && <span>Сохранённый отзыв: {savedReviewId.slice(0, 12)}</span>}
+            {reviewLabel === "GEOMETRY_CORRECTED" && rayComparison && (
+              <output aria-label="Сравнение линий Scanner и исправления">
+                {rayComparison.map((ray) => (
+                  <span key={ray.boundaryId}>
+                    {ray.boundaryId}: Δ точка 1 {ray.anchorChanges[0].priceShiftPercent.toFixed(2)}%,
+                    точка 2 {ray.anchorChanges[1].priceShiftPercent.toFixed(2)}%;
+                    Δ наклон {ray.slopeDeltaPerHour.toPrecision(3)}/ч{" "}
+                  </span>
+                ))}
+              </output>
+            )}
             {correctionExportStatus && <output role="status" aria-live="polite">{correctionExportStatus}</output>}
             {reviewStatus && <output role="status" aria-live="polite">{reviewStatus}</output>}
           </div>
