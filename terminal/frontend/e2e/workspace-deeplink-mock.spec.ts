@@ -116,8 +116,10 @@ test("frozen Editor geometry renders and accepts owner feedback without live Web
           review_id: "c".repeat(64),
           submission: {
             ...submitted,
-            // First reply claims the wrong label: never report false success.
-            label: posted.length === 1 ? "FALSE_POSITIVE" : submitted.label,
+            // First reply swaps in an unrequested boundary: never report success.
+            corrected_boundaries: posted.length === 1
+              ? [{ boundary_id: "foreign", kind: "ray", anchors: [] }]
+              : [],
           },
         },
       }) });
@@ -206,6 +208,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
     if (pathname === "/api/workspace/geometry-feedback" && request.method() === "POST") {
       writes++;
       const body = request.postDataJSON() as {
+        schema_version: 1; note: string;
         signal_id: string; label: string; snapshot_revision: string;
         bars_sha256: string; idempotency_key: string;
         corrected_boundaries: Array<{ id: string; type: string; anchors: Array<{ bar_open_time_ms: number; price: number }> }>;
@@ -232,9 +235,11 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
       await route.fulfill({ status: 200, contentType: "application/json",
         body: JSON.stringify({ ok: true, review: { review_id: savedReview.review_id,
           submission: {
+            schema_version: body.schema_version, note: body.note,
             signal_id: signalId, snapshot_revision: body.snapshot_revision,
             bars_sha256: body.bars_sha256, label: body.label,
             idempotency_key: body.idempotency_key,
+            corrected_boundaries: savedReview.submission.corrected_boundaries,
           } } }) });
       return;
     }
