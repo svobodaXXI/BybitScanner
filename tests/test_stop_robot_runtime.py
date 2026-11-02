@@ -701,6 +701,7 @@ class ReconciliationShutdownTests(unittest.TestCase):
 
     def test_confirmed_required_rejection_uses_single_explicit_protected_handoff(self):
         runtime = FakeRuntime(robot=RECON)
+        runtime.reconcile_state = RECON
         runtime.autopilot_mode = "PAPER_AUTO"
         runtime.reconcile_reply = (
             409, {"ok": False, "success": False,
