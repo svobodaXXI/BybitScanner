@@ -472,6 +472,12 @@ class RuntimeShutdown:
         # owner control and diagnosis until backend exit has been confirmed.
         # This also supports retry after a partial stop (backend absent).
         if backend == PRESENT:
+            if scope == SCOPE_ALL:
+                # Final ingress re-proof immediately before the irreversible
+                # backend shutdown request. Earlier OFF/STOPPED observations
+                # may have become stale while Robot/protection were drained.
+                self._require_scanner_stopped()
+                self._require_autopilot_off()
             self._mark("shutting down PAPER backend")
             steps.append(self._shutdown(
                 self._backend + "/api/runtime/shutdown", self._backend + "/api/health",
