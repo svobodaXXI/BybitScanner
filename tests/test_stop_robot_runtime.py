@@ -1496,6 +1496,64 @@ class OwnershipTests(unittest.TestCase):
         self.assertFalse(runtime.backend_alive)
         self.assertTrue(runtime.telegram_alive)
 
+    def test_unreachable_health_with_live_listener_cannot_confirm_shutdown(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        original_post = runtime.post
+        original_get = runtime.get
+
+        def post(url, payload, timeout):
+            reply = original_post(url, payload, timeout)
+            if url == TELEGRAM + "/shutdown":
+                runtime.telegram_alive = True  # shutdown ACK but listener remains
+            return reply
+
+        def get(url, timeout):
+            if url == TELEGRAM + "/health":
+                raise shutdown.Unreachable("health request timed out")
+            return original_get(url, timeout)
+
+        runtime.post = post
+        runtime.get = get
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertFalse(result.runtime_stopped)
+        self.assertIn("did not exit", result.message)
+        self.assertEqual(runtime.calls.count("telegram:shutdown"), 1)
+        self.assertEqual(runtime.calls.count("backend:shutdown"), 1)
+        self.assertGreaterEqual(runtime.now, shutdown.EXIT_WAIT_S)
+        self.assertTrue(runtime.telegram_alive)
+
+    def test_unreachable_health_confirms_shutdown_only_after_listener_exits(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        original_post = runtime.post
+        original_get = runtime.get
+        original_sleep = runtime.sleep
+
+        def post(url, payload, timeout):
+            reply = original_post(url, payload, timeout)
+            if url == TELEGRAM + "/shutdown":
+                runtime.telegram_alive = True
+            return reply
+
+        def get(url, timeout):
+            if url == TELEGRAM + "/health":
+                raise shutdown.Unreachable("transient health timeout")
+            return original_get(url, timeout)
+
+        def sleep(seconds):
+            original_sleep(seconds)
+            if runtime.now >= shutdown.POLL_INTERVAL_S * 2:
+                runtime.telegram_alive = False
+
+        runtime.post = post
+        runtime.get = get
+        runtime.sleep = sleep
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertGreaterEqual(runtime.now, shutdown.POLL_INTERVAL_S * 2)
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
     def test_no_broad_process_kill_exists(self):
         source = Path(shutdown.__file__).read_text(encoding="utf-8").lower()
         for forbidden in ("taskkill", "os.kill", "psutil", "terminate(", ".kill(", "netstat",
