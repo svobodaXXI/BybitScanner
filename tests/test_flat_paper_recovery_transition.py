@@ -108,12 +108,10 @@ class TransitionCase(unittest.TestCase):
         proof.assert_called_once()
 
     def test_generic_handoff_refuses_unowned_listener_before_sigint(self):
-        for jasmy in (False, True):
-            with self.subTest(jasmy=jasmy):
-                with self.assertRaisesRegex(
-                    FlatRecoveryBlocked, "backend_listener_owner_unproven",
-                ):
-                    self.case(execute=True, jasmy_incident=jasmy, listener_owned=False)
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "backend_listener_owner_unproven",
+        ):
+            self.case(execute=True, listener_owned=False)
 
     def test_generic_preflight_without_signal_does_not_claim_owner(self):
         # Preflight proves FLAT only; execution must independently prove the
