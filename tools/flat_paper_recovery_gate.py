@@ -135,14 +135,14 @@ def prove_flat_recovery(
     _require(
         conn.execute(
             "SELECT COUNT(*) FROM robot_candidates "
-            "WHERE trading_account_id='paper' AND status='OPEN'",
+            "WHERE trading_account_id='paper' AND (status IS NULL OR status NOT IN ('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))",
         ).fetchone()[0] == 0,
         "open_robot_candidate",
     )
     _require(
         conn.execute(
             "SELECT COUNT(*) FROM paper_limit_orders "
-            "WHERE trading_account_id='paper' AND status NOT IN ('filled','cancelled')",
+            "WHERE trading_account_id='paper' AND (status IS NULL OR status NOT IN ('filled','cancelled'))",
         ).fetchone()[0] == 0,
         "active_or_unknown_paper_limit",
     )
@@ -150,7 +150,7 @@ def prove_flat_recovery(
     _require(
         conn.execute(
             "SELECT COUNT(*) FROM trading_commands WHERE trading_account_id='paper' "
-            f"AND current_state NOT IN ({placeholders})",
+            f"AND (current_state IS NULL OR current_state NOT IN ({placeholders}))",
             _TERMINAL_COMMANDS,
         ).fetchone()[0] == 0,
         "unfinished_or_unknown_trading_command",
@@ -166,7 +166,7 @@ def prove_flat_recovery(
         " AND t.trading_account_id=o.trading_account_id AND t.symbol=o.symbol "
         "LEFT JOIN executions e ON e.trading_account_id=o.trading_account_id "
         " AND e.category='linear' AND e.exec_id=o.exec_id "
-        "WHERE o.trading_account_id='paper' AND o.status!='RESOLVED'",
+        "WHERE o.trading_account_id='paper' AND (o.status IS NULL OR o.status!='RESOLVED')",
     ).fetchall()
     _require(len(obligations) == 1, "unexpected_unresolved_obligations")
     (symbol, trade_id, leg, status, order_id, exec_id, observed_quantity,
