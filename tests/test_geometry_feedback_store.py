@@ -100,6 +100,7 @@ def test_rejects_stale_snapshot_or_reused_token_with_new_data(tmp_path):
     lambda p: p["corrected_boundaries"][0]["anchors"][0].update(price=float("nan")),
     lambda p: p["corrected_boundaries"][0].update(id="unknown"),
     lambda p: p["corrected_boundaries"][0].update(type="segment"),
+    lambda p: p["corrected_boundaries"][0]["anchors"][0].update(price=13),
     lambda p: p.update(signal_id="source:OTHERUSDT:5:abc"),
 ])
 def test_rejects_malformed_or_unrelated_geometry_without_writing(tmp_path, mutation):
