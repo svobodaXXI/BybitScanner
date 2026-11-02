@@ -117,3 +117,28 @@ def test_no_corrected_boundaries_on_non_edit_reviews(tmp_path):
     payload = _payload(source, label="UNCERTAIN")
     record = record_review(payload, source, directory=tmp_path)
     assert record["submission"]["corrected_boundaries"] == []
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda value: value["source_boundaries"][0]["anchors"][0].update(price=999),
+    lambda value: value["submission"]["corrected_boundaries"][0]["anchors"][0].update(
+        bar_open_time_ms=12345
+    ),
+    lambda value: value["submission"].update(signal_id="foreign:TESTUSDT:5"),
+    lambda value: value["submission"].update(idempotency_key="another-review-token-0001"),
+    lambda value: value.update(reviewer_source="not_the_owner_workspace"),
+])
+def test_editor_reopen_fails_closed_on_corrupted_review_evidence(tmp_path, mutate):
+    source = _source()
+    recorded = record_review(_payload(source), source, directory=tmp_path)
+    path, = list(tmp_path.rglob("*.json"))
+    damaged = json.loads(path.read_text(encoding="utf-8"))
+    mutate(damaged)
+    path.write_text(json.dumps(damaged, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(GeometryFeedbackError, match="stored_review"):
+        latest_review(source["signal_id"], snapshot=source, directory=tmp_path)
+    # Reusing the same idempotency token must not report a damaged record saved.
+    with pytest.raises(GeometryFeedbackConflict, match="existing_review_invalid"):
+        record_review(_payload(source), source, directory=tmp_path)
+    assert len(list(tmp_path.rglob("*.json"))) == 1
+    assert recorded["review_id"] == path.stem
