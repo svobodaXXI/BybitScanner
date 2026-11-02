@@ -54,6 +54,19 @@ class MirrorFrozenGeometryTests(unittest.TestCase):
             data.write_text(json.dumps({"tampered": True}))
             self.assertIsNone(load_frozen_signal_geometry("mirror-origin:abc", directory=root))
 
+    def test_image_only_mirror_archive_is_not_a_frozen_editor_source(self):
+        # The delivery archive can succeed with PNG-only evidence. That must
+        # never be treated as a valid exact-geometry Editor deep link.
+        with tempfile.TemporaryDirectory() as root:
+            self.assertTrue(record_original_signal(
+                "mirror-origin:image-only", symbol="ALCHUSDT", timeframe="5",
+                pattern="MIRROR", text="source", image_bytes=b"image",
+                directory=root, geometry_snapshot=None,
+            ))
+            self.assertIsNone(load_frozen_signal_geometry(
+                "mirror-origin:image-only", directory=root,
+            ))
+
     def test_invalid_or_outside_window_source_never_reconstructed(self):
         event = frozen_event()
         event["levels"][0]["anchors"] = [[-1000, 10.0]]
