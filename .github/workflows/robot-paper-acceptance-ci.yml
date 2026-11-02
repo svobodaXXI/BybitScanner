@@ -34,6 +34,8 @@ on:
       - "tests/test_robot_nonrobot_close_proof.py"
       - "tests/test_paper_two_orphan_proof.py"
       - "tools/paper_two_orphan_proof.py"
+      - "tools/flat_paper_recovery_transition.py"
+      - "tests/test_flat_paper_recovery_transition.py"
       - "tests/test_stop_reentry_paper_e2e.py"
       - "tests/test_stop_reentry_scanner_lshape.py"
       - "tests/test_stop_reentry_child_ipc.py"
@@ -115,6 +117,8 @@ jobs:
           tests/test_robot_paper_acceptance.py
           tests/test_paper_two_orphan_proof.py
           tools/paper_two_orphan_proof.py
+          tools/flat_paper_recovery_transition.py
+          tests/test_flat_paper_recovery_transition.py
           tests/runtime_replay.py
           tests/test_runtime_replay.py
           tests/test_robot_entry_limit.py
@@ -207,6 +211,7 @@ jobs:
           tests.test_paper_flat_robot_execution_fence
           tests.test_robot_nonrobot_close_proof
           tests.test_paper_two_orphan_proof
+          tests.test_flat_paper_recovery_transition
           tests.test_robot_entry_limit
           tests.test_robot_breakout_monitor
           tests.test_robot_recovery_coordinator
