@@ -63,7 +63,7 @@ def _valid_price(raw) -> float:
 
 
 def _normalize(payload: dict, snapshot: dict) -> dict:
-    if not isinstance(payload, dict) or set(payload) - {"note"} != {
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1 or set(payload) - {"note"} != {
         "schema_version", "signal_id", "snapshot_revision", "bars_sha256",
         "label", "corrected_boundaries", "idempotency_key",
     }:
