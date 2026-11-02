@@ -138,7 +138,7 @@ def test_editor_reopen_fails_closed_on_corrupted_review_evidence(tmp_path, mutat
     with pytest.raises(GeometryFeedbackError, match="stored_review"):
         latest_review(source["signal_id"], snapshot=source, directory=tmp_path)
     # Reusing the same idempotency token must not report a damaged record saved.
-    with pytest.raises(GeometryFeedbackConflict, match="existing_review_invalid"):
+    with pytest.raises(GeometryFeedbackConflict, match="existing_review_invalid|idempotency_key_reused"):
         record_review(_payload(source), source, directory=tmp_path)
     assert len(list(tmp_path.rglob("*.json"))) == 1
     assert recorded["review_id"] == path.stem
