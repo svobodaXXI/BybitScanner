@@ -4674,6 +4674,24 @@ class SQLiteStore:
         )
         return tuple(_robot_candidate_state_from_row(row) for row in rows)
 
+    def load_active_robot_candidates_for_symbol(
+        self, trading_account_id: TradingAccountId, symbol: Symbol,
+    ) -> tuple[RobotCandidateRecord, ...]:
+        """Read full active candidates for one symbol, not finished history.
+
+        Protection event matching needs the frozen Box snapshot and execution
+        state, but never EXPIRED/CLOSED/INVALIDATED candidate history.
+        """
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT * FROM robot_candidates
+               WHERE trading_account_id=? AND symbol=?
+                 AND status IN ('APPROVED', 'OPEN')
+               ORDER BY approved_at_ms, candidate_id""",
+            (trading_account_id.value, symbol.value),
+        )
+        return tuple(_robot_candidate_from_row(row) for row in rows)
+
     def load_robot_candidates_for_symbol(
         self, trading_account_id: TradingAccountId, symbol: Symbol,
     ) -> tuple[RobotCandidateRecord, ...]:
