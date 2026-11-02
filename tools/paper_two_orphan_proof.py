@@ -19,6 +19,7 @@ from terminal.domain.models import Category, PositionKey, PositionSide, Symbol, 
 from terminal.persistence.sqlite_store import SQLiteStore
 from terminal.runtime.paper_runtime import PaperRuntime
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked, _require
+from tools.jasmy_flat_handoff_proof import OLD_SHA as INCIDENT_BACKEND_SHA
 
 ACCOUNT = TradingAccountId("paper")
 EXPECTED_SYMBOLS = frozenset({"JASMYUSDT", "FLOWUSDT"})
@@ -41,7 +42,7 @@ def prove_two_flat_orphans(
         and backend.get("mode") == "paper"
         and backend.get("paper_live_safe") is True
         and backend.get("database_identity") == expected_identity
-        and bool(backend.get("build_sha"))
+        and backend.get("build_sha") == INCIDENT_BACKEND_SHA
         and bool(backend.get("process_instance_id")),
         "paper_backend_identity_unproven",
     )
