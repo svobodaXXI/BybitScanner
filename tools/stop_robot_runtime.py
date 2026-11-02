@@ -378,6 +378,9 @@ class RuntimeShutdown:
             steps.append("scanner:stop")
             self._mark("Scanner STOPPED confirmed")
             if scope == SCOPE_ALL:
+                # Revalidate after Scanner STOP: another controller may have
+                # re-enabled PAPER_AUTO while the stop was in flight.
+                self._require_autopilot_off()
                 state = self._robot_state()
                 if state == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
                     self._mark("requesting Robot reconciliation")
@@ -610,6 +613,18 @@ class RuntimeShutdown:
                 "Autopilot OFF postcondition unproven; runtime kept alive"
             )
         return True
+
+    def _require_autopilot_off(self) -> None:
+        """Read-only proof after Scanner STOP; never mutate on drift."""
+        try:
+            status, body = self._get(self._backend + "/api/robot/autopilot", PROBE_TIMEOUT_S)
+        except Exception as exc:
+            raise SafeStopError("Autopilot OFF post-Scanner state unavailable; runtime kept alive") from exc
+        if not (
+            status == 200 and isinstance(body, dict) and body.get("ok") is True
+            and body.get("mode") == "OFF"
+        ):
+            raise SafeStopError("Autopilot OFF post-Scanner state unproven; runtime kept alive")
 
     def _stop_scanner(self) -> None:
         try:
