@@ -2,14 +2,17 @@
 param(
  [ValidateSet("EDITOR","TERMINAL")][string]$Mode,
  [ValidatePattern('^[A-Z0-9]{2,32}USDT$')][string]$Symbol,
- [ValidateSet("15s","1m","5m","15m","1h","1d")][string]$Timeframe
+ [ValidateSet("15s","1m","5m","15m","1h","1d")][string]$Timeframe,
+ [ValidatePattern('^source-original:[0-9a-f]{24}$')][string]$SignalId
 )
 $ErrorActionPreference = "Stop"
+if ($SignalId -and $Mode -ne "EDITOR") { throw "Signal identity is only valid in EDITOR mode" }
 $port = 4173
 $root = Split-Path -Parent $PSScriptRoot
 $launcher = Join-Path $PSScriptRoot "start_workspace_web.ps1"
 if (!(Test-Path $launcher)) { throw "Workspace web launcher is missing; integrate PR #582" }
 $localUrl = "http://127.0.0.1:$port/?mode=$Mode&symbol=$Symbol&timeframe=$Timeframe"
+if ($SignalId) { $localUrl += "&signal_id=$([Uri]::EscapeDataString($SignalId))" }
 Write-Host "BybitScanner Workspace: $Mode $Symbol $Timeframe"
 Write-Host "PC URL: $localUrl"
 Write-Host "Checking local frontend..."
@@ -39,6 +42,7 @@ if ($remoteBase) {
       throw "Unsafe HTTPS origin"
     }
     $remoteUrl = "$($uri.GetLeftPart([System.UriPartial]::Path).TrimEnd('/'))/?mode=$Mode&symbol=$Symbol&timeframe=$Timeframe"
+    if ($SignalId) { $remoteUrl += "&signal_id=$([Uri]::EscapeDataString($SignalId))" }
     Write-Host "Smartphone URL (NOT VERIFIED): $remoteUrl"
     Write-Warning "No mobile QR until HTTPS authentication and gateway readiness are verified."
   } catch {
@@ -51,7 +55,9 @@ $delivery = Join-Path $PSScriptRoot "workspace_ready_delivery.py"
 $python = Join-Path $root "venv\Scripts\python.exe"
 if ((Test-Path $delivery) -and (Test-Path $python)) {
   Write-Host "Checking local UI and authenticated mobile HTTPS before Telegram QR delivery..."
-  $deliveryOutput = @(& $python $delivery --mode $Mode --symbol $Symbol --timeframe $Timeframe)
+  $deliveryArgs = @("--mode", $Mode, "--symbol", $Symbol, "--timeframe", $Timeframe)
+  if ($SignalId) { $deliveryArgs += @("--signal-id", $SignalId) }
+  $deliveryOutput = @(& $python $delivery @deliveryArgs)
   $deliveryOutput | ForEach-Object { Write-Host $_ }
   if ($LASTEXITCODE -eq 0) {
     $qrLine = $deliveryOutput | Where-Object { $_ -like "QR_FILE=*" } | Select-Object -First 1
