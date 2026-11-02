@@ -288,6 +288,43 @@ class FlatRecoveryGateTests(unittest.TestCase):
         )
         assert_blocked(self, conn, payload)
 
+    def test_busdt_stop_requires_finite_positive_economics(self):
+        # Matching infinities are equal as Decimal values, but can never
+        # attest an immutable PAPER fill or a safe recovery handoff.
+        cases = (
+            ("obligation-and-fill-quantity-infinity",
+             "UPDATE paper_protection_obligations SET observed_quantity='Infinity'",
+             "UPDATE executions SET quantity='Infinity'"),
+            ("trade-and-fill-price-infinity",
+             "UPDATE robot_trades SET exit_price='Infinity'",
+             "UPDATE executions SET price='Infinity'"),
+            ("negative-quantities",
+             "UPDATE paper_protection_obligations SET observed_quantity='-487'",
+             "UPDATE executions SET quantity='-487'"),
+            ("zero-prices",
+             "UPDATE robot_trades SET exit_price='0'",
+             "UPDATE executions SET price='0'"),
+            ("malformed-quantity",
+             "UPDATE paper_protection_obligations SET observed_quantity='not-a-number'",
+             None),
+            ("missing-execution-price",
+             "UPDATE executions SET price=NULL",
+             None),
+        )
+        for name, first, second in cases:
+            with self.subTest(case=name):
+                conn, payload = fixture()
+                conn.execute(first)
+                if second is not None:
+                    conn.execute(second)
+                before = conn.total_changes
+                with self.assertRaisesRegex(
+                    FlatRecoveryBlocked, "busdt_historical_stop_evidence_unproven",
+                ):
+                    prove_flat_recovery(conn, **payload)
+                self.assertEqual(conn.total_changes, before)
+                conn.close()
+
     def test_stop_execution_cannot_be_misattributed(self):
         for column, value in (
             ("order_id", "wrong-order"), ("symbol", "OTHERUSDT"),
