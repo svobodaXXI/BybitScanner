@@ -47,7 +47,10 @@ def fixture():
         ),
         scanner=dict(mode="SCANNER_STOPPED"),
         autopilot=dict(mode="OFF"),
-        protection=dict(healthy=True, unhealthy_symbols={}),
+        protection=dict(healthy=True, unhealthy_symbols={},
+                        covered_symbols=["JASMYUSDT", "FLOWUSDT"],
+                        armed_symbols=[],
+                        coverage_roles={"JASMYUSDT": "EXPOSURE", "FLOWUSDT": "EXPOSURE"}),
     )
     trades = {}
     candidates = {}
