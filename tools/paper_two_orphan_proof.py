@@ -198,3 +198,26 @@ def prove_two_flat_orphans(
         )
         _require(evidence is not None, "orphan_immutable_close_proof_missing")
     return PROOF_LABEL
+
+
+
+def inspect_read_only(
+    db_path: Path, *, expected_identity: str, snapshots: dict,
+) -> str:
+    """Coordinator's non-mutating preflight entrypoint, NOT a stop authorization.
+
+    HTTP snapshots are supplied by the caller BEFORE opening the transaction.
+    The caller must still re-attest runtime identity and immutable DB evidence
+    at the separately approved handoff boundary. No SQL writes or migrations.
+    """
+    _require(db_path.is_file(), "paper_database_missing")
+    try:
+        with sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            return prove_two_flat_orphans(
+                conn, expected_identity=expected_identity, **snapshots,
+            )
+    except sqlite3.Error as exc:
+        raise FlatRecoveryBlocked("paper_database_evidence_unreadable") from exc
