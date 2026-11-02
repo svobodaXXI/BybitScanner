@@ -188,7 +188,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
   let savedReview: {
     review_id: string;
     submission: {
-      signal_id: string; snapshot_revision: string; label: string;
+      signal_id: string; snapshot_revision: string; label: string; note: string;
       corrected_boundaries: Array<{ boundary_id: string; kind: string; anchors: Array<{ bar_open_time_ms: number; price: number }> }>;
     };
   } | null = null;
@@ -215,6 +215,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
       };
       expect(body.signal_id).toBe(signalId);
       expect(body.label).toBe("GEOMETRY_CORRECTED");
+      expect(body.note).toBe("Upper anchor corrected after candle close");
       expect(body.corrected_boundaries).toHaveLength(2);
       correctedPrice = body.corrected_boundaries[0].anchors[0].price;
       expect(Number.isFinite(correctedPrice)).toBe(true);
@@ -226,7 +227,8 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
       savedReview = {
         review_id: "d".repeat(64),
         submission: {
-          signal_id: signalId, snapshot_revision: body.snapshot_revision, label: body.label,
+          signal_id: signalId, snapshot_revision: body.snapshot_revision,
+          label: body.label, note: body.note,
           corrected_boundaries: body.corrected_boundaries.map((item) => ({
             boundary_id: item.id, kind: item.type, anchors: item.anchors,
           })),
@@ -311,6 +313,8 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
     .toContainText("Линии изменены");
   expect(writes).toBe(0);
   await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("GEOMETRY_CORRECTED");
+  await page.getByRole("textbox", { name: "Комментарий к исправлению" })
+    .fill("Upper anchor corrected after candle close");
   await page.getByRole("button", { name: "Передать исправление" }).click();
   await expect(page.locator(".editor-correction-export output[role=status]").last())
     .toContainText("Исправление сохранено в дневнике обратной связи");
@@ -326,6 +330,8 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
 
   await page.reload();
   await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Комментарий к исправлению" }))
+    .toHaveValue("Upper anchor corrected after candle close");
   await expect(page.getByText(/Сохранённый отзыв: d{12}.*Исправлена геометрия/)).toBeVisible();
   await expect.poll(() => page.evaluate((id) => {
     const savedKey = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}:review-${"d".repeat(64)}`;
