@@ -262,19 +262,22 @@ def execute_flat_handoff(
             _send_exact_sigint(expected_pid, token)
         else:
             send_interrupt(expected_pid, signal.SIGINT)
-        probe = is_alive if is_alive is not None else (
-            lambda pid: Path(f"/proc/{pid}/stat").exists()
-        )
-        deadline = monotonic() + 15
-        while monotonic() < deadline:
-            # Do not call _service_pid after SIGINT: it requires ActiveState=active
-            # and raises backend_unit_not_active when the intended exit succeeds.
-            # Only disappearance of the exact previously attested /proc PID
-            # proves exit. A changed/failed unit alone cannot prove exit.
-            if not probe(expected_pid):
-                return "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
-            sleep(0.25)
-        return "OUTCOME_UNKNOWN: single SIGINT sent, do not retry or deploy"
+    # Release SQLite's writer reservation immediately after the single SIGINT.
+    # Backend cleanup may need to write durable final state before the process
+    # disappears; polling while holding BEGIN IMMEDIATE can starve that exit.
+    probe = is_alive if is_alive is not None else (
+        lambda pid: Path(f"/proc/{pid}/stat").exists()
+    )
+    deadline = monotonic() + 15
+    while monotonic() < deadline:
+        # Do not call _service_pid after SIGINT: it requires ActiveState=active
+        # and raises backend_unit_not_active when the intended exit succeeds.
+        # Only disappearance of the exact previously attested /proc PID
+        # proves exit. A changed/failed unit alone cannot prove exit.
+        if not probe(expected_pid):
+            return "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
+        sleep(0.25)
+    return "OUTCOME_UNKNOWN: single SIGINT sent, do not retry or deploy"
 
 
 def main(argv=None) -> int:
