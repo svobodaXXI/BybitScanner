@@ -652,6 +652,7 @@ class ShutdownArmFixture:
         self.runtime = FakeRuntime(robot=robot)
         self.durable = {}
         self.store = mock.Mock()
+        self.store.get_robot_autopilot_state.return_value = SimpleNamespace(mode="OFF")
         self.store.load_active_robot_candidate_states.return_value = ()
         self.store.load_active_paper_limits.return_value = ()
         self.store.load_open_position_projections.return_value = ()
