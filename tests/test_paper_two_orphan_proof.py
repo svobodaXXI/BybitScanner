@@ -1,5 +1,6 @@
 """Synthetic-only tests for dual Flat/OPEN owner evidence. No VPS or SQLite writes."""
 import sqlite3
+import hashlib
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -149,6 +150,9 @@ class DualOrphanPreflightTests(TestCase):
             with sqlite3.connect(path) as destination:
                 conn.backup(destination)
             conn.close()
+            identity = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()
+            payload["expected_identity"] = identity
+            payload["backend"]["database_identity"] = identity
             with (
                 mock.patch("tools.paper_two_orphan_proof.SQLiteStore", return_value=store),
                 mock.patch("tools.paper_two_orphan_proof.robot_entry_order_ids", return_value=(
@@ -161,6 +165,11 @@ class DualOrphanPreflightTests(TestCase):
                     path, expected_identity=payload["expected_identity"],
                     snapshots={k: v for k, v in payload.items() if k != "expected_identity"},
                 ), PROOF_LABEL)
+            with self.assertRaisesRegex(FlatRecoveryBlocked, "paper_database_path_identity_mismatch"):
+                inspect_read_only(
+                    path, expected_identity="wrong-db-path-identity",
+                    snapshots={k: v for k, v in payload.items() if k != "expected_identity"},
+                )
             with sqlite3.connect(path) as unchanged:
                 self.assertEqual(unchanged.execute(
                     "SELECT COUNT(*) FROM robot_trades WHERE exit_time_ms IS NULL"
