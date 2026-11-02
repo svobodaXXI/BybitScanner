@@ -25,6 +25,7 @@ import time
 from typing import Callable, Mapping
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 INTENTS = ("ALL", "SCANNER", "ROBOT")
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8765"
@@ -366,6 +367,17 @@ class RuntimeIntentBootstrap:
         try:
             response = self._get(self._backend + "/api/health", PROBE_TIMEOUT_S)
         except Unreachable:
+            # A saturated PAPER owner can time out on /health while still
+            # owning the listener and SQLite. Never spawn a second backend
+            # solely because HTTP is unreachable.
+            from tools.legacy_runtime_process import LegacyOwnerUnproven, probe_listener_pids
+            location = urlsplit(self._backend)
+            try:
+                listeners = probe_listener_pids(location.hostname or "", location.port or 0)
+            except (LegacyOwnerUnproven, ValueError) as exc:
+                raise Mismatch("PAPER backend listener state cannot be proven; not starting another owner") from exc
+            if listeners:
+                raise Mismatch("PAPER backend listener is alive but health is unavailable; not starting another owner")
             return ABSENT
         health = _json_or_none(response)
         if (
