@@ -199,28 +199,38 @@ class BoxRetryRealPaperE2E(MirrorStandaloneHarness):
                 self.assertEqual(retry_trade.pattern, "IKIGAI_BOX")
                 self.assertNotEqual(retry_trade.trade_id, initial_trade.trade_id)
                 self.assertGreater(retry_trade.entry_quantity, 0)
-                try:
-                    second_protection = _wait_until(protection)
-                except AssertionError:
-                    diagnostic = runtime.call(lambda owner: {
-                        "trade": str(owner.store.get_open_robot_trade_for_symbol(ACCOUNT, symbol)),
-                        "candidate": str(owner.store.get_robot_candidate(second_id)),
-                        "protection": str(owner.store.get_protection_projection(key)),
-                        "robot": str(owner.store.get_robot_runtime_state(ACCOUNT)),
-                        "position": str(owner.store.get_position_projection(key)),
-                        "obligations": str(owner.store._connection.execute(
-                            "SELECT trade_id,winning_leg,status FROM paper_protection_obligations"
-                        ).fetchall()),
-                    })
-                    self.fail(f"Box P1 fill lacked armed STOP/TAKE: {diagnostic}")
+                # Box deliberately arms a STOP projection, but takes profit
+                # through Box-owned EXIT LIMITs, not protection.take_profit.
+                # The earlier MIRROR strategy uses STOP+TAKE projection;
+                # never conflate these independent canonical contracts.
+                def box_stop():
+                    value = runtime.call(
+                        lambda owner: owner.store.get_protection_projection(key),
+                    )
+                    return value if value and value.stop_loss is not None else None
+
+                second_protection = _wait_until(box_stop)
                 self.assertEqual(
                     second_protection.stop_loss,
                     Decimal(snapshot["plan"]["stop_price"]),
                 )
                 self.assertEqual(
-                    second_protection.take_profit,
+                    retry_trade.take_price,
                     Decimal(snapshot["plan"]["take_price"]),
                 )
+
+                def exit_limits():
+                    return runtime.call(lambda owner: [
+                        owner.store.get_paper_limit(item.order_id.value, ACCOUNT)
+                        for item in owner.store.load_box_order_ownership(source_id)
+                        if item.role == "EXIT"
+                    ])
+                take_limits = _wait_until(exit_limits)
+                self.assertTrue(any(
+                    item is not None and item.status == "open"
+                    and item.price == Decimal(snapshot["plan"]["take_price"])
+                    for item in take_limits
+                ))
                 journal = ReentryDiaryReader(self.db).load()
                 self.assertEqual(len(journal), 1)
                 self.assertEqual(
