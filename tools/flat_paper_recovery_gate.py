@@ -156,6 +156,17 @@ def prove_flat_recovery(
         "unfinished_or_unknown_trading_command",
     )
 
+    # An interrupted reconciliation can still own pending PAPER work even
+    # when positions, LIMITs and commands appear terminal. Preserve the same
+    # account-scoped checkpoint fence used by canonical shutdown/JASMY proof.
+    _require(
+        conn.execute(
+            "SELECT COUNT(*) FROM reconciliation_checkpoints "
+            "WHERE trading_account_id='paper' AND completed_at_ms IS NULL",
+        ).fetchone()[0] == 0,
+        "unfinished_reconciliation_checkpoint",
+    )
+
     obligations = conn.execute(
         "SELECT o.symbol, o.trade_id, o.winning_leg, o.status, o.order_id, "
         "o.exec_id, o.observed_quantity, t.pattern, t.exit_reason, "
