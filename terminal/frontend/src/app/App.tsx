@@ -106,6 +106,7 @@ export function App() {
     snapshotRevision: string;
     barsSha256: string;
     savedReviewId: string | null;
+    savedReviewLabel: GeometryReviewDraft["label"] | null;
   } | null>(null);
   const [frozenGeometryStatus, setFrozenGeometryStatus] = useState<"loading" | "unavailable" | "ready">("loading");
   useEffect(() => {
@@ -144,17 +145,21 @@ export function App() {
         const savedReview = payload.latest_review as {
           review_id?: string;
           submission?: {
-            signal_id?: string; snapshot_revision?: string; label?: string;
+            signal_id?: string; snapshot_revision?: string; label?: GeometryReviewDraft["label"];
             corrected_boundaries?: Array<{
               boundary_id: string; kind: TimestampDrawing["type"]; anchors: TimestampDrawing["anchors"];
             }>;
           };
         } | null;
+        const savedReviewLabel = savedReview?.submission?.label ?? null;
+        if (savedReview && (
+          savedReview.submission?.signal_id !== link.signalId
+          || savedReview.submission?.snapshot_revision !== payload.snapshot_revision
+          || !["CONFIRMED", "GEOMETRY_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"].includes(savedReviewLabel ?? "")
+        )) throw new Error("Saved review does not match source signal");
         let editableDrawings = projected.editableDrawings;
-        if (savedReview?.submission?.label === "GEOMETRY_CORRECTED") {
-          if (savedReview.submission.signal_id !== link.signalId
-              || savedReview.submission.snapshot_revision !== payload.snapshot_revision
-              || !Array.isArray(savedReview.submission.corrected_boundaries))
+        if (savedReviewLabel === "GEOMETRY_CORRECTED") {
+          if (!Array.isArray(savedReview?.submission?.corrected_boundaries))
             throw new Error("Saved correction does not match source signal");
           const reviewedLines: TimestampDrawing[] = savedReview.submission.corrected_boundaries.map((line) => ({
             id: line.boundary_id, type: line.kind, anchors: line.anchors,
@@ -171,6 +176,7 @@ export function App() {
             candles, ...projected, editableDrawings, signalId: link.signalId!,
             snapshotRevision: payload.snapshot_revision, barsSha256: payload.bars_sha256,
             savedReviewId: typeof savedReview?.review_id === "string" ? savedReview.review_id : null,
+            savedReviewLabel,
           });
           setFrozenGeometryStatus("ready");
         }
@@ -1283,6 +1289,7 @@ export function App() {
           snapshotRevision={mode === "EDITOR" ? frozenSignal?.snapshotRevision ?? null : null}
           barsSha256={mode === "EDITOR" ? frozenSignal?.barsSha256 ?? null : null}
           savedReviewId={mode === "EDITOR" ? frozenSignal?.savedReviewId ?? null : null}
+          savedReviewLabel={mode === "EDITOR" ? frozenSignal?.savedReviewLabel ?? null : null}
           onSaveGeometryReview={mode === "EDITOR" && frozenSignal ? async (
             review: GeometryReviewDraft & { note: string; idempotency_key: string },
           ) => {
@@ -1296,9 +1303,18 @@ export function App() {
               body: JSON.stringify(review),
             });
             const result = await response.json();
-            if (!response.ok || result.ok !== true || !result.review?.review_id
-                || result.review?.submission?.signal_id !== frozenSignal.signalId)
-              throw new Error(result.error || "Сервер не подтвердил сохранение");
+            const record = result.review;
+            const stored = record?.submission;
+            if (!response.ok || result.ok !== true
+                || typeof record?.review_id !== "string"
+                || !/^[0-9a-f]{64}$/.test(record.review_id)
+                || stored?.signal_id !== review.signal_id
+                || stored?.snapshot_revision !== review.snapshot_revision
+                || stored?.bars_sha256 !== review.bars_sha256
+                || stored?.label !== review.label
+                || stored?.idempotency_key !== review.idempotency_key)
+              throw new Error(result.error || "Сервер не подтвердил точное сохранение отзыва");
+            return { reviewId: record.review_id, label: review.label };
           } : undefined}
           tickSize={mode === "EDITOR" && frozenSignal ? null : market.tickSize}
           symbol={mode === "EDITOR" && frozenSignal ? launchLink?.symbol ?? market.book.symbol : market.book.symbol}
