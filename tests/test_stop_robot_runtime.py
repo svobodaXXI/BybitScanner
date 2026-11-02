@@ -422,6 +422,58 @@ class FullShutdownTests(unittest.TestCase):
             "backend:shutdown", "telegram:shutdown",
         ])
 
+    def test_partial_stop_resumes_natural_drain_from_paused_without_duplicate_pause(self):
+        runtime = FakeRuntime(robot=READY)
+        canonical_stop = runtime.stop_robot
+        canonical_sleep = runtime.sleep
+
+        def refuse_only_while_trade_open():
+            if runtime.robot_ownership_open:
+                raise RobotControlRejected(
+                    "stop_robot is rejected while OPEN Robot trades remain: trade-1"
+                )
+            return canonical_stop()
+
+        runtime.stop_robot = refuse_only_while_trade_open
+        first = runtime.orchestrator().run("all")
+        self.assertFalse(first.ok)
+        self.assertIn("natural drain incomplete", first.message)
+        self.assertEqual(runtime.robot, PAUSED)
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:pause"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+        def settled_via_stop_take(seconds):
+            canonical_sleep(seconds)
+            runtime.robot_ownership_open = False
+
+        runtime.sleep = settled_via_stop_take
+        second = runtime.orchestrator().run("all")
+        self.assertTrue(second.ok, second.message)
+        self.assertTrue(second.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "scanner:stop", "robot:pause", "scanner:stop", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertEqual(runtime.robot, STOPPED)
+
+    def test_paused_drain_cannot_proceed_after_pending_entry_sync_failure(self):
+        runtime = FakeRuntime(robot=PAUSED)
+
+        def reject_unresolved_limit():
+            runtime.robot = RECON
+            raise RobotControlRejected(
+                "stop_robot committed its durable transition, but pending Robot "
+                "entries remain unresolved; escalated to RECONCILIATION_REQUIRED"
+            )
+
+        runtime.stop_robot = reject_unresolved_limit
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("pending Robot entries remain unresolved", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.robot, RECON)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_open_trade_natural_drain_still_blocks_if_ingress_reactivates(self):
         runtime = FakeRuntime(robot=READY)
         runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
