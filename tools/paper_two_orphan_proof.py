@@ -52,6 +52,19 @@ def prove_two_flat_orphans(
         and protection.get("unhealthy_symbols") == {},
         "protection_unhealthy",
     )
+    covered = protection.get("covered_symbols")
+    armed = protection.get("armed_symbols")
+    roles = protection.get("coverage_roles")
+    _require(
+        isinstance(covered, list) and isinstance(armed, list)
+        and isinstance(roles, dict) and not armed
+        and (
+            (covered == [] and roles == {})
+            or (len(covered) == 2 and set(covered) == EXPECTED_SYMBOLS
+                and roles == {symbol: "EXPOSURE" for symbol in EXPECTED_SYMBOLS})
+        ),
+        "unexpected_protection_coverage",
+    )
     _require(conn.execute("PRAGMA quick_check").fetchone() == ("ok",),
              "paper_database_integrity_unproven")
     state = conn.execute(
