@@ -40,7 +40,7 @@ def prove_two_flat_orphans(
     # Reading independently committed rows can falsely pair a Flat projection
     # with a close execution or candidate from another runtime generation.
     _require(conn.in_transaction, "stable_snapshot_transaction_required")
-    _require(conn.execute("PRAGMA query_only").fetchone() == (1,),
+    _require(tuple(conn.execute("PRAGMA query_only").fetchone()) == (1,),
              "read_only_snapshot_required")
     _require(
         backend.get("ok") is True
@@ -72,7 +72,7 @@ def prove_two_flat_orphans(
         ),
         "unexpected_protection_coverage",
     )
-    _require(conn.execute("PRAGMA quick_check").fetchone() == ("ok",),
+    _require(tuple(conn.execute("PRAGMA quick_check").fetchone()) == ("ok",),
              "paper_database_integrity_unproven")
     state = conn.execute(
         "SELECT mode, recovery_status FROM robot_runtime_state "
