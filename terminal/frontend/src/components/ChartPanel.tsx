@@ -898,6 +898,7 @@ export function ChartPanel({
           tool={tool}
           magnet={magnet}
           candles={candles}
+          candleAligned={editorMode && signalIdentity !== null}
           coordinates={coordinates}
           priceFormatter={drawingPriceFormatter}
           onCommit={commit}
