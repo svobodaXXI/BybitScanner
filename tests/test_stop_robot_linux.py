@@ -32,6 +32,7 @@ class FakeHost:
     def __init__(self, *, robot=READY, backend=True, telegram=True, health_up=True):
         self.robot, self.backend, self.telegram, self.health_up = robot, backend, telegram, health_up
         self.calls, self.shutdown_status = [], {}
+        self.scanner_mode = "SCANNER_RUNNING"
         self.terminated = []
 
     def get(self, url, timeout):
@@ -43,6 +44,8 @@ class FakeHost:
             if not self.telegram:
                 raise shutdown.Unreachable("down")
             return 200, {"component": "telegram_monitoring", "database_identity": IDENTITY}
+        if url == BACKEND + "/api/scanner/status":
+            return 200, {"ok": True, "mode": self.scanner_mode}
         if url == BACKEND + "/api/robot/autopilot":
             return 200, {"ok": True, "mode": "OFF"}
         if url == BACKEND + "/api/robot/protection-health":
@@ -52,6 +55,7 @@ class FakeHost:
     def post(self, url, payload, timeout):
         self.calls.append(url.replace(BACKEND, "").replace(TELEGRAM, "tg"))
         if url.endswith("/api/scanner/stop"):
+            self.scanner_mode = "SCANNER_STOPPED"
             return 200, {"ok": True}
         if url.endswith("/shutdown"):
             status = self.shutdown_status.get("telegram" if url.startswith(TELEGRAM) else "backend", 200)

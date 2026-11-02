@@ -212,6 +212,28 @@ class FullShutdownTests(unittest.TestCase):
                 self.assertEqual(runtime.scanner_mode, "SCANNER_RUNNING")
                 self.assertEqual(runtime.robot, READY)
 
+    def test_scanner_ack_without_stopped_postcondition_keeps_robot_and_backend(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        original_post = runtime.post
+
+        def premature_ack(url, payload, timeout):
+            if url == BACKEND + "/api/scanner/stop":
+                runtime.calls.append("scanner:stop")
+                # Backend acknowledged a request, but the Scanner is still
+                # running: no Robot, protection, backend or Telegram shutdown.
+                return 200, {"ok": True, "mode": "SCANNER_STOPPED"}
+            return original_post(url, payload, timeout)
+
+        runtime.post = premature_ack
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Scanner is not proven STOPPED", result.message)
+        self.assertEqual(runtime.calls, ["autopilot:off", "scanner:stop"])
+        self.assertEqual(runtime.scanner_mode, "SCANNER_RUNNING")
+        self.assertEqual(runtime.robot, READY)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_scanner_only_does_not_change_autopilot(self):
         runtime = FakeRuntime(robot=READY)
         runtime.autopilot_mode = "PAPER_AUTO"

@@ -618,6 +618,10 @@ class RuntimeShutdown:
             raise SafeStopError("Scanner stop outcome is unknown; not retried") from exc
         if status != 200 or not isinstance(body, dict) or body.get("ok") is not True:
             raise SafeStopError("Scanner stop was rejected")
+        # A successful command acknowledgement is not proof that the Scanner
+        # has stopped. Never proceed to Robot/protection shutdown on stale state.
+        # The read-only postcondition is safe to repeat; do not retry POST.
+        self._require_scanner_stopped()
 
     def _reconcile_robot(self) -> None:
         # The backend owns evidence and recovery. Never retry an ambiguous mutation.
