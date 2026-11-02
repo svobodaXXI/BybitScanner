@@ -132,6 +132,13 @@ class DualOrphanPreflightTests(TestCase):
         )
         self.assertEqual(store.get_paper_command_by_order_link.call_count, 2)
 
+    def test_sqlite_row_factory_does_not_reject_valid_read_only_snapshot(self):
+        conn, payload, store = fixture()
+        conn.row_factory = sqlite3.Row
+        self.assertEqual(
+            check(conn, payload, store, evidence=[object(), object()]), PROOF_LABEL,
+        )
+
     def test_second_missing_proof_blocks_without_mutations(self):
         conn, payload, store = fixture()
         before = conn.total_changes
