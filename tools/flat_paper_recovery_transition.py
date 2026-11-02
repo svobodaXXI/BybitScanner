@@ -254,7 +254,11 @@ def execute_flat_handoff(
         # every execution path, not just the incident-scoped JASMY exception.
         # Preserve JASMY's stronger preflight requirement as well.
         if execute or jasmy_incident_20261102:
-            _assert(listener_owner(expected_pid), "backend_listener_owner_unproven")
+            _assert(
+                listener_owner(expected_pid),
+                "jasmy_backend_listener_owner_unproven" if jasmy_incident_20261102
+                else "backend_listener_owner_unproven",
+            )
         if not execute:
             return "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
         # SIGINT allows Python main() to unwind its finally: server, market
