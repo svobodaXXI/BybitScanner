@@ -13,7 +13,7 @@ def fixture():
     conn.executescript("""
         CREATE TABLE robot_runtime_state (trading_account_id TEXT, mode TEXT, recovery_status TEXT);
         CREATE TABLE robot_autopilot_state (trading_account_id TEXT, mode TEXT);
-        CREATE TABLE position_projections (trading_account_id TEXT, symbol TEXT, side TEXT, quantity TEXT);
+        CREATE TABLE position_projections (trading_account_id TEXT, symbol TEXT, side TEXT, quantity TEXT, sync_state TEXT);
         CREATE TABLE robot_trades (
             trade_id TEXT, trading_account_id TEXT, symbol TEXT, pattern TEXT,
             exit_reason TEXT, exit_time_ms INTEGER, exit_price TEXT
@@ -34,8 +34,8 @@ def fixture():
         );
         INSERT INTO robot_runtime_state VALUES ('paper','ROBOT_RUNNING','RECONCILIATION_REQUIRED');
         INSERT INTO robot_autopilot_state VALUES ('paper','OFF');
-        INSERT INTO position_projections VALUES ('paper','BUSDT','Flat','0');
-        INSERT INTO position_projections VALUES ('paper','VIRTUALUSDT','Flat','0');
+        INSERT INTO position_projections VALUES ('paper','BUSDT','Flat','0','synced');
+        INSERT INTO position_projections VALUES ('paper','VIRTUALUSDT','Flat','0','synced');
         INSERT INTO robot_trades VALUES
             ('box-busdt','paper','BUSDT','IKIGAI_BOX','TAKE',100,'0.1280451745');
         INSERT INTO paper_protection_obligations VALUES
@@ -189,6 +189,31 @@ class FlatRecoveryGateTests(unittest.TestCase):
         conn.execute(
             "UPDATE reconciliation_checkpoints SET completed_at_ms=100 "
             "WHERE trading_account_id='paper'"
+        )
+        self.assertEqual(
+            prove_flat_recovery(conn, **payload),
+            "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY",
+        )
+        conn.close()
+
+    def test_flat_projection_must_be_durably_synchronized(self):
+        for status in (None, "", "unknown", "stale", "pending"):
+            with self.subTest(sync_state=status):
+                conn, payload = fixture()
+                conn.execute(
+                    "UPDATE position_projections SET sync_state=? "
+                    "WHERE symbol='BUSDT'", (status,),
+                )
+                before = conn.total_changes
+                assert_blocked(self, conn, payload)
+                self.assertEqual(conn.total_changes, before)
+                conn.close()
+        # Both canonical synchronized markers remain valid, never used to
+        # infer exposure from an untrusted projection.
+        conn, payload = fixture()
+        conn.execute(
+            "UPDATE position_projections SET sync_state='synchronized' "
+            "WHERE symbol='VIRTUALUSDT'"
         )
         self.assertEqual(
             prove_flat_recovery(conn, **payload),
