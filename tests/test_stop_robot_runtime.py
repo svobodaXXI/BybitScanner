@@ -1450,6 +1450,41 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
             with shutdown.hold_legacy_paper_quiescence(path):
                 pass
 
+    def test_legacy_quiescence_checks_all_paper_categories_and_hedge_indices(self):
+        # Backend protection must not be stopped based only on linear/idx0:
+        # a hedge leg or a non-linear PAPER projection remains exposure.
+        cases = (
+            ("linear", 1, "Long", "1"),
+            ("linear", 2, "Short", "3"),
+            ("inverse", 0, "Long", "2"),
+            ("linear", 1, "Flat", "1"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for i, (category, idx, side, qty) in enumerate(cases):
+                with self.subTest(category=category, idx=idx, side=side):
+                    path = Path(directory) / f"projection-{i}.sqlite3"
+                    self.make_db(path)
+                    with sqlite3.connect(path) as db:
+                        db.execute(
+                            "INSERT INTO position_projections VALUES "
+                            "('paper',?,?,?, ?, ?)",
+                            (category, "HEDGEUSDT", idx, side, qty),
+                        )
+                    with self.assertRaises(shutdown.SafeStopError):
+                        shutdown.prove_legacy_paper_quiescence(path)
+                    with self.assertRaises(shutdown.SafeStopError):
+                        with shutdown.hold_legacy_paper_quiescence(path):
+                            pass
+            # Unrelated account remains outside the PAPER gate.
+            path = Path(directory) / "other.sqlite3"
+            self.make_db(path)
+            with sqlite3.connect(path) as db:
+                db.execute(
+                    "INSERT INTO position_projections VALUES "
+                    "('other','linear','OTHERUSDT',1,'Long','1')"
+                )
+            shutdown.prove_legacy_paper_quiescence(path)
+
     def test_legacy_quiescence_rejects_inconsistent_paper_position_shapes(self):
         # Contradictory projection economics must be rejected before even
         # considering a protected non-Robot position for shutdown.
