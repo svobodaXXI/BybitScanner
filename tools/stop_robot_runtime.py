@@ -552,30 +552,35 @@ class RuntimeShutdown:
                     scope, True, "Scanner STOPPED; Robot protection coverage keeps the runtime alive.",
                     tuple(steps),
                 )
-            self._mark("retiring stale entry protection coverage")
-            legacy_proof = self._retire_entry_coverage()
-            if legacy_proof is None:
-                steps.append("protection:retire-entry-arms")
-                if not self._protection_quiescent():
-                    raise SafeStopError("Robot protection coverage is still active; runtime kept alive")
-            else:
-                steps.append("protection:legacy-entry-proof")
-                # The old backend has no monitor idle guard. Freeze SQLite writers
-                # before the final process proof so an already in-flight pre-stop
-                # tick cannot create a durable LIMIT between proof and termination.
-                with self._legacy_paper_guard():
-                    backend_chain = self._prove_legacy_entry_backend_chain(legacy_proof)
-                    if telegram == PRESENT:
-                        steps.append(self._shutdown(
-                            self._telegram + "/shutdown", self._telegram + "/health",
-                            "Telegram monitoring", TELEGRAM, "telegram",
-                        ))
-                    self._terminate_legacy_entry_backend(legacy_proof, backend_chain)
-                    steps.append("backend:legacy-terminate")
-                    self._wait_gone(self._backend + "/api/health", "PAPER backend")
-                return ShutdownResult(
-                    scope, True, "Runtime STOPPED.", tuple(steps), runtime_stopped=True,
-                )
+            # A stopped Robot can still share the PAPER backend with protected
+            # non-Robot exposure. Wait for natural STOP/TAKE only when the
+            # coverage explicitly reports EXPOSURE; never retire its coverage.
+            drained = self._wait_for_natural_exposure_drain()
+            if not (drained and self._protection_quiescent()):
+                self._mark("retiring stale entry protection coverage")
+                legacy_proof = self._retire_entry_coverage()
+                if legacy_proof is None:
+                    steps.append("protection:retire-entry-arms")
+                    if not self._protection_quiescent():
+                        raise SafeStopError("Robot protection coverage is still active; runtime kept alive")
+                else:
+                    steps.append("protection:legacy-entry-proof")
+                    # The old backend has no monitor idle guard. Freeze SQLite writers
+                    # before the final process proof so an already in-flight pre-stop
+                    # tick cannot create a durable LIMIT between proof and termination.
+                    with self._legacy_paper_guard():
+                        backend_chain = self._prove_legacy_entry_backend_chain(legacy_proof)
+                        if telegram == PRESENT:
+                            steps.append(self._shutdown(
+                                self._telegram + "/shutdown", self._telegram + "/health",
+                                "Telegram monitoring", TELEGRAM, "telegram",
+                            ))
+                        self._terminate_legacy_entry_backend(legacy_proof, backend_chain)
+                        steps.append("backend:legacy-terminate")
+                        self._wait_gone(self._backend + "/api/health", "PAPER backend")
+                    return ShutdownResult(
+                        scope, True, "Runtime STOPPED.", tuple(steps), runtime_stopped=True,
+                    )
 
         # The PAPER backend may still reject a shutdown on fresh durable work
         # even after earlier Robot/protection preflight. Keep Telegram alive for
@@ -1099,6 +1104,49 @@ class RuntimeShutdown:
             self._legacy_terminator(final_chain)
         except Exception as exc:
             raise SafeStopError(f"PAPER backend legacy termination failed: {type(exc).__name__}") from exc
+
+    def _wait_for_natural_exposure_drain(self) -> bool:
+        """Bounded protection-only drain for exposure after Robot STOPPED.
+
+        Returns False if no explicit EXPOSURE coverage is reported; the existing
+        retirement gate then handles stale entry arms. No order or protection
+        mutation occurs during this wait.
+        """
+        def exposure_present() -> bool:
+            try:
+                status, health = self._get(
+                    self._backend + "/api/robot/protection-health", PROBE_TIMEOUT_S,
+                )
+            except Unreachable as exc:
+                raise SafeStopError("PAPER exposure coverage unavailable during drain") from exc
+            if (
+                status != 200 or not isinstance(health, dict)
+                or health.get("healthy") is not True
+                or not isinstance(health.get("coverage_roles"), dict)
+            ):
+                raise SafeStopError("PAPER exposure coverage unproven during drain")
+            roles = health["coverage_roles"]
+            if any(not isinstance(key, str) or not key.strip()
+                   or not isinstance(value, str) for key, value in roles.items()):
+                raise SafeStopError("PAPER exposure coverage malformed during drain")
+            return any(role == "EXPOSURE" for role in roles.values())
+
+        if not exposure_present():
+            return False
+        self._mark("waiting for protected PAPER exposure to drain naturally")
+        deadline = self._monotonic() + NATURAL_ROBOT_DRAIN_WAIT_S
+        while True:
+            self._require_scanner_stopped()
+            self._require_autopilot_off()
+            if self._robot_state() != ROBOT_STOPPED_PAIR:
+                raise SafeStopError("Robot STOPPED changed during protected PAPER drain")
+            if not exposure_present():
+                return True
+            if self._monotonic() >= deadline:
+                raise SafeStopError(
+                    "protected PAPER exposure remains open; backend retained for STOP/TAKE"
+                )
+            self._sleep(min(POLL_INTERVAL_S, deadline - self._monotonic()))
 
     def _protection_quiescent(self) -> bool:
         try:
