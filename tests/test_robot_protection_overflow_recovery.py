@@ -129,7 +129,7 @@ class RobotProtectionOverflowRecoveryTests(unittest.TestCase):
     def test_saturated_ingress_still_delivers_owner_fence_in_order(self):
         owner = _Owner()
         entered, release = threading.Event(), threading.Event()
-        runtime = SerializedPaperRuntime(lambda: owner, protection_ingress_capacity=1)
+        runtime = SerializedPaperRuntime(lambda: owner, protection_ingress_capacity=2)
         try:
             def held_operation(_owner):
                 entered.set()
@@ -153,7 +153,7 @@ class RobotProtectionOverflowRecoveryTests(unittest.TestCase):
             self.assertEqual(manager.health()["unhealthy_symbols"], {
                 SYMBOL: "ingress_overflow",
             })
-            self.assertEqual(runtime.protection_ingress_metrics()["current_pending"], 1)
+            self.assertEqual(runtime.protection_ingress_metrics()["current_pending"], 2)
             with self.assertRaises(ProtectionIngressOverflow):
                 runtime.enqueue(lambda current: None, symbol=SYMBOL)
 
