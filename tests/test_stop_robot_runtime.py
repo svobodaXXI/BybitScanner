@@ -1209,6 +1209,10 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                 CREATE TABLE reconciliation_checkpoints (
                     trading_account_id TEXT NOT NULL, completed_at_ms INTEGER
                 );
+                CREATE TABLE robot_autopilot_state (
+                    trading_account_id TEXT NOT NULL, mode TEXT
+                );
+                INSERT INTO robot_autopilot_state VALUES ('paper', 'OFF');
                 """
             )
             if blocker == "approved_candidate":
@@ -1274,6 +1278,41 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                     with self.assertRaisesRegex(shutdown.SafeStopError, phrase):
                         shutdown.prove_legacy_paper_quiescence(path)
 
+
+    def test_legacy_shutdown_requires_durable_autopilot_off_in_same_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "paper.sqlite3"
+            self.make_db(path)
+            for mode in ("PAPER_AUTO", "SHADOW", None):
+                with self.subTest(mode=mode):
+                    with sqlite3.connect(path) as db:
+                        db.execute(
+                            "UPDATE robot_autopilot_state SET mode=? "
+                            "WHERE trading_account_id='paper'", (mode,),
+                        )
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "Autopilot OFF unproven",
+                    ):
+                        shutdown.prove_legacy_paper_quiescence(path)
+            with sqlite3.connect(path) as db:
+                db.execute("DELETE FROM robot_autopilot_state")
+            with self.assertRaisesRegex(
+                shutdown.SafeStopError, "Autopilot OFF unproven",
+            ):
+                shutdown.prove_legacy_paper_quiescence(path)
+            with sqlite3.connect(path) as db:
+                db.execute("INSERT INTO robot_autopilot_state VALUES ('paper','OFF')")
+                db.execute("INSERT INTO robot_autopilot_state VALUES ('paper','OFF')")
+            with self.assertRaisesRegex(
+                shutdown.SafeStopError, "Autopilot OFF unproven",
+            ):
+                shutdown.prove_legacy_paper_quiescence(path)
+            with sqlite3.connect(path) as db:
+                db.execute("DELETE FROM robot_autopilot_state")
+                db.execute("INSERT INTO robot_autopilot_state VALUES ('paper','OFF')")
+            shutdown.prove_legacy_paper_quiescence(path)
+            with shutdown.hold_legacy_paper_quiescence(path):
+                pass
 
     def test_legacy_quiescence_rejects_unknown_and_inflight_ledgers(self):
         # Legacy exact-process fallback must not accept work the canonical
