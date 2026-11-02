@@ -401,6 +401,18 @@ class RuntimeIntentBootstrap:
         try:
             response = self._get(self._telegram_health, PROBE_TIMEOUT_S)
         except Unreachable:
+            # HTTP timeout is not proof the getUpdates owner has exited.
+            # Never start a duplicate Telegram polling worker over a live or
+            # unprovable loopback listener.
+            from tools.legacy_runtime_process import LegacyOwnerUnproven, probe_listener_pids
+            location = urlsplit(self._telegram_health)
+            try:
+                probe = self._listener_probe or probe_listener_pids
+                listeners = probe(location.hostname or "", location.port or 0)
+            except (LegacyOwnerUnproven, ValueError) as exc:
+                raise Mismatch("Telegram listener state cannot be proven; not starting another worker") from exc
+            if listeners:
+                raise Mismatch("Telegram listener is alive but health is unavailable; not starting another worker")
             return ABSENT
         health = _json_or_none(response)
         if not isinstance(health, dict) or health.get("component") != "telegram_monitoring":
