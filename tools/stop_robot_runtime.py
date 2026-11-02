@@ -171,15 +171,14 @@ def read_open_robot_ownership(database_path: Path) -> bool:
 
 
 def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
-    # Full runtime shutdown is Robot-scoped, not account-flattening. Manual or
-    # otherwise non-Robot PAPER positions may persist durably across a process
-    # restart and must never be liquidated merely because the Robot is stopped.
+    # Full runtime shutdown must not orphan even non-Robot PAPER exposure:
+    # Backend owns its STOP/TAKE protection. Preserve open positions in place
+    # and refuse termination until they close naturally. Never liquidate them.
     #
-    # APPROVED alone is also not live ownership: canonical stop_robot() may
-    # leave an inert APPROVED row after synchronously proving that no working
-    # entry LIMIT or exposure remains. But a non-flat position on the same
-    # symbol as an APPROVED candidate is ambiguous partial-fill ownership and
-    # therefore still blocks fail-closed.
+    # APPROVED alone is not live ownership: canonical stop_robot() may
+    # leave an inert APPROVED row after proving no working entry LIMIT.
+    # Any non-flat position blocks regardless of its Robot candidate origin;
+    # an APPROVED candidate on that symbol remains specifically ambiguous.
     # Exceptional shutdown may bypass a saturated owner queue, but cannot
     # bypass the durable admission freeze. A still-enabled PAPER_AUTO can
     # enqueue fresh work as soon as the SQLite writer reservation ends.
@@ -289,6 +288,13 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
         raise SafeStopError(
             "legacy PAPER shutdown blocked by pending Robot exposure: "
             + ",".join(ambiguous_approved_exposure)
+        )
+    # The legacy exact-process fallback has no owner-side protection seal.
+    # Do not terminate a Backend still protecting manual/non-Robot exposure.
+    if non_flat_symbols:
+        raise SafeStopError(
+            "legacy PAPER shutdown blocked by protected PAPER exposure: "
+            + ",".join(sorted(non_flat_symbols))
         )
     if unresolved_obligations:
         raise SafeStopError("legacy PAPER shutdown blocked by unresolved protection obligations")
