@@ -130,7 +130,10 @@ class BoxRetryRealPaperE2E(MirrorStandaloneHarness):
                 snapshot["identity"]["symbol"] = SYMBOL
                 snapshot["decision_time_ms"] = decision
                 book.set(SYMBOL, bid=Decimal("106.5"), ask=Decimal("106.6"))
-                clock = mock.patch("time.time", lambda: verified_now / 1000)
+                simulated_clock = {"ms": verified_now}
+                clock = mock.patch(
+                    "time.time", lambda: simulated_clock["ms"] / 1000,
+                )
                 clock.start()
                 self.addCleanup(clock.stop)
                 source_id = runtime.call(lambda owner:
@@ -248,6 +251,10 @@ class BoxRetryRealPaperE2E(MirrorStandaloneHarness):
 
                 # The EXIT LIMIT, not a synthetic trade close, must realize
                 # TAKE through the ordered owner market-book matcher.
+                # Real exchange executions occur at different times; do not
+                # manufacture same-millisecond entry/exit ambiguity by a
+                # frozen virtual clock.
+                simulated_clock["ms"] += 2_000
                 take_price = Decimal(snapshot["plan"]["take_price"])
                 take_bid = take_price + instrument.tick_size
                 take_ask = take_bid + instrument.tick_size
