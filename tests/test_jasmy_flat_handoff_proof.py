@@ -84,6 +84,33 @@ class JASMYLegacyGateTests(TestCase):
         self.assertEqual(store.get_paper_command_by_order_link.call_args.args[1],
                          "tw_ce6b00000000000000000000000000000")
 
+    def test_jasmy_handoff_matches_canonical_position_sync_states(self):
+        for state in ("synced", "synchronized"):
+            with self.subTest(sync_state=state):
+                db, payload, store = fixture()
+                db.execute(
+                    "UPDATE position_projections SET sync_state=? "
+                    "WHERE symbol='ICPUSDT'", (state,),
+                )
+                before = db.total_changes
+                self.assertEqual(self.check(db, payload, store), PROOF_LABEL)
+                self.assertEqual(db.total_changes, before)
+                db.close()
+        for state in (None, "", "stale", "unknown", "pending"):
+            with self.subTest(sync_state=state):
+                db, payload, store = fixture()
+                db.execute(
+                    "UPDATE position_projections SET sync_state=? "
+                    "WHERE symbol='ICPUSDT'", (state,),
+                )
+                before = db.total_changes
+                with self.assertRaisesRegex(
+                    FlatRecoveryBlocked, "paper_position_not_proven_flat",
+                ):
+                    self.check(db, payload, store)
+                self.assertEqual(db.total_changes, before)
+                db.close()
+
     def test_real_exposure_or_limit_or_other_orphan_never_passes(self):
         mutators = [
             lambda d, p: d.execute("UPDATE position_projections SET side='Long', quantity='1' WHERE symbol='ICPUSDT'"),
