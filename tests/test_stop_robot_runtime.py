@@ -1036,6 +1036,51 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 self.assertFalse(barrier_held[0])
                 self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
 
+    def test_legacy_exit_wait_releases_sqlite_writer_first(self):
+        # Both exact-PID paths must finish the single termination inside the
+        # barrier, but not keep the writer reserved while polling for exit.
+        for starved in (False, True):
+            with self.subTest(starved=starved):
+                runtime = self.stale_arm_runtime()
+                if starved:
+                    runtime.protection.update({
+                        "healthy": False,
+                        "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+                        "ingress": {
+                            "capacity": 64, "current_pending": 63,
+                            "high_watermark": 64,
+                        },
+                    })
+                coordinator = runtime.orchestrator()
+                held = [False]
+                original_terminate = coordinator._legacy_terminator
+                original_wait = coordinator._wait_legacy_listener_gone
+
+                @contextmanager
+                def guard():
+                    held[0] = True
+                    try:
+                        yield
+                    finally:
+                        held[0] = False
+
+                def terminate(chain):
+                    self.assertTrue(held[0], "termination must retain durable proof")
+                    original_terminate(chain)
+
+                def wait():
+                    self.assertFalse(held[0], "exit must not wait under SQLite writer")
+                    return original_wait()
+
+                coordinator._legacy_paper_guard = guard
+                coordinator._legacy_terminator = terminate
+                coordinator._wait_legacy_listener_gone = wait
+                result = coordinator.run("all")
+                self.assertTrue(result.ok, result.message)
+                self.assertTrue(result.runtime_stopped)
+                self.assertFalse(held[0])
+                self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
     def test_failed_legacy_backend_termination_retains_telegram_control(self):
         for starved in (False, True):
             with self.subTest(starved=starved):
