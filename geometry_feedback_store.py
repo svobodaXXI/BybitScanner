@@ -217,6 +217,8 @@ def record_review(payload: dict, snapshot: dict, *, directory=None) -> dict:
                 existing = json.loads(target.read_bytes())
             except (OSError, ValueError) as exc:
                 raise GeometryFeedbackConflict("existing_review_unreadable") from exc
+            if not isinstance(existing, dict):
+                raise GeometryFeedbackConflict("existing_review_invalid")
             if existing.get("submission") != normalized:
                 raise GeometryFeedbackConflict("idempotency_key_reused")
             try:
