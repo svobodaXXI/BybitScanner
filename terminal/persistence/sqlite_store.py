@@ -6397,7 +6397,9 @@ class SQLiteStore:
             # statuses; no terminal-state inference from coverage alone.
             checks = (
                 ("robot_trades", "exit_time_ms IS NULL", "open_robot_trade"),
-                ("robot_candidates", "status IS NULL OR status IN ('APPROVED','OPEN')", "active_robot_candidate"),
+                ("robot_candidates",
+                 "status IS NULL OR status NOT IN ('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED')",
+                 "active_robot_candidate"),
                 ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')", "active_or_unknown_paper_limit"),
                 ("trading_commands",
                  "current_state IS NULL OR current_state NOT IN ('filled','cancelled','amended','rejected','failed','owner_attested_closed')",
