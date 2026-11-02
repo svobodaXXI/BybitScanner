@@ -33,7 +33,7 @@ from tradingview_bridge import (
 
 from pattern_robot_integration import prepare_robot_handoff
 
-from signal_archive import record_original_signal
+from signal_archive import load_frozen_signal_geometry, record_original_signal
 from signal_geometry_producer import build_wedge_geometry_snapshot
 
 from timeframe_format import format_timeframe_ru
@@ -146,11 +146,12 @@ def archive_source_chart(*, symbol, timeframe, pattern, text, chart_path,
         f"{symbol}|{timeframe}|".encode("utf-8") + image
         + str(text).encode("utf-8")
     ).hexdigest()[:24]
+    source_id = f"source-original:{token}"
     if not record_original_signal(
-        f"source-original:{token}", symbol=symbol, timeframe=timeframe,
+        source_id, symbol=symbol, timeframe=timeframe,
         pattern=pattern, text=text, image_bytes=image,
         geometry_snapshot=build_wedge_geometry_snapshot(
-            f"source-original:{token}", symbol, timeframe, geometry, frozen_candles,
+            source_id, symbol, timeframe, geometry, frozen_candles,
         ),
     ):
         return None, image
@@ -160,7 +161,10 @@ def archive_source_chart(*, symbol, timeframe, pattern, text, chart_path,
             symbol=symbol, timeframe=timeframe,
             pattern=pattern, text=text, image_bytes=image,
         )
-    return token, image
+    # An image can be archived when source geometry is invalid or unavailable.
+    # Never give Telegram an exact handle that Editor cannot reopen.
+    # A previous image-only archive must also remain immutable.
+    return (token if load_frozen_signal_geometry(source_id) is not None else None), image
 
 
 
