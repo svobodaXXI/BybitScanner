@@ -422,6 +422,79 @@ class FullShutdownTests(unittest.TestCase):
             "backend:shutdown", "telegram:shutdown",
         ])
 
+    def test_partial_stop_retries_natural_drain_from_paused_without_repausing(self):
+        runtime = FakeRuntime(robot=READY)
+        canonical_stop = runtime.stop_robot
+        canonical_sleep = runtime.sleep
+
+        def reject_until_natural_exit():
+            if runtime.robot_ownership_open:
+                raise RobotControlRejected(
+                    "stop_robot is rejected while OPEN Robot trades remain: trade-1"
+                )
+            canonical_stop()
+
+        runtime.stop_robot = reject_until_natural_exit
+        first = runtime.orchestrator().run("all")
+        self.assertFalse(first.ok)
+        self.assertIn("natural drain incomplete", first.message)
+        self.assertEqual(runtime.robot, PAUSED)
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:pause"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+        def natural_take_exit(seconds):
+            canonical_sleep(seconds)
+            runtime.robot_ownership_open = False
+
+        runtime.sleep = natural_take_exit
+        second = runtime.orchestrator().run("all")
+        self.assertTrue(second.ok, second.message)
+        self.assertTrue(second.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "scanner:stop", "robot:pause", "scanner:stop", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+
+    def test_paused_open_trade_timeout_never_repauses_or_stops_backend(self):
+        runtime = FakeRuntime(robot=PAUSED)
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
+            "stop_robot is rejected while OPEN Robot trades remain: trade-1"
+        ))
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("natural drain incomplete", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.robot, PAUSED)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_durable_robot_ownership_read_is_account_scoped_and_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "paper.sqlite3"
+            db = sqlite3.connect(path)
+            try:
+                db.executescript("""
+                    CREATE TABLE robot_trades (
+                        trading_account_id TEXT, exit_time_ms INTEGER);
+                    CREATE TABLE robot_candidates (
+                        trading_account_id TEXT, status TEXT);
+                    INSERT INTO robot_candidates VALUES ('other', 'OPEN');
+                """)
+                self.assertFalse(shutdown.read_open_robot_ownership(path))
+                db.execute(
+                    "INSERT INTO robot_candidates VALUES ('paper', 'UNEXPECTED')"
+                )
+                db.commit()
+                self.assertTrue(shutdown.read_open_robot_ownership(path))
+                db.execute("DELETE FROM robot_candidates WHERE trading_account_id='paper'")
+                db.execute("INSERT INTO robot_trades VALUES ('paper', NULL)")
+                db.commit()
+                self.assertTrue(shutdown.read_open_robot_ownership(path))
+                db.execute("UPDATE robot_trades SET exit_time_ms=10")
+                db.commit()
+                self.assertFalse(shutdown.read_open_robot_ownership(path))
+            finally:
+                db.close()
+
     def test_open_trade_natural_drain_still_blocks_if_ingress_reactivates(self):
         runtime = FakeRuntime(robot=READY)
         runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(

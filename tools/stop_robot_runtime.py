@@ -147,12 +147,18 @@ def read_open_robot_ownership(database_path: Path) -> bool:
     try:
         connection = sqlite3.connect(database_path.resolve().as_uri() + "?mode=ro", uri=True)
         try:
+            # Both ledgers must come from one durable read snapshot: an
+            # in-flight candidate->trade transition must not disappear between
+            # separate autocommit SELECT statements.
+            connection.execute("BEGIN")
             for table, condition in (
                 ("robot_trades", "exit_time_ms IS NULL"),
-                ("robot_candidates", "status='OPEN'"),
+                ("robot_candidates",
+                 "status IS NULL OR status NOT IN "
+                 "('BOX_PLAN_ONLY','APPROVED','CLOSED','EXPIRED','INVALIDATED')"),
             ):
                 row = connection.execute(
-                    f"SELECT 1 FROM {table} WHERE trading_account_id=? AND {condition} LIMIT 1",
+                    f"SELECT 1 FROM {table} WHERE trading_account_id=? AND ({condition}) LIMIT 1",
                     ("paper",),
                 ).fetchone()
                 if row is not None:
@@ -439,10 +445,14 @@ class RuntimeShutdown:
                                 "stop_robot is rejected while a Robot-owned position is open;"
                             )
                         )
-                        if not known_open or state != ("ROBOT_RUNNING", "READY"):
+                        if not known_open or state not in ROBOT_STOPPABLE:
                             raise
-                        self._pause_robot()
-                        steps.append("robot:pause")
+                        if state == ("ROBOT_RUNNING", "READY"):
+                            self._pause_robot()
+                            steps.append("robot:pause")
+                        # A previous bounded attempt may already have PAUSED
+                        # admission. Resuming must not issue an illegal second
+                        # pause or reinterpret an unknown stop result as success.
                         if self._robot_state() != ("ROBOT_RUNNING", "PAUSED"):
                             raise SafeStopError(
                                 "Robot PAUSED postcondition unproven; backend retained for protection"
