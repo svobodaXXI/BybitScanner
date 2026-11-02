@@ -65,6 +65,10 @@ class SafeStopError(RuntimeError):
     """A shutdown precondition could not be proven; nothing further is changed."""
 
 
+class ReconcileDurablyUnresolved(SafeStopError):
+    """Exact 409/REQUIRED rejection, not a timeout or uncertain mutation."""
+
+
 class Unreachable(Exception):
     """No HTTP response: nothing is serving the endpoint."""
 
@@ -386,6 +390,7 @@ class RuntimeShutdown:
         legacy_paper_quiescence: Callable[[], None] | None = None,
         legacy_paper_guard: Callable[[], ContextManager[None]] | None = None,
         progress: Callable[[str], None] | None = None,
+        dual_orphan_handoff: Callable[[], str] | None = None,
         legacy_supported: bool | None = None,
     ) -> None:
         env = dict(os.environ if env is None else env)
@@ -424,6 +429,8 @@ class RuntimeShutdown:
         self._sleep = sleep
         self._monotonic = monotonic
         self._progress = progress or (lambda _message: None)
+        # Explicit opt-in only. Normal stop cannot bypass Robot lifecycle.
+        self._dual_orphan_handoff = dual_orphan_handoff
 
     def _mark(self, message: str) -> None:
         try:
@@ -476,7 +483,12 @@ class RuntimeShutdown:
                 state = self._robot_state()
                 if state == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
                     self._mark("requesting Robot reconciliation")
-                    self._reconcile_robot()
+                    try:
+                        self._reconcile_robot()
+                    except ReconcileDurablyUnresolved:
+                        if self._dual_orphan_handoff is None:
+                            raise
+                        return self._finish_dual_orphan_handoff(telegram, steps)
                     self._mark("Robot reconciliation confirmed")
                     steps.append("robot:reconcile")
                     state = self._robot_state()
@@ -788,12 +800,55 @@ class RuntimeShutdown:
                 "Robot reconcile outcome is unknown; not retried; runtime kept alive"
             ) from exc
         if (
+            status == 409 and isinstance(body, dict)
+            and body.get("ok") is False and body.get("success") is False
+            and body.get("recovery_status") == "RECONCILIATION_REQUIRED"
+        ):
+            raise ReconcileDurablyUnresolved(
+                "Robot reconcile returned durable REQUIRED ownership; runtime kept alive"
+            )
+        if (
             status != 200 or not isinstance(body, dict)
             or body.get("ok") is not True or body.get("success") is not True
         ):
             raise SafeStopError(
                 "Robot reconcile did not confirm success; not retried; runtime kept alive"
             )
+
+    def _finish_dual_orphan_handoff(self, telegram: str, steps: list[str]) -> ShutdownResult:
+        """One guarded fallback only after confirmed unresolved reconciliation.
+
+        The separately owner-authorized callback performs the final immutable
+        dual-lot proof, exact PID/listener check and single protected SIGINT.
+        Never perform this on HTTP 503, timeout, lost response or state drift.
+        """
+        if self._dual_orphan_handoff is None:
+            raise SafeStopError("dual orphan handoff was not authorized")
+        self._require_scanner_stopped()
+        self._require_autopilot_off()
+        if self._robot_state() != ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
+            raise SafeStopError("Robot REQUIRED state changed before dual orphan handoff")
+        self._mark("checking exact JASMY/FLOW evidence before one-shot handoff")
+        try:
+            result = self._dual_orphan_handoff()
+        except Exception as exc:
+            raise SafeStopError(
+                "dual orphan handoff failed or outcome unknown; not retried; runtime kept alive or uncertain"
+            ) from exc
+        if result != "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed":
+            raise SafeStopError(
+                "dual orphan handoff backend exit unproven; not retried; no deploy"
+            )
+        steps.append("backend:dual-orphan-handoff")
+        if telegram == PRESENT:
+            steps.append(self._shutdown(
+                self._telegram + "/shutdown", self._telegram + "/health",
+                "Telegram monitoring", TELEGRAM, "telegram",
+            ))
+        return ShutdownResult(
+            SCOPE_ALL, True, "Runtime STOPPED after protected dual orphan handoff.",
+            tuple(steps), runtime_stopped=True,
+        )
 
     def _require_legacy_fallback(self, what: str) -> None:
         if not self._legacy_supported:
