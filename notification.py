@@ -398,6 +398,14 @@ def _owner_workspace_button(mode, symbol, timeframe, signal_id=None):
             # Do not expose an unsafe URL. The callback path will verify HTTPS
             # independently before offering a link.
             pass
+    # Preserve the immutable signal identity even when only a callback can be
+    # delivered; a 24-hex source handle fits Telegram's 64-byte callback limit.
+    if mode == "EDITOR" and isinstance(signal_id, str):
+        import re
+        match = re.fullmatch(r"source-original:([0-9a-f]{24})", signal_id)
+        if match:
+            return {"text": "✏️ Редактор",
+                    "callback_data": f"workspace:EDITOR:S:{match.group(1)}"}
     return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
             "callback_data": f"workspace:{mode}:{symbol}:{timeframe}"}
 
