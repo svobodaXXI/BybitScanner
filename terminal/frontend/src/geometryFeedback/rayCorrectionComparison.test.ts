@@ -25,6 +25,21 @@ describe("two-point ray geometry feedback", () => {
     expect(delta.correctedSlopePerHour).toBeCloseTo(-12);
     expect(delta.slopeDeltaPerHour).toBeCloseTo(0);
   });
+  it("compares a frozen one-anchor MIRROR level without inventing a second point", () => {
+    const mirror: TimestampDrawing = {
+      id: "mirror-level", type: "horizontal-ray",
+      anchors: [{ bar_open_time_ms: 1_800_000_000_000, price: 100 }],
+    };
+    const corrected: TimestampDrawing = {
+      ...mirror,
+      anchors: [{ bar_open_time_ms: 1_800_000_000_000, price: 101 }],
+    };
+    const delta = compareRayCorrection(mirror, corrected);
+    expect(delta.anchorChanges).toHaveLength(1);
+    expect(delta.anchorChanges[0].priceShiftPercent).toBeCloseTo(1);
+    expect(delta.slopeDeltaPerHour).toBe(0);
+    expect(() => compareRayCorrection(mirror, { ...corrected, anchors: [] })).toThrow();
+  });
   it("denies mismatched identities, one-point rays, and coincident or reversed times", () => {
     expect(() => compareRayCorrection(scanner, { ...scanner, id: "lower" })).toThrow();
     expect(() => compareRayCorrection(scanner, { ...scanner, anchors: [scanner.anchors[0]] })).toThrow();

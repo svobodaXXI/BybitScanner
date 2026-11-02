@@ -60,3 +60,361 @@ for (const [mode, symbol, timeframe] of [
     });
   });
 }
+
+
+test("frozen Editor geometry reviews source even when browser draft storage is blocked", async ({ page }) => {
+  const signalId = "source:BTCUSDT:5:historic-wedge";
+  const posted: Array<{ idempotency_key: string; [key: string]: unknown }> = [];
+  await page.addInitScript(() => {
+    // A disabled browser drawing cache must not break immutable source display,
+    // owner verdict submission, or the explicit server acknowledgement.
+    const read = Storage.prototype.getItem;
+    const write = Storage.prototype.setItem;
+    Storage.prototype.getItem = function (key: string) {
+      if (key.startsWith("bybitscanner:editor-drawings:"))
+        throw new DOMException("Storage disabled", "SecurityError");
+      return read.call(this, key);
+    };
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (key.startsWith("bybitscanner:editor-drawings:"))
+        throw new DOMException("Storage full", "QuotaExceededError");
+      return write.call(this, key, value);
+    };
+    const observations = { reference: 0, editable: 0 };
+    Object.assign(window, { __editorRayStrokes: observations });
+    const stroke = CanvasRenderingContext2D.prototype.stroke;
+    CanvasRenderingContext2D.prototype.stroke = function (...args) {
+      if (this.strokeStyle === "#8195aa") observations.reference++;
+      if (this.strokeStyle === "#e0b45b") observations.editable++;
+      return stroke.apply(this, args);
+    };
+  });
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const { pathname } = new URL(request.url());
+    if (pathname === "/api/workspace/signal-geometry") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        ok: true,
+        snapshot_revision: "a".repeat(64),
+        bars_sha256: "b".repeat(64),
+        latest_review: null,
+        snapshot: {
+          schema_version: 1, signal_id: signalId, symbol: "BTCUSDT", timeframe: "5",
+          bars: [
+            { open_time_ms: 1800000000000, open: 100, high: 115, low: 95, close: 110 },
+            { open_time_ms: 1800000300000, open: 110, high: 116, low: 96, close: 102 },
+            { open_time_ms: 1800000600000, open: 102, high: 117, low: 97, close: 111 },
+          ],
+          boundaries: [
+            { boundary_id: "upper", kind: "ray", anchors: [
+              { bar_open_time_ms: 1800000000000, price: 115 },
+              { bar_open_time_ms: 1800000600000, price: 117 },
+            ] },
+            { boundary_id: "lower", kind: "ray", anchors: [
+              { bar_open_time_ms: 1800000000000, price: 95 },
+              { bar_open_time_ms: 1800000600000, price: 97 },
+            ] },
+          ],
+        },
+      }) });
+      return;
+    }
+    if (pathname === "/api/workspace/geometry-feedback" && request.method() === "POST") {
+      const submitted = request.postDataJSON() as {
+        idempotency_key: string; signal_id: string; snapshot_revision: string;
+        bars_sha256: string; label: string;
+      };
+      posted.push(submitted);
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        ok: true, review: {
+          review_id: "c".repeat(64),
+          submission: {
+            ...submitted,
+            // First reply swaps in an unrequested boundary: never report success.
+            corrected_boundaries: posted.length === 1
+              ? [{ boundary_id: "foreign", kind: "ray", anchors: [] }]
+              : [],
+          },
+        },
+      }) });
+      return;
+    }
+    if (pathname === "/api/workspace/symbol" && request.method() === "POST") {
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ ok: true, symbol: "BTCUSDT", generation: 101 }) });
+      return;
+    }
+    if (pathname === "/api/workspace/state") {
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ ok: true, workspace: { active_symbol: "ONGUSDT", active_generation: 1 } }) });
+      return;
+    }
+    await route.fulfill({ status: 503, contentType: "application/json", body: '{"ok":false}' });
+  });
+
+  // No /api/workspace/stream WebSocket stub: historical source is self-contained.
+  await page.goto("/?mode=EDITOR&symbol=BTCUSDT&timeframe=5m&signal_id=" + encodeURIComponent(signalId));
+  const save = page.getByRole("button", { name: "Передать исправление" });
+  await expect(save).toBeVisible();
+  await expect(save).toBeEnabled();
+  await expect.poll(() => page.evaluate(() => {
+    const strokes = (window as unknown as { __editorRayStrokes: { reference: number; editable: number } }).__editorRayStrokes;
+    return strokes.reference > 0 && strokes.editable > 0;
+  })).toBe(true);
+  // The toolbar is initially empty of undo history; clicking Undo must
+  // not claim that the unchanged Scanner geometry is an unsaved review.
+  await page.getByRole("button", { name: "Undo drawing" }).click();
+  await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
+  await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("CONFIRMED");
+  await save.click();
+  await expect(page.getByText(/Не удалось сохранить: Сервер не подтвердил точное сохранение отзыва/)).toBeVisible();
+  await expect(page.getByText(/Сохранённый отзыв:/)).toHaveCount(0);
+  await save.click();
+  await expect(page.getByText(/Исправление сохранено в дневнике обратной связи/)).toBeVisible();
+  await expect(page.getByText(/Сохранённый отзыв: c{12}.*Верный сигнал/)).toBeVisible();
+  expect(posted).toHaveLength(2);
+  expect(posted[0].idempotency_key).toBe(posted[1].idempotency_key);
+  expect(posted[0]).toMatchObject({
+    signal_id: signalId, label: "CONFIRMED",
+    snapshot_revision: "a".repeat(64), bars_sha256: "b".repeat(64),
+    corrected_boundaries: [],
+  });
+});
+
+
+test("Editor saved correction survives a fresh open with original Scanner rays unchanged", async ({ page }) => {
+  const signalId = "source:BTCUSDT:5:saved-review-roundtrip";
+  const original = [
+    { boundary_id: "upper", kind: "ray", anchors: [
+      { bar_open_time_ms: 1800000000000, price: 115 },
+      { bar_open_time_ms: 1800000600000, price: 117 },
+    ] },
+    { boundary_id: "lower", kind: "ray", anchors: [
+      { bar_open_time_ms: 1800000000000, price: 95 },
+      { bar_open_time_ms: 1800000600000, price: 97 },
+    ] },
+  ];
+  const candleBars = [
+    { open_time_ms: 1800000000000, open: 100, high: 115, low: 95, close: 110 },
+    { open_time_ms: 1800000300000, open: 110, high: 116, low: 96, close: 102 },
+    { open_time_ms: 1800000600000, open: 102, high: 117, low: 97, close: 111 },
+  ];
+  const frozen = {
+    schema_version: 1, signal_id: signalId, symbol: "BTCUSDT", timeframe: "5",
+    bars: candleBars, boundaries: original,
+  };
+  let savedReview: {
+    review_id: string;
+    submission: {
+      signal_id: string; snapshot_revision: string; bars_sha256: string;
+      label: string; note: string;
+      corrected_boundaries: Array<{ boundary_id: string; kind: string; anchors: Array<{ bar_open_time_ms: number; price: number }> }>;
+    };
+  } | null = null;
+  let writes = 0;
+  let correctedPrice: number | null = null;
+  let corruptedReviewDigest = false;
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const { pathname } = new URL(request.url());
+    if (pathname === "/api/workspace/signal-geometry") {
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({
+          ok: true, snapshot: frozen, latest_review: savedReview && corruptedReviewDigest
+            ? { ...savedReview, submission: {
+              ...savedReview.submission, bars_sha256: "f".repeat(64),
+            } } : savedReview,
+          snapshot_revision: "a".repeat(64), bars_sha256: "b".repeat(64),
+        }) });
+      return;
+    }
+    if (pathname === "/api/workspace/geometry-feedback" && request.method() === "POST") {
+      writes++;
+      const body = request.postDataJSON() as {
+        schema_version: 1; note: string;
+        signal_id: string; label: string; snapshot_revision: string;
+        bars_sha256: string; idempotency_key: string;
+        corrected_boundaries: Array<{ id: string; type: string; anchors: Array<{ bar_open_time_ms: number; price: number }> }>;
+      };
+      expect(body.signal_id).toBe(signalId);
+      expect(body.label).toBe("GEOMETRY_CORRECTED");
+      expect(body.note).toBe("Upper anchor corrected after candle close");
+      expect(body.corrected_boundaries).toHaveLength(2);
+      correctedPrice = body.corrected_boundaries[0].anchors[0].price;
+      expect(Number.isFinite(correctedPrice)).toBe(true);
+      expect(correctedPrice).not.toBe(115);
+      expect(body.corrected_boundaries[0].anchors[0].bar_open_time_ms).toBe(1800000000000);
+      expect(body.corrected_boundaries[1].anchors[0]).toEqual({
+        bar_open_time_ms: 1800000000000, price: 95,
+      });
+      savedReview = {
+        review_id: "d".repeat(64),
+        submission: {
+          signal_id: signalId, snapshot_revision: body.snapshot_revision,
+          label: body.label, note: body.note, bars_sha256: body.bars_sha256,
+          corrected_boundaries: body.corrected_boundaries.map((item) => ({
+            boundary_id: item.id, kind: item.type, anchors: item.anchors,
+          })),
+        },
+      };
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ ok: true, review: { review_id: savedReview.review_id,
+          submission: {
+            schema_version: body.schema_version, note: body.note,
+            signal_id: signalId, snapshot_revision: body.snapshot_revision,
+            bars_sha256: body.bars_sha256, label: body.label,
+            idempotency_key: body.idempotency_key,
+            corrected_boundaries: savedReview.submission.corrected_boundaries,
+          } } }) });
+      return;
+    }
+    if (pathname === "/api/workspace/symbol" && request.method() === "POST") {
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ ok: true, symbol: "BTCUSDT", generation: 101 }) });
+      return;
+    }
+    if (pathname === "/api/workspace/state") {
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ ok: true, workspace: {
+          active_symbol: "ONGUSDT", active_generation: 1,
+        } }) });
+      return;
+    }
+    await route.fulfill({ status: 503, contentType: "application/json", body: '{"ok":false}' });
+  });
+
+  // Observe the first editable ray's canvas origin, then physically drag it.
+  // This exercises the actual DrawingOverlay pointer path (not localStorage seeding).
+  await page.addInitScript(() => {
+    const clear = CanvasRenderingContext2D.prototype.clearRect;
+    CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+      if (this.canvas.classList.contains("drawing-overlay")) {
+        (window as typeof window & { __editableRay?: { x: number; y: number } }).__editableRay = undefined;
+      }
+      return clear.apply(this, args);
+    };
+    const original = CanvasRenderingContext2D.prototype.moveTo;
+    CanvasRenderingContext2D.prototype.moveTo = function (x, y) {
+      if (this.canvas.classList.contains("drawing-overlay") && this.strokeStyle === "#e0b45b") {
+        const marker = window as typeof window & { __editableRay?: { x: number; y: number } };
+        // The upper Scanner boundary is rendered before the lower boundary.
+        if (marker.__editableRay === undefined) marker.__editableRay = { x, y };
+      }
+      return original.call(this, x, y);
+    };
+  });
+  const url = "/?mode=EDITOR&symbol=BTCUSDT&timeframe=5m&signal_id=" + encodeURIComponent(signalId);
+  await page.addInitScript((id) => {
+    const key = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}`;
+    // Malformed but JSON-decodable source cache used to replace the two rays.
+    // This must be discarded in favor of the frozen Scanner originals.
+    localStorage.setItem(key, JSON.stringify({ version: 1, drawings: [
+      { id: "editable:foreign", type: "ray", anchors: [],
+        style: { color: "#e0b45b", lineWidth: 1.5 }, locked: false, hidden: false },
+    ] }));
+  }, signalId);
+  await page.goto(url);
+  await expect(page.getByRole("button", { name: "Передать исправление" })).toBeEnabled();
+  // The invalid local cache has been replaced with the two original editable rays.
+  await expect.poll(() => page.evaluate((id) => {
+    const key = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}`;
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw).drawings.map((drawing: { id: string }) => drawing.id) : [];
+  }, signalId)).toEqual(["editable:upper", "editable:lower"]);
+  await expect.poll(() => page.evaluate(() => (
+    (window as typeof window & { __editableRay?: { x: number; y: number } }).__editableRay ?? null
+  ))).not.toBeNull();
+  const rayStart = await page.evaluate(() => (
+    (window as typeof window & { __editableRay: { x: number; y: number } }).__editableRay
+  ));
+  const canvas = page.getByRole("application", { name: "Interactive market chart" }).locator("canvas.drawing-overlay");
+  const rect = await canvas.boundingBox();
+  expect(rect).not.toBeNull();
+  const x = rect!.x + rayStart.x;
+  const y = rect!.y + rayStart.y;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 2, y + 50, { steps: 6 });
+  await page.mouse.up();
+  const startKey = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${signalId}`;
+  await expect.poll(() => page.evaluate((key) => {
+    const raw = localStorage.getItem(key);
+    const upper = raw ? JSON.parse(raw).drawings.find((item: { id: string }) => item.id === "editable:upper") : null;
+    return upper?.anchors[0] ?? null;
+  }, startKey)).not.toEqual({ logical: 0, price: 115 });
+  await expect(page.getByLabel("Сравнение линий Scanner и исправления")).toContainText("Δ точка 1");
+  await expect(page.getByLabel("Несохранённый отзыв")).toContainText("Новые изменения не сохранены");
+  // "Confirmed" cannot silently discard an already moved Scanner boundary.
+  await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("CONFIRMED");
+  await page.getByRole("button", { name: "Передать исправление" }).click();
+  await expect(page.locator(".editor-correction-export output[role=status]").last())
+    .toContainText("Линии изменены");
+  expect(writes).toBe(0);
+  await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("GEOMETRY_CORRECTED");
+  const noteField = page.getByRole("textbox", { name: "Комментарий к исправлению" });
+  await noteField.fill("Upper anchor corrected after candle close!");
+  await noteField.press("Backspace");
+  await expect(noteField).toHaveValue("Upper anchor corrected after candle close");
+  // The ray remains selected after the drag. A global Backspace handler must
+  // not remove it when the owner is editing this review's comment.
+  await expect.poll(() => page.evaluate((key) => {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw).drawings.map((item: { id: string }) => item.id) : [];
+  }, startKey)).toEqual(["editable:upper", "editable:lower"]);
+  await page.getByRole("button", { name: "Передать исправление" }).click();
+  await expect(page.locator(".editor-correction-export output[role=status]").last())
+    .toContainText("Исправление сохранено в дневнике обратной связи");
+  expect(writes).toBe(1);
+  await expect(page.getByText(/Сохранённый отзыв: d{12}.*Исправлена геометрия/)).toBeVisible();
+  await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
+  // Changing the review AFTER the server's confirmation must not imply that
+  // the newly edited note has already been saved with the old geometry.
+  await page.getByRole("textbox", { name: "Комментарий к исправлению" }).fill("New note after receipt");
+  await expect(page.getByLabel("Несохранённый отзыв")).toContainText("Новые изменения не сохранены");
+  await expect(page.getByText(/Сохранённый отзыв: d{12}.*предыдущая версия/)).toBeVisible();
+  expect(writes).toBe(1);
+
+  // A stale local review cache must not override the authoritative persisted
+  // server correction, even if it is syntactically valid drawing JSON.
+  await page.evaluate((id) => {
+    const key = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}:review-${"d".repeat(64)}`;
+    localStorage.setItem(key, JSON.stringify({ version: 1, drawings: [
+      { id: "editable:upper", type: "ray", locked: false, hidden: false,
+        style: { color: "#e0b45b", lineWidth: 1.5 },
+        anchors: [{ logical: 0, price: 999 }, { logical: 2, price: 999 }] },
+      { id: "editable:lower", type: "ray", locked: false, hidden: false,
+        style: { color: "#e0b45b", lineWidth: 1.5 },
+        anchors: [{ logical: 0, price: 999 }, { logical: 2, price: 999 }] },
+    ] }));
+  }, signalId);
+  await page.reload();
+  await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Комментарий к исправлению" }))
+    .toHaveValue("Upper anchor corrected after candle close");
+  await expect(page.getByText(/Сохранённый отзыв: d{12}.*Исправлена геометрия/)).toBeVisible();
+  await expect.poll(() => page.evaluate((id) => {
+    const savedKey = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}:review-${"d".repeat(64)}`;
+    const raw = localStorage.getItem(savedKey);
+    return raw ? JSON.parse(raw).drawings.map((item: { id: string; anchors: Array<{ price: number }> }) => ({
+      id: item.id, price: item.anchors[0].price,
+    })) : null;
+  }, signalId)).toEqual([
+    { id: "editable:upper", price: correctedPrice },
+    { id: "editable:lower", price: 95 },
+  ]);
+  expect(original[0].anchors[0].price).toBe(115);
+  expect(writes).toBe(1); // Reload is read-only, never resubmits a correction.
+
+  // A stale or corrupted latest review must not be applied to the immutable
+  // source chart when its candle digest differs, even if the signal ID matches.
+  corruptedReviewDigest = true;
+  await page.reload();
+  await expect(page.getByText("Исходная геометрия недоступна. Текущие свечи не заменяют исходный сигнал.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Передать исправление" })).toHaveCount(0);
+  expect(writes).toBe(1);
+  corruptedReviewDigest = false;
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "Комментарий к исправлению" }))
+    .toHaveValue("Upper anchor corrected after candle close");
+  expect(writes).toBe(1);
+});

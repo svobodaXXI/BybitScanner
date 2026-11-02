@@ -226,6 +226,44 @@ button {
   grid-column: 1;
   grid-row: 1;
 }
+/* The Editor review controls share the chart cell; they must never create
+   another grid row or shift the existing trading/utility controls. */
+.editor-correction-export {
+  grid-column: 1;
+  grid-row: 1;
+  z-index: 7;
+  align-self: end;
+  justify-self: end;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: calc(100% - 3rem);
+  margin: 0.45rem;
+  padding: 0.4rem;
+  border: 1px solid #394653;
+  border-radius: 0.35rem;
+  background: rgba(15, 19, 24, 0.96);
+  color: #d7e0e8;
+  font-size: 0.72rem;
+}
+.editor-correction-export button,
+.editor-correction-export select,
+.editor-correction-export input {
+  min-height: 1.8rem;
+  max-width: 100%;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid #455363;
+  border-radius: 0.25rem;
+  background: #171d24;
+  color: inherit;
+}
+.editor-correction-export button:disabled {
+  opacity: 0.45;
+}
+.editor-correction-export output {
+  flex-basis: 100%;
+}
 
 .drawing-tools-panel {
   grid-column: 1;

@@ -23,6 +23,29 @@ function rayEndpoints(drawing: TimestampDrawing) {
 export function compareRayCorrection(original: TimestampDrawing, corrected: TimestampDrawing): RayDelta {
   if (!original.id || original.id !== corrected.id || original.type !== corrected.type)
     throw new Error("Different boundary identities");
+  // MIRROR horizontal source levels have one real anchor, not a fitted
+  // second point. Compare that anchor directly instead of inventing a ray.
+  if (["horizontal", "horizontal-ray"].includes(original.type)) {
+    if (original.anchors.length !== 1 || corrected.anchors.length !== 1)
+      throw new Error("A single frozen horizontal anchor is required");
+    const [before] = original.anchors;
+    const [after] = corrected.anchors;
+    if (![before, after].every((anchor) =>
+      Number.isSafeInteger(anchor.bar_open_time_ms) && anchor.bar_open_time_ms >= 0 &&
+      Number.isFinite(anchor.price) && anchor.price > 0))
+      throw new Error("Invalid horizontal source anchor");
+    return {
+      boundaryId: original.id,
+      anchorChanges: [{
+        barShiftMs: after.bar_open_time_ms - before.bar_open_time_ms,
+        priceShift: after.price - before.price,
+        priceShiftPercent: ((after.price - before.price) / before.price) * 100,
+      }],
+      originalSlopePerHour: 0,
+      correctedSlopePerHour: 0,
+      slopeDeltaPerHour: 0,
+    };
+  }
   const [a, b] = rayEndpoints(original);
   const [c, d] = rayEndpoints(corrected);
   const slope = (first: typeof a, second: typeof b) =>

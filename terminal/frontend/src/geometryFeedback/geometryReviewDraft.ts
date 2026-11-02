@@ -1,5 +1,6 @@
 import type { Candle } from "../contracts/marketData";
 import type { DrawingObject } from "../chart/drawingModel";
+import { compareRayCorrection, type RayDelta } from "./rayCorrectionComparison";
 
 /**
  * Draft-only conversion. Use the *frozen* signal candle window, never live market
@@ -19,6 +20,43 @@ export type GeometryReviewDraft = {
   label: "CONFIRMED" | "GEOMETRY_CORRECTED" | "FALSE_POSITIVE" | "UNCERTAIN";
   corrected_boundaries: TimestampDrawing[];
 };
+
+/** Confirm the exact append-only review returned by the server, not only its
+ * signal identity and label. The store canonicalizes UI id/type into
+ * boundary_id/kind and may reorder boundaries; do not trust an altered price.
+ */
+export function matchesStoredGeometryReview(
+  submitted: GeometryReviewDraft & { note: string; idempotency_key: string },
+  stored: unknown,
+): boolean {
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value);
+  if (!isRecord(stored)) return false;
+  const savedBoundaries = stored.corrected_boundaries;
+  if (stored.schema_version !== submitted.schema_version ||
+      stored.signal_id !== submitted.signal_id ||
+      stored.snapshot_revision !== submitted.snapshot_revision ||
+      stored.bars_sha256 !== submitted.bars_sha256 ||
+      stored.label !== submitted.label ||
+      stored.note !== submitted.note ||
+      stored.idempotency_key !== submitted.idempotency_key ||
+      !Array.isArray(savedBoundaries) ||
+      savedBoundaries.length !== submitted.corrected_boundaries.length) return false;
+  return submitted.corrected_boundaries.every((original) => {
+    const matching = savedBoundaries.filter((item: unknown) =>
+      isRecord(item) && item.boundary_id === original.id);
+    if (matching.length !== 1) return false;
+    const entry = matching[0] as Record<string, unknown>;
+    const savedAnchors = entry.anchors;
+    if (entry.kind !== original.type || !Array.isArray(savedAnchors) ||
+        savedAnchors.length !== original.anchors.length) return false;
+    return original.anchors.every((anchor, i) => {
+      const saved = savedAnchors[i];
+      return isRecord(saved) && saved.bar_open_time_ms === anchor.bar_open_time_ms &&
+        saved.price === anchor.price;
+    });
+  });
+}
 
 function candleTimes(candles: readonly Candle[]): number[] {
   if (!candles.length) throw new Error("Frozen candle window is empty");
@@ -80,4 +118,106 @@ export function buildGeometryReviewDraft(input: {
     label: input.label,
     corrected_boundaries,
   };
+}
+
+/** A cached *unsaved* review is optional. Accept it only if every original
+ * frozen source boundary has exactly one valid editable copy. Old drawings
+ * and corrupt browser storage must never replace Scanner source geometry.
+ */
+export function isValidCachedEditorDraft(
+  value: unknown,
+  referenceDrawings: readonly DrawingObject[],
+  frozenCandles: readonly Candle[],
+): value is DrawingObject[] {
+  if (!Array.isArray(value) || value.length !== referenceDrawings.length ||
+      !referenceDrawings.length) return false;
+  try {
+    const normalized = referenceDrawings.map((original) => {
+      const matches = value.filter((item: unknown) =>
+        item !== null && typeof item === "object" &&
+        (item as DrawingObject).id === `editable:${original.id}`);
+      if (matches.length !== 1) throw new Error("Editable identity mismatch");
+      const drawing = matches[0] as DrawingObject;
+      if (drawing.type !== original.type || drawing.locked !== false ||
+          drawing.hidden !== false || typeof drawing.style?.color !== "string" ||
+          !Number.isFinite(drawing.style.lineWidth) || drawing.style.lineWidth <= 0)
+        throw new Error("Invalid editable line");
+      return { ...drawing, id: original.id };
+    });
+    const serialized = serializeReviewDrawings(normalized, frozenCandles);
+    return serialized.every((line) =>
+      line.anchors.every((anchor, i) =>
+        i === 0 || line.anchors[i - 1].bar_open_time_ms < anchor.bar_open_time_ms));
+  } catch {
+    return false;
+  }
+}
+
+/** Only the owner's editable copies of the frozen Scanner lines may be submitted.
+ * Other saved/manual drawings must never silently become detector training data.
+ */
+export function buildEditorGeometryReview(input: {
+  signalId: string;
+  snapshotRevision: string;
+  barsSha256: string;
+  label: GeometryReviewDraft["label"];
+  referenceDrawings: readonly DrawingObject[];
+  editableDrawings: readonly DrawingObject[];
+  frozenCandles: readonly Candle[];
+}): GeometryReviewDraft {
+  if (!input.referenceDrawings.length)
+    throw new Error("Frozen source geometry is unavailable");
+  const sourceIds = new Set(input.referenceDrawings.map((drawing) => drawing.id));
+  if (sourceIds.size !== input.referenceDrawings.length)
+    throw new Error("Duplicated Scanner lines");
+  const normalized = input.referenceDrawings.map((reference) => {
+    const id = `editable:${reference.id}`;
+    const matching = input.editableDrawings.filter((drawing) => drawing.id === id);
+    if (matching.length !== 1 || matching[0].type !== reference.type)
+      throw new Error("Original editable line is missing or changed type");
+    return { ...matching[0], id: reference.id };
+  });
+  if (input.editableDrawings.length !== normalized.length)
+    throw new Error("Unexpected extra drawings in the correction");
+  const draft = buildGeometryReviewDraft({ ...input, drawings: normalized });
+  if (input.label === "GEOMETRY_CORRECTED" || input.label === "CONFIRMED") {
+    // A confirmed original must match the owner's visible editable geometry.
+    // Otherwise the review would silently discard the correction and poison
+    // the source-positive examples used for offline detector evaluation.
+    const original = serializeReviewDrawings(input.referenceDrawings, input.frozenCandles);
+    const owner = serializeReviewDrawings(normalized, input.frozenCandles);
+    const unchanged = JSON.stringify(original) === JSON.stringify(owner);
+    if (input.label === "GEOMETRY_CORRECTED" && unchanged)
+      throw new Error("No geometry changes to submit");
+    if (input.label === "CONFIRMED" && !unchanged)
+      throw new Error("Линии изменены: выберите «Исправлена геометрия» или восстановите исходные");
+  }
+  return draft;
+}
+
+
+/** Read-only comparison of a frozen Scanner ray with its editable copy.
+ * This intentionally reuses the strict UTC-anchor comparator and is never a
+ * training or persistence action. Malformed/extra review drawings fail closed.
+ */
+export function compareEditorRayChanges(input: {
+  referenceDrawings: readonly DrawingObject[];
+  editableDrawings: readonly DrawingObject[];
+  frozenCandles: readonly Candle[];
+}): RayDelta[] {
+  const originals = input.referenceDrawings;
+  if (!originals.length || originals.length !== input.editableDrawings.length)
+    throw new Error("Incomplete editable reference pair");
+  const source = serializeReviewDrawings(originals, input.frozenCandles);
+  const result = source.map((line) => {
+    const matches = input.editableDrawings.filter((item) =>
+      item.id === `editable:${line.id}` && item.type === line.type);
+    if (matches.length !== 1) throw new Error("Editable ray identity mismatch");
+    const [corrected] = serializeReviewDrawings(
+      [{ ...matches[0], id: line.id }], input.frozenCandles);
+    return compareRayCorrection(line, corrected);
+  });
+  if (new Set(originals.map((line) => line.id)).size !== originals.length)
+    throw new Error("Duplicate source ray identity");
+  return result;
 }

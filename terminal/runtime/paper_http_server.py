@@ -3022,7 +3022,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             if snapshot is None:
                 self._json_response(404, {"ok": False, "error": "signal_geometry_not_found"})
                 return
-            self._json_response(200, {"ok": True, "snapshot": snapshot})
+            from geometry_feedback_store import bars_digest, latest_review, source_revision
+            try:
+                review = latest_review(ids[0], snapshot=snapshot)
+            except Exception:
+                LOGGER.exception("Geometry feedback lookup failed")
+                self._json_response(503, {"ok": False, "error": "geometry_review_unavailable"})
+                return
+            self._json_response(200, {
+                "ok": True, "snapshot": snapshot,
+                "snapshot_revision": source_revision(snapshot),
+                "bars_sha256": bars_digest(snapshot),
+                "latest_review": review,
+            })
             return
 
         if parsed.path == "/api/workspace/account":
@@ -3478,6 +3490,42 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/workspace/geometry-feedback":
+            # Isolated append-only owner annotations, never PAPER trading state.
+            from geometry_feedback_store import (
+                GeometryFeedbackConflict, GeometryFeedbackError, MAX_REQUEST_BYTES,
+                record_review,
+            )
+            from signal_archive import load_frozen_signal_geometry
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if size <= 0 or size > MAX_REQUEST_BYTES:
+                    raise GeometryFeedbackError("invalid_review_size")
+                payload = self._payload({
+                    "schema_version", "signal_id", "snapshot_revision", "bars_sha256",
+                    "label", "corrected_boundaries", "idempotency_key",
+                }, frozenset({"note"}))
+                signal_id = payload.get("signal_id")
+                import re
+                if not isinstance(signal_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", signal_id):
+                    raise GeometryFeedbackError("invalid_signal_id")
+                snapshot = load_frozen_signal_geometry(signal_id)
+                if snapshot is None:
+                    self._json_response(404, {"ok": False, "error": "signal_geometry_not_found"})
+                    return
+                review = record_review(payload, snapshot)
+            except GeometryFeedbackConflict as exc:
+                self._json_response(409, {"ok": False, "error": str(exc)})
+                return
+            except (GeometryFeedbackError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                self._json_response(400, {"ok": False, "error": str(exc)})
+                return
+            except Exception:
+                LOGGER.exception("Geometry feedback persistence failed")
+                self._json_response(503, {"ok": False, "error": "geometry_feedback_unavailable"})
+                return
+            self._json_response(200, {"ok": True, "review": review})
+            return
         if path in {OPERATOR_ARM_PATH, OPERATOR_REVOKE_PATH}:
             if not self._operator_authorized():
                 self._json_response(403, {"ok": False, "error": "operator_unauthorized"})
