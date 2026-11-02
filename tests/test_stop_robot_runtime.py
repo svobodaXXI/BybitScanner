@@ -2315,6 +2315,39 @@ class HandoffAndCliTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             shutdown.launch_detached("robot", root=ROOT)
 
+    def test_one_opt_in_cli_routes_through_existing_all_shutdown(self):
+        flag = "--dual-orphan-handoff-20261103"
+        self.assertEqual(shutdown.main(["scanner", flag]), 64)
+        blocked = shutdown.ShutdownResult("all", False, "STOP BLOCKED: no runtime proof")
+        with (
+            mock.patch.object(shutdown, "_environment", return_value={}),
+            mock.patch.object(shutdown, "RuntimeShutdown") as runtime,
+            mock.patch(
+                "tools.flat_paper_recovery_transition._service_pid",
+                return_value=7654,
+            ),
+            mock.patch(
+                "tools.flat_paper_recovery_transition.execute_flat_handoff",
+                return_value="PRECHECK_ONLY: no signal",
+            ) as transition,
+        ):
+            runtime.return_value.run.return_value = blocked
+            self.assertEqual(shutdown.main(["all", flag]), 1)
+            runtime.return_value.run.assert_called_once_with("all")
+            callback = runtime.call_args.kwargs["dual_orphan_handoff"]
+            self.assertTrue(callable(callback))
+            callback()
+            kwargs = transition.call_args.kwargs
+            self.assertEqual(kwargs["expected_pid"], 7654)
+            self.assertTrue(kwargs["execute"])
+            self.assertTrue(kwargs["dual_orphan_incident_20261103"])
+            self.assertEqual(kwargs["expected_build_sha"],
+                             "f100ef369a1105443332b5729b558464c27be48f")
+        with mock.patch.object(shutdown, "RuntimeShutdown") as ordinary:
+            ordinary.return_value.run.return_value = blocked
+            self.assertEqual(shutdown.main([]), 1)
+            self.assertIsNone(ordinary.call_args.kwargs["dual_orphan_handoff"])
+
     def test_main_defaults_to_full_scope_and_notifies_result(self):
         result = shutdown.ShutdownResult("all", True, "Runtime STOPPED.", runtime_stopped=True)
         with mock.patch.object(shutdown.RuntimeShutdown, "run", return_value=result) as run, \
