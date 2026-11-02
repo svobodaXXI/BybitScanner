@@ -3,13 +3,15 @@ import sqlite3
 import hashlib
 import tempfile
 from pathlib import Path
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest import TestCase, mock
 
 from terminal.domain.models import PositionSide, Symbol, TradingAccountId
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
 from tools.paper_two_orphan_proof import (
-    INCIDENT_BACKEND_SHA, PROOF_LABEL, prove_two_flat_orphans, inspect_read_only,
+    INCIDENT_BACKEND_SHA, JASMY_TRADE_ID, JASMY_CANDIDATE_ID,
+    PROOF_LABEL, prove_two_flat_orphans, inspect_read_only,
 )
 
 ACCOUNT = TradingAccountId("paper")
@@ -38,9 +40,9 @@ def fixture():
         INSERT INTO robot_autopilot_state VALUES ('paper','OFF');
         INSERT INTO position_projections VALUES ('paper','JASMYUSDT','Flat','0','synced');
         INSERT INTO position_projections VALUES ('paper','FLOWUSDT','Flat','0','synced');
-        INSERT INTO robot_trades VALUES ('paper','trade-j','cand-j','JASMYUSDT',NULL);
+        INSERT INTO robot_trades VALUES ('paper','robot-trade-2a023e646fd8add8b5b30cd8','2a023e646fd8add8b5b30cd8','JASMYUSDT',NULL);
         INSERT INTO robot_trades VALUES ('paper','trade-f','cand-f','FLOWUSDT',NULL);
-        INSERT INTO robot_candidates VALUES ('paper','cand-j','JASMYUSDT','OPEN');
+        INSERT INTO robot_candidates VALUES ('paper','2a023e646fd8add8b5b30cd8','JASMYUSDT','OPEN');
         INSERT INTO robot_candidates VALUES ('paper','cand-f','FLOWUSDT','OPEN');
     """)
     payload = dict(
@@ -61,11 +63,14 @@ def fixture():
     candidates = {}
     positions = {}
     fills = {}
-    for sym, tid, cid in (("JASMYUSDT", "trade-j", "cand-j"), ("FLOWUSDT", "trade-f", "cand-f")):
+    for sym, tid, cid in (("JASMYUSDT", JASMY_TRADE_ID, JASMY_CANDIDATE_ID), ("FLOWUSDT", "trade-f", "cand-f")):
         symbol = Symbol(sym)
         trades[tid] = SimpleNamespace(
             trade_id=tid, candidate_id=cid, symbol=symbol,
             trading_account_id=ACCOUNT, entry_path="LIMIT",
+            direction="SHORT" if sym == "JASMYUSDT" else "LONG",
+            pattern="Double Top" if sym == "JASMYUSDT" else "MIRROR",
+            entry_quantity=Decimal("399" if sym == "JASMYUSDT" else "6550.8"),
         )
         candidates[cid] = SimpleNamespace(
             candidate_id=cid, symbol=symbol, trading_account_id=ACCOUNT,
@@ -123,7 +128,7 @@ class DualOrphanPreflightTests(TestCase):
         self.assertEqual(store.get_robot_trade.call_count, 2)
         self.assertEqual(
             {call.args[0] for call in store.get_robot_trade.call_args_list},
-            {"trade-j", "trade-f"},
+            {JASMY_TRADE_ID, "trade-f"},
         )
         self.assertEqual(
             {call.args[0] for call in store.load_executions_for_symbol.call_args_list},
@@ -215,6 +220,23 @@ class DualOrphanPreflightTests(TestCase):
         payload["protection"]["coverage_roles"]["OTHERUSDT"] = "EXPOSURE"
         with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_protection_coverage"):
             check(conn, payload, store)
+
+    def test_other_jasmy_trade_or_wrong_flow_lot_is_not_the_incident(self):
+        conn, payload, store = fixture()
+        conn.execute(
+            "UPDATE robot_trades SET trade_id='replacement' "
+            "WHERE trade_id=?", (JASMY_TRADE_ID,)
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_incident_robot_lot"):
+            check(conn, payload, store, evidence=[object(), object()])
+        conn.execute(
+            "UPDATE robot_trades SET trade_id=? WHERE trade_id='replacement'",
+            (JASMY_TRADE_ID,),
+        )
+        flow = store.get_robot_trade("trade-f")
+        flow.entry_quantity = Decimal("1")
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "orphan_lot_identity_unproven"):
+            check(conn, payload, store, evidence=[object(), object()])
 
     def test_duplicate_flat_projection_is_not_unique_owner_evidence(self):
         conn, payload, store = fixture()
