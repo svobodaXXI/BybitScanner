@@ -131,6 +131,16 @@ class DualOrphanPreflightTests(TestCase):
         with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_open_robot_owners"):
             check(conn, payload, store)
 
+    def test_wrong_backend_or_extra_coverage_cannot_authorize_incident(self):
+        conn, payload, store = fixture()
+        payload["backend"]["build_sha"] = "other-build"
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "paper_backend_identity_unproven"):
+            check(conn, payload, store)
+        payload["backend"]["build_sha"] = INCIDENT_BACKEND_SHA
+        payload["protection"]["coverage_roles"]["OTHERUSDT"] = "EXPOSURE"
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_protection_coverage"):
+            check(conn, payload, store)
+
     def test_pending_command_and_limit_block(self):
         conn, payload, store = fixture()
         conn.execute("INSERT INTO trading_commands VALUES ('paper','submitting')")
