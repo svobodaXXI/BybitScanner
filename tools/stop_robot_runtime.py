@@ -417,6 +417,14 @@ class RuntimeShutdown:
             self._stop_scanner()
             steps.append("scanner:stop")
             self._mark("Scanner STOPPED confirmed")
+            # Scanner-only is an independent scope. A previously STOPPED
+            # Robot must never cause a fallthrough to Backend/Telegram shutdown.
+            # Keep PAPER protection and the operator's other services alive.
+            if scope == SCOPE_SCANNER:
+                return ShutdownResult(
+                    scope, True, "Scanner STOPPED; PAPER runtime preserved.",
+                    tuple(steps),
+                )
             if scope == SCOPE_ALL:
                 # Revalidate after Scanner STOP: another controller may have
                 # re-enabled PAPER_AUTO while the stop was in flight.
