@@ -268,8 +268,10 @@ class RuntimeIntentBootstrap:
         out: Callable[[str], None] = lambda line: print(line, flush=True),
         require_telegram: bool = True,
         systemd_managed: bool | None = None,
+        listener_probe: Callable[[str, int], tuple[int, ...]] | None = None,
     ) -> None:
         self._require_telegram = require_telegram
+        self._listener_probe = listener_probe
         # Linux (#627 contour): the backend and Telegram are started by their systemd units, so the
         # bootstrap only waits for them to prove READY and never spawns a second owner. An explicitly
         # injected ``spawn`` keeps the Windows console behaviour (used by tests on every platform).
@@ -373,7 +375,8 @@ class RuntimeIntentBootstrap:
             from tools.legacy_runtime_process import LegacyOwnerUnproven, probe_listener_pids
             location = urlsplit(self._backend)
             try:
-                listeners = probe_listener_pids(location.hostname or "", location.port or 0)
+                probe = self._listener_probe or probe_listener_pids
+                listeners = probe(location.hostname or "", location.port or 0)
             except (LegacyOwnerUnproven, ValueError) as exc:
                 raise Mismatch("PAPER backend listener state cannot be proven; not starting another owner") from exc
             if listeners:
