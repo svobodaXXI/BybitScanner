@@ -833,7 +833,8 @@ class RuntimeShutdown:
             result = self._dual_orphan_handoff()
         except Exception as exc:
             raise SafeStopError(
-                "dual orphan handoff failed or outcome unknown; not retried; runtime kept alive or uncertain"
+                "dual orphan handoff blocked or outcome unknown: "
+                f"{type(exc).__name__}: {exc}; do not retry or deploy"
             ) from exc
         if result != "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed":
             raise SafeStopError(
