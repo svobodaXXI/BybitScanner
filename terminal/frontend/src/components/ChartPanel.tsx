@@ -228,9 +228,16 @@ export function ChartPanel({
         // Unsaved initial Editor work and ordinary trading drawings retain
         // their existing local draft recovery behavior.
         if (!(editorMode && signalIdentity && savedReviewId)) {
-          const stored = globalThis.localStorage?.getItem(storageKey);
-          // A saved empty array is an explicit owner's decision; do not reseed.
-          if (stored !== null && stored !== undefined) return deserializeDrawings(stored);
+          // Browser storage can throw SecurityError or QuotaExceededError
+          // (private mode, managed devices, storage disabled). Optional local
+          // drafts cannot prevent an authenticated frozen Editor opening.
+          try {
+            const stored = globalThis.localStorage?.getItem(storageKey);
+            // A saved empty array is an explicit owner's decision; do not reseed.
+            if (stored !== null && stored !== undefined) return deserializeDrawings(stored);
+          } catch {
+            // Fall back to immutable Scanner/review seed; never refit live bars.
+          }
         }
         return editableSeedDrawings.map((drawing) => ({
           ...drawing,
@@ -352,7 +359,12 @@ export function ChartPanel({
     followLatestRef.current = next;
   }, []);
   useEffect(() => {
-    globalThis.localStorage?.setItem(storageKey, serializeDrawings(drawings));
+    try {
+      globalThis.localStorage?.setItem(storageKey, serializeDrawings(drawings));
+    } catch {
+      // Persisted review delivery is server-owned; a failed optional browser
+      // drawing cache must not crash the Editor or alter feedback authority.
+    }
   }, [drawings, storageKey]);
   useEffect(() => {
     const host = hostRef.current;
