@@ -3176,6 +3176,43 @@ def test_backend_shutdown_requires_durable_paper_quiescence():
     finally:
         server.server_close()
 
+def test_retire_entry_coverage_requires_durable_autopilot_off():
+    """Reactivated admission cannot retire arms even after Scanner/Robot STOP."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from terminal.runtime.paper_http_server import RobotRouteLegalityError
+
+    class Owner:
+        def __init__(self, mode):
+            self.store = SimpleNamespace(
+                get_robot_autopilot_state=lambda account: SimpleNamespace(mode=mode)
+                if mode is not None else None,
+            )
+        def robot_shutdown_idle_guard(self):
+            return nullcontext()
+        def live_limit_acceptance_diagnostics(self):
+            return {"database_identity": "synthetic-paper-db"}
+        def robot_runtime_state(self):
+            return SimpleNamespace(mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
+        def scanner_status(self):
+            return SimpleNamespace(mode="SCANNER_STOPPED")
+
+    class Runtime:
+        def __init__(self, mode):
+            self.owner = Owner(mode)
+        def call(self, operation):
+            return operation(self.owner)
+
+    for mode in ("PAPER_AUTO", "SHADOW", None):
+        manager = RobotProtectionCoverageManager.__new__(RobotProtectionCoverageManager)
+        manager._runtime = Runtime(mode)
+        manager._subscription_lock = threading.RLock()
+        manager._armed = {"RISKUSDT"}
+        with pytest.raises(RobotRouteLegalityError, match="autopilot_not_durably_off"):
+            manager.retire_shutdown_entry_arms("synthetic-paper-db")
+        assert manager._armed == {"RISKUSDT"}
+
+
 def test_runtime_shutdown_rejects_missing_or_malformed_coverage_evidence():
     """A healthy flag alone cannot prove protection coverage quiescence."""
     from contextlib import nullcontext
