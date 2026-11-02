@@ -154,7 +154,7 @@ def _verified_stored_review(record: dict, snapshot: dict, *, review_id: str) -> 
         submission = record["submission"]
         token = submission["idempotency_key"]
         actual_review_id = hashlib.sha256(
-            (snapshot["signal_id"] + "\\0" + token).encode("utf-8")
+            (snapshot["signal_id"] + "\0" + token).encode("utf-8")
         ).hexdigest()
         if (
             record["review_id"] != review_id
