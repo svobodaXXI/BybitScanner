@@ -577,14 +577,17 @@ class RuntimeShutdown:
                     # tick cannot create a durable LIMIT between proof and termination.
                     with self._legacy_paper_guard():
                         backend_chain = self._prove_legacy_entry_backend_chain(legacy_proof)
-                        if telegram == PRESENT:
-                            steps.append(self._shutdown(
-                                self._telegram + "/shutdown", self._telegram + "/health",
-                                "Telegram monitoring", TELEGRAM, "telegram",
-                            ))
                         self._terminate_legacy_entry_backend(legacy_proof, backend_chain)
                         steps.append("backend:legacy-terminate")
                         self._wait_gone(self._backend + "/api/health", "PAPER backend")
+                    # Preserve operator control until the backend is proven
+                    # gone. Never terminate Telegram first on a failed proof
+                    # or an ambiguous legacy backend termination.
+                    if telegram == PRESENT:
+                        steps.append(self._shutdown(
+                            self._telegram + "/shutdown", self._telegram + "/health",
+                            "Telegram monitoring", TELEGRAM, "telegram",
+                        ))
                     return ShutdownResult(
                         scope, True, "Runtime STOPPED.", tuple(steps), runtime_stopped=True,
                     )
@@ -1016,12 +1019,6 @@ class RuntimeShutdown:
             backend_chain = self._resolve_legacy_backend_chain_without_scanner(proof)
             self._mark(f"legacy backend chain proven: {backend_chain}")
             steps.append("runtime:legacy-starvation-proof")
-            if telegram == PRESENT:
-                self._mark("shutting down Telegram monitoring")
-                steps.append(self._shutdown(
-                    self._telegram + "/shutdown", self._telegram + "/health",
-                    "Telegram monitoring", TELEGRAM, "telegram",
-                ))
             if self._robot_state() != ROBOT_STOPPED_PAIR:
                 raise SafeStopError("Robot changed while legacy shutdown barrier was held")
             # Do not require overflow to remain present after we have entered
@@ -1042,6 +1039,14 @@ class RuntimeShutdown:
                 ) from exc
             steps.append("backend:legacy-starvation-terminate")
             self._wait_gone(self._backend + "/api/health", "PAPER backend")
+        # The Telegram control plane must survive any failed/ambiguous backend
+        # exit. Only stop it after the exact legacy backend is observed gone.
+        if telegram == PRESENT:
+            self._mark("shutting down Telegram monitoring after backend exit")
+            steps.append(self._shutdown(
+                self._telegram + "/shutdown", self._telegram + "/health",
+                "Telegram monitoring", TELEGRAM, "telegram",
+            ))
         return ShutdownResult(
             SCOPE_ALL, True, "Runtime STOPPED.", tuple(steps), runtime_stopped=True,
         )
@@ -1084,9 +1089,9 @@ class RuntimeShutdown:
     def _terminate_legacy_entry_backend(
         self, proof: LegacyBackendProof, expected_chain: tuple[int, ...],
     ) -> None:
-        # SQLite writer reservation is held by the caller. Re-prove volatile
-        # state and the exact process chain after Telegram is gone, then kill
-        # only that unchanged chain while no PAPER writer can race the proof.
+        # SQLite writer reservation is held by the caller. Re-prove the
+        # exact backend process chain, then terminate it before Telegram:
+        # operator control must survive an unknown backend outcome.
         if self._robot_state() != ROBOT_STOPPED_PAIR:
             raise SafeStopError("Robot is not fully STOPPED; runtime kept alive")
         self._require_scanner_stopped()
