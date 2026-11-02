@@ -175,6 +175,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
     };
   } | null = null;
   let writes = 0;
+  let correctedPrice: number | null = null;
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const { pathname } = new URL(request.url());
@@ -195,7 +196,13 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
       expect(body.signal_id).toBe(signalId);
       expect(body.label).toBe("GEOMETRY_CORRECTED");
       expect(body.corrected_boundaries).toHaveLength(2);
-      expect(body.corrected_boundaries[0].anchors[0].price).toBe(113);
+      correctedPrice = body.corrected_boundaries[0].anchors[0].price;
+      expect(Number.isFinite(correctedPrice)).toBe(true);
+      expect(correctedPrice).not.toBe(115);
+      expect(body.corrected_boundaries[0].anchors[0].bar_open_time_ms).toBe(1800000000000);
+      expect(body.corrected_boundaries[1].anchors[0]).toEqual({
+        bar_open_time_ms: 1800000000000, price: 95,
+      });
       savedReview = {
         review_id: "roundtrip-confirmed",
         submission: {
@@ -225,21 +232,37 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
     await route.fulfill({ status: 503, contentType: "application/json", body: '{"ok":false}' });
   });
 
-  const startKey = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${signalId}`;
-  await page.addInitScript(({ key }) => {
-    // Equivalent to the owner dragging just the upper ray's first anchor.
-    localStorage.setItem(key, JSON.stringify({ version: 1, drawings: [
-      { id: "editable:upper", type: "ray", locked: false, hidden: false,
-        style: { color: "#e0b45b", lineWidth: 1.5 },
-        anchors: [{ logical: 0, price: 113 }, { logical: 2, price: 117 }] },
-      { id: "editable:lower", type: "ray", locked: false, hidden: false,
-        style: { color: "#e0b45b", lineWidth: 1.5 },
-        anchors: [{ logical: 0, price: 95 }, { logical: 2, price: 97 }] },
-    ] }));
-  }, { key: startKey });
+  // Observe the first editable ray's canvas origin, then physically drag it.
+  // This exercises the actual DrawingOverlay pointer path (not localStorage seeding).
+  await page.addInitScript(() => {
+    const original = CanvasRenderingContext2D.prototype.moveTo;
+    CanvasRenderingContext2D.prototype.moveTo = function (x, y) {
+      if (this.canvas.classList.contains("drawing-overlay") && this.strokeStyle === "#e0b45b") {
+        const marker = window as typeof window & { __editableRay?: { x: number; y: number } };
+        // The upper Scanner boundary is rendered before the lower boundary.
+        if (marker.__editableRay === undefined) marker.__editableRay = { x, y };
+      }
+      return original.call(this, x, y);
+    };
+  });
   const url = "/?mode=EDITOR&symbol=BTCUSDT&timeframe=5m&signal_id=" + encodeURIComponent(signalId);
   await page.goto(url);
   await expect(page.getByRole("button", { name: "Передать исправление" })).toBeEnabled();
+  await expect.poll(() => page.evaluate(() => (
+    (window as typeof window & { __editableRay?: { x: number; y: number } }).__editableRay ?? null
+  ))).not.toBeNull();
+  const rayStart = await page.evaluate(() => (
+    (window as typeof window & { __editableRay: { x: number; y: number } }).__editableRay
+  ));
+  const canvas = page.getByRole("application", { name: "Interactive market chart" }).locator("canvas.drawing-overlay");
+  const rect = await canvas.boundingBox();
+  expect(rect).not.toBeNull();
+  const x = rect!.x + rayStart.x;
+  const y = rect!.y + rayStart.y;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 2, y + 50, { steps: 6 });
+  await page.mouse.up();
   await page.getByRole("button", { name: "Передать исправление" }).click();
   await expect(page.getByText(/Исправление сохранено в дневнике обратной связи/)).toBeVisible();
   expect(writes).toBe(1);
@@ -253,7 +276,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
       id: item.id, price: item.anchors[0].price,
     })) : null;
   }, signalId)).toEqual([
-    { id: "editable:upper", price: 113 },
+    { id: "editable:upper", price: correctedPrice },
     { id: "editable:lower", price: 95 },
   ]);
   expect(original[0].anchors[0].price).toBe(115);
