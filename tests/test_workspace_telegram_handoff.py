@@ -262,6 +262,35 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
         )
         answer.assert_called_once_with("callback-1", "Ссылка на редактор/терминал отправлена в чат")
 
+    def test_fallback_mirror_editor_preserves_exact_source_identity(self):
+        from notification import build_tradingview_keyboard
+        token = "d" * 24
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "", "BYBITSCANNER_WORKSPACE_URL": "",
+        }, clear=True):
+            editor, _ = build_tradingview_keyboard(
+                "BTCUSDT", "5", signal_id=f"mirror-origin:{token}",
+            )["inline_keyboard"][-1]
+        self.assertEqual(editor["callback_data"], f"workspace:EDITOR:M:{token}")
+        self.assertLessEqual(len(editor["callback_data"].encode("utf-8")), 64)
+        parsed = telegram_review._parse_workspace_callback(editor["callback_data"])
+        self.assertEqual(parsed["source_kind"], "M")
+        self.assertIsNone(telegram_review._parse_workspace_callback(
+            "workspace:EDITOR:M:" + "!" * 24))
+        callback = {"id": "callback-mirror", "message": {"chat": {"id": 42}}}
+        frozen = {"signal_id": f"mirror-origin:{token}", "symbol": "BTCUSDT",
+                  "timeframe": "5", "bars": [], "boundaries": []}
+        with patch("signal_archive.load_frozen_signal_geometry", return_value=frozen) as load, \\
+                patch.object(handoff, "deliver_workspace_link", return_value={"ok": True}) as deliver, \\
+                patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._run_workspace_callback(callback, parsed)
+        load.assert_called_once_with(f"mirror-origin:{token}")
+        deliver.assert_called_once_with(
+            "42", mode="EDITOR", symbol="BTCUSDT", timeframe="5m",
+            signal_id=f"mirror-origin:{token}",
+        )
+        answer.assert_called_once_with("callback-mirror", "Ссылка на редактор/терминал отправлена в чат")
+
     def test_unavailable_frozen_geometry_blocks_callback_before_handoff(self):
         token = "b" * 24
         parsed = telegram_review._parse_workspace_callback(f"workspace:EDITOR:S:{token}")
