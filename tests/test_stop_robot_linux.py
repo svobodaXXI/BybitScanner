@@ -71,12 +71,18 @@ class FakeHost:
         self.calls.append("robot:stop")
         self.robot = STOPPED
 
-    def orchestrator(self, *, listener=lambda host, port: (legacy.LISTENER_PID_UNRESOLVED,),
-                     resolver=None):
+    def listener(self, host, port):
+        assert host == "127.0.0.1"
+        alive = self.backend if port == 8765 else self.telegram if port == 8766 else None
+        if alive is None:
+            raise AssertionError(f"unexpected listener port {port}")
+        return (legacy.LISTENER_PID_UNRESOLVED,) if alive else ()
+
+    def orchestrator(self, *, listener=None, resolver=None):
         return shutdown.RuntimeShutdown(
             root=ROOT, env={}, get=self.get, post=self.post, robot_state=lambda: self.robot,
             stop_robot_fn=self.stop_robot, sleep=lambda s: None, monotonic=iter(range(0, 10_000)).__next__,
-            listener_probe=listener, legacy_resolver=resolver or legacy.resolve_legacy_chain,
+            listener_probe=listener or self.listener, legacy_resolver=resolver or legacy.resolve_legacy_chain,
             legacy_terminator=self.terminated.extend, legacy_supported=False,
             legacy_paper_quiescence=lambda: self.calls.append("QUIESCENCE_PROOF"),
             legacy_paper_guard=lambda: (self.calls.append("SQLITE_BARRIER"), nullcontext())[1],

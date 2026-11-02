@@ -171,15 +171,32 @@ def read_open_robot_ownership(database_path: Path) -> bool:
 
 
 def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
-    # Full runtime shutdown is Robot-scoped, not account-flattening. Manual or
-    # otherwise non-Robot PAPER positions may persist durably across a process
-    # restart and must never be liquidated merely because the Robot is stopped.
+    # Full runtime shutdown must not orphan even non-Robot PAPER exposure:
+    # Backend owns its STOP/TAKE protection. Preserve open positions in place
+    # and refuse termination until they close naturally. Never liquidate them.
     #
-    # APPROVED alone is also not live ownership: canonical stop_robot() may
-    # leave an inert APPROVED row after synchronously proving that no working
-    # entry LIMIT or exposure remains. But a non-flat position on the same
-    # symbol as an APPROVED candidate is ambiguous partial-fill ownership and
-    # therefore still blocks fail-closed.
+    # APPROVED alone is not live ownership: canonical stop_robot() may
+    # leave an inert APPROVED row after proving no working entry LIMIT.
+    # Any non-flat position blocks regardless of its Robot candidate origin;
+    # an APPROVED candidate on that symbol remains specifically ambiguous.
+    # Exceptional shutdown may bypass a saturated owner queue, but cannot
+    # bypass the durable admission freeze. A still-enabled PAPER_AUTO can
+    # enqueue fresh work as soon as the SQLite writer reservation ends.
+    modes = connection.execute(
+        "SELECT mode FROM robot_autopilot_state WHERE trading_account_id='paper'"
+    ).fetchall()
+    if len(modes) != 1 or modes[0][0] != "OFF":
+        raise SafeStopError("legacy PAPER shutdown blocked: Autopilot OFF unproven")
+    # Reject unknown ownership statuses before interpreting any candidate as
+    # inert. SQL IN/NOT IN otherwise silently excludes NULL.
+    unknown_candidate = connection.execute(
+        """SELECT 1 FROM robot_candidates WHERE trading_account_id='paper'
+           AND (status IS NULL OR status NOT IN
+                ('BOX_PLAN_ONLY','APPROVED','OPEN','CLOSED','EXPIRED','INVALIDATED'))
+           LIMIT 1"""
+    ).fetchone()
+    if unknown_candidate is not None:
+        raise SafeStopError("legacy PAPER shutdown blocked by unknown Robot candidate status")
     active_candidates = connection.execute(
         """SELECT symbol, status FROM robot_candidates
            WHERE trading_account_id='paper' AND status IN ('APPROVED', 'OPEN')"""
@@ -206,23 +223,47 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
     active_limits = int(connection.execute(
         """SELECT COUNT(*) FROM paper_limit_orders
            WHERE trading_account_id='paper'
-             AND status IN ('open', 'partially_filled')"""
+             AND (status IS NULL OR status NOT IN ('filled', 'cancelled'))"""
     ).fetchone()[0])
     positions = connection.execute(
-        """SELECT symbol, side, quantity FROM position_projections
-           WHERE trading_account_id='paper' AND category='linear' AND position_idx=0"""
+        """SELECT symbol, side, quantity, sync_state FROM position_projections
+           WHERE trading_account_id='paper'"""
     ).fetchall()
     unresolved_obligations = int(connection.execute(
         """SELECT COUNT(*) FROM paper_protection_obligations
-           WHERE trading_account_id='paper' AND status!='RESOLVED'"""
+           WHERE trading_account_id='paper'
+             AND (status IS NULL OR status!='RESOLVED')"""
+    ).fetchone()[0])
+    # The exceptional legacy lifecycle is no bypass for in-flight or
+    # ambiguous PAPER commands and reconciliation checkpoints. Match the
+    # canonical owner's terminal-state contract; absent tables fail closed.
+    unfinished_commands = int(connection.execute(
+        """SELECT COUNT(*) FROM trading_commands WHERE trading_account_id='paper'
+           AND (current_state IS NULL OR current_state NOT IN
+                ('filled','cancelled','amended','rejected','failed','owner_attested_closed'))"""
+    ).fetchone()[0])
+    unfinished_checkpoints = int(connection.execute(
+        """SELECT COUNT(*) FROM reconciliation_checkpoints
+           WHERE trading_account_id='paper' AND completed_at_ms IS NULL"""
     ).fetchone()[0])
 
     non_flat_symbols: set[str] = set()
-    for symbol, side, raw_quantity in positions:
+    for symbol, side, raw_quantity, sync_state in positions:
         quantity = Decimal(str(raw_quantity))
         if not quantity.is_finite() or quantity < 0:
             raise InvalidOperation
-        if str(side) != "Flat" and quantity > 0:
+        # An internally inconsistent net projection cannot prove that a
+        # legacy backend has no Robot-owned exposure. Preserve genuine
+        # non-Robot Long/Short positions across shutdown; do not flatten them.
+        if (
+            side not in ("Flat", "Long", "Short")
+            or (side == "Flat") != (quantity == 0)
+            or sync_state not in ("synced", "synchronized")
+        ):
+            raise SafeStopError(
+                "legacy PAPER shutdown blocked by inconsistent position projection"
+            )
+        if side != "Flat":
             normalized = str(symbol).strip().upper()
             if not normalized:
                 raise ValueError("blank PAPER position symbol")
@@ -249,8 +290,19 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
             "legacy PAPER shutdown blocked by pending Robot exposure: "
             + ",".join(ambiguous_approved_exposure)
         )
+    # The legacy exact-process fallback has no owner-side protection seal.
+    # Do not terminate a Backend still protecting manual/non-Robot exposure.
+    if non_flat_symbols:
+        raise SafeStopError(
+            "legacy PAPER shutdown blocked by protected PAPER exposure: "
+            + ",".join(sorted(non_flat_symbols))
+        )
     if unresolved_obligations:
         raise SafeStopError("legacy PAPER shutdown blocked by unresolved protection obligations")
+    if unfinished_commands:
+        raise SafeStopError("legacy PAPER shutdown blocked by unfinished PAPER commands")
+    if unfinished_checkpoints:
+        raise SafeStopError("legacy PAPER shutdown blocked by unfinished reconciliation checkpoints")
 
 
 def prove_legacy_paper_quiescence(database_path: Path) -> None:
@@ -507,30 +559,48 @@ class RuntimeShutdown:
                     scope, True, "Scanner STOPPED; Robot protection coverage keeps the runtime alive.",
                     tuple(steps),
                 )
-            self._mark("retiring stale entry protection coverage")
-            legacy_proof = self._retire_entry_coverage()
-            if legacy_proof is None:
-                steps.append("protection:retire-entry-arms")
-                if not self._protection_quiescent():
-                    raise SafeStopError("Robot protection coverage is still active; runtime kept alive")
-            else:
-                steps.append("protection:legacy-entry-proof")
-                # The old backend has no monitor idle guard. Freeze SQLite writers
-                # before the final process proof so an already in-flight pre-stop
-                # tick cannot create a durable LIMIT between proof and termination.
-                with self._legacy_paper_guard():
+            # A stopped Robot can still share the PAPER backend with protected
+            # non-Robot exposure. Wait for natural STOP/TAKE only when the
+            # coverage explicitly reports EXPOSURE; never retire its coverage.
+            drained = self._wait_for_natural_exposure_drain()
+            if not (drained and self._protection_quiescent()):
+                self._mark("retiring stale entry protection coverage")
+                legacy_proof = self._retire_entry_coverage()
+                if legacy_proof is None:
+                    steps.append("protection:retire-entry-arms")
+                    if not self._protection_quiescent():
+                        raise SafeStopError("Robot protection coverage is still active; runtime kept alive")
+                else:
+                    steps.append("protection:legacy-entry-proof")
+                    # The old backend has no monitor idle guard. Freeze SQLite writers
+                    # before the final process proof so an already in-flight pre-stop
+                    # tick cannot create a durable LIMIT between proof and termination.
+                    # Read-only HTTP proof must precede BEGIN IMMEDIATE:
+                    # legacy health and protection handlers may need the same
+                    # SQLite writer slot. Do not call them under the barrier.
                     backend_chain = self._prove_legacy_entry_backend_chain(legacy_proof)
+                    # Recheck live protection after PID-chain resolution but
+                    # before taking SQLite's writer slot.
+                    self._require_temporary_entry_arm_shape()
+                    with self._legacy_paper_guard():
+                        self._terminate_legacy_entry_backend(legacy_proof, backend_chain)
+                        steps.append("backend:legacy-terminate")
+                    # One-shot termination is complete. Backend cleanup may
+                    # need SQLite's writer slot before the listener disappears.
+                    # No further durable-state-dependent action is retried.
+                    self._wait_legacy_listener_gone()
+                    self._wait_gone(self._backend + "/api/health", "PAPER backend")
+                    # Preserve operator control until the backend is proven
+                    # gone. Never terminate Telegram first on a failed proof
+                    # or an ambiguous legacy backend termination.
                     if telegram == PRESENT:
                         steps.append(self._shutdown(
                             self._telegram + "/shutdown", self._telegram + "/health",
                             "Telegram monitoring", TELEGRAM, "telegram",
                         ))
-                    self._terminate_legacy_entry_backend(legacy_proof, backend_chain)
-                    steps.append("backend:legacy-terminate")
-                    self._wait_gone(self._backend + "/api/health", "PAPER backend")
-                return ShutdownResult(
-                    scope, True, "Runtime STOPPED.", tuple(steps), runtime_stopped=True,
-                )
+                    return ShutdownResult(
+                        scope, True, "Runtime STOPPED.", tuple(steps), runtime_stopped=True,
+                    )
 
         # The PAPER backend may still reject a shutdown on fresh durable work
         # even after earlier Robot/protection preflight. Keep Telegram alive for
@@ -931,6 +1001,27 @@ class RuntimeShutdown:
             raise SafeStopError("legacy PAPER backend identity changed during ownership proof")
         return chain
 
+    def _local_legacy_backend_chain(self) -> tuple[int, ...]:
+        """Resolve exact backend process/listener ownership without HTTP."""
+        location = urlsplit(self._backend)
+        try:
+            return tuple(self._legacy_resolver(
+                BACKEND, location.hostname or "", location.port or 0, self._root,
+            ))
+        except LegacyOwnerUnproven as exc:
+            raise SafeStopError(
+                f"PAPER backend legacy ownership could not be proven ({exc}); nothing was terminated"
+            ) from exc
+
+    def _wait_legacy_listener_gone(self) -> None:
+        """Observe backend listener exit after releasing the writer barrier; no HTTP."""
+        deadline = self._monotonic() + EXIT_WAIT_S
+        while self._monotonic() < deadline:
+            if not self._listener_pids(self._backend, "PAPER backend"):
+                return
+            self._sleep(POLL_INTERVAL_S)
+        raise SafeStopError("PAPER backend listener remained active after legacy termination")
+
     def _shutdown_starved_legacy_runtime(
         self, telegram: str, steps: list[str],
     ) -> ShutdownResult:
@@ -953,27 +1044,20 @@ class RuntimeShutdown:
         except Exception as exc:
             raise SafeStopError("legacy PAPER durable shutdown evidence is unavailable") from exc
 
+        # Complete all HTTP snapshots while the backend can still acquire
+        # its owner writer slot. Repeat local process-chain attestation under
+        # the barrier without any HTTP or foreign DB writer dependency.
+        backend_chain = self._resolve_legacy_backend_chain_without_scanner(proof)
+        # Catch coverage drift after the first local owner-chain proof. Never
+        # make this HTTP observation inside the SQLite writer barrier.
+        self._require_temporary_entry_arm_shape()
         self._mark("acquiring bounded SQLite writer barrier")
         with self._legacy_paper_guard():
             self._mark("SQLite writer barrier acquired")
-            backend_chain = self._resolve_legacy_backend_chain_without_scanner(proof)
-            self._mark(f"legacy backend chain proven: {backend_chain}")
             steps.append("runtime:legacy-starvation-proof")
-            if telegram == PRESENT:
-                self._mark("shutting down Telegram monitoring")
-                steps.append(self._shutdown(
-                    self._telegram + "/shutdown", self._telegram + "/health",
-                    "Telegram monitoring", TELEGRAM, "telegram",
-                ))
             if self._robot_state() != ROBOT_STOPPED_PAIR:
                 raise SafeStopError("Robot changed while legacy shutdown barrier was held")
-            # Do not require overflow to remain present after we have entered
-            # the proven starvation path. Re-prove only the stable temporary
-            # coverage shape; queue recovery is a safer state, not a blocker.
-            self._require_temporary_entry_arm_shape()
-            if self._legacy_backend_attribution() != proof:
-                raise SafeStopError("legacy PAPER backend identity changed before final termination")
-            final_chain = self._resolve_legacy_backend_chain_without_scanner(proof)
+            final_chain = self._local_legacy_backend_chain()
             if final_chain != backend_chain:
                 raise SafeStopError("legacy PAPER backend process chain changed; nothing was terminated")
             self._mark(f"terminating exact legacy backend chain: {final_chain}")
@@ -984,7 +1068,17 @@ class RuntimeShutdown:
                     f"PAPER backend legacy termination failed: {type(exc).__name__}"
                 ) from exc
             steps.append("backend:legacy-starvation-terminate")
-            self._wait_gone(self._backend + "/api/health", "PAPER backend")
+        # Wait outside the writer reservation: backend exit may require writes.
+        self._wait_legacy_listener_gone()
+        self._wait_gone(self._backend + "/api/health", "PAPER backend")
+        # The Telegram control plane must survive any failed/ambiguous backend
+        # exit. Only stop it after the exact legacy backend is observed gone.
+        if telegram == PRESENT:
+            self._mark("shutting down Telegram monitoring after backend exit")
+            steps.append(self._shutdown(
+                self._telegram + "/shutdown", self._telegram + "/health",
+                "Telegram monitoring", TELEGRAM, "telegram",
+            ))
         return ShutdownResult(
             SCOPE_ALL, True, "Runtime STOPPED.", tuple(steps), runtime_stopped=True,
         )
@@ -1027,15 +1121,14 @@ class RuntimeShutdown:
     def _terminate_legacy_entry_backend(
         self, proof: LegacyBackendProof, expected_chain: tuple[int, ...],
     ) -> None:
-        # SQLite writer reservation is held by the caller. Re-prove volatile
-        # state and the exact process chain after Telegram is gone, then kill
-        # only that unchanged chain while no PAPER writer can race the proof.
+        # SQLite writer reservation is held by the caller. Re-prove the
+        # exact backend process chain, then terminate it before Telegram:
+        # operator control must survive an unknown backend outcome.
         if self._robot_state() != ROBOT_STOPPED_PAIR:
             raise SafeStopError("Robot is not fully STOPPED; runtime kept alive")
-        self._require_scanner_stopped()
-        self._require_temporary_entry_arm_shape()
-        if self._legacy_backend_attribution() != proof:
-            raise SafeStopError("legacy PAPER backend identity changed before termination")
+        # Only locally observed durable Robot state and the exact owner
+        # process/listener chain are admissible while SQLite writers are
+        # frozen. HTTP health/protection reads here can deadlock the owner.
         location = urlsplit(self._backend)
         try:
             final_chain = tuple(self._legacy_resolver(
@@ -1047,13 +1140,58 @@ class RuntimeShutdown:
             ) from exc
         if final_chain != expected_chain:
             raise SafeStopError("legacy PAPER backend process chain changed; nothing was terminated")
-        self._require_temporary_entry_arm_shape()
-        if self._legacy_backend_attribution() != proof:
-            raise SafeStopError("legacy PAPER backend identity changed during final proof")
         try:
             self._legacy_terminator(final_chain)
         except Exception as exc:
             raise SafeStopError(f"PAPER backend legacy termination failed: {type(exc).__name__}") from exc
+
+    def _wait_for_natural_exposure_drain(self) -> bool:
+        """Bounded protection-only drain for exposure after Robot STOPPED.
+
+        Returns False if no explicit EXPOSURE coverage is reported; the existing
+        retirement gate then handles stale entry arms. No order or protection
+        mutation occurs during this wait.
+        """
+        def exposure_present() -> bool:
+            try:
+                status, health = self._get(
+                    self._backend + "/api/robot/protection-health", PROBE_TIMEOUT_S,
+                )
+            except Unreachable as exc:
+                raise SafeStopError("PAPER exposure coverage unavailable during drain") from exc
+            if (
+                status != 200 or not isinstance(health, dict)
+                or not isinstance(health.get("coverage_roles"), dict)
+            ):
+                raise SafeStopError("PAPER exposure coverage unproven during drain")
+            roles = health["coverage_roles"]
+            if any(not isinstance(key, str) or not key.strip()
+                   or not isinstance(value, str) for key, value in roles.items()):
+                raise SafeStopError("PAPER exposure coverage malformed during drain")
+            if not any(role == "EXPOSURE" for role in roles.values()):
+                # Legacy ENTRY_PENDING overflow has its own exact proof/retire
+                # gate. An unrelated unhealthy flag must not preempt it here.
+                return False
+            if health.get("healthy") is not True:
+                raise SafeStopError("protected PAPER exposure unhealthy during drain")
+            return True
+
+        if not exposure_present():
+            return False
+        self._mark("waiting for protected PAPER exposure to drain naturally")
+        deadline = self._monotonic() + NATURAL_ROBOT_DRAIN_WAIT_S
+        while True:
+            self._require_scanner_stopped()
+            self._require_autopilot_off()
+            if self._robot_state() != ROBOT_STOPPED_PAIR:
+                raise SafeStopError("Robot STOPPED changed during protected PAPER drain")
+            if not exposure_present():
+                return True
+            if self._monotonic() >= deadline:
+                raise SafeStopError(
+                    "protected PAPER exposure remains open; backend retained for STOP/TAKE"
+                )
+            self._sleep(min(POLL_INTERVAL_S, deadline - self._monotonic()))
 
     def _protection_quiescent(self) -> bool:
         try:
@@ -1063,7 +1201,7 @@ class RuntimeShutdown:
         return (
             status == 200 and isinstance(health, dict) and health.get("healthy") is True
             and health.get("covered_symbols") == [] and health.get("unhealthy_symbols") == {}
-            and health.get("armed_symbols", []) == []
+            and health.get("armed_symbols") == []
         )
 
     def _shutdown(self, shutdown_url: str, health_url: str, name: str, kind: str, step: str) -> str:
@@ -1104,7 +1242,11 @@ class RuntimeShutdown:
             try:
                 self._get(health_url, PROBE_TIMEOUT_S)
             except Unreachable:
-                return
+                # A saturated owner queue can make /health unreachable while
+                # the process and its protection listener are still alive.
+                # Never report Runtime STOPPED until the exact port is gone.
+                if not self._listener_pids(health_url, name):
+                    return
             self._sleep(POLL_INTERVAL_S)
         raise SafeStopError(f"{name} did not exit within {int(EXIT_WAIT_S)} s")
 

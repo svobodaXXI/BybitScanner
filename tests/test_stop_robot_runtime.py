@@ -1,6 +1,6 @@
 """Unified owner runtime shutdown with fake HTTP, Robot state and clock; no real process."""
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import io
 import json
@@ -422,6 +422,58 @@ class FullShutdownTests(unittest.TestCase):
             "backend:shutdown", "telegram:shutdown",
         ])
 
+    def test_mixed_robot_and_nonrobot_exposure_drain_before_single_shutdown(self):
+        """One P0 freeze drains both owners while protection stays available."""
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        runtime.protection.update({
+            "covered_symbols": ["ROBOTUSDT", "MANUALUSDT"],
+            "coverage_roles": {"ROBOTUSDT": "EXPOSURE", "MANUALUSDT": "EXPOSURE"},
+        })
+        canonical_stop = runtime.stop_robot
+        canonical_sleep = runtime.sleep
+        phases = []
+
+        def stop_after_robot_drain():
+            if runtime.robot_ownership_open:
+                raise RobotControlRejected(
+                    "stop_robot is rejected while OPEN Robot trades remain: robot-1"
+                )
+            self.assertEqual(runtime.autopilot_mode, "OFF")
+            self.assertEqual(runtime.scanner_mode, "SCANNER_STOPPED")
+            canonical_stop()
+
+        def settle_protected_exposure(seconds):
+            canonical_sleep(seconds)
+            self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+            self.assertNotIn("backend:shutdown", runtime.calls)
+            self.assertEqual(runtime.autopilot_mode, "OFF")
+            if runtime.robot_ownership_open:
+                phases.append("robot-stop-take")
+                runtime.robot_ownership_open = False
+                runtime.protection.update({
+                    "covered_symbols": ["MANUALUSDT"],
+                    "coverage_roles": {"MANUALUSDT": "EXPOSURE"},
+                })
+            else:
+                phases.append("manual-stop-take")
+                self.assertEqual(runtime.robot, STOPPED)
+                runtime.protection.update({
+                    "covered_symbols": [], "coverage_roles": {},
+                })
+
+        runtime.stop_robot = stop_after_robot_drain
+        runtime.sleep = settle_protected_exposure
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(phases, ["robot-stop-take", "manual-stop-take"])
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:pause", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
     def test_partial_stop_retries_natural_drain_from_paused_without_repausing(self):
         runtime = FakeRuntime(robot=READY)
         canonical_stop = runtime.stop_robot
@@ -537,6 +589,77 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.calls, ["scanner:stop"])
         self.assertEqual(runtime.robot, READY)
         self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_nonrobot_protected_exposure_naturally_drains_in_same_stop(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.protection.update({
+            "covered_symbols": ["MANUALUSDT"],
+            "coverage_roles": {"MANUALUSDT": "EXPOSURE"},
+        })
+        original_sleep = runtime.sleep
+
+        def natural_take(seconds):
+            original_sleep(seconds)
+            runtime.protection.update({
+                "covered_symbols": [], "coverage_roles": {},
+            })
+
+        runtime.sleep = natural_take
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "scanner:stop", "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertGreater(runtime.now, 0)
+
+    def test_nonrobot_protected_exposure_timeout_never_retires_or_stops(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.protection.update({
+            "covered_symbols": ["MANUALUSDT"],
+            "coverage_roles": {"MANUALUSDT": "EXPOSURE"},
+        })
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("backend retained for STOP/TAKE", result.message)
+        self.assertGreaterEqual(runtime.now, shutdown.NATURAL_ROBOT_DRAIN_WAIT_S)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_nonrobot_drain_reactivation_blocks_backend_shutdown(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.protection.update({
+            "covered_symbols": ["MANUALUSDT"],
+            "coverage_roles": {"MANUALUSDT": "EXPOSURE"},
+        })
+        original_sleep = runtime.sleep
+
+        def competing_admission(seconds):
+            original_sleep(seconds)
+            runtime.autopilot_mode = "PAPER_AUTO"
+
+        runtime.sleep = competing_admission
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Autopilot OFF", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_missing_or_malformed_armed_symbols_cannot_prove_quiescence(self):
+        # A missing field must never be interpreted as an empty protection
+        # list before the owner-side shutdown proof is reached.
+        for value in ("missing", None, {}, "", False):
+            with self.subTest(value=value):
+                runtime = FakeRuntime(robot=STOPPED)
+                if value == "missing":
+                    del runtime.protection["armed_symbols"]
+                else:
+                    runtime.protection["armed_symbols"] = value
+                self.assertFalse(runtime.orchestrator()._protection_quiescent())
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertNotIn("backend:shutdown", runtime.calls)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
     def test_active_protection_coverage_keeps_runtime_alive(self):
         runtime = FakeRuntime(robot=READY)
@@ -858,17 +981,132 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 self.assertTrue(result.runtime_stopped)
                 self.assertEqual(result.steps, (
                     "scanner:stop", "protection:legacy-entry-proof",
-                    "telegram:shutdown", "backend:legacy-terminate",
+                    "backend:legacy-terminate", "telegram:shutdown",
                 ))
                 self.assertEqual(runtime.calls, [
                     "scanner:stop", "protection:retire-entry-arms",
-                    "resolve:backend:127.0.0.1:8765", "telegram:shutdown",
                     "resolve:backend:127.0.0.1:8765",
-                    "terminate:[130, 120, 110, 105]",
+                    "resolve:backend:127.0.0.1:8765",
+                    "terminate:[130, 120, 110, 105]", "telegram:shutdown",
                 ])
                 self.assertEqual(runtime.legacy_evidence_checks, 1)
                 self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
                 self.assertNotIn("backend:shutdown", runtime.calls)
+
+    def test_legacy_paths_never_call_http_under_sqlite_writer_barrier(self):
+        for starved in (False, True):
+            with self.subTest(starved=starved):
+                runtime = self.stale_arm_runtime()
+                if starved:
+                    runtime.protection.update({
+                        "healthy": False,
+                        "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+                        "ingress": {
+                            "capacity": 64, "current_pending": 63,
+                            "high_watermark": 64,
+                        },
+                    })
+                coordinator = runtime.orchestrator()
+                barrier_held = [False]
+                original_get = coordinator._get
+                original_post = coordinator._post
+
+                def get(url, timeout):
+                    self.assertFalse(barrier_held[0], f"HTTP under writer barrier: {url}")
+                    return original_get(url, timeout)
+
+                def post(url, payload, timeout):
+                    self.assertFalse(barrier_held[0], f"HTTP mutation under writer barrier: {url}")
+                    return original_post(url, payload, timeout)
+
+                @contextmanager
+                def guard():
+                    barrier_held[0] = True
+                    try:
+                        yield
+                    finally:
+                        barrier_held[0] = False
+
+                coordinator._get = get
+                coordinator._post = post
+                coordinator._legacy_paper_guard = guard
+                result = coordinator.run("all")
+                self.assertTrue(result.ok, result.message)
+                self.assertTrue(result.runtime_stopped)
+                self.assertFalse(barrier_held[0])
+                self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_legacy_exit_wait_releases_sqlite_writer_first(self):
+        # Both exact-PID paths must finish the single termination inside the
+        # barrier, but not keep the writer reserved while polling for exit.
+        for starved in (False, True):
+            with self.subTest(starved=starved):
+                runtime = self.stale_arm_runtime()
+                if starved:
+                    runtime.protection.update({
+                        "healthy": False,
+                        "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+                        "ingress": {
+                            "capacity": 64, "current_pending": 63,
+                            "high_watermark": 64,
+                        },
+                    })
+                coordinator = runtime.orchestrator()
+                held = [False]
+                original_terminate = coordinator._legacy_terminator
+                original_wait = coordinator._wait_legacy_listener_gone
+
+                @contextmanager
+                def guard():
+                    held[0] = True
+                    try:
+                        yield
+                    finally:
+                        held[0] = False
+
+                def terminate(chain):
+                    self.assertTrue(held[0], "termination must retain durable proof")
+                    original_terminate(chain)
+
+                def wait():
+                    self.assertFalse(held[0], "exit must not wait under SQLite writer")
+                    return original_wait()
+
+                coordinator._legacy_paper_guard = guard
+                coordinator._legacy_terminator = terminate
+                coordinator._wait_legacy_listener_gone = wait
+                result = coordinator.run("all")
+                self.assertTrue(result.ok, result.message)
+                self.assertTrue(result.runtime_stopped)
+                self.assertFalse(held[0])
+                self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_failed_legacy_backend_termination_retains_telegram_control(self):
+        for starved in (False, True):
+            with self.subTest(starved=starved):
+                runtime = self.stale_arm_runtime()
+                if starved:
+                    runtime.protection.update({
+                        "healthy": False,
+                        "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+                        "ingress": {
+                            "capacity": 64, "current_pending": 63,
+                            "high_watermark": 64,
+                        },
+                    })
+                attempts = []
+
+                def reject_backend_termination(chain):
+                    attempts.append(tuple(chain))
+                    raise RuntimeError("backend still alive")
+
+                runtime.terminate_legacy = reject_backend_termination
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertIn("legacy termination failed", result.message)
+                self.assertEqual(attempts, [(130, 120, 110, 105)])
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+                self.assertNotIn("telegram:shutdown", runtime.calls)
 
     def test_durable_live_ownership_blocks_legacy_termination(self):
         for blocker in (
@@ -922,8 +1160,8 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
         self.assertTrue(result.runtime_stopped)
         self.assertEqual(result.steps, (
             "runtime:legacy-starvation-proof",
-            "telegram:shutdown",
             "backend:legacy-starvation-terminate",
+            "telegram:shutdown",
         ))
         self.assertNotIn("scanner:stop", runtime.calls)
         self.assertEqual(runtime.legacy_evidence_checks, 1)
@@ -940,11 +1178,14 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 "high_watermark": 64,
             },
         })
-        original_post = runtime.post
+        original_resolve = runtime.resolve_legacy
+        first = True
 
-        def post(url, payload, timeout):
-            reply = original_post(url, payload, timeout)
-            if url == TELEGRAM + "/shutdown" and reply[0] == 200:
+        def recover_after_preflight(*args):
+            nonlocal first
+            chain = original_resolve(*args)
+            if first:
+                first = False
                 runtime.protection.update({
                     "healthy": True,
                     "unhealthy_symbols": {},
@@ -954,17 +1195,17 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                         "high_watermark": 64,
                     },
                 })
-            return reply
+            return chain
 
-        runtime.post = post
+        runtime.resolve_legacy = recover_after_preflight
         result = runtime.orchestrator().run("all")
 
         self.assertTrue(result.ok, result.message)
         self.assertTrue(result.runtime_stopped)
         self.assertEqual(result.steps, (
             "runtime:legacy-starvation-proof",
-            "telegram:shutdown",
             "backend:legacy-starvation-terminate",
+            "telegram:shutdown",
         ))
         self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
 
@@ -979,11 +1220,14 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 "high_watermark": 64,
             },
         })
-        original_post = runtime.post
+        original_resolve = runtime.resolve_legacy
+        first = True
 
-        def post(url, payload, timeout):
-            reply = original_post(url, payload, timeout)
-            if url == TELEGRAM + "/shutdown" and reply[0] == 200:
+        def change_shape_after_preflight(*args):
+            nonlocal first
+            chain = original_resolve(*args)
+            if first:
+                first = False
                 runtime.protection.update({
                     "healthy": True,
                     "unhealthy_symbols": {},
@@ -992,9 +1236,9 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                         "BLASTUSDT": "POSITION",
                     },
                 })
-            return reply
+            return chain
 
-        runtime.post = post
+        runtime.resolve_legacy = change_shape_after_preflight
         result = runtime.orchestrator().run("all")
 
         self.assertFalse(result.ok)
@@ -1187,22 +1431,33 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
             connection.executescript(
                 """
                 CREATE TABLE robot_candidates (
-                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT NOT NULL
+                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT
                 );
                 CREATE TABLE robot_trades (
                     trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, exit_time_ms INTEGER
                 );
                 CREATE TABLE paper_limit_orders (
-                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT NOT NULL
+                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT
                 );
                 CREATE TABLE position_projections (
                     trading_account_id TEXT NOT NULL, category TEXT NOT NULL,
                     symbol TEXT NOT NULL, position_idx INTEGER NOT NULL,
-                    side TEXT NOT NULL, quantity TEXT NOT NULL
+                    side TEXT NOT NULL, quantity TEXT NOT NULL,
+                    sync_state TEXT
                 );
                 CREATE TABLE paper_protection_obligations (
-                    trading_account_id TEXT NOT NULL, status TEXT NOT NULL
+                    trading_account_id TEXT NOT NULL, status TEXT
                 );
+                CREATE TABLE trading_commands (
+                    trading_account_id TEXT NOT NULL, current_state TEXT
+                );
+                CREATE TABLE reconciliation_checkpoints (
+                    trading_account_id TEXT NOT NULL, completed_at_ms INTEGER
+                );
+                CREATE TABLE robot_autopilot_state (
+                    trading_account_id TEXT NOT NULL, mode TEXT
+                );
+                INSERT INTO robot_autopilot_state VALUES ('paper', 'OFF');
                 """
             )
             if blocker == "approved_candidate":
@@ -1224,7 +1479,7 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
             elif blocker == "manual_exposure":
                 connection.execute(
                     "INSERT INTO position_projections VALUES "
-                    "('paper', 'linear', 'MANUALUSDT', 0, 'Long', '1')"
+                    "('paper', 'linear', 'MANUALUSDT', 0, 'Long', '1','synced')"
                 )
             elif blocker == "approved_exposure":
                 connection.execute(
@@ -1232,7 +1487,7 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                 )
                 connection.execute(
                     "INSERT INTO position_projections VALUES "
-                    "('paper', 'linear', 'ROBOTUSDT', 0, 'Long', '1')"
+                    "('paper', 'linear', 'ROBOTUSDT', 0, 'Long', '1','synced')"
                 )
             elif blocker == "obligation":
                 connection.execute(
@@ -1242,13 +1497,26 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_read_only_durable_proof_accepts_inert_approved_and_manual_exposure(self):
+    def test_read_only_durable_proof_accepts_only_inert_approved(self):
         with tempfile.TemporaryDirectory() as directory:
-            for state in ("approved_candidate", "manual_exposure"):
-                with self.subTest(state=state):
-                    path = Path(directory) / f"{state}.sqlite3"
-                    self.make_db(path, state)
-                    shutdown.prove_legacy_paper_quiescence(path)
+            path = Path(directory) / "approved.sqlite3"
+            self.make_db(path, "approved_candidate")
+            shutdown.prove_legacy_paper_quiescence(path)
+
+    def test_nonrobot_exposure_keeps_legacy_backend_protecting_stop_take(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manual.sqlite3"
+            self.make_db(path, "manual_exposure")
+            before = path.read_bytes()
+            for proof in (
+                lambda: shutdown.prove_legacy_paper_quiescence(path),
+                lambda: shutdown.hold_legacy_paper_quiescence(path).__enter__(),
+            ):
+                with self.assertRaisesRegex(
+                    shutdown.SafeStopError, "protected PAPER exposure: MANUALUSDT",
+                ):
+                    proof()
+            self.assertEqual(path.read_bytes(), before)
 
     def test_read_only_durable_proof_rejects_live_or_ambiguous_robot_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1268,6 +1536,183 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                     with self.assertRaisesRegex(shutdown.SafeStopError, phrase):
                         shutdown.prove_legacy_paper_quiescence(path)
 
+
+    def test_legacy_shutdown_requires_durable_autopilot_off_in_same_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "paper.sqlite3"
+            self.make_db(path)
+            for mode in ("PAPER_AUTO", "SHADOW", None):
+                with self.subTest(mode=mode):
+                    with sqlite3.connect(path) as db:
+                        db.execute(
+                            "UPDATE robot_autopilot_state SET mode=? "
+                            "WHERE trading_account_id='paper'", (mode,),
+                        )
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "Autopilot OFF unproven",
+                    ):
+                        shutdown.prove_legacy_paper_quiescence(path)
+            with sqlite3.connect(path) as db:
+                db.execute("DELETE FROM robot_autopilot_state")
+            with self.assertRaisesRegex(
+                shutdown.SafeStopError, "Autopilot OFF unproven",
+            ):
+                shutdown.prove_legacy_paper_quiescence(path)
+            with sqlite3.connect(path) as db:
+                db.execute("INSERT INTO robot_autopilot_state VALUES ('paper','OFF')")
+                db.execute("INSERT INTO robot_autopilot_state VALUES ('paper','OFF')")
+            with self.assertRaisesRegex(
+                shutdown.SafeStopError, "Autopilot OFF unproven",
+            ):
+                shutdown.prove_legacy_paper_quiescence(path)
+            with sqlite3.connect(path) as db:
+                db.execute("DELETE FROM robot_autopilot_state")
+                db.execute("INSERT INTO robot_autopilot_state VALUES ('paper','OFF')")
+            shutdown.prove_legacy_paper_quiescence(path)
+            with shutdown.hold_legacy_paper_quiescence(path):
+                pass
+
+    def test_legacy_quiescence_checks_all_paper_categories_and_hedge_indices(self):
+        # Backend protection must not be stopped based only on linear/idx0:
+        # a hedge leg or a non-linear PAPER projection remains exposure.
+        cases = (
+            ("linear", 1, "Long", "1"),
+            ("linear", 2, "Short", "3"),
+            ("inverse", 0, "Long", "2"),
+            ("linear", 1, "Flat", "1"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for i, (category, idx, side, qty) in enumerate(cases):
+                with self.subTest(category=category, idx=idx, side=side):
+                    path = Path(directory) / f"projection-{i}.sqlite3"
+                    self.make_db(path)
+                    with sqlite3.connect(path) as db:
+                        db.execute(
+                            "INSERT INTO position_projections VALUES "
+                            "('paper',?,?,?, ?, ?,'synced')",
+                            (category, "HEDGEUSDT", idx, side, qty),
+                        )
+                    with self.assertRaises(shutdown.SafeStopError):
+                        shutdown.prove_legacy_paper_quiescence(path)
+                    with self.assertRaises(shutdown.SafeStopError):
+                        with shutdown.hold_legacy_paper_quiescence(path):
+                            pass
+            # Unrelated account remains outside the PAPER gate.
+            path = Path(directory) / "other.sqlite3"
+            self.make_db(path)
+            with sqlite3.connect(path) as db:
+                db.execute(
+                    "INSERT INTO position_projections VALUES "
+                    "('other','linear','OTHERUSDT',1,'Long','1','synced')"
+                )
+            shutdown.prove_legacy_paper_quiescence(path)
+
+    def test_legacy_quiescence_requires_position_sync_for_every_paper_projection(self):
+        for status in (None, "", "stale", "unknown", "pending"):
+            with self.subTest(sync_state=status):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "paper.sqlite3"
+                    self.make_db(path)
+                    with sqlite3.connect(path) as db:
+                        db.execute(
+                            "INSERT INTO position_projections VALUES "
+                            "('paper','linear','BUSDT',0,'Flat','0',?)",
+                            (status,),
+                        )
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "inconsistent position projection",
+                    ):
+                        shutdown.prove_legacy_paper_quiescence(path)
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "inconsistent position projection",
+                    ):
+                        with shutdown.hold_legacy_paper_quiescence(path):
+                            pass
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "paper.sqlite3"
+            self.make_db(path)
+            with sqlite3.connect(path) as db:
+                db.execute(
+                    "INSERT INTO position_projections VALUES "
+                    "('paper','linear','BUSDT',0,'Flat','0','synchronized')"
+                )
+            shutdown.prove_legacy_paper_quiescence(path)
+
+    def test_legacy_quiescence_rejects_inconsistent_paper_position_shapes(self):
+        # Contradictory projection economics must be rejected before even
+        # considering a protected non-Robot position for shutdown.
+        cases = (
+            ("Flat", "1"),
+            ("Long", "0"),
+            ("Short", "0"),
+            ("UNKNOWN", "1"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for i, (side, qty) in enumerate(cases):
+                with self.subTest(side=side, qty=qty):
+                    path = Path(directory) / f"position-{i}.sqlite3"
+                    self.make_db(path)
+                    with sqlite3.connect(path) as db:
+                        db.execute(
+                            "INSERT INTO position_projections VALUES "
+                            "('paper','linear','MANUALUSDT',0,?,?,'synced')",
+                            (side, qty),
+                        )
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "inconsistent position projection",
+                    ):
+                        shutdown.prove_legacy_paper_quiescence(path)
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "inconsistent position projection",
+                    ):
+                        with shutdown.hold_legacy_paper_quiescence(path):
+                            pass
+
+    def test_legacy_quiescence_rejects_unknown_and_inflight_ledgers(self):
+        # Legacy exact-process fallback must not accept work the canonical
+        # PAPER owner would reject. All fixtures are isolated from live DB.
+        cases = (
+            ("INSERT INTO robot_candidates VALUES ('paper','RISKUSDT','UNEXPECTED')",
+             "unknown Robot candidate status"),
+            ("INSERT INTO robot_candidates VALUES ('paper','RISKUSDT',NULL)",
+             "unknown Robot candidate status"),
+            ("INSERT INTO paper_limit_orders VALUES ('paper','RISKUSDT','unknown')",
+             "working PAPER limits"),
+            ("INSERT INTO paper_limit_orders VALUES ('paper','RISKUSDT',NULL)",
+             "working PAPER limits"),
+            ("INSERT INTO trading_commands VALUES ('paper','dispatching')",
+             "unfinished PAPER commands"),
+            ("INSERT INTO trading_commands VALUES ('paper',NULL)",
+             "unfinished PAPER commands"),
+            ("INSERT INTO paper_protection_obligations VALUES ('paper',NULL)",
+             "unresolved protection obligations"),
+            ("INSERT INTO reconciliation_checkpoints VALUES ('paper',NULL)",
+             "unfinished reconciliation checkpoints"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for i, (mutation, reason) in enumerate(cases):
+                with self.subTest(mutation=mutation):
+                    path = Path(directory) / f"blocked-{i}.sqlite3"
+                    self.make_db(path)
+                    with sqlite3.connect(path) as db:
+                        db.execute(mutation)
+                    with self.assertRaisesRegex(shutdown.SafeStopError, reason):
+                        shutdown.prove_legacy_paper_quiescence(path)
+
+    def test_legacy_quiescence_ignores_other_account_and_terminal_ledgers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "terminal.sqlite3"
+            self.make_db(path)
+            with sqlite3.connect(path) as db:
+                db.executescript("""
+                    INSERT INTO paper_limit_orders VALUES ('paper','DONEUSDT','filled');
+                    INSERT INTO paper_protection_obligations VALUES ('paper','RESOLVED');
+                    INSERT INTO trading_commands VALUES ('paper','filled');
+                    INSERT INTO reconciliation_checkpoints VALUES ('paper',1234);
+                    INSERT INTO trading_commands VALUES ('another','dispatching');
+                    INSERT INTO paper_limit_orders VALUES ('another','OTHERUSDT','unknown');
+                """)
+            shutdown.prove_legacy_paper_quiescence(path)
 
     def test_final_guard_blocks_competing_writes_without_editing_database(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1375,6 +1820,64 @@ class OwnershipTests(unittest.TestCase):
         self.assertFalse(runtime.backend_alive)
         self.assertTrue(runtime.telegram_alive)
 
+    def test_unreachable_health_with_live_listener_cannot_confirm_shutdown(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        original_post = runtime.post
+        original_get = runtime.get
+
+        def post(url, payload, timeout):
+            reply = original_post(url, payload, timeout)
+            if url == TELEGRAM + "/shutdown":
+                runtime.telegram_alive = True  # shutdown ACK but listener remains
+            return reply
+
+        def get(url, timeout):
+            if url == TELEGRAM + "/health" and "telegram:shutdown" in runtime.calls:
+                raise shutdown.Unreachable("health request timed out")
+            return original_get(url, timeout)
+
+        runtime.post = post
+        runtime.get = get
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertFalse(result.runtime_stopped)
+        self.assertIn("did not exit", result.message)
+        self.assertEqual(runtime.calls.count("telegram:shutdown"), 1)
+        self.assertEqual(runtime.calls.count("backend:shutdown"), 1)
+        self.assertGreaterEqual(runtime.now, shutdown.EXIT_WAIT_S)
+        self.assertTrue(runtime.telegram_alive)
+
+    def test_unreachable_health_confirms_shutdown_only_after_listener_exits(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        original_post = runtime.post
+        original_get = runtime.get
+        original_sleep = runtime.sleep
+
+        def post(url, payload, timeout):
+            reply = original_post(url, payload, timeout)
+            if url == TELEGRAM + "/shutdown":
+                runtime.telegram_alive = True
+            return reply
+
+        def get(url, timeout):
+            if url == TELEGRAM + "/health" and "telegram:shutdown" in runtime.calls:
+                raise shutdown.Unreachable("transient health timeout")
+            return original_get(url, timeout)
+
+        def sleep(seconds):
+            original_sleep(seconds)
+            if runtime.now >= shutdown.POLL_INTERVAL_S * 2:
+                runtime.telegram_alive = False
+
+        runtime.post = post
+        runtime.get = get
+        runtime.sleep = sleep
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertGreaterEqual(runtime.now, shutdown.POLL_INTERVAL_S * 2)
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
     def test_no_broad_process_kill_exists(self):
         source = Path(shutdown.__file__).read_text(encoding="utf-8").lower()
         for forbidden in ("taskkill", "os.kill", "psutil", "terminate(", ".kill(", "netstat",
@@ -1389,6 +1892,7 @@ class OwnershipTests(unittest.TestCase):
     def test_exact_pid_termination_uses_one_pid_per_call_without_tree_or_name(self):
         # The exact-PID taskkill fallback is Windows-only (refusal off Windows: test_stop_robot_linux).
         with mock.patch.object(legacy.os, "name", "nt"), mock.patch.object(legacy.subprocess, "run") as run:
+            run.return_value.returncode = 0
             legacy.terminate_exact_pids((4321, 1234))
         self.assertEqual(
             [c.args[0] for c in run.call_args_list],
@@ -1396,6 +1900,67 @@ class OwnershipTests(unittest.TestCase):
         )
         for c in run.call_args_list:
             self.assertNotIn("shell", c.kwargs)
+
+
+    def test_unconfirmed_exact_pid_termination_fails_closed_without_next_kill(self):
+        with mock.patch.object(legacy.os, "name", "nt"), mock.patch.object(
+            legacy.subprocess, "run", return_value=SimpleNamespace(returncode=1),
+        ) as run:
+            with self.assertRaisesRegex(
+                LegacyOwnerUnproven, "exact legacy PID 4321 termination was not confirmed",
+            ):
+                legacy.terminate_exact_pids((4321, 1234))
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "4321", "/F"])
+
+
+class BootstrapSinglePaperOwnerTests(unittest.TestCase):
+    def test_unreachable_backend_with_live_listener_never_spawns(self):
+        from tools.runtime_intent import RuntimeIntentBootstrap, Unreachable
+        spawned = []
+        def unreachable(url, timeout):
+            raise Unreachable("owner queue delayed health")
+        bootstrap = RuntimeIntentBootstrap(
+            root=ROOT, env={}, get=unreachable, require_telegram=False,
+            spawn=lambda *args: spawned.append(args),
+        )
+        with mock.patch.object(legacy, "probe_listener_pids", return_value=(0,)):
+            result = bootstrap.execute("ALL")
+        self.assertFalse(result.ok)
+        self.assertIn("listener is alive", result.message)
+        self.assertEqual(spawned, [])
+
+    def test_unreadable_backend_listener_state_never_spawns(self):
+        from tools.runtime_intent import RuntimeIntentBootstrap, Unreachable
+        spawned = []
+        bootstrap = RuntimeIntentBootstrap(
+            root=ROOT, env={},
+            get=lambda url, timeout: (_ for _ in ()).throw(Unreachable("timeout")),
+            require_telegram=False, spawn=lambda *args: spawned.append(args),
+        )
+        with mock.patch.object(
+            legacy, "probe_listener_pids",
+            side_effect=LegacyOwnerUnproven("no socket table"),
+        ):
+            result = bootstrap.execute("ALL")
+        self.assertFalse(result.ok)
+        self.assertIn("listener state cannot be proven", result.message)
+        self.assertEqual(spawned, [])
+
+    def test_unreachable_backend_without_listener_allows_existing_bootstrap(self):
+        from tools.runtime_intent import RuntimeIntentBootstrap, Unreachable
+        spawned = []
+        bootstrap = RuntimeIntentBootstrap(
+            root=ROOT, env={},
+            get=lambda url, timeout: (_ for _ in ()).throw(Unreachable("refused")),
+            require_telegram=False, spawn=lambda *args: spawned.append(args),
+            monotonic=iter([0.0, 61.0]).__next__,
+        )
+        with mock.patch.object(legacy, "probe_listener_pids", return_value=()):
+            result = bootstrap.execute("ALL")
+        self.assertFalse(result.ok)
+        self.assertIn("did not prove READY", result.message)
+        self.assertEqual(len(spawned), 1)
 
 
 def _p(pid, ppid, name, command_line, executable="", created=None):

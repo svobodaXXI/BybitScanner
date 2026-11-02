@@ -84,6 +84,7 @@ class FakeWorld:
             root=ROOT, env=env or {}, get=self.get, post=self.post, spawn=self.spawn,
             python="python.exe", sleep=self.sleep, monotonic=lambda: self.now,
             out=self.lines.append, require_telegram=require_telegram,
+            listener_probe=lambda host, port: (),
         )
 
 
@@ -196,6 +197,41 @@ class RuntimeIntentBootstrapTests(unittest.TestCase):
         self.assertEqual(self.run_intent(), 0)
         self.assertEqual([name for name, _ in self.world.spawns], ["Telegram monitoring"])
         self.assertEqual(len(self.world.posts), 1)
+
+    def test_unreachable_telegram_with_live_listener_never_spawns(self):
+        self.world.telegram = None
+        spawned = self.world.spawns
+        bootstrap = RuntimeIntentBootstrap(
+            root=ROOT, env={}, get=self.world.get, post=self.world.post,
+            spawn=self.world.spawn, python="python.exe",
+            sleep=self.world.sleep, monotonic=lambda: self.world.now,
+            listener_probe=lambda host, port: (1001,) if port == 8766 else (),
+        )
+        result = bootstrap.execute("ALL")
+        self.assertFalse(result.ok)
+        self.assertIn("Telegram listener is alive", result.message)
+        self.assertEqual(spawned, [])
+        self.assertEqual(self.world.posts, [])
+
+    def test_unreachable_telegram_with_unknown_listener_never_spawns(self):
+        from tools.legacy_runtime_process import LegacyOwnerUnproven
+
+        self.world.telegram = None
+
+        def listener_probe(host, port):
+            raise LegacyOwnerUnproven("listener table unreadable")
+
+        bootstrap = RuntimeIntentBootstrap(
+            root=ROOT, env={}, get=self.world.get, post=self.world.post,
+            spawn=self.world.spawn, python="python.exe",
+            sleep=self.world.sleep, monotonic=lambda: self.world.now,
+            listener_probe=listener_probe,
+        )
+        result = bootstrap.execute("ALL")
+        self.assertFalse(result.ok)
+        self.assertIn("Telegram listener state cannot be proven", result.message)
+        self.assertEqual(self.world.spawns, [])
+        self.assertEqual(self.world.posts, [])
 
     def test_not_ready_telegram_on_its_port_is_waited_for_without_duplicate_spawn(self):
         self.world.telegram = [
