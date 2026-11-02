@@ -151,6 +151,22 @@ class NonRobotCloseProofTests(unittest.TestCase):
             {"executions": (self.entry, fill(self.close.dedup_key.exec_id.value, self.close.order_id.value,
                                              OrderSide.BUY, "399", "0.003794", "0.0009082836", 1793556278449))},
             {"entry_fees": Decimal("0")},
+            {"trade": SimpleNamespace(**{
+                **vars(self.trade), "entry_time_ms": self.trade.entry_time_ms + 1,
+            })},
+            {"executions": (
+                Execution(
+                    dedup_key=ExecutionDedupKey(
+                        ACCOUNT, Category.SPOT,
+                        ExecutionId(self.entry.dedup_key.exec_id.value),
+                    ),
+                    order_id=self.entry.order_id, symbol=SYMBOL,
+                    side=OrderSide.SELL, quantity=self.entry.quantity,
+                    price=self.entry.price, fee=self.entry.fee,
+                    exchange_timestamp_ms=self.entry.exchange_timestamp_ms,
+                ),
+                self.close,
+            )},
             {"unique_open_owner": False},
             {"has_competing_work": True},
             {"entry_order_ids": ("other-order",)},
