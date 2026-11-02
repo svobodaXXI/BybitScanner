@@ -7,6 +7,7 @@ from terminal.application.robot_autopilot_shadow import (
 )
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import SQLiteStore
+from tests.test_stop_reentry_reservation import prepared
 
 
 ACCOUNT = TradingAccountId("paper")
