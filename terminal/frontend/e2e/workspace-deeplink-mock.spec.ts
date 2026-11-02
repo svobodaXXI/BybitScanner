@@ -304,6 +304,13 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
   }, startKey)).not.toEqual({ logical: 0, price: 115 });
   await expect(page.getByLabel("Сравнение линий Scanner и исправления")).toContainText("Δ точка 1");
   await expect(page.getByLabel("Несохранённый отзыв")).toContainText("Новые изменения не сохранены");
+  // "Confirmed" cannot silently discard an already moved Scanner boundary.
+  await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("CONFIRMED");
+  await page.getByRole("button", { name: "Передать исправление" }).click();
+  await expect(page.locator(".editor-correction-export output[role=status]").last())
+    .toContainText("Линии изменены");
+  expect(writes).toBe(0);
+  await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("GEOMETRY_CORRECTED");
   await page.getByRole("button", { name: "Передать исправление" }).click();
   await expect(page.locator(".editor-correction-export output[role=status]").last())
     .toContainText("Исправление сохранено в дневнике обратной связи");
