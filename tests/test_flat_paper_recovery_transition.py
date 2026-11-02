@@ -105,6 +105,38 @@ class TransitionCase(unittest.TestCase):
         self.assertEqual(events, ["barrier:enter", "barrier:exit"])
         proof.assert_called_once()
 
+    def test_dual_orphan_rejects_writer_barrier_without_query_only(self):
+        # This synthetic writer guard deliberately omits the production
+        # query_only seal. Even BEGIN IMMEDIATE must not waive it.
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        path = Path("/no-vps-access")
+        identity = expected_database_identity(
+            ROOT, {"BYBITSCANNER_PAPER_DB": str(path)},
+        )
+        snapshots["backend"].update(
+            build_sha=JASMY_OLD_SHA, process_instance_id="old-paper-process",
+            database_identity=identity,
+        )
+        signals = []
+        @contextmanager
+        def unsealed_barrier(_):
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+            finally:
+                conn.rollback()
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "read_only_snapshot_required"):
+            execute_flat_handoff(
+                db_path=path, expected_identity=identity, expected_pid=PID,
+                expected_build_sha=JASMY_OLD_SHA, execute=True,
+                dual_orphan_incident_20261103=True, snapshots=snapshots,
+                service_pid=lambda: PID, start_token=lambda p: "start-77",
+                listener_owner=lambda p: True, writer_guard=unsealed_barrier,
+                send_interrupt=lambda *args: signals.append(args),
+            )
+        self.assertEqual(signals, [])
+
     def test_dual_orphan_wrong_db_identity_or_ambiguous_proof_never_signals(self):
         db_path = Path("/no-vps-access")
         identity = expected_database_identity(
