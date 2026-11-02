@@ -5,7 +5,9 @@ from unittest import TestCase, mock
 
 from terminal.domain.models import PositionSide, Symbol, TradingAccountId
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
-from tools.paper_two_orphan_proof import PROOF_LABEL, prove_two_flat_orphans
+from tools.paper_two_orphan_proof import (
+    INCIDENT_BACKEND_SHA, PROOF_LABEL, prove_two_flat_orphans,
+)
 
 ACCOUNT = TradingAccountId("paper")
 
@@ -43,7 +45,7 @@ def fixture():
         backend=dict(
             ok=True, component="paper_backend", mode="paper",
             paper_live_safe=True, database_identity="synthetic-db",
-            build_sha="synthetic-sha", process_instance_id="synthetic-instance",
+            build_sha=INCIDENT_BACKEND_SHA, process_instance_id="synthetic-instance",
         ),
         scanner=dict(mode="SCANNER_STOPPED"),
         autopilot=dict(mode="OFF"),
