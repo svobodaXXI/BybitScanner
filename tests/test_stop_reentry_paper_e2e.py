@@ -566,8 +566,17 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                 retry_limit = _wait_until(lambda: order(second_id))
                 self.assertNotEqual(retry_limit.order_id, first_limit.order_id)
                 self.assertEqual(retry_limit.filled_quantity, 0)
-                book.set(SYMBOL, bid=retry_limit.price - instrument.tick_size,
-                         ask=retry_limit.price)
+                retry_bid = retry_limit.price - instrument.tick_size
+                book.set(SYMBOL, bid=retry_bid, ask=retry_limit.price)
+                # The isolated harness has no live WS hub. Feed this immutable
+                # executable book through the production ordered owner path.
+                fill_book = _event_book(
+                    SYMBOL, bid=retry_bid, ask=retry_limit.price,
+                )
+                runtime.call(lambda owner: owner.process_robot_market_event(
+                    SYMBOL, fill_book, event_id="wedge-reentry-second-fill",
+                    received_at_ms=fill_book.received_at_ms,
+                ))
                 second_trade = _wait_until(lambda: (
                     lambda trade: trade if trade and trade.candidate_id == second_id else None
                 )(runtime.call(lambda owner: owner.store.get_open_robot_trade_for_symbol(
