@@ -47,7 +47,7 @@ import {
 import { chartPriceFormat } from "../chart/priceFormat";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
-import { buildEditorGeometryReview, compareEditorRayChanges, isValidCachedEditorDraft, serializeReviewDrawings, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
+import { buildEditorGeometryReview, compareEditorRayChanges, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
 import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
