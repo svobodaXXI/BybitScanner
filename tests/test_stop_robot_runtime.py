@@ -1375,13 +1375,26 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_read_only_durable_proof_accepts_inert_approved_and_manual_exposure(self):
+    def test_read_only_durable_proof_accepts_only_inert_approved(self):
         with tempfile.TemporaryDirectory() as directory:
-            for state in ("approved_candidate", "manual_exposure"):
-                with self.subTest(state=state):
-                    path = Path(directory) / f"{state}.sqlite3"
-                    self.make_db(path, state)
-                    shutdown.prove_legacy_paper_quiescence(path)
+            path = Path(directory) / "approved.sqlite3"
+            self.make_db(path, "approved_candidate")
+            shutdown.prove_legacy_paper_quiescence(path)
+
+    def test_nonrobot_exposure_keeps_legacy_backend_protecting_stop_take(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manual.sqlite3"
+            self.make_db(path, "manual_exposure")
+            before = path.read_bytes()
+            for proof in (
+                lambda: shutdown.prove_legacy_paper_quiescence(path),
+                lambda: shutdown.hold_legacy_paper_quiescence(path).__enter__(),
+            ):
+                with self.assertRaisesRegex(
+                    shutdown.SafeStopError, "protected PAPER exposure: MANUALUSDT",
+                ):
+                    proof()
+            self.assertEqual(path.read_bytes(), before)
 
     def test_read_only_durable_proof_rejects_live_or_ambiguous_robot_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1438,8 +1451,8 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                 pass
 
     def test_legacy_quiescence_rejects_inconsistent_paper_position_shapes(self):
-        # Non-Robot exposure is allowed; contradictory projection economics
-        # are not authoritative FLAT or a proven open manual position.
+        # Contradictory projection economics must be rejected before even
+        # considering a protected non-Robot position for shutdown.
         cases = (
             ("Flat", "1"),
             ("Long", "0"),
