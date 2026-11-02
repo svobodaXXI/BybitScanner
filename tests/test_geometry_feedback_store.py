@@ -72,6 +72,27 @@ def test_review_roundtrip_keeps_source_immutable_and_returns_timestamp_coordinat
     assert len(list(tmp_path.rglob("*.json"))) == 1
 
 
+def test_new_review_syncs_published_directory_before_ack(tmp_path, monkeypatch):
+    import os
+    import stat
+
+    if os.name != "posix":
+        pytest.skip("Directory fsync is a POSIX publication boundary")
+    actual_fsync = os.fsync
+    synced_directory = []
+
+    def observing_fsync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            synced_directory.append(True)
+        return actual_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", observing_fsync)
+    source = _source()
+    record = record_review(_payload(source), source, directory=tmp_path)
+    assert synced_directory, "The final review directory must be synced before success"
+    assert latest_review(source["signal_id"], snapshot=source, directory=tmp_path) == record
+
+
 def test_append_only_reviews_preserve_prior_correction(tmp_path):
     source = _source()
     first = record_review(_payload(source), source, directory=tmp_path)
