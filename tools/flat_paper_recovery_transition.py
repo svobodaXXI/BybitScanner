@@ -257,7 +257,7 @@ def execute_flat_handoff(
             conn.row_factory = sqlite3.Row
             proof = prove_two_flat_orphans(
                 conn, expected_identity=expected_identity,
-                writer_barrier_held=True, **snapshots,
+                **snapshots,
             )
             _assert(proof == TWO_ORPHAN_PROOF_LABEL,
                     "dual_orphan_flat_evidence_missing")
