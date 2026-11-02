@@ -1516,6 +1516,19 @@ class SerializedPaperRuntime:
             if wake:
                 self._requests.put(_PROTECTION_WAKE)
 
+    def enqueue_continuity_fence(self, operation: Callable[[object], None]) -> None:
+        """Submit a safety fence without re-entering saturated market-event ingress.
+
+        The owner drains all previously admitted protection tasks before this
+        request. Honor the same shutdown admission gate as normal enqueue().
+        """
+        with self._shutdown_gate:
+            if self._shutdown_sealed:
+                raise RuntimeError("PAPER shutdown sealed; continuity fence refused")
+            if not self._thread.is_alive():
+                raise RuntimeError("PAPER runtime owner is unavailable")
+            self._requests.put((operation, threading.Event(), {}))
+
     def fetch_manual_evidence(self, symbols) -> dict[str, object]:
         """Execution-time books for manual PAPER commands, read OFF the owner.
 
@@ -2719,9 +2732,13 @@ class RobotProtectionCoverageManager:
         self, symbol: str, reason: str, evidence: Mapping[str, object] | None = None,
     ) -> None:
         try:
-            self._runtime.enqueue(
-                lambda runtime: _fence_with_evidence(runtime, symbol, reason, evidence)
-            )
+            fence = lambda runtime: _fence_with_evidence(runtime, symbol, reason, evidence)
+            submit_fence = getattr(self._runtime, "enqueue_continuity_fence", None)
+            if submit_fence is not None:
+                submit_fence(fence)
+            else:
+                # Compatibility for existing isolated mock runtime contracts.
+                self._runtime.enqueue(fence)
         except Exception:
             LOGGER.exception(
                 "Robot protection coverage could not durably fence admission; "
