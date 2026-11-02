@@ -78,6 +78,7 @@ class TransitionCase(unittest.TestCase):
         @contextmanager
         def barrier(_):
             conn.execute("BEGIN IMMEDIATE")
+            conn.execute("PRAGMA query_only=ON")
             events.append("barrier:enter")
             try:
                 yield conn
@@ -87,7 +88,7 @@ class TransitionCase(unittest.TestCase):
         def prove(held, **kwargs):
             self.assertIs(held.row_factory, sqlite3.Row)
             self.assertTrue(held.in_transaction)
-            self.assertTrue(kwargs["writer_barrier_held"])
+            self.assertEqual(tuple(held.execute("PRAGMA query_only").fetchone()), (1,))
             return DUAL_PROOF
         with mock.patch(
             "tools.flat_paper_recovery_transition.prove_two_flat_orphans",
@@ -119,6 +120,7 @@ class TransitionCase(unittest.TestCase):
         @contextmanager
         def barrier(_):
             conn.execute("BEGIN IMMEDIATE")
+            conn.execute("PRAGMA query_only=ON")
             try:
                 yield conn
             finally:
