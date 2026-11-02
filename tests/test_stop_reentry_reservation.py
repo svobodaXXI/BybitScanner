@@ -394,3 +394,43 @@ def test_restart_with_partially_filled_retry_blocks_new_attempt(prepared):
             "WHERE order_id='retry-partial'"
         ).fetchone()[0] == "0.4"
     assert count(path) == 2
+
+
+def test_p0_shutdown_rejects_flat_orphan_open_robot_trade_even_with_stopped_robot(prepared):
+    """JASMY-like durable orphan: Flat projection != completed Robot ledger.
+
+    The shutdown predicate reads an actual temporary canonical PAPER SQLite,
+    not a mocked HTTP blocker or a fabricated exit. No runtime/market mutation.
+    """
+    store, path = prepared
+    store.initialize_robot_autopilot_state(ACCOUNT, updated_at_ms=1)
+    state = store.get_robot_runtime_state(ACCOUNT)
+    store.update_robot_runtime_state(
+        ACCOUNT, mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED",
+        reason=None, expected_version=state.version, updated_at_ms=500,
+    )
+    with sqlite3.connect(path) as connection:
+        # The second unfilled APPROVED admission must not hide the orphan.
+        connection.execute(
+            "UPDATE robot_candidates SET status='INVALIDATED' "
+            "WHERE candidate_id='second'"
+        )
+    assert store.paper_shutdown_blocker(ACCOUNT) is None
+
+    with sqlite3.connect(path) as connection:
+        # Represent a generic PAPER market close whose net position is still
+        # authoritative FLAT, but without a proven Robot trade close.
+        connection.execute(
+            "UPDATE robot_trades SET exit_time_ms=NULL, exit_price=NULL, "
+            "exit_reason=NULL, realized_pnl_usdt=NULL, "
+            "realized_pnl_pct=NULL, fees_costs_usdt=NULL "
+            "WHERE trade_id='trade-1'"
+        )
+    assert store.get_robot_trade("trade-1").exit_time_ms is None
+    assert store.paper_shutdown_blocker(ACCOUNT) == "open_robot_trade"
+    # The read-only shutdown predicate must not attempt reconciliation,
+    # backfill fictitious economics, or mutate the existing STOP execution.
+    assert store.get_robot_trade("trade-1").exit_time_ms is None
+    assert store._connection.execute(
+        "SELECT exec_id FROM executions WHERE exec_id='stop-exec-1'"
+    ).fetchone()[0] == "stop-exec-1"
