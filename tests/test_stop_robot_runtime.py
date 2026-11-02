@@ -593,6 +593,22 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.calls, ["scanner:stop"])
         self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
+    def test_missing_or_malformed_armed_symbols_cannot_prove_quiescence(self):
+        # A missing field must never be interpreted as an empty protection
+        # list before the owner-side shutdown proof is reached.
+        for value in ("missing", None, {}, "", False):
+            with self.subTest(value=value):
+                runtime = FakeRuntime(robot=STOPPED)
+                if value == "missing":
+                    del runtime.protection["armed_symbols"]
+                else:
+                    runtime.protection["armed_symbols"] = value
+                self.assertFalse(runtime.orchestrator()._protection_quiescent())
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertNotIn("backend:shutdown", runtime.calls)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_active_protection_coverage_keeps_runtime_alive(self):
         runtime = FakeRuntime(robot=READY)
         runtime.protection["covered_symbols"] = ["BTCUSDT"]
