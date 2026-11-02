@@ -153,6 +153,7 @@ class TransitionCase(unittest.TestCase):
         self.assertEqual(signals, [])
 
     def test_dual_orphan_wrong_db_identity_or_ambiguous_proof_never_signals(self):
+        conn, snapshots = fixture()
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         db_path = Path(tmp.name) / "paper.sqlite3"
@@ -164,7 +165,6 @@ class TransitionCase(unittest.TestCase):
         identity = expected_database_identity(
             ROOT, {"BYBITSCANNER_PAPER_DB": str(db_path)},
         )
-        conn, snapshots = fixture()
         snapshots.pop("expected_identity")
         snapshots["backend"].update(
             build_sha=JASMY_OLD_SHA, process_instance_id="old-paper-process",
