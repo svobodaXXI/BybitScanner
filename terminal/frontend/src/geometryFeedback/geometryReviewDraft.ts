@@ -120,6 +120,39 @@ export function buildGeometryReviewDraft(input: {
   };
 }
 
+/** A cached *unsaved* review is optional. Accept it only if every original
+ * frozen source boundary has exactly one valid editable copy. Old drawings
+ * and corrupt browser storage must never replace Scanner source geometry.
+ */
+export function isValidCachedEditorDraft(
+  value: unknown,
+  referenceDrawings: readonly DrawingObject[],
+  frozenCandles: readonly Candle[],
+): value is DrawingObject[] {
+  if (!Array.isArray(value) || value.length !== referenceDrawings.length ||
+      !referenceDrawings.length) return false;
+  try {
+    const normalized = referenceDrawings.map((original) => {
+      const matches = value.filter((item: unknown) =>
+        item !== null && typeof item === "object" &&
+        (item as DrawingObject).id === `editable:${original.id}`);
+      if (matches.length !== 1) throw new Error("Editable identity mismatch");
+      const drawing = matches[0] as DrawingObject;
+      if (drawing.type !== original.type || drawing.locked !== false ||
+          drawing.hidden !== false || typeof drawing.style?.color !== "string" ||
+          !Number.isFinite(drawing.style.lineWidth) || drawing.style.lineWidth <= 0)
+        throw new Error("Invalid editable line");
+      return { ...drawing, id: original.id };
+    });
+    const serialized = serializeReviewDrawings(normalized, frozenCandles);
+    return serialized.every((line) =>
+      line.anchors.every((anchor, i) =>
+        i === 0 || line.anchors[i - 1].bar_open_time_ms < anchor.bar_open_time_ms));
+  } catch {
+    return false;
+  }
+}
+
 /** Only the owner's editable copies of the frozen Scanner lines may be submitted.
  * Other saved/manual drawings must never silently become detector training data.
  */
