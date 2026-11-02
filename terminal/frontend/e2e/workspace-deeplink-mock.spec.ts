@@ -304,8 +304,23 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
     };
   });
   const url = "/?mode=EDITOR&symbol=BTCUSDT&timeframe=5m&signal_id=" + encodeURIComponent(signalId);
+  await page.addInitScript((id) => {
+    const key = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}`;
+    // Malformed but JSON-decodable source cache used to replace the two rays.
+    // This must be discarded in favor of the frozen Scanner originals.
+    localStorage.setItem(key, JSON.stringify({ version: 1, drawings: [
+      { id: "editable:foreign", type: "ray", anchors: [],
+        style: { color: "#e0b45b", lineWidth: 1.5 }, locked: false, hidden: false },
+    ] }));
+  }, signalId);
   await page.goto(url);
   await expect(page.getByRole("button", { name: "Передать исправление" })).toBeEnabled();
+  // The invalid local cache has been replaced with the two original editable rays.
+  await expect.poll(() => page.evaluate((id) => {
+    const key = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}`;
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw).drawings.map((drawing: { id: string }) => drawing.id) : [];
+  }, signalId)).toEqual(["editable:upper", "editable:lower"]);
   await expect.poll(() => page.evaluate(() => (
     (window as typeof window & { __editableRay?: { x: number; y: number } }).__editableRay ?? null
   ))).not.toBeNull();
