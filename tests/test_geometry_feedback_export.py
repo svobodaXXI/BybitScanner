@@ -101,5 +101,5 @@ def test_export_does_not_trust_modified_original_rays_in_review(tmp_path):
     record = json.loads(review_path.read_text(encoding="utf-8"))
     record["source_boundaries"][0]["anchors"][0]["price"] = 999
     review_path.write_text(json.dumps(record), encoding="utf-8")
-    with pytest.raises(GeometryExportError, match="review_source_mismatch"):
+    with pytest.raises(GeometryExportError, match="unverified_feedback_evidence"):
         reviewed_example(signal_id, archive_directory=signals, feedback_directory=reviews)
