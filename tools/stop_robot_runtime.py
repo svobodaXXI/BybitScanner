@@ -585,7 +585,10 @@ class RuntimeShutdown:
                     with self._legacy_paper_guard():
                         self._terminate_legacy_entry_backend(legacy_proof, backend_chain)
                         steps.append("backend:legacy-terminate")
-                        self._wait_legacy_listener_gone()
+                    # One-shot termination is complete. Backend cleanup may
+                    # need SQLite's writer slot before the listener disappears.
+                    # No further durable-state-dependent action is retried.
+                    self._wait_legacy_listener_gone()
                     self._wait_gone(self._backend + "/api/health", "PAPER backend")
                     # Preserve operator control until the backend is proven
                     # gone. Never terminate Telegram first on a failed proof
@@ -1011,7 +1014,7 @@ class RuntimeShutdown:
             ) from exc
 
     def _wait_legacy_listener_gone(self) -> None:
-        """Observe OS listener exit while holding the writer barrier; no HTTP."""
+        """Observe backend listener exit after releasing the writer barrier; no HTTP."""
         deadline = self._monotonic() + EXIT_WAIT_S
         while self._monotonic() < deadline:
             if not self._listener_pids(self._backend, "PAPER backend"):
@@ -1065,7 +1068,8 @@ class RuntimeShutdown:
                     f"PAPER backend legacy termination failed: {type(exc).__name__}"
                 ) from exc
             steps.append("backend:legacy-starvation-terminate")
-            self._wait_legacy_listener_gone()
+        # Wait outside the writer reservation: backend exit may require writes.
+        self._wait_legacy_listener_gone()
         self._wait_gone(self._backend + "/api/health", "PAPER backend")
         # The Telegram control plane must survive any failed/ambiguous backend
         # exit. Only stop it after the exact legacy backend is observed gone.
