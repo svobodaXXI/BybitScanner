@@ -577,11 +577,25 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                     SYMBOL, fill_book, event_id="wedge-reentry-second-fill",
                     received_at_ms=fill_book.received_at_ms,
                 ))
-                second_trade = _wait_until(lambda: (
-                    lambda trade: trade if trade and trade.candidate_id == second_id else None
-                )(runtime.call(lambda owner: owner.store.get_open_robot_trade_for_symbol(
-                    ACCOUNT, Symbol(SYMBOL),
-                ))))
+                second_trade = runtime.call(lambda owner:
+                    owner.store.get_open_robot_trade_for_symbol(
+                        ACCOUNT, Symbol(SYMBOL),
+                    ))
+                if second_trade is None:
+                    diagnostic = runtime.call(lambda owner: {
+                        "candidate_status": owner.store.get_robot_candidate(second_id).status,
+                        "candidate_state": owner.store.get_robot_candidate(second_id).robot_state,
+                        "limit": str(owner.store.get_paper_limit(
+                            retry_limit.order_id.value, ACCOUNT,
+                        )),
+                        "fenced_ids": sorted(owner._robot_entry_limit_ids_fenced_by_admission(
+                            Symbol(SYMBOL),
+                            owner.store.load_active_paper_limits(ACCOUNT, Symbol(SYMBOL)),
+                        )),
+                        "robot_state": str(owner.store.get_robot_runtime_state(ACCOUNT)),
+                        "position": str(owner.store.get_position_projection(key)),
+                    })
+                    self.fail(f"new Wedge LIMIT was not filled: {diagnostic}")
                 self.assertEqual(second_trade.pattern, "Falling Wedge")
                 self.assertEqual(second_trade.entry_path, "LIMIT")
                 self.assertNotEqual(second_trade.trade_id, first_trade.trade_id)
