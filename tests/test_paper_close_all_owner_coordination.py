@@ -80,6 +80,7 @@ def fixture(
         load_open_robot_trades=Mock(side_effect=lambda account: current["trades"]),
         load_active_robot_candidate_states=Mock(return_value=candidates),
         load_active_robot_entry_orders=Mock(return_value={}),
+        load_unfinished_commands=Mock(return_value=()),
         load_unresolved_paper_protection_obligations=Mock(return_value=tuple(obligations)),
         load_open_position_projections=Mock(side_effect=lambda account: (
             tuple(initial_positions) if current["trades"] or not robot else (
@@ -415,6 +416,8 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
         def dispatch(item, *, now_ms, recovery_book):
             self.assertIs(item, obligation)
             current["trades"] = ()
+            # Production STOP closes the exact Robot candidate as well.
+            runtime.store.load_active_robot_candidate_states.return_value = ()
             unresolved.clear()
             return SimpleNamespace(status="RESOLVED")
         runtime._dispatch_paper_protection_obligation = Mock(side_effect=dispatch)
@@ -429,6 +432,53 @@ class CoordinatedPaperCloseAllTests(unittest.TestCase):
         runtime.close_all.assert_not_called()
         runtime._dispatch_paper_protection_obligation.assert_called_once()
         runtime.store.update_robot_autopilot_state.assert_called_once()
+
+    def test_completed_stop_fastpath_blocks_stale_candidate_and_pending_work(self):
+        """Flat and resolved STOP cannot mask admission or unfinished commands."""
+        obligation = SimpleNamespace(
+            trade_id="trade-bot", symbol=Symbol("BOTUSDT"), status="TRIGGERED",
+        )
+        for kind in ("candidate", "entry", "command"):
+            with self.subTest(kind=kind):
+                runtime, state = fixture(
+                    status="RECONCILIATION_REQUIRED", robot=True, manual=False,
+                )
+                unresolved = [obligation]
+                runtime.store.load_unresolved_paper_protection_obligations.side_effect = (
+                    lambda account: tuple(unresolved)
+                )
+
+                def dispatch(item, *, now_ms, recovery_book):
+                    self.assertIs(item, obligation)
+                    state["trades"] = ()
+                    unresolved.clear()
+                    return SimpleNamespace(status="RESOLVED")
+
+                runtime._dispatch_paper_protection_obligation = Mock(side_effect=dispatch)
+                if kind == "entry":
+                    runtime.store.load_active_robot_candidate_states.return_value = ()
+                    runtime.store.load_active_robot_entry_orders.return_value = {
+                        "orphan-entry": (Symbol("BOTUSDT"), 2),
+                    }
+                elif kind == "command":
+                    runtime.store.load_active_robot_candidate_states.return_value = ()
+                    runtime.store.load_unfinished_commands.return_value = (
+                        SimpleNamespace(
+                            trading_account_id=ACCOUNT,
+                            symbol=Symbol("BOTUSDT"),
+                        ),
+                    )
+                # The candidate case retains its initial APPROVED/OPEN row.
+                with self.assertRaisesRegex(
+                    PaperCloseAllRejected, "operator_close_post_stop_work_unresolved",
+                ):
+                    run(runtime)
+                runtime._dispatch_paper_protection_obligation.assert_called_once()
+                runtime.robot_close_all.assert_not_called()
+                runtime.close_all.assert_not_called()
+                self.assertEqual(state["trades"], ())
+                self.assertEqual(runtime.store.get_robot_runtime_state(ACCOUNT).recovery_status,
+                                 "RECONCILIATION_REQUIRED")
 
     def test_operator_triggered_stop_without_fill_remains_fenced(self):
         obligation = SimpleNamespace(
