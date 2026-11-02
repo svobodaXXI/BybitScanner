@@ -280,9 +280,11 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
         callback = {"id": "callback-mirror", "message": {"chat": {"id": 42}}}
         frozen = {"signal_id": f"mirror-origin:{token}", "symbol": "BTCUSDT",
                   "timeframe": "5", "bars": [], "boundaries": []}
-        with patch("signal_archive.load_frozen_signal_geometry", return_value=frozen) as load, \\
-                patch.object(handoff, "deliver_workspace_link", return_value={"ok": True}) as deliver, \\
-                patch.object(telegram_review, "_answer_callback") as answer:
+        with (
+            patch("signal_archive.load_frozen_signal_geometry", return_value=frozen) as load,
+            patch.object(handoff, "deliver_workspace_link", return_value={"ok": True}) as deliver,
+            patch.object(telegram_review, "_answer_callback") as answer,
+        ):
             telegram_review._run_workspace_callback(callback, parsed)
         load.assert_called_once_with(f"mirror-origin:{token}")
         deliver.assert_called_once_with(
