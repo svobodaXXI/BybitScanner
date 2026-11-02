@@ -3135,6 +3135,10 @@ def test_backend_shutdown_requires_durable_paper_quiescence():
             return fn(Owner())
 
     class Coverage:
+        def shutdown_idle_guard(self):
+            from contextlib import nullcontext
+            return nullcontext()
+
         def health(self):
             return {
                 "healthy": True, "covered_symbols": [], "armed_symbols": [],
@@ -3169,5 +3173,126 @@ def test_backend_shutdown_requires_durable_paper_quiescence():
             "status": 409,
             "body": {"ok": False, "error": "runtime_still_required"},
         }
+    finally:
+        server.server_close()
+
+def test_shutdown_seals_owner_queue_after_final_quiescence_proof():
+    """A queued operation behind the successful final proof cannot run."""
+    from terminal.runtime.paper_http_server import SerializedPaperRuntime
+
+    class Owned:
+        def close(self):
+            pass
+
+    runtime = SerializedPaperRuntime(Owned)
+    entered = threading.Event()
+    release = threading.Event()
+    ran_after_proof = threading.Event()
+    results = {}
+    def prove_and_seal():
+        def operation(_owned):
+            entered.set()
+            assert release.wait(3)
+            runtime.seal_shutdown()
+            return "sealed"
+        results["proof"] = runtime.call(operation, timeout=5)
+    def queued_operation():
+        try:
+            runtime.call(lambda _owned: ran_after_proof.set(), timeout=5)
+        except RuntimeError as exc:
+            results["late"] = str(exc)
+    first = threading.Thread(target=prove_and_seal)
+    second = threading.Thread(target=queued_operation)
+    try:
+        first.start()
+        assert entered.wait(3)
+        second.start()
+        # Wait for the second call to join the existing owner queue before seal.
+        for _ in range(100):
+            if runtime._requests.qsize() >= 1:
+                break
+            time.sleep(0.005)
+        assert runtime._requests.qsize() >= 1
+        release.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+        assert not first.is_alive() and not second.is_alive()
+        assert results == {
+            "proof": "sealed",
+            "late": "PAPER shutdown sealed; queued owner work refused",
+        }
+        assert not ran_after_proof.is_set()
+        with pytest.raises(RuntimeError, match="shutdown sealed"):
+            runtime.call(lambda _owned: None)
+        with pytest.raises(RuntimeError, match="shutdown sealed"):
+            runtime.enqueue_book_update("book-1")
+        with pytest.raises(RuntimeError, match="shutdown sealed"):
+            runtime.enqueue(lambda _owned: None, symbol="BTCUSDT")
+    finally:
+        release.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+        runtime.close()
+
+
+def test_runtime_shutdown_seals_only_on_complete_evidence():
+    """No special shutdown API: existing route seals after durable+coverage proof."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    class Owner:
+        def live_limit_acceptance_diagnostics(self):
+            return {"database_identity": "synthetic-paper-db"}
+        def robot_runtime_state(self):
+            return SimpleNamespace(mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
+        def scanner_status(self):
+            return SimpleNamespace(mode="SCANNER_STOPPED")
+        def paper_shutdown_blocker(self):
+            return None
+
+    class Runtime:
+        def __init__(self):
+            self.seals = 0
+        def call(self, fn):
+            return fn(Owner())
+        def seal_shutdown(self):
+            self.seals += 1
+
+    class Coverage:
+        def shutdown_idle_guard(self):
+            return nullcontext()
+        def health(self):
+            return {"healthy": True, "covered_symbols": [], "armed_symbols": [],
+                    "unhealthy_symbols": {}}
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.runtime = Runtime()
+    server.robot_protection_coverage = Coverage()
+    ended = threading.Event()
+    server.shutdown = ended.set
+    response = {}
+
+    def post():
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/runtime/shutdown",
+            data=b'{"database_identity":"synthetic-paper-db"}',
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request) as answer:
+                response["status"] = answer.status
+                response["body"] = json.load(answer)
+        except urllib.error.HTTPError as exc:
+            response["status"] = exc.code
+            response["body"] = json.load(exc)
+    client = threading.Thread(target=post)
+    client.start()
+    try:
+        server.handle_request()
+        client.join(timeout=5)
+        assert not client.is_alive()
+        assert response == {"status": 200, "body": {"ok": True, "shutdown": "scheduled"}}
+        assert server.runtime.seals == 1
+        assert ended.wait(3)
     finally:
         server.server_close()
