@@ -1,3 +1,11 @@
+## 🏰 P0 — «Одна кнопка PAPER»: запуск, остановка, обслуживание — 03.11.2026
+
+**Текущий активный результат:** безопасно довести заблокированный PAPER VPS до обновлённого Terminal/Telegram Editor. **Высокоприоритетный следующий уровень того же квеста:** один готовый `START` / `STOP` / `UPDATE/SERVICE` для всего PAPER-контура без ручной цепочки Codex/SSH и без утраты защиты. Один общий coordinator, а не новые промежуточные квесты. Авторитет: верх `DOCUMENTS/BACKLOG.md`, §10 `DOCUMENTS/PAPER_CONTOUR_INTERNAL_CONSOLIDATION_PLAN_20261027.md`.
+
+**Последний доказанный VPS (Codex 03.11 02:27:53 MSK):** установлен `f100ef36`, новый stable `6a7c3ecd` только staged; positions Flat, Scanner STOPPED, Autopilot OFF, но JASMY/FLOW Flat+OPEN Robot-trades, шесть APPROVED, BB/KITE ENTRY_PENDING, защита JASMY/FLOW unhealthy. One-shot handoff/deploy **BLOCKED без SIGINT**; Backend и Telegram сохранены. Это не RECOVERED/COMPLETE для текущего квеста. Никакого XP за документацию/PR или безопасный отказ.
+
+---
+
 ## 🏆 Победа «Восстановление PAPER» — 2026-11-01 (по отчёту Codex)
 
 Итог: **RECOVERED**. Stable/installed SHA `86fda079cebb1139c2dd3b1e48990d5c8212f79a`; неизменная PAPER DB identity `e0cbafb1…ff0ad`, integrity OK; BUSDT STOP obligation **RESOLVED**, 6 executions и fingerprint неизменны; 0 незавершённых obligations, LIMIT, Market. Backend/Telegram active и ready; Robot `ROBOT_RUNNING / READY`; Scanner RUNNING; Autopilot PAPER_AUTO; Admission READY; protection HEALTHY. Появилась **новая** PAPER LONG AIOUSDT qty 8100 с coverage EXPOSURE — НЕ FLAT, НЕ завершённый цикл и не доказанный net PnL. LIVE не затронут. Не останавливать работающий PAPER runtime ради документации. Фактическая история ошибок, recovery runbook и остаточные defect-задачи: [PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md](PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md). Этот раздел имеет приоритет над устаревшими BLOCKED-снимками ниже.
