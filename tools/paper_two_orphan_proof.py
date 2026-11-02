@@ -87,6 +87,13 @@ def prove_two_flat_orphans(
         "WHERE trading_account_id='paper'",
     ).fetchall()
     _require(bool(positions), "paper_positions_missing")
+    # A second projection for either orphan symbol could conceal an alternate
+    # position owner even if both rows say Flat. Do not guess which is canonical.
+    for orphan_symbol in EXPECTED_SYMBOLS:
+        _require(
+            sum(symbol == orphan_symbol for symbol, *_ in positions) == 1,
+            "ambiguous_orphan_position_projection",
+        )
     for symbol, side, raw, sync in positions:
         try:
             quantity = Decimal(str(raw))
