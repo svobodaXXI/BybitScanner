@@ -158,7 +158,7 @@ def _set_reconciliation_required(owner, *, reason: str):
     raise AssertionError(f"unexpected runtime state: {(state.mode, state.recovery_status)}")
 
 
-def _seed_legacy_trigger(owner):
+def _seed_legacy_trigger(owner, *, create_obligation=True):
     base = int(time.time() * 1000) - 10_000
     _set_reconciliation_required(owner, reason="legacy acceptance seed")
 
@@ -228,6 +228,8 @@ def _seed_legacy_trigger(owner):
         entry_position_version=position.version,
         created_at_ms=base + 300,
     )
+    if not create_obligation:
+        return None
     with owner.store._transaction():
         owner.store._connection.execute(
             "UPDATE robot_trades SET entry_quantity=NULL, entry_position_version=NULL WHERE trade_id=?",
@@ -280,6 +282,73 @@ def _evidence(owner, obligation_id: str):
 
 
 class LegacyProtectionReconciliationAcceptanceTests(unittest.TestCase):
+
+    def test_flat_orphan_trade_without_active_candidate_stays_fenced(self):
+        # A stale trade record cannot disappear from reconciliation merely
+        # because its candidate is no longer in the active-candidate query.
+        # Corrupt only this temporary test database to reproduce the mismatch.
+        with tempfile.TemporaryDirectory() as temp:
+            database_path = Path(temp) / "paper.sqlite3"
+            runtime = SerializedPaperRuntime(lambda: _runtime_factory(database_path))
+            try:
+                def seed_flat_orphan(owner):
+                    _seed_legacy_trigger(owner, create_obligation=False)
+                    previous = owner.store.get_position_projection(POSITION_KEY)
+                    closed_at_ms = previous.updated_at_ms + 400
+                    owner.store.apply_execution_once(
+                        Execution(
+                            dedup_key=ExecutionDedupKey(
+                                ACCOUNT, Category.LINEAR, ExecutionId("orphan-flat-exec"),
+                            ),
+                            order_id=OrderId("orphan-flat-order"),
+                            symbol=SYMBOL,
+                            side=OrderSide.SELL,
+                            price=Price(Decimal("99")),
+                            quantity=Quantity(Decimal("2")),
+                            fee=Decimal("0"),
+                            exchange_timestamp_ms=closed_at_ms,
+                        ),
+                        PositionProjectionUpdate(
+                            position_key=POSITION_KEY,
+                            side=PositionSide.FLAT,
+                            quantity=Quantity(Decimal("0")),
+                            average_entry=None,
+                            realized_pnl=Decimal("-2"),
+                            accumulated_fee=Decimal("0"),
+                            engaged_notional=Notional(Decimal("0")),
+                            sync_state="ready",
+                            expected_version=previous.version,
+                            updated_at_ms=closed_at_ms,
+                        ),
+                    )
+                    with owner.store._transaction():
+                        owner.store._connection.execute(
+                            "UPDATE robot_candidates SET status='INVALIDATED', updated_at_ms=? "
+                            "WHERE candidate_id=?",
+                            (closed_at_ms + 1, CANDIDATE_ID),
+                        )
+                    return (
+                        owner.store.get_position_projection(POSITION_KEY),
+                        owner.store.get_robot_candidate(CANDIDATE_ID),
+                        owner.store.get_robot_trade(TRADE_ID),
+                    )
+
+                position, candidate, trade = runtime.call(seed_flat_orphan)
+                self.assertEqual(position.side, PositionSide.FLAT)
+                self.assertEqual(candidate.status, "INVALIDATED")
+                self.assertIsNone(trade.exit_time_ms)
+
+                reconciled = runtime.call(lambda owner: owner.robot_reconcile())
+                self.assertFalse(reconciled.success)
+                self.assertEqual(reconciled.recovery_status, "RECONCILIATION_REQUIRED")
+                self.assertEqual(reconciled.unresolved_trade_ids, (TRADE_ID,))
+                self.assertIn("OPEN trade without matching OPEN candidate", reconciled.reason)
+                self.assertIsNone(runtime.call(
+                    lambda owner: owner.store.get_robot_trade(TRADE_ID).exit_time_ms
+                ))
+            finally:
+                runtime.close()
+
     def test_attested_legacy_obligation_reconciles_exactly_once_across_repeat_and_restart(self):
         with tempfile.TemporaryDirectory() as temp:
             database_path = Path(temp) / "paper.sqlite3"
