@@ -3,7 +3,7 @@ import sqlite3
 from types import SimpleNamespace
 from unittest import TestCase, mock
 
-from terminal.domain.models import PositionSide, Quantity, Symbol, TradingAccountId
+from terminal.domain.models import PositionSide, Symbol, TradingAccountId
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
 from tools.paper_two_orphan_proof import PROOF_LABEL, prove_two_flat_orphans
 
@@ -66,7 +66,7 @@ def fixture():
             candidate_id=cid, symbol=symbol, trading_account_id=ACCOUNT,
             status="OPEN", robot_state={"execution": {"limit_order_id": "entry-" + tid}},
         )
-        positions[sym] = SimpleNamespace(side=PositionSide.FLAT, quantity=Quantity(0))
+        positions[sym] = SimpleNamespace(side=PositionSide.FLAT, quantity=SimpleNamespace(value=0))
         fills[sym] = [SimpleNamespace(order_id=SimpleNamespace(value="paper-order-tw_" + "a" * 33))]
     store = mock.Mock()
     store.get_robot_trade.side_effect = trades.get
