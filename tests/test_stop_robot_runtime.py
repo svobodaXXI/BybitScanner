@@ -234,6 +234,25 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.robot, READY)
         self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
+    def test_autopilot_reenabled_during_scanner_stop_blocks_robot_shutdown(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        original_post = runtime.post
+
+        def reenable_after_scanner_stop(url, payload, timeout):
+            result = original_post(url, payload, timeout)
+            if url == BACKEND + "/api/scanner/stop":
+                runtime.autopilot_mode = "PAPER_AUTO"
+            return result
+
+        runtime.post = reenable_after_scanner_stop
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Autopilot OFF post-Scanner state unproven", result.message)
+        self.assertEqual(runtime.calls, ["autopilot:off", "scanner:stop"])
+        self.assertEqual(runtime.robot, READY)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_scanner_only_does_not_change_autopilot(self):
         runtime = FakeRuntime(robot=READY)
         runtime.autopilot_mode = "PAPER_AUTO"
