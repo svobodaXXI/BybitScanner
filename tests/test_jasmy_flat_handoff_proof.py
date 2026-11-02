@@ -89,6 +89,12 @@ class JASMYLegacyGateTests(TestCase):
             lambda d, p: d.execute("UPDATE position_projections SET side='Long', quantity='1' WHERE symbol='ICPUSDT'"),
             lambda d, p: d.execute("INSERT INTO robot_trades VALUES ('paper','other','other','ICPUSDT',NULL)"),
             lambda d, p: d.execute("INSERT INTO robot_candidates VALUES ('paper','other','ICPUSDT','APPROVED')"),
+            # SQLite NOT IN / != do not match NULL unless explicitly guarded.
+            lambda d, p: d.execute("INSERT INTO paper_limit_orders VALUES ('paper',NULL)"),
+            lambda d, p: d.execute("INSERT INTO trading_commands VALUES ('paper',NULL)"),
+            lambda d, p: d.execute("INSERT INTO paper_protection_obligations VALUES ('paper',NULL)"),
+            lambda d, p: d.execute("INSERT INTO robot_candidates VALUES ('paper','other','ICPUSDT',NULL)"),
+            lambda d, p: d.execute("INSERT INTO robot_candidates VALUES ('paper','other','ICPUSDT','UNEXPECTED')"),
             lambda d, p: d.execute("INSERT INTO paper_limit_orders VALUES ('paper','open')"),
             lambda d, p: d.execute("INSERT INTO trading_commands VALUES ('paper','submitting')"),
             lambda d, p: d.execute("INSERT INTO paper_protection_obligations VALUES ('paper','DISPATCHING')"),
