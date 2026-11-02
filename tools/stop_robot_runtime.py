@@ -439,10 +439,16 @@ class RuntimeShutdown:
                                 "stop_robot is rejected while a Robot-owned position is open;"
                             )
                         )
-                        if not known_open or state != ("ROBOT_RUNNING", "READY"):
+                        if not known_open:
                             raise
-                        self._pause_robot()
-                        steps.append("robot:pause")
+                        # On a first attempt READY must freeze admission via
+                        # canonical PAUSE (including pending-entry sync).
+                        # A later invocation may already be PAUSED after a
+                        # bounded natural-drain timeout; do not reissue PAUSE
+                        # or require an additional owner workflow.
+                        if state == ("ROBOT_RUNNING", "READY"):
+                            self._pause_robot()
+                            steps.append("robot:pause")
                         if self._robot_state() != ("ROBOT_RUNNING", "PAUSED"):
                             raise SafeStopError(
                                 "Robot PAUSED postcondition unproven; backend retained for protection"
