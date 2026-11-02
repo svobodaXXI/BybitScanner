@@ -24,7 +24,7 @@ import {
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
 import { projectSignalGeometry } from "../geometryFeedback/signalChartBridge";
-import type { TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
+import type { GeometryReviewDraft, TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
 import type { DrawingObject } from "../chart/drawingModel";
 import {
@@ -103,6 +103,9 @@ export function App() {
     referenceDrawings: DrawingObject[];
     editableDrawings: DrawingObject[];
     signalId: string;
+    snapshotRevision: string;
+    barsSha256: string;
+    savedReviewId: string | null;
   } | null>(null);
   const [frozenGeometryStatus, setFrozenGeometryStatus] = useState<"loading" | "unavailable" | "ready">("loading");
   useEffect(() => {
@@ -135,8 +138,40 @@ export function App() {
           anchors: { bar_open_time_ms: number; price: number }[];
         }) => ({ id: line.boundary_id, type: line.kind, anchors: line.anchors }));
         const projected = projectSignalGeometry(boundaries, candles);
+        if (typeof payload.snapshot_revision !== "string" || !/^[0-9a-f]{64}$/i.test(payload.snapshot_revision)
+            || typeof payload.bars_sha256 !== "string" || !/^[0-9a-f]{64}$/i.test(payload.bars_sha256))
+          throw new Error("Frozen snapshot provenance is unavailable");
+        const savedReview = payload.latest_review as {
+          review_id?: string;
+          submission?: {
+            signal_id?: string; snapshot_revision?: string; label?: string;
+            corrected_boundaries?: Array<{
+              boundary_id: string; kind: TimestampDrawing["type"]; anchors: TimestampDrawing["anchors"];
+            }>;
+          };
+        } | null;
+        let editableDrawings = projected.editableDrawings;
+        if (savedReview?.submission?.label === "GEOMETRY_CORRECTED") {
+          if (savedReview.submission.signal_id !== link.signalId
+              || savedReview.submission.snapshot_revision !== payload.snapshot_revision
+              || !Array.isArray(savedReview.submission.corrected_boundaries))
+            throw new Error("Saved correction does not match source signal");
+          const reviewedLines: TimestampDrawing[] = savedReview.submission.corrected_boundaries.map((line) => ({
+            id: line.boundary_id, type: line.kind, anchors: line.anchors,
+          }));
+          const restored = projectSignalGeometry(reviewedLines, candles);
+          if (restored.referenceDrawings.length !== projected.referenceDrawings.length
+              || restored.referenceDrawings.some((line, i) =>
+                line.id !== projected.referenceDrawings[i].id || line.type !== projected.referenceDrawings[i].type))
+            throw new Error("Saved correction topology does not match source lines");
+          editableDrawings = restored.editableDrawings;
+        }
         if (!controller.signal.aborted) {
-          setFrozenSignal({ candles, ...projected, signalId: link.signalId! });
+          setFrozenSignal({
+            candles, ...projected, editableDrawings, signalId: link.signalId!,
+            snapshotRevision: payload.snapshot_revision, barsSha256: payload.bars_sha256,
+            savedReviewId: typeof savedReview?.review_id === "string" ? savedReview.review_id : null,
+          });
           setFrozenGeometryStatus("ready");
         }
       } catch {
@@ -1246,6 +1281,26 @@ export function App() {
           referenceDrawings={mode === "EDITOR" && launchLink?.symbol === market.book.symbol && launchLink.timeframe === timeframe ? frozenSignal?.referenceDrawings ?? [] : []}
           editableSeedDrawings={mode === "EDITOR" && launchLink?.symbol === market.book.symbol && launchLink.timeframe === timeframe ? frozenSignal?.editableDrawings ?? [] : []}
           signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
+          snapshotRevision={mode === "EDITOR" ? frozenSignal?.snapshotRevision ?? null : null}
+          barsSha256={mode === "EDITOR" ? frozenSignal?.barsSha256 ?? null : null}
+          savedReviewId={mode === "EDITOR" ? frozenSignal?.savedReviewId ?? null : null}
+          onSaveGeometryReview={mode === "EDITOR" && frozenSignal ? async (
+            review: GeometryReviewDraft & { note: string; idempotency_key: string },
+          ) => {
+            if (review.signal_id !== frozenSignal.signalId
+                || review.snapshot_revision !== frozenSignal.snapshotRevision
+                || review.bars_sha256 !== frozenSignal.barsSha256)
+              throw new Error("Несовпадение исходного сигнала");
+            const response = await fetch("/api/workspace/geometry-feedback", {
+              method: "POST", credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(review),
+            });
+            const result = await response.json();
+            if (!response.ok || result.ok !== true || !result.review?.review_id
+                || result.review?.submission?.signal_id !== frozenSignal.signalId)
+              throw new Error(result.error || "Сервер не подтвердил сохранение");
+          } : undefined}
           tickSize={market.tickSize}
           symbol={market.book.symbol}
           timeframe={timeframe}
