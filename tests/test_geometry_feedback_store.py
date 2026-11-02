@@ -112,6 +112,21 @@ def test_rejects_malformed_or_unrelated_geometry_without_writing(tmp_path, mutat
     assert not list(tmp_path.rglob("*.json"))
 
 
+@pytest.mark.parametrize("invalid_record", [None, [], "not-an-object", 123, True])
+def test_idempotent_replay_fails_closed_for_non_object_existing_review(tmp_path, invalid_record):
+    source = _source()
+    payload = _payload(source)
+    original = record_review(payload, source, directory=tmp_path)
+    path, = list(tmp_path.rglob("*.json"))
+    path.write_text(json.dumps(invalid_record), encoding="utf-8")
+
+    with pytest.raises(GeometryFeedbackConflict, match="existing_review_invalid"):
+        record_review(payload, source, directory=tmp_path)
+    assert json.loads(path.read_text(encoding="utf-8")) == invalid_record
+    assert len(list(tmp_path.rglob("*.json"))) == 1
+    assert path.stem == original["review_id"]
+
+
 def test_no_corrected_boundaries_on_non_edit_reviews(tmp_path):
     source = _source()
     payload = _payload(source, label="UNCERTAIN")
