@@ -16,9 +16,11 @@ import time
 from decimal import Decimal
 
 from signal_geometry_snapshot import canonical_bytes, validate_snapshot
+from signal_archive import archive_dir as signal_archive_dir
 
 FEEDBACK_DIR_ENV = "BYBITSCANNER_GEOMETRY_FEEDBACK_DIR"
-DEFAULT_FEEDBACK_DIR = Path(__file__).resolve().parent / "review_queue" / "geometry_feedback"
+# Co-locate reviews with the persistent immutable signal archive root by default.
+# BYBITSCANNER_GEOMETRY_FEEDBACK_DIR remains an explicit independent override.
 MAX_REQUEST_BYTES = 32_768
 MAX_NOTE_LENGTH = 1024
 LABELS = frozenset({"CONFIRMED", "GEOMETRY_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"})
@@ -35,9 +37,10 @@ class GeometryFeedbackConflict(GeometryFeedbackError):
 
 
 def feedback_directory(directory=None) -> Path:
-    return Path(directory) if directory is not None else Path(
-        os.environ.get(FEEDBACK_DIR_ENV) or DEFAULT_FEEDBACK_DIR
-    )
+    if directory is not None:
+        return Path(directory)
+    override = os.environ.get(FEEDBACK_DIR_ENV, "").strip()
+    return Path(override) if override else signal_archive_dir().parent / "geometry_feedback"
 
 
 def source_revision(snapshot: dict) -> str:
