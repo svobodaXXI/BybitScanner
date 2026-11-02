@@ -538,6 +538,61 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.robot, READY)
         self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
+    def test_nonrobot_protected_exposure_naturally_drains_in_same_stop(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.protection.update({
+            "covered_symbols": ["MANUALUSDT"],
+            "coverage_roles": {"MANUALUSDT": "EXPOSURE"},
+        })
+        original_sleep = runtime.sleep
+
+        def natural_take(seconds):
+            original_sleep(seconds)
+            runtime.protection.update({
+                "covered_symbols": [], "coverage_roles": {},
+            })
+
+        runtime.sleep = natural_take
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "scanner:stop", "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertGreater(runtime.now, 0)
+
+    def test_nonrobot_protected_exposure_timeout_never_retires_or_stops(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.protection.update({
+            "covered_symbols": ["MANUALUSDT"],
+            "coverage_roles": {"MANUALUSDT": "EXPOSURE"},
+        })
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("backend retained for STOP/TAKE", result.message)
+        self.assertGreaterEqual(runtime.now, shutdown.NATURAL_ROBOT_DRAIN_WAIT_S)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_nonrobot_drain_reactivation_blocks_backend_shutdown(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.protection.update({
+            "covered_symbols": ["MANUALUSDT"],
+            "coverage_roles": {"MANUALUSDT": "EXPOSURE"},
+        })
+        original_sleep = runtime.sleep
+
+        def competing_admission(seconds):
+            original_sleep(seconds)
+            runtime.autopilot_mode = "PAPER_AUTO"
+
+        runtime.sleep = competing_admission
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Autopilot OFF", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_active_protection_coverage_keeps_runtime_alive(self):
         runtime = FakeRuntime(robot=READY)
         runtime.protection["covered_symbols"] = ["BTCUSDT"]
