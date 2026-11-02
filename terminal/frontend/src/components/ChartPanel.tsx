@@ -341,14 +341,17 @@ export function ChartPanel({
   const copyCorrectionDraft = async () => {
     if (!editorMode || !signalIdentity) return;
     try {
-      const corrected = serializeReviewDrawings(drawings, candles);
-      if (!corrected.length) throw new Error("Нет исправленных линий");
+      if (!snapshotRevision || !barsSha256) throw new Error("Исходный снимок недоступен");
+      // Export the same canonical source IDs and frozen timestamp anchors as
+      // the validated feedback submission, never "editable:*" drawing IDs.
+      const draft = buildEditorGeometryReview({
+        signalId: signalIdentity, snapshotRevision, barsSha256,
+        label: "GEOMETRY_CORRECTED", frozenCandles: candles,
+        referenceDrawings, editableDrawings: drawings,
+      });
       await navigator.clipboard.writeText(JSON.stringify({
-        schema_version: 1,
-        signal_id: signalIdentity,
-        label: "GEOMETRY_CORRECTED",
+        ...draft,
         status: "DRAFT_ONLY",
-        corrected_boundaries: corrected,
       }, null, 2));
       setCorrectionExportStatus("Черновик коррекции скопирован. Scanner не обучен автоматически.");
     } catch {
