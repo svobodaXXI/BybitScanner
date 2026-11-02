@@ -249,11 +249,12 @@ def execute_flat_handoff(
                     "flat_recovery_evidence_missing")
         _assert(service_pid() == expected_pid and start_token(expected_pid) == token,
                 "backend_process_changed_during_proof")
-        # In the JASMY exception the systemd MainPID must also own the exact
-        # local PAPER listener. A healthy HTTP response from another process
-        # cannot authorize signaling this PID. Recheck after durable proof.
-        if jasmy_incident_20261102:
-            _assert(listener_owner(expected_pid), "jasmy_backend_listener_owner_unproven")
+        # A healthy HTTP response from a different owner must never authorize
+        # SIGINT to the systemd MainPID. Require the exact PAPER listener for
+        # every execution path, not just the incident-scoped JASMY exception.
+        # Preserve JASMY's stronger preflight requirement as well.
+        if execute or jasmy_incident_20261102:
+            _assert(listener_owner(expected_pid), "backend_listener_owner_unproven")
         if not execute:
             return "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
         # SIGINT allows Python main() to unwind its finally: server, market
