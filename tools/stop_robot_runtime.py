@@ -52,6 +52,7 @@ PROBE_TIMEOUT_S = 5.0
 MUTATION_TIMEOUT_S = 15.0
 LEGACY_WRITER_BARRIER_TIMEOUT_S = 5.0
 LEGACY_HEALTH_REPROOF_WAIT_S = 30.0
+NATURAL_ROBOT_DRAIN_WAIT_S = 10.0
 
 ROBOT_STOPPED_PAIR = ("ROBOT_STOPPED", "ROBOT_STOPPED")
 ROBOT_STOPPABLE = {("ROBOT_RUNNING", "READY"), ("ROBOT_RUNNING", "PAUSED")}
@@ -132,6 +133,35 @@ def read_robot_state(database_path: Path) -> tuple[str, str] | None:
     except sqlite3.Error as exc:
         raise SafeStopError("durable Robot state is unreadable") from exc
     return None if row is None else (str(row[0]), str(row[1]))
+
+
+def read_open_robot_ownership(database_path: Path) -> bool:
+    """Read-only proof that a Robot trade or OPEN candidate still owns work.
+
+    An absent, unreadable, or inconsistent ledger is never interpreted as drained.
+    This does not attest FLAT or pending order quiescence; canonical stop and
+    backend shutdown retain those separate gates.
+    """
+    if not database_path.exists():
+        raise SafeStopError("Robot ownership evidence is unavailable")
+    try:
+        connection = sqlite3.connect(database_path.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            for table, condition in (
+                ("robot_trades", "exit_time_ms IS NULL"),
+                ("robot_candidates", "status='OPEN'"),
+            ):
+                row = connection.execute(
+                    f"SELECT 1 FROM {table} WHERE trading_account_id=? AND {condition} LIMIT 1",
+                    ("paper",),
+                ).fetchone()
+                if row is not None:
+                    return True
+            return False
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise SafeStopError("Robot ownership evidence is unreadable") from exc
 
 
 def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
@@ -287,6 +317,7 @@ class RuntimeShutdown:
         get: Callable[[str, float], tuple[int, object]] = _http_get,
         post: Callable[[str, Mapping[str, object], float], tuple[int, object]] = _http_post,
         robot_state: Callable[[], tuple[str, str] | None] | None = None,
+        open_robot_ownership: Callable[[], bool] | None = None,
         stop_robot_fn: Callable[[], object] | None = None,
         pause_robot_fn: Callable[[], object] | None = None,
         sleep: Callable[[float], None] = time.sleep,
@@ -323,6 +354,9 @@ class RuntimeShutdown:
         self._get = get
         self._post = post
         self._robot_state = robot_state or (lambda: read_robot_state(database_path))
+        self._open_robot_ownership = open_robot_ownership or (
+            lambda: read_open_robot_ownership(database_path)
+        )
         self._stop_robot = stop_robot_fn or (lambda: stop_robot(
             http_post=_post_robot_json, database_path=database_path, backend_url=self._backend,
         ))
@@ -413,10 +447,31 @@ class RuntimeShutdown:
                             raise SafeStopError(
                                 "Robot PAUSED postcondition unproven; backend retained for protection"
                             )
-                        raise SafeStopError(
-                            "Robot PAUSED with OPEN trade: protected exposure/orphan "
-                            "must resolve before shutdown; backend retained"
-                        ) from exc
+                        # An explicit rejection is a known, non-ambiguous outcome.
+                        # Allow a bounded natural STOP/TAKE drain in the same
+                        # operation, keeping Backend/protection alive throughout.
+                        # Never issue Market, cancel protection or replay an
+                        # uncertain mutation. A second stop is legal only after
+                        # read-only durable OPEN ownership has disappeared.
+                        self._mark("waiting for natural Robot trade drain")
+                        deadline = self._monotonic() + NATURAL_ROBOT_DRAIN_WAIT_S
+                        while True:
+                            if self._robot_state() != ("ROBOT_RUNNING", "PAUSED"):
+                                raise SafeStopError(
+                                    "Robot PAUSED ownership changed during drain; backend retained"
+                                )
+                            self._require_scanner_stopped()
+                            self._require_autopilot_off()
+                            if not self._open_robot_ownership():
+                                break
+                            if self._monotonic() >= deadline:
+                                raise SafeStopError(
+                                    "Robot PAUSED with OPEN trade: natural drain incomplete; "
+                                    "backend retained for STOP/TAKE protection"
+                                ) from exc
+                            self._sleep(min(POLL_INTERVAL_S, deadline - self._monotonic()))
+                        self._mark("natural Robot ownership drain confirmed; requesting Robot STOPPED")
+                        self._stop_robot()
                     steps.append("robot:stop")
                     self._mark("Robot STOPPED confirmed")
                 elif state != ROBOT_STOPPED_PAIR:

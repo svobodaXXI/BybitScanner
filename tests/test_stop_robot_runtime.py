@@ -47,6 +47,7 @@ class FakeRuntime:
         self.telegram_health = {"component": "telegram_monitoring", "status": "ready",
                                 "database_identity": IDENTITY}
         self.scanner_mode = "SCANNER_RUNNING"
+        self.robot_ownership_open = True
         self.autopilot_mode = "OFF"
         self.autopilot_off_reply = (200, {"ok": True, "mode": "OFF"})
         self.protection = {
@@ -175,7 +176,9 @@ class FakeRuntime:
     def orchestrator(self):
         return shutdown.RuntimeShutdown(
             root=ROOT, env={}, get=self.get, post=self.post,
-            robot_state=lambda: self.robot, stop_robot_fn=self.stop_robot,
+            robot_state=lambda: self.robot,
+            open_robot_ownership=lambda: self.robot_ownership_open,
+            stop_robot_fn=self.stop_robot,
             pause_robot_fn=self.pause_robot,
             sleep=self.sleep, monotonic=lambda: self.now,
             legacy_resolver=self.resolve_legacy, listener_probe=self.probe_listener,
@@ -386,6 +389,56 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.calls, ["scanner:stop", "robot:pause"])
         self.assertEqual(result.steps, ("scanner:stop", "robot:pause"))
         self.assertEqual(runtime.protection["covered_symbols"], ["JASMYUSDT"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_open_trade_natural_drain_resumes_same_full_stop_without_market(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        original_stop = runtime.stop_robot
+        original_sleep = runtime.sleep
+        rejected_once = False
+
+        def stop_after_proven_drain():
+            nonlocal rejected_once
+            if not rejected_once:
+                rejected_once = True
+                raise RobotControlRejected(
+                    "stop_robot is rejected while OPEN Robot trades remain: trade-1"
+                )
+            self.assertFalse(runtime.robot_ownership_open)
+            original_stop()
+
+        def natural_stop_take_drain(seconds):
+            original_sleep(seconds)
+            runtime.robot_ownership_open = False
+
+        runtime.stop_robot = stop_after_proven_drain
+        runtime.sleep = natural_stop_take_drain
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:pause", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+
+    def test_open_trade_natural_drain_still_blocks_if_ingress_reactivates(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
+            "stop_robot is rejected while OPEN Robot trades remain: trade-1"
+        ))
+        original_sleep = runtime.sleep
+
+        def reenable_during_drain(seconds):
+            original_sleep(seconds)
+            runtime.autopilot_mode = "PAPER_AUTO"
+
+        runtime.sleep = reenable_during_drain
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Autopilot OFF", result.message)
+        self.assertEqual(runtime.robot, PAUSED)
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:pause"])
         self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
     def test_open_trade_pause_sync_failure_keeps_backend_alive(self):
