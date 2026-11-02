@@ -7,6 +7,7 @@ JASMY-only SIGINT path. Every missing/ambiguous fill blocks the transition.
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 import sqlite3
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
@@ -211,6 +212,11 @@ def inspect_read_only(
     at the separately approved handoff boundary. No SQL writes or migrations.
     """
     _require(db_path.is_file(), "paper_database_missing")
+    _require(
+        hashlib.sha256(str(db_path.resolve()).encode("utf-8")).hexdigest()
+        == expected_identity,
+        "paper_database_path_identity_mismatch",
+    )
     try:
         with sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True) as conn:
             conn.row_factory = sqlite3.Row
