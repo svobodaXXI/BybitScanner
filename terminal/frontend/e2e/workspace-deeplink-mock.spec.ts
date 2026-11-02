@@ -60,3 +60,87 @@ for (const [mode, symbol, timeframe] of [
     });
   });
 }
+
+
+test("frozen Editor geometry renders and accepts owner feedback without live WebSocket", async ({ page }) => {
+  const signalId = "source:BTCUSDT:5:historic-wedge";
+  const posted: unknown[] = [];
+  await page.addInitScript(() => {
+    const observations = { reference: 0, editable: 0 };
+    Object.assign(window, { __editorRayStrokes: observations });
+    const stroke = CanvasRenderingContext2D.prototype.stroke;
+    CanvasRenderingContext2D.prototype.stroke = function (...args) {
+      if (this.strokeStyle === "#8195aa") observations.reference++;
+      if (this.strokeStyle === "#e0b45b") observations.editable++;
+      return stroke.apply(this, args);
+    };
+  });
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const { pathname } = new URL(request.url());
+    if (pathname === "/api/workspace/signal-geometry") {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        ok: true,
+        snapshot_revision: "a".repeat(64),
+        bars_sha256: "b".repeat(64),
+        latest_review: null,
+        snapshot: {
+          schema_version: 1, signal_id: signalId, symbol: "BTCUSDT", timeframe: "5",
+          bars: [
+            { open_time_ms: 1800000000000, open: 100, high: 115, low: 95, close: 110 },
+            { open_time_ms: 1800000300000, open: 110, high: 116, low: 96, close: 102 },
+            { open_time_ms: 1800000600000, open: 102, high: 117, low: 97, close: 111 },
+          ],
+          boundaries: [
+            { boundary_id: "upper", kind: "ray", anchors: [
+              { bar_open_time_ms: 1800000000000, price: 115 },
+              { bar_open_time_ms: 1800000600000, price: 117 },
+            ] },
+            { boundary_id: "lower", kind: "ray", anchors: [
+              { bar_open_time_ms: 1800000000000, price: 95 },
+              { bar_open_time_ms: 1800000600000, price: 97 },
+            ] },
+          ],
+        },
+      }) });
+      return;
+    }
+    if (pathname === "/api/workspace/geometry-feedback" && request.method() === "POST") {
+      posted.push(request.postDataJSON());
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        ok: true, review: { review_id: "review-verified", submission: { signal_id: signalId } },
+      }) });
+      return;
+    }
+    if (pathname === "/api/workspace/symbol" && request.method() === "POST") {
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ ok: true, symbol: "BTCUSDT", generation: 101 }) });
+      return;
+    }
+    if (pathname === "/api/workspace/state") {
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ ok: true, workspace: { active_symbol: "ONGUSDT", active_generation: 1 } }) });
+      return;
+    }
+    await route.fulfill({ status: 503, contentType: "application/json", body: '{"ok":false}' });
+  });
+
+  // No /api/workspace/stream WebSocket stub: historical source is self-contained.
+  await page.goto("/?mode=EDITOR&symbol=BTCUSDT&timeframe=5m&signal_id=" + encodeURIComponent(signalId));
+  const save = page.getByRole("button", { name: "Передать исправление" });
+  await expect(save).toBeVisible();
+  await expect(save).toBeEnabled();
+  await expect.poll(() => page.evaluate(() => {
+    const strokes = (window as unknown as { __editorRayStrokes: { reference: number; editable: number } }).__editorRayStrokes;
+    return strokes.reference > 0 && strokes.editable > 0;
+  })).toBe(true);
+  await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("CONFIRMED");
+  await save.click();
+  await expect(page.getByText(/Исправление сохранено в дневнике обратной связи/)).toBeVisible();
+  expect(posted).toHaveLength(1);
+  expect(posted[0]).toMatchObject({
+    signal_id: signalId, label: "CONFIRMED",
+    snapshot_revision: "a".repeat(64), bars_sha256: "b".repeat(64),
+    corrected_boundaries: [],
+  });
+});
