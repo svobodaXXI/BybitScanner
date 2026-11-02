@@ -79,17 +79,37 @@ def fixture():
 
 
 def check(conn, payload, store, *, evidence=None):
-    with (
-        mock.patch("tools.paper_two_orphan_proof.SQLiteStore", return_value=store),
-        mock.patch("tools.paper_two_orphan_proof.robot_entry_order_ids", return_value=(
-            SimpleNamespace(value="entry-1"),)),
-        mock.patch("tools.paper_two_orphan_proof.PaperRuntime._robot_entry_fees", return_value=0),
-        mock.patch("tools.paper_two_orphan_proof.prove_nonrobot_robot_close", side_effect=evidence),
-    ):
-        return prove_two_flat_orphans(conn, **payload)
+    # The caller supplies a single pinned READ-ONLY transaction. The proof
+    # must not silently accept an autocommit or writable SQLite connection.
+    conn.commit()
+    conn.execute("PRAGMA query_only=ON")
+    conn.execute("BEGIN")
+    try:
+        with (
+            mock.patch("tools.paper_two_orphan_proof.SQLiteStore", return_value=store),
+            mock.patch("tools.paper_two_orphan_proof.robot_entry_order_ids", return_value=(
+                SimpleNamespace(value="entry-1"),)),
+            mock.patch("tools.paper_two_orphan_proof.PaperRuntime._robot_entry_fees", return_value=0),
+            mock.patch("tools.paper_two_orphan_proof.prove_nonrobot_robot_close", side_effect=evidence),
+        ):
+            return prove_two_flat_orphans(conn, **payload)
+    finally:
+        conn.rollback()
+        conn.execute("PRAGMA query_only=OFF")
 
 
 class DualOrphanPreflightTests(TestCase):
+    def test_proof_rejects_autocommit_and_write_capable_snapshot(self):
+        conn, payload, store = fixture()
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "stable_snapshot_transaction_required"):
+            prove_two_flat_orphans(conn, **payload)
+        conn.execute("BEGIN")
+        try:
+            with self.assertRaisesRegex(FlatRecoveryBlocked, "read_only_snapshot_required"):
+                prove_two_flat_orphans(conn, **payload)
+        finally:
+            conn.rollback()
+
     def test_both_lots_need_independent_verified_close_evidence_read_only(self):
         conn, payload, store = fixture()
         before = conn.total_changes
