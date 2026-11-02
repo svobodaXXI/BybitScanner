@@ -511,7 +511,7 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                                 {"price": 105.8, "counted": True},
                             ],
                         },
-                        "pair_metrics": {"reference_price": 105, "start_width": 2},
+                        "pair_metrics": {"reference_price": 105, "start_width": 6},
                     },
                     "scanner_geometry_cursor": build_scanner_geometry_cursor_anchor(
                         geometry_index=100, source_candle_time_ms=source_open,
