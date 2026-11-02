@@ -36,6 +36,12 @@ def prove_two_flat_orphans(
     closing execution for EACH Robot lot. No other OPEN or APPROVED owner is
     allowed. Passing this preflight does not release the canonical stop fence.
     """
+    # A coordinator must supply a single already-open, non-writable snapshot.
+    # Reading independently committed rows can falsely pair a Flat projection
+    # with a close execution or candidate from another runtime generation.
+    _require(conn.in_transaction, "stable_snapshot_transaction_required")
+    _require(conn.execute("PRAGMA query_only").fetchone() == (1,),
+             "read_only_snapshot_required")
     _require(
         backend.get("ok") is True
         and backend.get("component") == "paper_backend"
