@@ -226,7 +226,7 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
              AND (status IS NULL OR status NOT IN ('filled', 'cancelled'))"""
     ).fetchone()[0])
     positions = connection.execute(
-        """SELECT symbol, side, quantity FROM position_projections
+        """SELECT symbol, side, quantity, sync_state FROM position_projections
            WHERE trading_account_id='paper'"""
     ).fetchall()
     unresolved_obligations = int(connection.execute(
@@ -248,7 +248,7 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
     ).fetchone()[0])
 
     non_flat_symbols: set[str] = set()
-    for symbol, side, raw_quantity in positions:
+    for symbol, side, raw_quantity, sync_state in positions:
         quantity = Decimal(str(raw_quantity))
         if not quantity.is_finite() or quantity < 0:
             raise InvalidOperation
@@ -258,6 +258,7 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
         if (
             side not in ("Flat", "Long", "Short")
             or (side == "Flat") != (quantity == 0)
+            or sync_state not in ("synced", "synchronized")
         ):
             raise SafeStopError(
                 "legacy PAPER shutdown blocked by inconsistent position projection"
