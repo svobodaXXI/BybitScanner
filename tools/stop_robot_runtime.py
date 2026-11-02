@@ -180,6 +180,14 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
     # entry LIMIT or exposure remains. But a non-flat position on the same
     # symbol as an APPROVED candidate is ambiguous partial-fill ownership and
     # therefore still blocks fail-closed.
+    # Exceptional shutdown may bypass a saturated owner queue, but cannot
+    # bypass the durable admission freeze. A still-enabled PAPER_AUTO can
+    # enqueue fresh work as soon as the SQLite writer reservation ends.
+    modes = connection.execute(
+        "SELECT mode FROM robot_autopilot_state WHERE trading_account_id='paper'"
+    ).fetchall()
+    if len(modes) != 1 or modes[0][0] != "OFF":
+        raise SafeStopError("legacy PAPER shutdown blocked: Autopilot OFF unproven")
     # Reject unknown ownership statuses before interpreting any candidate as
     # inert. SQL IN/NOT IN otherwise silently excludes NULL.
     unknown_candidate = connection.execute(
