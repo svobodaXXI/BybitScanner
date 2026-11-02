@@ -1,6 +1,6 @@
 """Unified owner runtime shutdown with fake HTTP, Robot state and clock; no real process."""
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import io
 import json
