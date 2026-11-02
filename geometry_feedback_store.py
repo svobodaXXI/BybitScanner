@@ -211,6 +211,15 @@ def record_review(payload: dict, snapshot: dict, *, directory=None) -> dict:
             os.fsync(f.fileno())
         try:
             os.link(temp, target)
+            # The file's fsync above does not persist its new directory entry.
+            # Acknowledge the review only after the final name is durable on
+            # the Linux/POSIX filesystem used by the deployed sidecar.
+            if os.name == "posix":
+                fd = os.open(directory_path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
             return record
         except FileExistsError:
             try:
