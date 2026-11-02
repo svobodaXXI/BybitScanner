@@ -1914,6 +1914,55 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "4321", "/F"])
 
 
+class BootstrapSinglePaperOwnerTests(unittest.TestCase):
+    def test_unreachable_backend_with_live_listener_never_spawns(self):
+        from tools.runtime_intent import RuntimeIntentBootstrap, Unreachable
+        spawned = []
+        def unreachable(url, timeout):
+            raise Unreachable("owner queue delayed health")
+        bootstrap = RuntimeIntentBootstrap(
+            root=ROOT, env={}, get=unreachable, require_telegram=False,
+            spawn=lambda *args: spawned.append(args),
+        )
+        with mock.patch.object(legacy, "probe_listener_pids", return_value=(0,)):
+            result = bootstrap.execute("ALL")
+        self.assertFalse(result.ok)
+        self.assertIn("listener is alive", result.message)
+        self.assertEqual(spawned, [])
+
+    def test_unreadable_backend_listener_state_never_spawns(self):
+        from tools.runtime_intent import RuntimeIntentBootstrap, Unreachable
+        spawned = []
+        bootstrap = RuntimeIntentBootstrap(
+            root=ROOT, env={},
+            get=lambda url, timeout: (_ for _ in ()).throw(Unreachable("timeout")),
+            require_telegram=False, spawn=lambda *args: spawned.append(args),
+        )
+        with mock.patch.object(
+            legacy, "probe_listener_pids",
+            side_effect=LegacyOwnerUnproven("no socket table"),
+        ):
+            result = bootstrap.execute("ALL")
+        self.assertFalse(result.ok)
+        self.assertIn("listener state cannot be proven", result.message)
+        self.assertEqual(spawned, [])
+
+    def test_unreachable_backend_without_listener_allows_existing_bootstrap(self):
+        from tools.runtime_intent import RuntimeIntentBootstrap, Unreachable
+        spawned = []
+        bootstrap = RuntimeIntentBootstrap(
+            root=ROOT, env={},
+            get=lambda url, timeout: (_ for _ in ()).throw(Unreachable("refused")),
+            require_telegram=False, spawn=lambda *args: spawned.append(args),
+            monotonic=iter([0.0, 61.0]).__next__,
+        )
+        with mock.patch.object(legacy, "probe_listener_pids", return_value=()):
+            result = bootstrap.execute("ALL")
+        self.assertFalse(result.ok)
+        self.assertIn("did not prove READY", result.message)
+        self.assertEqual(len(spawned), 1)
+
+
 def _p(pid, ppid, name, command_line, executable="", created=None):
     return ProcessInfo(pid, ppid, name, command_line, executable, created if created is not None else pid)
 
