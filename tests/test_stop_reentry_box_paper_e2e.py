@@ -62,6 +62,13 @@ class BoxRetryRealPaperE2E(MirrorStandaloneHarness):
                         daily_loss_gate_enabled=False,
                     )
                     self.assertEqual(original.result.outcome, OUTCOME_ALLOW)
+                    original_attempts = store._connection.execute(
+                        "SELECT candidate_id, attempt_index FROM robot_reentry_attempts "
+                        "ORDER BY attempt_index"
+                    ).fetchall()
+                    self.assertEqual([tuple(row) for row in original_attempts], [
+                        (first_id, 1),
+                    ])
                 _start_robot_monitor(runtime)
                 symbol = Symbol(SYMBOL)
                 key = PositionKey(ACCOUNT, Category.LINEAR, symbol, 0)
