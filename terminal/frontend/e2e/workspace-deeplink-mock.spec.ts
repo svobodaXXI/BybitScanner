@@ -62,10 +62,24 @@ for (const [mode, symbol, timeframe] of [
 }
 
 
-test("frozen Editor geometry renders and accepts owner feedback without live WebSocket", async ({ page }) => {
+test("frozen Editor geometry reviews source even when browser draft storage is blocked", async ({ page }) => {
   const signalId = "source:BTCUSDT:5:historic-wedge";
   const posted: Array<{ idempotency_key: string; [key: string]: unknown }> = [];
   await page.addInitScript(() => {
+    // A disabled browser drawing cache must not break immutable source display,
+    // owner verdict submission, or the explicit server acknowledgement.
+    const read = Storage.prototype.getItem;
+    const write = Storage.prototype.setItem;
+    Storage.prototype.getItem = function (key: string) {
+      if (key.startsWith("bybitscanner:editor-drawings:"))
+        throw new DOMException("Storage disabled", "SecurityError");
+      return read.call(this, key);
+    };
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (key.startsWith("bybitscanner:editor-drawings:"))
+        throw new DOMException("Storage full", "QuotaExceededError");
+      return write.call(this, key, value);
+    };
     const observations = { reference: 0, editable: 0 };
     Object.assign(window, { __editorRayStrokes: observations });
     const stroke = CanvasRenderingContext2D.prototype.stroke;
