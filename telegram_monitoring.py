@@ -39,6 +39,7 @@ from robot_lifecycle_posts import (
     load_lifecycle_state, mark_notified, save_lifecycle_state,
 )
 from robot_position_chart import render_position_chart
+from terminal.diary.closed_chart_archive import archive_closed_chart
 from robot_position_view import (
     chart_candle_limit, format_position_card, load_position_view, with_last_price,
 )
@@ -357,6 +358,11 @@ def _send_chart_card(chat_id, view, candles, caption, reply_markup) -> bool:
     with _CHART_LOCK:
         try:
             chart_path = render_position_chart(view, candles)
+            if not view.is_open and view.trade is not None:
+                try:
+                    archive_closed_chart(view, chart_path)
+                except Exception as archive_error:
+                    print("[CLOSED TRADE ARCHIVE ERROR]", view.symbol, archive_error)
         except Exception as exc:
             print("[POSITION CHART ERROR]", view.symbol, exc)
             return _delivered(
