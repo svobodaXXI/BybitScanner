@@ -1121,7 +1121,6 @@ class RuntimeShutdown:
                 raise SafeStopError("PAPER exposure coverage unavailable during drain") from exc
             if (
                 status != 200 or not isinstance(health, dict)
-                or health.get("healthy") is not True
                 or not isinstance(health.get("coverage_roles"), dict)
             ):
                 raise SafeStopError("PAPER exposure coverage unproven during drain")
@@ -1129,7 +1128,13 @@ class RuntimeShutdown:
             if any(not isinstance(key, str) or not key.strip()
                    or not isinstance(value, str) for key, value in roles.items()):
                 raise SafeStopError("PAPER exposure coverage malformed during drain")
-            return any(role == "EXPOSURE" for role in roles.values())
+            if not any(role == "EXPOSURE" for role in roles.values()):
+                # Legacy ENTRY_PENDING overflow has its own exact proof/retire
+                # gate. An unrelated unhealthy flag must not preempt it here.
+                return False
+            if health.get("healthy") is not True:
+                raise SafeStopError("protected PAPER exposure unhealthy during drain")
+            return True
 
         if not exposure_present():
             return False
