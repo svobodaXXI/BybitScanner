@@ -253,7 +253,17 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
         quantity = Decimal(str(raw_quantity))
         if not quantity.is_finite() or quantity < 0:
             raise InvalidOperation
-        if str(side) != "Flat" and quantity > 0:
+        # An internally inconsistent net projection cannot prove that a
+        # legacy backend has no Robot-owned exposure. Preserve genuine
+        # non-Robot Long/Short positions across shutdown; do not flatten them.
+        if (
+            side not in ("Flat", "Long", "Short")
+            or (side == "Flat") != (quantity == 0)
+        ):
+            raise SafeStopError(
+                "legacy PAPER shutdown blocked by inconsistent position projection"
+            )
+        if side != "Flat":
             normalized = str(symbol).strip().upper()
             if not normalized:
                 raise ValueError("blank PAPER position symbol")
