@@ -235,6 +235,13 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
   // Observe the first editable ray's canvas origin, then physically drag it.
   // This exercises the actual DrawingOverlay pointer path (not localStorage seeding).
   await page.addInitScript(() => {
+    const clear = CanvasRenderingContext2D.prototype.clearRect;
+    CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+      if (this.canvas.classList.contains("drawing-overlay")) {
+        (window as typeof window & { __editableRay?: { x: number; y: number } }).__editableRay = undefined;
+      }
+      return clear.apply(this, args);
+    };
     const original = CanvasRenderingContext2D.prototype.moveTo;
     CanvasRenderingContext2D.prototype.moveTo = function (x, y) {
       if (this.canvas.classList.contains("drawing-overlay") && this.strokeStyle === "#e0b45b") {
@@ -263,8 +270,15 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
   await page.mouse.down();
   await page.mouse.move(x + 2, y + 50, { steps: 6 });
   await page.mouse.up();
+  const startKey = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${signalId}`;
+  await expect.poll(() => page.evaluate((key) => {
+    const raw = localStorage.getItem(key);
+    const upper = raw ? JSON.parse(raw).drawings.find((item: { id: string }) => item.id === "editable:upper") : null;
+    return upper?.anchors[0] ?? null;
+  }, startKey)).not.toEqual({ logical: 0, price: 115 });
   await page.getByRole("button", { name: "Передать исправление" }).click();
-  await expect(page.getByText(/Исправление сохранено в дневнике обратной связи/)).toBeVisible();
+  await expect(page.locator(".editor-correction-export output[role=status]").last())
+    .toContainText("Исправление сохранено в дневнике обратной связи");
   expect(writes).toBe(1);
 
   await page.reload();
