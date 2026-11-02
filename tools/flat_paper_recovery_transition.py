@@ -251,6 +251,20 @@ def execute_flat_handoff(
             _assert(proof == JASMY_PROOF_LABEL,
                     "jasmy_flat_evidence_missing")
         elif dual_orphan_incident_20261103:
+            # Bind the actual opened SQLite main database, not just a path
+            # resolved before the writer reservation (symlink/rename TOCTOU).
+            databases = conn.execute("PRAGMA database_list").fetchall()
+            main_paths = [str(row[2]) for row in databases if row[1] == "main"]
+            _assert(len(main_paths) == 1 and bool(main_paths[0]),
+                    "dual_orphan_open_database_unproven")
+            opened_db = Path(main_paths[0]).resolve()
+            _assert(
+                opened_db == db_path.resolve()
+                and expected_database_identity(
+                    ROOT, {"BYBITSCANNER_PAPER_DB": str(opened_db)},
+                ) == expected_identity,
+                "dual_orphan_open_database_identity_mismatch",
+            )
             # This branch is separate from JASMY-only and cannot silently
             # accept APPROVED candidates, a third owner or stale protection.
             # The caller already holds BEGIN IMMEDIATE in writer_guard.
