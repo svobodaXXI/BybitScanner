@@ -575,11 +575,15 @@ class RuntimeShutdown:
                     # The old backend has no monitor idle guard. Freeze SQLite writers
                     # before the final process proof so an already in-flight pre-stop
                     # tick cannot create a durable LIMIT between proof and termination.
+                    # Read-only HTTP proof must precede BEGIN IMMEDIATE:
+                    # legacy health and protection handlers may need the same
+                    # SQLite writer slot. Do not call them under the barrier.
+                    backend_chain = self._prove_legacy_entry_backend_chain(legacy_proof)
                     with self._legacy_paper_guard():
-                        backend_chain = self._prove_legacy_entry_backend_chain(legacy_proof)
                         self._terminate_legacy_entry_backend(legacy_proof, backend_chain)
                         steps.append("backend:legacy-terminate")
-                        self._wait_gone(self._backend + "/api/health", "PAPER backend")
+                        self._wait_legacy_listener_gone()
+                    self._wait_gone(self._backend + "/api/health", "PAPER backend")
                     # Preserve operator control until the backend is proven
                     # gone. Never terminate Telegram first on a failed proof
                     # or an ambiguous legacy backend termination.
@@ -991,6 +995,27 @@ class RuntimeShutdown:
             raise SafeStopError("legacy PAPER backend identity changed during ownership proof")
         return chain
 
+    def _local_legacy_backend_chain(self) -> tuple[int, ...]:
+        """Resolve exact backend process/listener ownership without HTTP."""
+        location = urlsplit(self._backend)
+        try:
+            return tuple(self._legacy_resolver(
+                BACKEND, location.hostname or "", location.port or 0, self._root,
+            ))
+        except LegacyOwnerUnproven as exc:
+            raise SafeStopError(
+                f"PAPER backend legacy ownership could not be proven ({exc}); nothing was terminated"
+            ) from exc
+
+    def _wait_legacy_listener_gone(self) -> None:
+        """Observe OS listener exit while holding the writer barrier; no HTTP."""
+        deadline = self._monotonic() + EXIT_WAIT_S
+        while self._monotonic() < deadline:
+            if not self._listener_pids(self._backend, "PAPER backend"):
+                return
+            self._sleep(POLL_INTERVAL_S)
+        raise SafeStopError("PAPER backend listener remained active after legacy termination")
+
     def _shutdown_starved_legacy_runtime(
         self, telegram: str, steps: list[str],
     ) -> ShutdownResult:
@@ -1013,21 +1038,17 @@ class RuntimeShutdown:
         except Exception as exc:
             raise SafeStopError("legacy PAPER durable shutdown evidence is unavailable") from exc
 
+        # Complete all HTTP snapshots while the backend can still acquire
+        # its owner writer slot. Repeat local process-chain attestation under
+        # the barrier without any HTTP or foreign DB writer dependency.
+        backend_chain = self._resolve_legacy_backend_chain_without_scanner(proof)
         self._mark("acquiring bounded SQLite writer barrier")
         with self._legacy_paper_guard():
             self._mark("SQLite writer barrier acquired")
-            backend_chain = self._resolve_legacy_backend_chain_without_scanner(proof)
-            self._mark(f"legacy backend chain proven: {backend_chain}")
             steps.append("runtime:legacy-starvation-proof")
             if self._robot_state() != ROBOT_STOPPED_PAIR:
                 raise SafeStopError("Robot changed while legacy shutdown barrier was held")
-            # Do not require overflow to remain present after we have entered
-            # the proven starvation path. Re-prove only the stable temporary
-            # coverage shape; queue recovery is a safer state, not a blocker.
-            self._require_temporary_entry_arm_shape()
-            if self._legacy_backend_attribution() != proof:
-                raise SafeStopError("legacy PAPER backend identity changed before final termination")
-            final_chain = self._resolve_legacy_backend_chain_without_scanner(proof)
+            final_chain = self._local_legacy_backend_chain()
             if final_chain != backend_chain:
                 raise SafeStopError("legacy PAPER backend process chain changed; nothing was terminated")
             self._mark(f"terminating exact legacy backend chain: {final_chain}")
@@ -1038,7 +1059,8 @@ class RuntimeShutdown:
                     f"PAPER backend legacy termination failed: {type(exc).__name__}"
                 ) from exc
             steps.append("backend:legacy-starvation-terminate")
-            self._wait_gone(self._backend + "/api/health", "PAPER backend")
+            self._wait_legacy_listener_gone()
+        self._wait_gone(self._backend + "/api/health", "PAPER backend")
         # The Telegram control plane must survive any failed/ambiguous backend
         # exit. Only stop it after the exact legacy backend is observed gone.
         if telegram == PRESENT:
@@ -1094,10 +1116,9 @@ class RuntimeShutdown:
         # operator control must survive an unknown backend outcome.
         if self._robot_state() != ROBOT_STOPPED_PAIR:
             raise SafeStopError("Robot is not fully STOPPED; runtime kept alive")
-        self._require_scanner_stopped()
-        self._require_temporary_entry_arm_shape()
-        if self._legacy_backend_attribution() != proof:
-            raise SafeStopError("legacy PAPER backend identity changed before termination")
+        # Only locally observed durable Robot state and the exact owner
+        # process/listener chain are admissible while SQLite writers are
+        # frozen. HTTP health/protection reads here can deadlock the owner.
         location = urlsplit(self._backend)
         try:
             final_chain = tuple(self._legacy_resolver(
@@ -1109,9 +1130,6 @@ class RuntimeShutdown:
             ) from exc
         if final_chain != expected_chain:
             raise SafeStopError("legacy PAPER backend process chain changed; nothing was terminated")
-        self._require_temporary_entry_arm_shape()
-        if self._legacy_backend_attribution() != proof:
-            raise SafeStopError("legacy PAPER backend identity changed during final proof")
         try:
             self._legacy_terminator(final_chain)
         except Exception as exc:
