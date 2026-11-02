@@ -196,6 +196,42 @@ class TransitionCase(unittest.TestCase):
                 execute_flat_handoff(expected_identity=identity, **common)
         self.assertEqual(signals, [])
 
+    def test_dual_orphan_rejects_different_open_main_db_under_barrier(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        with tempfile.TemporaryDirectory() as tmp:
+            intended = Path(tmp) / "intended.sqlite3"
+            substituted = Path(tmp) / "other.sqlite3"
+            with sqlite3.connect(substituted) as dest:
+                conn.backup(dest)
+            conn.close()
+            identity = expected_database_identity(
+                ROOT, {"BYBITSCANNER_PAPER_DB": str(intended)},
+            )
+            snapshots["backend"].update(
+                build_sha=JASMY_OLD_SHA, process_instance_id="old-paper-process",
+                database_identity=identity,
+            )
+            signals = []
+            @contextmanager
+            def wrong_file_barrier(_):
+                with sqlite3.connect(substituted) as actual:
+                    actual.execute("BEGIN IMMEDIATE")
+                    actual.execute("PRAGMA query_only=ON")
+                    yield actual
+            with self.assertRaisesRegex(
+                FlatRecoveryBlocked, "dual_orphan_open_database_identity_mismatch",
+            ):
+                execute_flat_handoff(
+                    db_path=intended, expected_identity=identity, expected_pid=PID,
+                    expected_build_sha=JASMY_OLD_SHA, execute=True,
+                    dual_orphan_incident_20261103=True, snapshots=snapshots,
+                    service_pid=lambda: PID, start_token=lambda p: "start-77",
+                    listener_owner=lambda p: True, writer_guard=wrong_file_barrier,
+                    send_interrupt=lambda *args: signals.append(args),
+                )
+            self.assertEqual(signals, [])
+
     def test_dual_orphan_cannot_combine_jasmy_or_legacy_exceptions(self):
         with self.assertRaisesRegex(FlatRecoveryBlocked, "mutually_exclusive_flat_incident_proofs"):
             execute_flat_handoff(
