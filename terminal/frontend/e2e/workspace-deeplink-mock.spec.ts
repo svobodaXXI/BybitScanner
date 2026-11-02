@@ -161,6 +161,10 @@ test("frozen Editor geometry reviews source even when browser draft storage is b
     const strokes = (window as unknown as { __editorRayStrokes: { reference: number; editable: number } }).__editorRayStrokes;
     return strokes.reference > 0 && strokes.editable > 0;
   })).toBe(true);
+  // The toolbar is initially empty of undo history; clicking Undo must
+  // not claim that the unchanged Scanner geometry is an unsaved review.
+  await page.getByRole("button", { name: "Undo drawing" }).click();
+  await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
   await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("CONFIRMED");
   await save.click();
   await expect(page.getByText(/Не удалось сохранить: Сервер не подтвердил точное сохранение отзыва/)).toBeVisible();
