@@ -180,6 +180,7 @@ def execute_flat_handoff(
     jasmy_incident_20261102: bool = False,
     service_pid=_service_pid, start_token=_process_start_token,
     send_interrupt=None, is_alive=None, writer_guard=_frozen_snapshot,
+    listener_owner=_has_exact_local_listener,
     monotonic=time.monotonic, sleep=time.sleep,
 ) -> str:
     """One-shot SIGINT, not a systemd override and never a SIGKILL fallback."""
@@ -248,6 +249,11 @@ def execute_flat_handoff(
                     "flat_recovery_evidence_missing")
         _assert(service_pid() == expected_pid and start_token(expected_pid) == token,
                 "backend_process_changed_during_proof")
+        # In the JASMY exception the systemd MainPID must also own the exact
+        # local PAPER listener. A healthy HTTP response from another process
+        # cannot authorize signaling this PID. Recheck after durable proof.
+        if jasmy_incident_20261102:
+            _assert(listener_owner(expected_pid), "jasmy_backend_listener_owner_unproven")
         if not execute:
             return "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
         # SIGINT allows Python main() to unwind its finally: server, market
