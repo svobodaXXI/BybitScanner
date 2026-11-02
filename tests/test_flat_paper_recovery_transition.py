@@ -20,7 +20,7 @@ PID = 500879
 
 class TransitionCase(unittest.TestCase):
     def case(self, *, execute=False, mutate=None, token=None, pid=None, exit_after=True,
-             jasmy_incident=False):
+             jasmy_incident=False, listener_owned=True):
         conn, snapshots = fixture()
         snapshots.pop("expected_identity")  # passed independently by handoff
         snapshots["backend"]["build_sha"] = JASMY_OLD_SHA if jasmy_incident else SHA
@@ -50,6 +50,7 @@ class TransitionCase(unittest.TestCase):
             expected_build_sha=JASMY_OLD_SHA if jasmy_incident else SHA,
             execute=execute, snapshots=snapshots,
             jasmy_incident_20261102=jasmy_incident,
+            listener_owner=lambda p: listener_owned,
             service_pid=pid or (lambda: PID if live[0] else 0),
             start_token=token or (lambda p: "start-77"),
             send_interrupt=interrupt, is_alive=lambda p: live[0],
@@ -92,6 +93,28 @@ class TransitionCase(unittest.TestCase):
                               and e[0] == "signal"]), 1)
         self.assertEqual(events[0], "barrier:enter")
         self.assertEqual(events[-1], "barrier:exit")
+        proof.assert_called_once()
+
+    def test_jasmy_incident_refuses_unowned_listener_without_signal(self):
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_jasmy_legacy_flat",
+            return_value=JASMY_PROOF,
+        ) as proof:
+            with self.assertRaisesRegex(
+                FlatRecoveryBlocked, "jasmy_backend_listener_owner_unproven",
+            ):
+                self.case(jasmy_incident=True, execute=True, listener_owned=False)
+        proof.assert_called_once()
+
+    def test_jasmy_incident_refuses_unowned_listener_even_for_preflight(self):
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_jasmy_legacy_flat",
+            return_value=JASMY_PROOF,
+        ) as proof:
+            with self.assertRaisesRegex(
+                FlatRecoveryBlocked, "jasmy_backend_listener_owner_unproven",
+            ):
+                self.case(jasmy_incident=True, execute=False, listener_owned=False)
         proof.assert_called_once()
 
     def test_jasmy_incident_rejects_missing_proof_without_signal(self):
