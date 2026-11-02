@@ -20,7 +20,7 @@ PID = 500879
 
 class TransitionCase(unittest.TestCase):
     def case(self, *, execute=False, mutate=None, token=None, pid=None, exit_after=True,
-             jasmy_incident=False):
+             jasmy_incident=False, listener_owned=True):
         conn, snapshots = fixture()
         snapshots.pop("expected_identity")  # passed independently by handoff
         snapshots["backend"]["build_sha"] = JASMY_OLD_SHA if jasmy_incident else SHA
@@ -50,6 +50,7 @@ class TransitionCase(unittest.TestCase):
             expected_build_sha=JASMY_OLD_SHA if jasmy_incident else SHA,
             execute=execute, snapshots=snapshots,
             jasmy_incident_20261102=jasmy_incident,
+            listener_owner=lambda p: listener_owned,
             service_pid=pid or (lambda: PID if live[0] else 0),
             start_token=token or (lambda p: "start-77"),
             send_interrupt=interrupt, is_alive=lambda p: live[0],
@@ -90,8 +91,44 @@ class TransitionCase(unittest.TestCase):
         self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
         self.assertEqual(len([e for e in events if isinstance(e, tuple)
                               and e[0] == "signal"]), 1)
-        self.assertEqual(events[0], "barrier:enter")
-        self.assertEqual(events[-1], "barrier:exit")
+        self.assertEqual(events, [
+            "barrier:enter", ("signal", PID, signal.SIGINT), "barrier:exit",
+        ])
+        proof.assert_called_once()
+
+    def test_jasmy_incident_refuses_unowned_listener_without_signal(self):
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_jasmy_legacy_flat",
+            return_value=JASMY_PROOF,
+        ) as proof:
+            with self.assertRaisesRegex(
+                FlatRecoveryBlocked, "jasmy_backend_listener_owner_unproven",
+            ):
+                self.case(jasmy_incident=True, execute=True, listener_owned=False)
+        proof.assert_called_once()
+
+    def test_generic_handoff_refuses_unowned_listener_before_sigint(self):
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "backend_listener_owner_unproven",
+        ):
+            self.case(execute=True, listener_owned=False)
+
+    def test_generic_preflight_without_signal_does_not_claim_owner(self):
+        # Preflight proves FLAT only; execution must independently prove the
+        # listener after the final SQLite evidence check.
+        result, events, _ = self.case(execute=False, listener_owned=False)
+        self.assertTrue(result.startswith("PRECHECK_ONLY:"))
+        self.assertEqual(events, ["barrier:enter", "barrier:exit"])
+
+    def test_jasmy_incident_refuses_unowned_listener_even_for_preflight(self):
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_jasmy_legacy_flat",
+            return_value=JASMY_PROOF,
+        ) as proof:
+            with self.assertRaisesRegex(
+                FlatRecoveryBlocked, "jasmy_backend_listener_owner_unproven",
+            ):
+                self.case(jasmy_incident=True, execute=False, listener_owned=False)
         proof.assert_called_once()
 
     def test_jasmy_incident_rejects_missing_proof_without_signal(self):
@@ -168,6 +205,41 @@ class TransitionCase(unittest.TestCase):
             "barrier:enter", ("signal", PID, signal.SIGINT), "barrier:exit",
         ])
 
+    def test_backend_exit_probe_runs_only_after_writer_barrier_release(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(build_sha=SHA, process_instance_id="old-paper-process")
+        events = []
+        writer_held = [False]
+        @contextmanager
+        def barrier(_):
+            writer_held[0] = True
+            events.append("barrier:enter")
+            try:
+                yield conn
+            finally:
+                writer_held[0] = False
+                events.append("barrier:exit")
+        def interrupt(pid, sig):
+            self.assertTrue(writer_held[0])
+            events.append("signal")
+        def probe(pid):
+            self.assertFalse(writer_held[0], "Backend exit needs released SQLite writer")
+            events.append("exit:probe")
+            return False
+        result = execute_flat_handoff(
+            db_path=Path("/no-vps-access"), expected_identity=IDENTITY,
+            expected_pid=PID, expected_build_sha=SHA, execute=True,
+            snapshots=snapshots, service_pid=lambda: PID,
+            start_token=lambda p: "start-77", writer_guard=barrier,
+            send_interrupt=interrupt, is_alive=probe, listener_owner=lambda p: True,
+            monotonic=lambda: 0, sleep=lambda seconds: None,
+        )
+        self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
+        self.assertEqual(events, [
+            "barrier:enter", "signal", "barrier:exit", "exit:probe",
+        ])
+
     def test_failed_systemd_unit_after_signal_is_successful_exit(self):
         # In production _service_pid raises backend_unit_not_active once
         # systemd marks the expected, now-dead owner process as failed.
@@ -194,6 +266,7 @@ class TransitionCase(unittest.TestCase):
             snapshots=snapshots, service_pid=service_pid,
             start_token=lambda p: "start-77", writer_guard=barrier,
             send_interrupt=interrupt, is_alive=lambda p: live[0],
+            listener_owner=lambda p: True,
             monotonic=lambda: 0, sleep=lambda seconds: None,
         )
         self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
@@ -216,7 +289,7 @@ class TransitionCase(unittest.TestCase):
             service_pid=lambda: PID,
             start_token=lambda p: "start-77", writer_guard=barrier,
             send_interrupt=lambda pid, sig: signals.append((pid, sig)),
-            is_alive=lambda pid: True,
+            listener_owner=lambda p: True, is_alive=lambda pid: True,
             monotonic=lambda: next(ticks), sleep=lambda seconds: None,
         )
         self.assertTrue(result.startswith("OUTCOME_UNKNOWN:"))

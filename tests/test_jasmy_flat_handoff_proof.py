@@ -84,11 +84,44 @@ class JASMYLegacyGateTests(TestCase):
         self.assertEqual(store.get_paper_command_by_order_link.call_args.args[1],
                          "tw_ce6b00000000000000000000000000000")
 
+    def test_jasmy_handoff_matches_canonical_position_sync_states(self):
+        for state in ("synced", "synchronized"):
+            with self.subTest(sync_state=state):
+                db, payload, store = fixture()
+                db.execute(
+                    "UPDATE position_projections SET sync_state=? "
+                    "WHERE symbol='ICPUSDT'", (state,),
+                )
+                before = db.total_changes
+                self.assertEqual(self.check(db, payload, store), PROOF_LABEL)
+                self.assertEqual(db.total_changes, before)
+                db.close()
+        for state in (None, "", "stale", "unknown", "pending"):
+            with self.subTest(sync_state=state):
+                db, payload, store = fixture()
+                db.execute(
+                    "UPDATE position_projections SET sync_state=? "
+                    "WHERE symbol='ICPUSDT'", (state,),
+                )
+                before = db.total_changes
+                with self.assertRaisesRegex(
+                    FlatRecoveryBlocked, "paper_position_not_proven_flat",
+                ):
+                    self.check(db, payload, store)
+                self.assertEqual(db.total_changes, before)
+                db.close()
+
     def test_real_exposure_or_limit_or_other_orphan_never_passes(self):
         mutators = [
             lambda d, p: d.execute("UPDATE position_projections SET side='Long', quantity='1' WHERE symbol='ICPUSDT'"),
             lambda d, p: d.execute("INSERT INTO robot_trades VALUES ('paper','other','other','ICPUSDT',NULL)"),
             lambda d, p: d.execute("INSERT INTO robot_candidates VALUES ('paper','other','ICPUSDT','APPROVED')"),
+            # SQLite NOT IN / != do not match NULL unless explicitly guarded.
+            lambda d, p: d.execute("INSERT INTO paper_limit_orders VALUES ('paper',NULL)"),
+            lambda d, p: d.execute("INSERT INTO trading_commands VALUES ('paper',NULL)"),
+            lambda d, p: d.execute("INSERT INTO paper_protection_obligations VALUES ('paper',NULL)"),
+            lambda d, p: d.execute("INSERT INTO robot_candidates VALUES ('paper','other','ICPUSDT',NULL)"),
+            lambda d, p: d.execute("INSERT INTO robot_candidates VALUES ('paper','other','ICPUSDT','UNEXPECTED')"),
             lambda d, p: d.execute("INSERT INTO paper_limit_orders VALUES ('paper','open')"),
             lambda d, p: d.execute("INSERT INTO trading_commands VALUES ('paper','submitting')"),
             lambda d, p: d.execute("INSERT INTO paper_protection_obligations VALUES ('paper','DISPATCHING')"),

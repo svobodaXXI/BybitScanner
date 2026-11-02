@@ -13,7 +13,7 @@ def fixture():
     conn.executescript("""
         CREATE TABLE robot_runtime_state (trading_account_id TEXT, mode TEXT, recovery_status TEXT);
         CREATE TABLE robot_autopilot_state (trading_account_id TEXT, mode TEXT);
-        CREATE TABLE position_projections (trading_account_id TEXT, symbol TEXT, side TEXT, quantity TEXT);
+        CREATE TABLE position_projections (trading_account_id TEXT, symbol TEXT, side TEXT, quantity TEXT, sync_state TEXT);
         CREATE TABLE robot_trades (
             trade_id TEXT, trading_account_id TEXT, symbol TEXT, pattern TEXT,
             exit_reason TEXT, exit_time_ms INTEGER, exit_price TEXT
@@ -21,6 +21,9 @@ def fixture():
         CREATE TABLE robot_candidates (trading_account_id TEXT, symbol TEXT, status TEXT);
         CREATE TABLE paper_limit_orders (trading_account_id TEXT, status TEXT);
         CREATE TABLE trading_commands (trading_account_id TEXT, current_state TEXT);
+        CREATE TABLE reconciliation_checkpoints (
+            trading_account_id TEXT, completed_at_ms INTEGER
+        );
         CREATE TABLE paper_protection_obligations (
             trading_account_id TEXT, symbol TEXT, trade_id TEXT, winning_leg TEXT,
             status TEXT, order_id TEXT, exec_id TEXT, observed_quantity TEXT
@@ -31,8 +34,8 @@ def fixture():
         );
         INSERT INTO robot_runtime_state VALUES ('paper','ROBOT_RUNNING','RECONCILIATION_REQUIRED');
         INSERT INTO robot_autopilot_state VALUES ('paper','OFF');
-        INSERT INTO position_projections VALUES ('paper','BUSDT','Flat','0');
-        INSERT INTO position_projections VALUES ('paper','VIRTUALUSDT','Flat','0');
+        INSERT INTO position_projections VALUES ('paper','BUSDT','Flat','0','synced');
+        INSERT INTO position_projections VALUES ('paper','VIRTUALUSDT','Flat','0','synced');
         INSERT INTO robot_trades VALUES
             ('box-busdt','paper','BUSDT','IKIGAI_BOX','TAKE',100,'0.1280451745');
         INSERT INTO paper_protection_obligations VALUES
@@ -164,6 +167,82 @@ class FlatRecoveryGateTests(unittest.TestCase):
         conn.execute("DELETE FROM position_projections WHERE symbol='BUSDT'")
         assert_blocked(self, conn, payload)
 
+    def test_unfinished_paper_reconciliation_blocks_historical_handoff(self):
+        conn, payload = fixture()
+        conn.execute(
+            "INSERT INTO reconciliation_checkpoints VALUES ('other',NULL)"
+        )
+        # Other account's unfinished work must not affect the PAPER gate.
+        self.assertEqual(
+            prove_flat_recovery(conn, **payload),
+            "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY",
+        )
+        conn.execute(
+            "INSERT INTO reconciliation_checkpoints VALUES ('paper',NULL)"
+        )
+        before = conn.total_changes
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "unfinished_reconciliation_checkpoint",
+        ):
+            prove_flat_recovery(conn, **payload)
+        self.assertEqual(conn.total_changes, before)
+        conn.execute(
+            "UPDATE reconciliation_checkpoints SET completed_at_ms=100 "
+            "WHERE trading_account_id='paper'"
+        )
+        self.assertEqual(
+            prove_flat_recovery(conn, **payload),
+            "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY",
+        )
+        conn.close()
+
+    def test_flat_projection_must_be_durably_synchronized(self):
+        for status in (None, "", "unknown", "stale", "pending"):
+            with self.subTest(sync_state=status):
+                conn, payload = fixture()
+                conn.execute(
+                    "UPDATE position_projections SET sync_state=? "
+                    "WHERE symbol='BUSDT'", (status,),
+                )
+                before = conn.total_changes
+                assert_blocked(self, conn, payload)
+                self.assertEqual(conn.total_changes, before)
+                conn.close()
+        # Both canonical synchronized markers remain valid, never used to
+        # infer exposure from an untrusted projection.
+        conn, payload = fixture()
+        conn.execute(
+            "UPDATE position_projections SET sync_state='synchronized' "
+            "WHERE symbol='VIRTUALUSDT'"
+        )
+        self.assertEqual(
+            prove_flat_recovery(conn, **payload),
+            "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY",
+        )
+        conn.close()
+
+    def test_null_and_unknown_durable_work_never_proves_flat(self):
+        # SQLite three-valued logic: NOT IN and != silently exclude NULL.
+        # This historical exception must refuse any unclassified work, not
+        # only explicitly OPEN candidates or known pending commands.
+        statements = (
+            "INSERT INTO robot_candidates VALUES ('paper','NEWUSDT',NULL)",
+            "INSERT INTO robot_candidates VALUES ('paper','NEWUSDT','APPROVED')",
+            "INSERT INTO robot_candidates VALUES ('paper','NEWUSDT','UNKNOWN')",
+            "INSERT INTO paper_limit_orders VALUES ('paper',NULL)",
+            "INSERT INTO trading_commands VALUES ('paper',NULL)",
+            "INSERT INTO paper_protection_obligations VALUES "
+            "('paper','OTHERUSDT','unknown','STOP',NULL,'order','exec','1')",
+        )
+        for statement in statements:
+            with self.subTest(statement=statement):
+                conn, payload = fixture()
+                conn.execute(statement)
+                before = conn.total_changes
+                assert_blocked(self, conn, payload)
+                self.assertEqual(conn.total_changes, before)
+                conn.close()
+
     def test_active_limit_and_unknown_limit_block(self):
         for status in ("open", "partially_filled", "unknown"):
             with self.subTest(status=status):
@@ -208,6 +287,43 @@ class FlatRecoveryGateTests(unittest.TestCase):
             "('paper','NEWUSDT','new','STOP','TRIGGERED','new-order','new-exec','1')"
         )
         assert_blocked(self, conn, payload)
+
+    def test_busdt_stop_requires_finite_positive_economics(self):
+        # Matching infinities are equal as Decimal values, but can never
+        # attest an immutable PAPER fill or a safe recovery handoff.
+        cases = (
+            ("obligation-and-fill-quantity-infinity",
+             "UPDATE paper_protection_obligations SET observed_quantity='Infinity'",
+             "UPDATE executions SET quantity='Infinity'"),
+            ("trade-and-fill-price-infinity",
+             "UPDATE robot_trades SET exit_price='Infinity'",
+             "UPDATE executions SET price='Infinity'"),
+            ("negative-quantities",
+             "UPDATE paper_protection_obligations SET observed_quantity='-487'",
+             "UPDATE executions SET quantity='-487'"),
+            ("zero-prices",
+             "UPDATE robot_trades SET exit_price='0'",
+             "UPDATE executions SET price='0'"),
+            ("malformed-quantity",
+             "UPDATE paper_protection_obligations SET observed_quantity='not-a-number'",
+             None),
+            ("missing-execution-price",
+             "UPDATE executions SET price=NULL",
+             None),
+        )
+        for name, first, second in cases:
+            with self.subTest(case=name):
+                conn, payload = fixture()
+                conn.execute(first)
+                if second is not None:
+                    conn.execute(second)
+                before = conn.total_changes
+                with self.assertRaisesRegex(
+                    FlatRecoveryBlocked, "busdt_historical_stop_evidence_unproven",
+                ):
+                    prove_flat_recovery(conn, **payload)
+                self.assertEqual(conn.total_changes, before)
+                conn.close()
 
     def test_stop_execution_cannot_be_misattributed(self):
         for column, value in (

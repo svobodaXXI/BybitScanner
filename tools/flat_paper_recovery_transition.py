@@ -180,6 +180,7 @@ def execute_flat_handoff(
     jasmy_incident_20261102: bool = False,
     service_pid=_service_pid, start_token=_process_start_token,
     send_interrupt=None, is_alive=None, writer_guard=_frozen_snapshot,
+    listener_owner=_has_exact_local_listener,
     monotonic=time.monotonic, sleep=time.sleep,
 ) -> str:
     """One-shot SIGINT, not a systemd override and never a SIGKILL fallback."""
@@ -248,6 +249,16 @@ def execute_flat_handoff(
                     "flat_recovery_evidence_missing")
         _assert(service_pid() == expected_pid and start_token(expected_pid) == token,
                 "backend_process_changed_during_proof")
+        # A healthy HTTP response from a different owner must never authorize
+        # SIGINT to the systemd MainPID. Require the exact PAPER listener for
+        # every execution path, not just the incident-scoped JASMY exception.
+        # Preserve JASMY's stronger preflight requirement as well.
+        if execute or jasmy_incident_20261102:
+            _assert(
+                listener_owner(expected_pid),
+                "jasmy_backend_listener_owner_unproven" if jasmy_incident_20261102
+                else "backend_listener_owner_unproven",
+            )
         if not execute:
             return "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
         # SIGINT allows Python main() to unwind its finally: server, market
@@ -256,19 +267,22 @@ def execute_flat_handoff(
             _send_exact_sigint(expected_pid, token)
         else:
             send_interrupt(expected_pid, signal.SIGINT)
-        probe = is_alive if is_alive is not None else (
-            lambda pid: Path(f"/proc/{pid}/stat").exists()
-        )
-        deadline = monotonic() + 15
-        while monotonic() < deadline:
-            # Do not call _service_pid after SIGINT: it requires ActiveState=active
-            # and raises backend_unit_not_active when the intended exit succeeds.
-            # Only disappearance of the exact previously attested /proc PID
-            # proves exit. A changed/failed unit alone cannot prove exit.
-            if not probe(expected_pid):
-                return "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
-            sleep(0.25)
-        return "OUTCOME_UNKNOWN: single SIGINT sent, do not retry or deploy"
+    # Release SQLite's writer reservation immediately after the single SIGINT.
+    # Backend cleanup may need to write durable final state before the process
+    # disappears; polling while holding BEGIN IMMEDIATE can starve that exit.
+    probe = is_alive if is_alive is not None else (
+        lambda pid: Path(f"/proc/{pid}/stat").exists()
+    )
+    deadline = monotonic() + 15
+    while monotonic() < deadline:
+        # Do not call _service_pid after SIGINT: it requires ActiveState=active
+        # and raises backend_unit_not_active when the intended exit succeeds.
+        # Only disappearance of the exact previously attested /proc PID
+        # proves exit. A changed/failed unit alone cannot prove exit.
+        if not probe(expected_pid):
+            return "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
+        sleep(0.25)
+    return "OUTCOME_UNKNOWN: single SIGINT sent, do not retry or deploy"
 
 
 def main(argv=None) -> int:

@@ -96,7 +96,7 @@ def prove_jasmy_legacy_flat(
             bool(symbol) and side == "Flat"
             and Decimal(str(quantity)).is_finite()
             and Decimal(str(quantity)) == 0
-            and sync_state == "synced"
+            and sync_state in ("synced", "synchronized")
             for symbol, side, quantity, sync_state in rows
         ), "paper_position_not_proven_flat")
     except (InvalidOperation, TypeError, ValueError) as exc:
@@ -112,7 +112,7 @@ def prove_jasmy_legacy_flat(
     )
     candidates = conn.execute(
         "SELECT candidate_id, symbol, status FROM robot_candidates "
-        "WHERE trading_account_id='paper' AND status IN ('OPEN','APPROVED')",
+        "WHERE trading_account_id='paper' AND (status IS NULL OR status NOT IN ('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))",
     ).fetchall()
     _require(
         [tuple(row) for row in candidates] == [(CANDIDATE_ID, SYMBOL.value, "OPEN")],
@@ -120,16 +120,16 @@ def prove_jasmy_legacy_flat(
     )
     _require(conn.execute(
         "SELECT COUNT(*) FROM paper_limit_orders WHERE trading_account_id='paper' "
-        "AND status NOT IN ('filled','cancelled')",
+        "AND (status IS NULL OR status NOT IN ('filled','cancelled'))",
     ).fetchone()[0] == 0, "active_or_unknown_paper_limit")
     _require(conn.execute(
         "SELECT COUNT(*) FROM trading_commands WHERE trading_account_id='paper' "
-        "AND current_state NOT IN "
-        "('filled','cancelled','amended','rejected','failed','owner_attested_closed')",
+        "AND (current_state IS NULL OR current_state NOT IN "
+        "('filled','cancelled','amended','rejected','failed','owner_attested_closed'))",
     ).fetchone()[0] == 0, "unfinished_or_unknown_trading_command")
     _require(conn.execute(
         "SELECT COUNT(*) FROM paper_protection_obligations "
-        "WHERE trading_account_id='paper' AND status!='RESOLVED'",
+        "WHERE trading_account_id='paper' AND (status IS NULL OR status!='RESOLVED')",
     ).fetchone()[0] == 0, "unresolved_protection_obligation")
     _require(conn.execute(
         "SELECT COUNT(*) FROM reconciliation_checkpoints "

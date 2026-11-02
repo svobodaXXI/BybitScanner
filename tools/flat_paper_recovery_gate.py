@@ -113,17 +113,18 @@ def prove_flat_recovery(
         "durable_autopilot_not_off",
     )
     positions = conn.execute(
-        "SELECT symbol, side, quantity FROM position_projections "
+        "SELECT symbol, side, quantity, sync_state FROM position_projections "
         "WHERE trading_account_id='paper'",
     ).fetchall()
-    for symbol, side, raw_quantity in positions:
+    for symbol, side, raw_quantity, sync_state in positions:
         try:
             quantity = Decimal(str(raw_quantity))
         except (InvalidOperation, TypeError, ValueError) as exc:
             raise FlatRecoveryBlocked("invalid_paper_position_quantity") from exc
         _require(
             bool(symbol) and side == "Flat" and quantity.is_finite()
-            and quantity == 0, "paper_position_not_proven_flat",
+            and quantity == 0 and sync_state in ("synced", "synchronized"),
+            "paper_position_not_proven_flat",
         )
     _require(
         conn.execute(
@@ -135,14 +136,14 @@ def prove_flat_recovery(
     _require(
         conn.execute(
             "SELECT COUNT(*) FROM robot_candidates "
-            "WHERE trading_account_id='paper' AND status='OPEN'",
+            "WHERE trading_account_id='paper' AND (status IS NULL OR status NOT IN ('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))",
         ).fetchone()[0] == 0,
         "open_robot_candidate",
     )
     _require(
         conn.execute(
             "SELECT COUNT(*) FROM paper_limit_orders "
-            "WHERE trading_account_id='paper' AND status NOT IN ('filled','cancelled')",
+            "WHERE trading_account_id='paper' AND (status IS NULL OR status NOT IN ('filled','cancelled'))",
         ).fetchone()[0] == 0,
         "active_or_unknown_paper_limit",
     )
@@ -150,10 +151,21 @@ def prove_flat_recovery(
     _require(
         conn.execute(
             "SELECT COUNT(*) FROM trading_commands WHERE trading_account_id='paper' "
-            f"AND current_state NOT IN ({placeholders})",
+            f"AND (current_state IS NULL OR current_state NOT IN ({placeholders}))",
             _TERMINAL_COMMANDS,
         ).fetchone()[0] == 0,
         "unfinished_or_unknown_trading_command",
+    )
+
+    # An interrupted reconciliation can still own pending PAPER work even
+    # when positions, LIMITs and commands appear terminal. Preserve the same
+    # account-scoped checkpoint fence used by canonical shutdown/JASMY proof.
+    _require(
+        conn.execute(
+            "SELECT COUNT(*) FROM reconciliation_checkpoints "
+            "WHERE trading_account_id='paper' AND completed_at_ms IS NULL",
+        ).fetchone()[0] == 0,
+        "unfinished_reconciliation_checkpoint",
     )
 
     obligations = conn.execute(
@@ -166,12 +178,21 @@ def prove_flat_recovery(
         " AND t.trading_account_id=o.trading_account_id AND t.symbol=o.symbol "
         "LEFT JOIN executions e ON e.trading_account_id=o.trading_account_id "
         " AND e.category='linear' AND e.exec_id=o.exec_id "
-        "WHERE o.trading_account_id='paper' AND o.status!='RESOLVED'",
+        "WHERE o.trading_account_id='paper' AND (o.status IS NULL OR o.status!='RESOLVED')",
     ).fetchall()
     _require(len(obligations) == 1, "unexpected_unresolved_obligations")
     (symbol, trade_id, leg, status, order_id, exec_id, observed_quantity,
      pattern, reason, exit_time, exit_price, execution_order, execution_symbol,
      executed_qty, execution_time, execution_price, execution_side) = obligations[0]
+    # Decimal equality alone can accept matching infinities; malformed
+    # values must fail as evidence, not escape as a numeric exception.
+    try:
+        observed = Decimal(str(observed_quantity))
+        executed = Decimal(str(executed_qty))
+        trade_exit = Decimal(str(exit_price))
+        fill_exit = Decimal(str(execution_price))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise FlatRecoveryBlocked("busdt_historical_stop_evidence_unproven") from exc
     _require(
         symbol == "BUSDT" and bool(trade_id) and leg == "STOP"
         and status == "DISPATCHING" and bool(order_id) and bool(exec_id)
@@ -179,8 +200,10 @@ def prove_flat_recovery(
         and exit_time is not None and exit_time == execution_time
         and order_id == execution_order and symbol == execution_symbol
         and execution_side == "Sell"
-        and Decimal(str(observed_quantity)) == Decimal(str(executed_qty))
-        and Decimal(str(exit_price)) == Decimal(str(execution_price)),
+        and all(value.is_finite() and value > 0 for value in (
+            observed, executed, trade_exit, fill_exit,
+        ))
+        and observed == executed and trade_exit == fill_exit,
         "busdt_historical_stop_evidence_unproven",
     )
     if known_incident_coverage:
