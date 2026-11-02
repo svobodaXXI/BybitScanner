@@ -184,6 +184,15 @@ def prove_flat_recovery(
     (symbol, trade_id, leg, status, order_id, exec_id, observed_quantity,
      pattern, reason, exit_time, exit_price, execution_order, execution_symbol,
      executed_qty, execution_time, execution_price, execution_side) = obligations[0]
+    # Decimal equality alone can accept matching infinities; malformed
+    # values must fail as evidence, not escape as a numeric exception.
+    try:
+        observed = Decimal(str(observed_quantity))
+        executed = Decimal(str(executed_qty))
+        trade_exit = Decimal(str(exit_price))
+        fill_exit = Decimal(str(execution_price))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise FlatRecoveryBlocked("busdt_historical_stop_evidence_unproven") from exc
     _require(
         symbol == "BUSDT" and bool(trade_id) and leg == "STOP"
         and status == "DISPATCHING" and bool(order_id) and bool(exec_id)
@@ -191,8 +200,10 @@ def prove_flat_recovery(
         and exit_time is not None and exit_time == execution_time
         and order_id == execution_order and symbol == execution_symbol
         and execution_side == "Sell"
-        and Decimal(str(observed_quantity)) == Decimal(str(executed_qty))
-        and Decimal(str(exit_price)) == Decimal(str(execution_price)),
+        and all(value.is_finite() and value > 0 for value in (
+            observed, executed, trade_exit, fill_exit,
+        ))
+        and observed == executed and trade_exit == fill_exit,
         "busdt_historical_stop_evidence_unproven",
     )
     if known_incident_coverage:
