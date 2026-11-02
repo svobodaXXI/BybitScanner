@@ -37,7 +37,7 @@ class ClosedChartArchiveTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.png = self.root / "rendered.png"
-        self.png.write_bytes(b"\\x89PNG\\r\\n\\x1a\\n" + b"chart-bytes")
+        self.png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"chart-bytes")
 
     def test_closed_only_one_final_png_and_factual_report(self):
         chart, report = archive_closed_chart(_view(), self.png, archive_dir=self.root / "archive")
@@ -61,6 +61,6 @@ class ClosedChartArchiveTests(unittest.TestCase):
 
     def test_existing_final_image_cannot_be_overwritten(self):
         archive_closed_chart(_view(), self.png, archive_dir=self.root / "archive")
-        self.png.write_bytes(b"\\x89PNG\\r\\n\\x1a\\n" + b"different")
+        self.png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"different")
         with self.assertRaises(ClosedChartArchiveError):
             archive_closed_chart(_view(), self.png, archive_dir=self.root / "archive")
