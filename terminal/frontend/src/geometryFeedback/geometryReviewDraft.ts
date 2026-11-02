@@ -1,5 +1,6 @@
 import type { Candle } from "../contracts/marketData";
 import type { DrawingObject } from "../chart/drawingModel";
+import { compareRayCorrection, type RayDelta } from "./rayCorrectionComparison";
 
 /**
  * Draft-only conversion. Use the *frozen* signal candle window, never live market
@@ -115,4 +116,31 @@ export function buildEditorGeometryReview(input: {
       throw new Error("No geometry changes to submit");
   }
   return draft;
+}
+
+
+/** Read-only comparison of a frozen Scanner ray with its editable copy.
+ * This intentionally reuses the strict UTC-anchor comparator and is never a
+ * training or persistence action. Malformed/extra review drawings fail closed.
+ */
+export function compareEditorRayChanges(input: {
+  referenceDrawings: readonly DrawingObject[];
+  editableDrawings: readonly DrawingObject[];
+  frozenCandles: readonly Candle[];
+}): RayDelta[] {
+  const originals = input.referenceDrawings;
+  if (!originals.length || originals.length !== input.editableDrawings.length)
+    throw new Error("Incomplete editable reference pair");
+  const source = serializeReviewDrawings(originals, input.frozenCandles);
+  const result = source.map((line) => {
+    const matches = input.editableDrawings.filter((item) =>
+      item.id === `editable:${line.id}` && item.type === line.type);
+    if (matches.length !== 1) throw new Error("Editable ray identity mismatch");
+    const [corrected] = serializeReviewDrawings(
+      [{ ...matches[0], id: line.id }], input.frozenCandles);
+    return compareRayCorrection(line, corrected);
+  });
+  if (new Set(originals.map((line) => line.id)).size !== originals.length)
+    throw new Error("Duplicate source ray identity");
+  return result;
 }
