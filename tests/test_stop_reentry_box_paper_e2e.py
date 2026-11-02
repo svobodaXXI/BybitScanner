@@ -245,5 +245,65 @@ class BoxRetryRealPaperE2E(MirrorStandaloneHarness):
                 self.assertEqual(
                     journal[0].attempts[1].candidate_id, second_id,
                 )
+
+                # The EXIT LIMIT, not a synthetic trade close, must realize
+                # TAKE through the ordered owner market-book matcher.
+                take_price = Decimal(snapshot["plan"]["take_price"])
+                take_bid = take_price + instrument.tick_size
+                take_ask = take_bid + instrument.tick_size
+                book.set(SYMBOL, bid=take_bid, ask=take_ask)
+                take_book = _event_book(SYMBOL, bid=take_bid, ask=take_ask)
+                runtime.call(lambda owner: owner.process_robot_market_event(
+                    SYMBOL, take_book, event_id="box-retry-exit-take",
+                    received_at_ms=take_book.received_at_ms,
+                ))
+                closed = _wait_until(lambda: (
+                    lambda row: row if row and row.exit_time_ms else None
+                )(runtime.call(lambda owner:
+                    owner.store.get_robot_trade(retry_trade.trade_id),
+                )))
+                self.assertEqual(closed.exit_reason, "TAKE")
+                self.assertGreater(closed.realized_pnl_usdt, 0)
+                self.assertEqual(candidate(second_id).status, "CLOSED")
+                self.assertIsNone(runtime.call(lambda owner:
+                    owner.store.get_open_robot_trade_for_symbol(ACCOUNT, symbol),
+                ))
+                self.assertEqual(runtime.call(lambda owner:
+                    owner.store.get_position_projection(key).quantity.value
+                ), Decimal("0"))
+                final_diary = ReentryDiaryReader(self.db).load()
+                self.assertEqual(len(final_diary), 1)
+                self.assertEqual(
+                    [row.exit_reason for row in final_diary[0].attempts],
+                    ["STOP", "TAKE"],
+                )
+                self.assertEqual(final_diary[0].filled_attempt_count, 2)
+                executions = runtime.call(lambda owner:
+                    owner.store.load_executions_for_symbol(ACCOUNT, symbol),
+                )
+                self.assertGreaterEqual(len(executions), 4)
+
+                # Reopen the SAME temp PAPER SQLite. An already completed
+                # campaign must not fill again or reserve attempt #3.
+                runtime.close()
+                runtime, _ = self.runtime(cache, book)
+                _start_robot_monitor(runtime)
+                replay = _event_book(SYMBOL, bid=take_bid, ask=take_ask)
+                runtime.call(lambda owner: owner.process_robot_market_event(
+                    SYMBOL, replay, event_id="box-retry-post-restart-replay",
+                    received_at_ms=replay.received_at_ms,
+                ))
+                self.assertEqual(runtime.call(lambda owner:
+                    owner.store.load_executions_for_symbol(ACCOUNT, symbol),
+                ), executions)
+                self.assertEqual(runtime.call(lambda owner:
+                    owner.store._connection.execute(
+                        "SELECT COUNT(*) FROM robot_reentry_attempts"
+                    ).fetchone()[0],
+                ), 2)
+                self.assertIsNone(runtime.call(lambda owner:
+                    owner.store.get_open_robot_trade_for_symbol(ACCOUNT, symbol),
+                ))
+                self.assertEqual(candidate(second_id).status, "CLOSED")
             finally:
                 runtime.close()
