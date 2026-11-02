@@ -276,6 +276,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
     const upper = raw ? JSON.parse(raw).drawings.find((item: { id: string }) => item.id === "editable:upper") : null;
     return upper?.anchors[0] ?? null;
   }, startKey)).not.toEqual({ logical: 0, price: 115 });
+  await expect(page.getByLabel("Сравнение линий Scanner и исправления")).toContainText("Δ точка 1");
   await page.getByRole("button", { name: "Передать исправление" }).click();
   await expect(page.locator(".editor-correction-export output[role=status]").last())
     .toContainText("Исправление сохранено в дневнике обратной связи");
