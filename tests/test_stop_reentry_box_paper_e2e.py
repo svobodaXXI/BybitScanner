@@ -210,7 +210,12 @@ class BoxRetryRealPaperE2E(MirrorStandaloneHarness):
                     return value if value and value.stop_loss is not None else None
 
                 second_protection = _wait_until(box_stop)
-                self.assertEqual(
+                from robot_protection import box_stop_for_actual_entry
+                expected_stop = box_stop_for_actual_entry(
+                    snapshot, average_entry=retry_trade.average_entry,
+                )
+                self.assertEqual(second_protection.stop_loss, expected_stop)
+                self.assertGreaterEqual(
                     second_protection.stop_loss,
                     Decimal(snapshot["plan"]["stop_price"]),
                 )
