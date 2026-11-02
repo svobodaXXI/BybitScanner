@@ -227,7 +227,7 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
     ).fetchone()[0])
     positions = connection.execute(
         """SELECT symbol, side, quantity FROM position_projections
-           WHERE trading_account_id='paper' AND category='linear' AND position_idx=0"""
+           WHERE trading_account_id='paper'"""
     ).fetchall()
     unresolved_obligations = int(connection.execute(
         """SELECT COUNT(*) FROM paper_protection_obligations
