@@ -21,6 +21,9 @@ def fixture():
         CREATE TABLE robot_candidates (trading_account_id TEXT, symbol TEXT, status TEXT);
         CREATE TABLE paper_limit_orders (trading_account_id TEXT, status TEXT);
         CREATE TABLE trading_commands (trading_account_id TEXT, current_state TEXT);
+        CREATE TABLE reconciliation_checkpoints (
+            trading_account_id TEXT, completed_at_ms INTEGER
+        );
         CREATE TABLE paper_protection_obligations (
             trading_account_id TEXT, symbol TEXT, trade_id TEXT, winning_leg TEXT,
             status TEXT, order_id TEXT, exec_id TEXT, observed_quantity TEXT
@@ -163,6 +166,35 @@ class FlatRecoveryGateTests(unittest.TestCase):
         conn, payload = fixture()
         conn.execute("DELETE FROM position_projections WHERE symbol='BUSDT'")
         assert_blocked(self, conn, payload)
+
+    def test_unfinished_paper_reconciliation_blocks_historical_handoff(self):
+        conn, payload = fixture()
+        conn.execute(
+            "INSERT INTO reconciliation_checkpoints VALUES ('other',NULL)"
+        )
+        # Other account's unfinished work must not affect the PAPER gate.
+        self.assertEqual(
+            prove_flat_recovery(conn, **payload),
+            "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY",
+        )
+        conn.execute(
+            "INSERT INTO reconciliation_checkpoints VALUES ('paper',NULL)"
+        )
+        before = conn.total_changes
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "unfinished_reconciliation_checkpoint",
+        ):
+            prove_flat_recovery(conn, **payload)
+        self.assertEqual(conn.total_changes, before)
+        conn.execute(
+            "UPDATE reconciliation_checkpoints SET completed_at_ms=100 "
+            "WHERE trading_account_id='paper'"
+        )
+        self.assertEqual(
+            prove_flat_recovery(conn, **payload),
+            "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY",
+        )
+        conn.close()
 
     def test_null_and_unknown_durable_work_never_proves_flat(self):
         # SQLite three-valued logic: NOT IN and != silently exclude NULL.
