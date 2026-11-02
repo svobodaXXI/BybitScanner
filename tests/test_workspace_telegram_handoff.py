@@ -356,6 +356,63 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
                 self.assertIsNone(load_frozen_signal_geometry(
                     "source-original:" + "f" * 24))
 
+    def test_editor_source_id_not_advertised_for_image_only_or_old_incomplete_archive(self):
+        """Original PNG remains available, but unavailable frozen rays get no exact Editor link."""
+        import hashlib
+        import notification
+        import tempfile
+        from signal_archive import load_original_signal, load_frozen_signal_geometry
+
+        image = b"same-original-wedge-chart"
+        caption = "Original wedge"
+        token = hashlib.sha256(
+            b"BTCUSDT|5|" + image + caption.encode("utf-8")
+        ).hexdigest()[:24]
+        source_id = f"source-original:{token}"
+        with tempfile.TemporaryDirectory() as root:
+            chart = Path(root) / "chart.png"
+            chart.write_bytes(image)
+            with patch.dict("os.environ", {
+                "BYBITSCANNER_SIGNAL_ARCHIVE_DIR": str(Path(root) / "archive"),
+                "BYBITSCANNER_TERMINAL_HTTPS_URL": "",
+                "BYBITSCANNER_WORKSPACE_URL": "",
+            }, clear=True):
+                handle, archived_image = notification.archive_source_chart(
+                    symbol="BTCUSDT", timeframe="5", pattern="Falling Wedge",
+                    text=caption, chart_path=chart,
+                    geometry={"upper_line": {"model": "regression"}},
+                    frozen_candles=None,
+                )
+                self.assertIsNone(handle)
+                self.assertEqual(archived_image, image)
+                self.assertIsNotNone(load_original_signal([source_id]))
+                self.assertIsNone(load_frozen_signal_geometry(source_id))
+                # The first archived image is immutable, even if a later retry
+                # presents valid geometry. It must not create a phantom link.
+                class Candles:
+                    def itertuples(self, index=False):
+                        return iter((
+                            SimpleNamespace(time=1000, open=10, high=12, low=8, close=11),
+                            SimpleNamespace(time=301000, open=11, high=14, low=9, close=13),
+                        ))
+                good = {
+                    "upper_line": {"model": "anchor", "anchor_index": 0,
+                                   "second_index": 1, "anchor_price": 12, "second_price": 14},
+                    "lower_line": {"model": "anchor", "anchor_index": 0,
+                                   "second_index": 1, "anchor_price": 8, "second_price": 9},
+                }
+                handle2, _ = notification.archive_source_chart(
+                    symbol="BTCUSDT", timeframe="5", pattern="Falling Wedge",
+                    text=caption, chart_path=chart,
+                    geometry=good, frozen_candles=Candles(),
+                )
+                self.assertIsNone(handle2)
+                self.assertIsNone(load_frozen_signal_geometry(source_id))
+                editor = notification.build_tradingview_keyboard(
+                    "BTCUSDT", "5", signal_id=handle2,
+                )["inline_keyboard"][-1][0]
+                self.assertEqual(editor["callback_data"], "workspace:EDITOR:BTCUSDT:5m")
+
 
 if __name__ == "__main__":
     unittest.main()
