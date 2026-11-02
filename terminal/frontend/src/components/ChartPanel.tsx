@@ -47,7 +47,7 @@ import {
 import { chartPriceFormat } from "../chart/priceFormat";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
-import { serializeReviewDrawings } from "../geometryFeedback/geometryReviewDraft";
+import { buildEditorGeometryReview, serializeReviewDrawings, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
 import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
@@ -141,6 +141,10 @@ export function ChartPanel({
   referenceDrawings = [],
   editableSeedDrawings = [],
   signalIdentity = null,
+  snapshotRevision = null,
+  barsSha256 = null,
+  savedReviewId = null,
+  onSaveGeometryReview,
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
@@ -181,6 +185,10 @@ export function ChartPanel({
   referenceDrawings?: readonly DrawingObject[];
   editableSeedDrawings?: readonly DrawingObject[];
   signalIdentity?: string | null;
+  snapshotRevision?: string | null;
+  barsSha256?: string | null;
+  savedReviewId?: string | null;
+  onSaveGeometryReview?: (review: GeometryReviewDraft & { note: string; idempotency_key: string }) => Promise<void>;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -224,6 +232,35 @@ export function ChartPanel({
     historyRef.current.current,
   );
   const [correctionExportStatus, setCorrectionExportStatus] = useState("");
+  const [reviewLabel, setReviewLabel] = useState<GeometryReviewDraft["label"]>("GEOMETRY_CORRECTED");
+  const [reviewNote, setReviewNote] = useState("");
+  const [reviewPending, setReviewPending] = useState(false);
+  const [reviewStatus, setReviewStatus] = useState("");
+  const submitToken = useRef<{ content: string; key: string } | null>(null);
+  const saveCorrection = async () => {
+    if (!editorMode || !signalIdentity || !snapshotRevision || !barsSha256 || !onSaveGeometryReview || reviewPending) return;
+    try {
+      const draft = buildEditorGeometryReview({
+        signalId: signalIdentity, snapshotRevision, barsSha256,
+        label: reviewLabel, frozenCandles: candles,
+        referenceDrawings, editableDrawings: drawings,
+      });
+      const note = reviewNote.trim();
+      const content = JSON.stringify({ ...draft, note });
+      if (submitToken.current?.content !== content) {
+        const key = globalThis.crypto?.randomUUID?.() ?? `geometry-review-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        submitToken.current = { content, key };
+      }
+      setReviewPending(true);
+      setReviewStatus("Сохранение исправления…");
+      await onSaveGeometryReview({ ...draft, note, idempotency_key: submitToken.current.key });
+      setReviewStatus("Исправление сохранено в дневнике обратной связи. Scanner автоматически не менялся.");
+    } catch (error) {
+      setReviewStatus(`Не удалось сохранить: ${error instanceof Error ? error.message : "неизвестная ошибка"}`);
+    } finally {
+      setReviewPending(false);
+    }
+  };
   const copyCorrectionDraft = async () => {
     if (!editorMode || !signalIdentity) return;
     try {
@@ -782,7 +819,30 @@ export function ChartPanel({
             <button type="button" onClick={() => void copyCorrectionDraft()}>
               Скопировать исправленную геометрию
             </button>
+            <select
+              aria-label="Оценка сигнала"
+              value={reviewLabel}
+              onChange={(event) => { setReviewLabel(event.target.value as GeometryReviewDraft["label"]); setReviewStatus(""); }}
+            >
+              <option value="GEOMETRY_CORRECTED">Исправлена геометрия</option>
+              <option value="CONFIRMED">Верный сигнал</option>
+              <option value="FALSE_POSITIVE">Ложный сигнал</option>
+              <option value="UNCERTAIN">Неоднозначно</option>
+            </select>
+            <input
+              aria-label="Комментарий к исправлению"
+              placeholder="Комментарий (необязательно)"
+              maxLength={1024}
+              value={reviewNote}
+              onChange={(event) => { setReviewNote(event.target.value); setReviewStatus(""); }}
+            />
+            <button type="button" disabled={reviewPending || !snapshotRevision || !barsSha256 || !onSaveGeometryReview}
+              onClick={() => void saveCorrection()}>
+              {reviewPending ? "Сохранение…" : "Передать исправление"}
+            </button>
+            {savedReviewId && <span>Сохранённый отзыв: {savedReviewId.slice(0, 12)}</span>}
             {correctionExportStatus && <output role="status" aria-live="polite">{correctionExportStatus}</output>}
+            {reviewStatus && <output role="status" aria-live="polite">{reviewStatus}</output>}
           </div>
         )}
         <DrawingToolbar
