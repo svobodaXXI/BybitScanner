@@ -147,10 +147,17 @@ export function buildEditorGeometryReview(input: {
   if (input.editableDrawings.length !== normalized.length)
     throw new Error("Unexpected extra drawings in the correction");
   const draft = buildGeometryReviewDraft({ ...input, drawings: normalized });
-  if (input.label === "GEOMETRY_CORRECTED") {
+  if (input.label === "GEOMETRY_CORRECTED" || input.label === "CONFIRMED") {
+    // A confirmed original must match the owner's visible editable geometry.
+    // Otherwise the review would silently discard the correction and poison
+    // the source-positive examples used for offline detector evaluation.
     const original = serializeReviewDrawings(input.referenceDrawings, input.frozenCandles);
-    if (JSON.stringify(original) === JSON.stringify(draft.corrected_boundaries))
+    const owner = serializeReviewDrawings(normalized, input.frozenCandles);
+    const unchanged = JSON.stringify(original) === JSON.stringify(owner);
+    if (input.label === "GEOMETRY_CORRECTED" && unchanged)
       throw new Error("No geometry changes to submit");
+    if (input.label === "CONFIRMED" && !unchanged)
+      throw new Error("Edited lines contradict the 'Confirmed' verdict; choose 'Geometry corrected' or restore originals");
   }
   return draft;
 }
