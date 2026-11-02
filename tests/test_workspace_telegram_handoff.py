@@ -290,6 +290,72 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
         url = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["web_app"]["url"]
         self.assertEqual(parse_qs(urlsplit(url).query)["signal_id"], [f"source-original:{token}"])
 
+    def test_wedge_source_archive_to_owner_editor_button_exact_identity(self):
+        """Real two-anchor Scanner inputs, not a synthetic Editor URL alone."""
+        import tempfile
+        from urllib.parse import parse_qs, urlsplit
+        import notification
+        from signal_archive import load_frozen_signal_geometry
+
+        class SourceCandles:
+            def itertuples(self, index=False):
+                return iter((
+                    SimpleNamespace(time=1000, open=10.0, high=12.0, low=8.0, close=11.0),
+                    SimpleNamespace(time=301000, open=11.0, high=14.0, low=9.0, close=13.0),
+                ))
+
+        geometry = {
+            "upper_line": {
+                "model": "anchor", "anchor_index": 0, "second_index": 1,
+                "anchor_price": 12.0, "second_price": 14.0,
+            },
+            "lower_line": {
+                "model": "anchor", "anchor_index": 0, "second_index": 1,
+                "anchor_price": 8.0, "second_price": 9.0,
+            },
+        }
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "wedge.png"
+            path.write_bytes(b"owner-original-wedge-png")
+            with patch.dict("os.environ", {
+                "BYBITSCANNER_SIGNAL_ARCHIVE_DIR": str(Path(root) / "archive"),
+                "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181",
+            }, clear=True):
+                token, image = notification.archive_source_chart(
+                    symbol="BTCUSDT", timeframe="5", pattern="Falling Wedge",
+                    text="owner original wedge", chart_path=path,
+                    geometry=geometry, frozen_candles=SourceCandles(),
+                )
+                self.assertEqual(image, path.read_bytes())
+                self.assertRegex(token or "", r"^[0-9a-f]{24}$")
+                signal_id = f"source-original:{token}"
+                frozen = load_frozen_signal_geometry(signal_id)
+                self.assertIsNotNone(frozen)
+                self.assertEqual(frozen["signal_id"], signal_id)
+                self.assertEqual(frozen["boundaries"][0]["anchors"], [
+                    {"bar_open_time_ms": 1000, "price": 12.0},
+                    {"bar_open_time_ms": 301000, "price": 14.0},
+                ])
+                owner_button = notification.build_tradingview_keyboard(
+                    "BTCUSDT", "5", signal_id=signal_id,
+                )["inline_keyboard"][-1][0]
+                query = parse_qs(urlsplit(owner_button["web_app"]["url"]).query)
+                self.assertEqual(query["signal_id"], [signal_id])
+                self.assertEqual(query["timeframe"], ["5m"])
+                with patch.dict("os.environ", {
+                    "BYBITSCANNER_TERMINAL_HTTPS_URL": "",
+                }):
+                    fallback = notification.build_tradingview_keyboard(
+                        "BTCUSDT", "5", signal_id=signal_id,
+                    )["inline_keyboard"][-1][0]
+                self.assertEqual(
+                    fallback["callback_data"], f"workspace:EDITOR:S:{token}")
+                self.assertEqual(
+                    telegram_review._parse_workspace_callback(
+                        fallback["callback_data"])["source_token"], token)
+                self.assertIsNone(load_frozen_signal_geometry(
+                    "source-original:" + "f" * 24))
+
 
 if __name__ == "__main__":
     unittest.main()
