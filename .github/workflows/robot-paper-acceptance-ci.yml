@@ -253,7 +253,7 @@ jobs:
         run: >-
           python -m pytest -q
           tests/test_terminal_paper_http.py
-          -k "runtime_shutdown_rejects_missing_or_malformed_coverage_evidence or runtime_shutdown_seals_only_on_complete_evidence"
+          -k "runtime_shutdown_rejects_missing_or_malformed_coverage_evidence or runtime_shutdown_seals_only_on_complete_evidence or retire_entry_coverage_requires_durable_autopilot_off"
       - name: Run Wedge terminal producer acceptance
         run: >-
           python -m unittest -v
