@@ -100,6 +100,13 @@ LOGIN_HTML = """<!doctype html><html lang="ru"><meta charset="utf-8">
   target.searchParams.set("mode",mode);
   target.searchParams.set("symbol",symbol);
   target.searchParams.set("timeframe",timeframe);
+  const signalId=params.get("signal_id");
+  if(mode==="EDITOR" && signalId!==null){
+    if(!/^[A-Za-z0-9_.:-]{1,128}$/.test(signalId)){
+      document.getElementById("status").textContent="Недопустимый идентификатор исходного сигнала.";return;
+    }
+    target.searchParams.set("signal_id",signalId);
+  }
   location.replace(target.pathname+target.search);
  }catch(e){document.getElementById("status").textContent="Доступ не разрешён.";}
 })();

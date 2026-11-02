@@ -48,6 +48,7 @@ import { chartPriceFormat } from "../chart/priceFormat";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
 import { serializeReviewDrawings } from "../geometryFeedback/geometryReviewDraft";
+import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
 import { normalizedLimitDraftPrice } from "../orders/limitDraft";
@@ -195,6 +196,7 @@ export function ChartPanel({
     timer: ReturnType<typeof setTimeout> | null;
   }>({ state: { mode: "IDLE" }, pointerId: null, last: null, timer: null });
   const followLatestRef = useRef(true);
+  const initialSourceFrameApplied = useRef(false);
   const panBatcherRef = useRef<ReturnType<typeof createFrameBatcher> | null>(null);
   const [renderTick, setRenderTick] = useState(0),
     [tool, setTool] = useState<DrawingTool>("select"),
@@ -354,8 +356,16 @@ export function ChartPanel({
       series,
       timeScale,
     );
+    if (editorMode && signalIdentity && !initialSourceFrameApplied.current) {
+      const sourceRange = initialSourceGeometryRange(referenceDrawings);
+      if (sourceRange) {
+        timeScale.setVisibleLogicalRange(sourceRange);
+        followLatestRef.current = false;
+        initialSourceFrameApplied.current = true;
+      }
+    }
     setRenderTick((v) => v + 1);
-  }, [candles]);
+  }, [candles, editorMode, signalIdentity, referenceDrawings]);
   useEffect(() => {
     const priceFormat = tickSize === null ? null : chartPriceFormat(tickSize);
     if (priceFormat) seriesRef.current?.applyOptions({ priceFormat });

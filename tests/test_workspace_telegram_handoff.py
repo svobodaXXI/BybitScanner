@@ -87,6 +87,33 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
         self.assertIn('target.searchParams.set("timeframe",timeframe)', LOGIN_HTML)
         self.assertNotIn("CF-Access", repr(send.call_args))
 
+    def test_editor_login_keeps_exact_signal_id_after_owner_auth(self):
+        # The Telegram login page must forward the immutable Scanner identity
+        # to App; otherwise App silently loads only current symbol candles.
+        from notification import build_tradingview_keyboard
+        from workspace_ready_link import workspace_link
+        from urllib.parse import parse_qs, urlsplit
+
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181/login",
+        }, clear=True):
+            editor, terminal = build_tradingview_keyboard(
+                "BTCUSDT", "5", signal_id="mirror-origin:abc",
+            )["inline_keyboard"][-1]
+        editor_query = parse_qs(urlsplit(editor["web_app"]["url"]).query)
+        self.assertEqual(editor_query["signal_id"], ["mirror-origin:abc"])
+        self.assertNotIn("signal_id", urlsplit(terminal["web_app"]["url"]).query)
+        self.assertIn('const signalId=params.get("signal_id")', LOGIN_HTML)
+        self.assertIn('mode==="EDITOR" && signalId!==null', LOGIN_HTML)
+        self.assertIn('target.searchParams.set("signal_id",signalId)', LOGIN_HTML)
+        self.assertIn("^[A-Za-z0-9_.:-]{1,128}$", LOGIN_HTML)
+        # Reuse the canonical URL builder, never add a credential token.
+        self.assertEqual(
+            workspace_link("https://83.217.213.181/", "EDITOR",
+                           "BTCUSDT", "5m", signal_id="mirror-origin:abc"),
+            "https://83.217.213.181/?mode=EDITOR&symbol=BTCUSDT&timeframe=5m&signal_id=mirror-origin%3Aabc",
+        )
+
     def test_signal_callback_reuses_configured_telegram_mini_app_url(self):
         # Production /terminal uses BYBITSCANNER_WORKSPACE_URL; signal cards
         # must not silently require a second environment variable.

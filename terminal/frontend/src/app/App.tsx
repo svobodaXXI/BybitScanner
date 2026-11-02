@@ -1222,6 +1222,11 @@ export function App() {
         </output>
       )}
       <TelegramMiniAppBridge />
+      {mode === "EDITOR" && launchLink?.mode === "EDITOR" && !launchLink.signalId && (
+        <output role="status" aria-live="polite">
+          Исходный сигнал не указан в ссылке. Показаны текущие свечи без сохранённых линий паттерна.
+        </output>
+      )}
       <section className="workspace-grid" aria-label="Trading workspace">
         <div
           className={`workspace-market-row ${marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}

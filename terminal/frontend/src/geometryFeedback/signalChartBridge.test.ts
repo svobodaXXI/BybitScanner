@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectSignalGeometry } from "./signalChartBridge";
+import { initialSourceGeometryRange, projectSignalGeometry } from "./signalChartBridge";
 import { serializeReviewDrawings } from "./geometryReviewDraft";
 
 const candles = [
@@ -14,6 +14,20 @@ const source = [
   { id: "upper", type: "ray" as const, anchors: [at(0, 12), at(2, 14)] },
   { id: "lower", type: "ray" as const, anchors: [at(0, 8), at(2, 9)] },
 ];
+
+describe("historical editor viewport", () => {
+  it("centers the immutable source pivots even if later frozen candles exist", () => {
+    const { referenceDrawings } = projectSignalGeometry(source, candles);
+    const range = initialSourceGeometryRange(referenceDrawings);
+    expect(range).toEqual({ from: -12, to: 14 });
+    expect(range!.from).toBeLessThan(referenceDrawings[0].anchors[0].logical);
+    expect(range!.to).toBeGreaterThan(referenceDrawings[0].anchors[1].logical);
+  });
+
+  it("does not override the chart viewport without anchored source evidence", () => {
+    expect(initialSourceGeometryRange([])).toBeNull();
+  });
+});
 
 describe("GFL frozen signal-to-chart bridge", () => {
   it("projects both immutable rays and makes independent editable copies", () => {
