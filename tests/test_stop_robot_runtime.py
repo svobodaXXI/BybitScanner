@@ -981,13 +981,13 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 self.assertTrue(result.runtime_stopped)
                 self.assertEqual(result.steps, (
                     "scanner:stop", "protection:legacy-entry-proof",
-                    "telegram:shutdown", "backend:legacy-terminate",
+                    "backend:legacy-terminate", "telegram:shutdown",
                 ))
                 self.assertEqual(runtime.calls, [
                     "scanner:stop", "protection:retire-entry-arms",
-                    "resolve:backend:127.0.0.1:8765", "telegram:shutdown",
                     "resolve:backend:127.0.0.1:8765",
-                    "terminate:[130, 120, 110, 105]",
+                    "resolve:backend:127.0.0.1:8765",
+                    "terminate:[130, 120, 110, 105]", "telegram:shutdown",
                 ])
                 self.assertEqual(runtime.legacy_evidence_checks, 1)
                 self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
@@ -1045,8 +1045,8 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
         self.assertTrue(result.runtime_stopped)
         self.assertEqual(result.steps, (
             "runtime:legacy-starvation-proof",
-            "telegram:shutdown",
             "backend:legacy-starvation-terminate",
+            "telegram:shutdown",
         ))
         self.assertNotIn("scanner:stop", runtime.calls)
         self.assertEqual(runtime.legacy_evidence_checks, 1)
@@ -1063,11 +1063,14 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 "high_watermark": 64,
             },
         })
-        original_post = runtime.post
+        original_resolve = runtime.resolve_legacy
+        first = True
 
-        def post(url, payload, timeout):
-            reply = original_post(url, payload, timeout)
-            if url == TELEGRAM + "/shutdown" and reply[0] == 200:
+        def recover_after_preflight(*args):
+            nonlocal first
+            chain = original_resolve(*args)
+            if first:
+                first = False
                 runtime.protection.update({
                     "healthy": True,
                     "unhealthy_symbols": {},
@@ -1077,17 +1080,17 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                         "high_watermark": 64,
                     },
                 })
-            return reply
+            return chain
 
-        runtime.post = post
+        runtime.resolve_legacy = recover_after_preflight
         result = runtime.orchestrator().run("all")
 
         self.assertTrue(result.ok, result.message)
         self.assertTrue(result.runtime_stopped)
         self.assertEqual(result.steps, (
             "runtime:legacy-starvation-proof",
-            "telegram:shutdown",
             "backend:legacy-starvation-terminate",
+            "telegram:shutdown",
         ))
         self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
 
@@ -1102,11 +1105,14 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 "high_watermark": 64,
             },
         })
-        original_post = runtime.post
+        original_resolve = runtime.resolve_legacy
+        first = True
 
-        def post(url, payload, timeout):
-            reply = original_post(url, payload, timeout)
-            if url == TELEGRAM + "/shutdown" and reply[0] == 200:
+        def change_shape_after_preflight(*args):
+            nonlocal first
+            chain = original_resolve(*args)
+            if first:
+                first = False
                 runtime.protection.update({
                     "healthy": True,
                     "unhealthy_symbols": {},
@@ -1115,9 +1121,9 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                         "BLASTUSDT": "POSITION",
                     },
                 })
-            return reply
+            return chain
 
-        runtime.post = post
+        runtime.resolve_legacy = change_shape_after_preflight
         result = runtime.orchestrator().run("all")
 
         self.assertFalse(result.ok)
