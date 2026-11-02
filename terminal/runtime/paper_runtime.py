@@ -3876,6 +3876,22 @@ class PaperRuntime:
                 and not self.store.load_unresolved_paper_protection_obligations(account_id)
                 and not self.store.load_open_robot_trades(account_id)
             ):
+                # A resolved STOP and net FLAT are not sufficient if a
+                # candidate can still enter, an ENTRY is in flight, or a
+                # command has not reached its durable terminal state. Do not
+                # bypass the canonical Close-All preflight or dispatch a
+                # competing Market close to "repair" unknown ownership.
+                if (
+                    self.store.load_active_robot_candidate_states(account_id)
+                    or self.store.load_active_robot_entry_orders(account_id)
+                    or any(
+                        item.trading_account_id == account_id
+                        for item in self.store.load_unfinished_commands()
+                    )
+                ):
+                    raise PaperCloseAllRejected(
+                        "operator_close_post_stop_work_unresolved"
+                    )
                 return CloseAllCommandResponse(
                     request.client_action_id.value, (), (),
                 )
