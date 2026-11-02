@@ -306,6 +306,10 @@ export function DrawingOverlay({
         if (
           (d.type === "horizontal" &&
             Math.abs(point.y - pts[0].y) < HIT_RADIUS) ||
+          (d.type === "horizontal-ray" &&
+            point.x >= pts[0].x - HIT_RADIUS &&
+            point.x <= bounds.width + HIT_RADIUS &&
+            Math.abs(point.y - pts[0].y) < HIT_RADIUS) ||
           (d.type === "vertical" && Math.abs(point.x - pts[0].x) < HIT_RADIUS)
         )
           return { id: d.id, anchor: null };
