@@ -1487,6 +1487,7 @@ class SerializedPaperRuntime:
                 raise RuntimeError("PAPER shutdown sealed; ingress refused")
             if not self._thread.is_alive():
                 raise RuntimeError("PAPER runtime owner is unavailable")
+            with self._protection_ingress_lock:
                 if self._protection_ingress_pending >= self._protection_ingress_capacity:
                     self._protection_ingress_last_overflow_symbol = normalized_symbol or None
                     self._protection_ingress_last_overflow_role = normalized_role
