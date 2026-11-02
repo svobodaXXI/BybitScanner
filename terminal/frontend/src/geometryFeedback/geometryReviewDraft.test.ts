@@ -81,6 +81,21 @@ describe("Editor two-pair review evidence", () => {
     });
     expect(result.corrected_boundaries).toEqual([]);
   });
+
+  it("rejects a Confirmed verdict after editing Scanner rays", () => {
+    expect(() => buildEditorGeometryReview({
+      ...review, label: "CONFIRMED", editableDrawings: [editable],
+    })).toThrow(/Линии изменены/);
+  });
+
+  it("accepts Confirmed only when the editable copy agrees with Scanner originals", () => {
+    const confirmation = buildEditorGeometryReview({
+      ...review, label: "CONFIRMED",
+      editableDrawings: [{ ...editable, anchors: original.anchors.map((anchor) => ({ ...anchor })) }],
+    });
+    expect(confirmation.label).toBe("CONFIRMED");
+    expect(confirmation.corrected_boundaries).toEqual([]);
+  });
 });
 
 
