@@ -199,7 +199,20 @@ class BoxRetryRealPaperE2E(MirrorStandaloneHarness):
                 self.assertEqual(retry_trade.pattern, "IKIGAI_BOX")
                 self.assertNotEqual(retry_trade.trade_id, initial_trade.trade_id)
                 self.assertGreater(retry_trade.entry_quantity, 0)
-                second_protection = _wait_until(protection)
+                try:
+                    second_protection = _wait_until(protection)
+                except AssertionError:
+                    diagnostic = runtime.call(lambda owner: {
+                        "trade": str(owner.store.get_open_robot_trade_for_symbol(ACCOUNT, symbol)),
+                        "candidate": str(owner.store.get_robot_candidate(second_id)),
+                        "protection": str(owner.store.get_protection_projection(key)),
+                        "robot": str(owner.store.get_robot_runtime_state(ACCOUNT)),
+                        "position": str(owner.store.get_position_projection(key)),
+                        "obligations": str(owner.store._connection.execute(
+                            "SELECT trade_id,winning_leg,status FROM paper_protection_obligations"
+                        ).fetchall()),
+                    })
+                    self.fail(f"Box P1 fill lacked armed STOP/TAKE: {diagnostic}")
                 self.assertEqual(
                     second_protection.stop_loss,
                     Decimal(snapshot["plan"]["stop_price"]),
