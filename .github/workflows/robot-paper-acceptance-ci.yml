@@ -33,6 +33,7 @@ on:
       - "tests/test_paper_flat_robot_execution_fence.py"
       - "tests/test_robot_nonrobot_close_proof.py"
       - "tests/test_stop_reentry_paper_e2e.py"
+      - "tests/test_stop_reentry_box_paper_e2e.py"
       - "tests/test_stop_reentry_scanner_lshape.py"
       - "tests/test_stop_reentry_child_ipc.py"
       - "tests/runtime_replay.py"
@@ -187,6 +188,8 @@ jobs:
           tests/test_retest_account_risk.py
       - name: Real STOP retry PAPER LIMIT fill, TAKE, Trading Diary and restart
         run: python -m pytest -q tests/test_stop_reentry_paper_e2e.py
+      - name: Real Box STOP retry grid P1 fill and protective STOP/TAKE
+        run: python -m pytest -q tests/test_stop_reentry_box_paper_e2e.py
       - name: Real Scanner L-shape reentry signal and stale-breakout rejection
         run: python -m pytest -q tests/test_stop_reentry_scanner_lshape.py
       - name: Spawned Scanner L-shape IPC to canonical STOP campaign
