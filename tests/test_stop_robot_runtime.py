@@ -422,6 +422,58 @@ class FullShutdownTests(unittest.TestCase):
             "backend:shutdown", "telegram:shutdown",
         ])
 
+    def test_mixed_robot_and_nonrobot_exposure_drain_before_single_shutdown(self):
+        """One P0 freeze drains both owners while protection stays available."""
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        runtime.protection.update({
+            "covered_symbols": ["ROBOTUSDT", "MANUALUSDT"],
+            "coverage_roles": {"ROBOTUSDT": "EXPOSURE", "MANUALUSDT": "EXPOSURE"},
+        })
+        canonical_stop = runtime.stop_robot
+        canonical_sleep = runtime.sleep
+        phases = []
+
+        def stop_after_robot_drain():
+            if runtime.robot_ownership_open:
+                raise RobotControlRejected(
+                    "stop_robot is rejected while OPEN Robot trades remain: robot-1"
+                )
+            self.assertEqual(runtime.autopilot_mode, "OFF")
+            self.assertEqual(runtime.scanner_mode, "SCANNER_STOPPED")
+            canonical_stop()
+
+        def settle_protected_exposure(seconds):
+            canonical_sleep(seconds)
+            self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+            self.assertNotIn("backend:shutdown", runtime.calls)
+            self.assertEqual(runtime.autopilot_mode, "OFF")
+            if runtime.robot_ownership_open:
+                phases.append("robot-stop-take")
+                runtime.robot_ownership_open = False
+                runtime.protection.update({
+                    "covered_symbols": ["MANUALUSDT"],
+                    "coverage_roles": {"MANUALUSDT": "EXPOSURE"},
+                })
+            else:
+                phases.append("manual-stop-take")
+                self.assertEqual(runtime.robot, STOPPED)
+                runtime.protection.update({
+                    "covered_symbols": [], "coverage_roles": {},
+                })
+
+        runtime.stop_robot = stop_after_robot_drain
+        runtime.sleep = settle_protected_exposure
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(phases, ["robot-stop-take", "manual-stop-take"])
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:pause", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
     def test_partial_stop_retries_natural_drain_from_paused_without_repausing(self):
         runtime = FakeRuntime(robot=READY)
         canonical_stop = runtime.stop_robot
