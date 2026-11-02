@@ -164,6 +164,28 @@ class FlatRecoveryGateTests(unittest.TestCase):
         conn.execute("DELETE FROM position_projections WHERE symbol='BUSDT'")
         assert_blocked(self, conn, payload)
 
+    def test_null_and_unknown_durable_work_never_proves_flat(self):
+        # SQLite three-valued logic: NOT IN and != silently exclude NULL.
+        # This historical exception must refuse any unclassified work, not
+        # only explicitly OPEN candidates or known pending commands.
+        statements = (
+            "INSERT INTO robot_candidates VALUES ('paper','NEWUSDT',NULL)",
+            "INSERT INTO robot_candidates VALUES ('paper','NEWUSDT','APPROVED')",
+            "INSERT INTO robot_candidates VALUES ('paper','NEWUSDT','UNKNOWN')",
+            "INSERT INTO paper_limit_orders VALUES ('paper',NULL)",
+            "INSERT INTO trading_commands VALUES ('paper',NULL)",
+            "INSERT INTO paper_protection_obligations VALUES "
+            "('paper','OTHERUSDT','unknown','STOP',NULL,'order','exec','1')",
+        )
+        for statement in statements:
+            with self.subTest(statement=statement):
+                conn, payload = fixture()
+                conn.execute(statement)
+                before = conn.total_changes
+                assert_blocked(self, conn, payload)
+                self.assertEqual(conn.total_changes, before)
+                conn.close()
+
     def test_active_limit_and_unknown_limit_block(self):
         for status in ("open", "partially_filled", "unknown"):
             with self.subTest(status=status):
