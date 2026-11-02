@@ -1,12 +1,14 @@
 """Synthetic-only tests for dual Flat/OPEN owner evidence. No VPS or SQLite writes."""
 import sqlite3
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import TestCase, mock
 
 from terminal.domain.models import PositionSide, Symbol, TradingAccountId
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
 from tools.paper_two_orphan_proof import (
-    INCIDENT_BACKEND_SHA, PROOF_LABEL, prove_two_flat_orphans,
+    INCIDENT_BACKEND_SHA, PROOF_LABEL, prove_two_flat_orphans, inspect_read_only,
 )
 
 ACCOUNT = TradingAccountId("paper")
@@ -138,6 +140,31 @@ class DualOrphanPreflightTests(TestCase):
         self.assertEqual(
             check(conn, payload, store, evidence=[object(), object()]), PROOF_LABEL,
         )
+
+    def test_inspector_opens_pinned_read_only_sqlite_without_writing(self):
+        conn, payload, store = fixture()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "paper.sqlite3"
+            conn.commit()
+            with sqlite3.connect(path) as destination:
+                conn.backup(destination)
+            conn.close()
+            with (
+                mock.patch("tools.paper_two_orphan_proof.SQLiteStore", return_value=store),
+                mock.patch("tools.paper_two_orphan_proof.robot_entry_order_ids", return_value=(
+                    SimpleNamespace(value="entry-1"),)),
+                mock.patch("tools.paper_two_orphan_proof.PaperRuntime._robot_entry_fees", return_value=0),
+                mock.patch("tools.paper_two_orphan_proof.prove_nonrobot_robot_close",
+                           side_effect=[object(), object()]),
+            ):
+                self.assertEqual(inspect_read_only(
+                    path, expected_identity=payload["expected_identity"],
+                    snapshots={k: v for k, v in payload.items() if k != "expected_identity"},
+                ), PROOF_LABEL)
+            with sqlite3.connect(path) as unchanged:
+                self.assertEqual(unchanged.execute(
+                    "SELECT COUNT(*) FROM robot_trades WHERE exit_time_ms IS NULL"
+                ).fetchone()[0], 2)
 
     def test_second_missing_proof_blocks_without_mutations(self):
         conn, payload, store = fixture()
