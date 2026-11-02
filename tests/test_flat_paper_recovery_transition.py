@@ -266,6 +266,7 @@ class TransitionCase(unittest.TestCase):
             snapshots=snapshots, service_pid=service_pid,
             start_token=lambda p: "start-77", writer_guard=barrier,
             send_interrupt=interrupt, is_alive=lambda p: live[0],
+            listener_owner=lambda p: True,
             monotonic=lambda: 0, sleep=lambda seconds: None,
         )
         self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
