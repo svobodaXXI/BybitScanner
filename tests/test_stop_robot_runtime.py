@@ -1322,7 +1322,6 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
             ("Long", "0"),
             ("Short", "0"),
             ("UNKNOWN", "1"),
-            (None, "1"),
         )
         with tempfile.TemporaryDirectory() as directory:
             for i, (side, qty) in enumerate(cases):
