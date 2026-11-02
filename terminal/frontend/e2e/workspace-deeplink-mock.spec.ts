@@ -313,8 +313,16 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
     .toContainText("Линии изменены");
   expect(writes).toBe(0);
   await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("GEOMETRY_CORRECTED");
-  await page.getByRole("textbox", { name: "Комментарий к исправлению" })
-    .fill("Upper anchor corrected after candle close");
+  const noteField = page.getByRole("textbox", { name: "Комментарий к исправлению" });
+  await noteField.fill("Upper anchor corrected after candle close!");
+  await noteField.press("Backspace");
+  await expect(noteField).toHaveValue("Upper anchor corrected after candle close");
+  // The ray remains selected after the drag. A global Backspace handler must
+  // not remove it when the owner is editing this review's comment.
+  await expect.poll(() => page.evaluate((key) => {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw).drawings.map((item: { id: string }) => item.id) : [];
+  }, startKey)).toEqual(["editable:upper", "editable:lower"]);
   await page.getByRole("button", { name: "Передать исправление" }).click();
   await expect(page.locator(".editor-correction-export output[role=status]").last())
     .toContainText("Исправление сохранено в дневнике обратной связи");
