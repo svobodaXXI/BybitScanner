@@ -232,6 +232,64 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
             )["inline_keyboard"]
         self.assertFalse(any("web_app" in button for row in rows for button in row))
 
+    def test_fallback_owner_editor_callback_preserves_original_source_identity(self):
+        from notification import build_tradingview_keyboard
+        token = "a" * 24
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "", "BYBITSCANNER_WORKSPACE_URL": "",
+        }, clear=True):
+            editor, terminal = build_tradingview_keyboard(
+                "BTCUSDT", "5", signal_id=f"source-original:{token}",
+            )["inline_keyboard"][-1]
+        self.assertEqual(editor["callback_data"], f"workspace:EDITOR:S:{token}")
+        self.assertLessEqual(len(editor["callback_data"].encode("utf-8")), 64)
+        self.assertEqual(terminal["callback_data"], "workspace:TERMINAL:BTCUSDT:5m")
+        parsed = telegram_review._parse_workspace_callback(editor["callback_data"])
+        self.assertEqual(parsed["source_token"], token)
+        self.assertIsNone(telegram_review._parse_workspace_callback(
+            "workspace:EDITOR:S:" + "!" * 24))
+        callback = {"id": "callback-1", "message": {"chat": {"id": 42}}}
+        frozen = {"signal_id": f"source-original:{token}", "symbol": "BTCUSDT",
+                  "timeframe": "5", "bars": [], "boundaries": []}
+        with patch("signal_archive.load_frozen_signal_geometry", return_value=frozen) as load, \
+                patch.object(handoff, "deliver_workspace_link", return_value={"ok": True}) as deliver, \
+                patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._run_workspace_callback(callback, parsed)
+        load.assert_called_once_with(f"source-original:{token}")
+        deliver.assert_called_once_with(
+            "42", mode="EDITOR", symbol="BTCUSDT", timeframe="5m",
+            signal_id=f"source-original:{token}",
+        )
+        answer.assert_called_once_with("callback-1", "Ссылка на редактор/терминал отправлена в чат")
+
+    def test_unavailable_frozen_geometry_blocks_callback_before_handoff(self):
+        token = "b" * 24
+        parsed = telegram_review._parse_workspace_callback(f"workspace:EDITOR:S:{token}")
+        callback = {"id": "callback-2", "message": {"chat": {"id": 42}}}
+        with patch("signal_archive.load_frozen_signal_geometry", return_value=None), \
+                patch.object(handoff, "deliver_workspace_link") as deliver, \
+                patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._run_workspace_callback(callback, parsed)
+        deliver.assert_not_called()
+        answer.assert_called_once_with("callback-2", "Исходная геометрия сигнала недоступна")
+
+    def test_verified_telegram_handoff_url_contains_archived_signal_id(self):
+        token = "c" * 24
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181",
+            "TELEGRAM_CHAT_ID": "42",
+        }, clear=True), patch.object(handoff.requests, "get", side_effect=[
+            SimpleNamespace(status_code=200), SimpleNamespace(status_code=401),
+        ]), patch.object(handoff.telegram_gateway_client, "configured", return_value=True), \
+                patch.object(handoff.telegram_gateway_client, "send_text", return_value={"ok": True}) as send:
+            handoff.deliver_workspace_link(
+                "42", mode="EDITOR", symbol="BTCUSDT", timeframe="5m",
+                signal_id=f"source-original:{token}",
+            )
+        from urllib.parse import parse_qs, urlsplit
+        url = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["web_app"]["url"]
+        self.assertEqual(parse_qs(urlsplit(url).query)["signal_id"], [f"source-original:{token}"])
+
 
 if __name__ == "__main__":
     unittest.main()
