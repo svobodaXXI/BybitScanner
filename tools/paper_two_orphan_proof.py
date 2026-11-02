@@ -24,6 +24,16 @@ from tools.jasmy_flat_handoff_proof import OLD_SHA as INCIDENT_BACKEND_SHA
 
 ACCOUNT = TradingAccountId("paper")
 EXPECTED_SYMBOLS = frozenset({"JASMYUSDT", "FLOWUSDT"})
+# The exceptional old-release handoff is for these observed incident lots,
+# not any future unrelated trades on the same pair of symbols. FLOW's durable
+# trade/candidate IDs are not yet attested; require its observed lot identity
+# and independent immutable execution proof instead of inventing those IDs.
+JASMY_TRADE_ID = "robot-trade-2a023e646fd8add8b5b30cd8"
+JASMY_CANDIDATE_ID = "2a023e646fd8add8b5b30cd8"
+INCIDENT_LOT = {
+    "JASMYUSDT": ("SHORT", "DOUBLE TOP", Decimal("399")),
+    "FLOWUSDT": ("LONG", "MIRROR", Decimal("6550.8")),
+}
 PROOF_LABEL = "TWO_ORPHANS_IMMUTABLE_CLOSE_EVIDENCE_ONLY"
 
 
@@ -161,6 +171,12 @@ def prove_two_flat_orphans(
         position = store.get_position_projection(
             PositionKey(ACCOUNT, Category.LINEAR, symbol, 0),
         )
+        expected_direction, expected_pattern, expected_quantity = INCIDENT_LOT[symbol_text]
+        _require(
+            (symbol_text != "JASMYUSDT" or
+             (trade_id == JASMY_TRADE_ID and candidate_id == JASMY_CANDIDATE_ID)),
+            "unexpected_incident_robot_lot",
+        )
         _require(
             trade is not None and candidate is not None and position is not None
             and trade.trading_account_id == ACCOUNT
@@ -172,7 +188,10 @@ def prove_two_flat_orphans(
             and candidate.symbol == symbol
             and candidate.status == "OPEN"
             and position.side is PositionSide.FLAT
-            and trade.entry_path in ("LIMIT", "MARKET"),
+            and trade.entry_path in ("LIMIT", "MARKET")
+            and trade.direction == expected_direction
+            and str(trade.pattern).upper() == expected_pattern
+            and trade.entry_quantity == expected_quantity,
             "orphan_lot_identity_unproven",
         )
         try:
