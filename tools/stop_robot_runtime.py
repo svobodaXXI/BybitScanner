@@ -1347,7 +1347,9 @@ def _notify(chat_id: str, text: str) -> None:
         print(f"[STOP NOTIFY ERROR] {type(exc).__name__}")
 
 
-USAGE = "usage: python -m tools.stop_robot_runtime [all|scanner] [--notify-chat CHAT_ID] [--env-file PATH]"
+USAGE = ("usage: python -m tools.stop_robot_runtime [all|scanner] "
+         "[--notify-chat CHAT_ID] [--env-file PATH] "
+         "[--dual-orphan-handoff-20261103 (separate owner runtime authorization required)]")
 
 
 def _environment(env_file: Path | None) -> dict[str, str]:
@@ -1382,7 +1384,12 @@ def main(argv: list[str] | None = None) -> int:
             return 64
         notify_chat = args[index + 1]
         del args[index:index + 2]
-    if len(args) > 1:
+    # Opt-in is an exceptional runtime action, not part of ordinary STOP.
+    # Never enable this on scanner-only or infer consent from a development PR.
+    dual_handoff = "--dual-orphan-handoff-20261103" in args
+    if dual_handoff:
+        args.remove("--dual-orphan-handoff-20261103")
+    if len(args) > 1 or (dual_handoff and args and args[0] != SCOPE_ALL):
         print(USAGE)
         return 64
     def progress(message: str) -> None:
@@ -1390,8 +1397,28 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         progress(f"starting scope={args[0] if args else SCOPE_ALL}")
-        result = RuntimeShutdown(env=_environment(env_file), progress=progress).run(
-            args[0] if args else SCOPE_ALL)
+        env = _environment(env_file)
+        handoff = None
+        if dual_handoff:
+            # Import only on explicitly authorized execution; this module
+            # already owns the exact systemd-PID and writer-barrier contract.
+            from tools.flat_paper_recovery_transition import (
+                ROOT as VPS_ROOT, _service_pid, execute_flat_handoff,
+            )
+            from tools.paper_two_orphan_proof import INCIDENT_BACKEND_SHA
+
+            def handoff() -> str:
+                return execute_flat_handoff(
+                    db_path=_database_path(VPS_ROOT, env),
+                    expected_identity=expected_database_identity(VPS_ROOT, env),
+                    expected_pid=_service_pid(),
+                    expected_build_sha=INCIDENT_BACKEND_SHA,
+                    execute=True, dual_orphan_incident_20261103=True,
+                )
+
+        result = RuntimeShutdown(
+            env=env, progress=progress, dual_orphan_handoff=handoff,
+        ).run(args[0] if args else SCOPE_ALL)
     except Exception as exc:
         print(f"[STOP CRASH] {type(exc).__name__}: {exc}", flush=True)
         print(traceback.format_exc(), end="", flush=True)
