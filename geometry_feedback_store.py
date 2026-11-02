@@ -126,6 +126,9 @@ def _normalize(payload: dict, snapshot: dict) -> dict:
                 previous = at
                 converted.append({"bar_open_time_ms": at, "price": _valid_price(anchor["price"])})
             normalized.append({"boundary_id": original["boundary_id"], "kind": original["kind"], "anchors": converted})
+        # A correction must differ from the actual immutable Scanner geometry.
+        if normalized == snapshot["boundaries"]:
+            raise GeometryFeedbackError("unchanged_corrected_geometry")
     else:
         normalized = []
     return {
