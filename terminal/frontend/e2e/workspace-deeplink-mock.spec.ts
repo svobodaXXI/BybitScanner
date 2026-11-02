@@ -144,3 +144,118 @@ test("frozen Editor geometry renders and accepts owner feedback without live Web
     corrected_boundaries: [],
   });
 });
+
+
+test("Editor saved correction survives a fresh open with original Scanner rays unchanged", async ({ page }) => {
+  const signalId = "source:BTCUSDT:5:saved-review-roundtrip";
+  const original = [
+    { boundary_id: "upper", kind: "ray", anchors: [
+      { bar_open_time_ms: 1800000000000, price: 115 },
+      { bar_open_time_ms: 1800000600000, price: 117 },
+    ] },
+    { boundary_id: "lower", kind: "ray", anchors: [
+      { bar_open_time_ms: 1800000000000, price: 95 },
+      { bar_open_time_ms: 1800000600000, price: 97 },
+    ] },
+  ];
+  const candleBars = [
+    { open_time_ms: 1800000000000, open: 100, high: 115, low: 95, close: 110 },
+    { open_time_ms: 1800000300000, open: 110, high: 116, low: 96, close: 102 },
+    { open_time_ms: 1800000600000, open: 102, high: 117, low: 97, close: 111 },
+  ];
+  const frozen = {
+    schema_version: 1, signal_id: signalId, symbol: "BTCUSDT", timeframe: "5",
+    bars: candleBars, boundaries: original,
+  };
+  let savedReview: {
+    review_id: string;
+    submission: {
+      signal_id: string; snapshot_revision: string; label: string;
+      corrected_boundaries: Array<{ boundary_id: string; kind: string; anchors: Array<{ bar_open_time_ms: number; price: number }> }>;
+    };
+  } | null = null;
+  let writes = 0;
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const { pathname } = new URL(request.url());
+    if (pathname === "/api/workspace/signal-geometry") {
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({
+          ok: true, snapshot: frozen, latest_review: savedReview,
+          snapshot_revision: "a".repeat(64), bars_sha256: "b".repeat(64),
+        }) });
+      return;
+    }
+    if (pathname === "/api/workspace/geometry-feedback" && request.method() === "POST") {
+      writes++;
+      const body = request.postDataJSON() as {
+        signal_id: string; label: string; snapshot_revision: string;
+        corrected_boundaries: Array<{ id: string; type: string; anchors: Array<{ bar_open_time_ms: number; price: number }> }>;
+      };
+      expect(body.signal_id).toBe(signalId);
+      expect(body.label).toBe("GEOMETRY_CORRECTED");
+      expect(body.corrected_boundaries).toHaveLength(2);
+      expect(body.corrected_boundaries[0].anchors[0].price).toBe(113);
+      savedReview = {
+        review_id: "roundtrip-confirmed",
+        submission: {
+          signal_id: signalId, snapshot_revision: body.snapshot_revision, label: body.label,
+          corrected_boundaries: body.corrected_boundaries.map((item) => ({
+            boundary_id: item.id, kind: item.type, anchors: item.anchors,
+          })),
+        },
+      };
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ ok: true, review: { review_id: savedReview.review_id,
+          submission: { signal_id: signalId } } }) });
+      return;
+    }
+    if (pathname === "/api/workspace/symbol" && request.method() === "POST") {
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ ok: true, symbol: "BTCUSDT", generation: 101 }) });
+      return;
+    }
+    if (pathname === "/api/workspace/state") {
+      await route.fulfill({ status: 200, contentType: "application/json",
+        body: JSON.stringify({ ok: true, workspace: {
+          active_symbol: "ONGUSDT", active_generation: 1,
+        } }) });
+      return;
+    }
+    await route.fulfill({ status: 503, contentType: "application/json", body: '{"ok":false}' });
+  });
+
+  const startKey = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${signalId}`;
+  await page.addInitScript(({ key }) => {
+    // Equivalent to the owner dragging just the upper ray's first anchor.
+    localStorage.setItem(key, JSON.stringify({ version: 1, drawings: [
+      { id: "editable:upper", type: "ray", locked: false, hidden: false,
+        style: { color: "#e0b45b", lineWidth: 1.5 },
+        anchors: [{ logical: 0, price: 113 }, { logical: 2, price: 117 }] },
+      { id: "editable:lower", type: "ray", locked: false, hidden: false,
+        style: { color: "#e0b45b", lineWidth: 1.5 },
+        anchors: [{ logical: 0, price: 95 }, { logical: 2, price: 97 }] },
+    ] }));
+  }, { key: startKey });
+  const url = "/?mode=EDITOR&symbol=BTCUSDT&timeframe=5m&signal_id=" + encodeURIComponent(signalId);
+  await page.goto(url);
+  await expect(page.getByRole("button", { name: "Передать исправление" })).toBeEnabled();
+  await page.getByRole("button", { name: "Передать исправление" }).click();
+  await expect(page.getByText(/Исправление сохранено в дневнике обратной связи/)).toBeVisible();
+  expect(writes).toBe(1);
+
+  await page.reload();
+  await expect(page.getByText(/Сохранённый отзыв: roundtrip-con/)).toBeVisible();
+  const restored = await expect.poll(() => page.evaluate((id) => {
+    const savedKey = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}:review-roundtrip-confirmed`;
+    const raw = localStorage.getItem(savedKey);
+    return raw ? JSON.parse(raw).drawings.map((item: { id: string; anchors: Array<{ price: number }> }) => ({
+      id: item.id, price: item.anchors[0].price,
+    })) : null;
+  }, signalId)).toEqual([
+    { id: "editable:upper", price: 113 },
+    { id: "editable:lower", price: 95 },
+  ]);
+  expect(original[0].anchors[0].price).toBe(115);
+  expect(writes).toBe(1); // Reload is read-only, never resubmits a correction.
+});
