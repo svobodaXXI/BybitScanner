@@ -215,7 +215,8 @@ def _run_workspace_callback(callback_query, parsed):
     if parsed.get("source_token"):
         from signal_archive import load_frozen_signal_geometry
         import re
-        source_id = "source-original:" + parsed["source_token"]
+        source_prefix = "mirror-origin:" if parsed.get("source_kind") == "M" else "source-original:"
+        source_id = source_prefix + parsed["source_token"]
         source = load_frozen_signal_geometry(source_id)
         timeframe = {
             "1": "1m", "5": "5m", "15": "15m", "60": "1h", "D": "1d",
