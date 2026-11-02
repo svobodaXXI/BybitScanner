@@ -1005,7 +1005,7 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
         get_telegram_owner_chat_id, send_message_to_recipients,
     )
     from telegram_bot import send_photo
-    from signal_archive import record_original_signal
+    from signal_archive import record_original_signal, load_frozen_signal_geometry
     from signal_mirror_geometry_producer import build_mirror_geometry_snapshot
     from mirror_event_chart import render_mirror_chart
     import tempfile
@@ -1072,12 +1072,17 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                             image_bytes=image_bytes, source_formation_ids=source_ids,
                             source_campaign_first_id=first_id,
                             geometry_snapshot=build_mirror_geometry_snapshot(source_id, frozen))
+                        # PNG archival alone does not establish readable Editor
+                        # geometry. Keep image-only source navigation intact.
+                        editor_source_ready = bool(
+                            source_ready and load_frozen_signal_geometry(source_id) is not None
+                        )
                         delivered = True
                         for chat_id in get_telegram_chat_ids():
                             is_owner = bool(owner_id and chat_id == owner_id)
                             markup = build_tradingview_keyboard(
                                 symbol, timeframe, include_review_actions=is_owner,
-                                signal_id=source_id if is_owner and source_ready else None)
+                                signal_id=source_id if is_owner and editor_source_ready else None)
                             if is_owner and source_ready:
                                 markup["inline_keyboard"].insert(0, [{
                                     "text": "↩️ К сигналу",
