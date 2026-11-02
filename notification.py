@@ -406,10 +406,11 @@ def _owner_workspace_button(mode, symbol, timeframe, signal_id=None):
     # delivered; a 24-hex source handle fits Telegram's 64-byte callback limit.
     if mode == "EDITOR" and isinstance(signal_id, str):
         import re
-        match = re.fullmatch(r"source-original:([0-9a-f]{24})", signal_id)
+        match = re.fullmatch(r"(source-original|mirror-origin):([0-9a-f]{24})", signal_id)
         if match:
+            source_kind = "S" if match.group(1) == "source-original" else "M"
             return {"text": "✏️ Редактор",
-                    "callback_data": f"workspace:EDITOR:S:{match.group(1)}"}
+                    "callback_data": f"workspace:EDITOR:{source_kind}:{match.group(2)}"}
     return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
             "callback_data": f"workspace:{mode}:{symbol}:{timeframe}"}
 
