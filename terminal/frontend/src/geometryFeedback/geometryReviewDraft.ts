@@ -81,3 +81,38 @@ export function buildGeometryReviewDraft(input: {
     corrected_boundaries,
   };
 }
+
+/** Only the owner's editable copies of the frozen Scanner lines may be submitted.
+ * Other saved/manual drawings must never silently become detector training data.
+ */
+export function buildEditorGeometryReview(input: {
+  signalId: string;
+  snapshotRevision: string;
+  barsSha256: string;
+  label: GeometryReviewDraft["label"];
+  referenceDrawings: readonly DrawingObject[];
+  editableDrawings: readonly DrawingObject[];
+  frozenCandles: readonly Candle[];
+}): GeometryReviewDraft {
+  if (!input.referenceDrawings.length)
+    throw new Error("Frozen source geometry is unavailable");
+  const sourceIds = new Set(input.referenceDrawings.map((drawing) => drawing.id));
+  if (sourceIds.size !== input.referenceDrawings.length)
+    throw new Error("Duplicated Scanner lines");
+  const normalized = input.referenceDrawings.map((reference) => {
+    const id = `editable:${reference.id}`;
+    const matching = input.editableDrawings.filter((drawing) => drawing.id === id);
+    if (matching.length !== 1 || matching[0].type !== reference.type)
+      throw new Error("Original editable line is missing or changed type");
+    return { ...matching[0], id: reference.id };
+  });
+  if (input.editableDrawings.length !== normalized.length)
+    throw new Error("Unexpected extra drawings in the correction");
+  const draft = buildGeometryReviewDraft({ ...input, drawings: normalized });
+  if (input.label === "GEOMETRY_CORRECTED") {
+    const original = serializeReviewDrawings(input.referenceDrawings, input.frozenCandles);
+    if (JSON.stringify(original) === JSON.stringify(draft.corrected_boundaries))
+      throw new Error("No geometry changes to submit");
+  }
+  return draft;
+}
