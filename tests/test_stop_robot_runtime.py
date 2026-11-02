@@ -546,6 +546,25 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.calls, ["scanner:stop", "robot:stop", "protection:retire-entry-arms"])
         self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
+    def test_missing_armed_symbols_never_proves_protection_quiescent(self):
+        # An incomplete healthy snapshot is not evidence that no ENTRY arms
+        # remain. Check both full shutdown and Scanner-only behavior.
+        for scope in ("all", "scanner"):
+            with self.subTest(scope=scope):
+                runtime = FakeRuntime(robot=STOPPED)
+                runtime.protection.pop("armed_symbols")
+                result = runtime.orchestrator().run(scope)
+                self.assertFalse(result.runtime_stopped)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+                self.assertNotIn("backend:shutdown", runtime.calls)
+                self.assertNotIn("telegram:shutdown", runtime.calls)
+                if scope == "all":
+                    self.assertFalse(result.ok)
+                    self.assertIn("protection:retire-entry-arms", runtime.calls)
+                else:
+                    self.assertTrue(result.ok)
+                    self.assertIn("protection coverage keeps the runtime alive", result.message)
+
     def test_robot_running_with_absent_backend_is_blocked_without_shutdown(self):
         runtime = FakeRuntime(robot=READY, backend=False)
         result = runtime.orchestrator().run("all")
