@@ -255,6 +255,22 @@ export function ChartPanel({
   const [savedReceipt, setSavedReceipt] = useState<{
     reviewId: string; label: GeometryReviewDraft["label"];
   } | null>(null);
+  const reviewEditSequence = useRef(0);
+  const [reviewDirty, setReviewDirty] = useState(() =>
+    Boolean(editorMode && signalIdentity && (
+      drawings.length !== editableSeedDrawings.length ||
+      drawings.some((drawing) => {
+        const source = editableSeedDrawings.find((seed) => seed.id === drawing.id);
+        return !source || JSON.stringify(drawing.anchors) !== JSON.stringify(source.anchors);
+      })
+    )),
+  );
+  const markReviewEdited = useCallback(() => {
+    if (!editorMode || !signalIdentity) return;
+    reviewEditSequence.current += 1;
+    setReviewDirty(true);
+    setReviewStatus("");
+  }, [editorMode, signalIdentity]);
   const latestReceipt = savedReceipt ?? (savedReviewId && savedReviewLabel
     ? { reviewId: savedReviewId, label: savedReviewLabel } : null);
   const reviewVerdicts: Record<GeometryReviewDraft["label"], string> = {
@@ -278,13 +294,20 @@ export function ChartPanel({
         const key = globalThis.crypto?.randomUUID?.() ?? `geometry-review-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         submitToken.current = { content, key };
       }
+      const submittedSequence = reviewEditSequence.current;
       setReviewPending(true);
       setReviewStatus("Сохранение исправления…");
       const receipt = await onSaveGeometryReview({
         ...draft, note, idempotency_key: submitToken.current.key,
       });
       setSavedReceipt(receipt);
-      setReviewStatus("Исправление сохранено в дневнике обратной связи. Scanner автоматически не менялся.");
+      if (submittedSequence === reviewEditSequence.current) {
+        setReviewDirty(false);
+        setReviewStatus("Исправление сохранено в дневнике обратной связи. Scanner автоматически не менялся.");
+      } else {
+        setReviewDirty(true);
+        setReviewStatus("Отзыв сохранён, но изменения после отправки ещё не сохранены.");
+      }
     } catch (error) {
       setReviewStatus(`Не удалось сохранить: ${error instanceof Error ? error.message : "неизвестная ошибка"}`);
     } finally {
@@ -312,8 +335,8 @@ export function ChartPanel({
   const commit = useCallback((next: DrawingObject[]) => {
     historyRef.current.commit(next);
     setDrawings(next);
-    setReviewStatus("");
-  }, []);
+    markReviewEdited();
+  }, [markReviewEdited]);
   const applyFollowLatest = useCallback((next: boolean) => {
     followLatestRef.current = next;
   }, []);
@@ -853,7 +876,7 @@ export function ChartPanel({
             <select
               aria-label="Оценка сигнала"
               value={reviewLabel}
-              onChange={(event) => { setReviewLabel(event.target.value as GeometryReviewDraft["label"]); setReviewStatus(""); }}
+              onChange={(event) => { setReviewLabel(event.target.value as GeometryReviewDraft["label"]); markReviewEdited(); }}
             >
               <option value="GEOMETRY_CORRECTED">Исправлена геометрия</option>
               <option value="CONFIRMED">Верный сигнал</option>
@@ -865,7 +888,7 @@ export function ChartPanel({
               placeholder="Комментарий (необязательно)"
               maxLength={1024}
               value={reviewNote}
-              onChange={(event) => { setReviewNote(event.target.value); setReviewStatus(""); }}
+              onChange={(event) => { setReviewNote(event.target.value); markReviewEdited(); }}
             />
             <button type="button" disabled={reviewPending || !snapshotRevision || !barsSha256 || !onSaveGeometryReview}
               onClick={() => void saveCorrection()}>
@@ -875,8 +898,10 @@ export function ChartPanel({
               <span>
                 Сохранённый отзыв: {latestReceipt.reviewId.slice(0, 12)}
                 {" · "}{reviewVerdicts[latestReceipt.label]}
+                {reviewDirty ? " (предыдущая версия)" : ""}
               </span>
             )}
+            {reviewDirty && <output aria-label="Несохранённый отзыв">Новые изменения не сохранены</output>}
             {reviewLabel === "GEOMETRY_CORRECTED" && rayComparison && (
               <output aria-label="Сравнение линий Scanner и исправления">
                 {rayComparison.map((ray) => (
@@ -898,7 +923,7 @@ export function ChartPanel({
           selected={selectedId !== null}
           onTool={setTool}
           onMagnet={() => setMagnet((v) => !v)}
-          onUndo={() => setDrawings(historyRef.current.undo())}
+          onUndo={() => { setDrawings(historyRef.current.undo()); markReviewEdited(); }}
           onDelete={deleteSelected}
           onClear={() => {
             if (drawings.length) setClearConfirmationOpen(true);
@@ -1248,6 +1273,7 @@ export function ChartPanel({
             onCancel={() => setClearConfirmationOpen(false)}
             onConfirm={() => {
               setDrawings(clearDrawingHistory(historyRef.current));
+              markReviewEdited();
               setSelectedId(null);
               setClearConfirmationOpen(false);
             }}
