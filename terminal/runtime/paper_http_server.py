@@ -3862,9 +3862,12 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     or scanner != "SCANNER_STOPPED"
                     or not isinstance(protection, Mapping)
                     or protection.get("healthy") is not True
-                    or protection.get("covered_symbols")
-                    or protection.get("armed_symbols")
-                    or protection.get("unhealthy_symbols")
+                    # Absence or malformed evidence is not empty coverage.
+                    # Shutdown must see all three authoritative collections,
+                    # not merely a truthy healthy flag.
+                    or protection.get("covered_symbols") != []
+                    or protection.get("armed_symbols") != []
+                    or protection.get("unhealthy_symbols") != {}
                 ):
                     return "runtime_still_required"
                 # Atomic with owner-call admission. Reject every later owner
