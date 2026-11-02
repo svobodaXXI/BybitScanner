@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
 import unittest
 
-from terminal.runtime.paper_http_server import RobotProtectionCoverageManager
+from terminal.runtime.paper_http_server import (
+    ProtectionIngressOverflow, RobotProtectionCoverageManager, SerializedPaperRuntime,
+)
 
 
 SYMBOL = "KSMUSDT"
@@ -69,6 +72,9 @@ class _Owner:
         self.processed = []
         self.durable_loss = durable_loss
 
+    def close(self):
+        pass
+
     def robot_protection_coverage_symbols(self):
         return (SYMBOL,)
 
@@ -120,6 +126,46 @@ class _QueuedRuntime(_Runtime):
 
 
 class RobotProtectionOverflowRecoveryTests(unittest.TestCase):
+    def test_saturated_ingress_still_delivers_owner_fence_in_order(self):
+        owner = _Owner()
+        entered, release = threading.Event(), threading.Event()
+        runtime = SerializedPaperRuntime(lambda: owner, protection_ingress_capacity=1)
+        try:
+            def held_operation(_owner):
+                entered.set()
+                if not release.wait(5):
+                    raise AssertionError("test owner stall not released")
+
+            runtime.enqueue(held_operation, symbol=SYMBOL, coverage_role="OPEN_POSITION")
+            self.assertTrue(entered.wait(2))
+            # One genuine protection event is now admitted behind the held owner.
+            runtime.enqueue(
+                lambda current: current.processed.append("admitted"),
+                symbol=SYMBOL, coverage_role="OPEN_POSITION",
+            )
+            manager = RobotProtectionCoverageManager(object(), runtime)
+            manager._covered[SYMBOL] = _Context(public_orderbook=_BookSnapshot())
+            manager._roles[SYMBOL] = "OPEN_POSITION"
+
+            # Third event overflows. The old code tried to enqueue its fence
+            # into the same saturated FIFO and left the durable fence missing.
+            manager._on_update(SYMBOL, f"{SYMBOL}:177600000001:10680001")
+            self.assertEqual(manager.health()["unhealthy_symbols"], {
+                SYMBOL: "ingress_overflow",
+            })
+            self.assertEqual(runtime.protection_ingress_metrics()["current_pending"], 1)
+            with self.assertRaises(ProtectionIngressOverflow):
+                runtime.enqueue(lambda current: None, symbol=SYMBOL)
+
+            release.set()
+            runtime.call(lambda current: None)
+            self.assertEqual(owner.processed, ["admitted"])
+            self.assertEqual(owner.fences, [(SYMBOL, "ingress_overflow")])
+            self.assertEqual(runtime.protection_ingress_metrics()["current_pending"], 0)
+        finally:
+            release.set()
+            runtime.close()
+
     def test_restart_rehydrates_durable_continuity_loss_and_recovers(self):
         owner = _Owner((SYMBOL, "ingress_overflow"))
         runtime = _Runtime(owner)
