@@ -257,11 +257,30 @@ class BoxRetryRealPaperE2E(MirrorStandaloneHarness):
                     SYMBOL, take_book, event_id="box-retry-exit-take",
                     received_at_ms=take_book.received_at_ms,
                 ))
-                closed = _wait_until(lambda: (
-                    lambda row: row if row and row.exit_time_ms else None
-                )(runtime.call(lambda owner:
-                    owner.store.get_robot_trade(retry_trade.trade_id),
-                )))
+                try:
+                    closed = _wait_until(lambda: (
+                        lambda row: row if row and row.exit_time_ms else None
+                    )(runtime.call(lambda owner:
+                        owner.store.get_robot_trade(retry_trade.trade_id),
+                    )))
+                except AssertionError:
+                    diagnostic = runtime.call(lambda owner: {
+                        "trade": str(owner.store.get_robot_trade(retry_trade.trade_id)),
+                        "candidate": str(owner.store.get_robot_candidate(second_id)),
+                        "position": str(owner.store.get_position_projection(key)),
+                        "exit_orders": [
+                            str(owner.store.get_paper_limit(item.order_id.value, ACCOUNT))
+                            for item in owner.store.load_box_order_ownership(source_id)
+                            if item.role == "EXIT"
+                        ],
+                        "active_entries": [
+                            str(order) for order in owner.store.load_active_paper_limits(
+                                ACCOUNT, symbol,
+                            )
+                        ],
+                        "runtime": str(owner.store.get_robot_runtime_state(ACCOUNT)),
+                    })
+                    self.fail(f"Box EXIT did not finalize retry trade: {diagnostic}")
                 self.assertEqual(closed.exit_reason, "TAKE")
                 self.assertGreater(closed.realized_pnl_usdt, 0)
                 self.assertEqual(candidate(second_id).status, "CLOSED")
