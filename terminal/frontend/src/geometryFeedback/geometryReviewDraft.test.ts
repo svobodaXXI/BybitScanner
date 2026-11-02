@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DrawingObject } from "../chart/drawingModel";
-import { buildEditorGeometryReview, buildGeometryReviewDraft, compareEditorRayChanges, serializeReviewDrawings } from "./geometryReviewDraft";
+import { buildEditorGeometryReview, buildGeometryReviewDraft, compareEditorRayChanges, matchesStoredGeometryReview, serializeReviewDrawings } from "./geometryReviewDraft";
 
 const candles = [
   { time: "2026-10-19T00:00:00.000Z", open: 10, high: 12, low: 9, close: 11 },
@@ -125,5 +125,62 @@ describe("Editor ray deviation preview", () => {
     expect(() => compareEditorRayChanges({
       ...inputs, editableDrawings: [changedUpper, unchangedLower, unchangedLower],
     })).toThrow(/Incomplete/);
+  });
+});
+
+describe("Stored geometry review receipt", () => {
+  const ownerDraft = {
+    ...buildGeometryReviewDraft({
+      ...base, label: "GEOMETRY_CORRECTED", drawings: [
+        { ...line, anchors: [{ logical: 0, price: 11.5 }, line.anchors[1]] },
+      ],
+    }),
+    note: "Owner verified upper ray", idempotency_key: "owner-review-token-123456789",
+  };
+  const stored = {
+    schema_version: ownerDraft.schema_version,
+    signal_id: ownerDraft.signal_id,
+    snapshot_revision: ownerDraft.snapshot_revision,
+    bars_sha256: ownerDraft.bars_sha256,
+    label: ownerDraft.label,
+    idempotency_key: ownerDraft.idempotency_key,
+    note: ownerDraft.note,
+    corrected_boundaries: ownerDraft.corrected_boundaries.map((line) => ({
+      boundary_id: line.id, kind: line.type,
+      anchors: line.anchors.map((anchor) => ({ ...anchor })),
+    })),
+  };
+  it("accepts exact saved UTC anchors in the store's canonical boundary format", () => {
+    expect(matchesStoredGeometryReview(ownerDraft, stored)).toBe(true);
+  });
+  it("rejects substituted price/time, missing boundary, note or review label", () => {
+    for (const corrupted of [
+      { ...stored, corrected_boundaries: [{
+        ...stored.corrected_boundaries[0], anchors: [
+          { ...stored.corrected_boundaries[0].anchors[0], price: 999 },
+          stored.corrected_boundaries[0].anchors[1],
+        ],
+      }] },
+      { ...stored, corrected_boundaries: [{
+        ...stored.corrected_boundaries[0], anchors: [
+          { ...stored.corrected_boundaries[0].anchors[0], bar_open_time_ms: 1 },
+          stored.corrected_boundaries[0].anchors[1],
+        ],
+      }] },
+      { ...stored, corrected_boundaries: [] },
+      { ...stored, note: "changed" },
+      { ...stored, label: "FALSE_POSITIVE" },
+    ]) expect(matchesStoredGeometryReview(ownerDraft, corrupted)).toBe(false);
+  });
+  it("rejects fabricated confirmations for a no-correction verdict", () => {
+    const noCorrection = {
+      ...ownerDraft, label: "CONFIRMED" as const, corrected_boundaries: [],
+    };
+    expect(matchesStoredGeometryReview(noCorrection, {
+      ...stored, label: "CONFIRMED", corrected_boundaries: [],
+    })).toBe(true);
+    expect(matchesStoredGeometryReview(noCorrection, {
+      ...stored, label: "CONFIRMED",
+    })).toBe(false);
   });
 });
