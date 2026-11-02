@@ -1161,7 +1161,7 @@ class RuntimeShutdown:
         return (
             status == 200 and isinstance(health, dict) and health.get("healthy") is True
             and health.get("covered_symbols") == [] and health.get("unhealthy_symbols") == {}
-            and health.get("armed_symbols", []) == []
+            and health.get("armed_symbols") == []
         )
 
     def _shutdown(self, shutdown_url: str, health_url: str, name: str, kind: str, step: str) -> str:
