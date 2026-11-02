@@ -180,6 +180,16 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
     # entry LIMIT or exposure remains. But a non-flat position on the same
     # symbol as an APPROVED candidate is ambiguous partial-fill ownership and
     # therefore still blocks fail-closed.
+    # Reject unknown ownership statuses before interpreting any candidate as
+    # inert. SQL IN/NOT IN otherwise silently excludes NULL.
+    unknown_candidate = connection.execute(
+        """SELECT 1 FROM robot_candidates WHERE trading_account_id='paper'
+           AND (status IS NULL OR status NOT IN
+                ('BOX_PLAN_ONLY','APPROVED','OPEN','CLOSED','EXPIRED','INVALIDATED'))
+           LIMIT 1"""
+    ).fetchone()
+    if unknown_candidate is not None:
+        raise SafeStopError("legacy PAPER shutdown blocked by unknown Robot candidate status")
     active_candidates = connection.execute(
         """SELECT symbol, status FROM robot_candidates
            WHERE trading_account_id='paper' AND status IN ('APPROVED', 'OPEN')"""
@@ -206,7 +216,7 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
     active_limits = int(connection.execute(
         """SELECT COUNT(*) FROM paper_limit_orders
            WHERE trading_account_id='paper'
-             AND status IN ('open', 'partially_filled')"""
+             AND (status IS NULL OR status NOT IN ('filled', 'cancelled'))"""
     ).fetchone()[0])
     positions = connection.execute(
         """SELECT symbol, side, quantity FROM position_projections
@@ -214,7 +224,20 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
     ).fetchall()
     unresolved_obligations = int(connection.execute(
         """SELECT COUNT(*) FROM paper_protection_obligations
-           WHERE trading_account_id='paper' AND status!='RESOLVED'"""
+           WHERE trading_account_id='paper'
+             AND (status IS NULL OR status!='RESOLVED')"""
+    ).fetchone()[0])
+    # The exceptional legacy lifecycle is no bypass for in-flight or
+    # ambiguous PAPER commands and reconciliation checkpoints. Match the
+    # canonical owner's terminal-state contract; absent tables fail closed.
+    unfinished_commands = int(connection.execute(
+        """SELECT COUNT(*) FROM trading_commands WHERE trading_account_id='paper'
+           AND (current_state IS NULL OR current_state NOT IN
+                ('filled','cancelled','amended','rejected','failed','owner_attested_closed'))"""
+    ).fetchone()[0])
+    unfinished_checkpoints = int(connection.execute(
+        """SELECT COUNT(*) FROM reconciliation_checkpoints
+           WHERE trading_account_id='paper' AND completed_at_ms IS NULL"""
     ).fetchone()[0])
 
     non_flat_symbols: set[str] = set()
@@ -251,6 +274,10 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
         )
     if unresolved_obligations:
         raise SafeStopError("legacy PAPER shutdown blocked by unresolved protection obligations")
+    if unfinished_commands:
+        raise SafeStopError("legacy PAPER shutdown blocked by unfinished PAPER commands")
+    if unfinished_checkpoints:
+        raise SafeStopError("legacy PAPER shutdown blocked by unfinished reconciliation checkpoints")
 
 
 def prove_legacy_paper_quiescence(database_path: Path) -> None:
