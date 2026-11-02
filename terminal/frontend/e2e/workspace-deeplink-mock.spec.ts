@@ -328,6 +328,19 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
   await expect(page.getByText(/Сохранённый отзыв: d{12}.*предыдущая версия/)).toBeVisible();
   expect(writes).toBe(1);
 
+  // A stale local review cache must not override the authoritative persisted
+  // server correction, even if it is syntactically valid drawing JSON.
+  await page.evaluate((id) => {
+    const key = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}:review-${"d".repeat(64)}`;
+    localStorage.setItem(key, JSON.stringify({ version: 1, drawings: [
+      { id: "editable:upper", type: "ray", locked: false, hidden: false,
+        style: { color: "#e0b45b", lineWidth: 1.5 },
+        anchors: [{ logical: 0, price: 999 }, { logical: 2, price: 999 }] },
+      { id: "editable:lower", type: "ray", locked: false, hidden: false,
+        style: { color: "#e0b45b", lineWidth: 1.5 },
+        anchors: [{ logical: 0, price: 999 }, { logical: 2, price: 999 }] },
+    ] }));
+  }, signalId);
   await page.reload();
   await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "Комментарий к исправлению" }))
