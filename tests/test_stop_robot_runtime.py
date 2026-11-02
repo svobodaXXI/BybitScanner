@@ -173,7 +173,7 @@ class FakeRuntime:
         if self.legacy_paper_blocker is not None:
             raise shutdown.SafeStopError(self.legacy_paper_blocker)
 
-    def orchestrator(self):
+    def orchestrator(self, *, dual_orphan_handoff=None):
         return shutdown.RuntimeShutdown(
             root=ROOT, env={}, get=self.get, post=self.post,
             robot_state=lambda: self.robot,
@@ -185,6 +185,7 @@ class FakeRuntime:
             legacy_terminator=self.terminate_legacy,
             legacy_paper_quiescence=self.prove_legacy_paper_quiescence,
             legacy_paper_guard=lambda: nullcontext(), legacy_supported=True,
+            dual_orphan_handoff=dual_orphan_handoff,
         )
 
 
@@ -697,6 +698,84 @@ class ReconciliationShutdownTests(unittest.TestCase):
             "backend:shutdown", "telegram:shutdown",
         ])
         self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_confirmed_required_rejection_uses_single_explicit_protected_handoff(self):
+        runtime = FakeRuntime(robot=RECON)
+        runtime.reconcile_state = RECON
+        runtime.autopilot_mode = "PAPER_AUTO"
+        runtime.reconcile_reply = (
+            409, {"ok": False, "success": False,
+                  "recovery_status": "RECONCILIATION_REQUIRED"},
+        )
+        called = []
+
+        def protected_handoff():
+            self.assertEqual(runtime.scanner_mode, "SCANNER_STOPPED")
+            self.assertEqual(runtime.autopilot_mode, "OFF")
+            self.assertEqual(runtime.robot, RECON)
+            self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+            called.append("handoff")
+            runtime.backend_alive = False
+            return "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
+
+        result = runtime.orchestrator(dual_orphan_handoff=protected_handoff).run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(called, ["handoff"])
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:reconcile", "telegram:shutdown",
+        ])
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_unapproved_reconcile_rejection_never_uses_exceptional_handoff(self):
+        runtime = FakeRuntime(robot=RECON)
+        runtime.reconcile_reply = (
+            409, {"ok": False, "success": False,
+                  "recovery_status": "RECONCILIATION_REQUIRED"},
+        )
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:reconcile"])
+
+    def test_unknown_reconcile_outcome_never_triggers_dual_handoff(self):
+        for reply in (
+            TimeoutError("unknown"),
+            (503, {"ok": False, "error": "robot_reconcile_unavailable"}),
+            (409, {"ok": False, "error": "illegal_transition"}),
+        ):
+            with self.subTest(reply=reply):
+                runtime = FakeRuntime(robot=RECON)
+                runtime.reconcile_reply = reply
+                called = []
+                result = runtime.orchestrator(
+                    dual_orphan_handoff=lambda: called.append("unsafe"),
+                ).run("all")
+                self.assertFalse(result.ok)
+                self.assertEqual(called, [])
+                self.assertEqual(runtime.calls, ["scanner:stop", "robot:reconcile"])
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_dual_handoff_unknown_exit_or_robot_state_drift_remains_blocked(self):
+        for result_text, changed_state in (
+            ("OUTCOME_UNKNOWN: single SIGINT sent, do not retry or deploy", RECON),
+            ("INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed", READY),
+        ):
+            with self.subTest(result_text=result_text, state=changed_state):
+                runtime = FakeRuntime(robot=RECON)
+                runtime.reconcile_reply = (
+                    409, {"ok": False, "success": False,
+                          "recovery_status": "RECONCILIATION_REQUIRED"},
+                )
+                runtime.reconcile_state = changed_state
+                called = []
+                result = runtime.orchestrator(
+                    dual_orphan_handoff=lambda: called.append("handoff") or result_text,
+                ).run("all")
+                self.assertFalse(result.ok)
+                self.assertFalse(result.runtime_stopped)
+                self.assertEqual(called, [] if changed_state != RECON else ["handoff"])
+                self.assertNotIn("telegram:shutdown", runtime.calls)
 
     def test_unresolved_or_failed_reconcile_keeps_runtime_alive(self):
         for reply, state in (
@@ -2236,6 +2315,39 @@ class HandoffAndCliTests(unittest.TestCase):
             self.assertIs(kwargs[stream], subprocess.DEVNULL)
         with self.assertRaises(ValueError):
             shutdown.launch_detached("robot", root=ROOT)
+
+    def test_one_opt_in_cli_routes_through_existing_all_shutdown(self):
+        flag = "--dual-orphan-handoff-20261103"
+        self.assertEqual(shutdown.main(["scanner", flag]), 64)
+        blocked = shutdown.ShutdownResult("all", False, "STOP BLOCKED: no runtime proof")
+        with (
+            mock.patch.object(shutdown, "_environment", return_value={}),
+            mock.patch.object(shutdown, "RuntimeShutdown") as runtime,
+            mock.patch(
+                "tools.flat_paper_recovery_transition._service_pid",
+                return_value=7654,
+            ),
+            mock.patch(
+                "tools.flat_paper_recovery_transition.execute_flat_handoff",
+                return_value="PRECHECK_ONLY: no signal",
+            ) as transition,
+        ):
+            runtime.return_value.run.return_value = blocked
+            self.assertEqual(shutdown.main(["all", flag]), 1)
+            runtime.return_value.run.assert_called_once_with("all")
+            callback = runtime.call_args.kwargs["dual_orphan_handoff"]
+            self.assertTrue(callable(callback))
+            callback()
+            kwargs = transition.call_args.kwargs
+            self.assertEqual(kwargs["expected_pid"], 7654)
+            self.assertTrue(kwargs["execute"])
+            self.assertTrue(kwargs["dual_orphan_incident_20261103"])
+            self.assertEqual(kwargs["expected_build_sha"],
+                             "f100ef369a1105443332b5729b558464c27be48f")
+        with mock.patch.object(shutdown, "RuntimeShutdown") as ordinary:
+            ordinary.return_value.run.return_value = blocked
+            self.assertEqual(shutdown.main([]), 1)
+            self.assertIsNone(ordinary.call_args.kwargs["dual_orphan_handoff"])
 
     def test_main_defaults_to_full_scope_and_notifies_result(self):
         result = shutdown.ShutdownResult("all", True, "Runtime STOPPED.", runtime_stopped=True)

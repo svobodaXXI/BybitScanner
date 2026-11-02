@@ -26,6 +26,9 @@ from tools.jasmy_flat_handoff_proof import (
     prove_jasmy_legacy_flat,
 )
 from tools.runtime_intent import expected_database_identity, http_get
+from tools.paper_two_orphan_proof import (
+    PROOF_LABEL as TWO_ORPHAN_PROOF_LABEL, prove_two_flat_orphans,
+)
 from tools.stop_robot_runtime import _database_path, _environment
 
 UNIT = "bybitscanner-paper-backend.service"
@@ -178,6 +181,7 @@ def execute_flat_handoff(
     expected_build_sha: str, execute: bool, snapshots=None,
     legacy_unversioned: bool = False, legacy_attestor=_attest_legacy_unversioned,
     jasmy_incident_20261102: bool = False,
+    dual_orphan_incident_20261103: bool = False,
     service_pid=_service_pid, start_token=_process_start_token,
     send_interrupt=None, is_alive=None, writer_guard=_frozen_snapshot,
     listener_owner=_has_exact_local_listener,
@@ -185,9 +189,14 @@ def execute_flat_handoff(
 ) -> str:
     """One-shot SIGINT, not a systemd override and never a SIGKILL fallback."""
     _assert(expected_pid > 1, "expected_pid_invalid")
-    if jasmy_incident_20261102:
+    if jasmy_incident_20261102 or dual_orphan_incident_20261103:
+        _assert(not (jasmy_incident_20261102 and dual_orphan_incident_20261103),
+                "mutually_exclusive_flat_incident_proofs")
         _assert(not legacy_unversioned and expected_build_sha == JASMY_OLD_SHA,
-                "jasmy_incident_old_sha_mismatch")
+                "incident_old_sha_mismatch")
+    if dual_orphan_incident_20261103:
+        _assert(expected_database_identity(ROOT, {"BYBITSCANNER_PAPER_DB": str(db_path)})
+                == expected_identity, "dual_orphan_database_identity_mismatch")
     _assert(len(expected_build_sha) == 40 and
             all(c in "0123456789abcdef" for c in expected_build_sha),
             "expected_build_sha_invalid")
@@ -241,6 +250,31 @@ def execute_flat_handoff(
             )
             _assert(proof == JASMY_PROOF_LABEL,
                     "jasmy_flat_evidence_missing")
+        elif dual_orphan_incident_20261103:
+            # Bind the actual opened SQLite main database, not just a path
+            # resolved before the writer reservation (symlink/rename TOCTOU).
+            databases = conn.execute("PRAGMA database_list").fetchall()
+            main_paths = [str(row[2]) for row in databases if row[1] == "main"]
+            _assert(len(main_paths) == 1 and bool(main_paths[0]),
+                    "dual_orphan_open_database_unproven")
+            opened_db = Path(main_paths[0]).resolve()
+            _assert(
+                opened_db == db_path.resolve()
+                and expected_database_identity(
+                    ROOT, {"BYBITSCANNER_PAPER_DB": str(opened_db)},
+                ) == expected_identity,
+                "dual_orphan_open_database_identity_mismatch",
+            )
+            # This branch is separate from JASMY-only and cannot silently
+            # accept APPROVED candidates, a third owner or stale protection.
+            # The caller already holds BEGIN IMMEDIATE in writer_guard.
+            conn.row_factory = sqlite3.Row
+            proof = prove_two_flat_orphans(
+                conn, expected_identity=expected_identity,
+                **snapshots,
+            )
+            _assert(proof == TWO_ORPHAN_PROOF_LABEL,
+                    "dual_orphan_flat_evidence_missing")
         else:
             proof = prove_flat_recovery(
                 conn, expected_identity=expected_identity, **snapshots,
@@ -253,7 +287,7 @@ def execute_flat_handoff(
         # SIGINT to the systemd MainPID. Require the exact PAPER listener for
         # every execution path, not just the incident-scoped JASMY exception.
         # Preserve JASMY's stronger preflight requirement as well.
-        if execute or jasmy_incident_20261102:
+        if execute or jasmy_incident_20261102 or dual_orphan_incident_20261103:
             _assert(
                 listener_owner(expected_pid),
                 "jasmy_backend_listener_owner_unproven" if jasmy_incident_20261102
@@ -298,6 +332,10 @@ def main(argv=None) -> int:
         "--jasmy-incident-20261102", action="store_true",
         help="Only exact JASMY Flat/OPEN ledger on verified f100ef3 old release",
     )
+    parser.add_argument(
+        "--dual-orphan-incident-20261103", action="store_true",
+        help="Only verified JASMY+FLOW Flat/OPEN ownership on exact f100ef3 backend",
+    )
     parser.add_argument("--execute", action="store_true",
                         help="One exceptional SIGINT; needs separate owner authorization")
     args = parser.parse_args(argv)
@@ -311,6 +349,7 @@ def main(argv=None) -> int:
             execute=args.execute,
             legacy_unversioned=args.legacy_unversioned_20261031,
             jasmy_incident_20261102=args.jasmy_incident_20261102,
+            dual_orphan_incident_20261103=args.dual_orphan_incident_20261103,
         )
     except (FlatRecoveryBlocked, OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"BLOCKED: {exc}; no new signal is authorized")

@@ -3,6 +3,7 @@
 All data synthetic; no runtime/DB/Market calls or production credentials.
 """
 import unittest
+from dataclasses import replace
 from unittest.mock import Mock
 from decimal import Decimal
 from types import SimpleNamespace
@@ -88,6 +89,67 @@ class NonRobotCloseProofTests(unittest.TestCase):
             Decimal("-0.000798") - Decimal("0.0018160884")
         ) / (Decimal("399") * Decimal("0.003792")) * 100
         self.assertEqual(result.realized_pnl_pct, expected_pct)
+
+    def test_flow_long_manual_sell_requires_its_own_immutable_execution(self):
+        # The second orphan is LONG, unlike JASMY SHORT. An opposite-side
+        # exact-quantity SELL must be linked to FLOW's own Robot entry lot.
+        flow = Symbol("FLOWUSDT")
+        qty = Decimal("6550.8")
+        entry_price = Decimal("0.024")
+        exit_price = Decimal("0.0235")
+        flow_entry_order = "paper-limit-flow-entry"
+        flow_link = "tw_" + "f" * 33
+        trade = SimpleNamespace(**{
+            **vars(self.trade), "trade_id": "robot-trade-flow",
+            "candidate_id": "candidate-flow", "symbol": flow,
+            "direction": "LONG", "pattern": "MIRROR",
+            "entry_quantity": qty, "average_entry": entry_price,
+        })
+        candidate = SimpleNamespace(**{
+            **vars(self.candidate), "candidate_id": "candidate-flow",
+            "symbol": flow,
+        })
+        position = SimpleNamespace(**{
+            **vars(self.position),
+            "position_key": PositionKey(ACCOUNT, Category.LINEAR, flow, 0),
+        })
+        entry = replace(
+            self.entry, symbol=flow, order_id=OrderId(flow_entry_order),
+            side=OrderSide.BUY, quantity=Quantity(qty), price=Price(entry_price),
+            fee=Decimal("0.020"),
+        )
+        close = replace(
+            self.close, symbol=flow,
+            dedup_key=ExecutionDedupKey(
+                ACCOUNT, Category.LINEAR, ExecutionId("paper-exec-" + flow_link),
+            ),
+            order_id=OrderId("paper-order-" + flow_link), side=OrderSide.SELL,
+            quantity=Quantity(qty), price=Price(exit_price), fee=Decimal("0.018"),
+        )
+        command = SimpleNamespace(**{
+            **vars(self.command), "symbol": flow, "side": OrderSide.SELL,
+            "exchange_order_id": close.order_id, "order_link_id": flow_link,
+            "normalized_quantity": Quantity(qty),
+        })
+        facts = dict(
+            trade=trade, candidate=candidate, position=position,
+            executions=(entry, close), command=command,
+            entry_order_ids=(flow_entry_order,), entry_fees=entry.fee,
+            unique_open_owner=True, has_competing_work=False,
+        )
+        proof = prove_nonrobot_robot_close(**facts)
+        self.assertIsNotNone(proof)
+        self.assertEqual(proof.exit_price, exit_price)
+        self.assertEqual(proof.realized_pnl_usdt, qty * (exit_price - entry_price))
+        self.assertEqual(proof.fees_costs_usdt, Decimal("0.038"))
+        self.assertIsNone(prove_nonrobot_robot_close(
+            **{**facts, "entry_order_ids": (ENTRY_ORDER,)}
+        ))
+        self.assertIsNone(prove_nonrobot_robot_close(
+            **{**facts, "command": SimpleNamespace(**{
+                **vars(command), "side": OrderSide.BUY,
+            })}
+        ))
 
     def test_owner_reconcile_finalizes_only_proven_existing_execution(self):
         trade = SimpleNamespace(**{
