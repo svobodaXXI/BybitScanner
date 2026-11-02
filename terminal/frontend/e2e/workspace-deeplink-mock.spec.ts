@@ -245,8 +245,8 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
   expect(writes).toBe(1);
 
   await page.reload();
-  await expect(page.getByText(/Сохранённый отзыв: roundtrip-con/)).toBeVisible();
-  const restored = await expect.poll(() => page.evaluate((id) => {
+  await expect(page.getByText(/Сохранённый отзыв: roundtrip-co/)).toBeVisible();
+  await expect.poll(() => page.evaluate((id) => {
     const savedKey = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}:review-roundtrip-confirmed`;
     const raw = localStorage.getItem(savedKey);
     return raw ? JSON.parse(raw).drawings.map((item: { id: string; anchors: Array<{ price: number }> }) => ({
