@@ -9,6 +9,9 @@ from unittest import mock
 from tests.test_flat_paper_recovery_gate import fixture, IDENTITY
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
 from tools.jasmy_flat_handoff_proof import OLD_SHA as JASMY_OLD_SHA, PROOF_LABEL as JASMY_PROOF
+from tools.paper_two_orphan_proof import PROOF_LABEL as DUAL_PROOF
+from tools.runtime_intent import expected_database_identity
+from tools.flat_paper_recovery_transition import ROOT
 from tools.flat_paper_recovery_transition import (execute_flat_handoff, _send_exact_sigint,
     _attest_legacy_unversioned, LEGACY_UNVERSIONED_PID,
     LEGACY_UNVERSIONED_START, LEGACY_UNVERSIONED_INSTANCE)
@@ -59,6 +62,98 @@ class TransitionCase(unittest.TestCase):
             sleep=lambda n: None,
         )
         return result, events, conn
+
+    def test_dual_orphan_attested_once_under_writer_barrier(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        db_path = Path("/no-vps-access")
+        identity = expected_database_identity(
+            ROOT, {"BYBITSCANNER_PAPER_DB": str(db_path)},
+        )
+        snapshots["backend"].update(
+            build_sha=JASMY_OLD_SHA, process_instance_id="old-paper-process",
+            database_identity=identity,
+        )
+        events = []
+        @contextmanager
+        def barrier(_):
+            conn.execute("BEGIN IMMEDIATE")
+            events.append("barrier:enter")
+            try:
+                yield conn
+            finally:
+                conn.rollback()
+                events.append("barrier:exit")
+        def prove(held, **kwargs):
+            self.assertIs(held.row_factory, sqlite3.Row)
+            self.assertTrue(held.in_transaction)
+            self.assertTrue(kwargs["writer_barrier_held"])
+            return DUAL_PROOF
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_two_flat_orphans",
+            side_effect=prove,
+        ) as proof:
+            result = execute_flat_handoff(
+                db_path=db_path, expected_identity=identity, expected_pid=PID,
+                expected_build_sha=JASMY_OLD_SHA, execute=False,
+                dual_orphan_incident_20261103=True, snapshots=snapshots,
+                service_pid=lambda: PID, start_token=lambda p: "start-77",
+                listener_owner=lambda p: True, writer_guard=barrier,
+            )
+        self.assertTrue(result.startswith("PRECHECK_ONLY:"))
+        self.assertEqual(events, ["barrier:enter", "barrier:exit"])
+        proof.assert_called_once()
+
+    def test_dual_orphan_wrong_db_identity_or_ambiguous_proof_never_signals(self):
+        db_path = Path("/no-vps-access")
+        identity = expected_database_identity(
+            ROOT, {"BYBITSCANNER_PAPER_DB": str(db_path)},
+        )
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(
+            build_sha=JASMY_OLD_SHA, process_instance_id="old-paper-process",
+            database_identity=identity,
+        )
+        signals = []
+        @contextmanager
+        def barrier(_):
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+            finally:
+                conn.rollback()
+        common = dict(
+            db_path=db_path, expected_pid=PID, expected_build_sha=JASMY_OLD_SHA,
+            execute=True, dual_orphan_incident_20261103=True,
+            snapshots=snapshots, service_pid=lambda: PID,
+            start_token=lambda p: "start-77", listener_owner=lambda p: True,
+            writer_guard=barrier, send_interrupt=lambda *args: signals.append(args),
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "dual_orphan_database_identity_mismatch"):
+            execute_flat_handoff(expected_identity="wrong", **common)
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_two_flat_orphans",
+            side_effect=FlatRecoveryBlocked("unproven_FLOW_exit"),
+        ):
+            with self.assertRaisesRegex(FlatRecoveryBlocked, "unproven_FLOW_exit"):
+                execute_flat_handoff(expected_identity=identity, **common)
+        self.assertEqual(signals, [])
+
+    def test_dual_orphan_cannot_combine_jasmy_or_legacy_exceptions(self):
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "mutually_exclusive_flat_incident_proofs"):
+            execute_flat_handoff(
+                db_path=Path("/no-vps-access"), expected_identity=IDENTITY,
+                expected_pid=PID, expected_build_sha=JASMY_OLD_SHA,
+                execute=False, dual_orphan_incident_20261103=True,
+                jasmy_incident_20261102=True, snapshots={},
+            )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "incident_old_sha_mismatch"):
+            execute_flat_handoff(
+                db_path=Path("/no-vps-access"), expected_identity=IDENTITY,
+                expected_pid=PID, expected_build_sha=SHA,
+                execute=False, dual_orphan_incident_20261103=True, snapshots={},
+            )
 
     def test_jasmy_incident_uses_named_rows_inside_barrier_only(self):
         # Production _frozen_snapshot opens an ordinary sqlite3.Connection:
