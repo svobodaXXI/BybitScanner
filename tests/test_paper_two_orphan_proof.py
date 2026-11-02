@@ -141,6 +141,14 @@ class DualOrphanPreflightTests(TestCase):
         with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_protection_coverage"):
             check(conn, payload, store)
 
+    def test_duplicate_flat_projection_is_not_unique_owner_evidence(self):
+        conn, payload, store = fixture()
+        conn.execute(
+            "INSERT INTO position_projections VALUES ('paper','FLOWUSDT','Flat','0','synced')"
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "ambiguous_orphan_position_projection"):
+            check(conn, payload, store)
+
     def test_pending_command_and_limit_block(self):
         conn, payload, store = fixture()
         conn.execute("INSERT INTO trading_commands VALUES ('paper','submitting')")
