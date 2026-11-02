@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DrawingObject } from "../chart/drawingModel";
-import { buildEditorGeometryReview, buildGeometryReviewDraft, serializeReviewDrawings } from "./geometryReviewDraft";
+import { buildEditorGeometryReview, buildGeometryReviewDraft, compareEditorRayChanges, serializeReviewDrawings } from "./geometryReviewDraft";
 
 const candles = [
   { time: "2026-10-19T00:00:00.000Z", open: 10, high: 12, low: 9, close: 11 },
@@ -80,5 +80,50 @@ describe("Editor two-pair review evidence", () => {
       ...review, label: "FALSE_POSITIVE", editableDrawings: [editable],
     });
     expect(result.corrected_boundaries).toEqual([]);
+  });
+});
+
+
+describe("Editor ray deviation preview", () => {
+  const sourceUpper: DrawingObject = { ...line, id: "upper", type: "ray", locked: true };
+  const sourceLower: DrawingObject = {
+    ...line, id: "lower", type: "ray", locked: true,
+    anchors: [{ logical: 0, price: 9 }, { logical: 1, price: 10 }],
+  };
+  const changedUpper: DrawingObject = {
+    ...sourceUpper, id: "editable:upper", locked: false,
+    anchors: [{ logical: 0, price: 11.5 }, { logical: 1, price: 13 }],
+  };
+  const unchangedLower: DrawingObject = {
+    ...sourceLower, id: "editable:lower", locked: false,
+    anchors: sourceLower.anchors.map((anchor) => ({ ...anchor })),
+  };
+  const inputs = {
+    referenceDrawings: [sourceUpper, sourceLower],
+    editableDrawings: [changedUpper, unchangedLower],
+    frozenCandles: candles,
+  };
+  it("compares both frozen rays in UTC and reports real price and slope deltas", () => {
+    const deltas = compareEditorRayChanges(inputs);
+    expect(deltas.map((item) => item.boundaryId)).toEqual(["upper", "lower"]);
+    expect(deltas[0].anchorChanges[0].priceShiftPercent).toBeCloseTo(-4.1666666667);
+    expect(deltas[0].anchorChanges[0].barShiftMs).toBe(0);
+    expect(deltas[0].slopeDeltaPerHour).toBeCloseTo(6);
+    expect(deltas[1].anchorChanges.every((item) => item.priceShift === 0)).toBe(true);
+    expect(sourceUpper.anchors[0].price).toBe(12);
+  });
+  it("rejects fractional editor anchors or extra/foreign copied drawings", () => {
+    expect(() => compareEditorRayChanges({
+      ...inputs,
+      editableDrawings: [{ ...changedUpper, anchors: [
+        { logical: 0.25, price: 11.5 }, changedUpper.anchors[1],
+      ] }, unchangedLower],
+    })).toThrow(/frozen candle/);
+    expect(() => compareEditorRayChanges({
+      ...inputs, editableDrawings: [changedUpper, { ...unchangedLower, id: "editable:foreign" }],
+    })).toThrow(/identity/);
+    expect(() => compareEditorRayChanges({
+      ...inputs, editableDrawings: [changedUpper, unchangedLower, unchangedLower],
+    })).toThrow(/Incomplete/);
   });
 });
