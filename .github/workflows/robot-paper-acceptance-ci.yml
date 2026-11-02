@@ -165,6 +165,7 @@ jobs:
           tests/test_signal_geometry_producer.py
           tests/test_geometry_feedback_store.py
           tests/test_geometry_feedback_http_route.py
+          tests/test_geometry_feedback_export.py
           tests/test_telegram_delivery.py
       - name: Confirmed Double Top/Bottom STOP reentry gate
         run: >-
