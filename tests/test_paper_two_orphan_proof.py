@@ -98,6 +98,18 @@ class DualOrphanPreflightTests(TestCase):
         )
         self.assertEqual(conn.total_changes, before)
         self.assertEqual(store.get_robot_trade.call_count, 2)
+        self.assertEqual(
+            {call.args[0] for call in store.get_robot_trade.call_args_list},
+            {"trade-j", "trade-f"},
+        )
+        self.assertEqual(
+            {call.args[0] for call in store.load_executions_for_symbol.call_args_list},
+            {ACCOUNT},
+        )
+        self.assertEqual(
+            {call.args[1].value for call in store.load_executions_for_symbol.call_args_list},
+            {"JASMYUSDT", "FLOWUSDT"},
+        )
         self.assertEqual(store.get_paper_command_by_order_link.call_count, 2)
 
     def test_second_missing_proof_blocks_without_mutations(self):
