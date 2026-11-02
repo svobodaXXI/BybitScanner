@@ -579,6 +579,9 @@ class RuntimeShutdown:
                     # legacy health and protection handlers may need the same
                     # SQLite writer slot. Do not call them under the barrier.
                     backend_chain = self._prove_legacy_entry_backend_chain(legacy_proof)
+                    # Recheck live protection after PID-chain resolution but
+                    # before taking SQLite's writer slot.
+                    self._require_temporary_entry_arm_shape()
                     with self._legacy_paper_guard():
                         self._terminate_legacy_entry_backend(legacy_proof, backend_chain)
                         steps.append("backend:legacy-terminate")
@@ -1042,6 +1045,9 @@ class RuntimeShutdown:
         # its owner writer slot. Repeat local process-chain attestation under
         # the barrier without any HTTP or foreign DB writer dependency.
         backend_chain = self._resolve_legacy_backend_chain_without_scanner(proof)
+        # Catch coverage drift after the first local owner-chain proof. Never
+        # make this HTTP observation inside the SQLite writer barrier.
+        self._require_temporary_entry_arm_shape()
         self._mark("acquiring bounded SQLite writer barrier")
         with self._legacy_paper_guard():
             self._mark("SQLite writer barrier acquired")
