@@ -157,7 +157,7 @@ export function buildEditorGeometryReview(input: {
     if (input.label === "GEOMETRY_CORRECTED" && unchanged)
       throw new Error("No geometry changes to submit");
     if (input.label === "CONFIRMED" && !unchanged)
-      throw new Error("Edited lines contradict the 'Confirmed' verdict; choose 'Geometry corrected' or restore originals");
+      throw new Error("Линии изменены: выберите «Исправлена геометрия» или восстановите исходные");
   }
   return draft;
 }
