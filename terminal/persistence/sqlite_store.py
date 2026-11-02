@@ -6386,7 +6386,7 @@ class SQLiteStore:
                 if any(
                     side != "Flat" or not Decimal(str(quantity)).is_finite()
                     or Decimal(str(quantity)) != Decimal("0")
-                    or sync_state != "synced"
+                    or sync_state not in {"synced", "synchronized"}
                     for side, quantity, sync_state in rows
                 ):
                     return "paper_position_not_flat_and_synced"
