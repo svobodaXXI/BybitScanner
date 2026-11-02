@@ -3176,6 +3176,86 @@ def test_backend_shutdown_requires_durable_paper_quiescence():
     finally:
         server.server_close()
 
+def test_runtime_shutdown_rejects_missing_or_malformed_coverage_evidence():
+    """A healthy flag alone cannot prove protection coverage quiescence."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    class Owner:
+        def live_limit_acceptance_diagnostics(self):
+            return {"database_identity": "synthetic-paper-db"}
+        def robot_runtime_state(self):
+            return SimpleNamespace(mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
+        def scanner_status(self):
+            return SimpleNamespace(mode="SCANNER_STOPPED")
+        def paper_shutdown_blocker(self):
+            return None
+
+    class Runtime:
+        def __init__(self):
+            self.seals = 0
+        def call(self, operation):
+            return operation(Owner())
+        def seal_shutdown(self):
+            self.seals += 1
+
+    class Coverage:
+        def __init__(self, snapshot):
+            self.snapshot = snapshot
+        def shutdown_idle_guard(self):
+            return nullcontext()
+        def health(self):
+            return self.snapshot
+
+    complete = {
+        "healthy": True, "covered_symbols": [],
+        "armed_symbols": [], "unhealthy_symbols": {},
+    }
+    snapshots = [
+        {k: v for k, v in complete.items() if k != missing}
+        for missing in ("covered_symbols", "armed_symbols", "unhealthy_symbols")
+    ] + [
+        {**complete, "covered_symbols": None},
+        {**complete, "armed_symbols": None},
+        {**complete, "unhealthy_symbols": None},
+        {**complete, "covered_symbols": {}},
+        {**complete, "armed_symbols": {}},
+        {**complete, "unhealthy_symbols": []},
+    ]
+    for snapshot in snapshots:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = Runtime()
+        server.robot_protection_coverage = Coverage(snapshot)
+        server.shutdown = lambda: None
+        result = {}
+        def post():
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/runtime/shutdown",
+                data=b'{"database_identity":"synthetic-paper-db"}',
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request) as answer:
+                    result["status"] = answer.status
+                    result["body"] = json.load(answer)
+            except urllib.error.HTTPError as exc:
+                result["status"] = exc.code
+                result["body"] = json.load(exc)
+        client = threading.Thread(target=post)
+        client.start()
+        try:
+            server.handle_request()
+            client.join(timeout=5)
+            assert not client.is_alive()
+            assert result == {
+                "status": 409,
+                "body": {"ok": False, "error": "runtime_still_required"},
+            }, snapshot
+            assert server.runtime.seals == 0
+        finally:
+            server.server_close()
+
+
 def test_shutdown_seals_owner_queue_after_final_quiescence_proof():
     """A queued operation behind the successful final proof cannot run."""
     from terminal.runtime.paper_http_server import SerializedPaperRuntime
