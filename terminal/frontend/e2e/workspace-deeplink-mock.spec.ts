@@ -303,13 +303,22 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
     return upper?.anchors[0] ?? null;
   }, startKey)).not.toEqual({ logical: 0, price: 115 });
   await expect(page.getByLabel("Сравнение линий Scanner и исправления")).toContainText("Δ точка 1");
+  await expect(page.getByLabel("Несохранённый отзыв")).toContainText("Новые изменения не сохранены");
   await page.getByRole("button", { name: "Передать исправление" }).click();
   await expect(page.locator(".editor-correction-export output[role=status]").last())
     .toContainText("Исправление сохранено в дневнике обратной связи");
   expect(writes).toBe(1);
   await expect(page.getByText(/Сохранённый отзыв: d{12}.*Исправлена геометрия/)).toBeVisible();
+  await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
+  // Changing the review AFTER the server's confirmation must not imply that
+  // the newly edited note has already been saved with the old geometry.
+  await page.getByRole("textbox", { name: "Комментарий к исправлению" }).fill("New note after receipt");
+  await expect(page.getByLabel("Несохранённый отзыв")).toContainText("Новые изменения не сохранены");
+  await expect(page.getByText(/Сохранённый отзыв: d{12}.*предыдущая версия/)).toBeVisible();
+  expect(writes).toBe(1);
 
   await page.reload();
+  await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
   await expect(page.getByText(/Сохранённый отзыв: d{12}.*Исправлена геометрия/)).toBeVisible();
   await expect.poll(() => page.evaluate((id) => {
     const savedKey = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}:review-${"d".repeat(64)}`;
