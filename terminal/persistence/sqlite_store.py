@@ -6384,7 +6384,7 @@ class SQLiteStore:
             ).fetchall()
             try:
                 if any(
-                    side != "Flat" or not Decimal(str(quantity)).is_finite()
+                    side is None or side != "Flat" or not Decimal(str(quantity)).is_finite()
                     or Decimal(str(quantity)) != Decimal("0")
                     or sync_state not in {"synced", "synchronized"}
                     for side, quantity, sync_state in rows
@@ -6397,12 +6397,12 @@ class SQLiteStore:
             # statuses; no terminal-state inference from coverage alone.
             checks = (
                 ("robot_trades", "exit_time_ms IS NULL", "open_robot_trade"),
-                ("robot_candidates", "status IN ('APPROVED','OPEN')", "active_robot_candidate"),
-                ("paper_limit_orders", "status NOT IN ('filled','cancelled')", "active_or_unknown_paper_limit"),
+                ("robot_candidates", "status IS NULL OR status IN ('APPROVED','OPEN')", "active_robot_candidate"),
+                ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')", "active_or_unknown_paper_limit"),
                 ("trading_commands",
-                 "current_state NOT IN ('filled','cancelled','amended','rejected','failed','owner_attested_closed')",
+                 "current_state IS NULL OR current_state NOT IN ('filled','cancelled','amended','rejected','failed','owner_attested_closed')",
                  "unfinished_or_unknown_command"),
-                ("paper_protection_obligations", "status!='RESOLVED'", "unresolved_protection_obligation"),
+                ("paper_protection_obligations", "status IS NULL OR status!='RESOLVED'", "unresolved_protection_obligation"),
                 ("reconciliation_checkpoints", "completed_at_ms IS NULL", "unfinished_reconciliation"),
             )
             for table, predicate, reason in checks:
