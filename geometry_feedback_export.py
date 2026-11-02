@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import secrets
 from pathlib import Path
 
 from geometry_feedback_store import (
@@ -84,7 +86,15 @@ def export_reviewed_examples(
     ]
     path = Path(output)
     content = b"".join(canonical_bytes(record) + b"\n" for record in examples)
-    # Fail closed if output exists; neither import nor export rewrites history.
-    with path.open("xb") as handle:
-        handle.write(content)
+    # Publish complete data only; a failed write leaves no misleading partial
+    # corpus, and an existing file is never overwritten.
+    temp = path.with_name(path.name + "." + secrets.token_hex(8) + ".tmp")
+    try:
+        with temp.open("xb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(temp, path)  # exclusive publication; FileExistsError is intentional
+    finally:
+        temp.unlink(missing_ok=True)
     return len(examples)
