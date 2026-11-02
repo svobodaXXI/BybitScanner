@@ -17,6 +17,7 @@ import math
 import time
 from terminal.protection_timing import capture_callback, protection_span
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
