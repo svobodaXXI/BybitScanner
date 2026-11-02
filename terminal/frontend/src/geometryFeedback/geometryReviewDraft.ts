@@ -21,6 +21,41 @@ export type GeometryReviewDraft = {
   corrected_boundaries: TimestampDrawing[];
 };
 
+/** Confirm the exact append-only review returned by the server, not only its
+ * signal identity and label. The store canonicalizes UI id/type into
+ * boundary_id/kind and may reorder boundaries; do not trust an altered price.
+ */
+export function matchesStoredGeometryReview(
+  submitted: GeometryReviewDraft & { note: string; idempotency_key: string },
+  stored: unknown,
+): boolean {
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value);
+  if (!isRecord(stored)) return false;
+  if (stored.schema_version !== submitted.schema_version ||
+      stored.signal_id !== submitted.signal_id ||
+      stored.snapshot_revision !== submitted.snapshot_revision ||
+      stored.bars_sha256 !== submitted.bars_sha256 ||
+      stored.label !== submitted.label ||
+      stored.note !== submitted.note ||
+      stored.idempotency_key !== submitted.idempotency_key ||
+      !Array.isArray(stored.corrected_boundaries) ||
+      stored.corrected_boundaries.length !== submitted.corrected_boundaries.length) return false;
+  return submitted.corrected_boundaries.every((original) => {
+    const matching = stored.corrected_boundaries.filter((item: unknown) =>
+      isRecord(item) && item.boundary_id === original.id);
+    if (matching.length !== 1) return false;
+    const entry = matching[0] as Record<string, unknown>;
+    if (entry.kind !== original.type || !Array.isArray(entry.anchors) ||
+        entry.anchors.length !== original.anchors.length) return false;
+    return original.anchors.every((anchor, i) => {
+      const saved = entry.anchors[i];
+      return isRecord(saved) && saved.bar_open_time_ms === anchor.bar_open_time_ms &&
+        saved.price === anchor.price;
+    });
+  });
+}
+
 function candleTimes(candles: readonly Candle[]): number[] {
   if (!candles.length) throw new Error("Frozen candle window is empty");
   const times = candles.map((candle) => Date.parse(candle.time));
