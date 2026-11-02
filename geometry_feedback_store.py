@@ -143,6 +143,43 @@ def _normalize(payload: dict, snapshot: dict) -> dict:
     }
 
 
+def _verified_stored_review(record: dict, snapshot: dict, *, review_id: str) -> dict:
+    """Recheck on-disk evidence before displaying it or accepting an idempotent replay.
+
+    A filename and source revision alone do not establish valid owner geometry.
+    Canonical sidecar lines must round-trip through the same strict ingress
+    validator used when the review was originally written.
+    """
+    try:
+        submission = record["submission"]
+        token = submission["idempotency_key"]
+        actual_review_id = hashlib.sha256(
+            (snapshot["signal_id"] + "\\0" + token).encode("utf-8")
+        ).hexdigest()
+        if (
+            record["review_id"] != review_id
+            or actual_review_id != review_id
+            or record["reviewer_source"] != "workspace_owner_ingress"
+            or type(record["received_at_ms"]) is not int
+            or record["received_at_ms"] <= 0
+            or record["source_boundaries"] != snapshot["boundaries"]
+        ):
+            raise GeometryFeedbackError("invalid_stored_review")
+        ingress = {
+            **submission,
+            "corrected_boundaries": [
+                {"id": boundary["boundary_id"], "type": boundary["kind"],
+                 "anchors": boundary["anchors"]}
+                for boundary in submission["corrected_boundaries"]
+            ],
+        }
+        if _normalize(ingress, snapshot) != submission:
+            raise GeometryFeedbackError("invalid_stored_review")
+        return record
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise GeometryFeedbackError("invalid_stored_review") from exc
+
+
 def record_review(payload: dict, snapshot: dict, *, directory=None) -> dict:
     """Publish one immutable review; same submit token + same facts is replay-safe."""
     try:
@@ -182,7 +219,10 @@ def record_review(payload: dict, snapshot: dict, *, directory=None) -> dict:
                 raise GeometryFeedbackConflict("existing_review_unreadable") from exc
             if existing.get("submission") != normalized:
                 raise GeometryFeedbackConflict("idempotency_key_reused")
-            return existing
+            try:
+                return _verified_stored_review(existing, snapshot, review_id=review_id)
+            except GeometryFeedbackError as exc:
+                raise GeometryFeedbackConflict("existing_review_invalid") from exc
     finally:
         temp.unlink(missing_ok=True)
 
@@ -194,16 +234,11 @@ def latest_review(signal_id: str, *, snapshot: dict, directory=None) -> dict | N
     path = _signal_path(signal_id, directory)
     if not path.is_dir():
         return None
-    revision = source_revision(snapshot)
     reviews = []
     for file in path.glob("*.json"):
         try:
             value = json.loads(file.read_text(encoding="utf-8"))
-            if (not isinstance(value, dict) or value.get("review_id") != file.stem
-                    or not isinstance(value.get("submission"), dict)):
-                raise GeometryFeedbackError("invalid_stored_review")
-            if value["submission"].get("snapshot_revision") == revision:
-                reviews.append(value)
+            reviews.append(_verified_stored_review(value, snapshot, review_id=file.stem))
         except (OSError, ValueError, TypeError) as exc:
             raise GeometryFeedbackError("unreadable_stored_review") from exc
     return max(reviews, key=lambda item: (item["received_at_ms"], item["review_id"])) if reviews else None
