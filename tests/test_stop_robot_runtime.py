@@ -1508,7 +1508,7 @@ class OwnershipTests(unittest.TestCase):
             return reply
 
         def get(url, timeout):
-            if url == TELEGRAM + "/health":
+            if url == TELEGRAM + "/health" and "telegram:shutdown" in runtime.calls:
                 raise shutdown.Unreachable("health request timed out")
             return original_get(url, timeout)
 
@@ -1536,7 +1536,7 @@ class OwnershipTests(unittest.TestCase):
             return reply
 
         def get(url, timeout):
-            if url == TELEGRAM + "/health":
+            if url == TELEGRAM + "/health" and "telegram:shutdown" in runtime.calls:
                 raise shutdown.Unreachable("transient health timeout")
             return original_get(url, timeout)
 
