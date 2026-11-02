@@ -864,6 +864,12 @@ export function ChartPanel({
   }, [commit, drawings, selectedId]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
+      // This listener is global: typing or deleting an owner review note (or
+      // another workspace form value) must never delete a selected chart ray.
+      const target = event.target;
+      if (event.isComposing || (target instanceof Element && target.closest(
+        "input, textarea, select, button, [contenteditable], [role='textbox'], [role='combobox']",
+      ))) return;
       if (event.key === "Delete" || event.key === "Backspace") deleteSelected();
       if (event.key === "Escape") {
         setSelectedId(null);
