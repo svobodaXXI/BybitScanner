@@ -145,6 +145,7 @@ export function ChartPanel({
   barsSha256 = null,
   savedReviewId = null,
   savedReviewLabel = null,
+  savedReviewNote = null,
   onSaveGeometryReview,
 }: {
   candles: readonly Candle[];
@@ -190,6 +191,7 @@ export function ChartPanel({
   barsSha256?: string | null;
   savedReviewId?: string | null;
   savedReviewLabel?: GeometryReviewDraft["label"] | null;
+  savedReviewNote?: string | null;
   onSaveGeometryReview?: (review: GeometryReviewDraft & { note: string; idempotency_key: string }) =>
     Promise<{ reviewId: string; label: GeometryReviewDraft["label"] }>;
 }) {
@@ -249,7 +251,9 @@ export function ChartPanel({
   const [reviewLabel, setReviewLabel] = useState<GeometryReviewDraft["label"]>(
     savedReviewLabel ?? "GEOMETRY_CORRECTED",
   );
-  const [reviewNote, setReviewNote] = useState("");
+  // Persisted review text belongs to the same immutable review ID as the
+  // restored editable rays. A fresh editor must not silently erase the note.
+  const [reviewNote, setReviewNote] = useState(savedReviewNote ?? "");
   const [reviewPending, setReviewPending] = useState(false);
   const [reviewStatus, setReviewStatus] = useState("");
   const [savedReceipt, setSavedReceipt] = useState<{
