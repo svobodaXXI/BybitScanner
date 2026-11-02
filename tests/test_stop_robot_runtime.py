@@ -993,6 +993,33 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
                 self.assertNotIn("backend:shutdown", runtime.calls)
 
+    def test_failed_legacy_backend_termination_retains_telegram_control(self):
+        for starved in (False, True):
+            with self.subTest(starved=starved):
+                runtime = self.stale_arm_runtime()
+                if starved:
+                    runtime.protection.update({
+                        "healthy": False,
+                        "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+                        "ingress": {
+                            "capacity": 64, "current_pending": 63,
+                            "high_watermark": 64,
+                        },
+                    })
+                attempts = []
+
+                def reject_backend_termination(chain):
+                    attempts.append(tuple(chain))
+                    raise RuntimeError("backend still alive")
+
+                runtime.terminate_legacy = reject_backend_termination
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertIn("legacy termination failed", result.message)
+                self.assertEqual(attempts, [(130, 120, 110, 105)])
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+                self.assertNotIn("telegram:shutdown", runtime.calls)
+
     def test_durable_live_ownership_blocks_legacy_termination(self):
         for blocker in (
             "legacy PAPER shutdown blocked by OPEN Robot candidates",
