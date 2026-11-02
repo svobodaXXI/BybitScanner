@@ -144,6 +144,7 @@ export function ChartPanel({
   snapshotRevision = null,
   barsSha256 = null,
   savedReviewId = null,
+  savedReviewLabel = null,
   onSaveGeometryReview,
 }: {
   candles: readonly Candle[];
@@ -188,7 +189,9 @@ export function ChartPanel({
   snapshotRevision?: string | null;
   barsSha256?: string | null;
   savedReviewId?: string | null;
-  onSaveGeometryReview?: (review: GeometryReviewDraft & { note: string; idempotency_key: string }) => Promise<void>;
+  savedReviewLabel?: GeometryReviewDraft["label"] | null;
+  onSaveGeometryReview?: (review: GeometryReviewDraft & { note: string; idempotency_key: string }) =>
+    Promise<{ reviewId: string; label: GeometryReviewDraft["label"] }>;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -243,10 +246,23 @@ export function ChartPanel({
     }
   }, [editorMode, signalIdentity, referenceDrawings, drawings, candles]);
   const [correctionExportStatus, setCorrectionExportStatus] = useState("");
-  const [reviewLabel, setReviewLabel] = useState<GeometryReviewDraft["label"]>("GEOMETRY_CORRECTED");
+  const [reviewLabel, setReviewLabel] = useState<GeometryReviewDraft["label"]>(
+    savedReviewLabel ?? "GEOMETRY_CORRECTED",
+  );
   const [reviewNote, setReviewNote] = useState("");
   const [reviewPending, setReviewPending] = useState(false);
   const [reviewStatus, setReviewStatus] = useState("");
+  const [savedReceipt, setSavedReceipt] = useState<{
+    reviewId: string; label: GeometryReviewDraft["label"];
+  } | null>(null);
+  const latestReceipt = savedReceipt ?? (savedReviewId && savedReviewLabel
+    ? { reviewId: savedReviewId, label: savedReviewLabel } : null);
+  const reviewVerdicts: Record<GeometryReviewDraft["label"], string> = {
+    CONFIRMED: "Верный сигнал",
+    GEOMETRY_CORRECTED: "Исправлена геометрия",
+    FALSE_POSITIVE: "Ложный сигнал",
+    UNCERTAIN: "Неоднозначно",
+  };
   const submitToken = useRef<{ content: string; key: string } | null>(null);
   const saveCorrection = async () => {
     if (!editorMode || !signalIdentity || !snapshotRevision || !barsSha256 || !onSaveGeometryReview || reviewPending) return;
@@ -264,7 +280,10 @@ export function ChartPanel({
       }
       setReviewPending(true);
       setReviewStatus("Сохранение исправления…");
-      await onSaveGeometryReview({ ...draft, note, idempotency_key: submitToken.current.key });
+      const receipt = await onSaveGeometryReview({
+        ...draft, note, idempotency_key: submitToken.current.key,
+      });
+      setSavedReceipt(receipt);
       setReviewStatus("Исправление сохранено в дневнике обратной связи. Scanner автоматически не менялся.");
     } catch (error) {
       setReviewStatus(`Не удалось сохранить: ${error instanceof Error ? error.message : "неизвестная ошибка"}`);
@@ -293,6 +312,7 @@ export function ChartPanel({
   const commit = useCallback((next: DrawingObject[]) => {
     historyRef.current.commit(next);
     setDrawings(next);
+    setReviewStatus("");
   }, []);
   const applyFollowLatest = useCallback((next: boolean) => {
     followLatestRef.current = next;
@@ -851,7 +871,12 @@ export function ChartPanel({
               onClick={() => void saveCorrection()}>
               {reviewPending ? "Сохранение…" : "Передать исправление"}
             </button>
-            {savedReviewId && <span>Сохранённый отзыв: {savedReviewId.slice(0, 12)}</span>}
+            {latestReceipt && (
+              <span>
+                Сохранённый отзыв: {latestReceipt.reviewId.slice(0, 12)}
+                {" · "}{reviewVerdicts[latestReceipt.label]}
+              </span>
+            )}
             {reviewLabel === "GEOMETRY_CORRECTED" && rayComparison && (
               <output aria-label="Сравнение линий Scanner и исправления">
                 {rayComparison.map((ray) => (
