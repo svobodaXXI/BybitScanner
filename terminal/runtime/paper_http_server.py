@@ -2469,9 +2469,16 @@ class RobotProtectionCoverageManager:
                         "ROBOT_STOPPED", "ROBOT_STOPPED",
                     ) or runtime.scanner_status().mode != "SCANNER_STOPPED":
                         raise RobotRouteLegalityError("runtime_still_required")
+                    # Retiring entry arms is a shutdown mutation, not just a
+                    # stopped-Robot check. Another controller may have
+                    # re-enabled PAPER_AUTO after Scanner STOP: prove durable
+                    # Autopilot OFF on this same serialized owner callback.
+                    account = TradingAccountId("paper")
+                    autopilot = runtime.store.get_robot_autopilot_state(account)
+                    if autopilot is None or autopilot.mode != "OFF":
+                        raise RobotRouteLegalityError("autopilot_not_durably_off")
                     if runtime.robot_protection_coverage_symbols():
                         raise RobotRouteLegalityError("durable_protection_required")
-                    account = TradingAccountId("paper")
                     if runtime.store.load_active_robot_candidate_states(account):
                         raise RobotRouteLegalityError("robot_entry_ownership_unresolved")
                     with self._lock:
