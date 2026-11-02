@@ -941,9 +941,10 @@ export function ChartPanel({
               <output aria-label="Сравнение линий Scanner и исправления">
                 {rayComparison.map((ray) => (
                   <span key={ray.boundaryId}>
-                    {ray.boundaryId}: Δ точка 1 {ray.anchorChanges[0].priceShiftPercent.toFixed(2)}%,
-                    точка 2 {ray.anchorChanges[1].priceShiftPercent.toFixed(2)}%;
-                    Δ наклон {ray.slopeDeltaPerHour.toPrecision(3)}/ч{" "}
+                    {ray.boundaryId}: Δ точка 1 {ray.anchorChanges[0].priceShiftPercent.toFixed(2)}%
+                    {ray.anchorChanges.length === 2 && (
+                      <>; Δ точка 2 {ray.anchorChanges[1].priceShiftPercent.toFixed(2)}%; Δ наклон {ray.slopeDeltaPerHour.toPrecision(3)}/ч</>
+                    )}{" "}
                   </span>
                 ))}
               </output>
