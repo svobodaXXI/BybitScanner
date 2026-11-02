@@ -464,16 +464,20 @@ class RuntimeShutdown:
                     scope, True, "Runtime STOPPED.", tuple(steps), runtime_stopped=True,
                 )
 
-        if telegram == PRESENT:
-            steps.append(self._shutdown(
-                self._telegram + "/shutdown", self._telegram + "/health", "Telegram monitoring",
-                TELEGRAM, "telegram",
-            ))
+        # The PAPER backend may still reject a shutdown on fresh durable work
+        # even after earlier Robot/protection preflight. Keep Telegram alive for
+        # owner control and diagnosis until backend exit has been confirmed.
+        # This also supports retry after a partial stop (backend absent).
         if backend == PRESENT:
             self._mark("shutting down PAPER backend")
             steps.append(self._shutdown(
                 self._backend + "/api/runtime/shutdown", self._backend + "/api/health",
                 "PAPER backend", BACKEND, "backend",
+            ))
+        if telegram == PRESENT:
+            steps.append(self._shutdown(
+                self._telegram + "/shutdown", self._telegram + "/health", "Telegram monitoring",
+                TELEGRAM, "telegram",
             ))
         return ShutdownResult(scope, True, "Runtime STOPPED.", tuple(steps), runtime_stopped=True)
 
@@ -997,7 +1001,7 @@ class RuntimeShutdown:
         except LegacyOwnerUnproven as exc:
             raise SafeStopError(
                 f"{name} is a legacy process without a shutdown endpoint and its ownership "
-                f"could not be proven ({exc}); nothing was terminated"
+                f"could not be proven ({exc}); that legacy process was not terminated"
             ) from exc
         try:
             self._legacy_terminator(tuple(chain))
