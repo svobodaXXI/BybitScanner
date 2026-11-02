@@ -232,6 +232,218 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
             )["inline_keyboard"]
         self.assertFalse(any("web_app" in button for row in rows for button in row))
 
+    def test_fallback_owner_editor_callback_preserves_original_source_identity(self):
+        from notification import build_tradingview_keyboard
+        token = "a" * 24
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "", "BYBITSCANNER_WORKSPACE_URL": "",
+        }, clear=True):
+            editor, terminal = build_tradingview_keyboard(
+                "BTCUSDT", "5", signal_id=f"source-original:{token}",
+            )["inline_keyboard"][-1]
+        self.assertEqual(editor["callback_data"], f"workspace:EDITOR:S:{token}")
+        self.assertLessEqual(len(editor["callback_data"].encode("utf-8")), 64)
+        self.assertEqual(terminal["callback_data"], "workspace:TERMINAL:BTCUSDT:5m")
+        parsed = telegram_review._parse_workspace_callback(editor["callback_data"])
+        self.assertEqual(parsed["source_token"], token)
+        self.assertIsNone(telegram_review._parse_workspace_callback(
+            "workspace:EDITOR:S:" + "!" * 24))
+        callback = {"id": "callback-1", "message": {"chat": {"id": 42}}}
+        frozen = {"signal_id": f"source-original:{token}", "symbol": "BTCUSDT",
+                  "timeframe": "5", "bars": [], "boundaries": []}
+        with patch("signal_archive.load_frozen_signal_geometry", return_value=frozen) as load, \
+                patch.object(handoff, "deliver_workspace_link", return_value={"ok": True}) as deliver, \
+                patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._run_workspace_callback(callback, parsed)
+        load.assert_called_once_with(f"source-original:{token}")
+        deliver.assert_called_once_with(
+            "42", mode="EDITOR", symbol="BTCUSDT", timeframe="5m",
+            signal_id=f"source-original:{token}",
+        )
+        answer.assert_called_once_with("callback-1", "Ссылка на редактор/терминал отправлена в чат")
+
+    def test_fallback_mirror_editor_preserves_exact_source_identity(self):
+        from notification import build_tradingview_keyboard
+        token = "d" * 24
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "", "BYBITSCANNER_WORKSPACE_URL": "",
+        }, clear=True):
+            editor, _ = build_tradingview_keyboard(
+                "BTCUSDT", "5", signal_id=f"mirror-origin:{token}",
+            )["inline_keyboard"][-1]
+        self.assertEqual(editor["callback_data"], f"workspace:EDITOR:M:{token}")
+        self.assertLessEqual(len(editor["callback_data"].encode("utf-8")), 64)
+        parsed = telegram_review._parse_workspace_callback(editor["callback_data"])
+        self.assertEqual(parsed["source_kind"], "M")
+        self.assertIsNone(telegram_review._parse_workspace_callback(
+            "workspace:EDITOR:M:" + "!" * 24))
+        callback = {"id": "callback-mirror", "message": {"chat": {"id": 42}}}
+        frozen = {"signal_id": f"mirror-origin:{token}", "symbol": "BTCUSDT",
+                  "timeframe": "5", "bars": [], "boundaries": []}
+        with (
+            patch("signal_archive.load_frozen_signal_geometry", return_value=frozen) as load,
+            patch.object(handoff, "deliver_workspace_link", return_value={"ok": True}) as deliver,
+            patch.object(telegram_review, "_answer_callback") as answer,
+        ):
+            telegram_review._run_workspace_callback(callback, parsed)
+        load.assert_called_once_with(f"mirror-origin:{token}")
+        deliver.assert_called_once_with(
+            "42", mode="EDITOR", symbol="BTCUSDT", timeframe="5m",
+            signal_id=f"mirror-origin:{token}",
+        )
+        answer.assert_called_once_with("callback-mirror", "Ссылка на редактор/терминал отправлена в чат")
+
+    def test_unavailable_frozen_geometry_blocks_callback_before_handoff(self):
+        token = "b" * 24
+        parsed = telegram_review._parse_workspace_callback(f"workspace:EDITOR:S:{token}")
+        callback = {"id": "callback-2", "message": {"chat": {"id": 42}}}
+        with patch("signal_archive.load_frozen_signal_geometry", return_value=None), \
+                patch.object(handoff, "deliver_workspace_link") as deliver, \
+                patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._run_workspace_callback(callback, parsed)
+        deliver.assert_not_called()
+        answer.assert_called_once_with("callback-2", "Исходная геометрия сигнала недоступна")
+
+    def test_verified_telegram_handoff_url_contains_archived_signal_id(self):
+        token = "c" * 24
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181",
+            "TELEGRAM_CHAT_ID": "42",
+        }, clear=True), patch.object(handoff.requests, "get", side_effect=[
+            SimpleNamespace(status_code=200), SimpleNamespace(status_code=401),
+        ]), patch.object(handoff.telegram_gateway_client, "configured", return_value=True), \
+                patch.object(handoff.telegram_gateway_client, "send_text", return_value={"ok": True}) as send:
+            handoff.deliver_workspace_link(
+                "42", mode="EDITOR", symbol="BTCUSDT", timeframe="5m",
+                signal_id=f"source-original:{token}",
+            )
+        from urllib.parse import parse_qs, urlsplit
+        url = send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["web_app"]["url"]
+        self.assertEqual(parse_qs(urlsplit(url).query)["signal_id"], [f"source-original:{token}"])
+
+    def test_wedge_source_archive_to_owner_editor_button_exact_identity(self):
+        """Real two-anchor Scanner inputs, not a synthetic Editor URL alone."""
+        import tempfile
+        from urllib.parse import parse_qs, urlsplit
+        import notification
+        from signal_archive import load_frozen_signal_geometry
+
+        class SourceCandles:
+            def itertuples(self, index=False):
+                return iter((
+                    SimpleNamespace(time=1000, open=10.0, high=12.0, low=8.0, close=11.0),
+                    SimpleNamespace(time=301000, open=11.0, high=14.0, low=9.0, close=13.0),
+                ))
+
+        geometry = {
+            "upper_line": {
+                "model": "anchor", "anchor_index": 0, "second_index": 1,
+                "anchor_price": 12.0, "second_price": 14.0,
+            },
+            "lower_line": {
+                "model": "anchor", "anchor_index": 0, "second_index": 1,
+                "anchor_price": 8.0, "second_price": 9.0,
+            },
+        }
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "wedge.png"
+            path.write_bytes(b"owner-original-wedge-png")
+            with patch.dict("os.environ", {
+                "BYBITSCANNER_SIGNAL_ARCHIVE_DIR": str(Path(root) / "archive"),
+                "BYBITSCANNER_TERMINAL_HTTPS_URL": "https://83.217.213.181",
+            }, clear=True):
+                token, image = notification.archive_source_chart(
+                    symbol="BTCUSDT", timeframe="5", pattern="Falling Wedge",
+                    text="owner original wedge", chart_path=path,
+                    geometry=geometry, frozen_candles=SourceCandles(),
+                )
+                self.assertEqual(image, path.read_bytes())
+                self.assertRegex(token or "", r"^[0-9a-f]{24}$")
+                signal_id = f"source-original:{token}"
+                frozen = load_frozen_signal_geometry(signal_id)
+                self.assertIsNotNone(frozen)
+                self.assertEqual(frozen["signal_id"], signal_id)
+                self.assertEqual(frozen["boundaries"][0]["anchors"], [
+                    {"bar_open_time_ms": 1000, "price": 12.0},
+                    {"bar_open_time_ms": 301000, "price": 14.0},
+                ])
+                owner_button = notification.build_tradingview_keyboard(
+                    "BTCUSDT", "5", signal_id=signal_id,
+                )["inline_keyboard"][-1][0]
+                query = parse_qs(urlsplit(owner_button["web_app"]["url"]).query)
+                self.assertEqual(query["signal_id"], [signal_id])
+                self.assertEqual(query["timeframe"], ["5m"])
+                with patch.dict("os.environ", {
+                    "BYBITSCANNER_TERMINAL_HTTPS_URL": "",
+                }):
+                    fallback = notification.build_tradingview_keyboard(
+                        "BTCUSDT", "5", signal_id=signal_id,
+                    )["inline_keyboard"][-1][0]
+                self.assertEqual(
+                    fallback["callback_data"], f"workspace:EDITOR:S:{token}")
+                self.assertEqual(
+                    telegram_review._parse_workspace_callback(
+                        fallback["callback_data"])["source_token"], token)
+                self.assertIsNone(load_frozen_signal_geometry(
+                    "source-original:" + "f" * 24))
+
+    def test_editor_source_id_not_advertised_for_image_only_or_old_incomplete_archive(self):
+        """Original PNG remains available, but unavailable frozen rays get no exact Editor link."""
+        import hashlib
+        import notification
+        import tempfile
+        from signal_archive import load_original_signal, load_frozen_signal_geometry
+
+        image = b"same-original-wedge-chart"
+        caption = "Original wedge"
+        token = hashlib.sha256(
+            b"BTCUSDT|5|" + image + caption.encode("utf-8")
+        ).hexdigest()[:24]
+        source_id = f"source-original:{token}"
+        with tempfile.TemporaryDirectory() as root:
+            chart = Path(root) / "chart.png"
+            chart.write_bytes(image)
+            with patch.dict("os.environ", {
+                "BYBITSCANNER_SIGNAL_ARCHIVE_DIR": str(Path(root) / "archive"),
+                "BYBITSCANNER_TERMINAL_HTTPS_URL": "",
+                "BYBITSCANNER_WORKSPACE_URL": "",
+            }, clear=True):
+                handle, archived_image = notification.archive_source_chart(
+                    symbol="BTCUSDT", timeframe="5", pattern="Falling Wedge",
+                    text=caption, chart_path=chart,
+                    geometry={"upper_line": {"model": "regression"}},
+                    frozen_candles=None,
+                )
+                self.assertIsNone(handle)
+                self.assertEqual(archived_image, image)
+                self.assertIsNotNone(load_original_signal([source_id]))
+                self.assertIsNone(load_frozen_signal_geometry(source_id))
+                # The first archived image is immutable, even if a later retry
+                # presents valid geometry. It must not create a phantom link.
+                class Candles:
+                    def itertuples(self, index=False):
+                        return iter((
+                            SimpleNamespace(time=1000, open=10, high=12, low=8, close=11),
+                            SimpleNamespace(time=301000, open=11, high=14, low=9, close=13),
+                        ))
+                good = {
+                    "upper_line": {"model": "anchor", "anchor_index": 0,
+                                   "second_index": 1, "anchor_price": 12, "second_price": 14},
+                    "lower_line": {"model": "anchor", "anchor_index": 0,
+                                   "second_index": 1, "anchor_price": 8, "second_price": 9},
+                }
+                handle2, _ = notification.archive_source_chart(
+                    symbol="BTCUSDT", timeframe="5", pattern="Falling Wedge",
+                    text=caption, chart_path=chart,
+                    geometry=good, frozen_candles=Candles(),
+                )
+                self.assertIsNone(handle2)
+                self.assertIsNone(load_frozen_signal_geometry(source_id))
+                editor = notification.build_tradingview_keyboard(
+                    "BTCUSDT", "5", signal_id=handle2,
+                )["inline_keyboard"][-1][0]
+                self.assertEqual(editor["callback_data"], "workspace:EDITOR:BTCUSDT:5m")
+
 
 if __name__ == "__main__":
     unittest.main()

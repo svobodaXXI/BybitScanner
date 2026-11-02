@@ -50,5 +50,19 @@ class WorkspaceReadyDeliveryTests(unittest.TestCase):
         self.assertEqual(send.call_args.kwargs["access_client_secret"], "secret")
         qr.assert_called_once()
 
+    @patch.dict(worker.os.environ, ENV, clear=True)
+    @patch.object(worker, "urlopen")
+    @patch.object(worker, "write_workspace_qr")
+    @patch.object(worker, "send_ready_workspace_checked")
+    def test_source_identity_is_kept_in_verified_mobile_qr(self, send, qr, probe):
+        response = probe.return_value.__enter__.return_value
+        response.status = 200
+        response.read.return_value = json.dumps({"ok": True}).encode()
+        signal = "source-original:" + "a" * 24
+        self.assertTrue(worker.deliver_if_verified(
+            "EDITOR", "BTCUSDT", "5m", signal_id=signal))
+        self.assertEqual(send.call_args.kwargs["signal_id"], signal)
+        self.assertIn("signal_id=source-original%3A", qr.call_args.args[0])
+
 if __name__ == "__main__":
     unittest.main()

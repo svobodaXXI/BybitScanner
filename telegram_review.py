@@ -192,6 +192,10 @@ def _parse_workspace_callback(data):
     """Only a verified owner callback may request local UI opening."""
     import re
     parts = str(data).split(":")
+    if len(parts) == 4 and parts[:2] == ["workspace", "EDITOR"] and parts[2] in ("S", "M"):
+        return ({"kind": "workspace", "mode": "EDITOR", "source_token": parts[3],
+                 "source_kind": parts[2]}
+                if re.fullmatch(r"[0-9a-f]{24}", parts[3]) else None)
     if len(parts) != 4 or parts[0] != "workspace":
         return None
     _, mode, symbol, timeframe = parts
@@ -208,6 +212,27 @@ def _run_workspace_callback(callback_query, parsed):
     """Owner-only view handoff: Windows local launcher OR verified VPS HTTPS link."""
     import os
     callback_id = callback_query.get("id")
+    if parsed.get("source_token"):
+        from signal_archive import load_frozen_signal_geometry
+        import re
+        source_prefix = "mirror-origin:" if parsed.get("source_kind") == "M" else "source-original:"
+        source_id = source_prefix + parsed["source_token"]
+        source = load_frozen_signal_geometry(source_id)
+        timeframe = {
+            "1": "1m", "5": "5m", "15": "15m", "60": "1h", "D": "1d",
+            "15s": "15s", "1m": "1m", "5m": "5m", "15m": "15m",
+            "1h": "1h", "1d": "1d",
+        }.get(str((source or {}).get("timeframe")))
+        symbol = (source or {}).get("symbol")
+        if (not isinstance(symbol, str)
+                or not re.fullmatch(r"[A-Z0-9]{2,32}USDT", symbol)
+                or timeframe is None
+                or (source or {}).get("signal_id") != source_id):
+            _answer_callback(callback_id, "Исходная геометрия сигнала недоступна")
+            return
+        parsed = {"kind": "workspace", "mode": "EDITOR", "symbol": symbol,
+                  "timeframe": timeframe, "signal_id": source_id}
+    context = {"signal_id": parsed["signal_id"]} if parsed.get("signal_id") else {}
     if os.name != "nt":
         from workspace_telegram_handoff import (
             WorkspaceHandoffUnavailable, deliver_workspace_link,
@@ -217,6 +242,7 @@ def _run_workspace_callback(callback_query, parsed):
             deliver_workspace_link(
                 str(chat_id), mode=parsed["mode"],
                 symbol=parsed["symbol"], timeframe=parsed["timeframe"],
+                **context,
             )
         except WorkspaceHandoffUnavailable as exc:
             print("[WORKSPACE HANDOFF BLOCKED]", type(exc).__name__)
@@ -226,7 +252,8 @@ def _run_workspace_callback(callback_query, parsed):
         return
     from workspace_owner_launcher import request_owner_workspace_open
     try:
-        request_owner_workspace_open(parsed["mode"], parsed["symbol"], parsed["timeframe"])
+        request_owner_workspace_open(
+            parsed["mode"], parsed["symbol"], parsed["timeframe"], **context)
     except Exception as exc:
         print("[WORKSPACE OPEN FAILED]", type(exc).__name__)
         _answer_callback(callback_id, "Редактор/Терминал недоступен на ПК")
