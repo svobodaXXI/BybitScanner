@@ -47,7 +47,7 @@ import {
 import { chartPriceFormat } from "../chart/priceFormat";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
-import { buildEditorGeometryReview, compareEditorRayChanges, serializeReviewDrawings, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
+import { buildEditorGeometryReview, compareEditorRayChanges, isValidCachedEditorDraft, serializeReviewDrawings, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
 import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
@@ -233,8 +233,14 @@ export function ChartPanel({
           // drafts cannot prevent an authenticated frozen Editor opening.
           try {
             const stored = globalThis.localStorage?.getItem(storageKey);
-            // A saved empty array is an explicit owner's decision; do not reseed.
-            if (stored !== null && stored !== undefined) return deserializeDrawings(stored);
+            if (stored !== null && stored !== undefined) {
+              const recovered = deserializeDrawings(stored);
+              // Only Editor requires exact original topology and valid frozen
+              // anchors; preserve regular trading drawing recovery as before.
+              if (!editorMode || !signalIdentity ||
+                  isValidCachedEditorDraft(recovered, referenceDrawings, candles))
+                return recovered;
+            }
           } catch {
             // Fall back to immutable Scanner/review seed; never refit live bars.
           }
