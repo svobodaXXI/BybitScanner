@@ -4684,7 +4684,7 @@ class SQLiteStore:
         """
         self._assert_owner()
         rows = self._connection.execute(
-            """SELECT * FROM robot_candidates
+            """SELECT * FROM robot_candidates INDEXED BY robot_candidates_account_status
                WHERE trading_account_id=? AND symbol=?
                  AND status IN ('APPROVED', 'OPEN')
                ORDER BY approved_at_ms, candidate_id""",
