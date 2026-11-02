@@ -64,7 +64,7 @@ for (const [mode, symbol, timeframe] of [
 
 test("frozen Editor geometry renders and accepts owner feedback without live WebSocket", async ({ page }) => {
   const signalId = "source:BTCUSDT:5:historic-wedge";
-  const posted: unknown[] = [];
+  const posted: Array<{ idempotency_key: string; [key: string]: unknown }> = [];
   await page.addInitScript(() => {
     const observations = { reference: 0, editable: 0 };
     Object.assign(window, { __editorRayStrokes: observations });
@@ -106,9 +106,20 @@ test("frozen Editor geometry renders and accepts owner feedback without live Web
       return;
     }
     if (pathname === "/api/workspace/geometry-feedback" && request.method() === "POST") {
-      posted.push(request.postDataJSON());
+      const submitted = request.postDataJSON() as {
+        idempotency_key: string; signal_id: string; snapshot_revision: string;
+        bars_sha256: string; label: string;
+      };
+      posted.push(submitted);
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
-        ok: true, review: { review_id: "review-verified", submission: { signal_id: signalId } },
+        ok: true, review: {
+          review_id: "c".repeat(64),
+          submission: {
+            ...submitted,
+            // First reply claims the wrong label: never report false success.
+            label: posted.length === 1 ? "FALSE_POSITIVE" : submitted.label,
+          },
+        },
       }) });
       return;
     }
@@ -136,8 +147,13 @@ test("frozen Editor geometry renders and accepts owner feedback without live Web
   })).toBe(true);
   await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("CONFIRMED");
   await save.click();
+  await expect(page.getByText(/Не удалось сохранить: Сервер не подтвердил точное сохранение отзыва/)).toBeVisible();
+  await expect(page.getByText(/Сохранённый отзыв:/)).toHaveCount(0);
+  await save.click();
   await expect(page.getByText(/Исправление сохранено в дневнике обратной связи/)).toBeVisible();
-  expect(posted).toHaveLength(1);
+  await expect(page.getByText(/Сохранённый отзыв: c{12}.*Верный сигнал/)).toBeVisible();
+  expect(posted).toHaveLength(2);
+  expect(posted[0].idempotency_key).toBe(posted[1].idempotency_key);
   expect(posted[0]).toMatchObject({
     signal_id: signalId, label: "CONFIRMED",
     snapshot_revision: "a".repeat(64), bars_sha256: "b".repeat(64),
@@ -191,6 +207,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
       writes++;
       const body = request.postDataJSON() as {
         signal_id: string; label: string; snapshot_revision: string;
+        bars_sha256: string; idempotency_key: string;
         corrected_boundaries: Array<{ id: string; type: string; anchors: Array<{ bar_open_time_ms: number; price: number }> }>;
       };
       expect(body.signal_id).toBe(signalId);
@@ -204,7 +221,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
         bar_open_time_ms: 1800000000000, price: 95,
       });
       savedReview = {
-        review_id: "roundtrip-confirmed",
+        review_id: "d".repeat(64),
         submission: {
           signal_id: signalId, snapshot_revision: body.snapshot_revision, label: body.label,
           corrected_boundaries: body.corrected_boundaries.map((item) => ({
@@ -214,7 +231,11 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
       };
       await route.fulfill({ status: 200, contentType: "application/json",
         body: JSON.stringify({ ok: true, review: { review_id: savedReview.review_id,
-          submission: { signal_id: signalId } } }) });
+          submission: {
+            signal_id: signalId, snapshot_revision: body.snapshot_revision,
+            bars_sha256: body.bars_sha256, label: body.label,
+            idempotency_key: body.idempotency_key,
+          } } }) });
       return;
     }
     if (pathname === "/api/workspace/symbol" && request.method() === "POST") {
@@ -281,11 +302,12 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
   await expect(page.locator(".editor-correction-export output[role=status]").last())
     .toContainText("Исправление сохранено в дневнике обратной связи");
   expect(writes).toBe(1);
+  await expect(page.getByText(/Сохранённый отзыв: d{12}.*Исправлена геометрия/)).toBeVisible();
 
   await page.reload();
-  await expect(page.getByText(/Сохранённый отзыв: roundtrip-co/)).toBeVisible();
+  await expect(page.getByText(/Сохранённый отзыв: d{12}.*Исправлена геометрия/)).toBeVisible();
   await expect.poll(() => page.evaluate((id) => {
-    const savedKey = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}:review-roundtrip-confirmed`;
+    const savedKey = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}:review-${"d".repeat(64)}`;
     const raw = localStorage.getItem(savedKey);
     return raw ? JSON.parse(raw).drawings.map((item: { id: string; anchors: Array<{ price: number }> }) => ({
       id: item.id, price: item.anchors[0].price,
