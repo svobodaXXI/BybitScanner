@@ -98,3 +98,18 @@ test("EDITOR opens exact frozen signal, preserves source rays and exports a manu
   expect(copied.corrected_boundaries[1].anchors).toEqual(source[1].anchors);
   expect(copied.corrected_boundaries[2].type).toBe("horizontal");
 });
+
+test("legacy Editor link without signal ID truthfully labels current candles", async ({ page }) => {
+  let geometryRequests = 0;
+  await page.route("**/api/**", (route) => {
+    if (new URL(route.request().url()).pathname === "/api/workspace/signal-geometry")
+      geometryRequests += 1;
+    return route.fulfill({ status: 503, contentType: "application/json", body: '{"ok":false}' });
+  });
+  await page.goto("/?mode=EDITOR&symbol=BTCUSDT&timeframe=5m");
+  await expect(page.getByRole("heading", { name: "EDITOR" })).toBeVisible();
+  await expect(page.getByRole("status", {
+    name: "",
+  }).filter({ hasText: "Исходный сигнал не указан в ссылке." })).toBeVisible();
+  expect(geometryRequests).toBe(0);
+});
