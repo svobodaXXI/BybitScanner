@@ -91,8 +91,9 @@ class TransitionCase(unittest.TestCase):
         self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
         self.assertEqual(len([e for e in events if isinstance(e, tuple)
                               and e[0] == "signal"]), 1)
-        self.assertEqual(events[0], "barrier:enter")
-        self.assertEqual(events[-1], "barrier:exit")
+        self.assertEqual(events, [
+            "barrier:enter", ("signal", PID, signal.SIGINT), "barrier:exit",
+        ])
         proof.assert_called_once()
 
     def test_jasmy_incident_refuses_unowned_listener_without_signal(self):
@@ -189,6 +190,41 @@ class TransitionCase(unittest.TestCase):
         self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
         self.assertEqual(events, [
             "barrier:enter", ("signal", PID, signal.SIGINT), "barrier:exit",
+        ])
+
+    def test_backend_exit_probe_runs_only_after_writer_barrier_release(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(build_sha=SHA, process_instance_id="old-paper-process")
+        events = []
+        writer_held = [False]
+        @contextmanager
+        def barrier(_):
+            writer_held[0] = True
+            events.append("barrier:enter")
+            try:
+                yield conn
+            finally:
+                writer_held[0] = False
+                events.append("barrier:exit")
+        def interrupt(pid, sig):
+            self.assertTrue(writer_held[0])
+            events.append("signal")
+        def probe(pid):
+            self.assertFalse(writer_held[0], "Backend exit needs released SQLite writer")
+            events.append("exit:probe")
+            return False
+        result = execute_flat_handoff(
+            db_path=Path("/no-vps-access"), expected_identity=IDENTITY,
+            expected_pid=PID, expected_build_sha=SHA, execute=True,
+            snapshots=snapshots, service_pid=lambda: PID,
+            start_token=lambda p: "start-77", writer_guard=barrier,
+            send_interrupt=interrupt, is_alive=probe,
+            monotonic=lambda: 0, sleep=lambda seconds: None,
+        )
+        self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
+        self.assertEqual(events, [
+            "barrier:enter", "signal", "barrier:exit", "exit:probe",
         ])
 
     def test_failed_systemd_unit_after_signal_is_successful_exit(self):
