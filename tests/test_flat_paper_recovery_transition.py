@@ -53,7 +53,7 @@ class TransitionCase(unittest.TestCase):
             listener_owner=lambda p: listener_owned,
             service_pid=pid or (lambda: PID if live[0] else 0),
             start_token=token or (lambda p: "start-77"),
-            send_interrupt=interrupt, is_alive=lambda p: live[0], listener_owner=lambda p: True,
+            send_interrupt=interrupt, is_alive=lambda p: live[0],
             writer_guard=barrier,
             monotonic=advancing_clock,
             sleep=lambda n: None,
