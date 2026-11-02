@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DrawingObject } from "../chart/drawingModel";
-import { buildEditorGeometryReview, buildGeometryReviewDraft, compareEditorRayChanges, matchesStoredGeometryReview, serializeReviewDrawings } from "./geometryReviewDraft";
+import { buildEditorGeometryReview, buildGeometryReviewDraft, compareEditorRayChanges, isValidCachedEditorDraft, matchesStoredGeometryReview, serializeReviewDrawings } from "./geometryReviewDraft";
 
 const candles = [
   { time: "2026-10-19T00:00:00.000Z", open: 10, high: 12, low: 9, close: 11 },
@@ -62,6 +62,23 @@ describe("Editor two-pair review evidence", () => {
       ],
     }]);
     expect(original.anchors[0].price).toBe(12);
+  });
+
+  it("accepts only complete source-aligned cached drafts and rejects corrupt browser drawings", () => {
+    const same = [{ ...editable, anchors: editable.anchors.map((anchor) => ({ ...anchor })) }];
+    expect(isValidCachedEditorDraft(same, [original], candles)).toBe(true);
+    for (const invalid of [
+      [], [{ ...editable, id: "editable:foreign" }],
+      [{ ...editable, type: "ray" }],
+      [{ ...editable, anchors: [{ logical: 0.5, price: 12 }, editable.anchors[1]] }],
+      [{ ...editable, anchors: [{ logical: 1, price: 12 }, { logical: 0, price: 13 }] }],
+      [{ ...editable, style: null }],
+      [{ ...editable, anchors: null }],
+      [{ ...editable, hidden: true }],
+      [{ ...editable, locked: true }],
+      [{ ...editable, anchors: [{ logical: 0, price: Number.NaN }, editable.anchors[1]] }],
+      [null],
+    ]) expect(isValidCachedEditorDraft(invalid, [original], candles)).toBe(false);
   });
 
   it("rejects missing or extra lines, wrong topology and unchanged originals", () => {
