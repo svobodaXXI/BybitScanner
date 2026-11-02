@@ -1314,6 +1314,37 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
             with shutdown.hold_legacy_paper_quiescence(path):
                 pass
 
+    def test_legacy_quiescence_rejects_inconsistent_paper_position_shapes(self):
+        # Non-Robot exposure is allowed; contradictory projection economics
+        # are not authoritative FLAT or a proven open manual position.
+        cases = (
+            ("Flat", "1"),
+            ("Long", "0"),
+            ("Short", "0"),
+            ("UNKNOWN", "1"),
+            (None, "1"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for i, (side, qty) in enumerate(cases):
+                with self.subTest(side=side, qty=qty):
+                    path = Path(directory) / f"position-{i}.sqlite3"
+                    self.make_db(path)
+                    with sqlite3.connect(path) as db:
+                        db.execute(
+                            "INSERT INTO position_projections VALUES "
+                            "('paper','linear','MANUALUSDT',0,?,?)",
+                            (side, qty),
+                        )
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "inconsistent position projection",
+                    ):
+                        shutdown.prove_legacy_paper_quiescence(path)
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "inconsistent position projection",
+                    ):
+                        with shutdown.hold_legacy_paper_quiescence(path):
+                            pass
+
     def test_legacy_quiescence_rejects_unknown_and_inflight_ledgers(self):
         # Legacy exact-process fallback must not accept work the canonical
         # PAPER owner would reject. All fixtures are isolated from live DB.
