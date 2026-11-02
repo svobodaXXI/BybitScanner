@@ -952,7 +952,14 @@ export function ChartPanel({
           selected={selectedId !== null}
           onTool={setTool}
           onMagnet={() => setMagnet((v) => !v)}
-          onUndo={() => { setDrawings(historyRef.current.undo()); markReviewEdited(); }}
+          onUndo={() => {
+            const previous = drawings;
+            const undone = historyRef.current.undo();
+            if (undone !== previous) {
+              setDrawings(undone);
+              markReviewEdited();
+            }
+          }}
           onDelete={deleteSelected}
           onClear={() => {
             if (drawings.length) setClearConfirmationOpen(true);
