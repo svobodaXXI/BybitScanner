@@ -38,13 +38,15 @@ ACCOUNT = TradingAccountId("paper")
 HOT_INDEXES = ("robot_candidates_account_symbol", "robot_candidates_account_status")
 
 
-def _seed_history(store: SQLiteStore, start: int, count: int) -> None:
-    """Finished candidates on unrelated symbols with Box-sized snapshots."""
+def _seed_history(
+    store: SQLiteStore, start: int, count: int, *, symbol: str | None = None,
+) -> None:
+    """Finished candidates with Box-sized snapshots (optionally same symbol)."""
     for index in range(start, start + count):
         candidate_id = f"history-{index}"
         store.create_robot_candidate(
             candidate_id=candidate_id, trading_account_id=ACCOUNT,
-            symbol=Symbol(f"HIST{index % 40}USDT"), status="APPROVED",
+            symbol=Symbol(symbol or f"HIST{index % 40}USDT"), status="APPROVED",
             signal_snapshot={
                 "pattern": "IKIGAI_BOX", "index": index,
                 "candles": [[minute, "1.0", "2.0"] for minute in range(400)],
@@ -106,6 +108,35 @@ class RobotCandidateHotReadAccessPathTests(unittest.TestCase):
                         for row in store._connection.execute(f"EXPLAIN QUERY PLAN {sql}")
                     )
                     self.assertIn(f"USING INDEX {index}", plan)
+            finally:
+                store.close()
+
+    def test_active_symbol_read_ignores_terminal_history_and_preserves_active_rows(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = SQLiteStore.open(Path(temp) / "paper.sqlite3")
+            try:
+                symbol = Symbol("BTCUSDT")
+                store.create_robot_candidate(
+                    candidate_id="active-btc", trading_account_id=ACCOUNT,
+                    symbol=symbol, status="APPROVED",
+                    signal_snapshot={"pattern": "IKIGAI_BOX"},
+                    approved_at_ms=1000, updated_at_ms=1000,
+                )
+                def active():
+                    return store.load_active_robot_candidates_for_symbol(ACCOUNT, symbol)
+                before = active()
+                before_steps = _vm_steps(store, active)
+                _seed_history(store, 0, 150, symbol="BTCUSDT")
+                after = active()
+                after_steps = _vm_steps(store, active)
+                self.assertEqual(before, after)
+                self.assertEqual(tuple(item.candidate_id for item in after), ("active-btc",))
+                self.assertLess(abs(after_steps - before_steps), 25)
+                self.assertEqual(
+                    tuple(item for item in store.load_robot_candidates_for_symbol(ACCOUNT, symbol)
+                          if item.status in {"APPROVED", "OPEN"}),
+                    after,
+                )
             finally:
                 store.close()
 
