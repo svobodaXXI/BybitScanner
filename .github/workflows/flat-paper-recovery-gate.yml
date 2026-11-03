@@ -5,9 +5,11 @@ on:
       - 'tools/flat_paper_recovery_gate.py'
       - 'tools/flat_paper_recovery_transition.py'
       - 'tools/jasmy_flat_handoff_proof.py'
+      - 'tools/paper_two_orphan_proof.py'
       - 'tests/test_flat_paper_recovery_gate.py'
       - 'tests/test_flat_paper_recovery_transition.py'
       - 'tests/test_jasmy_flat_handoff_proof.py'
+      - 'tests/test_paper_two_orphan_proof.py'
       - '.github/workflows/flat-paper-recovery-gate.yml'
   workflow_dispatch:
 
@@ -26,6 +28,6 @@ jobs:
           websocket-client==1.9.0 pandas==3.0.5 numpy==2.5.1
           matplotlib==3.11.1 mplfinance==0.12.10b0 six==1.17.0
       - name: Compile offline gate
-        run: python -m py_compile tools/flat_paper_recovery_gate.py tools/flat_paper_recovery_transition.py tools/jasmy_flat_handoff_proof.py tests/test_jasmy_flat_handoff_proof.py tests/test_flat_paper_recovery_gate.py tests/test_flat_paper_recovery_transition.py
+        run: python -m py_compile tools/flat_paper_recovery_gate.py tools/flat_paper_recovery_transition.py tools/jasmy_flat_handoff_proof.py tools/paper_two_orphan_proof.py tests/test_paper_two_orphan_proof.py tests/test_jasmy_flat_handoff_proof.py tests/test_flat_paper_recovery_gate.py tests/test_flat_paper_recovery_transition.py
       - name: Run fail-closed synthetic tests
-        run: python -m unittest -v tests.test_flat_paper_recovery_gate tests.test_flat_paper_recovery_transition tests.test_jasmy_flat_handoff_proof
+        run: python -m unittest -v tests.test_flat_paper_recovery_gate tests.test_flat_paper_recovery_transition tests.test_jasmy_flat_handoff_proof tests.test_paper_two_orphan_proof
