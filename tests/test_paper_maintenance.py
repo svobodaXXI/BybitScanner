@@ -988,11 +988,13 @@ def test_editor_flat_reconcile_preflight_refuses_exposure_or_unexpected_owner(
 ):
     import tools.paper_maintenance as maintenance
     import tools.stop_robot_runtime as shutdown
-    from tools.paper_incident_approvals import IDLE_APPROVALS
+    from tools.paper_incident_approvals import (
+        IDLE_APPROVALS, JASMY_CANDIDATE_ID, JASMY_TRADE_ID,
+    )
 
     db = tmp_path / "paper.sqlite3"
     with sqlite3.connect(db) as conn:
-        conn.executescript("""
+        conn.executescript(f"""
             CREATE TABLE robot_runtime_state (
                 trading_account_id TEXT, mode TEXT, recovery_status TEXT);
             CREATE TABLE scanner_runtime_state (
@@ -1003,7 +1005,7 @@ def test_editor_flat_reconcile_preflight_refuses_exposure_or_unexpected_owner(
                 trading_account_id TEXT, symbol TEXT, side TEXT,
                 quantity TEXT, sync_state TEXT);
             CREATE TABLE robot_trades (
-                trading_account_id TEXT, candidate_id TEXT,
+                trading_account_id TEXT, trade_id TEXT, candidate_id TEXT,
                 symbol TEXT, exit_time_ms INTEGER);
             CREATE TABLE robot_candidates (
                 trading_account_id TEXT, candidate_id TEXT, symbol TEXT, status TEXT,
@@ -1033,11 +1035,11 @@ def test_editor_flat_reconcile_preflight_refuses_exposure_or_unexpected_owner(
             INSERT INTO position_projections VALUES
                 ('paper','FLOWUSDT','Flat','0','synced');
             INSERT INTO robot_trades VALUES
-                ('paper','jasmy','JASMYUSDT',NULL);
+                ('paper','{JASMY_TRADE_ID}','{JASMY_CANDIDATE_ID}','JASMYUSDT',NULL);
             INSERT INTO robot_trades VALUES
-                ('paper','flow','FLOWUSDT',NULL);
+                ('paper','unattested-flow-trade','flow','FLOWUSDT',NULL);
             INSERT INTO robot_candidates VALUES
-                ('paper','jasmy','JASMYUSDT','OPEN',100,0,NULL);
+                ('paper','{JASMY_CANDIDATE_ID}','JASMYUSDT','OPEN',100,0,NULL);
             INSERT INTO robot_candidates VALUES
                 ('paper','flow','FLOWUSDT','OPEN',100,0,NULL);
         """)
@@ -1050,6 +1052,51 @@ def test_editor_flat_reconcile_preflight_refuses_exposure_or_unexpected_owner(
 
     monkeypatch.setattr(shutdown, "_database_path", lambda *_: db)
     preflight = lambda: maintenance._editor_flat_reconcile_preflight(tmp_path, None)
+    assert preflight()
+
+    # One or zero OPEN lots are not the exact historic two-orphan incident.
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE robot_trades SET exit_time_ms=200 WHERE symbol='FLOWUSDT'")
+    assert not preflight()
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE robot_trades SET exit_time_ms=200 WHERE symbol='JASMYUSDT'")
+    assert not preflight()
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE robot_trades SET exit_time_ms=NULL")
+    assert preflight()
+
+    # A new JASMY trade may be Flat and use the same symbol; it must not
+    # inherit permission to invoke the historical owner reconciliation.
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE robot_trades SET trade_id='foreign-jasmy-trade' "
+            "WHERE symbol='JASMYUSDT'"
+        )
+    assert not preflight()
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE robot_trades SET trade_id=? WHERE symbol='JASMYUSDT'",
+            (JASMY_TRADE_ID,),
+        )
+        conn.execute(
+            "UPDATE robot_trades SET candidate_id='foreign-jasmy-candidate' "
+            "WHERE symbol='JASMYUSDT'"
+        )
+        conn.execute(
+            "UPDATE robot_candidates SET candidate_id='foreign-jasmy-candidate' "
+            "WHERE symbol='JASMYUSDT' AND status='OPEN'"
+        )
+    assert not preflight()
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE robot_trades SET candidate_id=? WHERE symbol='JASMYUSDT'",
+            (JASMY_CANDIDATE_ID,),
+        )
+        conn.execute(
+            "UPDATE robot_candidates SET candidate_id=? "
+            "WHERE symbol='JASMYUSDT' AND status='OPEN'",
+            (JASMY_CANDIDATE_ID,),
+        )
     assert preflight()
 
     with sqlite3.connect(db) as conn:

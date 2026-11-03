@@ -19,11 +19,12 @@ from terminal.domain.models import Category, PositionKey, PositionSide, Symbol, 
 from terminal.persistence.sqlite_store import SQLiteStore
 from terminal.runtime.paper_runtime import PaperRuntime
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked, _require
+from tools.paper_incident_approvals import JASMY_CANDIDATE_ID, JASMY_TRADE_ID
 
 ACCOUNT = TradingAccountId("paper")
 SYMBOL = Symbol("JASMYUSDT")
-TRADE_ID = "robot-trade-2a023e646fd8add8b5b30cd8"
-CANDIDATE_ID = "2a023e646fd8add8b5b30cd8"
+TRADE_ID = JASMY_TRADE_ID
+CANDIDATE_ID = JASMY_CANDIDATE_ID
 OLD_SHA = "f100ef369a1105443332b5729b558464c27be48f"
 PROOF_LABEL = "JASMY_FLAT_ORPHAN_LEDGER_PROVEN_ONLY"
 

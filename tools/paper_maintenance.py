@@ -629,7 +629,8 @@ def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
     """
     from tools.stop_robot_runtime import _database_path
     from tools.paper_incident_approvals import (
-        IDLE_APPROVALS, prove_six_inert_approvals,
+        IDLE_APPROVALS, JASMY_CANDIDATE_ID, JASMY_TRADE_ID,
+        prove_six_inert_approvals,
     )
     from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
 
@@ -669,14 +670,17 @@ def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
                     or quantity != 0 or sync not in ("synced", "synchronized")):
                 return False
         trades = conn.execute(
-            "SELECT candidate_id, symbol FROM robot_trades "
+            "SELECT trade_id, candidate_id, symbol FROM robot_trades "
             "WHERE trading_account_id='paper' AND exit_time_ms IS NULL"
         ).fetchall()
-        if (len(trades) > 2 or len(set(trades)) != len(trades)
-                or len({symbol for _, symbol in trades}) != len(trades)
-                or any(symbol not in expected_symbols for _, symbol in trades)):
+        if (len(trades) != 2
+                or len({trade_id for trade_id, _, _ in trades}) != 2
+                or len({cid for _, cid, _ in trades}) != 2
+                or {symbol for _, _, symbol in trades} != expected_symbols
+                or any((trade_id, cid) != (JASMY_TRADE_ID, JASMY_CANDIDATE_ID)
+                       for trade_id, cid, symbol in trades if symbol == "JASMYUSDT")):
             return False
-        for _, symbol in trades:
+        for _, _, symbol in trades:
             if sum(position[0] == symbol for position in positions) != 1:
                 return False
         rows = conn.execute(
@@ -685,7 +689,7 @@ def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
             "AND (status IS NULL OR status NOT IN "
             "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))"
         ).fetchall()
-        open_owners = {(candidate_id, symbol, "OPEN") for candidate_id, symbol in trades}
+        open_owners = {(candidate_id, symbol, "OPEN") for _, candidate_id, symbol in trades}
         approvals = [row for row in rows if row[2] == "APPROVED"]
         if (len(rows) != len(trades) + len(approvals)
                 or len(set(rows)) != len(rows)
