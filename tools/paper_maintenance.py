@@ -552,6 +552,16 @@ def main(argv=None) -> int:
         )
     elif args.resume_installed_editor_only:
         status = resume_installed_release(args.sha, root=REPO, env_file=args.env_file)
+        if status.startswith("READY:"):
+            # Standalone recovery must finalize the same pinned transaction
+            # as staged deploy; otherwise the next planned release remains
+            # fenced by its previously successful STOP attempt.
+            from tools.vps_gitless_release_activate import ActivationBlocked, TRANSACTIONS
+            try:
+                _complete_stop_intent(TRANSACTIONS, args.sha, uid=0)
+            except (ActivationBlocked, OSError, ValueError) as exc:
+                status = ("BLOCKED: completed_release_receipt_unproven:"
+                          + type(exc).__name__)
     else:
         status = run_maintenance(args.sha, env_file=args.env_file,
                                  wait_seconds=args.wait_seconds)
