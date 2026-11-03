@@ -124,6 +124,65 @@ class StoppedPreEntryWedgeTests(unittest.TestCase):
             self.sync()
         self.assertEqual(self.status("filled"), "INVALIDATED")
 
+    def test_frozen_canonical_reconciliation_retires_only_never_filled(self):
+        self.candidate("frozen", "WAITING_RETEST")
+        stopped = self.store.get_robot_runtime_state(ACCOUNT)
+        self.store.update_robot_runtime_state(
+            ACCOUNT, mode="ROBOT_RUNNING", recovery_status="RECONCILING", reason=None,
+            expected_version=stopped.version, updated_at_ms=int(time.time() * 1000),
+        )
+        scanner = self.store.get_scanner_runtime_state(ACCOUNT)
+        autopilot = self.store.get_robot_autopilot_state(ACCOUNT)
+        self.assertEqual(scanner.mode, "SCANNER_STOPPED")
+        self.assertEqual(autopilot.mode, "OFF")
+        response = self.sync()
+        self.assertEqual(self.status("frozen"), "INVALIDATED")
+        self.assertIn("frozen", response.terminalized_candidate_ids)
+        self.assertIn(
+            "FROZEN_RECONCILING",
+            self.store.get_robot_candidate("frozen")
+            .robot_state["execution"]["stopped_without_entry_reason"],
+        )
+
+    def test_reconciliation_rejects_unfrozen_scanner_or_autopilot(self):
+        self.candidate("unfrozen", "WAITING_BREAKOUT")
+        stopped = self.store.get_robot_runtime_state(ACCOUNT)
+        self.store.update_robot_runtime_state(
+            ACCOUNT, mode="ROBOT_RUNNING", recovery_status="RECONCILING", reason=None,
+            expected_version=stopped.version, updated_at_ms=int(time.time() * 1000),
+        )
+        scanner = self.store.get_scanner_runtime_state(ACCOUNT)
+        self.store.update_scanner_runtime_state(
+            ACCOUNT, mode="SCANNER_RUNNING",
+            expected_version=scanner.version, updated_at_ms=int(time.time() * 1000),
+        )
+        self.sync()
+        self.assertEqual(self.status("unfrozen"), "APPROVED")
+        scanner = self.store.get_scanner_runtime_state(ACCOUNT)
+        self.store.update_scanner_runtime_state(
+            ACCOUNT, mode="SCANNER_STOPPED",
+            expected_version=scanner.version, updated_at_ms=int(time.time() * 1000),
+        )
+        autopilot = self.store.get_robot_autopilot_state(ACCOUNT)
+        self.store.update_robot_autopilot_state(
+            ACCOUNT, mode="PAPER_AUTO",
+            expected_version=autopilot.version, updated_at_ms=int(time.time() * 1000),
+        )
+        self.sync()
+        self.assertEqual(self.status("unfrozen"), "APPROVED")
+
+    def test_frozen_reconciliation_preserves_any_post_approval_fill(self):
+        self.candidate("filled-frozen", "RETEST_DETECTED")
+        stopped = self.store.get_robot_runtime_state(ACCOUNT)
+        self.store.update_robot_runtime_state(
+            ACCOUNT, mode="ROBOT_RUNNING", recovery_status="RECONCILING", reason=None,
+            expected_version=stopped.version, updated_at_ms=int(time.time() * 1000),
+        )
+        with patch.object(self.store, "load_executions_for_symbol",
+                          return_value=(_Execution(1_500),)):
+            self.sync()
+        self.assertEqual(self.status("filled-frozen"), "APPROVED")
+
     def test_running_robot_never_terminalizes_through_this_rule(self):
         self.candidate("paused", "WAITING_BREAKOUT")
         stopped = self.store.get_robot_runtime_state(ACCOUNT)
