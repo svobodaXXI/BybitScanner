@@ -272,3 +272,15 @@ def test_interrupted_switch_refuses_changed_old_file_without_new_stop(tmp_path, 
         _activate(kw, proof=False)
     assert victim.read_text() == "owner-changed-after-interruption"
     assert json.loads(kw["manifest"].read_text())["build_sha"] != kw["sha"]
+
+
+def test_installer_rejects_symlink_release_lock_without_mutating_owner_file(tmp_path, monkeypatch):
+    kw = _fixture(tmp_path, monkeypatch)
+    owner_file = tmp_path / "owner-private-data"
+    owner_file.write_text("preserve")
+    (kw["transactions"] / ".release.lock").symlink_to(owner_file)
+    with pytest.raises(activation.ActivationBlocked, match="untrusted_release_lock"):
+        _activate(kw)
+    assert owner_file.read_text() == "preserve"
+    assert not (kw["transactions"] / kw["sha"]).exists()
+    assert json.loads(kw["manifest"].read_text())["build_sha"] != kw["sha"]
