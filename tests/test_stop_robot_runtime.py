@@ -49,7 +49,9 @@ class FakeRuntime:
         self.scanner_mode = "SCANNER_RUNNING"
         self.robot_ownership_open = True
         self.autopilot_mode = "OFF"
-        self.autopilot_off_reply = (200, {"ok": True, "mode": "OFF"})
+        self.autopilot_off_reply = (200, {
+            "ok": True, "mode": "OFF", "trading_account_id": {"value": "paper"},
+        })
         self.protection = {
             "ok": True, "healthy": True, "covered_symbols": [], "coverage_roles": {},
             "armed_symbols": [], "unhealthy_symbols": {},
@@ -74,7 +76,10 @@ class FakeRuntime:
         if url == BACKEND + "/api/scanner/status":
             return 200, {"ok": True, "mode": self.scanner_mode}
         if url == BACKEND + "/api/robot/autopilot":
-            return 200, {"ok": True, "mode": self.autopilot_mode}
+            return 200, {
+                "ok": True, "mode": self.autopilot_mode,
+                "trading_account_id": {"value": "paper"},
+            }
         if url == TELEGRAM + "/health":
             if not self.telegram_alive:
                 raise shutdown.Unreachable("refused")
@@ -201,6 +206,63 @@ class FullShutdownTests(unittest.TestCase):
             "backend:shutdown", "telegram:shutdown",
         ])
         self.assertIn("autopilot:off", result.steps)
+
+    def test_unproven_autopilot_account_blocks_stop_before_any_mutation(self):
+        for account in ({"value": "live"}, None, {"value": "PAPER"}):
+            with self.subTest(account=account):
+                runtime = FakeRuntime(robot=READY)
+                runtime.autopilot_mode = "OFF"
+                get = runtime.get
+
+                def foreign_account(url, timeout):
+                    status, body = get(url, timeout)
+                    if url == BACKEND + "/api/robot/autopilot":
+                        body["trading_account_id"] = account
+                    return status, body
+
+                runtime.get = foreign_account
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertIn("Autopilot state unproven", result.message)
+                self.assertEqual(runtime.calls, [])
+                self.assertEqual(runtime.scanner_mode, "SCANNER_RUNNING")
+                self.assertEqual(runtime.robot, READY)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_autopilot_off_ack_requires_paper_owner_before_scanner_stop(self):
+        for account in ({"value": "live"}, None):
+            with self.subTest(account=account):
+                runtime = FakeRuntime(robot=READY)
+                runtime.autopilot_mode = "PAPER_AUTO"
+                runtime.autopilot_off_reply = (200, {
+                    "ok": True, "mode": "OFF", "trading_account_id": account,
+                })
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertIn("Autopilot OFF rejected or unconfirmed", result.message)
+                self.assertEqual(runtime.calls, ["autopilot:off"])
+                self.assertEqual(runtime.scanner_mode, "SCANNER_RUNNING")
+                self.assertEqual(runtime.robot, READY)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_autopilot_account_drift_after_scanner_blocks_robot_shutdown(self):
+        runtime = FakeRuntime(robot=READY)
+        get = runtime.get
+
+        def changed_account(url, timeout):
+            status, body = get(url, timeout)
+            if (url == BACKEND + "/api/robot/autopilot"
+                    and runtime.scanner_mode == "SCANNER_STOPPED"):
+                body["trading_account_id"] = {"value": "live"}
+            return status, body
+
+        runtime.get = changed_account
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Autopilot OFF post-Scanner state unproven", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.robot, READY)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
     def test_all_does_not_stop_scanner_or_protection_on_rejected_autopilot_off(self):
         for reply in ((409, {"ok": False, "error": "rejected"}),
