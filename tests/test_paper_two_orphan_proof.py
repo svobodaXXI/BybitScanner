@@ -389,7 +389,7 @@ class DualOrphanPreflightTests(TestCase):
             "UPDATE paper_limit_orders SET filled_quantity='0.1' "
             "WHERE symbol='BNCUSDT'"
         )
-        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress"):
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress:BNCUSDT:symbol_limit_not_cancelled_zero_fill"):
             check(conn, payload, store)
         conn.execute(
             "UPDATE paper_limit_orders SET filled_quantity='0' "
@@ -398,7 +398,7 @@ class DualOrphanPreflightTests(TestCase):
         conn.execute(
             "UPDATE robot_candidates SET state_revision=7 WHERE symbol='BNCUSDT'"
         )
-        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress"):
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress:BNCUSDT:revision_or_state_type_mismatch"):
             check(conn, payload, store)
         conn.execute(
             "UPDATE robot_candidates SET state_revision=6 WHERE symbol='BNCUSDT'"
@@ -406,7 +406,7 @@ class DualOrphanPreflightTests(TestCase):
         conn.execute(
             "UPDATE box_order_ownership SET role='EXIT' WHERE order_id='cancelled-HEMIUSDT-0'"
         )
-        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress"):
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress:HEMIUSDT:box_reservation_role_or_id_mismatch"):
             check(conn, payload, store)
         conn.execute(
             "UPDATE box_order_ownership SET role='ENTRY' WHERE order_id='cancelled-HEMIUSDT-0'"
@@ -415,7 +415,7 @@ class DualOrphanPreflightTests(TestCase):
             "INSERT INTO executions (trading_account_id,symbol,exchange_timestamp_ms,order_id) "
             "VALUES ('paper','HEMIUSDT',201,'cancelled-HEMIUSDT-0')"
         )
-        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress"):
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress:HEMIUSDT:box_reserved_order_has_execution"):
             check(conn, payload, store)
 
     def test_stale_approval_identity_progress_and_box_owner_fail_closed(self):
