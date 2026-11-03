@@ -903,6 +903,58 @@ def test_editor_only_does_not_start_on_failed_reconcile_postproof(
     assert events == ["reconcile"]
 
 
+def test_editor_reconcile_never_retries_unknown_owner_outcome(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as http
+
+    calls = []
+    proofs = iter([True, True])
+    intents = iter([True, False])
+    monkeypatch.setattr(maintenance, "_editor_flat_reconcile_preflight",
+                        lambda *_: next(proofs))
+    monkeypatch.setattr(maintenance, "_record_editor_reconcile_once",
+                        lambda *_a, **_kw: next(intents))
+
+    def ambiguous(*_args):
+        calls.append("post")
+        raise http.Unreachable("timed out after the owner may have committed")
+
+    monkeypatch.setattr(http, "http_post_json", ambiguous)
+    assert maintenance._editor_reconcile_once(
+        "a" * 40, "d" * 64, root=tmp_path, env_file=None,
+    ) == "BLOCKED: Editor_Robot_reconcile_outcome_unknown; no_replay"
+    assert maintenance._editor_reconcile_once(
+        "a" * 40, "d" * 64, root=tmp_path, env_file=None,
+    ) == "BLOCKED: prior_Editor_Robot_reconcile_outcome_unknown; no_replay"
+    assert calls == ["post"]
+
+
+def test_editor_reconcile_http_success_not_enough_without_durable_postproof(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as http
+
+    monkeypatch.setattr(maintenance, "_editor_flat_reconcile_preflight",
+                        lambda *_: True)
+    monkeypatch.setattr(maintenance, "_record_editor_reconcile_once",
+                        lambda *_a, **_kw: True)
+    calls = []
+    monkeypatch.setattr(
+        http, "http_post_json",
+        lambda url, payload, timeout: (
+            calls.append((url, payload, timeout)) or
+            SimpleNamespace(status=200, json=lambda: {"ok": True, "success": True})
+        ),
+    )
+    assert maintenance._editor_reconcile_once(
+        "a" * 40, "d" * 64, root=tmp_path, env_file=None,
+    ) is None
+    assert len(calls) == 1
+    assert calls[0][0].endswith("/api/robot/reconcile")
+    assert calls[0][1] == {}
+
+
 def test_editor_reconcile_one_shot_receipt_cannot_replay(tmp_path):
     import tools.paper_maintenance as maintenance
 
