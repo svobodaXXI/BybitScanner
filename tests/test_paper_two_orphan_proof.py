@@ -408,7 +408,9 @@ class DualOrphanPreflightTests(TestCase):
             check(conn, payload, store)
         payload["protection"]["coverage_roles"]["BBUSDT"] = "ENTRY_PENDING"
         conn.execute(
-            "INSERT INTO paper_limit_orders VALUES ('paper','open','BBUSDT',201)"
+            "INSERT INTO paper_limit_orders "
+            "(trading_account_id,status,symbol,created_at_ms) "
+            "VALUES ('paper','open','BBUSDT',201)"
         )
         with self.assertRaisesRegex(FlatRecoveryBlocked, "active_or_unknown_paper_limit"):
             check(conn, payload, store)
