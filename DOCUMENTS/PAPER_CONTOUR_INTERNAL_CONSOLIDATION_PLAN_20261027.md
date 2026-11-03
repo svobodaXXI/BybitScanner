@@ -209,3 +209,60 @@ PAPER Market для повторного **того же** Close-All запро�
 **Граница приёмки:** один code PR через ChatGPT GitHub connector → targeted mandatory CI на его HEAD → отдельное разрешение merge → **один отдельно разрешённый** VPS end-to-end до установки точного stable SHA и Telegram Editor acceptance, сохранив Scanner OFF/PAPER_AUTO OFF → затем нормальный проверенный START/STOP с protected exposure и единственным PAPER owner. Codex — только исполнитель одной VPS-операции, не автор кода. Не выдавать PR/тесты/staging за реальный продуктовый результат.
 
 **Реалистичное инженерное обещание:** после внедрения нормальные и заранее известные безопасные состояния не требуют промежуточных owner-команд. Неопределённая настоящая экспозиция или неподтверждённая exit-attribution всё равно может остановить работу BLOCKED с одним точным доказательным blocker, а защищающий Backend продолжает работать. Безусловное «никогда не будет блокеров» несовместимо с безопасной торговлей.
+
+
+## 13. P0 — максимальная отказоустойчивость одной команды PAPER (решение владельца 03.11.2026)
+
+**Цель:** один START/STOP/UPDATE должен переживать подтверждённые штатные отказы с безопасным автоматическим восстановлением, минимальным временем владельца и без повторных ордеров/неизвестных side effects. Это часть **того же интегрированного GitHub code PR из §12**, не отдельный сервис/квест. Максимизируем надёжность **для одного VPS и локальной PAPER SQLite**, не утверждаем недоказанную непрерывность при падении самого хоста. Без ослабления STOP/TAKE, Admission, LIVE-ban и owner approval.
+
+### 13.1 Три отдельные границы здоровья
+
+1. **Process liveness:** systemd MainPID + starttime/cgroup/listener + runtime SHA, а не один HTTP 200. HTTP timeout не доказывает отсутствие backend. WebSocket disconnect не означает смерть процесса.
+2. **Protection readiness:** реальные позиции, durable STOP/TAKE и EXIT obligations, covered/armed roles, полный sequence/generation continuity, owner queue, рынок и текущий book. Любой провал немедленно останавливает **новые входы**, но не выключает защищающий Backend.
+3. **Trading readiness / persisted owner intent:** явно заданные START TRADE, START EDITOR_ONLY, STOP, UPDATE/SERVICE. START TRADE разрешает Admission/PAPER_AUTO только после доказанных READY+HEALTHY и прежнего owner opt-in. STOP и SERVICE переживают reboot; при crash/reboot default = admission OFF, никогда не происходит несанкционированный самозапуск торговли.
+
+### 13.2 Матрица восстановления
+
+| Сбой | Самостоятельно восстановить, если доказано | Недопустимый автоматизм |
+| --- | --- | --- |
+| WebSocket disconnect, stale sequence/book | ingress freeze; существующий bounded reconnect + REST catch-up; новый generation/sequence/freshness proof; resume лишь owned continuity | считать REST 200 полной защитой; очищать чужой REQUIRED fence |
+| ingress_overflow, starvation owner FIFO | existing durable protection fence вне переполненной FIFO (#784), приоритет STOP/TAKE и control-plane, backpressure новых сигналов | убить процесс с экспозицией ради разгрузки |
+| Backend crash/OOM | оценить guarded systemd Restart=on-failure + bounded rate limiter **после** отдельной offline crash/reboot приёмки boot-safe flow: один DB writer, admission OFF, восстановить позиции/obligations, только затем дозволенный режим | сразу заменить Restart=no на Restart=always; watchdog SIGABRT при защищаемых позициях; auto-PAPER_AUTO после crash |
+| Host reboot/power loss | сохранённый STOP/MAINTENANCE intent, crash-consistent SQLite, single-writer lock, проверяемый boot recovery только после authorized policy | утверждать, что STOP/TAKE работали во время полной недоступности VPS |
+| Telegram Gateway, SOCKS, HTTPS, DNS, TLS failure | независимый bounded reconnect/jitter Telegram с одним consumer; core Backend/protection продолжает работать; отложенное owner уведомление после recovery | restart Backend для исправления Telegram, фальшивый success Editor по 200 |
+| SQLite busy, large WAL, low disk, corrupt DB | короткое bounded чтение и online backup/verify/restore proof, WAL checkpoint/space checks, admission OFF при потере integrity | копировать одну .db без WAL; очищать журнал вручную; второй writer |
+| Unsupported candidate/orphan/partial fill | existing exact immutable ownership/entry/exit proof; legal lifecycle terminalization; freeze + precise BLOCKED если evidence missing | fake Flat, UPDATE despite exposure, SQL reset, повторный Market |
+| Timeout после Close-All / SIGINT / release switch | durable action ID и phase receipt: REQUESTED, OBSERVED, OUTCOME_UNKNOWN; после неизвестного исхода **только read-only observe**, затем resume со следующей доказанной фазы | повторить необратимое действие с новым ID или по одному timeout |
+| Two simultaneous commands, Autopilot race | сериализация единого owner intent; duplicate intent join current operation; durable admission fence before quiescence | второй coordinator, второй Scanner/SQLite owner, re-enable trading from stale intent |
+| Bad target SHA/unit, broken deploy, incompatible schema | immutable staging manifest + reviewed units/config + preflight rollback asset; systemd unit prepare; resume from observed installed process/manifest | git merge over running Gitless tree, blind rollback, SIGKILL or unsafe systemctl stop |
+
+**Разделять recovery policy от health:** actual process fault — кандидат на guarded restart; market-data continuity fault — fence и попытка восстановления в живом процессе; обычный explicit STOP — не ошибка и никогда не вызывает auto-restart. Текущий systemd Backend/Telegram содержит Restart=no именно из-за safety. Менять policy можно **только** одновременно с crash-safe startup и регрессионным доказательством, что STOP/TAKE/ownership не теряются и не создаётся торговля без owner intent.
+
+### 13.3 Инженерный минимум поверх готового кода (§12)
+
+- tools/paper_maintenance.py: единственный coordinator, stable intent/action IDs, атомарный защищённый журнал фазы **вне PAPER DB** (только операционная metadata, не второй ledger); восстановление по фактически наблюдаемому состоянию, не по return code. Полное отсутствие повторов неопределённых Close-All/SIGINT/switch. Один operation lock, без фоновой бесконечной серии shutdown retry.
+- tools/runtime_intent.py, tools/stop_robot_runtime.py, tools/vps_paper_auto_start.py: durable STOP/MAINTENANCE fence, default OFF after restart, отдельные проверки process/protection/trading readiness; целевые режимы TRADE/EDITOR_ONLY/STOPPED.
+- terminal/runtime/paper_runtime.py и existing protection manager: восстановление coverage/entry/exit из единственного authoritative SQLiteStore, source generation/sequence, прохождение owner reconciliation до новых admissions. Использовать уже созданные exact JASMY/FLOW, no-entry и stale-arm proofs; не ослаблять общее правило защиты.
+- Существующие systemd unit files: если безопасное восстановление доказано, ограничить restart только аварийными exit с RestartPreventExitStatus для штатного STOP, StartLimitBurst/Interval и проверенной PID/DB singleton; сохранить RefuseManualStop, KillSignal=SIGCONT, SendSIGKILL=no. **Никакого watchdog, убивающего процесс с экспозицией, пока непрерывность защиты не доказана.**
+- vps_release_identity, vps_release_resume, vps_systemd_unit_prepare и vps_check: pre-stage, schema compatibility, exact file manifest, correct unit order, atomic upgrade resume, disk/WAL/backup consistency. Сохранить user-owned конфиги, state и Telegram ingress.
+- Telegram: отдельный singleton restart/reconnect с ограниченным backoff и последующей сводной owner delivery; Telegram не является единственной системой health/protection.
+
+### 13.4 Fault-injection обязательна до deployment, не «исправим потом»
+
+Один интегрированный production-entrypoint acceptance suite с **реальными SQLiteStore schema/row_factory** и injected HTTP/systemd/process faults:
+
+- crash до/после durable entry, partial fill, STOP/TAKE obligation; duplicate callback, concurrent START/STOP/UPDATE, unknown POST outcome; никакого duplicate fill/Market;
+- crash и reboot в STOPPED/MAINTENANCE и TRADE; после reboot только OFF до доказанного owner recovery; ни одного самовольного нового входа;
+- Backend crash с PAPER exposure: доказать reconcilable protection state после рестарта; честно измерить **незащищённое окно**, не считать рестарт непрерывностью STOP/TAKE;
+- disconnect, stale tick, out-of-order sequence, overflow/owner-starvation, loss of REST, delayed book, recovery with mismatched generation; fail-closed admissions;
+- SQLite busy/full disk/corrupt DB, high WAL, backup + verified restore в изолированном каталоге, лживый HTTP absent при live listener;
+- operator timeout **после** Close-All/SIGINT/deploy; SIGINT sent/exit unknown, failed unit/port owned, wrong SHA, dirty/legitimate drop-ins; no second irreversible step;
+- Telegram 429/5xx, Gateway/DNS/TLS offline, one consumer, delayed notification; Editor auth/signal_id/frozen rays/geometry-feedback with Scanner OFF.
+
+**Гейт реальной приёмки:** после mandatory CI — отдельный authorized VPS rollout с installed exact SHA, одной DB identity, реальным owner START→STOP→UPDATE/EDITOR_ONLY и проверкой Telegram Editor; отдельные destructive crash/fault tests проводят **только на изолированном PAPER клоне**, не при живой VPS экспозиции. Измерять time-to-recover, outcome_unknown/replay count, recovery admission leak count, duplicates и защитное окно; не заявлять RTO=0, RPO=0 или availability 99.99% без наблюдений.
+
+### 13.5 Непреодолимая граница текущей архитектуры
+
+Один VPS + software STOP/TAKE в PAPER Backend — single point of failure. Даже идеально настроенный systemd не исполнит локальный STOP/TAKE в момент отключённого хоста; snapshot/backup не заменяет фактическую защиту. Независимая защитная execution authority с fencing и защитой от split-brain могла бы закрывать эту категорию, но это новая архитектура и не должна блокировать текущий P0. **Сначала** надёжная минимальная монолитная система с явными безопасными ограничениями.
+
+**Официальные инженерные источники:** systemd Restart, RestartPreventExitStatus и watchdog https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html; Kubernetes startup/readiness/liveness https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/; SQLite WAL https://www.sqlite.org/wal.html и Online Backup https://www.sqlite.org/backup.html. Заимствовать принципы без установки новой платформы.
