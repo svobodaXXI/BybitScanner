@@ -141,10 +141,17 @@ class WedgeSenderArchiveTests(_ArchiveDir):
                 12,
             )
 
-    def test_no_candidate_or_failed_owner_photo_archives_nothing(self):
+    def test_failed_owner_photo_does_not_create_candidate_owned_archive(self):
+        # The source chart is frozen before Telegram send so its Editor button
+        # can carry a real handle. Failed delivery must not additionally store
+        # it under an undelivered Robot candidate id.
         self._send(candidate_id=None)
         self._send(candidate_id="cand-x", photo_response={"ok": False})
-        self.assertFalse(self.archive.exists() and list(self.archive.iterdir()))
+        self.assertIsNone(signal_archive.load_original_signal(["cand-x"]))
+        self.assertTrue(self.archive.is_dir())
+        source_records = list(self.archive.glob("*.json"))
+        self.assertEqual(len(source_records), 1)
+        self.assertIn('"candidate_id": "source-original:', source_records[0].read_text())
 
     def test_archive_failure_does_not_change_delivery(self):
         with patch.object(signal_archive.os, "replace", side_effect=OSError("disk full")):
