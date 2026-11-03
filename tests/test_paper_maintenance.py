@@ -21,16 +21,22 @@ def fake_git_checkout(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def fake_ready_api(monkeypatch):
+    from tools.runtime_intent import expected_database_identity
+    from tools.stop_robot_runtime import _environment
+
+    identity = expected_database_identity(Path("/opt/BybitScanner"), _environment(None))
+
     def get(url, _timeout):
         if url.endswith("/api/health"):
-            data = {"mode": "paper", "paper_live_safe": True,
-                    "robot_admission_ready": True, "build_sha": "a" * 40}
+            data = {"ok": True, "component": "paper_backend", "mode": "paper",
+                    "paper_live_safe": True, "robot_admission_ready": True,
+                    "database_identity": identity, "build_sha": "a" * 40}
         elif url.endswith("/api/robot/protection-health"):
-            data = {"healthy": True}
+            data = {"ok": True, "healthy": True}
         elif url.endswith("/api/scanner/status"):
-            data = {"mode": "SCANNER_RUNNING"}
+            data = {"ok": True, "mode": "SCANNER_RUNNING"}
         else:
-            data = {"mode": "PAPER_AUTO"}
+            data = {"ok": True, "mode": "PAPER_AUTO"}
         return SimpleNamespace(status=200, json=lambda: data)
     monkeypatch.setattr("tools.runtime_intent.http_get", get)
 
@@ -1310,6 +1316,52 @@ def test_full_paper_readiness_requires_canonical_robot_admission(monkeypatch, tm
     assert "readiness not proven" in result
 
 
+
+@pytest.mark.parametrize("endpoint,field,invalid", (
+    ("/api/health", "ok", False),
+    ("/api/health", "component", "unrelated_backend"),
+    ("/api/robot/protection-health", "ok", False),
+    ("/api/scanner/status", "ok", False),
+    ("/api/robot/autopilot", "ok", False),
+    ("/api/health", "database_identity", "e" * 64),
+    ("/api/health", "database_identity", None),
+))
+def test_paper_readiness_rejects_unattributed_or_foreign_owner(
+    monkeypatch, tmp_path, endpoint, field, invalid,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as runtime_intent
+
+    identity = "d" * 64
+    monkeypatch.setattr(runtime_intent, "expected_database_identity",
+                        lambda *_a, **_kw: identity)
+    payloads = {
+        "/api/health": {
+            "ok": True, "component": "paper_backend", "mode": "paper",
+            "paper_live_safe": True, "robot_admission_ready": True,
+            "build_sha": "a" * 40, "database_identity": identity,
+        },
+        "/api/robot/protection-health": {"ok": True, "healthy": True},
+        "/api/scanner/status": {"ok": True, "mode": "SCANNER_RUNNING"},
+        "/api/robot/autopilot": {"ok": True, "mode": "PAPER_AUTO"},
+    }
+    def api(url, _timeout):
+        path = next(path for path in payloads if url.endswith(path))
+        return SimpleNamespace(status=200, json=lambda: payloads[path])
+
+    monkeypatch.setattr(runtime_intent, "http_get", api)
+    args = dict(root=tmp_path, env_file=None, target="a" * 40,
+                readiness=lambda: True)
+    assert maintenance._paper_full_readiness(**args).startswith("READY:")
+    payloads[endpoint][field] = invalid
+    result = maintenance._paper_full_readiness(**args)
+    assert result.startswith("BLOCKED:")
+    if field == "database_identity":
+        assert "database_identity_unproven" in result
+    else:
+        assert "readiness not proven" in result
+
+
 def test_full_gitless_readiness_requires_same_db_telegram(monkeypatch, tmp_path):
     import tools.paper_maintenance as maintenance
     import tools.runtime_intent as runtime_intent
@@ -1321,15 +1373,15 @@ def test_full_gitless_readiness_requires_same_db_telegram(monkeypatch, tmp_path)
 
     def api(url, _timeout):
         if url.endswith("/api/health"):
-            payload = dict(mode="paper", paper_live_safe=True,
-                           robot_admission_ready=True,
+            payload = dict(ok=True, component="paper_backend", mode="paper",
+                           paper_live_safe=True, robot_admission_ready=True,
                            build_sha=target, database_identity=identity)
         elif url.endswith("/api/robot/protection-health"):
-            payload = {"healthy": True}
+            payload = {"ok": True, "healthy": True}
         elif url.endswith("/api/scanner/status"):
-            payload = {"mode": "SCANNER_RUNNING"}
+            payload = {"ok": True, "mode": "SCANNER_RUNNING"}
         else:
-            payload = {"mode": "PAPER_AUTO"}
+            payload = {"ok": True, "mode": "PAPER_AUTO"}
         return SimpleNamespace(status=200, json=lambda: payload)
 
     monkeypatch.setattr(runtime_intent, "http_get", api)
@@ -1354,12 +1406,13 @@ def test_full_gitless_readiness_rejects_wrong_backend_db_even_with_telegram(monk
                         lambda *_args, **_kw: "d" * 64)
     def api(url, _timeout):
         payload = (
-            {"mode": "paper", "paper_live_safe": True, "robot_admission_ready": True,
+            {"ok": True, "component": "paper_backend", "mode": "paper",
+             "paper_live_safe": True, "robot_admission_ready": True,
              "build_sha": target, "database_identity": "e" * 64}
             if url.endswith("/api/health") else
-            {"healthy": True} if url.endswith("/api/robot/protection-health") else
-            {"mode": "SCANNER_RUNNING"} if url.endswith("/api/scanner/status") else
-            {"mode": "PAPER_AUTO"}
+            {"ok": True, "healthy": True} if url.endswith("/api/robot/protection-health") else
+            {"ok": True, "mode": "SCANNER_RUNNING"} if url.endswith("/api/scanner/status") else
+            {"ok": True, "mode": "PAPER_AUTO"}
         )
         return SimpleNamespace(status=200, json=lambda: payload)
     monkeypatch.setattr(runtime_intent, "http_get", api)
