@@ -106,7 +106,11 @@ def _resume_missing_telegram(
         if (installed.is_symlink() or not installed.is_file()
                 or installed.read_bytes() != source.read_bytes()):
             raise ResumeBlocked("telegram_unit_mismatch")
-        _systemd_state(unit)
+        state = _systemd_state(unit)
+        if (not isinstance(state, dict)
+                or state.get("ActiveState") not in ("inactive", "failed")
+                or str(state.get("MainPID")) != "0"):
+            raise ResumeBlocked("telegram_unit_not_stopped")
         if probe_listener_pids("127.0.0.1", 8766):
             raise ResumeBlocked("telegram_listener_not_absent")
     except (ResumeBlocked, ReleaseIdentityBlocked, LegacyOwnerUnproven, OSError):
