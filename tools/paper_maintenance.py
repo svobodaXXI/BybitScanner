@@ -147,7 +147,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
-    parser.add_argument("--wait-seconds", type=float, default=0)
+    parser.add_argument("--wait-seconds", type=float, default=0,
+                        help="Legacy compatibility only; mutating STOP is never retried")
     args = parser.parse_args(argv)
     status = run_maintenance(args.sha, env_file=args.env_file, wait_seconds=args.wait_seconds)
     print(status)
