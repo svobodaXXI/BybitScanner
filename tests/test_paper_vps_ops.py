@@ -137,6 +137,73 @@ class OwnerBridgeTests(unittest.TestCase):
             self.assertEqual(bridge.remote("execute", SHA), 2)
         self.assertEqual(len(calls), 1)
 
+    def test_forced_ssh_requires_root_owned_pinned_installed_script(self):
+        import stat
+        from types import SimpleNamespace
+
+        pinned = str(bridge.PINNED_REMOTE)
+        protected = SimpleNamespace(st_mode=stat.S_IFREG | 0o700, st_uid=0)
+        with (
+            mock.patch.object(bridge, "__file__", pinned),
+            mock.patch("pathlib.Path.lstat", return_value=protected),
+        ):
+            self.assertEqual(
+                bridge.authorized_remote_request("preflight " + SHA),
+                ("preflight", SHA),
+            )
+            self.assertEqual(
+                bridge.authorized_remote_request("execute " + SHA),
+                ("execute", SHA),
+            )
+            for command in (
+                None, "", "execute " + SHA + " --force",
+                "execute " + SHA + "\\nanything",
+                "remote execute " + SHA,
+                "bash -c id",
+            ):
+                with self.subTest(command=command):
+                    with self.assertRaises(ValueError):
+                        bridge.authorized_remote_request(command)
+
+        # A source file in any checkout or injected via stdin is never
+        # permitted to act as the privileged SSH command handler.
+        with (
+            mock.patch.object(bridge, "__file__", "/tmp/rogue.py"),
+            mock.patch("pathlib.Path.lstat", return_value=protected),
+        ):
+            with self.assertRaises(ValueError):
+                bridge.authorized_remote_request("execute " + SHA)
+        for st_mode, st_uid in (
+            (stat.S_IFREG | 0o755, 0),
+            (stat.S_IFLNK | 0o700, 0),
+            (stat.S_IFREG | 0o700, 1000),
+        ):
+            with (
+                mock.patch.object(bridge, "__file__", pinned),
+                mock.patch("pathlib.Path.lstat", return_value=SimpleNamespace(
+                    st_mode=st_mode, st_uid=st_uid)),
+            ):
+                with self.assertRaises(ValueError):
+                    bridge.authorized_remote_request("execute " + SHA)
+
+    def test_ssh_entrypoint_cannot_be_called_as_unrestricted_remote(self):
+        with mock.patch.object(bridge, "remote") as remote:
+            self.assertEqual(bridge.main(["remote", "execute", SHA]), 2)
+            remote.assert_not_called()
+        with (
+            mock.patch.object(
+                bridge, "authorized_remote_request",
+                return_value=("preflight", SHA),
+            ) as attest,
+            mock.patch.object(bridge, "remote", return_value=0) as remote,
+            mock.patch.dict(bridge.os.environ, {
+                "SSH_ORIGINAL_COMMAND": "preflight " + SHA,
+            }),
+        ):
+            self.assertEqual(bridge.main(["forced"]), 0)
+            attest.assert_called_once_with("preflight " + SHA)
+            remote.assert_called_once_with("preflight", SHA)
+
     def test_invalid_target_never_prepares_stage(self):
         with mock.patch.object(bridge, "_stage") as stage:
             self.assertEqual(bridge.remote("execute", "not-a-sha"), 2)

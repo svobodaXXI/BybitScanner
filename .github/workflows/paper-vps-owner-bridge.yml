@@ -69,7 +69,10 @@ jobs:
           chmod 600 "$key_file" "$known_file"
           printf '%s\n' "$PAPER_VPS_SSH_PRIVATE_KEY" > "$key_file"
           printf '%s\n' "$PAPER_VPS_SSH_KNOWN_HOSTS" > "$known_file"
-          ssh -T \
+          # The dedicated key MUST have server-side authorized_keys
+          # restrict,command= pointing to a root-owned pinned helper.
+          # No source code is streamed to root, even if this workflow changes.
+          ssh -T -n \
             -i "$key_file" \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
@@ -81,4 +84,4 @@ jobs:
             -o ForwardAgent=no \
             -o ClearAllForwardings=yes \
             "$PAPER_VPS_SSH_TARGET" \
-            "/usr/bin/python3 - remote $MODE $TARGET_SHA" < ci/paper_vps_ops.py
+            "$MODE $TARGET_SHA" </dev/null
