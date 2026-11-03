@@ -9,6 +9,7 @@ import argparse
 import fcntl
 import os
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -222,7 +223,17 @@ def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -
             or journal_root.stat().st_uid != uid
             or journal_root.stat().st_mode & 0o077):
         raise ActivationBlocked("untrusted_stop_intent_directory")
-    with (journal_root / ".release.lock").open("a+b") as lock:
+    # Do not follow a user-substituted lock symlink or trust an externally
+    # writable lock inode when serializing irreversible STOP intent.
+    lock_path = journal_root / ".release.lock"
+    descriptor = os.open(
+        lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600,
+    )
+    with os.fdopen(descriptor, "a+b") as lock:
+        meta = os.fstat(lock.fileno())
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != uid
+                or meta.st_mode & 0o077):
+            raise ActivationBlocked("untrusted_release_lock")
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         # An unresolved STOP from another requested release is still the same
         # runtime side effect. Changing the target SHA must not replay it.
