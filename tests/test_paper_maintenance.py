@@ -23,7 +23,8 @@ def fake_git_checkout(monkeypatch):
 def fake_ready_api(monkeypatch):
     def get(url, _timeout):
         if url.endswith("/api/health"):
-            data = {"mode": "paper", "paper_live_safe": True, "build_sha": "a" * 40}
+            data = {"mode": "paper", "paper_live_safe": True,
+                    "robot_admission_ready": True, "build_sha": "a" * 40}
         elif url.endswith("/api/robot/protection-health"):
             data = {"healthy": True}
         elif url.endswith("/api/scanner/status"):
@@ -1175,7 +1176,8 @@ def test_paper_readiness_unreachable_endpoint_blocks(monkeypatch, tmp_path, endp
     import tools.runtime_intent as runtime_intent
 
     payloads = {
-        "/api/health": {"mode": "paper", "paper_live_safe": True},
+        "/api/health": {"mode": "paper", "paper_live_safe": True,
+                        "robot_admission_ready": True},
         "/api/robot/protection-health": {"healthy": True},
         "/api/scanner/status": {"mode": "SCANNER_RUNNING"},
         "/api/robot/autopilot": {"mode": "PAPER_AUTO"},
@@ -1206,7 +1208,8 @@ def test_paper_readiness_rejects_malformed_http_json(monkeypatch, tmp_path, endp
     import tools.runtime_intent as runtime_intent
 
     payloads = {
-        "/api/health": {"mode": "paper", "paper_live_safe": True, "build_sha": "a" * 40},
+        "/api/health": {"mode": "paper", "paper_live_safe": True,
+                        "robot_admission_ready": True, "build_sha": "a" * 40},
         "/api/robot/protection-health": {"healthy": True},
         "/api/scanner/status": {"mode": "SCANNER_RUNNING"},
         "/api/robot/autopilot": {"mode": "PAPER_AUTO"},
@@ -1224,6 +1227,33 @@ def test_paper_readiness_rejects_malformed_http_json(monkeypatch, tmp_path, endp
     assert result.startswith("BLOCKED: PAPER core started but")
 
 
+@pytest.mark.parametrize("admission", (False, None, 0, "true"))
+def test_full_paper_readiness_requires_canonical_robot_admission(monkeypatch, tmp_path, admission):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as runtime_intent
+
+    payloads = {
+        "/api/health": {
+            "mode": "paper", "paper_live_safe": True,
+            "robot_admission_ready": admission, "build_sha": "a" * 40,
+        },
+        "/api/robot/protection-health": {"healthy": True},
+        "/api/scanner/status": {"mode": "SCANNER_RUNNING"},
+        "/api/robot/autopilot": {"mode": "PAPER_AUTO"},
+    }
+
+    def api(url, _timeout):
+        path = next(path for path in payloads if url.endswith(path))
+        return SimpleNamespace(status=200, json=lambda: payloads[path])
+
+    monkeypatch.setattr(runtime_intent, "http_get", api)
+    result = maintenance._paper_full_readiness(
+        root=tmp_path, env_file=None, target="a" * 40, readiness=lambda: True,
+    )
+    assert result.startswith("BLOCKED: PAPER core started but")
+    assert "readiness not proven" in result
+
+
 def test_full_gitless_readiness_requires_same_db_telegram(monkeypatch, tmp_path):
     import tools.paper_maintenance as maintenance
     import tools.runtime_intent as runtime_intent
@@ -1236,6 +1266,7 @@ def test_full_gitless_readiness_requires_same_db_telegram(monkeypatch, tmp_path)
     def api(url, _timeout):
         if url.endswith("/api/health"):
             payload = dict(mode="paper", paper_live_safe=True,
+                           robot_admission_ready=True,
                            build_sha=target, database_identity=identity)
         elif url.endswith("/api/robot/protection-health"):
             payload = {"healthy": True}
@@ -1267,8 +1298,8 @@ def test_full_gitless_readiness_rejects_wrong_backend_db_even_with_telegram(monk
                         lambda *_args, **_kw: "d" * 64)
     def api(url, _timeout):
         payload = (
-            {"mode": "paper", "paper_live_safe": True, "build_sha": target,
-             "database_identity": "e" * 64}
+            {"mode": "paper", "paper_live_safe": True, "robot_admission_ready": True,
+             "build_sha": target, "database_identity": "e" * 64}
             if url.endswith("/api/health") else
             {"healthy": True} if url.endswith("/api/robot/protection-health") else
             {"mode": "SCANNER_RUNNING"} if url.endswith("/api/scanner/status") else

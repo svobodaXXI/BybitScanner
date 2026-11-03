@@ -508,6 +508,7 @@ def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
         if not all(isinstance(payload, dict) for payload in (h, p, s, a)):
             raise ValueError("malformed PAPER readiness evidence")
         if (h.get("mode") != "paper" or h.get("paper_live_safe") is not True
+                or h.get("robot_admission_ready") is not True
                 or (target is not None and h.get("build_sha") != target)
                 or p.get("healthy") is not True
                 or s.get("mode") != "SCANNER_RUNNING"
