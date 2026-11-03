@@ -1381,6 +1381,30 @@ def _environment(env_file: Path | None) -> dict[str, str]:
     return env
 
 
+def build_dual_orphan_handoff(env: Mapping[str, str]) -> Callable[[], str]:
+    """Incident-only callback shared with the one-command release coordinator.
+
+    Construction is not runtime authority. Call only after the explicit
+    owner-selected --dual-orphan-handoff-20261103 option. Existing immutable
+    proof, expected old SHA, exact PID and one-shot pidfd semantics are unchanged.
+    """
+    from tools.flat_paper_recovery_transition import (
+        ROOT as VPS_ROOT, _service_pid, execute_flat_handoff,
+    )
+    from tools.paper_two_orphan_proof import INCIDENT_BACKEND_SHA
+
+    def handoff() -> str:
+        return execute_flat_handoff(
+            db_path=_database_path(VPS_ROOT, env),
+            expected_identity=expected_database_identity(VPS_ROOT, env),
+            expected_pid=_service_pid(),
+            expected_build_sha=INCIDENT_BACKEND_SHA,
+            execute=True, dual_orphan_incident_20261103=True,
+        )
+
+    return handoff
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     notify_chat = None
@@ -1413,23 +1437,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         progress(f"starting scope={args[0] if args else SCOPE_ALL}")
         env = _environment(env_file)
-        handoff = None
-        if dual_handoff:
-            # Import only on explicitly authorized execution; this module
-            # already owns the exact systemd-PID and writer-barrier contract.
-            from tools.flat_paper_recovery_transition import (
-                ROOT as VPS_ROOT, _service_pid, execute_flat_handoff,
-            )
-            from tools.paper_two_orphan_proof import INCIDENT_BACKEND_SHA
-
-            def handoff() -> str:
-                return execute_flat_handoff(
-                    db_path=_database_path(VPS_ROOT, env),
-                    expected_identity=expected_database_identity(VPS_ROOT, env),
-                    expected_pid=_service_pid(),
-                    expected_build_sha=INCIDENT_BACKEND_SHA,
-                    execute=True, dual_orphan_incident_20261103=True,
-                )
+        handoff = build_dual_orphan_handoff(env) if dual_handoff else None
 
         result = RuntimeShutdown(
             env=env, progress=progress, dual_orphan_handoff=handoff,
