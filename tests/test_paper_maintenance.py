@@ -502,6 +502,30 @@ def test_staged_gitless_different_target_cannot_replay_unresolved_stop(monkeypat
     assert calls == ["stop"]
 
 
+def test_staged_gitless_other_target_pending_transaction_blocks_new_stop(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    transactions.mkdir(mode=0o700)
+    previous = "a" * 40
+    (transactions / (".stop-invoked-" + previous)).write_text("STOP_INVOKED")
+    (transactions / previous).mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_: "c" * 40)
+    result = deploy_staged_editor_only(
+        "b" * 40, stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(), preflight=lambda *_args, **_kwargs: None,
+        stop=lambda *_: pytest.fail("do not stop when another release owns transaction"),
+        installer=lambda *_args, **_kw: pytest.fail("do not install"),
+    )
+    assert result.startswith("BLOCKED:")
+    assert not (transactions / (".stop-invoked-" + "b" * 40)).exists()
+
+
 def test_staged_gitless_editor_recovery_of_partial_install_never_replays_stop(monkeypatch, tmp_path):
     from tools.paper_maintenance import deploy_staged_editor_only
     from tools.vps_release_identity import ReleaseIdentityBlocked
