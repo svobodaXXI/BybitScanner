@@ -303,3 +303,98 @@ def test_partial_editor_resume_blocked_if_telegram_port_still_owned(monkeypatch,
     )
     assert result.startswith("BLOCKED: Telegram_owner_or_release_not_proven")
     assert not calls
+
+
+def test_staged_gitless_editor_executes_one_stop_then_install_and_resume(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    steps = []
+    stopped = SimpleNamespace(ok=True, runtime_stopped=True)
+    result = deploy_staged_editor_only(
+        "a" * 40, stage=stage, root=root, env_file=None,
+        preflight=lambda *_args, **_kw: steps.append("preflight"),
+        stop=lambda scope: (steps.append("stop"), stopped)[1],
+        installer=lambda *_args, **kw: (
+            steps.append(("install", kw["stopped_proof"] is stopped)),
+            "INSTALLED_STOPPED: exact"
+        )[1],
+        resume=lambda *_args, **_kw: (steps.append("resume"), "READY: EDITOR_ONLY")[1],
+        transactions=tmp_path / "transactions",
+    )
+    assert result == "READY: EDITOR_ONLY"
+    assert steps == ["preflight", "stop", ("install", True), "resume"]
+
+
+def test_staged_gitless_editor_rejected_stop_never_installs(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    steps = []
+    result = deploy_staged_editor_only(
+        "a" * 40, stage=stage, root=root,
+        preflight=lambda *_args, **_kw: steps.append("preflight"),
+        stop=lambda scope: (
+            steps.append("stop"),
+            SimpleNamespace(ok=False, runtime_stopped=False)
+        )[1],
+        installer=lambda *_args, **_kw: pytest.fail("no install after refused stop"),
+        resume=lambda *_args, **_kw: pytest.fail("no resume after refused stop"),
+        transactions=tmp_path / "transactions",
+    )
+    assert result.startswith("BLOCKED: canonical_safe_stop_unproven")
+    assert steps == ["preflight", "stop"]
+
+
+def test_staged_gitless_editor_recovery_of_partial_install_never_replays_stop(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    from tools.vps_release_identity import ReleaseIdentityBlocked
+    import tools.vps_release_identity as release
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    (transactions / ("a" * 40)).mkdir(parents=True)
+    monkeypatch.setattr(
+        release, "verify_release",
+        lambda *_: (_ for _ in ()).throw(ReleaseIdentityBlocked("partial copy")),
+    )
+    steps = []
+    result = deploy_staged_editor_only(
+        "a" * 40, stage=stage, root=root, transactions=transactions,
+        stop=lambda *_: pytest.fail("a partial-install resume cannot stop again"),
+        preflight=lambda *_args, **_kw: pytest.fail("old files may be partially copied"),
+        installer=lambda *_args, **kw: (
+            steps.append(("resumed_install", kw["stopped_proof"] is None)),
+            "INSTALLED_STOPPED: exact"
+        )[1],
+        resume=lambda *_args, **_kw: (steps.append("editor"), "READY: EDITOR_ONLY")[1],
+    )
+    assert result == "READY: EDITOR_ONLY"
+    assert steps == [("resumed_install", True), "editor"]
+
+
+def test_staged_gitless_editor_existing_target_only_resumes(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_: "a" * 40)
+    assert deploy_staged_editor_only(
+        "a" * 40, stage=stage, root=root,
+        preflight=lambda *_args, **_kw: pytest.fail("no preflight after install"),
+        stop=lambda *_: pytest.fail("no repeated stop"),
+        installer=lambda *_args, **_kw: pytest.fail("no repeated install"),
+        resume=lambda *_args, **_kw: "READY: existing install",
+    ) == "READY: existing install"
