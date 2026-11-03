@@ -548,6 +548,46 @@ def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
     return "READY: exact HEAD, PAPER-only, Robot, Scanner, PAPER_AUTO, reentry and protection confirmed"
 
 
+def _paper_start_quiescent(root: Path, env_file: Path | None) -> bool:
+    """Never re-enable PAPER_AUTO on unresolved incident owners or entry ideas.
+
+    EDITOR_ONLY remains usable for canonical reconciliation. The existing
+    oneshot may resume trading only after durable STOPPED/READY evidence and
+    all old entry/exit ownership is fully retired. No SQL mutations.
+    """
+    from tools.stop_robot_runtime import _database_path
+    db = _database_path(root, _environment(env_file))
+    if not db.is_file() or db.is_symlink():
+        return False
+    with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0) as conn:
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("BEGIN")
+        states = conn.execute(
+            "SELECT mode, recovery_status FROM robot_runtime_state "
+            "WHERE trading_account_id='paper'"
+        ).fetchall()
+        if len(states) != 1 or tuple(states[0]) not in (
+            ("ROBOT_STOPPED", "ROBOT_STOPPED"), ("ROBOT_RUNNING", "READY"),
+        ):
+            return False
+        for table, condition in (
+            ("robot_trades", "exit_time_ms IS NULL"),
+            ("robot_candidates", "status IS NULL OR status IN ('APPROVED','OPEN')"),
+            ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
+            ("trading_commands",
+             "current_state IS NULL OR current_state NOT IN "
+             "('filled','cancelled','amended','rejected','failed','owner_attested_closed')"),
+            ("paper_protection_obligations", "status IS NULL OR status != 'RESOLVED'"),
+            ("reconciliation_checkpoints", "completed_at_ms IS NULL"),
+        ):
+            if conn.execute(
+                f"SELECT 1 FROM {table} WHERE trading_account_id='paper' "
+                f"AND ({condition}) LIMIT 1"
+            ).fetchone() is not None:
+                return False
+    return True
+
+
 def start_installed_paper_from_editor(
     target: str, *, root: Path = REPO, env_file: Path | None = None,
     runner=subprocess.run, editor_status: str,
@@ -563,6 +603,8 @@ def start_installed_paper_from_editor(
         identity = _durable_editor_freeze(root, env_file)
         if not _editor_runtime_ready(target, identity):
             return "BLOCKED: editor_only_runtime_not_proven"
+        if not _paper_start_quiescent(root, env_file):
+            return "BLOCKED: PAPER_stale_owners_or_reconciliation; START_not_attempted"
     except (ReleaseIdentityBlocked, OSError, ValueError, sqlite3.Error):
         return "BLOCKED: editor_only_release_or_freeze_unproven"
     try:
