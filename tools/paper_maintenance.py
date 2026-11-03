@@ -553,8 +553,10 @@ def _paper_start_quiescent(root: Path, env_file: Path | None) -> bool:
     """Never re-enable PAPER_AUTO on unresolved incident owners or entry ideas.
 
     EDITOR_ONLY remains usable for canonical reconciliation. The existing
-    oneshot may resume trading only after durable STOPPED/READY evidence and
-    all old entry/exit ownership is fully retired. No SQL mutations.
+    oneshot may resume trading only after durable STOPPED/PAUSED/READY evidence
+    and all old entry/exit ownership is fully retired. Canonical reconcile
+    succeeds into PAUSED; the existing runtime intent owns PAUSED -> READY.
+    No SQL mutations.
     """
     from tools.stop_robot_runtime import _database_path
     db = _database_path(root, _environment(env_file))
@@ -568,7 +570,9 @@ def _paper_start_quiescent(root: Path, env_file: Path | None) -> bool:
             "WHERE trading_account_id='paper'"
         ).fetchall()
         if len(states) != 1 or tuple(states[0]) not in (
-            ("ROBOT_STOPPED", "ROBOT_STOPPED"), ("ROBOT_RUNNING", "READY"),
+            ("ROBOT_STOPPED", "ROBOT_STOPPED"),
+            ("ROBOT_RUNNING", "PAUSED"),
+            ("ROBOT_RUNNING", "READY"),
         ):
             return False
         for table, condition in (
