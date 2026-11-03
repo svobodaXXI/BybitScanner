@@ -225,3 +225,28 @@ def test_new_file_publish_refuses_collision_at_atomic_link(tmp_path, monkeypatch
     assert owner_file.read_text() == "owner-wrote-during-atomic-publish"
     assert json.loads(kw["manifest"].read_text())["build_sha"] != kw["sha"]
     assert (kw["transactions"] / kw["sha"] / "target.json").is_file()
+
+
+def test_crash_at_manifest_commit_resumes_with_existing_journal_without_new_stop(tmp_path, monkeypatch):
+    kw = _fixture(tmp_path, monkeypatch)
+    original = activation._atomic_file
+    interrupted = [False]
+
+    def fail_at_commit(path, data, mode=0o644):
+        if Path(path) == kw["manifest"] and not interrupted[0]:
+            interrupted[0] = True
+            raise OSError("simulated crash before release commit marker")
+        return original(path, data, mode)
+
+    monkeypatch.setattr(activation, "_atomic_file", fail_at_commit)
+    with pytest.raises(OSError, match="simulated crash"):
+        _activate(kw)
+    assert interrupted[0]
+    assert json.loads(kw["manifest"].read_text())["build_sha"] != kw["sha"]
+    assert (kw["transactions"] / kw["sha"] / "old.json").is_file()
+    monkeypatch.setattr(activation, "_atomic_file", original)
+    # Existing protected transaction and freshly proven stopped units are the
+    # only restart entitlement. No new canonical STOP proof is supplied.
+    assert _activate(kw, proof=False).startswith("INSTALLED_STOPPED:")
+    assert json.loads(kw["manifest"].read_text())["build_sha"] == kw["sha"]
+    assert (kw["root"] / "untracked-secret.conf").read_text() == "owner must keep"
