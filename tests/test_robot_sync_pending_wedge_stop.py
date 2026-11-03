@@ -210,6 +210,14 @@ class StoppedPreEntryWedgeTests(unittest.TestCase):
         execution = self.store.get_robot_candidate(idea.candidate_id).robot_state["execution"]
         self.assertIn("FROZEN_20261103", execution["stopped_without_entry_reason"])
 
+    def test_full_canonical_sync_retires_inert_frozen_nonwedge_candidate(self):
+        self.frozen_reconcile_state()
+        record = self.frozen_incident_idea("frozen-sync", symbol="PLAYSOUTUSDT")
+        result = self.sync()
+        self.assertEqual(self.status(record.candidate_id), "INVALIDATED")
+        self.assertIn(record.candidate_id, result.terminalized_candidate_ids)
+        self.assertEqual(result.unresolved_candidate_ids, ())
+
     def test_incident_nonwedge_refuses_other_symbol_future_idea_or_unfrozen(self):
         self.frozen_reconcile_state()
         other = self.frozen_incident_idea("other", symbol="OTHERUSDT")
