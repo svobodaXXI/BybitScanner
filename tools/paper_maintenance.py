@@ -26,6 +26,12 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
         return "BLOCKED: target must be an exact 40-character commit SHA"
     if wait_seconds < 0 or poll_seconds <= 0:
         return "BLOCKED: invalid waiting period"
+    # An installed Gitless PAPER tree cannot be upgraded with git merge.
+    # Reject this known VPS layout BEFORE attempting a live runtime stop.
+    # The approved immutable-release activation must be provided by the
+    # unified service path, never by hot-patching an active checkout.
+    if not (root / ".git").is_dir():
+        return "BLOCKED: gitless_install_requires_verified_immutable_release_switch; runtime unchanged"
 
     def execute(*argv: str):
         try:
@@ -60,14 +66,12 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
     shutdown = stop if stop is not None else RuntimeShutdown(
         root=root, env=_environment(env_file)
     ).run
-    deadline = clock() + wait_seconds
-    while True:
-        result = shutdown(SCOPE_ALL)
-        if result.ok and result.runtime_stopped:
-            break
-        if clock() >= deadline:
-            return "BLOCKED: canonical safe-stop refused; PAPER protection retained"
-        sleep(min(poll_seconds, max(0, deadline - clock())))
+    # This is a trading/runtime mutation, not a health probe. An ambiguous
+    # response cannot authorize a second STOP, even after a waiting period.
+    # All retries/resumption must first observe exact owner/process state.
+    result = shutdown(SCOPE_ALL)
+    if not (result.ok and result.runtime_stopped):
+        return "BLOCKED: canonical safe-stop unproven; no mutation retry; PAPER protection retained"
 
     if not command("git", "merge", "--ff-only", target):
         return "BLOCKED: fast-forward failed after safe-stop"
