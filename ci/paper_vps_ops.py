@@ -27,7 +27,7 @@ TARGET = re.compile(r"root@[A-Za-z0-9.-]{1,253}\Z")
 VENV = Path("/opt/BybitScanner/venv/bin/python")
 TRANSACTIONS = Path("/var/lib/bybitscanner-release-transactions")
 PINNED_REMOTE = Path("/usr/local/libexec/bybitscanner-paper-vps.py")
-REMOTE_REQUEST = re.compile(r"(preflight|execute) ([0-9a-f]{40})\\Z")
+REMOTE_REQUEST = re.compile(r"(preflight|execute) ([0-9a-f]{40})\Z")
 
 
 def authorized_remote_request(original: str | None) -> tuple[str, str]:
