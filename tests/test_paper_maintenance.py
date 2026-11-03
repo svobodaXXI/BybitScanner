@@ -420,6 +420,33 @@ def test_staged_gitless_unknown_stop_never_replayed_without_install_journal(monk
     assert not (transactions / target).exists()
 
 
+def test_staged_gitless_different_target_cannot_replay_unresolved_stop(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    monkeypatch.setattr(release, "verify_release", lambda *_: "c" * 40)
+    calls = []
+    def stop(_scope):
+        calls.append("stop")
+        raise OSError("unknown stop outcome")
+    args = dict(
+        stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(), preflight=lambda *_args, **_kw: None,
+        stop=stop,
+        installer=lambda *_args, **_kw: pytest.fail("no installer"),
+        resume=lambda *_args, **_kw: pytest.fail("no resume"),
+    )
+    assert deploy_staged_editor_only("a" * 40, **args).startswith("BLOCKED:")
+    result = deploy_staged_editor_only("b" * 40, **args)
+    assert result.startswith("BLOCKED: prior_STOP_outcome_unproven_without_install_journal")
+    assert calls == ["stop"]
+
+
 def test_staged_gitless_editor_recovery_of_partial_install_never_replays_stop(monkeypatch, tmp_path):
     from tools.paper_maintenance import deploy_staged_editor_only
     from tools.vps_release_identity import ReleaseIdentityBlocked
