@@ -60,10 +60,98 @@ class WedgeSenderArchiveTests(_ArchiveDir):
                          b"ORIGINAL-CHART-BYTES")
         self.assertIsNotNone(signal_archive.load_original_signal(["cand-2"]))
 
-    def test_no_candidate_or_failed_owner_photo_archives_nothing(self):
+    def test_same_photo_and_caption_do_not_alias_different_frozen_source_rays(self):
+        from tests.test_signal_geometry_producer import Candles, GEOMETRY
+
+        with tempfile.TemporaryDirectory() as folder:
+            chart = Path(folder) / "BTCUSDT_analysis.png"
+            chart.write_bytes(b"IDENTICAL-PRESENTATION-PNG")
+            source = {
+                "symbol": "BTCUSDT", "timeframe": "5",
+                "pattern": "Falling Wedge", "text": "Identical caption",
+                "chart_path": str(chart), "frozen_candles": Candles(),
+            }
+            first_token, _ = notification.archive_source_chart(
+                **source, geometry=GEOMETRY,
+            )
+            changed = {
+                **GEOMETRY,
+                "upper_line": {**GEOMETRY["upper_line"], "second_price": 13.5},
+            }
+            second_token, _ = notification.archive_source_chart(
+                **source, geometry=changed,
+            )
+            self.assertIsNotNone(first_token)
+            self.assertIsNotNone(second_token)
+            self.assertNotEqual(first_token, second_token)
+            first = signal_archive.load_frozen_signal_geometry(
+                f"source-original:{first_token}",
+            )
+            second = signal_archive.load_frozen_signal_geometry(
+                f"source-original:{second_token}",
+            )
+            self.assertEqual(first["boundaries"][0]["anchors"][1]["price"], 14)
+            self.assertEqual(second["boundaries"][0]["anchors"][1]["price"], 13.5)
+            self.assertEqual(
+                notification.archive_source_chart(**source, geometry=GEOMETRY)[0],
+                first_token,
+            )
+
+    def test_same_photo_and_caption_do_not_alias_different_frozen_candles(self):
+        from tests.test_signal_geometry_producer import Candles, GEOMETRY
+
+        class RevisedCandles(Candles):
+            def itertuples(self, index=False):
+                for row in super().itertuples(index=index):
+                    if row.time == 301000:
+                        yield types.SimpleNamespace(
+                            time=row.time, open=row.open, high=row.high,
+                            low=row.low, close=12,
+                        )
+                    else:
+                        yield row
+
+        with tempfile.TemporaryDirectory() as folder:
+            chart = Path(folder) / "BTCUSDT_analysis.png"
+            chart.write_bytes(b"IDENTICAL-PRESENTATION-PNG")
+            kwargs = {
+                "symbol": "BTCUSDT", "timeframe": "5",
+                "pattern": "Falling Wedge", "text": "Identical caption",
+                "chart_path": str(chart), "geometry": GEOMETRY,
+            }
+            first_token, _ = notification.archive_source_chart(
+                **kwargs, frozen_candles=Candles(),
+            )
+            second_token, _ = notification.archive_source_chart(
+                **kwargs, frozen_candles=RevisedCandles(),
+            )
+            self.assertIsNotNone(first_token)
+            self.assertIsNotNone(second_token)
+            self.assertNotEqual(first_token, second_token)
+            self.assertEqual(
+                signal_archive.load_frozen_signal_geometry(
+                    f"source-original:{first_token}",
+                )["bars"][-1]["close"],
+                13,
+            )
+            self.assertEqual(
+                signal_archive.load_frozen_signal_geometry(
+                    f"source-original:{second_token}",
+                )["bars"][-1]["close"],
+                12,
+            )
+
+    def test_failed_owner_photo_does_not_create_candidate_owned_archive(self):
+        # The source chart is frozen before Telegram send so its Editor button
+        # can carry a real handle. Failed delivery must not additionally store
+        # it under an undelivered Robot candidate id.
         self._send(candidate_id=None)
         self._send(candidate_id="cand-x", photo_response={"ok": False})
-        self.assertFalse(self.archive.exists() and list(self.archive.iterdir()))
+        self.assertIsNone(signal_archive.load_original_signal(["cand-x"]))
+        self.assertTrue(self.archive.is_dir())
+        source_records = list(self.archive.glob("*.json"))
+        self.assertEqual(len(source_records), 1)
+        self.assertIn('"candidate_id": "source-original:', source_records[0].read_text())
 
     def test_archive_failure_does_not_change_delivery(self):
         with patch.object(signal_archive.os, "replace", side_effect=OSError("disk full")):

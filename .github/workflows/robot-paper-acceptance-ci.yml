@@ -59,6 +59,7 @@ on:
       - "tests/test_l_shape_scanner.py"
       - "tests/test_signal_admission.py"
       - "tests/test_telegram_delivery.py"
+      - "tests/test_signal_archive_hooks.py"
       - "tests/test_scanner_control_runtime.py"
       - "tests/test_dual_timeframe_scanner.py"
       - "stop_robot_runtime.bat"
@@ -173,6 +174,7 @@ jobs:
           python -m pytest -q
           tests/test_editor_frozen_mirror_geometry.py
           tests/test_signal_geometry_producer.py
+          tests/test_signal_archive_hooks.py
           tests/test_geometry_feedback_store.py
           tests/test_geometry_feedback_http_route.py
           tests/test_geometry_feedback_export.py
