@@ -409,3 +409,203 @@ class StopReentryPaperFillE2E(MirrorStandaloneHarness):
                 self.assertEqual(candidate(new_id).status, "CLOSED")
             finally:
                 runtime.close()
+
+
+    def test_mirror_stop_then_fresh_wedge_retries_through_real_limit_and_protection(self):
+        """Existing Robot monitor owns Wedge breakout/retest/LIMIT after a real STOP."""
+        from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
+        import robot_state_machine
+        import robot_candidate_store
+        from terminal.application.robot_autopilot_shadow import (
+            SOURCE_SCANNER, admit_arrived_auto_candidate,
+        )
+
+        with mock.patch.dict(os.environ, {"BYBITSCANNER_STOP_REENTRY_AUTO": "1"}):
+            tl = self.timeline
+            self.assertEqual(self.scan(tl.breakout_open + 2 * FIVE)["new_candidates"], 1)
+            arrivals = self.scan(tl.t)["standalone_handoffs"]
+            self.assertEqual(len(arrivals), 1)
+            first_id = arrivals[0]
+            feed = _RobotCandle()
+            cache = CachedClosedCandleProvider(max_age_s=60)
+            cache._fetch = feed
+            book = _MutableBookProvider()
+            book.set(SYMBOL, bid=Decimal("105.3"), ask=Decimal("105.4"))
+            runtime, instrument = self.runtime(cache, book)
+            try:
+                self.assertEqual(start_robot(database_path=self.db).recovery_status, "READY")
+                with SQLiteStore.open(self.db) as store:
+                    ap = store.get_robot_autopilot_state(ACCOUNT)
+                    store.update_robot_autopilot_state(
+                        ACCOUNT, mode="PAPER_AUTO", expected_version=ap.version,
+                        updated_at_ms=int(time.time() * 1000),
+                    )
+                    initial = admit_arrived_auto_candidate(
+                        store, ACCOUNT, source=SOURCE_SCANNER, candidate_ref=first_id,
+                        protection_healthy=lambda: True, candidate_fresh=lambda *_: True,
+                        candidate_store_dir=self.candidates,
+                        clock_ms=lambda: int(time.time() * 1000),
+                        daily_loss_gate_enabled=False,
+                    )
+                    self.assertEqual(initial.result.outcome, OUTCOME_ALLOW)
+                _start_robot_monitor(runtime)
+
+                def record(cid):
+                    return runtime.call(lambda owner: owner.store.get_robot_candidate(cid))
+
+                def order(cid):
+                    state = (record(cid).robot_state or {}).get("execution") or {}
+                    oid = state.get("limit_order_id")
+                    return runtime.call(lambda owner: owner.store.get_paper_limit(oid, ACCOUNT)) if oid else None
+
+                first_limit = _wait_until(lambda: order(first_id))
+                book.set(SYMBOL, bid=first_limit.price - instrument.tick_size,
+                         ask=first_limit.price)
+                first_trade = _wait_until(lambda: runtime.call(
+                    lambda owner: owner.store.get_open_robot_trade_for_symbol(
+                        ACCOUNT, Symbol(SYMBOL),
+                    ),
+                ))
+                key = PositionKey(ACCOUNT, Category.LINEAR, Symbol(SYMBOL), 0)
+                def protected():
+                    projection = runtime.call(
+                        lambda owner: owner.store.get_protection_projection(key),
+                    )
+                    return projection if projection and projection.stop_loss and projection.take_profit else None
+
+                initial_protection = _wait_until(protected)
+                stop_bid = initial_protection.stop_loss - instrument.tick_size
+                book.set(SYMBOL, bid=stop_bid, ask=initial_protection.stop_loss)
+                stop_book = _event_book(
+                    SYMBOL, bid=stop_bid, ask=initial_protection.stop_loss,
+                )
+                runtime.call(lambda owner: owner.process_robot_market_event(
+                    SYMBOL, stop_book, event_id="wedge-reentry-original-stop",
+                    received_at_ms=stop_book.received_at_ms,
+                ))
+                stopped = _wait_until(lambda: (
+                    lambda trade: trade if trade and trade.exit_time_ms else None
+                )(runtime.call(lambda owner: owner.store.get_robot_trade(first_trade.trade_id))))
+                self.assertEqual(stopped.exit_reason, "STOP")
+                self.assertEqual(record(first_id).status, "CLOSED")
+
+                # Freeze a fresh Wedge with its own closed 1m source cursor.
+                # A small overlapping corridor is structurally compatible
+                # with the original MIRROR STOP-to-TAKE thesis.
+                source_open = (stopped.exit_time_ms // 60_000 + 1) * 60_000
+                snapshot = {
+                    "symbol": SYMBOL, "pattern": "Falling Wedge",
+                    "geometry": {
+                        "upper_line": {"slope": -0.1, "intercept": 115},
+                        "lower_line": {"slope": -0.05, "intercept": 109},
+                        "current_index": 100,
+                        "apex": {"index": 120, "price": 103,
+                                 "valid_intersection": True},
+                        "touches": {
+                            "lower_touch_points": [
+                                {"price": 103.5, "counted": True},
+                                {"price": 103.7, "counted": True},
+                            ],
+                            "upper_touch_points": [
+                                {"price": 105.5, "counted": True},
+                                {"price": 105.8, "counted": True},
+                            ],
+                        },
+                        "pair_metrics": {"reference_price": 105, "start_width": 6},
+                    },
+                    "scanner_geometry_cursor": build_scanner_geometry_cursor_anchor(
+                        geometry_index=100, source_candle_time_ms=source_open,
+                        timeframe="1",
+                    ),
+                }
+                verified_now = source_open + 5 * 60_000
+                mock_clock = mock.patch("time.time", lambda: verified_now / 1000)
+                mock_clock.start()
+                self.addCleanup(mock_clock.stop)
+                robot_candidate_store.create_signal_snapshot(
+                    snapshot, timeframe="1", store_dir=self.candidates,
+                    candidate_id="wedge-reentry-second",
+                    created_at="2026-11-02T00:00:00+00:00",
+                )
+                admitted = runtime.call(lambda owner: admit_arrived_auto_candidate(
+                    owner.store, ACCOUNT, source=SOURCE_SCANNER,
+                    candidate_ref="wedge-reentry-second",
+                    protection_healthy=lambda: True, candidate_fresh=lambda *_: True,
+                    candidate_store_dir=self.candidates,
+                    clock_ms=lambda: verified_now, daily_loss_gate_enabled=False,
+                ))
+                self.assertIsNotNone(admitted)
+                self.assertEqual(admitted.result.outcome, OUTCOME_ALLOW, admitted.result)
+                second_id = admitted.candidate.candidate_id
+                attempts = runtime.call(lambda owner: owner.store._connection.execute(
+                    "SELECT candidate_id,attempt_index FROM robot_reentry_attempts ORDER BY attempt_index",
+                ).fetchall())
+                self.assertEqual([tuple(item) for item in attempts], [
+                    (first_id, 1), (second_id, 2),
+                ])
+                self.assertIsNone(runtime.call(lambda owner:
+                    owner.store.get_open_robot_trade_for_symbol(ACCOUNT, Symbol(SYMBOL))
+                ))
+
+                def phase(target):
+                    current = record(second_id)
+                    return current if (current.robot_state or {}).get("phase") == target else None
+                _wait_until(lambda: phase(robot_state_machine.PHASE_WAITING_BREAKOUT))
+                feed.set({
+                    "time_ms": source_open + 2 * 60_000,
+                    "high": 105.5, "low": 104.5, "close": 105.2,
+                })
+                cache.warm([SYMBOL])
+                _wait_until(lambda: phase(robot_state_machine.PHASE_WAITING_RETEST))
+                feed.set({
+                    "time_ms": source_open + 3 * 60_000,
+                    "high": 105.3, "low": 104.4, "close": 105.0,
+                })
+                cache.warm([SYMBOL])
+                _wait_until(lambda: phase(robot_state_machine.PHASE_RETEST_DETECTED))
+                retry_limit = _wait_until(lambda: order(second_id))
+                self.assertNotEqual(retry_limit.order_id, first_limit.order_id)
+                self.assertEqual(retry_limit.filled_quantity, 0)
+                retry_bid = retry_limit.price - instrument.tick_size
+                book.set(SYMBOL, bid=retry_bid, ask=retry_limit.price)
+                # The isolated harness has no live WS hub. Feed this immutable
+                # executable book through the production ordered owner path.
+                fill_book = _event_book(
+                    SYMBOL, bid=retry_bid, ask=retry_limit.price,
+                )
+                runtime.call(lambda owner: owner.process_robot_market_event(
+                    SYMBOL, fill_book, event_id="wedge-reentry-second-fill",
+                    received_at_ms=fill_book.received_at_ms,
+                ))
+                second_trade = runtime.call(lambda owner:
+                    owner.store.get_open_robot_trade_for_symbol(
+                        ACCOUNT, Symbol(SYMBOL),
+                    ))
+                if second_trade is None:
+                    diagnostic = runtime.call(lambda owner: {
+                        "candidate_status": owner.store.get_robot_candidate(second_id).status,
+                        "candidate_state": owner.store.get_robot_candidate(second_id).robot_state,
+                        "limit": str(owner.store.get_paper_limit(
+                            retry_limit.order_id.value, ACCOUNT,
+                        )),
+                        "fenced_ids": sorted(owner._robot_entry_limit_ids_fenced_by_admission(
+                            Symbol(SYMBOL),
+                            owner.store.load_active_paper_limits(ACCOUNT, Symbol(SYMBOL)),
+                        )),
+                        "robot_state": str(owner.store.get_robot_runtime_state(ACCOUNT)),
+                        "position": str(owner.store.get_position_projection(key)),
+                    })
+                    self.fail(f"new Wedge LIMIT was not filled: {diagnostic}")
+                self.assertEqual(second_trade.pattern, "Falling Wedge")
+                self.assertEqual(second_trade.entry_path, "LIMIT")
+                self.assertNotEqual(second_trade.trade_id, first_trade.trade_id)
+                second_protection = _wait_until(protected)
+                self.assertLess(second_protection.stop_loss, second_trade.average_entry)
+                self.assertGreater(second_protection.take_profit, second_trade.average_entry)
+                self.assertEqual(runtime.call(lambda owner:
+                    owner.store._connection.execute(
+                        "SELECT COUNT(*) FROM robot_reentry_attempts",
+                    ).fetchone()[0],
+                ), 2)
+            finally:
+                runtime.close()
