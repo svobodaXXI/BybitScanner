@@ -863,3 +863,64 @@ def test_gitless_full_start_unproven_runtime_does_not_skip_recovery(monkeypatch)
     assert maintenance.main([
         target, "--resume-installed-editor-only", "--start-paper-after-editor",
     ]) == 2
+
+
+def test_full_gitless_readiness_requires_same_db_telegram(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as runtime_intent
+
+    target = "a" * 40
+    identity = "d" * 64
+    monkeypatch.setattr(runtime_intent, "expected_database_identity",
+                        lambda *_args, **_kw: identity)
+
+    def api(url, _timeout):
+        if url.endswith("/api/health"):
+            payload = dict(mode="paper", paper_live_safe=True,
+                           build_sha=target, database_identity=identity)
+        elif url.endswith("/api/robot/protection-health"):
+            payload = {"healthy": True}
+        elif url.endswith("/api/scanner/status"):
+            payload = {"mode": "SCANNER_RUNNING"}
+        else:
+            payload = {"mode": "PAPER_AUTO"}
+        return SimpleNamespace(status=200, json=lambda: payload)
+
+    monkeypatch.setattr(runtime_intent, "http_get", api)
+    telegram_ready = [False]
+    monkeypatch.setattr(maintenance, "_editor_telegram_ready",
+                        lambda observed: telegram_ready[0] and observed == identity)
+    args = dict(root=tmp_path, env_file=None, target=target,
+                readiness=lambda: True, require_gitless_telegram=True)
+    assert maintenance._paper_full_readiness(**args).startswith(
+        "BLOCKED: Gitless_PAPER_Telegram_or_database_identity_unproven"
+    )
+    telegram_ready[0] = True
+    assert maintenance._paper_full_readiness(**args).startswith("READY:")
+
+
+def test_full_gitless_readiness_rejects_wrong_backend_db_even_with_telegram(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as runtime_intent
+
+    target = "a" * 40
+    monkeypatch.setattr(runtime_intent, "expected_database_identity",
+                        lambda *_args, **_kw: "d" * 64)
+    def api(url, _timeout):
+        payload = (
+            {"mode": "paper", "paper_live_safe": True, "build_sha": target,
+             "database_identity": "e" * 64}
+            if url.endswith("/api/health") else
+            {"healthy": True} if url.endswith("/api/robot/protection-health") else
+            {"mode": "SCANNER_RUNNING"} if url.endswith("/api/scanner/status") else
+            {"mode": "PAPER_AUTO"}
+        )
+        return SimpleNamespace(status=200, json=lambda: payload)
+    monkeypatch.setattr(runtime_intent, "http_get", api)
+    monkeypatch.setattr(maintenance, "_editor_telegram_ready",
+                        lambda *_: pytest.fail("wrong backend DB must block before Telegram"))
+    result = maintenance._paper_full_readiness(
+        root=tmp_path, env_file=None, target=target,
+        readiness=lambda: True, require_gitless_telegram=True,
+    )
+    assert result.startswith("BLOCKED: Gitless_PAPER_Telegram_or_database_identity_unproven")
