@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import subprocess
 import pytest
 from pathlib import Path
@@ -768,6 +769,7 @@ def test_gitless_editor_to_full_paper_reuses_owner_oneshot(monkeypatch, tmp_path
                         lambda *_: "d" * 64)
     monkeypatch.setattr(maintenance, "_editor_runtime_ready",
                         lambda *_: True)
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: True)
     monkeypatch.setattr(maintenance, "_paper_full_readiness",
                         lambda **_kw: "READY: full PAPER verified")
 
@@ -811,6 +813,7 @@ def test_gitless_full_paper_start_unknown_systemd_outcome_never_replays(monkeypa
     monkeypatch.setattr(release, "verify_release", lambda *_: target)
     monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *_: "d" * 64)
     monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: True)
 
     def runner(*_args, **_kwargs):
         calls.append("start")
@@ -821,6 +824,63 @@ def test_gitless_full_paper_start_unknown_systemd_outcome_never_replays(monkeypa
     )
     assert result == "BLOCKED: PAPER_core_start_outcome_unknown; no replay"
     assert calls == ["start"]
+
+
+def test_editor_only_never_starts_paper_with_frozen_orphan_or_approvals(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    calls = []
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *_: "d" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: False)
+    result = maintenance.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="READY: EDITOR_ONLY",
+        runner=lambda *_a, **_kw: calls.append("start"),
+    )
+    assert result == "BLOCKED: PAPER_stale_owners_or_reconciliation; START_not_attempted"
+    assert calls == []
+
+
+def test_paper_start_quiescence_checks_durable_frozen_ledgers(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.stop_robot_runtime as shutdown
+
+    db = tmp_path / "paper.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
+            CREATE TABLE robot_runtime_state (
+                trading_account_id TEXT, mode TEXT, recovery_status TEXT
+            );
+            CREATE TABLE robot_trades (trading_account_id TEXT, exit_time_ms INTEGER);
+            CREATE TABLE robot_candidates (trading_account_id TEXT, status TEXT);
+            CREATE TABLE paper_limit_orders (trading_account_id TEXT, status TEXT);
+            CREATE TABLE trading_commands (trading_account_id TEXT, current_state TEXT);
+            CREATE TABLE paper_protection_obligations (trading_account_id TEXT, status TEXT);
+            CREATE TABLE reconciliation_checkpoints (
+                trading_account_id TEXT, completed_at_ms INTEGER
+            );
+            INSERT INTO robot_runtime_state VALUES
+                ('paper','ROBOT_STOPPED','ROBOT_STOPPED');
+        """)
+    monkeypatch.setattr(shutdown, "_database_path", lambda *_: db)
+    assert maintenance._paper_start_quiescent(tmp_path, None)
+    with sqlite3.connect(db) as conn:
+        conn.execute("INSERT INTO robot_candidates VALUES ('paper','APPROVED')")
+    assert not maintenance._paper_start_quiescent(tmp_path, None)
+    with sqlite3.connect(db) as conn:
+        conn.execute("DELETE FROM robot_candidates")
+        conn.execute("UPDATE robot_runtime_state "
+                     "SET mode='ROBOT_RUNNING', recovery_status='RECONCILIATION_REQUIRED'")
+    assert not maintenance._paper_start_quiescent(tmp_path, None)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE robot_runtime_state SET recovery_status='READY'")
+        conn.execute("INSERT INTO robot_trades VALUES ('paper',NULL)")
+    assert not maintenance._paper_start_quiescent(tmp_path, None)
 
 
 def test_gitless_repeated_full_start_is_read_only(monkeypatch):
