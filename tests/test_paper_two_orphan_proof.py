@@ -11,7 +11,7 @@ from terminal.domain.models import PositionSide, Symbol, TradingAccountId
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
 from tools.paper_two_orphan_proof import (
     INCIDENT_BACKEND_SHA, JASMY_TRADE_ID, JASMY_CANDIDATE_ID,
-    PROOF_LABEL, prove_two_flat_orphans, inspect_read_only,
+    IDLE_APPROVALS, PROOF_LABEL, prove_two_flat_orphans, inspect_read_only,
 )
 
 ACCOUNT = TradingAccountId("paper")
@@ -91,6 +91,53 @@ def fixture():
     store.get_robot_candidate.side_effect = candidates.get
     store.get_position_projection.side_effect = lambda key: positions.get(key.symbol.value)
     store.load_executions_for_symbol.side_effect = lambda _account, symbol: fills[symbol.value]
+    return conn, payload, store
+
+
+def stale_incident_fixture():
+    """Exactly the six incident approvals; never write to the real PAPER DB."""
+    conn, payload, store = fixture()
+    conn.executescript("""
+        ALTER TABLE robot_candidates ADD COLUMN state_revision INTEGER;
+        ALTER TABLE robot_candidates ADD COLUMN robot_state_json TEXT;
+        ALTER TABLE paper_limit_orders ADD COLUMN order_id TEXT;
+        CREATE TABLE robot_entry_orders (
+            trading_account_id TEXT, order_id TEXT
+        );
+        CREATE TABLE box_attempt_ownership (
+            trading_account_id TEXT, candidate_id TEXT
+        );
+    """)
+    original_get = store.get_robot_candidate.side_effect
+    approved_candidates = {}
+    for symbol, (prefix, suffix) in IDLE_APPROVALS.items():
+        candidate_id = prefix if not suffix else prefix + ("0" * 32) + suffix
+        conn.execute(
+            "INSERT INTO robot_candidates "
+            "(trading_account_id,candidate_id,symbol,status,approved_at_ms,"
+            "state_revision,robot_state_json) VALUES (?,?,?,?,?,0,NULL)",
+            ("paper", candidate_id, symbol, "APPROVED", 200),
+        )
+        approved_candidates[candidate_id] = SimpleNamespace(
+            candidate_id=candidate_id, trading_account_id=ACCOUNT,
+            symbol=Symbol(symbol), status="APPROVED", approved_at_ms=200,
+        )
+    store.get_robot_candidate.side_effect = lambda cid: (
+        approved_candidates[cid] if cid in approved_candidates else original_get(cid)
+    )
+    payload["protection"] = dict(
+        healthy=False,
+        unhealthy_symbols={
+            "JASMYUSDT": "websocket_disconnect:WebSocketConnectionClosedException",
+            "FLOWUSDT": "websocket_disconnect:WebSocketConnectionClosedException",
+        },
+        covered_symbols=["JASMYUSDT", "FLOWUSDT", "BBUSDT", "KITEUSDT"],
+        armed_symbols=["BBUSDT", "KITEUSDT"],
+        coverage_roles={
+            "JASMYUSDT": "EXPOSURE", "FLOWUSDT": "EXPOSURE",
+            "BBUSDT": "ENTRY_PENDING", "KITEUSDT": "ENTRY_PENDING",
+        },
+    )
     return conn, payload, store
 
 
@@ -264,8 +311,68 @@ class DualOrphanPreflightTests(TestCase):
         ):
             check(conn, payload, store, evidence=[object(), object()])
 
+    def test_stale_incident_requires_all_six_exact_idle_approvals(self):
+        conn, payload, store = stale_incident_fixture()
+        self.assertEqual(
+            check(conn, payload, store, evidence=[object(), object()]), PROOF_LABEL,
+        )
+        conn.execute(
+            "DELETE FROM robot_candidates WHERE symbol='BNCUSDT' AND status='APPROVED'"
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_active_robot_candidate"):
+            check(conn, payload, store)
+        conn.execute(
+            "UPDATE robot_candidates SET candidate_id='spoofed' "
+            "WHERE symbol='HEMIUSDT' AND status='APPROVED'"
+        )
+        # The missing BNC owner alone is enough to reject the legacy exception.
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_active_robot_candidate"):
+            check(conn, payload, store)
+
+    def test_stale_approval_identity_progress_and_box_owner_fail_closed(self):
+        conn, payload, store = stale_incident_fixture()
+        bnc = IDLE_APPROVALS["BNCUSDT"][0]
+        conn.execute(
+            "UPDATE robot_candidates SET candidate_id='different' WHERE candidate_id=?",
+            (bnc,),
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_approved_candidate_identity"):
+            check(conn, payload, store)
+        conn.execute(
+            "UPDATE robot_candidates SET candidate_id=? WHERE candidate_id='different'", (bnc,)
+        )
+        conn.execute(
+            "UPDATE robot_candidates SET state_revision=1 WHERE candidate_id=?", (bnc,)
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress"):
+            check(conn, payload, store)
+        conn.execute(
+            "UPDATE robot_candidates SET state_revision=0, robot_state_json='{}' "
+            "WHERE candidate_id=?", (bnc,)
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress"):
+            check(conn, payload, store)
+        conn.execute(
+            "UPDATE robot_candidates SET robot_state_json=NULL WHERE candidate_id=?", (bnc,)
+        )
+        conn.execute(
+            "INSERT INTO box_attempt_ownership VALUES ('paper',?)", (bnc,)
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "approved_candidate_execution_or_ownership_unknown",
+        ):
+            check(conn, payload, store)
+
+    def test_stale_approval_orphan_entry_order_metadata_blocks(self):
+        conn, payload, store = stale_incident_fixture()
+        conn.execute(
+            "INSERT INTO robot_entry_orders VALUES ('paper','missing-order')"
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "orphan_robot_entry_order_metadata"):
+            check(conn, payload, store)
+
     def test_exact_flat_only_unhealthy_coverage_is_not_any_health_bypass(self):
-        conn, payload, store = fixture()
+        conn, payload, store = stale_incident_fixture()
         payload["protection"] = dict(
             healthy=False,
             unhealthy_symbols={
@@ -301,7 +408,9 @@ class DualOrphanPreflightTests(TestCase):
             check(conn, payload, store)
         payload["protection"]["coverage_roles"]["BBUSDT"] = "ENTRY_PENDING"
         conn.execute(
-            "INSERT INTO paper_limit_orders VALUES ('paper','open','BBUSDT',201)"
+            "INSERT INTO paper_limit_orders "
+            "(trading_account_id,status,symbol,created_at_ms) "
+            "VALUES ('paper','open','BBUSDT',201)"
         )
         with self.assertRaisesRegex(FlatRecoveryBlocked, "active_or_unknown_paper_limit"):
             check(conn, payload, store)
