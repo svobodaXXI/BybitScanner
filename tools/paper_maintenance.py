@@ -68,8 +68,19 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
     # Never retry an entire STOP as a polling mechanism. A future maintenance
     # resume path must use read-only, identity-bound observed state to determine
     # whether a *different* stage is now legal.
-    result = shutdown(SCOPE_ALL)
-    if not (result.ok and result.runtime_stopped):
+    try:
+        result = shutdown(SCOPE_ALL)
+    except Exception:
+        # A broken transport or helper may fail *after* an irreversible side
+        # effect. The caller has no authority to guess the outcome or retry.
+        return (
+            "BLOCKED: canonical safe-stop outcome unknown; no repeated STOP, "
+            "release switch or start; observe runtime state before recovery"
+        )
+    if not (
+        getattr(result, "ok", None) is True
+        and getattr(result, "runtime_stopped", None) is True
+    ):
         return (
             "BLOCKED: canonical safe-stop not proven; no repeated STOP, "
             "release switch or start; PAPER backend retained when present"
