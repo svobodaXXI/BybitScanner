@@ -541,6 +541,38 @@ def test_staged_gitless_completed_release_allows_later_target_without_stop_repla
     assert (transactions / new / "editor-ready").read_bytes() == new.encode()
 
 
+def test_staged_gitless_failed_resume_never_marks_prior_release_complete(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    monkeypatch.setattr(release, "verify_release", lambda *_: "c" * 40)
+    calls = []
+
+    def stop(_scope):
+        calls.append("stop")
+        return SimpleNamespace(ok=True, runtime_stopped=True)
+
+    def install(target, **_kw):
+        (transactions / target).mkdir(mode=0o700, exist_ok=True)
+        return "INSTALLED_STOPPED: exact"
+
+    args = dict(
+        stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(), preflight=lambda *_args, **_kw: None,
+        stop=stop, installer=install,
+        resume=lambda *_args, **_kw: "BLOCKED: editor_postconditions_unproven",
+    )
+    assert deploy_staged_editor_only("a" * 40, **args).startswith("BLOCKED:")
+    assert not (transactions / ("a" * 40) / "editor-ready").exists()
+    assert deploy_staged_editor_only("b" * 40, **args).startswith("BLOCKED:")
+    assert calls == ["stop"]
+
+
 def test_staged_gitless_other_target_pending_transaction_blocks_new_stop(monkeypatch, tmp_path):
     from tools.paper_maintenance import deploy_staged_editor_only
     import tools.vps_release_identity as release
