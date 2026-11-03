@@ -69,6 +69,15 @@ class OwnerBridgeTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     bridge.validate_target(item)
 
+    def test_preflight_inspects_installed_root_not_git_staging(self):
+        # Imported staging modules derive ROOT from their own file path.
+        # Failing to override it verifies staging against itself instead
+        # of the still-running /opt/BybitScanner release.
+        self.assertIn(
+            'inspect_staged_release(\n        sha, stage=stage, root=Path("/opt/BybitScanner"))',
+            bridge.PREFLIGHT,
+        )
+
     def test_preflight_never_invokes_coordinator_or_one_shot_marker(self):
         calls = []
         def run(argv, **kwargs):
