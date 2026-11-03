@@ -250,3 +250,25 @@ def test_crash_at_manifest_commit_resumes_with_existing_journal_without_new_stop
     assert _activate(kw, proof=False).startswith("INSTALLED_STOPPED:")
     assert json.loads(kw["manifest"].read_text())["build_sha"] == kw["sha"]
     assert (kw["root"] / "untracked-secret.conf").read_text() == "owner must keep"
+
+
+def test_interrupted_switch_refuses_changed_old_file_without_new_stop(tmp_path, monkeypatch):
+    kw = _fixture(tmp_path, monkeypatch)
+    original_atomic = activation._atomic_file
+    victim = kw["root"] / "tracked/user.txt"
+
+    def fail_before_old_file_copy(path, data, mode=0o644):
+        if Path(path) == victim:
+            raise OSError("simulated interruption before old file copy")
+        return original_atomic(path, data, mode)
+
+    monkeypatch.setattr(activation, "_atomic_file", fail_before_old_file_copy)
+    with pytest.raises(OSError, match="simulated interruption"):
+        _activate(kw)
+    assert (kw["transactions"] / kw["sha"] / "old.json").is_file()
+    monkeypatch.setattr(activation, "_atomic_file", original_atomic)
+    victim.write_text("owner-changed-after-interruption")
+    with pytest.raises(activation.ActivationBlocked, match="tracked_or_untracked_collision"):
+        _activate(kw, proof=False)
+    assert victim.read_text() == "owner-changed-after-interruption"
+    assert json.loads(kw["manifest"].read_text())["build_sha"] != kw["sha"]
