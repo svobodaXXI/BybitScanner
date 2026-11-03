@@ -96,6 +96,7 @@ def prove_nonrobot_robot_close(
         fill.order_id.value not in order_ids
         or fill.symbol != trade.symbol
         or fill.dedup_key.trading_account_id != trade.trading_account_id
+        or fill.dedup_key.category is not Category.LINEAR
         or fill.side is not entry_side
         or fill.quantity.value <= 0
         or not fill.fee.is_finite() or fill.fee < 0
@@ -103,6 +104,11 @@ def prove_nonrobot_robot_close(
     ):
         return None
     if len(entry_indices) != len(entry_fills):
+        return None
+    # The first recognized entry must be this trade's actual first fill.
+    # Coincidentally equal quantities/fees from an earlier lot cannot be
+    # substituted to manufacture a closing ledger attribution.
+    if entry_fills[0].exchange_timestamp_ms != trade.entry_time_ms:
         return None
     if sum((fill.quantity.value for fill in entry_fills), Decimal("0")) != trade.entry_quantity:
         return None
