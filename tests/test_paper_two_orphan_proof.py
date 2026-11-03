@@ -383,6 +383,26 @@ class DualOrphanPreflightTests(TestCase):
         self.assertEqual(check(conn, payload, store, evidence=[object(), object()]),
                          PROOF_LABEL)
 
+        # A previous INUSDT LIMIT is NOT silently treated as an unfilled
+        # current approval: diagnose age, fill state, and ownership first.
+        conn.execute(
+            "INSERT INTO paper_limit_orders "
+            "(trading_account_id,status,symbol,created_at_ms,order_id,filled_quantity) "
+            "VALUES ('paper','filled','INUSDT',100,'prior-inusdt-order','10')"
+        )
+        with self.assertRaises(FlatRecoveryBlocked) as failure:
+            check(conn, payload, store, evidence=[object(), object()])
+        self.assertIn(
+            "INUSDT:symbol_limit_not_cancelled_zero_fill:", str(failure.exception)
+        )
+        for detail in ("bad=1", "time[before=1]", "status[filled=1]",
+                       "qty[positive=1]", "exec=0", "robotentry=0", "boxowner=0"):
+            self.assertIn(detail, str(failure.exception))
+        self.assertNotIn("prior-inusdt-order", str(failure.exception))
+        conn.execute(
+            "DELETE FROM paper_limit_orders WHERE order_id='prior-inusdt-order'"
+        )
+
         # A nonzero cancelled partial fill is never inert even if the
         # order's terminal status says cancelled and no execution was linked.
         conn.execute(

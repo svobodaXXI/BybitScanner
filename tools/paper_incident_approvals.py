@@ -5,6 +5,7 @@ This never opens/migrates/writes the real PAPER database or authorizes START.
 """
 
 import json
+from collections import Counter
 from decimal import Decimal, InvalidOperation
 
 from tools.flat_paper_recovery_gate import _require
@@ -44,8 +45,77 @@ def _zero_filled(value: object) -> bool:
         return False
 
 
+def _failed_limit_evidence_shape(conn, *, bad_orders, approved_at_ms: int) -> str:
+    """Bounded, non-identifying READ-ONLY evidence; never changes acceptance.
+
+    Return categories and chronology, not order IDs, candidate IDs, exact
+    trade quantities or database values. Any diagnostic failure leaves the
+    original BLOCKED gate in force.
+    """
+    status = Counter()
+    quantity = Counter()
+    chronology = Counter()
+    executions = 0
+    robot_entries = 0
+    box_owners = 0
+    sampled = bad_orders[:16]
+    try:
+        for order_id, raw_status, raw_quantity, created_at in sampled:
+            label = raw_status if raw_status in (
+                "filled", "cancelled", "open", "partially_filled", "pending",
+                "rejected", "expired", "failed",
+            ) else "other"
+            status[label] += 1
+            try:
+                value = Decimal(str(raw_quantity))
+                if not value.is_finite():
+                    category = "invalid"
+                elif value == 0:
+                    category = "zero"
+                elif value > 0:
+                    category = "positive"
+                else:
+                    category = "negative"
+            except (InvalidOperation, TypeError, ValueError):
+                category = "invalid"
+            quantity[category] += 1
+            moment = (
+                "before" if type(created_at) is int and created_at < approved_at_ms
+                else "since" if type(created_at) is int
+                else "unknown"
+            )
+            chronology[moment] += 1
+            if isinstance(order_id, str) and order_id:
+                executions += bool(conn.execute(
+                    "SELECT 1 FROM executions WHERE trading_account_id='paper' "
+                    "AND order_id=? LIMIT 1", (order_id,),
+                ).fetchone())
+                robot_entries += bool(conn.execute(
+                    "SELECT 1 FROM robot_entry_orders "
+                    "WHERE trading_account_id='paper' AND order_id=? LIMIT 1",
+                    (order_id,),
+                ).fetchone())
+                box_owners += bool(conn.execute(
+                    "SELECT 1 FROM box_order_ownership "
+                    "WHERE trading_account_id='paper' AND order_id=? LIMIT 1",
+                    (order_id,),
+                ).fetchone())
+    except Exception:
+        return "diagnostic_unavailable"
+    summary = lambda values: ",".join(
+        f"{key}={count}" for key, count in sorted(values.items())
+    )
+    return (
+        f"bad={len(bad_orders)};sample={len(sampled)};"
+        f"time[{summary(chronology)}];status[{summary(status)}];"
+        f"qty[{summary(quantity)}];exec={executions};"
+        f"robotentry={robot_entries};boxowner={box_owners}"
+    )
+
+
 def _historical_approval_progress(conn, *, candidate_id: str, symbol: str,
                                   revision: int, raw_state: str,
+                                  approved_at_ms: int | None = None,
                                   blocked_reasons: list[str] | None = None) -> bool:
     """Report only a bounded invariant code; never log state JSON or owner IDs."""
     def blocked(reason: str) -> bool:
@@ -100,12 +170,22 @@ def _historical_approval_progress(conn, *, candidate_id: str, symbol: str,
     # Even cancelled LIMIT orders can have fills. Never rely on terminal
     # status alone, and never allow an unproved partially-filled retirement.
     orders = conn.execute(
-        "SELECT status, filled_quantity FROM paper_limit_orders "
+        "SELECT order_id, status, filled_quantity, created_at_ms "
+        "FROM paper_limit_orders "
         "WHERE trading_account_id='paper' AND symbol=?", (symbol,),
     ).fetchall()
-    if not all(status == "cancelled" and _zero_filled(filled)
-               for status, filled in orders):
-        return blocked("symbol_limit_not_cancelled_zero_fill")
+    bad_orders = [
+        row for row in orders
+        if row[1] != "cancelled" or not _zero_filled(row[2])
+    ]
+    if bad_orders:
+        # This is a diagnostic suffix only. A historical, pre-approval fill
+        # still BLOCKS until its ownership and non-exposure are proved.
+        detail = _failed_limit_evidence_shape(
+            conn, bad_orders=bad_orders,
+            approved_at_ms=approved_at_ms if type(approved_at_ms) is int else -1,
+        )
+        return blocked("symbol_limit_not_cancelled_zero_fill:" + detail)
     return True
 
 def prove_six_inert_approvals(conn, approvals, positions) -> None:
@@ -149,7 +229,7 @@ def prove_six_inert_approvals(conn, approvals, positions) -> None:
                 or _historical_approval_progress(
                     conn, candidate_id=candidate_id, symbol=symbol,
                     revision=revision, raw_state=raw_state,
-                    blocked_reasons=details,
+                    approved_at_ms=approved, blocked_reasons=details,
                 )
             )
         )
