@@ -348,8 +348,16 @@ def deploy_staged_editor_only(
                 journal_root, target, uid=trusted_uid,
             ):
                 return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
-            result = action(SCOPE_ALL)
-            if not (result.ok and result.runtime_stopped):
+            try:
+                result = action(SCOPE_ALL)
+            except Exception as exc:
+                # The stop may already have performed a trading/runtime action.
+                # The durable intent prevents replay; never install on an
+                # exception or try to infer completion from missing processes.
+                return ("BLOCKED: canonical_safe_stop_outcome_unknown:"
+                        + type(exc).__name__ + "; no retry, no deployment")
+            if not (getattr(result, "ok", False) is True
+                    and getattr(result, "runtime_stopped", False) is True):
                 return "BLOCKED: canonical_safe_stop_unproven; no retry, no deployment"
         else:
             result = None  # Already recorded protected transaction; no STOP replay.
