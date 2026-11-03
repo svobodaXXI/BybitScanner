@@ -916,7 +916,7 @@ def test_editor_reconcile_one_shot_receipt_cannot_replay(tmp_path):
     assert maintenance._record_editor_reconcile_once(
         sha, identity, journal_root=tmp_path, trusted_uid=os.getuid(),
     )
-    assert (journal / "robot-reconcile-invoked").read_text() == sha + "\\n" + identity + "\\n"
+    assert (journal / "robot-reconcile-invoked").read_text() == sha + "\n" + identity + "\n"
     assert not maintenance._record_editor_reconcile_once(
         sha, identity, journal_root=tmp_path, trusted_uid=os.getuid(),
     )
