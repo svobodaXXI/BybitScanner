@@ -221,7 +221,15 @@ def activate_staged_release(
             "unprotected_manifest_directory")
     stage_manifest = _new_manifest(stage, sha)
     journal = transactions / sha
-    with (transactions / ".release.lock").open("a+b") as lock:
+    lock_path = transactions / ".release.lock"
+    try:
+        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError as exc:
+        raise ActivationBlocked("untrusted_release_lock") from exc
+    with os.fdopen(lock_fd, "a+b") as lock:
+        meta = os.fstat(lock.fileno())
+        _demand(stat.S_ISREG(meta.st_mode) and meta.st_uid == uid
+                and not meta.st_mode & 0o077, "untrusted_release_lock")
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         _stopped(states, listeners)
         if journal.exists():
