@@ -2482,9 +2482,16 @@ class RobotProtectionCoverageManager:
                         "ROBOT_STOPPED", "ROBOT_STOPPED",
                     ) or runtime.scanner_status().mode != "SCANNER_STOPPED":
                         raise RobotRouteLegalityError("runtime_still_required")
+                    # Retiring entry arms is a shutdown mutation, not just a
+                    # stopped-Robot check. Another controller may have
+                    # re-enabled PAPER_AUTO after Scanner STOP: prove durable
+                    # Autopilot OFF on this same serialized owner callback.
+                    account = TradingAccountId("paper")
+                    autopilot = runtime.store.get_robot_autopilot_state(account)
+                    if autopilot is None or autopilot.mode != "OFF":
+                        raise RobotRouteLegalityError("autopilot_not_durably_off")
                     if runtime.robot_protection_coverage_symbols():
                         raise RobotRouteLegalityError("durable_protection_required")
-                    account = TradingAccountId("paper")
                     if runtime.store.load_active_robot_candidate_states(account):
                         raise RobotRouteLegalityError("robot_entry_ownership_unresolved")
                     with self._lock:
@@ -3927,9 +3934,12 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     or scanner != "SCANNER_STOPPED"
                     or not isinstance(protection, Mapping)
                     or protection.get("healthy") is not True
-                    or protection.get("covered_symbols")
-                    or protection.get("armed_symbols")
-                    or protection.get("unhealthy_symbols")
+                    # Absence or malformed evidence is not empty coverage.
+                    # Shutdown must see all three authoritative collections,
+                    # not merely a truthy healthy flag.
+                    or protection.get("covered_symbols") != []
+                    or protection.get("armed_symbols") != []
+                    or protection.get("unhealthy_symbols") != {}
                 ):
                     return "runtime_still_required"
                 # Atomic with owner-call admission. Reject every later owner
