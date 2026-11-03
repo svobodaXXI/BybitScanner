@@ -17,7 +17,8 @@ def replies(mode="OFF", healthy=True, scanner="SCANNER_RUNNING", account="paper"
         "/api/health": {
             "ok": True, "component": "paper_backend", "mode": "paper",
             "paper_live_safe": True, "robot_admission_ready": True,
-            "scanner_acceptance_ready": True, "database_identity": "db",
+            "scanner_acceptance_ready": True,
+            "database_identity": launch.expected_database_identity(launch.PROJECT_ROOT, ENV),
         },
         "/api/scanner/status": {"ok": True, "mode": scanner},
         "/api/robot/protection-health": {"ok": True, "healthy": healthy},
@@ -83,6 +84,44 @@ class UnifiedPaperStartTests(unittest.TestCase):
                     with self.assertRaises(launch.StartupBlocked):
                         launch.enable_from_authorized_start(ENV)
                     self.assertFalse(any(c.kwargs.get("data") for c in call.call_args_list))
+
+    def test_foreign_or_unproven_db_never_enables_paper_auto(self):
+        for name, env, identity in (
+            ("different_backend_db", ENV, "other-paper-database"),
+            ("missing_backend_db", ENV, None),
+            ("changed_configured_db",
+             {**ENV, "BYBITSCANNER_PAPER_DB": "/var/lib/bybitscanner/alternate.sqlite3"},
+             replies()["/api/health"]["database_identity"]),
+        ):
+            with self.subTest(name=name):
+                responses = replies()
+                responses["/api/health"]["database_identity"] = identity
+                with patch.object(
+                    launch, "request", side_effect=lambda path, **_: responses[path],
+                ) as call:
+                    with self.assertRaisesRegex(
+                        launch.StartupBlocked, "database|admission",
+                    ):
+                        launch.enable_from_authorized_start(env)
+                    self.assertEqual(call.call_count, 1)
+                    self.assertFalse(any(
+                        c.kwargs.get("data") is not None for c in call.call_args_list
+                    ))
+
+    def test_explicit_alternate_paper_db_identity_is_accepted_without_replay(self):
+        env = {**ENV, "BYBITSCANNER_PAPER_DB": "/var/lib/bybitscanner/alternate.sqlite3"}
+        responses = replies(mode="PAPER_AUTO")
+        responses["/api/health"]["database_identity"] = (
+            launch.expected_database_identity(launch.PROJECT_ROOT, env)
+        )
+        with patch.object(
+            launch, "request", side_effect=lambda path, **_: responses[path],
+        ) as call:
+            launch.enable_from_authorized_start(env)
+        self.assertEqual(call.call_count, 5)
+        self.assertFalse(any(
+            c.kwargs.get("data") is not None for c in call.call_args_list
+        ))
 
     def test_failed_post_never_reports_success(self):
         responses = replies()
