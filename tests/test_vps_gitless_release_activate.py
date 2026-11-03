@@ -182,3 +182,25 @@ def test_identical_untracked_owner_file_is_never_claimed_by_release(tmp_path, mo
         _activate(kw)
     assert (kw["root"] / "new_feature.py").read_bytes() == b"new feature"
     assert not (kw["transactions"] / kw["sha"]).exists()
+
+
+def test_late_untracked_owner_file_is_not_overwritten_after_preflight(tmp_path, monkeypatch):
+    kw = _fixture(tmp_path, monkeypatch)
+    original = activation._atomic_file
+    owner_file = kw["root"] / "new_feature.py"
+    injected = [False]
+
+    def owner_race(path, data, mode=0o644):
+        if (not injected[0] and path.is_relative_to(kw["root"])
+                and path.name != "new_feature.py"):
+            injected[0] = True
+            owner_file.write_text("owner-created-after-preflight")
+        return original(path, data, mode)
+
+    monkeypatch.setattr(activation, "_atomic_file", owner_race)
+    with pytest.raises(activation.ActivationBlocked, match="new_owner_file_during_switch"):
+        _activate(kw)
+    assert injected[0]
+    assert owner_file.read_text() == "owner-created-after-preflight"
+    assert json.loads(kw["manifest"].read_text())["build_sha"] != kw["sha"]
+    assert (kw["transactions"] / kw["sha"] / "old.json").is_file()
