@@ -1049,6 +1049,10 @@ def test_paper_start_quiescence_checks_durable_frozen_ledgers(monkeypatch, tmp_p
             CREATE TABLE robot_runtime_state (
                 trading_account_id TEXT, mode TEXT, recovery_status TEXT
             );
+            CREATE TABLE position_projections (
+                trading_account_id TEXT, symbol TEXT, side TEXT,
+                quantity TEXT, sync_state TEXT
+            );
             CREATE TABLE robot_trades (trading_account_id TEXT, exit_time_ms INTEGER);
             CREATE TABLE robot_candidates (trading_account_id TEXT, status TEXT);
             CREATE TABLE paper_limit_orders (trading_account_id TEXT, status TEXT);
@@ -1086,6 +1090,26 @@ def test_paper_start_quiescence_checks_durable_frozen_ledgers(monkeypatch, tmp_p
         conn.execute("DELETE FROM robot_trades")
         conn.execute("UPDATE robot_runtime_state SET recovery_status='READY'")
     assert maintenance._paper_start_quiescent(tmp_path, None)
+
+    # Manual PAPER exposure has no Robot-owned trade or approval. It must
+    # still forbid the systemd oneshot from re-enabling entry admission.
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO position_projections VALUES "
+            "('paper','TESTUSDT','Long','2','synced')"
+        )
+    assert not maintenance._paper_start_quiescent(tmp_path, None)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE position_projections SET side='Flat', quantity='0'"
+        )
+    assert maintenance._paper_start_quiescent(tmp_path, None)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE position_projections SET sync_state='unknown'")
+    assert not maintenance._paper_start_quiescent(tmp_path, None)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE position_projections SET sync_state='synced', quantity='NaN'")
+    assert not maintenance._paper_start_quiescent(tmp_path, None)
 
 
 def test_gitless_repeated_full_start_is_read_only(monkeypatch):
