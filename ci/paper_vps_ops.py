@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import stat
 
 REPO = "svobodaXXI/BybitScanner"
 OWNER = "svobodaXXI"
@@ -25,6 +26,32 @@ REQUEST = re.compile(r"/paper-vps (preflight|execute) ([0-9a-f]{40})\Z")
 TARGET = re.compile(r"root@[A-Za-z0-9.-]{1,253}\Z")
 VENV = Path("/opt/BybitScanner/venv/bin/python")
 TRANSACTIONS = Path("/var/lib/bybitscanner-release-transactions")
+PINNED_REMOTE = Path("/usr/local/libexec/bybitscanner-paper-vps.py")
+REMOTE_REQUEST = re.compile(r"(preflight|execute) ([0-9a-f]{40})\\Z")
+
+
+def authorized_remote_request(original: str | None) -> tuple[str, str]:
+    """Accept only sshd's original literal operation and exact Git SHA.
+
+    The root-owned helper MUST be installed outside the Git checkout and
+    bound to a dedicated SSH key via authorized_keys command= and restrict.
+    An unforced root key will not be given a runnable Python SSH command.
+    """
+    installed = Path(__file__)
+    try:
+        meta = installed.lstat()
+    except OSError as exc:
+        raise ValueError("pinned_remote_missing") from exc
+    if (installed != PINNED_REMOTE
+            or not stat.S_ISREG(meta.st_mode)
+            or meta.st_uid != 0 or meta.st_mode & 0o077
+            or not isinstance(original, str)):
+        raise ValueError("untrusted_remote_install_or_command")
+    match = REMOTE_REQUEST.fullmatch(original)
+    if match is None:
+        raise ValueError("unsupported_ssh_original_command")
+    return match.group(1), match.group(2)
+
 
 # The source is executed by the already-installed PAPER venv using the pinned
 # release staging as the import root; every HTTP probe precedes any DB snapshot.
@@ -193,8 +220,14 @@ def main(argv: list[str]) -> int:
         except (OSError, ValueError, KeyError) as exc:
             print("BLOCKED: invalid_owner_request:" + type(exc).__name__)
             return 2
-    if len(argv) == 3 and argv[0] == "remote":
-        return remote(argv[1], argv[2])
+    if len(argv) == 1 and argv[0] == "forced":
+        try:
+            mode, sha = authorized_remote_request(
+                os.environ.get("SSH_ORIGINAL_COMMAND"))
+        except ValueError as exc:
+            print("BLOCKED: " + str(exc))
+            return 2
+        return remote(mode, sha)
     if len(argv) == 2 and argv[0] == "check-target":
         try:
             validate_target(argv[1])
