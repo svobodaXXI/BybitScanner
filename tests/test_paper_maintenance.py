@@ -1070,10 +1070,22 @@ def test_paper_start_quiescence_checks_durable_frozen_ledgers(monkeypatch, tmp_p
         conn.execute("UPDATE robot_runtime_state "
                      "SET mode='ROBOT_RUNNING', recovery_status='RECONCILIATION_REQUIRED'")
     assert not maintenance._paper_start_quiescent(tmp_path, None)
+    # Canonical Robot reconcile commits PAUSED, not READY. Starting the
+    # owner oneshot from proven PAUSED is the legitimate PAUSED -> READY path.
     with sqlite3.connect(db) as conn:
-        conn.execute("UPDATE robot_runtime_state SET recovery_status='READY'")
+        conn.execute("UPDATE robot_runtime_state SET recovery_status='PAUSED'")
+    assert maintenance._paper_start_quiescent(tmp_path, None)
+    with sqlite3.connect(db) as conn:
+        conn.execute("INSERT INTO robot_candidates VALUES ('paper','APPROVED')")
+    assert not maintenance._paper_start_quiescent(tmp_path, None)
+    with sqlite3.connect(db) as conn:
+        conn.execute("DELETE FROM robot_candidates")
         conn.execute("INSERT INTO robot_trades VALUES ('paper',NULL)")
     assert not maintenance._paper_start_quiescent(tmp_path, None)
+    with sqlite3.connect(db) as conn:
+        conn.execute("DELETE FROM robot_trades")
+        conn.execute("UPDATE robot_runtime_state SET recovery_status='READY'")
+    assert maintenance._paper_start_quiescent(tmp_path, None)
 
 
 def test_gitless_repeated_full_start_is_read_only(monkeypatch):
