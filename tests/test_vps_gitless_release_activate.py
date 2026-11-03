@@ -173,3 +173,12 @@ def test_previous_transaction_blocks_tampered_staged_target(tmp_path, monkeypatc
     with pytest.raises(activation.ActivationBlocked):
         _activate(kw, proof=False)
     assert json.loads(kw["manifest"].read_text())["build_sha"] != kw["sha"]
+
+
+def test_identical_untracked_owner_file_is_never_claimed_by_release(tmp_path, monkeypatch):
+    kw = _fixture(tmp_path, monkeypatch)
+    (kw["root"] / "new_feature.py").write_bytes(b"new feature")
+    with pytest.raises(activation.ActivationBlocked, match="tracked_or_untracked_collision"):
+        _activate(kw)
+    assert (kw["root"] / "new_feature.py").read_bytes() == b"new feature"
+    assert not (kw["transactions"] / kw["sha"]).exists()
