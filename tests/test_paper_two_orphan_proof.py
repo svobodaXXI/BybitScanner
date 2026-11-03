@@ -314,7 +314,9 @@ class DualOrphanPreflightTests(TestCase):
             check(conn, payload, store, evidence=[object(), object()])
         conn.execute("DELETE FROM paper_limit_orders")
         conn.execute(
-            "INSERT INTO trading_commands VALUES ('paper','filled','1000FLOKIUSDT',201)"
+            "INSERT INTO trading_commands "
+            "(trading_account_id,current_state,symbol,created_at_ms) "
+            "VALUES ('paper','filled','1000FLOKIUSDT',201)"
         )
         with self.assertRaisesRegex(
             FlatRecoveryBlocked, "approved_candidate_execution_or_ownership_unknown",
