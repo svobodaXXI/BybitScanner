@@ -821,3 +821,45 @@ def test_gitless_full_paper_start_unknown_systemd_outcome_never_replays(monkeypa
     )
     assert result == "BLOCKED: PAPER_core_start_outcome_unknown; no replay"
     assert calls == ["start"]
+
+
+def test_gitless_repeated_full_start_is_read_only(monkeypatch):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    monkeypatch.setattr(release, "verify_release", lambda *_args, **_kw: target)
+    calls = []
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "READY: full PAPER proven")
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
+                        lambda *_args, **_kw: calls.append("deploy"))
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_args, **_kw: calls.append("resume"))
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_args, **_kw: calls.append("start"))
+    assert maintenance.main([
+        target, "--staged-gitless-editor-only", "/staged/release",
+        "--start-paper-after-editor",
+    ]) == 0
+    assert maintenance.main([
+        target, "--resume-installed-editor-only", "--start-paper-after-editor",
+    ]) == 0
+    assert calls == []
+
+
+def test_gitless_full_start_unproven_runtime_does_not_skip_recovery(monkeypatch):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    monkeypatch.setattr(release, "verify_release", lambda *_args, **_kw: target)
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "BLOCKED: PAPER not proven")
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_args, **_kw: "BLOCKED: EDITOR_ONLY freeze unproven")
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_args, **_kw: pytest.fail("must not start"))
+    assert maintenance.main([
+        target, "--resume-installed-editor-only", "--start-paper-after-editor",
+    ]) == 2
