@@ -119,6 +119,28 @@ def _atomic_file(path: Path, data: bytes, mode: int = 0o644) -> None:
             os.unlink(name)
 
 
+
+def _atomic_new_file(path: Path, data: bytes, mode: int = 0o644) -> None:
+    """Publish new tracked code without ever replacing an owner-created path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=".paper-release-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            os.fchmod(stream.fileno(), mode)
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            # Unlike os.replace, link fails if a file arrived after preflight.
+            os.link(name, path)
+        except FileExistsError as exc:
+            raise ActivationBlocked("new_owner_file_during_switch:" + str(path)) from exc
+        _sync_directory(path.parent)
+    finally:
+        if os.path.lexists(name):
+            os.unlink(name)
+
+
 def _stopped(states: Callable, listeners: Callable) -> None:
     for unit in UNITS:
         state = states(unit)
@@ -270,7 +292,11 @@ def activate_staged_release(
             else:
                 _demand(observed is None,
                         "new_owner_file_during_switch:" + name)
-            _atomic_file(destination, raw, 0o755 if source.stat().st_mode & stat.S_IXUSR else 0o644)
+            mode = 0o755 if source.stat().st_mode & stat.S_IXUSR else 0o644
+            if name in old_blobs:
+                _atomic_file(destination, raw, mode)
+            else:
+                _atomic_new_file(destination, raw, mode)
         for name in sorted(set(old_blobs) - set(new_blobs)):
             dest = _safe_path(root, name)
             if dest.exists():
