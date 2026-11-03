@@ -591,7 +591,9 @@ def _paper_start_quiescent(root: Path, env_file: Path | None) -> bool:
                 return False
         for table, condition in (
             ("robot_trades", "exit_time_ms IS NULL"),
-            ("robot_candidates", "status IS NULL OR status IN ('APPROVED','OPEN')"),
+            ("robot_candidates",
+             "status IS NULL OR status NOT IN "
+             "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED')"),
             ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
             ("trading_commands",
              "current_state IS NULL OR current_state NOT IN "
