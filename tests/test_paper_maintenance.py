@@ -573,6 +573,33 @@ def test_staged_gitless_failed_resume_never_marks_prior_release_complete(monkeyp
     assert calls == ["stop"]
 
 
+def test_staged_gitless_corrupt_completed_receipt_blocks_next_stop(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    transactions.mkdir(mode=0o700)
+    previous = "a" * 40
+    (transactions / (".stop-invoked-" + previous)).write_bytes(b"STOP_INVOKED")
+    prior_journal = transactions / previous
+    prior_journal.mkdir(mode=0o700)
+    (prior_journal / "editor-ready").write_bytes(b"wrong-target")
+    monkeypatch.setattr(release, "verify_release", lambda *_: "c" * 40)
+    result = deploy_staged_editor_only(
+        "b" * 40, stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(), preflight=lambda *_args, **_kwargs: None,
+        stop=lambda *_: pytest.fail("corrupt receipt must not authorize STOP"),
+        installer=lambda *_args, **_kwargs: pytest.fail("no install"),
+    )
+    assert result.startswith("BLOCKED: Gitless_switch_unproven:ActivationBlocked:")
+    assert "completed_release_receipt_mismatch" in result
+    assert not (transactions / (".stop-invoked-" + "b" * 40)).exists()
+
+
 def test_staged_gitless_other_target_pending_transaction_blocks_new_stop(monkeypatch, tmp_path):
     from tools.paper_maintenance import deploy_staged_editor_only
     import tools.vps_release_identity as release
