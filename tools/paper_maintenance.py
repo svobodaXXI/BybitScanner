@@ -588,6 +588,27 @@ def main(argv=None) -> int:
         parser.error("full PAPER start requires verified Gitless Editor recovery")
     if args.dual_orphan_handoff_20261103 and not args.staged_gitless_editor_only:
         parser.error("exceptional handoff requires staged Gitless operation")
+    if args.start_paper_after_editor and (
+        args.staged_gitless_editor_only or args.resume_installed_editor_only
+    ):
+        # A repeated one-action START is read-only when the exact approved
+        # Gitless release and all PAPER postconditions are already proven.
+        # Do not route an active trading runtime through EDITOR_ONLY freeze,
+        # canonical STOP, or systemctl start a second time.
+        from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+        if (len(args.sha) == 40
+                and all(ch in "0123456789abcdef" for ch in args.sha)):
+            try:
+                installed = verify_release(REPO)
+            except (ReleaseIdentityBlocked, OSError):
+                installed = None
+            if installed == args.sha:
+                observed = _paper_full_readiness(
+                    root=REPO, env_file=args.env_file, target=args.sha,
+                )
+                if observed.startswith("READY:"):
+                    print("READY: exact installed Gitless PAPER already running; no mutation")
+                    return 0
     if args.staged_gitless_editor_only:
         status = deploy_staged_editor_only(
             args.sha, stage=args.staged_gitless_editor_only,
