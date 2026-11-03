@@ -575,6 +575,20 @@ def _paper_start_quiescent(root: Path, env_file: Path | None) -> bool:
             ("ROBOT_RUNNING", "READY"),
         ):
             return False
+        # Robot ledgers can be empty while a separate manual PAPER position
+        # remains open. Never restart ingress on that unprotected exposure.
+        positions = conn.execute(
+            "SELECT symbol, side, quantity, sync_state FROM position_projections "
+            "WHERE trading_account_id='paper'"
+        ).fetchall()
+        for symbol, side, raw_quantity, sync_state in positions:
+            try:
+                quantity = Decimal(str(raw_quantity))
+            except (ValueError, ArithmeticError):
+                return False
+            if (not symbol or side != "Flat" or not quantity.is_finite()
+                    or quantity != 0 or sync_state not in ("synced", "synchronized")):
+                return False
         for table, condition in (
             ("robot_trades", "exit_time_ms IS NULL"),
             ("robot_candidates", "status IS NULL OR status IN ('APPROVED','OPEN')"),
