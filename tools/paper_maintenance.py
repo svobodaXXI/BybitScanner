@@ -629,7 +629,7 @@ def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
     """
     from tools.stop_robot_runtime import _database_path
     from tools.paper_incident_approvals import (
-        IDLE_APPROVALS, prove_six_inert_approvals,
+        IDLE_APPROVALS, JASMY_CANDIDATE_ID, prove_six_inert_approvals,
     )
     from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
 
@@ -672,9 +672,10 @@ def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
             "SELECT candidate_id, symbol FROM robot_trades "
             "WHERE trading_account_id='paper' AND exit_time_ms IS NULL"
         ).fetchall()
-        if (len(trades) > 2 or len(set(trades)) != len(trades)
-                or len({symbol for _, symbol in trades}) != len(trades)
-                or any(symbol not in expected_symbols for _, symbol in trades)):
+        if (len(trades) != 2 or len(set(trades)) != 2
+                or {symbol for _, symbol in trades} != expected_symbols
+                or any(cid != JASMY_CANDIDATE_ID
+                       for cid, symbol in trades if symbol == "JASMYUSDT")):
             return False
         for _, symbol in trades:
             if sum(position[0] == symbol for position in positions) != 1:
