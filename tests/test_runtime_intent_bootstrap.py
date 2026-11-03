@@ -382,6 +382,8 @@ class PaperSafeBackendSpawnTests(unittest.TestCase):
         parent.update({
             "BYBITSCANNER_TELEGRAM_BOT_TOKEN": "synthetic-bot-credential",
             "BYBITSCANNER_WORKSPACE_URL": "https://workspace.example.invalid",
+            "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN": "synthetic-autopilot-secret",
+            "BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN": "synthetic-geometry-secret",
         })
         self.world.bootstrap(env=parent).run("ALL")
         self.assertEqual(
@@ -390,11 +392,12 @@ class PaperSafeBackendSpawnTests(unittest.TestCase):
         )
         child = dict(self.world.spawn_envs)["Telegram monitoring"]
         self.assertIsNotNone(child)
-        self.assertNotIn("BYBITSCANNER_OPERATOR_TOKEN", child)
+        for key in runtime_intent.TELEGRAM_EXCLUDED_CREDENTIALS:
+            self.assertNotIn(key, child)
         self.assertEqual(
             child,
             {key: value for key, value in parent.items()
-             if key != "BYBITSCANNER_OPERATOR_TOKEN"},
+             if key.upper() not in runtime_intent.TELEGRAM_EXCLUDED_CREDENTIALS},
         )
         self.assertEqual(parent["BYBITSCANNER_OPERATOR_TOKEN"], "t" * 64)
         self.assertEqual(child["BYBITSCANNER_TELEGRAM_BOT_TOKEN"],
@@ -402,17 +405,21 @@ class PaperSafeBackendSpawnTests(unittest.TestCase):
         self.assertEqual(child["BYBITSCANNER_WORKSPACE_URL"],
                          "https://workspace.example.invalid")
 
-    def test_telegram_environment_excludes_all_operator_token_case_variants(self):
+    def test_telegram_environment_excludes_all_sensitive_token_case_variants(self):
         parent = {
             "bybitscanner_operator_token": "synthetic-lowercase",
             "BYBITSCANNER_OPERATOR_TOKEN": "synthetic-uppercase",
+            "bybitscanner_autopilot_owner_token": "synthetic-autopilot-lower",
+            "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN": "synthetic-autopilot-upper",
+            "bybitscanner_signal_geometry_token": "synthetic-geometry-lower",
+            "BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN": "synthetic-geometry-upper",
             "BYBITSCANNER_PAPER_DB": "paper_runtime.sqlite3",
             "HTTPS_PROXY": "http://proxy.example.invalid",
         }
         before = dict(parent)
         child = runtime_intent.telegram_safe_env(parent)
         self.assertEqual(parent, before)
-        self.assertFalse(any(key.upper() == "BYBITSCANNER_OPERATOR_TOKEN"
+        self.assertFalse(any(key.upper() in runtime_intent.TELEGRAM_EXCLUDED_CREDENTIALS
                              for key in child))
         self.assertEqual(child["BYBITSCANNER_PAPER_DB"], parent["BYBITSCANNER_PAPER_DB"])
         self.assertEqual(child["HTTPS_PROXY"], parent["HTTPS_PROXY"])
