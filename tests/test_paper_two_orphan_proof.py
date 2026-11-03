@@ -1,5 +1,6 @@
 """Synthetic-only tests for dual Flat/OPEN owner evidence. No VPS or SQLite writes."""
 import sqlite3
+import json
 import hashlib
 import tempfile
 from pathlib import Path
@@ -101,6 +102,13 @@ def stale_incident_fixture():
         ALTER TABLE robot_candidates ADD COLUMN state_revision INTEGER;
         ALTER TABLE robot_candidates ADD COLUMN robot_state_json TEXT;
         ALTER TABLE paper_limit_orders ADD COLUMN order_id TEXT;
+        ALTER TABLE paper_limit_orders ADD COLUMN filled_quantity TEXT DEFAULT '0';
+        ALTER TABLE trading_commands ADD COLUMN exchange_order_id TEXT;
+        ALTER TABLE trading_commands ADD COLUMN order_link_id TEXT;
+        ALTER TABLE executions ADD COLUMN order_id TEXT;
+        CREATE TABLE box_order_ownership (
+            trading_account_id TEXT, candidate_id TEXT, order_id TEXT, role TEXT
+        );
         CREATE TABLE robot_entry_orders (
             trading_account_id TEXT, order_id TEXT
         );
@@ -327,6 +335,83 @@ class DualOrphanPreflightTests(TestCase):
         )
         # The missing BNC owner alone is enough to reject the legacy exception.
         with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_active_robot_candidate"):
+            check(conn, payload, store)
+
+    def test_six_exact_progressed_approvals_with_cancelled_zero_fill_are_inert(self):
+        conn, payload, store = stale_incident_fixture()
+        revisions = {
+            "1000FLOKIUSDT": (6, "BOX_ENTRY_READY", 4),
+            "BNCUSDT": (6, "RETEST_DETECTED", 1),
+            "HEMIUSDT": (6, "BOX_ENTRY_READY", 4),
+            "INUSDT": (6, "BOX_ENTRY_READY", 4),
+            "PLAYSOUTUSDT": (4, "RETEST_DETECTED", 1),
+            "RUNEUSDT": (3, "BOX_ENTRY_READY", 0),
+        }
+        for symbol, (revision, phase, count) in revisions.items():
+            prefix, suffix = IDLE_APPROVALS[symbol]
+            candidate_id = prefix if not suffix else prefix + ("0" * 32) + suffix
+            state = {"phase": phase, "state_version": "1.0"}
+            if phase == "BOX_ENTRY_READY":
+                state["source_box_candidate_id"] = (
+                    "box-plan-" + candidate_id.removeprefix("box-robot-")
+                )
+            conn.execute(
+                "UPDATE robot_candidates SET state_revision=?, robot_state_json=? "
+                "WHERE candidate_id=?",
+                (revision, json.dumps(state), candidate_id),
+            )
+            for slot in range(count):
+                order_id = f"cancelled-{symbol}-{slot}"
+                conn.execute(
+                    "INSERT INTO paper_limit_orders "
+                    "(trading_account_id,status,symbol,created_at_ms,order_id,filled_quantity) "
+                    "VALUES ('paper','cancelled',?,201,?,'0')",
+                    (symbol, order_id),
+                )
+                conn.execute(
+                    "INSERT INTO robot_entry_orders VALUES ('paper',?)", (order_id,),
+                )
+                if phase == "BOX_ENTRY_READY":
+                    conn.execute(
+                        "INSERT INTO box_order_ownership VALUES ('paper',?,?,'ENTRY')",
+                        (state["source_box_candidate_id"], order_id),
+                    )
+        self.assertEqual(check(conn, payload, store, evidence=[object(), object()]),
+                         PROOF_LABEL)
+
+        # A nonzero cancelled partial fill is never inert even if the
+        # order's terminal status says cancelled and no execution was linked.
+        conn.execute(
+            "UPDATE paper_limit_orders SET filled_quantity='0.1' "
+            "WHERE symbol='BNCUSDT'"
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress"):
+            check(conn, payload, store)
+        conn.execute(
+            "UPDATE paper_limit_orders SET filled_quantity='0' "
+            "WHERE symbol='BNCUSDT'"
+        )
+        conn.execute(
+            "UPDATE robot_candidates SET state_revision=7 WHERE symbol='BNCUSDT'"
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress"):
+            check(conn, payload, store)
+        conn.execute(
+            "UPDATE robot_candidates SET state_revision=6 WHERE symbol='BNCUSDT'"
+        )
+        conn.execute(
+            "UPDATE box_order_ownership SET role='EXIT' WHERE order_id='cancelled-HEMIUSDT-0'"
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress"):
+            check(conn, payload, store)
+        conn.execute(
+            "UPDATE box_order_ownership SET role='ENTRY' WHERE order_id='cancelled-HEMIUSDT-0'"
+        )
+        conn.execute(
+            "INSERT INTO executions (trading_account_id,symbol,exchange_timestamp_ms,order_id) "
+            "VALUES ('paper','HEMIUSDT',201,'cancelled-HEMIUSDT-0')"
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress"):
             check(conn, payload, store)
 
     def test_stale_approval_identity_progress_and_box_owner_fail_closed(self):
