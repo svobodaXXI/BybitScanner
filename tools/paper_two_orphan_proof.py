@@ -105,10 +105,11 @@ def prove_two_flat_orphans(
         # an acceptable shutdown exception. Durable entry and Flat proofs below
         # must pass before the one-shot backend handoff can be authorized.
         _require(
-            protection.get("healthy") is False and bool(unhealthy)
-            and set(unhealthy) <= EXPECTED_SYMBOLS
-            and all(isinstance(reason, str) and bool(reason.strip())
-                    for reason in unhealthy.values()),
+            protection.get("healthy") is False
+            and unhealthy == {
+                "JASMYUSDT": "websocket_disconnect:WebSocketConnectionClosedException",
+                "FLOWUSDT": "websocket_disconnect:WebSocketConnectionClosedException",
+            },
             "protection_unhealthy",
         )
         _require(

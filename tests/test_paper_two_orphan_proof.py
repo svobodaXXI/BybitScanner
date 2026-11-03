@@ -268,8 +268,10 @@ class DualOrphanPreflightTests(TestCase):
         conn, payload, store = fixture()
         payload["protection"] = dict(
             healthy=False,
-            unhealthy_symbols={"JASMYUSDT": "websocket_disconnected",
-                               "FLOWUSDT": "continuity_lost"},
+            unhealthy_symbols={
+                "JASMYUSDT": "websocket_disconnect:WebSocketConnectionClosedException",
+                "FLOWUSDT": "websocket_disconnect:WebSocketConnectionClosedException",
+            },
             covered_symbols=["JASMYUSDT", "FLOWUSDT", "BBUSDT", "KITEUSDT"],
             armed_symbols=["BBUSDT", "KITEUSDT"],
             coverage_roles={
@@ -279,6 +281,16 @@ class DualOrphanPreflightTests(TestCase):
         )
         self.assertEqual(
             check(conn, payload, store, evidence=[object(), object()]), PROOF_LABEL,
+        )
+        # Do not reuse this incident-only exception for other protection failures.
+        for wrong_reason in (
+            "ingress_overflow", "continuity_lost", "websocket_disconnected",
+        ):
+            payload["protection"]["unhealthy_symbols"]["JASMYUSDT"] = wrong_reason
+            with self.assertRaisesRegex(FlatRecoveryBlocked, "protection_unhealthy"):
+                check(conn, payload, store)
+        payload["protection"]["unhealthy_symbols"]["JASMYUSDT"] = (
+            "websocket_disconnect:WebSocketConnectionClosedException"
         )
         payload["protection"]["unhealthy_symbols"]["DOGEUSDT"] = "ingress_overflow"
         with self.assertRaisesRegex(FlatRecoveryBlocked, "protection_unhealthy"):
