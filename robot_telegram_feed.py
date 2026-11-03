@@ -126,6 +126,17 @@ def parse_robot_control_callback(data: Any) -> str | None:
     return command if command in ROBOT_CONTROL_COMMANDS else None
 
 
+def robot_control_status_note(mode: str, recovery_status: str) -> str:
+    """Explain legal recovery choices without offering a mutating bypass."""
+    if recovery_status == "RECONCILIATION_REQUIRED":
+        return (
+            "\\n⚠ Требуется штатная сверка Robot. "
+            "Старт, пауза и остановка сейчас заблокированы; "
+            "кнопка обновления только перечитывает статус."
+        )
+    return ""
+
+
 def build_robot_control_keyboard(
     mode: str, recovery_status: str,
 ) -> dict[str, list[list[dict[str, str]]]]:
@@ -139,10 +150,12 @@ def build_robot_control_keyboard(
     account-wide PAPER closure; ordinary Robot start/resume stays gated.
     """
     if recovery_status == "RECONCILIATION_REQUIRED":
-        return {"inline_keyboard": [[
-            {"text": "🚨 Закрыть ВСЕ PAPER по рынку",
-             "callback_data": f"robot:cmd:{CONTROL_PAPER_CLOSE_ALL}"},
-        ]]}
+        return {"inline_keyboard": [
+            [{"text": "🔄 Обновить статус",
+              "callback_data": f"robot:cmd:{CONTROL_STATUS}"}],
+            [{"text": "🚨 Закрыть ВСЕ PAPER по рынку",
+              "callback_data": f"robot:cmd:{CONTROL_PAPER_CLOSE_ALL}"}],
+        ]}
     if mode == "ROBOT_STOPPED":
         return {
             "inline_keyboard": [
