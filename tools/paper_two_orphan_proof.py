@@ -21,7 +21,7 @@ from terminal.persistence.sqlite_store import SQLiteStore
 from terminal.runtime.paper_runtime import PaperRuntime
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked, _require
 from tools.paper_incident_approvals import (
-    IDLE_APPROVALS, JASMY_CANDIDATE_ID,
+    IDLE_APPROVALS, JASMY_CANDIDATE_ID, JASMY_TRADE_ID,
     prove_six_inert_approvals as _prove_six_inert_approvals,
 )
 from tools.jasmy_flat_handoff_proof import OLD_SHA as INCIDENT_BACKEND_SHA
@@ -32,7 +32,6 @@ EXPECTED_SYMBOLS = frozenset({"JASMYUSDT", "FLOWUSDT"})
 # not any future unrelated trades on the same pair of symbols. FLOW's durable
 # trade/candidate IDs are not yet attested; require its observed lot identity
 # and independent immutable execution proof instead of inventing those IDs.
-JASMY_TRADE_ID = "robot-trade-2a023e646fd8add8b5b30cd8"
 INCIDENT_LOT = {
     "JASMYUSDT": ("SHORT", "DOUBLE TOP", Decimal("399")),
     "FLOWUSDT": ("LONG", "MIRROR", Decimal("6550.8")),
