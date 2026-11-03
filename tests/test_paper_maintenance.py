@@ -305,6 +305,37 @@ def test_partial_editor_resume_blocked_if_telegram_port_still_owned(monkeypatch,
     assert not calls
 
 
+def test_partial_editor_resume_rejects_active_telegram_unit_without_restarting(monkeypatch, tmp_path):
+    from tools.paper_maintenance import resume_installed_release
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as identity
+    import tools.vps_release_resume as resume
+    import tools.legacy_runtime_process as legacy
+
+    root = tmp_path / "release"
+    source = root / "deploy/systemd/bybitscanner-telegram.service"
+    source.parent.mkdir(parents=True)
+    source.write_text("[Service]\\nExecStart=/bin/true\\n")
+    units = tmp_path / "systemd"
+    units.mkdir()
+    (units / source.name).write_bytes(source.read_bytes())
+    monkeypatch.setattr(resume, "UNIT_DIR", units)
+    monkeypatch.setattr(resume, "_systemd_state",
+                        lambda _: {"ActiveState": "active", "MainPID": "1234"})
+    monkeypatch.setattr(identity, "verify_release", lambda _: "a" * 40)
+    monkeypatch.setattr(legacy, "probe_listener_pids", lambda *_: ())
+    monkeypatch.setattr(maintenance, "_editor_backend_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_editor_telegram_ready", lambda *_: False)
+    calls = []
+    result = resume_installed_release(
+        "a" * 40, root=root, env_file=None,
+        runner=lambda argv, **_: calls.append(tuple(argv)),
+        freeze_proof=lambda *_: "b" * 64,
+    )
+    assert result.startswith("BLOCKED: Telegram_owner_or_release_not_proven")
+    assert not calls
+
+
 def test_staged_gitless_editor_executes_one_stop_then_install_and_resume(monkeypatch, tmp_path):
     from tools.paper_maintenance import deploy_staged_editor_only
     import tools.vps_release_identity as release
