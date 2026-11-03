@@ -109,6 +109,31 @@ def test_blocked_stop_never_replays_mutations_even_with_wait_option():
     assert not any(cmd[:2] == ("git", "merge") or "systemctl" in cmd for cmd in calls)
 
 
+def test_lost_stop_response_does_not_raise_or_repeat_or_deploy():
+    calls, attempts = [], []
+    def uncertain_stop(_scope):
+        attempts.append("sent_then_timeout")
+        raise TimeoutError("lost HTTP response after possibly applied stop")
+    result = run_maintenance(
+        "a" * 40, stop=uncertain_stop, runner=fake_runner(calls),
+        readiness=lambda: True, wait_seconds=90,
+    )
+    assert result.startswith("BLOCKED: canonical safe-stop outcome unknown")
+    assert "observe runtime state" in result
+    assert attempts == ["sent_then_timeout"]
+    assert not any(cmd[:2] == ("git", "merge") or "systemctl" in cmd for cmd in calls)
+
+
+def test_malformed_safe_stop_success_never_authorizes_release_switch():
+    calls = []
+    result = run_maintenance(
+        "a" * 40, stop=lambda _: SimpleNamespace(ok="true", runtime_stopped=1),
+        runner=fake_runner(calls), readiness=lambda: True,
+    )
+    assert result.startswith("BLOCKED: canonical safe-stop not proven")
+    assert not any(cmd[:2] == ("git", "merge") or "systemctl" in cmd for cmd in calls)
+
+
 def test_expired_safe_stop_leaves_code_and_service_untouched():
     calls = []
     now = [0.]
