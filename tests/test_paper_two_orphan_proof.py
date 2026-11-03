@@ -103,9 +103,13 @@ def stale_incident_fixture():
         ALTER TABLE robot_candidates ADD COLUMN robot_state_json TEXT;
         ALTER TABLE paper_limit_orders ADD COLUMN order_id TEXT;
         ALTER TABLE paper_limit_orders ADD COLUMN filled_quantity TEXT DEFAULT '0';
+        ALTER TABLE paper_limit_orders ADD COLUMN side TEXT;
+        ALTER TABLE paper_limit_orders ADD COLUMN quantity TEXT;
         ALTER TABLE trading_commands ADD COLUMN exchange_order_id TEXT;
         ALTER TABLE trading_commands ADD COLUMN order_link_id TEXT;
         ALTER TABLE executions ADD COLUMN order_id TEXT;
+        ALTER TABLE executions ADD COLUMN side TEXT;
+        ALTER TABLE executions ADD COLUMN quantity TEXT;
         CREATE TABLE box_order_ownership (
             trading_account_id TEXT, candidate_id TEXT, order_id TEXT, role TEXT
         );
@@ -436,6 +440,100 @@ class DualOrphanPreflightTests(TestCase):
             "VALUES ('paper','HEMIUSDT',201,'cancelled-HEMIUSDT-0')"
         )
         with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress:HEMIUSDT:box_reserved_order_has_execution"):
+            check(conn, payload, store)
+
+    def test_two_old_partially_filled_inusdt_orders_require_proved_flat_ledger(self):
+        conn, payload, store = stale_incident_fixture()
+        # A current approved INUSDT idea has no admission or executions.
+        # Both older LIMITs have independently matched partial executions;
+        # the older Market exit balances the complete symbol ledger to zero.
+        candidate_id = "box-robot-9631" + "0" * 32 + "e84e8"
+        conn.execute(
+            "UPDATE robot_candidates SET state_revision=6, robot_state_json=? "
+            "WHERE candidate_id=?",
+            (json.dumps({"phase": "BOX_ENTRY_READY",
+                         "source_box_candidate_id":
+                             "box-plan-" + candidate_id.removeprefix("box-robot-")}),
+             candidate_id),
+        )
+        conn.execute(
+            "INSERT INTO position_projections VALUES "
+            "('paper','INUSDT','Flat','0','synced')"
+        )
+        for i in range(2):
+            order_id = f"old-inusdt-{i}"
+            conn.execute(
+                "INSERT INTO paper_limit_orders "
+                "(trading_account_id,status,symbol,created_at_ms,order_id,"
+                "filled_quantity,side,quantity) "
+                "VALUES ('paper','cancelled','INUSDT',100,?,'1','Buy','2')",
+                (order_id,),
+            )
+            conn.execute(
+                "INSERT INTO robot_entry_orders VALUES ('paper',?)", (order_id,),
+            )
+            conn.execute(
+                "INSERT INTO executions "
+                "(trading_account_id,symbol,exchange_timestamp_ms,"
+                "order_id,side,quantity) "
+                "VALUES ('paper','INUSDT',101,?,'Buy','1')",
+                (order_id,),
+            )
+        conn.execute(
+            "INSERT INTO executions "
+            "(trading_account_id,symbol,exchange_timestamp_ms,"
+            "order_id,side,quantity) "
+            "VALUES ('paper','INUSDT',102,'old-inusdt-close','Sell','2')"
+        )
+        self.assertEqual(
+            check(conn, payload, store, evidence=[object(), object()]), PROOF_LABEL,
+        )
+        # Old orders are not inert because they were cancelled: their
+        # exact fills must match immutable executions and be fully closed.
+        for statement, args, undo, undo_args in (
+            ("UPDATE executions SET quantity='1' WHERE order_id='old-inusdt-close'",
+             (), "UPDATE executions SET quantity='2' WHERE order_id='old-inusdt-close'", ()),
+            ("UPDATE executions SET quantity='0.5' WHERE order_id='old-inusdt-0'",
+             (), "UPDATE executions SET quantity='1' WHERE order_id='old-inusdt-0'", ()),
+            ("UPDATE executions SET exchange_timestamp_ms=201 WHERE order_id='old-inusdt-1'",
+             (), "UPDATE executions SET exchange_timestamp_ms=101 WHERE order_id='old-inusdt-1'", ()),
+            ("UPDATE paper_limit_orders SET status='open' WHERE order_id='old-inusdt-0'",
+             (), "UPDATE paper_limit_orders SET status='cancelled' WHERE order_id='old-inusdt-0'", ()),
+        ):
+            conn.execute(statement, args)
+            with self.assertRaisesRegex(FlatRecoveryBlocked,
+                                        "INUSDT:symbol_limit_not_cancelled_zero_fill"):
+                check(conn, payload, store)
+            conn.execute(undo, undo_args)
+        conn.execute(
+            "INSERT INTO box_order_ownership VALUES "
+            "('paper','other-plan','old-inusdt-1','ENTRY')"
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "INUSDT:symbol_limit_not_cancelled_zero_fill"
+        ):
+            check(conn, payload, store)
+        conn.execute(
+            "DELETE FROM box_order_ownership WHERE order_id='old-inusdt-1'"
+        )
+        self.assertEqual(
+            check(conn, payload, store, evidence=[object(), object()]), PROOF_LABEL,
+        )
+        # This is not a cross-symbol exception.
+        conn.execute(
+            "INSERT INTO paper_limit_orders "
+            "(trading_account_id,status,symbol,created_at_ms,order_id,"
+            "filled_quantity,side,quantity) "
+            "VALUES ('paper','cancelled','BNCUSDT',100,'old-bnc','1','Buy','2')"
+        )
+        conn.execute(
+            "UPDATE robot_candidates SET state_revision=6, robot_state_json=? "
+            "WHERE symbol='BNCUSDT'",
+            (json.dumps({"phase": "RETEST_DETECTED"}),),
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "BNCUSDT:symbol_limit_not_cancelled_zero_fill"
+        ):
             check(conn, payload, store)
 
     def test_stale_approval_identity_progress_and_box_owner_fail_closed(self):
