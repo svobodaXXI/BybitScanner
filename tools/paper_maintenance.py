@@ -278,7 +278,7 @@ def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -
             if completed.exists() or completed.is_symlink():
                 if (journal_root / previous).is_symlink():
                     raise ActivationBlocked("untrusted_completed_release_transaction")
-                if _trusted_file(completed, uid).read_bytes() != previous.encode("ascii"):
+                if _trusted_file(completed, uid) != previous.encode("ascii"):
                     raise ActivationBlocked("completed_release_receipt_mismatch")
                 continue
             return False
