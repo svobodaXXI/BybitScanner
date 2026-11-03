@@ -113,6 +113,108 @@ def _failed_limit_evidence_shape(conn, *, bad_orders, approved_at_ms: int) -> st
     )
 
 
+def _prove_old_inusdt_limits_flat(conn, *, orders, approved_at_ms: int) -> bool:
+    """Incident-only evidence for two *prior* cancelled, partly filled LIMITs.
+
+    Closing evidence is the complete symbol execution ledger's signed zero
+    balance together with one synchronized FLAT projection, not the LIMIT
+    terminal status. Never infer zero fills from 'cancelled'. This predicate
+    is deliberately independent of order/candidate naming or trade prices.
+    """
+    if type(approved_at_ms) is not int or approved_at_ms <= 0:
+        return False
+    # The exact observed incident: two pre-approval partial fills. Any
+    # additional abnormal order, newer order, or owner conflicts blocks.
+    legacy = [row for row in orders
+              if row[1] != "cancelled" or not _zero_filled(row[2])]
+    if len(legacy) != 2 or len({row[0] for row in legacy}) != 2:
+        return False
+    for order_id, status, filled, created_at, side, quantity in legacy:
+        if (not isinstance(order_id, str) or not order_id
+                or status != "cancelled"
+                or type(created_at) is not int or not 0 < created_at < approved_at_ms
+                or side not in ("Buy", "Sell")):
+            return False
+        try:
+            filled_dec = Decimal(str(filled))
+            ordered_dec = Decimal(str(quantity))
+        except (InvalidOperation, TypeError, ValueError):
+            return False
+        if (not filled_dec.is_finite() or not ordered_dec.is_finite()
+                or not 0 < filled_dec < ordered_dec):
+            return False
+        # A prior Robot entry marker is not itself proof of an OPEN owner.
+        # It must be linked unambiguously to this historical order, but
+        # cannot be a reservation of a current Box candidate.
+        marker = conn.execute(
+            "SELECT COUNT(*) FROM robot_entry_orders "
+            "WHERE trading_account_id='paper' AND order_id=?", (order_id,),
+        ).fetchone()
+        if marker is None or marker[0] != 1:
+            return False
+        if conn.execute(
+            "SELECT 1 FROM box_order_ownership WHERE trading_account_id='paper' "
+            "AND order_id=? LIMIT 1", (order_id,),
+        ).fetchone() is not None:
+            return False
+        fills = conn.execute(
+            "SELECT side, quantity, exchange_timestamp_ms FROM executions "
+            "WHERE trading_account_id='paper' AND symbol='INUSDT' "
+            "AND order_id=?", (order_id,),
+        ).fetchall()
+        if not fills:
+            return False
+        summed = Decimal("0")
+        for fill_side, raw_qty, timestamp in fills:
+            if (fill_side != side or type(timestamp) is not int
+                    or not created_at <= timestamp < approved_at_ms):
+                return False
+            try:
+                qty = Decimal(str(raw_qty))
+            except (InvalidOperation, TypeError, ValueError):
+                return False
+            if not qty.is_finite() or qty <= 0:
+                return False
+            summed += qty
+        if summed != filled_dec:
+            return False
+    # Independent, complete immutable execution ledger, including any
+    # Market exit: no unbalanced past exposure and no fill after approval.
+    executions = conn.execute(
+        "SELECT side, quantity, exchange_timestamp_ms FROM executions "
+        "WHERE trading_account_id='paper' AND symbol='INUSDT'",
+    ).fetchall()
+    if not executions:
+        return False
+    net = Decimal("0")
+    for side, raw_qty, timestamp in executions:
+        if (side not in ("Buy", "Sell") or type(timestamp) is not int
+                or not 0 < timestamp < approved_at_ms):
+            return False
+        try:
+            qty = Decimal(str(raw_qty))
+        except (InvalidOperation, TypeError, ValueError):
+            return False
+        if not qty.is_finite() or qty <= 0:
+            return False
+        net += qty if side == "Buy" else -qty
+    if net != 0:
+        return False
+    projections = conn.execute(
+        "SELECT side, quantity, sync_state FROM position_projections "
+        "WHERE trading_account_id='paper' AND symbol='INUSDT'",
+    ).fetchall()
+    if (len(projections) != 1
+            or projections[0][0] != "Flat"
+            or not _zero_filled(projections[0][1])
+            or projections[0][2] not in ("synced", "synchronized")):
+        return False
+    return conn.execute(
+        "SELECT 1 FROM robot_trades WHERE trading_account_id='paper' "
+        "AND symbol='INUSDT' AND exit_time_ms IS NULL LIMIT 1",
+    ).fetchone() is None
+
+
 def _historical_approval_progress(conn, *, candidate_id: str, symbol: str,
                                   revision: int, raw_state: str,
                                   approved_at_ms: int | None = None,
@@ -170,7 +272,7 @@ def _historical_approval_progress(conn, *, candidate_id: str, symbol: str,
     # Even cancelled LIMIT orders can have fills. Never rely on terminal
     # status alone, and never allow an unproved partially-filled retirement.
     orders = conn.execute(
-        "SELECT order_id, status, filled_quantity, created_at_ms "
+        "SELECT order_id, status, filled_quantity, created_at_ms, side, quantity "
         "FROM paper_limit_orders "
         "WHERE trading_account_id='paper' AND symbol=?", (symbol,),
     ).fetchall()
@@ -179,8 +281,14 @@ def _historical_approval_progress(conn, *, candidate_id: str, symbol: str,
         if row[1] != "cancelled" or not _zero_filled(row[2])
     ]
     if bad_orders:
-        # This is a diagnostic suffix only. A historical, pre-approval fill
-        # still BLOCKS until its ownership and non-exposure are proved.
+        # No general historical-fill exception. Only INUSDT's two
+        # observed pre-approval, settled partial fills may pass after proving
+        # exact order execution linkage and complete signed FLAT ledger.
+        if (symbol == "INUSDT"
+                and _prove_old_inusdt_limits_flat(
+                    conn, orders=orders, approved_at_ms=approved_at_ms,
+                )):
+            return True
         detail = _failed_limit_evidence_shape(
             conn, bad_orders=bad_orders,
             approved_at_ms=approved_at_ms if type(approved_at_ms) is int else -1,
