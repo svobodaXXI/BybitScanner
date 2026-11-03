@@ -7,6 +7,7 @@ from terminal.application.robot_autopilot_shadow import (
 )
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import SQLiteStore
+from tests.test_stop_reentry_reservation import prepared
 
 
 ACCOUNT = TradingAccountId("paper")
@@ -84,3 +85,145 @@ def test_canonical_box_plan_and_robot_diary_reserve_atomically(tmp_path, monkeyp
         assert store._connection.execute(
             "SELECT count(*) FROM robot_trades"
         ).fetchone()[0] == 0
+
+
+def compatible_retry_box_plan(*, multiplier=Decimal("0.1")):
+    """A new frozen grid sharing a stopped MIRROR's [99, 110] corridor.
+
+    The canonical Box planner fixture is shifted to a different price region
+    and sized proportionally. The snapshot fields remain immutable and
+    internally consistent; no risk/admission checks are patched.
+    """
+    from copy import deepcopy
+
+    snapshot = deepcopy(canonical_box_snapshot())
+    delta = Decimal("12")
+    snapshot["identity"]["symbol"] = "LABUSDT"
+    snapshot["identity"]["a_time_ms"] = 1000
+    snapshot["identity"]["b_time_ms"] = 2000
+    def shift(value):
+        return format(Decimal(value) + delta, "f")
+    for key in ("a_price", "b_price"):
+        snapshot["anchors"][key] = shift(snapshot["anchors"][key])
+    for key in ("f1", "f1618", "f2618"):
+        snapshot["fibonacci"][key] = shift(snapshot["fibonacci"][key])
+    plan = snapshot["plan"]
+    for key in ("frozen_f1", "frozen_f1618", "take_price", "stop_price"):
+        plan[key] = shift(plan[key])
+    plan["limit_prices"] = [shift(value) for value in plan["limit_prices"]]
+    plan["limit_quantities"] = [
+        str(Decimal(value) * multiplier) for value in plan["limit_quantities"]
+    ]
+    snapshot["inputs"]["working_quantity"] = str(
+        Decimal(snapshot["inputs"]["working_quantity"]) * multiplier
+    )
+    for exposure in [plan["full_position"], *plan["slices"]]:
+        exposure["average_entry"] = shift(exposure["average_entry"])
+        for key in ("quantity", "net_target_profit", "net_stop_loss"):
+            exposure[key] = str(Decimal(exposure[key]) * multiplier)
+    plan["partial_fill_loss_upper_bound"] = str(
+        Decimal(plan["partial_fill_loss_upper_bound"]) * multiplier
+    )
+    return snapshot
+
+
+def test_stopped_mirror_to_fresh_box_atomic_child_retry_without_second_budget(prepared):
+    """Use canonical Box source->Robot handoff and the existing STOP ledger."""
+    from terminal.application.robot_admission import (
+        admit_robot_candidate, box_plan_admission_handle,
+    )
+    from terminal.application.robot_reentry_adapter import automatic_reentry_proposal
+    from terminal.domain.models import Symbol
+    from terminal.diary.reentry import ReentryDiaryReader
+
+    store, path = prepared
+    # Fixture's placeholder is not a second live entry. The new source plan
+    # and its actual Robot child must be the only admitted active candidate.
+    store._connection.execute(
+        "DELETE FROM robot_candidates WHERE candidate_id='second'"
+    )
+    snapshot = compatible_retry_box_plan()
+    source, created = store.save_box_plan_only(
+        snapshot=snapshot, created_at_ms=300001,
+    )
+    assert created and source.status == "BOX_PLAN_ONLY"
+
+    with store.robot_admission_transaction():
+        proposal = automatic_reentry_proposal(
+            store, ACCOUNT, candidate_id=source.candidate_id,
+            symbol=Symbol("LABUSDT"), snapshot=source.signal_snapshot,
+            now_ms=600001,
+        )
+        assert proposal is not None
+        assert proposal.campaign_id == "thesis-lab-long"
+        assert proposal.previous_stop_exec_id == "stop-exec-1"
+        child, child_created = admit_robot_candidate(
+            box_plan_admission_handle(source.candidate_id),
+            transaction_store=store,
+            expected_snapshot_sha256=source.snapshot_sha256,
+            clock_ms=lambda: 600001, mark_legacy_approved=False,
+            reentry=proposal,
+        )
+        assert child_created
+    assert child.candidate_id != source.candidate_id
+    assert child.status == "APPROVED"
+    assert child.signal_snapshot["source_box_candidate_id"] == source.candidate_id
+    assert store.get_robot_candidate(source.candidate_id).status == "BOX_PLAN_ONLY"
+    attempts = store._connection.execute(
+        """SELECT attempt_index, candidate_id, previous_stop_exec_id
+           FROM robot_reentry_attempts ORDER BY attempt_index"""
+    ).fetchall()
+    assert [tuple(row) for row in attempts] == [
+        (1, "first", None), (2, child.candidate_id, "stop-exec-1"),
+    ]
+    assert store._connection.execute(
+        "SELECT COUNT(*) FROM robot_reentry_campaigns"
+    ).fetchone()[0] == 1
+    assert store._connection.execute(
+        "SELECT COUNT(*) FROM robot_trades"
+    ).fetchone()[0] == 1  # reserve != fill
+    diary = ReentryDiaryReader(path).load()
+    assert len(diary) == 1
+    assert len(diary[0].attempts) == 2
+    assert diary[0].attempts[1].status == "RESERVED_OR_UNFILLED"
+    assert diary[0].attempts[1].candidate_id == child.candidate_id
+
+
+def test_box_retry_full_grid_risk_cannot_reset_previous_stop_campaign(prepared):
+    """Frozen cumulative risk enforces WAIT/rollback even with same thesis."""
+    from terminal.application.robot_admission import (
+        RobotAdmissionRejected, admit_robot_candidate, box_plan_admission_handle,
+    )
+    from terminal.application.robot_reentry_adapter import automatic_reentry_proposal
+    from terminal.domain.models import Symbol
+
+    store, _ = prepared
+    store._connection.execute("DELETE FROM robot_candidates WHERE candidate_id='second'")
+    source, _ = store.save_box_plan_only(
+        snapshot=compatible_retry_box_plan(multiplier=Decimal("1")),
+        created_at_ms=300001,
+    )
+    with store.robot_admission_transaction():
+        proposal = automatic_reentry_proposal(
+            store, ACCOUNT, candidate_id=source.candidate_id,
+            symbol=Symbol("LABUSDT"), snapshot=source.signal_snapshot,
+            now_ms=600001,
+        )
+        assert proposal is not None
+        assert proposal.reserved_risk_usdt > Decimal("10")
+    import pytest
+    with pytest.raises(RobotAdmissionRejected, match="identity conflicts"):
+        with store.robot_admission_transaction():
+            admit_robot_candidate(
+                box_plan_admission_handle(source.candidate_id),
+                transaction_store=store,
+                expected_snapshot_sha256=source.snapshot_sha256,
+                clock_ms=lambda: 600001, mark_legacy_approved=False,
+                reentry=proposal,
+            )
+    assert store._connection.execute(
+        "SELECT COUNT(*) FROM robot_reentry_attempts"
+    ).fetchone()[0] == 1
+    assert store.load_robot_candidates_for_box_source(
+        ACCOUNT, source.candidate_id
+    ) == ()
