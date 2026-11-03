@@ -63,12 +63,25 @@ def _prove_six_inert_approvals(conn, candidates, positions) -> None:
         and all(row[2] == "APPROVED" for row in candidates),
         "unexpected_active_robot_candidate",
     )
+    # Metadata rows without their durable order are still ambiguous. This
+    # index is created by the existing SQLiteStore owner; never create it in
+    # a read-only proof.
+    _require(
+        conn.execute(
+            "SELECT COUNT(*) FROM robot_entry_orders m "
+            "LEFT JOIN paper_limit_orders o ON m.order_id=o.order_id "
+            "WHERE m.trading_account_id='paper' AND o.order_id IS NULL"
+        ).fetchone()[0] == 0,
+        "orphan_robot_entry_order_metadata",
+    )
     for candidate_id, symbol, _ in candidates:
         prefix, suffix = IDLE_APPROVALS[symbol]
         _require(
-            candidate_id.startswith(prefix)
-            and (not suffix or candidate_id.endswith(suffix))
-            and len(candidate_id) >= len(prefix) + len(suffix),
+            (candidate_id == prefix if not suffix else (
+                candidate_id.startswith(prefix)
+                and candidate_id.endswith(suffix)
+                and len(candidate_id) >= len(prefix) + len(suffix)
+            )),
             "unexpected_approved_candidate_identity",
         )
         state = conn.execute(
@@ -141,6 +154,8 @@ def prove_two_flat_orphans(
     _require(
         isinstance(covered, list) and isinstance(armed, list)
         and isinstance(roles, dict)
+        and all(isinstance(item, str) for item in covered + armed)
+        and all(isinstance(item, str) for item in roles)
         and len(covered) == len(set(covered))
         and len(armed) == len(set(armed)),
         "unexpected_protection_coverage",
