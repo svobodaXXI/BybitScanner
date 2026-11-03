@@ -597,7 +597,13 @@ def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
     identities and exact six frozen entry ideas are eligible.
     """
     from tools.stop_robot_runtime import _database_path
-    from tools.paper_two_orphan_proof import EXPECTED_SYMBOLS, FROZEN_APPROVAL_SYMBOLS
+    # Incident identities mirror tools/paper_two_orphan_proof.py. Keep the
+    # maintenance CLI import-light (the full proof imports runtime/scanner).
+    expected_symbols = frozenset({"JASMYUSDT", "FLOWUSDT"})
+    frozen_symbols = frozenset({
+        "1000FLOKIUSDT", "BNCUSDT", "HEMIUSDT", "INUSDT",
+        "PLAYSOUTUSDT", "RUNEUSDT",
+    })
     path = _database_path(root, _environment(env_file))
     if not path.is_file() or path.is_symlink():
         return False
@@ -637,7 +643,7 @@ def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
         ).fetchall()
         if (len(trades) > 2 or len(set(trades)) != len(trades)
                 or len({symbol for _, symbol in trades}) != len(trades)
-                or any(symbol not in EXPECTED_SYMBOLS for _, symbol in trades)):
+                or any(symbol not in expected_symbols for _, symbol in trades)):
             return False
         for _, symbol in trades:
             if sum(position[0] == symbol for position in positions) != 1:
@@ -655,7 +661,7 @@ def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
                 or {(cid, sym, status) for cid, sym, status in rows if status == "OPEN"}
                    != open_owners
                 or len({sym for _, sym, _ in approvals}) != len(approvals)
-                or any(sym not in FROZEN_APPROVAL_SYMBOLS for _, sym, _ in approvals)):
+                or any(sym not in frozen_symbols for _, sym, _ in approvals)):
             return False
         for table, condition in (
             ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
