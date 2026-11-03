@@ -5118,7 +5118,7 @@ class PaperRuntime:
         "1000FLOKIUSDT", "BNCUSDT", "HEMIUSDT", "INUSDT",
         "PLAYSOUTUSDT", "RUNEUSDT",
     })
-    _FROZEN_INCIDENT_APPROVAL_CUTOFF_MS = 1793703600000  # 03 Nov 14:00 MSK
+    _FROZEN_INCIDENT_APPROVAL_CUTOFF_MS = 1793703654000  # 03 Nov 14:00:54 MSK snapshot
 
     def _terminalize_frozen_incident_never_traded(self, record) -> bool:
         """Retire only a pre-incident inert idea during canonical frozen reconcile.
