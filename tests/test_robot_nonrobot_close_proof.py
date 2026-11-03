@@ -90,6 +90,33 @@ class NonRobotCloseProofTests(unittest.TestCase):
         ) / (Decimal("399") * Decimal("0.003792")) * 100
         self.assertEqual(result.realized_pnl_pct, expected_pct)
 
+    def test_only_historical_jasmy_record_clock_lag_is_accepted(self):
+        old = self.trade
+        self.trade = SimpleNamespace(**{
+            **vars(old), "entry_time_ms": 1793556278463,
+        })
+        try:
+            self.assertIsNotNone(self.prove())
+            # Neither an unrelated later recorded time nor a substituted
+            # trade or candidate gets the incident-only clock allowance.
+            for invalid in (
+                {"entry_time_ms": 1793556278464},
+                {"trade_id": "other-jasmy-trade"},
+                {"candidate_id": "different-candidate"},
+                {"direction": "LONG"},
+                {"entry_quantity": Decimal("398")},
+            ):
+                with self.subTest(invalid=invalid):
+                    altered = SimpleNamespace(**{**vars(self.trade), **invalid})
+                    self.assertIsNone(self.prove(trade=altered))
+            fake_live = SimpleNamespace(**{
+                **vars(self.trade),
+                "trading_account_id": TradingAccountId("live"),
+            })
+            self.assertIsNone(self.prove(trade=fake_live))
+        finally:
+            self.trade = old
+
     def test_flow_long_manual_sell_requires_its_own_immutable_execution(self):
         # The second orphan is LONG, unlike JASMY SHORT. An opposite-side
         # exact-quantity SELL must be linked to FLOW's own Robot entry lot.
@@ -104,6 +131,7 @@ class NonRobotCloseProofTests(unittest.TestCase):
             "candidate_id": "candidate-flow", "symbol": flow,
             "direction": "LONG", "pattern": "MIRROR",
             "entry_quantity": qty, "average_entry": entry_price,
+            "entry_time_ms": 1793570677682,
         })
         candidate = SimpleNamespace(**{
             **vars(self.candidate), "candidate_id": "candidate-flow",
@@ -112,11 +140,12 @@ class NonRobotCloseProofTests(unittest.TestCase):
         position = SimpleNamespace(**{
             **vars(self.position),
             "position_key": PositionKey(ACCOUNT, Category.LINEAR, flow, 0),
+            "updated_at_ms": 1793570683000,
         })
         entry = replace(
             self.entry, symbol=flow, order_id=OrderId(flow_entry_order),
             side=OrderSide.BUY, quantity=Quantity(qty), price=Price(entry_price),
-            fee=Decimal("0.020"),
+            fee=Decimal("0.020"), exchange_timestamp_ms=1793570677669,
         )
         close = replace(
             self.close, symbol=flow,
@@ -125,6 +154,7 @@ class NonRobotCloseProofTests(unittest.TestCase):
             ),
             order_id=OrderId("paper-order-" + flow_link), side=OrderSide.SELL,
             quantity=Quantity(qty), price=Price(exit_price), fee=Decimal("0.018"),
+            exchange_timestamp_ms=1793570683000,
         )
         command = SimpleNamespace(**{
             **vars(self.command), "symbol": flow, "side": OrderSide.SELL,
@@ -139,6 +169,12 @@ class NonRobotCloseProofTests(unittest.TestCase):
         )
         proof = prove_nonrobot_robot_close(**facts)
         self.assertIsNotNone(proof)
+        # FLOW's real first-fill/Robot-record timestamp difference is 13 ms.
+        self.assertIsNone(prove_nonrobot_robot_close(
+            **{**facts, "trade": SimpleNamespace(**{
+                **vars(trade), "entry_time_ms": 1793570677681,
+            })}
+        ))
         self.assertEqual(proof.exit_price, exit_price)
         self.assertEqual(proof.realized_pnl_usdt, qty * (exit_price - entry_price))
         self.assertEqual(proof.fees_costs_usdt, Decimal("0.038"))
