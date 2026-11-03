@@ -35,6 +35,7 @@ from pattern_robot_integration import prepare_robot_handoff
 
 from signal_archive import load_frozen_signal_geometry, record_original_signal
 from signal_geometry_producer import build_wedge_geometry_snapshot
+from signal_geometry_snapshot import canonical_bytes
 
 from timeframe_format import format_timeframe_ru
 
@@ -142,17 +143,29 @@ def archive_source_chart(*, symbol, timeframe, pattern, text, chart_path,
         return None, None
     if not image:
         return None, None
-    token = hashlib.sha256(
-        f"{symbol}|{timeframe}|".encode("utf-8") + image
-        + str(text).encode("utf-8")
-    ).hexdigest()[:24]
+    # Image/text bytes can repeat even if the detector's frozen source
+    # anchors change (for example when a chart file is reused). Binding only
+    # those bytes to source_id would silently reopen the first immutable
+    # archive for a later, different signal. Include the *validated frozen*
+    # OHLC and rays in the deterministic handle; retries of the same source
+    # still resolve to exactly one archived record.
+    provisional_id = "source-original:" + "0" * 24
+    frozen = build_wedge_geometry_snapshot(
+        provisional_id, symbol, timeframe, geometry, frozen_candles,
+    )
+    token_input = (
+        f"{symbol}|{timeframe}|".encode("utf-8")
+        + image + str(text).encode("utf-8")
+    )
+    if frozen is not None:
+        token_input += b"\0frozen-geometry-v1\0" + canonical_bytes(frozen)
+    token = hashlib.sha256(token_input).hexdigest()[:24]
     source_id = f"source-original:{token}"
+    snapshot = {**frozen, "signal_id": source_id} if frozen is not None else None
     if not record_original_signal(
         source_id, symbol=symbol, timeframe=timeframe,
         pattern=pattern, text=text, image_bytes=image,
-        geometry_snapshot=build_wedge_geometry_snapshot(
-            source_id, symbol, timeframe, geometry, frozen_candles,
-        ),
+        geometry_snapshot=snapshot,
     ):
         return None, image
     if formation_id:
