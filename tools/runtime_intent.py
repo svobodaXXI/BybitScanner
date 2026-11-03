@@ -143,6 +143,26 @@ def paper_safe_backend_env(env: Mapping[str, str]) -> dict[str, str]:
     return child
 
 
+TELEGRAM_EXCLUDED_CREDENTIALS = frozenset((
+    "BYBITSCANNER_OPERATOR_TOKEN",
+    "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN",
+    "BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN",
+))
+
+
+def telegram_safe_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Do not pass unrelated operator credentials to the Telegram worker.
+
+    Telegram handles external callbacks and may spawn child processes; it
+    needs its own bot/Gateway/workspace configuration, not trading operator,
+    Autopilot owner or geometry service credentials. Never log the values.
+    """
+    return {
+        key: value for key, value in env.items()
+        if key.upper() not in TELEGRAM_EXCLUDED_CREDENTIALS
+    }
+
+
 def spawn_console(argv: list[str], cwd: Path, env: Mapping[str, str] | None = None) -> None:
     """Start a dependency in its own visible console that closes when the child exits.
 
@@ -317,7 +337,8 @@ class RuntimeIntentBootstrap:
             if self._require_telegram:
                 self._ensure(
                     "Telegram monitoring", self._probe_telegram,
-                    telegram_argv(self._root, self._python), None,
+                    telegram_argv(self._root, self._python),
+                    telegram_safe_env(self._env),
                 )
         except (Mismatch, TimeoutError, OSError) as error:
             return BootstrapResult(
