@@ -42,18 +42,17 @@ def _durable_editor_freeze(root: Path, env_file: Path | None) -> str:
     return expected_database_identity(root, env)
 
 
-def _editor_runtime_ready(target: str, database_identity: str) -> bool:
-    """Read-only owner proof. Never substitute an HTTP timeout for process absence."""
+def _editor_backend_ready(target: str, database_identity: str) -> bool:
+    """Prove the running backend's exact release and frozen trading admission."""
     from tools.runtime_intent import http_get
 
     try:
         health = http_get("http://127.0.0.1:8765/api/health", 3)
         scanner = http_get("http://127.0.0.1:8765/api/scanner/status", 3)
         autopilot = http_get("http://127.0.0.1:8765/api/robot/autopilot", 3)
-        telegram = http_get("http://127.0.0.1:8766/health", 3)
-        if not all(x.status == 200 for x in (health, scanner, autopilot, telegram)):
+        if not all(x.status == 200 for x in (health, scanner, autopilot)):
             return False
-        h, s, a, t = (x.json() for x in (health, scanner, autopilot, telegram))
+        h, s, a = (x.json() for x in (health, scanner, autopilot))
         return (
             isinstance(h, dict) and h.get("ok") is True
             and h.get("component") == "paper_backend"
@@ -63,12 +62,67 @@ def _editor_runtime_ready(target: str, database_identity: str) -> bool:
             and h.get("database_identity") == database_identity
             and isinstance(s, dict) and s.get("mode") == "SCANNER_STOPPED"
             and isinstance(a, dict) and a.get("mode") == "OFF"
-            and isinstance(t, dict) and t.get("component") == "telegram_monitoring"
-            and t.get("status") == "ready"
-            and t.get("database_identity") == database_identity
         )
-    except (OSError, ValueError, TypeError, KeyError, Exception):
+    except Exception:
         return False
+
+
+def _editor_telegram_ready(database_identity: str) -> bool:
+    from tools.runtime_intent import http_get
+
+    try:
+        response = http_get("http://127.0.0.1:8766/health", 3)
+        if response.status != 200:
+            return False
+        body = response.json()
+        return (isinstance(body, dict)
+                and body.get("component") == "telegram_monitoring"
+                and body.get("status") == "ready"
+                and body.get("database_identity") == database_identity)
+    except Exception:
+        return False
+
+
+def _editor_runtime_ready(target: str, database_identity: str) -> bool:
+    return (_editor_backend_ready(target, database_identity)
+            and _editor_telegram_ready(database_identity))
+
+
+def _resume_missing_telegram(
+    target: str, database_identity: str, *, root: Path, runner,
+    probe,
+) -> str:
+    """A partial successful resume only needs its proven-absent Telegram worker."""
+    from tools.legacy_runtime_process import LegacyOwnerUnproven, probe_listener_pids
+    from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+    from tools.vps_release_resume import ResumeBlocked, UNIT_DIR, _systemd_state
+
+    unit = "bybitscanner-telegram.service"
+    try:
+        if verify_release(root) != target:
+            raise ResumeBlocked("installed_release_differs")
+        installed = UNIT_DIR / unit
+        source = root / "deploy/systemd" / unit
+        if (installed.is_symlink() or not installed.is_file()
+                or installed.read_bytes() != source.read_bytes()):
+            raise ResumeBlocked("telegram_unit_mismatch")
+        _systemd_state(unit)
+        if probe_listener_pids("127.0.0.1", 8766):
+            raise ResumeBlocked("telegram_listener_not_absent")
+    except (ResumeBlocked, ReleaseIdentityBlocked, LegacyOwnerUnproven, OSError):
+        return "BLOCKED: Telegram_owner_or_release_not_proven; no start attempted"
+    try:
+        result = runner(
+            [*PREFIX, "systemctl", "start", unit],
+            cwd=root, capture_output=True, text=True, timeout=180, check=False,
+        )
+        if result.returncode != 0:
+            return "BLOCKED: Telegram_start_failed_or_unknown; no retry"
+    except (OSError, subprocess.TimeoutExpired):
+        return "BLOCKED: Telegram_start_outcome_unknown; no retry"
+    if not probe(target, database_identity):
+        return "BLOCKED: EDITOR_ONLY_postconditions_unproven; Backend preserved"
+    return "READY: Telegram recovered in EDITOR_ONLY; Backend not restarted"
 
 
 def resume_installed_release(
@@ -95,7 +149,20 @@ def resume_installed_release(
         return "BLOCKED: editor_only_freeze_unproven:" + type(exc).__name__
     probe = runtime_ready or _editor_runtime_ready
     if probe(target, identity):
+        from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+        if resume_proof is None:
+            try:
+                if verify_release(root) != target:
+                    return "BLOCKED: installed_release_content_changed"
+            except (ReleaseIdentityBlocked, OSError):
+                return "BLOCKED: installed_release_content_unproven"
         return "READY: exact installed PAPER release, Telegram and EDITOR_ONLY already proven; no mutation"
+    # If the backend was started before a transport failure, do not restart
+    # it or re-run STOP. Recover only a proven-absent worker, one time.
+    if runtime_ready is None and _editor_backend_ready(target, identity):
+        return _resume_missing_telegram(
+            target, identity, root=root, runner=runner, probe=probe,
+        )
     try:
         receipt = (resume_proof or check_resume)(target, root=root)
         if not isinstance(receipt, str) or not receipt.startswith("RESUME_READY:"):
