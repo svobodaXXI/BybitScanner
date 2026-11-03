@@ -446,6 +446,35 @@ def test_staged_gitless_rejects_symlink_release_lock_before_stop(monkeypatch, tm
     assert not (transactions / (".stop-invoked-" + "a" * 40)).exists()
 
 
+def test_staged_gitless_unknown_stop_exception_is_bounded_and_not_replayed(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    calls = []
+    def stop(_scope):
+        calls.append("stop")
+        raise RuntimeError("owner transport failed after dispatch")
+    kwargs = dict(
+        stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(), preflight=lambda *_args, **_kw: None,
+        stop=stop,
+        installer=lambda *_args, **_kw: pytest.fail("no install on unknown stop"),
+        resume=lambda *_args, **_kw: pytest.fail("no resume"),
+    )
+    first = deploy_staged_editor_only("a" * 40, **kwargs)
+    assert first.startswith("BLOCKED: canonical_safe_stop_outcome_unknown:RuntimeError")
+    second = deploy_staged_editor_only("a" * 40, **kwargs)
+    assert second.startswith("BLOCKED: prior_STOP_outcome_unproven_without_install_journal")
+    assert calls == ["stop"]
+    assert not (transactions / ("a" * 40)).exists()
+
+
 def test_staged_gitless_different_target_cannot_replay_unresolved_stop(monkeypatch, tmp_path):
     from tools.paper_maintenance import deploy_staged_editor_only
     import tools.vps_release_identity as release
