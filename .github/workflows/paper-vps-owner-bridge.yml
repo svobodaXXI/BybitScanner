@@ -1,0 +1,84 @@
+name: PAPER VPS owner-command bridge
+
+# issue_comment executes the workflow FROM THE DEFAULT main BRANCH, not stable.
+# This is deliberate: feature/PR code never receives VPS SSH credentials.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ci/paper_vps_ops.py'
+      - 'tests/test_paper_vps_ops.py'
+      - '.github/workflows/paper-vps-owner-bridge.yml'
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paper-vps-owner-bridge
+  cancel-in-progress: false
+
+jobs:
+  bridge-tests:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest -v tests.test_paper_vps_ops
+      - run: python3 -m py_compile ci/paper_vps_ops.py
+
+  owner-vps-operation:
+    if: >-
+      ${{ github.event_name == 'issue_comment' &&
+          github.event.action == 'created' &&
+          github.repository == 'svobodaXXI/BybitScanner' &&
+          github.event.issue.number == 823 &&
+          !github.event.issue.pull_request &&
+          github.event.comment.user.login == 'svobodaXXI' &&
+          github.event.comment.author_association == 'OWNER' &&
+          startsWith(github.event.comment.body, '/paper-vps ') }}
+    runs-on: ubuntu-24.04
+    environment: paper-vps-ops
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate fixed owner operation and exact SHA
+        id: intent
+        shell: bash
+        run: python3 ci/paper_vps_ops.py request "$GITHUB_EVENT_PATH" "$GITHUB_OUTPUT"
+
+      - name: Execute only pinned PAPER preflight or one-shot coordinator
+        shell: bash
+        env:
+          PAPER_VPS_SSH_PRIVATE_KEY: ${{ secrets.PAPER_VPS_SSH_PRIVATE_KEY }}
+          PAPER_VPS_SSH_KNOWN_HOSTS: ${{ secrets.PAPER_VPS_SSH_KNOWN_HOSTS }}
+          PAPER_VPS_SSH_TARGET: ${{ secrets.PAPER_VPS_SSH_TARGET }}
+          MODE: ${{ steps.intent.outputs.mode }}
+          TARGET_SHA: ${{ steps.intent.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test -n "${PAPER_VPS_SSH_PRIVATE_KEY:-}"
+          test -n "${PAPER_VPS_SSH_KNOWN_HOSTS:-}"
+          test -n "${PAPER_VPS_SSH_TARGET:-}"
+          python3 ci/paper_vps_ops.py check-target "$PAPER_VPS_SSH_TARGET"
+          key_file="$(mktemp "$RUNNER_TEMP/paper-vps-key.XXXXXX")"
+          known_file="$(mktemp "$RUNNER_TEMP/paper-vps-known.XXXXXX")"
+          trap 'rm -f "$key_file" "$known_file"' EXIT
+          chmod 600 "$key_file" "$known_file"
+          printf '%s\n' "$PAPER_VPS_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$PAPER_VPS_SSH_KNOWN_HOSTS" > "$known_file"
+          ssh -T \
+            -i "$key_file" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o PasswordAuthentication=no \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$known_file" \
+            -o ConnectTimeout=10 \
+            -o ConnectionAttempts=1 \
+            -o ForwardAgent=no \
+            -o ClearAllForwardings=yes \
+            "$PAPER_VPS_SSH_TARGET" \
+            "/usr/bin/python3 - remote $MODE $TARGET_SHA" < ci/paper_vps_ops.py
