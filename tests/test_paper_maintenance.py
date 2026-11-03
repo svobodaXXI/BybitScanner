@@ -584,7 +584,9 @@ def test_staged_gitless_corrupt_completed_receipt_blocks_next_stop(monkeypatch, 
     transactions = tmp_path / "transactions"
     transactions.mkdir(mode=0o700)
     previous = "a" * 40
-    (transactions / (".stop-invoked-" + previous)).write_bytes(b"STOP_INVOKED")
+    intent = transactions / (".stop-invoked-" + previous)
+    intent.write_bytes(b"STOP_INVOKED")
+    intent.chmod(0o600)
     prior_journal = transactions / previous
     prior_journal.mkdir(mode=0o700)
     (prior_journal / "editor-ready").write_bytes(b"wrong-target")
