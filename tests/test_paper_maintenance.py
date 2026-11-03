@@ -1,3 +1,4 @@
+import os
 import pytest
 from pathlib import Path
 from types import SimpleNamespace
@@ -355,7 +356,7 @@ def test_staged_gitless_editor_executes_one_stop_then_install_and_resume(monkeyp
             "INSTALLED_STOPPED: exact"
         )[1],
         resume=lambda *_args, **_kw: (steps.append("resume"), "READY: EDITOR_ONLY")[1],
-        transactions=tmp_path / "transactions",
+        transactions=tmp_path / "transactions", trusted_uid=os.geteuid(),
     )
     assert result == "READY: EDITOR_ONLY"
     assert steps == ["preflight", "stop", ("install", True), "resume"]
@@ -379,10 +380,44 @@ def test_staged_gitless_editor_rejected_stop_never_installs(monkeypatch, tmp_pat
         )[1],
         installer=lambda *_args, **_kw: pytest.fail("no install after refused stop"),
         resume=lambda *_args, **_kw: pytest.fail("no resume after refused stop"),
-        transactions=tmp_path / "transactions",
+        transactions=tmp_path / "transactions", trusted_uid=os.geteuid(),
     )
     assert result.startswith("BLOCKED: canonical_safe_stop_unproven")
     assert steps == ["preflight", "stop"]
+
+
+
+def test_staged_gitless_unknown_stop_never_replayed_without_install_journal(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    calls = []
+    def stop(_scope):
+        calls.append("stop")
+        raise OSError("stop outcome lost after dispatch")
+    def blocked_installer(*_args, **_kwargs):
+        pytest.fail("never install without successful STOP receipt")
+    kwargs = dict(
+        stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(), preflight=lambda *_args, **_kwargs: None,
+        stop=stop, installer=blocked_installer,
+        resume=lambda *_args, **_kwargs: pytest.fail("must not resume"),
+    )
+    first = deploy_staged_editor_only(target, **kwargs)
+    assert first.startswith("BLOCKED:")
+    assert calls == ["stop"]
+    assert (transactions / (".stop-invoked-" + target)).is_file()
+    second = deploy_staged_editor_only(target, **kwargs)
+    assert second.startswith("BLOCKED: prior_STOP_outcome_unproven_without_install_journal")
+    assert calls == ["stop"]
+    assert not (transactions / target).exists()
 
 
 def test_staged_gitless_editor_recovery_of_partial_install_never_replays_stop(monkeypatch, tmp_path):
