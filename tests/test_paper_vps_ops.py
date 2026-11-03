@@ -23,6 +23,28 @@ def event(body, *, login="svobodaXXI", association="OWNER", issue=823,
 
 
 class OwnerBridgeTests(unittest.TestCase):
+    def test_owner_bootstrap_shell_fragment_preserves_shared_system_paths(self):
+        import subprocess
+        script = (
+            Path("tools/bootstrap_paper_vps_bridge.ps1")
+            .read_text(encoding="utf-8")
+        )
+        shell = script.split("$setup = @'", 1)[1].split("'@", 1)[0]
+        result = subprocess.run(
+            ["sh", "-n"], input=shell, text=True, capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(
+            "install -d -o root -g root -m 0700 /usr/local/libexec", shell
+        )
+        self.assertIn(
+            "test -z \"$(find /usr/local/libexec -maxdepth 0 -perm /022 -print)\"",
+            shell,
+        )
+        self.assertIn("test -z \"$(find /root/.ssh -maxdepth 0 -perm /077 -print)\"", shell)
+        self.assertNotIn("chmod 0600 /root/.ssh/authorized_keys", shell)
+
     def test_exact_owner_comment_matches_one_fixed_operation(self):
         self.assertEqual(
             bridge.parse_request(event("/paper-vps preflight " + SHA)),
