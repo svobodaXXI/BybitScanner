@@ -5052,20 +5052,27 @@ class PaperRuntime:
     _PRE_ENTRY_WEDGE_PHASES = frozenset({"WAITING_BREAKOUT", "WAITING_RETEST", "RETEST_DETECTED"})
 
     def _terminalize_stopped_pre_entry_wedge(self, record, prior) -> bool:
-        """ROBOT_STOPPED only: end a Wedge idea proven never to have traded.
+        """End a never-traded Wedge only under proven frozen admission.
 
-        A missing ``limit_order_id`` is not proof: an entry submitted by a caller
-        that timed out may still have been executed by the owner later (2026-10-14
-        AAVEUSDT). This pass runs on the owner, so every earlier queued command has
-        already run, and ROBOT_STOPPED admits no new entry. Ownership is then
-        proven only from durable PAPER evidence on the symbol: no working LIMIT,
-        no fill since approval, no unfinished command, no open Robot trade or
-        unresolved protection obligation (an open position was handled above).
-        Anything unproven is left APPROVED for the caller to report.
+        Normal ROBOT_STOPPED is already entry-fenced. During the canonical
+        REQUIRED -> RECONCILING pass, allow the same terminalization only when
+        Scanner is durably STOPPED and Autopilot durably OFF. Both paths then
+        require symbol-scoped no-order, no-fill, no-command, no-trade, no-
+        obligation and Flat evidence below. A caller timeout is not proof.
         """
         runtime_state = self.store.get_robot_runtime_state(self._account_id)
-        if runtime_state is None or runtime_state.mode != "ROBOT_STOPPED":
+        if runtime_state is None:
             return False
+        if runtime_state.mode != "ROBOT_STOPPED":
+            if (runtime_state.mode, runtime_state.recovery_status) != (
+                "ROBOT_RUNNING", "RECONCILING",
+            ):
+                return False
+            scanner = self.store.get_scanner_runtime_state(self._account_id)
+            autopilot = self.store.get_robot_autopilot_state(self._account_id)
+            if (scanner is None or scanner.mode != "SCANNER_STOPPED"
+                    or autopilot is None or autopilot.mode != "OFF"):
+                return False
         state = record.robot_state or {}
         if (
             record.status != "APPROVED"
@@ -5092,6 +5099,8 @@ class PaperRuntime:
         now_ms = int(time.time() * 1000)
         execution["stopped_without_entry_at_ms"] = now_ms
         execution["stopped_without_entry_reason"] = (
+            "FROZEN_RECONCILING before Wedge entry (no order, fill or exposure)"
+            if runtime_state.mode == "ROBOT_RUNNING" else
             "ROBOT_STOPPED before Wedge entry (no order, fill or exposure)"
         )
         self.store.save_robot_candidate_state(
