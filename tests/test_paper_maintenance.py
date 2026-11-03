@@ -145,3 +145,93 @@ def test_wrong_branch_blocks_before_safe_stop():
         stop=lambda _: (_ for _ in ()).throw(AssertionError("stop must not run")))
     assert result.startswith("BLOCKED:")
     assert not any("systemctl" in cmd for cmd in calls)
+
+
+def test_resume_installed_editor_only_from_verified_stopped_release_no_stop_or_git():
+    from tools.paper_maintenance import resume_installed_release
+    calls = []
+    probes = []
+    def ready(sha, identity):
+        probes.append((sha, identity))
+        return len(probes) == 2
+    result = resume_installed_release(
+        "a" * 40, root=Path("/opt/BybitScanner"), env_file=None,
+        runner=lambda argv, **_: (
+            calls.append(tuple(argv)),
+            SimpleNamespace(returncode=0)
+        )[1],
+        resume_proof=lambda sha, **_: "RESUME_READY: installed release verified",
+        freeze_proof=lambda *_: "b" * 64,
+        runtime_ready=ready,
+    )
+    assert result.startswith("READY:")
+    assert len(probes) == 2
+    assert calls == [
+        ("sudo", "-n", "/opt/BybitScanner/venv/bin/python",
+         "-m", "tools.vps_systemd_unit_prepare"),
+        ("sudo", "-n", "systemctl", "start", "bybitscanner-paper-backend.service"),
+        ("sudo", "-n", "systemctl", "start", "bybitscanner-telegram.service"),
+    ]
+    assert not any("paper-start" in " ".join(call) or "merge" in call for call in calls)
+
+
+def test_resume_installed_editor_only_already_ready_never_mutates():
+    from tools.paper_maintenance import resume_installed_release
+    result = resume_installed_release(
+        "a" * 40, root=Path("/opt/BybitScanner"), env_file=None,
+        runner=lambda *_args, **_kwargs: pytest.fail("no command"),
+        resume_proof=lambda *_args, **_kwargs: pytest.fail("no stopped proof"),
+        freeze_proof=lambda *_: "b" * 64,
+        runtime_ready=lambda *_: True,
+    )
+    assert result.startswith("READY:")
+    assert "no mutation" in result
+
+
+def test_resume_installed_live_or_wrong_release_never_starts():
+    from tools.paper_maintenance import resume_installed_release
+    from tools.vps_release_resume import ResumeBlocked
+    calls = []
+    result = resume_installed_release(
+        "a" * 40, root=Path("/opt/BybitScanner"), env_file=None,
+        runner=lambda argv, **_: calls.append(tuple(argv)),
+        resume_proof=lambda *_args, **_kwargs: (
+            _ for _ in ()
+        ).throw(ResumeBlocked("PAPER_unit_not_stopped")),
+        freeze_proof=lambda *_: "b" * 64,
+        runtime_ready=lambda *_: False,
+    )
+    assert result.startswith("BLOCKED: installed_release_not_stopped")
+    assert not calls
+
+
+def test_resume_installed_unfrozen_paper_never_attempts_start():
+    from tools.paper_maintenance import resume_installed_release
+    calls = []
+    result = resume_installed_release(
+        "a" * 40, root=Path("/opt/BybitScanner"), env_file=None,
+        runner=lambda argv, **_: calls.append(tuple(argv)),
+        freeze_proof=lambda *_: (_ for _ in ()).throw(
+            ValueError("Scanner is running")
+        ),
+    )
+    assert result.startswith("BLOCKED: editor_only_freeze_unproven")
+    assert not calls
+
+
+def test_resume_installed_service_failure_preserves_backend_and_never_requests_paper_auto():
+    from tools.paper_maintenance import resume_installed_release
+    calls = []
+    def run(argv, **kwargs):
+        calls.append(tuple(argv))
+        return SimpleNamespace(returncode=1 if "bybitscanner-telegram.service" in argv else 0)
+    result = resume_installed_release(
+        "a" * 40, root=Path("/opt/BybitScanner"), env_file=None,
+        runner=run,
+        resume_proof=lambda *_args, **_kwargs: "RESUME_READY: installed",
+        freeze_proof=lambda *_: "b" * 64,
+        runtime_ready=lambda *_: False,
+    )
+    assert result.startswith("BLOCKED: telegram_start_failed_or_unknown")
+    assert len(calls) == 3
+    assert not any("bybitscanner-paper-start.service" in c for c in calls)
