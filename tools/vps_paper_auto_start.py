@@ -13,6 +13,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+from tools.runtime_intent import PROJECT_ROOT, expected_database_identity
+
 BASE = "http://127.0.0.1:8765"
 HEADER = "X-BybitScanner-Autopilot-Owner-Token"
 
@@ -59,6 +61,14 @@ def enable_from_authorized_start(env: dict[str, str] | None = None) -> None:
     if len(token) < 32:
         raise StartupBlocked("PAPER_AUTO owner token is missing or invalid")
 
+    # The owner oneshot must refuse admission against any other PAPER DB,
+    # before the first PAPER_AUTO POST. Reuse the canonical path identity,
+    # including the configured BYBITSCANNER_PAPER_DB override.
+    try:
+        expected_db = expected_database_identity(PROJECT_ROOT, env)
+    except (OSError, TypeError, ValueError) as exc:
+        raise StartupBlocked("configured PAPER database identity is unproven") from exc
+
     health = request("/api/health")
     if not (
         health.get("ok") is True
@@ -67,7 +77,7 @@ def enable_from_authorized_start(env: dict[str, str] | None = None) -> None:
         and health.get("paper_live_safe") is True
         and health.get("robot_admission_ready") is True
         and health.get("scanner_acceptance_ready") is True
-        and health.get("database_identity")
+        and health.get("database_identity") == expected_db
     ):
         raise StartupBlocked("PAPER backend / LIVE isolation / admission not proven")
     scanner = request("/api/scanner/status")
