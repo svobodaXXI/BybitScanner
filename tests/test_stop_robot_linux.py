@@ -47,7 +47,8 @@ class FakeHost:
         if url == BACKEND + "/api/scanner/status":
             return 200, {"ok": True, "mode": self.scanner_mode}
         if url == BACKEND + "/api/robot/autopilot":
-            return 200, {"ok": True, "mode": "OFF"}
+            return 200, {"ok": True, "mode": "OFF",
+                         "trading_account_id": {"value": "paper"}}
         if url == BACKEND + "/api/robot/protection-health":
             return 200, {"healthy": True, "covered_symbols": [], "unhealthy_symbols": {}, "armed_symbols": []}
         raise AssertionError(f"unexpected GET {url}")

@@ -752,6 +752,7 @@ class RuntimeShutdown:
             if (
                 status != 200 or not isinstance(body, dict)
                 or body.get("ok") is not True
+                or body.get("trading_account_id") != {"value": "paper"}
                 or body.get("mode") not in ("OFF", "SHADOW", "PAPER_AUTO")
             ):
                 raise SafeStopError(
@@ -768,7 +769,10 @@ class RuntimeShutdown:
             raise SafeStopError(
                 "Autopilot OFF outcome unknown; not retried; runtime kept alive"
             ) from exc
-        if status != 200 or not isinstance(body, dict) or body.get("ok") is not True or body.get("mode") != "OFF":
+        if (status != 200 or not isinstance(body, dict)
+                or body.get("ok") is not True
+                or body.get("trading_account_id") != {"value": "paper"}
+                or body.get("mode") != "OFF"):
             raise SafeStopError(
                 "Autopilot OFF rejected or unconfirmed; runtime kept alive"
             )
@@ -786,6 +790,7 @@ class RuntimeShutdown:
             raise SafeStopError("Autopilot OFF post-Scanner state unavailable; runtime kept alive") from exc
         if not (
             status == 200 and isinstance(body, dict) and body.get("ok") is True
+            and body.get("trading_account_id") == {"value": "paper"}
             and body.get("mode") == "OFF"
         ):
             raise SafeStopError("Autopilot OFF post-Scanner state unproven; runtime kept alive")
