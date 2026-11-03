@@ -13,6 +13,33 @@ from terminal.domain.models import Category, Controller, OrderSide, PositionSide
 from terminal.domain.states import CommandState
 
 
+# Immutable evidence from the exact 2026-11-03 JASMY/FLOW PAPER incident.
+# The owner persisted a local entry_time_ms just after the immutable fill
+# event, not the fill's exchange_timestamp_ms. No generic time tolerance:
+# unrelated lots, times or accounts must continue to require equality.
+_HISTORICAL_ENTRY_TIME_PAIRS = {
+    "JASMYUSDT": (1793556278449, 1793556278463, "SHORT", "DOUBLE TOP",
+                  Decimal("399")),
+    "FLOWUSDT": (1793570677669, 1793570677682, "LONG", "MIRROR",
+                 Decimal("6550.8")),
+}
+
+
+def _exact_legacy_entry_time_pair(trade, first_fill_ms: int) -> bool:
+    symbol = getattr(getattr(trade, "symbol", None), "value", None)
+    expected = _HISTORICAL_ENTRY_TIME_PAIRS.get(symbol)
+    if (expected is None or getattr(trade.trading_account_id, "value", None) != "paper"
+            or (first_fill_ms, trade.entry_time_ms) != expected[:2]
+            or trade.direction != expected[2]
+            or str(trade.pattern).upper() != expected[3]
+            or trade.entry_quantity != expected[4]):
+        return False
+    if symbol == "JASMYUSDT":
+        return (trade.trade_id == "robot-trade-2a023e646fd8add8b5b30cd8"
+                and trade.candidate_id == "2a023e646fd8add8b5b30cd8")
+    return True
+
+
 def prove_nonrobot_robot_close(
     *, trade, candidate, position, executions: Sequence,
     command, entry_order_ids: Sequence[str], entry_fees: Decimal | None,
@@ -108,7 +135,9 @@ def prove_nonrobot_robot_close(
     # The first recognized entry must be this trade's actual first fill.
     # Coincidentally equal quantities/fees from an earlier lot cannot be
     # substituted to manufacture a closing ledger attribution.
-    if entry_fills[0].exchange_timestamp_ms != trade.entry_time_ms:
+    if (entry_fills[0].exchange_timestamp_ms != trade.entry_time_ms
+            and not _exact_legacy_entry_time_pair(
+                trade, entry_fills[0].exchange_timestamp_ms)):
         return None
     if sum((fill.quantity.value for fill in entry_fills), Decimal("0")) != trade.entry_quantity:
         return None
