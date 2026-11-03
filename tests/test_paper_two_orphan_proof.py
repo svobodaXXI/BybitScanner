@@ -30,10 +30,18 @@ def fixture():
           symbol TEXT, exit_time_ms INTEGER
         );
         CREATE TABLE robot_candidates (
-          trading_account_id TEXT, candidate_id TEXT, symbol TEXT, status TEXT
+          trading_account_id TEXT, candidate_id TEXT, symbol TEXT, status TEXT,
+          approved_at_ms INTEGER
         );
-        CREATE TABLE paper_limit_orders (trading_account_id TEXT, status TEXT);
-        CREATE TABLE trading_commands (trading_account_id TEXT, current_state TEXT);
+        CREATE TABLE paper_limit_orders (
+          trading_account_id TEXT, status TEXT, symbol TEXT, created_at_ms INTEGER
+        );
+        CREATE TABLE trading_commands (
+          trading_account_id TEXT, current_state TEXT, symbol TEXT, created_at_ms INTEGER
+        );
+        CREATE TABLE executions (
+          trading_account_id TEXT, symbol TEXT, exchange_timestamp_ms INTEGER
+        );
         CREATE TABLE paper_protection_obligations (trading_account_id TEXT, status TEXT);
         CREATE TABLE reconciliation_checkpoints (trading_account_id TEXT, completed_at_ms INTEGER);
         INSERT INTO robot_runtime_state VALUES ('paper','ROBOT_RUNNING','PAUSED');
@@ -42,8 +50,8 @@ def fixture():
         INSERT INTO position_projections VALUES ('paper','FLOWUSDT','Flat','0','synced');
         INSERT INTO robot_trades VALUES ('paper','robot-trade-2a023e646fd8add8b5b30cd8','2a023e646fd8add8b5b30cd8','JASMYUSDT',NULL);
         INSERT INTO robot_trades VALUES ('paper','trade-f','cand-f','FLOWUSDT',NULL);
-        INSERT INTO robot_candidates VALUES ('paper','2a023e646fd8add8b5b30cd8','JASMYUSDT','OPEN');
-        INSERT INTO robot_candidates VALUES ('paper','cand-f','FLOWUSDT','OPEN');
+        INSERT INTO robot_candidates VALUES ('paper','2a023e646fd8add8b5b30cd8','JASMYUSDT','OPEN',100);
+        INSERT INTO robot_candidates VALUES ('paper','cand-f','FLOWUSDT','OPEN',100);
     """)
     payload = dict(
         expected_identity="synthetic-db",
@@ -203,12 +211,87 @@ class DualOrphanPreflightTests(TestCase):
 
     def test_approved_or_third_trade_never_inherits_two_owner_exception(self):
         conn, payload, store = fixture()
-        conn.execute("INSERT INTO robot_candidates VALUES ('paper','approved','DOGEUSDT','APPROVED')")
+        conn.execute("INSERT INTO robot_candidates VALUES ('paper','approved','DOGEUSDT','APPROVED',100)")
         with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_active_robot_candidate"):
             check(conn, payload, store)
         conn.execute("DELETE FROM robot_candidates WHERE candidate_id='approved'")
         conn.execute("INSERT INTO robot_trades VALUES ('paper','trade-x','cand-x','DOGEUSDT',NULL)")
         with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_open_robot_owners"):
+            check(conn, payload, store)
+
+    def test_exact_frozen_approved_candidate_requires_no_execution(self):
+        conn, payload, store = fixture()
+        conn.execute(
+            "INSERT INTO robot_candidates VALUES "
+            "('paper','frozen-a','1000FLOKIUSDT','APPROVED',200)"
+        )
+        old = store.get_robot_candidate.side_effect
+        approved = SimpleNamespace(
+            candidate_id="frozen-a", trading_account_id=ACCOUNT,
+            symbol=Symbol("1000FLOKIUSDT"), status="APPROVED",
+            approved_at_ms=200,
+        )
+        store.get_robot_candidate.side_effect = (
+            lambda candidate_id: approved if candidate_id == "frozen-a"
+            else old(candidate_id)
+        )
+        self.assertEqual(
+            check(conn, payload, store, evidence=[object(), object()]), PROOF_LABEL,
+        )
+        conn.execute(
+            "INSERT INTO executions VALUES ('paper','1000FLOKIUSDT',200)"
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "frozen_candidate_entry_execution_unproven",
+        ):
+            check(conn, payload, store, evidence=[object(), object()])
+        conn.execute("DELETE FROM executions")
+        conn.execute(
+            "INSERT INTO paper_limit_orders VALUES "
+            "('paper','filled','1000FLOKIUSDT',201)"
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "frozen_candidate_entry_execution_unproven",
+        ):
+            check(conn, payload, store, evidence=[object(), object()])
+        conn.execute("DELETE FROM paper_limit_orders")
+        conn.execute(
+            "INSERT INTO trading_commands VALUES "
+            "('paper','filled','1000FLOKIUSDT',201)"
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "frozen_candidate_entry_execution_unproven",
+        ):
+            check(conn, payload, store, evidence=[object(), object()])
+
+    def test_exact_flat_only_unhealthy_coverage_is_not_any_health_bypass(self):
+        conn, payload, store = fixture()
+        payload["protection"] = dict(
+            healthy=False,
+            unhealthy_symbols={"JASMYUSDT": "websocket_disconnected",
+                               "FLOWUSDT": "continuity_lost"},
+            covered_symbols=["JASMYUSDT", "FLOWUSDT", "BBUSDT", "KITEUSDT"],
+            armed_symbols=["BBUSDT", "KITEUSDT"],
+            coverage_roles={
+                "JASMYUSDT": "EXPOSURE", "FLOWUSDT": "EXPOSURE",
+                "BBUSDT": "ENTRY_PENDING", "KITEUSDT": "ENTRY_PENDING",
+            },
+        )
+        self.assertEqual(
+            check(conn, payload, store, evidence=[object(), object()]), PROOF_LABEL,
+        )
+        payload["protection"]["unhealthy_symbols"]["DOGEUSDT"] = "ingress_overflow"
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "protection_unhealthy"):
+            check(conn, payload, store)
+        del payload["protection"]["unhealthy_symbols"]["DOGEUSDT"]
+        payload["protection"]["coverage_roles"]["BBUSDT"] = "OBLIGATION"
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_protection_coverage"):
+            check(conn, payload, store)
+        payload["protection"]["coverage_roles"]["BBUSDT"] = "ENTRY_PENDING"
+        conn.execute(
+            "INSERT INTO paper_limit_orders VALUES ('paper','open','BBUSDT',201)"
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "active_or_unknown_paper_limit"):
             check(conn, payload, store)
 
     def test_wrong_backend_or_extra_coverage_cannot_authorize_incident(self):
