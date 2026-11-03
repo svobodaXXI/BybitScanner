@@ -105,6 +105,91 @@ def test_wedge_cursor_must_not_be_guessed_from_candle_age_or_candidate_arrival()
     assert proven_pattern_entry(snap, now_ms=1_200_000) is None
 
 
+
+@pytest.mark.parametrize("source_timeframe", ["1", "5"])
+def test_proven_stop_then_fresh_wedge_reserves_second_canonical_attempt(
+    prepared, source_timeframe,
+):
+    """A different Wedge setup reuses the STOP campaign, never a new budget."""
+    from scanner_geometry_cursor import project_frozen_geometry_to_robot_1m
+
+    store, _ = prepared
+    snapshot = wedge()
+    # Frozen 1m Wedge corridor [101, 109] overlaps the prior MIRROR
+    # STOP-to-TAKE corridor [99, 110]; matching direction alone is insufficient.
+    snapshot["geometry"]["upper_line"]["intercept"] = 110
+    snapshot["geometry"]["lower_line"]["intercept"] = 100
+    if source_timeframe == "5":
+        snapshot["scanner_source_timeframe"] = "5"
+        snapshot["robot_handoff_ready"] = True
+        snapshot["robot_geometry"] = project_frozen_geometry_to_robot_1m(
+            snapshot["geometry"], source_timeframe="5",
+        )
+    assert proven_pattern_entry(snapshot, now_ms=1_079_999) is None
+    confirmed = proven_pattern_entry(snapshot, now_ms=1_080_000)
+    assert confirmed is not None
+    assert confirmed.confirmed_at_ms == 1_080_000
+
+    # Replace only the unfilled placeholder in this isolated fixture.
+    store._connection.execute("DELETE FROM robot_candidates WHERE candidate_id='second'")
+    store.create_robot_candidate(
+        candidate_id="second", trading_account_id=TradingAccountId("paper"),
+        symbol=Symbol("LABUSDT"), status="APPROVED",
+        signal_snapshot=snapshot, approved_at_ms=1_100_000,
+        updated_at_ms=1_100_000,
+    )
+    with store.robot_admission_transaction():
+        proposal = automatic_reentry_proposal(
+            store, TradingAccountId("paper"), candidate_id="second",
+            symbol=Symbol("LABUSDT"), snapshot=snapshot, now_ms=1_200_000,
+        )
+        assert proposal is not None
+        assert proposal.campaign_id == "thesis-lab-long"
+        assert proposal.previous_stop_exec_id == "stop-exec-1"
+        assert store.reserve_robot_stop_reentry(
+            account=TradingAccountId("paper"),
+            campaign_id=proposal.campaign_id,
+            candidate_id="second",
+            frozen_thesis_sha256=proposal.frozen_thesis_sha256,
+            direction=proposal.direction,
+            previous_stop_exec_id=proposal.previous_stop_exec_id,
+            confirmed_at_ms=proposal.confirmed_at_ms,
+            reserved_risk_usdt=proposal.reserved_risk_usdt,
+            reserved_at_ms=1_200_000,
+            strategy_confirmation_proven=proposal.strategy_confirmation_proven,
+        )
+    attempt_rows = store._connection.execute(
+        """SELECT attempt_index, candidate_id, previous_stop_exec_id
+           FROM robot_reentry_attempts ORDER BY attempt_index"""
+    ).fetchall()
+    assert [tuple(row) for row in attempt_rows] == [
+        (1, "first", None),
+        (2, "second", "stop-exec-1"),
+    ]
+    # Reservation is not a trade, fill, order, or second execution engine.
+    assert store._connection.execute(
+        "SELECT COUNT(*) FROM robot_trades"
+    ).fetchone()[0] == 1
+
+
+def test_post_stop_box_disjoint_frozen_grid_does_not_inherit_campaign(prepared):
+    store, _ = prepared
+    snapshot = box()
+    snapshot["plan"].update(stop_price="89.6", take_price="99.2")
+    # A valid 5m plan can still be a DIFFERENT idea: its frozen entry
+    # (92.8) lies below the previous MIRROR STOP (99).
+    assert proven_pattern_entry(snapshot, now_ms=600_000) is not None
+    with pytest.raises(PersistenceError, match="thesis lineage unproven"):
+        with store.robot_admission_transaction():
+            automatic_reentry_proposal(
+                store, TradingAccountId("paper"), candidate_id="second",
+                symbol=Symbol("LABUSDT"), snapshot=snapshot, now_ms=600_000,
+            )
+    assert store._connection.execute(
+        "SELECT COUNT(*) FROM robot_reentry_attempts"
+    ).fetchone()[0] == 1
+
+
 def test_ordinary_wedge_and_box_do_not_forge_stop_or_confirmation_proof():
     for name in ("Falling Wedge", "Rising Wedge", "IKIGAI_BOX"):
         snap = lshape()
