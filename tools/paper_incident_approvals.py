@@ -60,7 +60,7 @@ def _failed_limit_evidence_shape(conn, *, bad_orders, approved_at_ms: int) -> st
     box_owners = 0
     sampled = bad_orders[:16]
     try:
-        for order_id, raw_status, raw_quantity, created_at in sampled:
+        for order_id, raw_status, raw_quantity, created_at, *_ in sampled:
             label = raw_status if raw_status in (
                 "filled", "cancelled", "open", "partially_filled", "pending",
                 "rejected", "expired", "failed",
