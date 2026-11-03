@@ -76,8 +76,9 @@ def _blob(path: Path) -> str | None:
     return git_blob_hash(path.read_bytes())
 
 
-def _check_files(root: Path, old: dict, new: dict) -> None:
-    """Every file must be either old, target, or legitimately not yet created."""
+def _check_files(root: Path, old: dict, new: dict, *,
+                 partial: bool = False) -> None:
+    """Do not adopt a pre-existing untracked file as new tracked release code."""
     for name in sorted(set(old) | set(new)):
         _demand(not (
             name == "config.py" or name == "paper_runtime.sqlite3"
@@ -85,6 +86,9 @@ def _check_files(root: Path, old: dict, new: dict) -> None:
         ), "release_touches_runtime_owned_file")
         path = _safe_path(root, name)
         got = _blob(path)
+        if name not in old and not partial:
+            _demand(got is None, "tracked_or_untracked_collision:" + name)
+            continue
         permitted = {old.get(name), new.get(name)}
         if name in old and name in new:
             permitted.discard(None)
@@ -190,6 +194,9 @@ def activate_staged_release(
     _demand(not manifest.is_symlink(), "manifest_symlink")
     _demand(manifest.parent.is_dir() and not manifest.parent.is_symlink(),
             "unsafe_manifest_directory")
+    manifest_parent = manifest.parent.stat()
+    _demand(manifest_parent.st_uid == uid and not manifest_parent.st_mode & 0o022,
+            "unprotected_manifest_directory")
     stage_manifest = _new_manifest(stage, sha)
     journal = transactions / sha
     with (transactions / ".release.lock").open("a+b") as lock:
@@ -233,7 +240,7 @@ def activate_staged_release(
             _sync_directory(transactions)
 
         old_blobs, new_blobs = original["blobs"], rec["blobs"]
-        _check_files(root, old_blobs, new_blobs)
+        _check_files(root, old_blobs, new_blobs, partial=True)
         # Compare units against pinned rollback data rather than the possibly
         # already-upgraded tracked source on an interrupted transaction.
         for unit in UNITS:
@@ -254,7 +261,7 @@ def activate_staged_release(
             destination = _safe_path(root, name)
             if _blob(destination) == digest:
                 continue
-            _atomic_file(destination, raw, stat.S_IMODE(source.stat().st_mode))
+            _atomic_file(destination, raw, 0o755 if source.stat().st_mode & stat.S_IXUSR else 0o644)
         for name in sorted(set(old_blobs) - set(new_blobs)):
             dest = _safe_path(root, name)
             if dest.exists():
@@ -268,8 +275,11 @@ def activate_staged_release(
                     "staging_unit_changed:" + unit)
             dest = unit_dir / unit
             if not dest.is_file() or dest.read_bytes() != data:
-                _atomic_file(dest, data, stat.S_IMODE(source.stat().st_mode))
+                _atomic_file(dest, data, 0o644)
 
+        # Reattest stopped ownership immediately before the commit marker:
+        # a concurrently restarted process may never run half-installed code.
+        _stopped(states, listeners)
         # Install the protected release manifest last; it is the commit point.
         # A crash before it is written is recoverable via the pinned rollback.
         installed_manifest = _manifest(_trusted_file(manifest, uid))
