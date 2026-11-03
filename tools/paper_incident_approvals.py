@@ -8,6 +8,7 @@ from tools.flat_paper_recovery_gate import _require
 
 # Observed historical JASMY Robot candidate; never match by symbol alone.
 JASMY_CANDIDATE_ID = "2a023e646fd8add8b5b30cd8"
+JASMY_TRADE_ID = "robot-trade-2a023e646fd8add8b5b30cd8"
 
 IDLE_APPROVALS = {
     "1000FLOKIUSDT": ("box-robot-aa55", "af8c6"),
