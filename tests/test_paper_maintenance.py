@@ -502,6 +502,45 @@ def test_staged_gitless_different_target_cannot_replay_unresolved_stop(monkeypat
     assert calls == ["stop"]
 
 
+def test_staged_gitless_completed_release_allows_later_target_without_stop_replay(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    old = "a" * 40
+    new = "b" * 40
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    current = ["c" * 40]
+    monkeypatch.setattr(release, "verify_release", lambda *_: current[0])
+    calls = []
+
+    def install(target, **_kw):
+        (transactions / target).mkdir(exist_ok=True)
+        return "INSTALLED_STOPPED: exact"
+
+    def resume(target, **_kw):
+        current[0] = target
+        return "READY: EDITOR_ONLY"
+
+    def stop(_scope):
+        calls.append("stop")
+        return SimpleNamespace(ok=True, runtime_stopped=True)
+
+    args = dict(
+        stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(), preflight=lambda *_args, **_kw: None,
+        stop=stop, installer=install, resume=resume,
+    )
+    assert deploy_staged_editor_only(old, **args) == "READY: EDITOR_ONLY"
+    assert (transactions / old / "editor-ready").read_bytes() == old.encode()
+    assert deploy_staged_editor_only(new, **args) == "READY: EDITOR_ONLY"
+    assert calls == ["stop", "stop"]
+    assert (transactions / new / "editor-ready").read_bytes() == new.encode()
+
+
 def test_staged_gitless_other_target_pending_transaction_blocks_new_stop(monkeypatch, tmp_path):
     from tools.paper_maintenance import deploy_staged_editor_only
     import tools.vps_release_identity as release
