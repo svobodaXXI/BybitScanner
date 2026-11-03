@@ -195,6 +195,81 @@ SERVICE = "bybitscanner-paper-start.service"
 PREFIX = ("sudo", "-n")
 
 
+def deploy_staged_editor_only(
+    target: str, *, stage: Path, root: Path = REPO, env_file: Path | None = None,
+    dual_orphan_handoff: bool = False, stop=None, preflight=None,
+    installer=None, resume=None, manifest=None, unit_dir=None,
+    transactions=None, trusted_uid: int = 0,
+) -> str:
+    """Single bounded intent: preflight -> canonical STOP -> Gitless switch -> Editor.
+
+    No stage mutation before exact old/target evidence. A durable prior
+    installation transaction may resume read-only ownership proofs without
+    invoking STOP or any other trading action again. EDITOR_ONLY does not
+    resume Scanner or PAPER_AUTO.
+    """
+    from tools.vps_gitless_release_activate import (
+        ActivationBlocked, TRANSACTIONS, UNIT_DIR, activate_staged_release,
+        inspect_staged_release,
+    )
+    from tools.vps_release_identity import (
+        MANIFEST, ReleaseIdentityBlocked, verify_release,
+    )
+    from tools.stop_robot_runtime import build_dual_orphan_handoff
+
+    if len(target) != 40 or any(ch not in "0123456789abcdef" for ch in target):
+        return "BLOCKED: invalid_approved_target"
+    if (not root.is_dir() or root.is_symlink() or (root / ".git").exists()
+            or not stage.is_dir() or stage.is_symlink()):
+        return "BLOCKED: incorrect_Gitless_release_layout"
+    manifest_path = manifest or MANIFEST
+    installed_units = unit_dir or UNIT_DIR
+    journal_root = transactions or TRANSACTIONS
+    journal = journal_root / target
+
+    resume_action = resume or resume_installed_release
+    install_action = installer or activate_staged_release
+    try:
+        try:
+            current = verify_release(root, manifest_path)
+        except (ReleaseIdentityBlocked, OSError):
+            if not journal.is_dir() or journal.is_symlink():
+                return "BLOCKED: installed_release_unproven_without_transaction"
+            current = None
+        if current == target:
+            return resume_action(target, root=root, env_file=env_file)
+        if not journal.is_dir():
+            (preflight or inspect_staged_release)(
+                target, stage=stage, root=root, manifest=manifest_path,
+                unit_dir=installed_units, uid=trusted_uid,
+            )
+            # Ordinary STOP is a single mutating action. The exact dual-orphan
+            # fallback requires its own explicit opt-in, never implied by update.
+            if stop is None:
+                env = _environment(env_file)
+                callback = build_dual_orphan_handoff(env) if dual_orphan_handoff else None
+                action = RuntimeShutdown(
+                    root=root, env=env, dual_orphan_handoff=callback,
+                ).run
+            else:
+                action = stop
+            result = action(SCOPE_ALL)
+            if not (result.ok and result.runtime_stopped):
+                return "BLOCKED: canonical_safe_stop_unproven; no retry, no deployment"
+        else:
+            result = None  # Already recorded protected transaction; no STOP replay.
+        receipt = install_action(
+            target, stage=stage, stopped_proof=result, root=root,
+            manifest=manifest_path, unit_dir=installed_units,
+            transactions=journal_root, uid=trusted_uid,
+        )
+        if not isinstance(receipt, str) or not receipt.startswith("INSTALLED_STOPPED:"):
+            return "BLOCKED: installed_release_postcondition_unknown; do not start"
+    except (ActivationBlocked, ReleaseIdentityBlocked, OSError, ValueError) as exc:
+        return "BLOCKED: Gitless_switch_unproven:" + type(exc).__name__ + ":" + str(exc)
+    return resume_action(target, root=root, env_file=env_file)
+
+
 def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
                     stop=None, env_file: Path | None = None,
                     wait_seconds: float = 0, poll_seconds: float = 30,
@@ -314,8 +389,22 @@ def main(argv=None) -> int:
     parser.add_argument("--wait-seconds", type=float, default=0)
     parser.add_argument("--resume-installed-editor-only", action="store_true",
                         help="only after an exact Gitless release was safely installed")
+    parser.add_argument("--staged-gitless-editor-only", type=Path,
+                        help="owner-approved exact staged checkout; safe-stop and install once")
+    parser.add_argument("--dual-orphan-handoff-20261103", action="store_true",
+                        help="separate explicit opt-in to exact JASMY/FLOW protected handoff")
     args = parser.parse_args(argv)
-    if args.resume_installed_editor_only:
+    if args.resume_installed_editor_only and args.staged_gitless_editor_only:
+        parser.error("choose exactly one Gitless operation")
+    if args.dual_orphan_handoff_20261103 and not args.staged_gitless_editor_only:
+        parser.error("exceptional handoff requires staged Gitless operation")
+    if args.staged_gitless_editor_only:
+        status = deploy_staged_editor_only(
+            args.sha, stage=args.staged_gitless_editor_only,
+            env_file=args.env_file,
+            dual_orphan_handoff=args.dual_orphan_handoff_20261103,
+        )
+    elif args.resume_installed_editor_only:
         status = resume_installed_release(args.sha, root=REPO, env_file=args.env_file)
     else:
         status = run_maintenance(args.sha, env_file=args.env_file,
