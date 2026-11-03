@@ -24,7 +24,7 @@ from tools.vps_release_resume import _assert_no_listeners, _systemd_state
 from tools.vps_systemd_unit_prepare import UNITS
 
 UNIT_DIR = Path("/etc/systemd/system")
-TRANSACTIONS = Path("/var/lib/bybitscanner/release-transactions")
+TRANSACTIONS = Path("/var/lib/bybitscanner-release-transactions")
 
 
 class ActivationBlocked(ValueError):
@@ -58,12 +58,13 @@ def _manifest(payload: bytes) -> dict:
 def _safe_path(root: Path, name: str) -> Path:
     _demand(root.is_dir() and not root.is_symlink(), "unsafe_release_root")
     path = root
-    for part in name.split("/"):
+    parts = name.split("/")
+    for index, part in enumerate(parts):
         _demand(bool(part) and part not in (".", "..") and "\\" not in part,
                 "invalid_release_path")
         path = path / part
         _demand(not path.is_symlink(), "release_path_symlink")
-        if part != name.split("/")[-1] and path.exists():
+        if index < len(parts) - 1 and path.exists():
             _demand(path.is_dir(), "release_parent_not_directory")
     return path
 
@@ -88,30 +89,6 @@ def _check_files(root: Path, old: dict, new: dict) -> None:
         if name in old and name in new:
             permitted.discard(None)
         _demand(got in permitted, "tracked_or_untracked_collision:" + name)
-
-
-def _check_units(unit_dir: Path, root: Path, stage: Path,
-                 old: dict, new: dict, *, old_units: dict[str, bool]) -> None:
-    _demand(unit_dir.is_dir() and not unit_dir.is_symlink(), "unsafe_unit_directory")
-    for unit in UNITS:
-        name = "deploy/systemd/" + unit
-        _demand(name in old and name in new, "missing_tracked_systemd_unit")
-        destination = unit_dir / unit
-        _demand(not destination.is_symlink(), "systemd_unit_symlink")
-        got = destination.read_bytes() if destination.is_file() else None
-        old_bytes = _safe_path(root, name).read_bytes() if (
-            _blob(_safe_path(root, name)) == old[name]
-        ) else None
-        new_bytes = _safe_path(stage, name).read_bytes()
-        # A transaction may have already copied the new tracked file, so
-        # old unit bytes can come from the pinned rollback snapshot instead.
-        if old_units[unit]:
-            _demand(got is not None and (
-                (old_bytes is not None and got == old_bytes) or got == new_bytes
-            ), "systemd_unit_modified:" + unit)
-        else:
-            _demand(got is None or got == new_bytes,
-                    "untracked_systemd_unit_collision:" + unit)
 
 
 def _sync_directory(path: Path) -> None:
@@ -198,6 +175,13 @@ def activate_staged_release(
     authorize a new STOP, Close-All or SIGINT.
     """
     _demand(os.geteuid() == uid, "release_requires_trusted_operator")
+    _demand(transactions.parent.is_dir() and not transactions.parent.is_symlink(),
+            "unsafe_transaction_parent")
+    parent_owner = transactions.parent.stat()
+    _demand(parent_owner.st_uid == uid and not parent_owner.st_mode & 0o022,
+            "unprotected_transaction_parent")
+    if not transactions.exists():
+        transactions.mkdir(mode=0o700)
     _demand(transactions.is_dir() and not transactions.is_symlink(),
             "missing_protected_transaction_directory")
     parent_stat = transactions.stat()
