@@ -243,7 +243,10 @@ def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -
                     or marker.is_symlink() or not marker.is_file()
                     or marker.stat().st_uid != uid or marker.stat().st_mode & 0o077):
                 raise ActivationBlocked("untrusted_prior_STOP_intent")
-            if not (journal_root / previous).is_dir():
+            # An in-progress switch for another target is not permission to
+            # execute a second STOP against whichever runtime now exists.
+            # Resolve the original transaction before changing release target.
+            if previous != target or not (journal_root / previous).is_dir():
                 return False
         marker = journal_root / (".stop-invoked-" + target)
         if marker.exists() or marker.is_symlink():
