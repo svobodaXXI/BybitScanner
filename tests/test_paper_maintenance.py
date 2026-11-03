@@ -1069,6 +1069,16 @@ def test_paper_start_quiescence_checks_durable_frozen_ledgers(monkeypatch, tmp_p
     with sqlite3.connect(db) as conn:
         conn.execute("INSERT INTO robot_candidates VALUES ('paper','APPROVED')")
     assert not maintenance._paper_start_quiescent(tmp_path, None)
+    # Only proven terminal Robot candidate states can coexist with a restart.
+    # Unknown/corrupt future states must block instead of silently passing.
+    for status in ("OPEN", "UNKNOWN_FUTURE_STATE", None):
+        with sqlite3.connect(db) as conn:
+            conn.execute("UPDATE robot_candidates SET status=?", (status,))
+        assert not maintenance._paper_start_quiescent(tmp_path, None)
+    for status in ("BOX_PLAN_ONLY", "CLOSED", "EXPIRED", "INVALIDATED"):
+        with sqlite3.connect(db) as conn:
+            conn.execute("UPDATE robot_candidates SET status=?", (status,))
+        assert maintenance._paper_start_quiescent(tmp_path, None)
     with sqlite3.connect(db) as conn:
         conn.execute("DELETE FROM robot_candidates")
         conn.execute("UPDATE robot_runtime_state "
