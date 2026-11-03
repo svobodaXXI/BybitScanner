@@ -1170,6 +1170,36 @@ def test_gitless_full_start_unproven_runtime_does_not_skip_recovery(monkeypatch)
     "/api/scanner/status",
     "/api/robot/autopilot",
 ))
+def test_paper_readiness_unreachable_endpoint_blocks(monkeypatch, tmp_path, endpoint):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as runtime_intent
+
+    payloads = {
+        "/api/health": {"mode": "paper", "paper_live_safe": True},
+        "/api/robot/protection-health": {"healthy": True},
+        "/api/scanner/status": {"mode": "SCANNER_RUNNING"},
+        "/api/robot/autopilot": {"mode": "PAPER_AUTO"},
+    }
+
+    def api(url, _timeout):
+        path = next(path for path in payloads if url.endswith(path))
+        if path == endpoint:
+            raise runtime_intent.Unreachable("connection refused")
+        return SimpleNamespace(status=200, json=lambda: payloads[path])
+
+    monkeypatch.setattr(runtime_intent, "http_get", api)
+    result = maintenance._paper_full_readiness(
+        root=tmp_path, env_file=None, readiness=lambda: True,
+    )
+    assert result.startswith("BLOCKED: PAPER core started but")
+
+
+@pytest.mark.parametrize("endpoint", (
+    "/api/health",
+    "/api/robot/protection-health",
+    "/api/scanner/status",
+    "/api/robot/autopilot",
+))
 @pytest.mark.parametrize("malformed", (None, [], "not-an-object"))
 def test_paper_readiness_rejects_malformed_http_json(monkeypatch, tmp_path, endpoint, malformed):
     import tools.paper_maintenance as maintenance
