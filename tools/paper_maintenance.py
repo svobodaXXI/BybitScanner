@@ -241,19 +241,23 @@ def deploy_staged_editor_only(
                 return "BLOCKED: installed_release_unproven_without_transaction"
             current = None
         if current == target:
-            # The manifest can have been committed before a crash left the
-            # external systemd unit copy incomplete. A protected transaction
-            # may complete that stopped-only installation, but never replay
-            # STOP or start a process before the installer reattests ownership.
-            if journal.is_dir():
-                receipt = install_action(
-                    target, stage=stage, stopped_proof=None, root=root,
-                    manifest=manifest_path, unit_dir=installed_units,
-                    transactions=journal_root, uid=trusted_uid,
-                )
-                if (not isinstance(receipt, str)
-                        or not receipt.startswith("INSTALLED_STOPPED:")):
-                    return "BLOCKED: installed_release_postcondition_unknown; do not start"
+            # Already-ready installations must be idempotent (and may have
+            # live units); never touch their protected journal in that case.
+            observed = resume_action(target, root=root, env_file=env_file)
+            if (not journal.is_dir() or
+                    (isinstance(observed, str) and observed.startswith("READY:"))):
+                return observed
+            # If manifest commit preceded a crash copying systemd units, a
+            # stopped-only installer can complete the pinned transaction.
+            # It reattests stopped units and ports; no STOP is replayed.
+            receipt = install_action(
+                target, stage=stage, stopped_proof=None, root=root,
+                manifest=manifest_path, unit_dir=installed_units,
+                transactions=journal_root, uid=trusted_uid,
+            )
+            if (not isinstance(receipt, str)
+                    or not receipt.startswith("INSTALLED_STOPPED:")):
+                return "BLOCKED: installed_release_postcondition_unknown; do not start"
             return resume_action(target, root=root, env_file=env_file)
         if not journal.is_dir():
             (preflight or inspect_staged_release)(
