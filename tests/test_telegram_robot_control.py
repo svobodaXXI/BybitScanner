@@ -411,12 +411,58 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         self.assertIn("PAPER FLAT", answer.call_args.args[1])
         panel.assert_called_once()
 
-    def test_reconciliation_required_panel_still_offers_operator_close(self):
-        from robot_telegram_feed import build_robot_control_keyboard
+    def test_reconciliation_required_panel_is_readonly_except_existing_paper_close(self):
+        from robot_telegram_feed import build_robot_control_keyboard, robot_control_status_note
         panel = build_robot_control_keyboard("ROBOT_RUNNING", "RECONCILIATION_REQUIRED")
-        self.assertEqual(panel["inline_keyboard"][0][0]["callback_data"],
-                         "robot:cmd:paper_close_all")
-        self.assertEqual(len(panel["inline_keyboard"]), 1)
+        commands = [button["callback_data"]
+                    for row in panel["inline_keyboard"] for button in row]
+        self.assertEqual(commands, ["robot:cmd:status", "robot:cmd:paper_close_all"])
+        self.assertNotIn("robot:cmd:pause", commands)
+        self.assertNotIn("robot:cmd:stop", commands)
+        self.assertNotIn("robot:cmd:start", commands)
+        self.assertIn("Требуется штатная сверка", robot_control_status_note(
+            "ROBOT_RUNNING", "RECONCILIATION_REQUIRED",
+        ))
+        for recovery_status in ("READY", "PAUSED", "ROBOT_STOPPED"):
+            self.assertEqual(robot_control_status_note("ROBOT_RUNNING", recovery_status), "")
+        self.assertEqual(
+            build_robot_control_keyboard("ROBOT_RUNNING", "READY")["inline_keyboard"][0][0]["callback_data"],
+            "robot:cmd:pause",
+        )
+        self.assertEqual(
+            build_robot_control_keyboard("ROBOT_RUNNING", "PAUSED")["inline_keyboard"][0][0]["callback_data"],
+            "robot:cmd:resume",
+        )
+        self.assertEqual(
+            build_robot_control_keyboard("ROBOT_STOPPED", "ROBOT_STOPPED")["inline_keyboard"][0][0]["callback_data"],
+            "robot:cmd:start",
+        )
+
+    def test_reconciliation_status_refresh_authorized_and_read_only(self):
+        callback = _owner_callback("status-recon", "status")
+        with patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "42"), \
+             patch.object(telegram_review, "get_robot_runtime_status",
+                          return_value=_state("ROBOT_RUNNING", "RECONCILIATION_REQUIRED")), \
+             patch.object(telegram_review.telegram_bot, "send_message") as send, \
+             patch.object(telegram_review, "_post_paper_close_all") as paper_close, \
+             patch.object(telegram_review, "pause_robot") as pause, \
+             patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._process_callback(callback)
+        answer.assert_called_once()
+        send.assert_called_once()
+        self.assertIn("Требуется штатная сверка", send.call_args.args[2])
+        paper_close.assert_not_called()
+        pause.assert_not_called()
+
+    def test_reconciliation_status_refresh_rejects_other_user(self):
+        callback = _owner_callback("status-intruder", "status")
+        callback["from"]["id"] = 99
+        with patch.object(telegram_review.config, "TELEGRAM_CHAT_ID", "42"), \
+             patch.object(telegram_review.telegram_bot, "send_message") as send, \
+             patch.object(telegram_review, "_answer_callback") as answer:
+            telegram_review._process_callback(callback)
+        answer.assert_called_once_with("status-intruder", "Недостаточно прав")
+        send.assert_not_called()
 
     def test_paper_confirm_success_uses_single_route_scoped_action(self):
         callback = self._private_paper_callback("paper-confirm", "paper_close_all_confirm")
