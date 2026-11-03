@@ -86,20 +86,27 @@ def test_unapproved_target_never_updates_or_starts():
     assert not any(cmd[:2] == ("git", "merge") or "systemctl" in cmd for cmd in calls)
 
 
-def test_waits_for_canonical_safe_stop_before_mutating_runtime():
+def test_blocked_stop_never_replays_mutations_even_with_wait_option():
     calls = []
     attempts = []
     def stop(_scope):
         attempts.append(len(attempts))
+        # A second call would appear to succeed, but it is not authorized:
+        # the first call could have sent SIGINT before losing its response.
         return SimpleNamespace(ok=len(attempts) >= 2, runtime_stopped=len(attempts) >= 2)
     now = [0.]
+    sleeps = []
     def sleep(seconds):
+        sleeps.append(seconds)
         now[0] += seconds
     result = run_maintenance("a" * 40, stop=stop,
         runner=fake_runner(calls), readiness=lambda: True, wait_seconds=60, poll_seconds=10,
         clock=lambda: now[0], sleep=sleep)
-    assert result.startswith("READY:")
-    assert len(attempts) == 2
+    assert result.startswith("BLOCKED:")
+    assert "no repeated STOP" in result
+    assert attempts == [0]
+    assert sleeps == []
+    assert not any(cmd[:2] == ("git", "merge") or "systemctl" in cmd for cmd in calls)
 
 
 def test_expired_safe_stop_leaves_code_and_service_untouched():
