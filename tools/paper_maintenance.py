@@ -221,6 +221,16 @@ def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -
             or journal_root.stat().st_uid != uid
             or journal_root.stat().st_mode & 0o077):
         raise ActivationBlocked("untrusted_stop_intent_directory")
+    # An unresolved STOP from another requested release is still the same
+    # runtime side effect. Changing the target SHA must not replay it.
+    for marker in journal_root.glob(".stop-invoked-*"):
+        previous = marker.name.removeprefix(".stop-invoked-")
+        if (len(previous) != 40 or any(ch not in "0123456789abcdef" for ch in previous)
+                or marker.is_symlink() or not marker.is_file()
+                or marker.stat().st_uid != uid or marker.stat().st_mode & 0o077):
+            raise ActivationBlocked("untrusted_prior_STOP_intent")
+        if not (journal_root / previous).is_dir():
+            return False
     marker = journal_root / (".stop-invoked-" + target)
     if marker.exists() or marker.is_symlink():
         return False
@@ -298,10 +308,13 @@ def deploy_staged_editor_only(
                 return "BLOCKED: installed_release_postcondition_unknown; do not start"
             return resume_action(target, root=root, env_file=env_file)
         if not journal.is_dir():
-            # An earlier attempt may have died after STOP and before the
-            # installer created its protected rollback journal. Never replay
-            # an irreversible owner action or treat this marker as safe STOP.
-            if (journal_root / (".stop-invoked-" + target)).exists():
+            # Preserve a pending intent for any release SHA; a later operator
+            # cannot bypass a failed STOP merely by changing the target.
+            if journal_root.is_dir() and any(
+                marker.is_file() or marker.is_symlink()
+                for marker in journal_root.glob(".stop-invoked-*")
+                if not (journal_root / marker.name.removeprefix(".stop-invoked-")).is_dir()
+            ):
                 return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
             (preflight or inspect_staged_release)(
                 target, stage=stage, root=root, manifest=manifest_path,
