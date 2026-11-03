@@ -22,7 +22,7 @@ def fake_git_checkout(monkeypatch):
 def fake_ready_api(monkeypatch):
     def get(url, _timeout):
         if url.endswith("/api/health"):
-            data = {"mode": "paper", "paper_live_safe": True}
+            data = {"mode": "paper", "paper_live_safe": True, "build_sha": "a" * 40}
         elif url.endswith("/api/robot/protection-health"):
             data = {"healthy": True}
         elif url.endswith("/api/scanner/status"):
