@@ -143,16 +143,23 @@ def paper_safe_backend_env(env: Mapping[str, str]) -> dict[str, str]:
     return child
 
 
-def telegram_safe_env(env: Mapping[str, str]) -> dict[str, str]:
-    """Do not inherit the LIVE operator credential into the Telegram worker.
+TELEGRAM_EXCLUDED_CREDENTIALS = frozenset((
+    "BYBITSCANNER_OPERATOR_TOKEN",
+    "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN",
+    "BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN",
+))
 
-    The worker handles external callbacks and may launch child processes.
-    Keep its existing bot, gateway, workspace and PAPER configuration intact;
-    unlike the PAPER backend it is not a LIVE authority. Never log values.
+
+def telegram_safe_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Do not pass unrelated operator credentials to the Telegram worker.
+
+    Telegram handles external callbacks and may spawn child processes; it
+    needs its own bot/Gateway/workspace configuration, not trading operator,
+    Autopilot owner or geometry service credentials. Never log the values.
     """
     return {
         key: value for key, value in env.items()
-        if key.upper() != "BYBITSCANNER_OPERATOR_TOKEN"
+        if key.upper() not in TELEGRAM_EXCLUDED_CREDENTIALS
     }
 
 
