@@ -203,6 +203,33 @@ PREFIX = ("sudo", "-n")
 
 
 
+
+def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
+    """Record post-resume success only; never grant STOP or install authority."""
+    from tools.vps_gitless_release_activate import (
+        ActivationBlocked, _sync_directory, _trusted_file,
+    )
+    marker = journal_root / (".stop-invoked-" + target)
+    if not marker.exists():
+        return  # An existing release may predate one-shot STOP fencing.
+    _trusted_file(marker, uid)
+    journal = journal_root / target
+    if (not journal.is_dir() or journal.is_symlink()
+            or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077):
+        raise ActivationBlocked("untrusted_completed_release_transaction")
+    done = journal / "editor-ready"
+    if done.exists():
+        if _trusted_file(done, uid).read_bytes() != target.encode("ascii"):
+            raise ActivationBlocked("completed_release_receipt_mismatch")
+        return
+    fd = os.open(done, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(target.encode("ascii"))
+        stream.flush()
+        os.fsync(stream.fileno())
+    _sync_directory(journal)
+
+
 def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -> bool:
     """Durably fence STOP replay before the first irreversible owner call.
 
@@ -210,7 +237,7 @@ def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -
     before the installer's protected transaction requires a separate verified
     recovery decision, not a second STOP or an unproven release switch.
     """
-    from tools.vps_gitless_release_activate import ActivationBlocked, _sync_directory
+    from tools.vps_gitless_release_activate import ActivationBlocked, _sync_directory, _trusted_file
 
     parent = journal_root.parent
     if (not parent.is_dir() or parent.is_symlink()
@@ -243,11 +270,16 @@ def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -
                     or marker.is_symlink() or not marker.is_file()
                     or marker.stat().st_uid != uid or marker.stat().st_mode & 0o077):
                 raise ActivationBlocked("untrusted_prior_STOP_intent")
-            # An in-progress switch for another target is not permission to
-            # execute a second STOP against whichever runtime now exists.
-            # Resolve the original transaction before changing release target.
-            if previous != target or not (journal_root / previous).is_dir():
-                return False
+            # A previous READY install may be superseded; a mere journal
+            # directory or a STOP intent is not completion evidence.
+            completed = journal_root / previous / "editor-ready"
+            if completed.exists() or completed.is_symlink():
+                if (journal_root / previous).is_symlink():
+                    raise ActivationBlocked("untrusted_completed_release_transaction")
+                if _trusted_file(completed, uid).read_bytes() != previous.encode("ascii"):
+                    raise ActivationBlocked("completed_release_receipt_mismatch")
+                continue
+            return False
         marker = journal_root / (".stop-invoked-" + target)
         if marker.exists() or marker.is_symlink():
             return False
@@ -298,6 +330,12 @@ def deploy_staged_editor_only(
 
     resume_action = resume or resume_installed_release
     install_action = installer or activate_staged_release
+
+    def finish_resume() -> str:
+        observed = resume_action(target, root=root, env_file=env_file)
+        if isinstance(observed, str) and observed.startswith("READY:"):
+            _complete_stop_intent(journal_root, target, uid=trusted_uid)
+        return observed
     try:
         try:
             current = verify_release(root, manifest_path)
@@ -323,7 +361,7 @@ def deploy_staged_editor_only(
             if (not isinstance(receipt, str)
                     or not receipt.startswith("INSTALLED_STOPPED:")):
                 return "BLOCKED: installed_release_postcondition_unknown; do not start"
-            return resume_action(target, root=root, env_file=env_file)
+            return finish_resume()
         if not journal.is_dir():
             # Preserve a pending intent for any release SHA; a later operator
             # cannot bypass a failed STOP merely by changing the target.
@@ -373,7 +411,7 @@ def deploy_staged_editor_only(
             return "BLOCKED: installed_release_postcondition_unknown; do not start"
     except (ActivationBlocked, ReleaseIdentityBlocked, OSError, ValueError) as exc:
         return "BLOCKED: Gitless_switch_unproven:" + type(exc).__name__ + ":" + str(exc)
-    return resume_action(target, root=root, env_file=env_file)
+    return finish_resume()
 
 
 def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
