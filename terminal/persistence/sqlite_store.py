@@ -5758,6 +5758,68 @@ class SQLiteStore:
         )
         return tuple(_robot_candidate_from_row(row) for row in rows)
 
+    def prove_approved_candidate_never_traded(
+        self, candidate: RobotCandidateRecord,
+    ) -> bool:
+        """Owner-side, read-only proof for a frozen legacy APPROVED idea.
+
+        Missing order identity is not nonexecution evidence. Check every
+        durable command/limit/fill ledger since approval and all current
+        symbol owners before an incident-scoped caller may invalidate it.
+        A missing position row is permissible for a truly never-traded idea.
+        """
+        self._assert_owner()
+        if (candidate.status != "APPROVED"
+                or type(candidate.approved_at_ms) is not int
+                or candidate.approved_at_ms <= 0):
+            return False
+        account = candidate.trading_account_id.value
+        symbol = candidate.symbol.value
+        approved_at = candidate.approved_at_ms
+        row = self._connection.execute(
+            "SELECT COUNT(*) FROM robot_candidates WHERE trading_account_id=? "
+            "AND symbol=? AND (status IS NULL OR status IN ('APPROVED','OPEN'))",
+            (account, symbol),
+        ).fetchone()
+        if row is None or row[0] != 1:
+            return False
+        for side, quantity, sync in self._connection.execute(
+            "SELECT side, quantity, sync_state FROM position_projections "
+            "WHERE trading_account_id=? AND symbol=?", (account, symbol),
+        ):
+            try:
+                value = Decimal(str(quantity))
+            except (InvalidOperation, ValueError, TypeError):
+                return False
+            if (side != "Flat" or not value.is_finite() or value != 0
+                    or sync not in ("synced", "synchronized")):
+                return False
+        for table, predicate, params in (
+            ("robot_trades", "candidate_id=?", (candidate.candidate_id,)),
+            ("executions", "symbol=? AND exchange_timestamp_ms>=?",
+             (symbol, approved_at)),
+            ("paper_limit_orders", "symbol=? AND "
+             "(status IS NULL OR status NOT IN ('filled','cancelled') "
+             "OR (created_at_ms>=? AND status!='cancelled'))",
+             (symbol, approved_at)),
+            ("trading_commands", "symbol=? AND "
+             "(current_state IS NULL OR current_state NOT IN "
+             "('filled','cancelled','amended','rejected','failed','owner_attested_closed') "
+             "OR (created_at_ms>=? AND current_state NOT IN "
+             "('cancelled','amended','rejected','failed')))",
+             (symbol, approved_at)),
+            ("paper_protection_obligations", "symbol=? AND "
+             "(status IS NULL OR status!='RESOLVED')", (symbol,)),
+            ("reconciliation_checkpoints", "symbol=? AND completed_at_ms IS NULL",
+             (symbol,)),
+        ):
+            if self._connection.execute(
+                f"SELECT 1 FROM {table} WHERE trading_account_id=? "
+                f"AND ({predicate}) LIMIT 1", (account, *params),
+            ).fetchone() is not None:
+                return False
+        return True
+
     def save_robot_candidate_state(
         self, candidate_id: str, *, status: str, robot_state: dict[str, object],
         expected_revision: int, updated_at_ms: int,
