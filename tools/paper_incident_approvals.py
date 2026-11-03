@@ -45,16 +45,23 @@ def _zero_filled(value: object) -> bool:
 
 
 def _historical_approval_progress(conn, *, candidate_id: str, symbol: str,
-                                  revision: int, raw_state: str) -> bool:
+                                  revision: int, raw_state: str,
+                                  blocked_reasons: list[str] | None = None) -> bool:
+    """Report only a bounded invariant code; never log state JSON or owner IDs."""
+    def blocked(reason: str) -> bool:
+        if blocked_reasons is not None:
+            blocked_reasons.append(reason)
+        return False
+
     expected_revision, expected_phase = _INCIDENT_ADVANCED_APPROVALS[symbol]
     if revision != expected_revision or not isinstance(raw_state, str):
-        return False
+        return blocked("revision_or_state_type_mismatch")
     try:
         state = json.loads(raw_state)
     except (ValueError, TypeError):
-        return False
+        return blocked("state_json_invalid")
     if not isinstance(state, dict) or state.get("phase") != expected_phase:
-        return False
+        return blocked("state_phase_mismatch")
     # A Box's source plan and its order-reservation ledger are NOT the Robot
     # candidate ID. Check all source-owned order identities too; an unissued
     # reservation is not a fill, but any executed/foreign/exit identity blocks.
@@ -62,25 +69,25 @@ def _historical_approval_progress(conn, *, candidate_id: str, symbol: str,
         source = state.get("source_box_candidate_id")
         if (not isinstance(source, str) or not source.startswith("box-plan-")
                 or candidate_id != "box-robot-" + source.removeprefix("box-plan-")):
-            return False
+            return blocked("box_source_candidate_identity_mismatch")
         reservations = conn.execute(
             "SELECT order_id, role FROM box_order_ownership "
             "WHERE trading_account_id='paper' AND candidate_id=?", (source,),
         ).fetchall()
         for order_id, role in reservations:
             if not isinstance(order_id, str) or not order_id or role != "ENTRY":
-                return False
+                return blocked("box_reservation_role_or_id_mismatch")
             if conn.execute(
                 "SELECT 1 FROM executions WHERE trading_account_id='paper' "
                 "AND order_id=? LIMIT 1", (order_id,),
             ).fetchone() is not None:
-                return False
+                return blocked("box_reserved_order_has_execution")
             if conn.execute(
                 "SELECT 1 FROM trading_commands WHERE trading_account_id='paper' "
                 "AND (exchange_order_id=? OR order_link_id=?) LIMIT 1",
                 (order_id, order_id),
             ).fetchone() is not None:
-                return False
+                return blocked("box_reserved_order_has_command")
             orders = conn.execute(
                 "SELECT symbol, status, filled_quantity FROM paper_limit_orders "
                 "WHERE trading_account_id='paper' AND order_id=?", (order_id,),
@@ -89,16 +96,17 @@ def _historical_approval_progress(conn, *, candidate_id: str, symbol: str,
                 row[0] != symbol or row[1] != "cancelled"
                 or not _zero_filled(row[2]) for row in orders
             ):
-                return False
+                return blocked("box_reserved_order_not_cancelled_zero_fill")
     # Even cancelled LIMIT orders can have fills. Never rely on terminal
     # status alone, and never allow an unproved partially-filled retirement.
     orders = conn.execute(
         "SELECT status, filled_quantity FROM paper_limit_orders "
         "WHERE trading_account_id='paper' AND symbol=?", (symbol,),
     ).fetchall()
-    return all(status == "cancelled" and _zero_filled(filled)
-               for status, filled in orders)
-
+    if not all(status == "cancelled" and _zero_filled(filled)
+               for status, filled in orders):
+        return blocked("symbol_limit_not_cancelled_zero_fill")
+    return True
 
 def prove_six_inert_approvals(conn, approvals, positions) -> None:
     """Attest exact known, unadmitted approvals in the pinned read-only snapshot."""
@@ -133,16 +141,22 @@ def prove_six_inert_approvals(conn, approvals, positions) -> None:
         ).fetchall()
         _require(len(state) == 1, "approved_candidate_identity_missing")
         approved, revision, raw_state = tuple(state[0])
-        _require(
+        details = []
+        proven = (
             type(approved) is int and approved > 0 and approved == approved_at_ms
             and type(revision) is int and (
                 (revision == 0 and raw_state is None)
                 or _historical_approval_progress(
                     conn, candidate_id=candidate_id, symbol=symbol,
                     revision=revision, raw_state=raw_state,
+                    blocked_reasons=details,
                 )
-            ),
-            "approved_candidate_has_admission_progress",
+            )
+        )
+        _require(
+            proven,
+            "approved_candidate_has_admission_progress:"
+            + symbol + ":" + (details[0] if details else "approved_metadata_invalid"),
         )
         _require(
             sum(projected_symbol == symbol for projected_symbol, *_ in positions) <= 1,
