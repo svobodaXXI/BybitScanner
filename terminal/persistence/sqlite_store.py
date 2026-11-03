@@ -5794,6 +5794,19 @@ class SQLiteStore:
             if (side != "Flat" or not value.is_finite() or value != 0
                     or sync not in ("synced", "synchronized")):
                 return False
+        # Cancelled is terminal, but a cancelled partially-filled LIMIT
+        # is NOT a never-traded candidate. Fail closed on malformed quantities.
+        for (raw_filled,) in self._connection.execute(
+            "SELECT filled_quantity FROM paper_limit_orders "
+            "WHERE trading_account_id=? AND symbol=? AND status='cancelled'",
+            (account, symbol),
+        ):
+            try:
+                filled = Decimal(str(raw_filled))
+            except (InvalidOperation, ValueError, TypeError):
+                return False
+            if not filled.is_finite() or filled != 0:
+                return False
         for table, predicate, params in (
             ("robot_trades", "candidate_id=?", (candidate.candidate_id,)),
             ("executions", "symbol=? AND exchange_timestamp_ms>=?",
