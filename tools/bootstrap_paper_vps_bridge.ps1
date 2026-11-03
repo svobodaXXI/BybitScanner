@@ -93,7 +93,15 @@ digest="__DIGEST__"
 test -f "$src" && test ! -L "$src"
 test "$(sha256sum "$src" | cut -d ' ' -f1)" = "$digest"
 test -f "$pub" && test ! -L "$pub"
-install -d -o root -g root -m 0700 /usr/local/libexec
+# /usr/local/libexec is shared system-owned infrastructure. Never chmod it.
+test ! -L /usr/local/libexec
+if test -e /usr/local/libexec; then
+    test -d /usr/local/libexec
+else
+    install -d -o root -g root -m 0755 /usr/local/libexec
+fi
+test "$(stat -c '%u' /usr/local/libexec)" = "0"
+test -z "$(find /usr/local/libexec -maxdepth 0 -perm /022 -print)"
 if test -e "$target" || test -L "$target"; then
     test -f "$target" && test ! -L "$target"
     test "$(sha256sum "$target" | cut -d ' ' -f1)" = "$digest"
@@ -102,10 +110,21 @@ else
 fi
 test "$(stat -c '%u:%a' "$target")" = "0:700"
 test ! -L /root/.ssh
-install -d -o root -g root -m 0700 /root/.ssh
+if test -e /root/.ssh; then
+    test -d /root/.ssh
+else
+    install -d -o root -g root -m 0700 /root/.ssh
+fi
+test "$(stat -c '%u' /root/.ssh)" = "0"
+test -z "$(find /root/.ssh -maxdepth 0 -perm /077 -print)"
 test ! -L /root/.ssh/authorized_keys
-touch /root/.ssh/authorized_keys
-chmod 0600 /root/.ssh/authorized_keys
+if test -e /root/.ssh/authorized_keys; then
+    test -f /root/.ssh/authorized_keys
+else
+    install -o root -g root -m 0600 /dev/null /root/.ssh/authorized_keys
+fi
+test "$(stat -c '%u' /root/.ssh/authorized_keys)" = "0"
+test -z "$(find /root/.ssh/authorized_keys -maxdepth 0 -perm /022 -print)"
 key="$(cat "$pub")"
 case "$key" in
   'ssh-ed25519 '*) ;;
