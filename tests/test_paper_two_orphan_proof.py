@@ -11,7 +11,7 @@ from terminal.domain.models import PositionSide, Symbol, TradingAccountId
 from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
 from tools.paper_two_orphan_proof import (
     INCIDENT_BACKEND_SHA, JASMY_TRADE_ID, JASMY_CANDIDATE_ID,
-    PROOF_LABEL, prove_two_flat_orphans, inspect_read_only,
+    PROOF_LABEL, IDLE_APPROVALS, prove_two_flat_orphans, inspect_read_only,
 )
 
 ACCOUNT = TradingAccountId("paper")
@@ -83,6 +83,58 @@ def fixture():
     store.get_robot_candidate.side_effect = candidates.get
     store.get_position_projection.side_effect = lambda key: positions.get(key.symbol.value)
     store.load_executions_for_symbol.side_effect = lambda _account, symbol: fills[symbol.value]
+    return conn, payload, store
+
+
+def stale_incident_fixture():
+    """Exact legacy stale coverage with six never-admitted approvals.
+
+    Use additive columns/tables only in this synthetic case; old two-owner
+    fixture intentionally continues testing the historical contract.
+    """
+    conn, payload, store = fixture()
+    conn.executescript("""
+        ALTER TABLE robot_candidates ADD COLUMN approved_at_ms INTEGER;
+        ALTER TABLE robot_candidates ADD COLUMN state_revision INTEGER;
+        ALTER TABLE robot_candidates ADD COLUMN robot_state_json TEXT;
+        ALTER TABLE trading_commands ADD COLUMN symbol TEXT;
+        ALTER TABLE trading_commands ADD COLUMN created_at_ms INTEGER;
+        ALTER TABLE paper_limit_orders ADD COLUMN symbol TEXT;
+        ALTER TABLE paper_limit_orders ADD COLUMN created_at_ms INTEGER;
+        ALTER TABLE paper_limit_orders ADD COLUMN order_id TEXT;
+        CREATE TABLE executions (
+          trading_account_id TEXT, symbol TEXT, exchange_timestamp_ms INTEGER
+        );
+        CREATE TABLE box_attempt_ownership (
+          trading_account_id TEXT, candidate_id TEXT
+        );
+        CREATE TABLE robot_entry_orders (
+          trading_account_id TEXT, order_id TEXT
+        );
+        INSERT INTO position_projections VALUES ('paper','BBUSDT','Flat','0','synced');
+        INSERT INTO position_projections VALUES ('paper','KITEUSDT','Flat','0','synced');
+    """)
+    for symbol, (prefix, suffix) in IDLE_APPROVALS.items():
+        candidate_id = prefix if not suffix else prefix + ("0" * 32) + suffix
+        conn.execute(
+            "INSERT INTO robot_candidates "
+            "(trading_account_id,candidate_id,symbol,status,approved_at_ms,"
+            "state_revision,robot_state_json) VALUES (?,?,?,?,?,0,NULL)",
+            ("paper", candidate_id, symbol, "APPROVED", 100),
+        )
+    payload["protection"] = {
+        "healthy": False,
+        "unhealthy_symbols": {
+            "JASMYUSDT": "websocket_disconnect:WebSocketConnectionClosedException",
+            "FLOWUSDT": "websocket_disconnect:WebSocketConnectionClosedException",
+        },
+        "covered_symbols": ["JASMYUSDT", "FLOWUSDT", "BBUSDT", "KITEUSDT"],
+        "armed_symbols": ["BBUSDT", "KITEUSDT"],
+        "coverage_roles": {
+            "JASMYUSDT": "EXPOSURE", "FLOWUSDT": "EXPOSURE",
+            "BBUSDT": "ENTRY_PENDING", "KITEUSDT": "ENTRY_PENDING",
+        },
+    }
     return conn, payload, store
 
 
@@ -200,6 +252,88 @@ class DualOrphanPreflightTests(TestCase):
         payload["protection"]["healthy"] = False
         with self.assertRaisesRegex(FlatRecoveryBlocked, "protection_unhealthy"):
             check(conn, payload, store)
+
+    def test_stale_incident_is_allowed_only_with_six_never_admitted_candidates(self):
+        conn, payload, store = stale_incident_fixture()
+        before = conn.total_changes
+        self.assertEqual(
+            check(conn, payload, store, evidence=[object(), object()]), PROOF_LABEL,
+        )
+        self.assertEqual(conn.total_changes, before)
+
+    def test_stale_incident_rejects_completed_candidate_execution_after_approval(self):
+        conn, payload, store = stale_incident_fixture()
+        conn.execute(
+            "INSERT INTO executions VALUES ('paper','BNCUSDT',100)"
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "approved_candidate_execution_or_ownership_unknown",
+        ):
+            check(conn, payload, store)
+
+    def test_stale_incident_rejects_filled_command_after_approval(self):
+        conn, payload, store = stale_incident_fixture()
+        conn.execute(
+            "INSERT INTO trading_commands "
+            "(trading_account_id,current_state,symbol,created_at_ms) "
+            "VALUES ('paper','filled','BNCUSDT',100)"
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "approved_candidate_execution_or_ownership_unknown",
+        ):
+            check(conn, payload, store)
+
+    def test_stale_incident_rejects_candidate_admission_progress(self):
+        conn, payload, store = stale_incident_fixture()
+        conn.execute(
+            "UPDATE robot_candidates SET state_revision=1, robot_state_json='{}' "
+            "WHERE symbol='BNCUSDT' AND status='APPROVED'"
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "approved_candidate_has_admission_progress",
+        ):
+            check(conn, payload, store)
+
+    def test_stale_incident_rejects_orphan_entry_order_metadata(self):
+        conn, payload, store = stale_incident_fixture()
+        conn.execute(
+            "INSERT INTO robot_entry_orders VALUES ('paper','unknown-order')"
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "orphan_robot_entry_order_metadata",
+        ):
+            check(conn, payload, store)
+
+    def test_stale_incident_rejects_unknown_websocket_reason(self):
+        conn, payload, store = stale_incident_fixture()
+        payload["protection"]["unhealthy_symbols"]["JASMYUSDT"] = "ingress_overflow"
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "protection_unhealthy"):
+            check(conn, payload, store)
+
+    def test_stale_incident_rejects_competing_or_missing_approval(self):
+        conn, payload, store = stale_incident_fixture()
+        conn.execute(
+            "DELETE FROM robot_candidates WHERE symbol='BNCUSDT' AND status='APPROVED'"
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "unexpected_active_robot_candidate",
+        ):
+            check(conn, payload, store)
+
+    def test_stale_incident_rejects_unfrozen_entry_role_drift(self):
+        conn, payload, store = stale_incident_fixture()
+        payload["protection"]["coverage_roles"]["BBUSDT"] = "EXPOSURE"
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "unexpected_protection_coverage",
+        ):
+            check(conn, payload, store)
+
+    def test_stale_incident_rejects_missing_real_exit_attribution(self):
+        conn, payload, store = stale_incident_fixture()
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "orphan_immutable_close_proof_missing",
+        ):
+            check(conn, payload, store, evidence=[object(), None])
 
     def test_approved_or_third_trade_never_inherits_two_owner_exception(self):
         conn, payload, store = fixture()
