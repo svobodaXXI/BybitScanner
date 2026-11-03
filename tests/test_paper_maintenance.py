@@ -838,12 +838,153 @@ def test_editor_only_never_starts_paper_with_frozen_orphan_or_approvals(
     monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *_: "d" * 64)
     monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
     monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: False)
+    monkeypatch.setattr(
+        maintenance, "_editor_reconcile_once",
+        lambda *_a, **_kw: "BLOCKED: Editor_Robot_reconcile_preflight_unproven; PAPER_START_not_attempted",
+    )
     result = maintenance.start_installed_paper_from_editor(
         target, root=tmp_path, editor_status="READY: EDITOR_ONLY",
         runner=lambda *_a, **_kw: calls.append("start"),
     )
-    assert result == "BLOCKED: PAPER_stale_owners_or_reconciliation; START_not_attempted"
+    assert result == "BLOCKED: Editor_Robot_reconcile_preflight_unproven; PAPER_START_not_attempted"
     assert calls == []
+
+
+def test_editor_only_reconciles_once_then_starts_only_after_full_postproof(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    events = []
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze",
+                        lambda *_: "d" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    proofs = iter([False, True])
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent",
+                        lambda *_: next(proofs))
+    monkeypatch.setattr(maintenance, "_editor_reconcile_once",
+                        lambda *_a, **_kw: events.append("reconcile"))
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "READY: full PAPER proven")
+
+    def runner(args, **_kwargs):
+        events.append("start")
+        return SimpleNamespace(returncode=0)
+
+    assert maintenance.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="READY: EDITOR_ONLY",
+        runner=runner,
+    ) == "READY: full PAPER proven"
+    assert events == ["reconcile", "start"]
+
+
+def test_editor_only_does_not_start_on_failed_reconcile_postproof(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    events = []
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze",
+                        lambda *_: "d" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: False)
+    monkeypatch.setattr(maintenance, "_editor_reconcile_once",
+                        lambda *_a, **_kw: events.append("reconcile"))
+    assert maintenance.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="READY: EDITOR_ONLY",
+        runner=lambda *_a, **_kw: events.append("start"),
+    ) == "BLOCKED: PAPER_stale_owners_after_reconcile; START_not_attempted"
+    assert events == ["reconcile"]
+
+
+def test_editor_reconcile_one_shot_receipt_cannot_replay(tmp_path):
+    import tools.paper_maintenance as maintenance
+
+    sha = "a" * 40
+    identity = "d" * 64
+    journal = tmp_path / sha
+    journal.mkdir(mode=0o700)
+    ready = journal / "editor-ready"
+    ready.write_text(sha)
+    ready.chmod(0o600)
+    assert maintenance._record_editor_reconcile_once(
+        sha, identity, journal_root=tmp_path, trusted_uid=os.getuid(),
+    )
+    assert (journal / "robot-reconcile-invoked").read_text() == sha + "\\n" + identity + "\\n"
+    assert not maintenance._record_editor_reconcile_once(
+        sha, identity, journal_root=tmp_path, trusted_uid=os.getuid(),
+    )
+
+
+def test_editor_flat_reconcile_preflight_refuses_exposure_or_unexpected_owner(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.stop_robot_runtime as shutdown
+
+    db = tmp_path / "paper.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
+            CREATE TABLE robot_runtime_state (
+                trading_account_id TEXT, mode TEXT, recovery_status TEXT);
+            CREATE TABLE scanner_runtime_state (
+                trading_account_id TEXT, mode TEXT);
+            CREATE TABLE robot_autopilot_state (
+                trading_account_id TEXT, mode TEXT);
+            CREATE TABLE position_projections (
+                trading_account_id TEXT, symbol TEXT, side TEXT,
+                quantity TEXT, sync_state TEXT);
+            CREATE TABLE robot_trades (
+                trading_account_id TEXT, candidate_id TEXT,
+                symbol TEXT, exit_time_ms INTEGER);
+            CREATE TABLE robot_candidates (
+                trading_account_id TEXT, candidate_id TEXT, symbol TEXT, status TEXT);
+            CREATE TABLE paper_limit_orders (trading_account_id TEXT, status TEXT);
+            CREATE TABLE trading_commands (trading_account_id TEXT, current_state TEXT);
+            CREATE TABLE paper_protection_obligations (trading_account_id TEXT, status TEXT);
+            CREATE TABLE reconciliation_checkpoints (
+                trading_account_id TEXT, completed_at_ms INTEGER);
+            INSERT INTO robot_runtime_state VALUES
+                ('paper','ROBOT_RUNNING','RECONCILIATION_REQUIRED');
+            INSERT INTO scanner_runtime_state VALUES ('paper','SCANNER_STOPPED');
+            INSERT INTO robot_autopilot_state VALUES ('paper','OFF');
+            INSERT INTO position_projections VALUES
+                ('paper','JASMYUSDT','Flat','0','synced');
+            INSERT INTO position_projections VALUES
+                ('paper','FLOWUSDT','Flat','0','synced');
+            INSERT INTO robot_trades VALUES
+                ('paper','jasmy','JASMYUSDT',NULL);
+            INSERT INTO robot_trades VALUES
+                ('paper','flow','FLOWUSDT',NULL);
+            INSERT INTO robot_candidates VALUES
+                ('paper','jasmy','JASMYUSDT','OPEN');
+            INSERT INTO robot_candidates VALUES
+                ('paper','flow','FLOWUSDT','OPEN');
+            INSERT INTO robot_candidates VALUES
+                ('paper','fro','1000FLOKIUSDT','APPROVED');
+        """)
+    monkeypatch.setattr(shutdown, "_database_path", lambda *_: db)
+    assert maintenance._editor_flat_reconcile_preflight(tmp_path, None)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE position_projections SET side='Long', quantity='1' "
+                     "WHERE symbol='FLOWUSDT'")
+    assert not maintenance._editor_flat_reconcile_preflight(tmp_path, None)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE position_projections SET side='Flat', quantity='0' "
+                     "WHERE symbol='FLOWUSDT'")
+        conn.execute("INSERT INTO robot_candidates VALUES "
+                     "('paper','alien','DOGEUSDT','APPROVED')")
+    assert not maintenance._editor_flat_reconcile_preflight(tmp_path, None)
+    with sqlite3.connect(db) as conn:
+        conn.execute("DELETE FROM robot_candidates WHERE candidate_id='alien'")
+        conn.execute("INSERT INTO paper_limit_orders VALUES ('paper','open')")
+    assert not maintenance._editor_flat_reconcile_preflight(tmp_path, None)
 
 
 def test_paper_start_quiescence_checks_durable_frozen_ledgers(monkeypatch, tmp_path):
