@@ -420,6 +420,32 @@ def test_staged_gitless_unknown_stop_never_replayed_without_install_journal(monk
     assert not (transactions / target).exists()
 
 
+def test_staged_gitless_rejects_symlink_release_lock_before_stop(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    transactions.mkdir(mode=0o700)
+    other = tmp_path / "owner-file"
+    other.write_text("preserve")
+    (transactions / ".release.lock").symlink_to(other)
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    result = deploy_staged_editor_only(
+        "a" * 40, stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_args, **_kw: None,
+        stop=lambda *_: pytest.fail("no STOP with untrusted lock"),
+        installer=lambda *_args, **_kw: pytest.fail("no installation"),
+    )
+    assert result.startswith("BLOCKED: Gitless_switch_unproven")
+    assert other.read_text() == "preserve"
+    assert not (transactions / (".stop-invoked-" + "a" * 40)).exists()
+
+
 def test_staged_gitless_different_target_cannot_replay_unresolved_stop(monkeypatch, tmp_path):
     from tools.paper_maintenance import deploy_staged_editor_only
     import tools.vps_release_identity as release
