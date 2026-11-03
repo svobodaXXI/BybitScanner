@@ -489,7 +489,8 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
 
 
 def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
-                          target: str | None = None) -> str:
+                          target: str | None = None,
+                          require_gitless_telegram: bool = False) -> str:
     # The oneshot says only that startup was requested; do not report READY
     # unless the PAPER backend has independently proven its safety.
     from tools.runtime_intent import http_get
@@ -511,6 +512,18 @@ def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
             raise ValueError("PAPER state not ready")
     except (ValueError, KeyError, OSError, TypeError):
         return "BLOCKED: PAPER core started but PAPER_AUTO/protection readiness not proven; do not enable new admission"
+    if require_gitless_telegram:
+        # Full Gitless START is not READY while its separately owned Telegram
+        # worker is absent or attached to another PAPER database.
+        from tools.runtime_intent import expected_database_identity
+        try:
+            expected = expected_database_identity(root, _environment(env_file))
+            if (not isinstance(h.get("database_identity"), str)
+                    or h["database_identity"] != expected
+                    or not _editor_telegram_ready(expected)):
+                return "BLOCKED: Gitless_PAPER_Telegram_or_database_identity_unproven"
+        except (OSError, ValueError, TypeError, sqlite3.Error):
+            return "BLOCKED: Gitless_PAPER_Telegram_or_database_identity_unproven"
     # An enabled Autopilot is not proof that Robot can admit trades.
     # Read the canonical durable state without mutating the PAPER DB.
     try:
@@ -563,7 +576,10 @@ def start_installed_paper_from_editor(
         return "BLOCKED: PAPER_core_start_failed; no replay"
     # The existing oneshot owns Scanner, Robot and PAPER_AUTO transitions;
     # these independent postconditions must also prove the exact release.
-    return _paper_full_readiness(root=root, env_file=env_file, target=target)
+    return _paper_full_readiness(
+        root=root, env_file=env_file, target=target,
+        require_gitless_telegram=True,
+    )
 
 
 def main(argv=None) -> int:
@@ -605,6 +621,7 @@ def main(argv=None) -> int:
             if installed == args.sha:
                 observed = _paper_full_readiness(
                     root=REPO, env_file=args.env_file, target=args.sha,
+                    require_gitless_telegram=True,
                 )
                 if observed.startswith("READY:"):
                     print("READY: exact installed Gitless PAPER already running; no mutation")
