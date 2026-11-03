@@ -37,6 +37,74 @@ INCIDENT_LOT = {
 PROOF_LABEL = "TWO_ORPHANS_IMMUTABLE_CLOSE_EVIDENCE_ONLY"
 
 
+# Exact observed approvals, never a general candidate exemption. The Box
+# candidate IDs were available only as bounded prefix/suffix evidence; their
+# approval and zero-entry evidence must independently match the durable DB.
+IDLE_APPROVALS = {
+    "1000FLOKIUSDT": ("box-robot-aa55", "af8c6"),
+    "BNCUSDT": ("589fc4625b687906eb778630", ""),
+    "HEMIUSDT": ("box-robot-feaa", "24c43"),
+    "INUSDT": ("box-robot-9631", "e84e8"),
+    "PLAYSOUTUSDT": ("b4a30317bc2b6fa3777711c3", ""),
+    "RUNEUSDT": ("box-robot-358e", "4dd3b"),
+}
+
+
+def _prove_six_inert_approvals(conn, candidates, positions) -> None:
+    """No admission, order, execution or Box ownership since each approval.
+
+    A candidate with runtime progress is NOT automatically invalidated. This
+    is read-only evidence authorizing only the exact frozen incident handoff;
+    its durable status is left for the next legitimate owner to reconcile.
+    """
+    _require(
+        len(candidates) == len(IDLE_APPROVALS)
+        and {row[1] for row in candidates} == set(IDLE_APPROVALS)
+        and all(row[2] == "APPROVED" for row in candidates),
+        "unexpected_active_robot_candidate",
+    )
+    for candidate_id, symbol, _ in candidates:
+        prefix, suffix = IDLE_APPROVALS[symbol]
+        _require(
+            candidate_id.startswith(prefix)
+            and (not suffix or candidate_id.endswith(suffix))
+            and len(candidate_id) >= len(prefix) + len(suffix),
+            "unexpected_approved_candidate_identity",
+        )
+        state = conn.execute(
+            "SELECT approved_at_ms, state_revision, robot_state_json "
+            "FROM robot_candidates WHERE trading_account_id='paper' AND candidate_id=?",
+            (candidate_id,),
+        ).fetchall()
+        _require(len(state) == 1, "approved_candidate_identity_missing")
+        approved_at, revision, raw_state = tuple(state[0])
+        _require(
+            type(approved_at) is int and approved_at > 0
+            and type(revision) is int and revision == 0
+            and raw_state is None,
+            "approved_candidate_has_admission_progress",
+        )
+        _require(
+            sum(projected_symbol == symbol for projected_symbol, *_ in positions) <= 1,
+            "ambiguous_approved_candidate_projection",
+        )
+        for table, predicate, params in (
+            ("robot_trades", "candidate_id=?", (candidate_id,)),
+            ("box_attempt_ownership", "candidate_id=?", (candidate_id,)),
+            ("trading_commands", "symbol=? AND created_at_ms>=?", (symbol, approved_at)),
+            ("paper_limit_orders", "symbol=? AND created_at_ms>=?", (symbol, approved_at)),
+            ("executions", "symbol=? AND exchange_timestamp_ms>=?", (symbol, approved_at)),
+        ):
+            query = (
+                f"SELECT COUNT(*) FROM {table} "
+                f"WHERE trading_account_id='paper' AND {predicate}"
+            )
+            _require(
+                conn.execute(query, params).fetchone()[0] == 0,
+                "approved_candidate_execution_or_ownership_unknown",
+            )
+
+
 def prove_two_flat_orphans(
     conn: sqlite3.Connection, *, expected_identity: str,
     backend: dict, scanner: dict, autopilot: dict, protection: dict,
@@ -67,24 +135,56 @@ def prove_two_flat_orphans(
     )
     _require(scanner.get("mode") == "SCANNER_STOPPED", "scanner_not_stopped")
     _require(autopilot.get("mode") == "OFF", "autopilot_not_off")
-    _require(
-        protection.get("healthy") is True
-        and protection.get("unhealthy_symbols") == {},
-        "protection_unhealthy",
-    )
     covered = protection.get("covered_symbols")
     armed = protection.get("armed_symbols")
     roles = protection.get("coverage_roles")
     _require(
         isinstance(covered, list) and isinstance(armed, list)
-        and isinstance(roles, dict) and not armed
-        and (
-            (covered == [] and roles == {})
-            or (len(covered) == 2 and set(covered) == EXPECTED_SYMBOLS
-                and roles == {symbol: "EXPOSURE" for symbol in EXPECTED_SYMBOLS})
-        ),
+        and isinstance(roles, dict)
+        and len(covered) == len(set(covered))
+        and len(armed) == len(set(armed)),
         "unexpected_protection_coverage",
     )
+    # The incident's legacy backend retains coverage after BOTH trades have
+    # already closed. Its WebSocket disconnect cannot become healthy because
+    # the Robot ledger still claims those Flat trades are OPEN. Only this
+    # precise frozen legacy shape may rely on immutable close/zero-entry proof
+    # instead of feed continuity; other unhealthy causes remain forbidden.
+    stale_incident = protection.get("healthy") is False
+    if stale_incident:
+        _require(
+            protection.get("unhealthy_symbols") == {
+                "JASMYUSDT": "websocket_disconnect:WebSocketConnectionClosedException",
+                "FLOWUSDT": "websocket_disconnect:WebSocketConnectionClosedException",
+            },
+            "protection_unhealthy",
+        )
+        idle_arms = {"BBUSDT", "KITEUSDT"}
+        _require(
+            set(roles) == EXPECTED_SYMBOLS | idle_arms
+            and roles == {
+                "JASMYUSDT": "EXPOSURE", "FLOWUSDT": "EXPOSURE",
+                "BBUSDT": "ENTRY_PENDING", "KITEUSDT": "ENTRY_PENDING",
+            }
+            and set(covered) == set(roles)
+            and set(armed) == idle_arms,
+            "unexpected_protection_coverage",
+        )
+    else:
+        _require(
+            protection.get("healthy") is True
+            and protection.get("unhealthy_symbols") == {},
+            "protection_unhealthy",
+        )
+        _require(
+            not armed
+            and (
+                (covered == [] and roles == {})
+                or (len(covered) == 2 and set(covered) == EXPECTED_SYMBOLS
+                    and roles == {symbol: "EXPOSURE" for symbol in EXPECTED_SYMBOLS})
+            ),
+            "unexpected_protection_coverage",
+        )
     _require(tuple(conn.execute("PRAGMA quick_check").fetchone()) == ("ok",),
              "paper_database_integrity_unproven")
     state = conn.execute(
@@ -139,12 +239,31 @@ def prove_two_flat_orphans(
         "AND (status IS NULL OR status NOT IN "
         "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))",
     ).fetchall()
+    open_candidates = [row for row in candidates if row[2] == "OPEN"]
     _require(
-        len(candidates) == 2
-        and {(row[0], row[1], row[2]) for row in candidates}
+        len(open_candidates) == 2
+        and {(row[0], row[1], row[2]) for row in open_candidates}
         == {(row[1], row[2], "OPEN") for row in rows},
         "unexpected_active_robot_candidate",
     )
+    extra_candidates = [row for row in candidates if row[2] != "OPEN"]
+    if stale_incident:
+        # This exception is confined to the six *observed* idle approvals.
+        # Mere APPROVED status and zero working LIMITs are NOT proof of
+        # never-started execution. Check each candidate independently inside
+        # the pinned transaction; UNKNOWN/filled/linked owner always blocks.
+        _prove_six_inert_approvals(conn, extra_candidates, positions)
+        for idle_symbol in ("BBUSDT", "KITEUSDT"):
+            _require(
+                sum(symbol == idle_symbol for symbol, *_ in positions) <= 1,
+                "ambiguous_pending_entry_projection",
+            )
+            _require(
+                not any(row[1] == idle_symbol for row in candidates),
+                "stale_pending_entry_has_candidate_owner",
+            )
+    else:
+        _require(not extra_candidates, "unexpected_active_robot_candidate")
     for table, condition, reason in (
         ("paper_limit_orders", "(status IS NULL OR status NOT IN ('filled','cancelled'))",
          "active_or_unknown_paper_limit"),
