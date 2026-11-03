@@ -494,7 +494,7 @@ def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
                           require_gitless_telegram: bool = False) -> str:
     # The oneshot says only that startup was requested; do not report READY
     # unless the PAPER backend has independently proven its safety.
-    from tools.runtime_intent import http_get
+    from tools.runtime_intent import Unreachable, http_get
     try:
         health = http_get("http://127.0.0.1:8765/api/health", 5)
         protection = http_get("http://127.0.0.1:8765/api/robot/protection-health", 5)
@@ -513,7 +513,7 @@ def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
                 or s.get("mode") != "SCANNER_RUNNING"
                 or a.get("mode") != "PAPER_AUTO"):
             raise ValueError("PAPER state not ready")
-    except (ValueError, KeyError, OSError, TypeError):
+    except (Unreachable, ValueError, KeyError, OSError, TypeError):
         return "BLOCKED: PAPER core started but PAPER_AUTO/protection readiness not proven; do not enable new admission"
     if require_gitless_telegram:
         # Full Gitless START is not READY while its separately owned Telegram
