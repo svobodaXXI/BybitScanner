@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from decimal import Decimal
 
 from tools.stop_robot_runtime import RuntimeShutdown, SCOPE_ALL, _environment
 
@@ -548,6 +549,210 @@ def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
     return "READY: exact HEAD, PAPER-only, Robot, Scanner, PAPER_AUTO, reentry and protection confirmed"
 
 
+def _paper_start_quiescent(root: Path, env_file: Path | None) -> bool:
+    """Never re-enable PAPER_AUTO on unresolved incident owners or entry ideas.
+
+    EDITOR_ONLY remains usable for canonical reconciliation. The existing
+    oneshot may resume trading only after durable STOPPED/PAUSED/READY evidence
+    and all old entry/exit ownership is fully retired. Canonical reconcile
+    succeeds into PAUSED; the existing runtime intent owns PAUSED -> READY.
+    No SQL mutations.
+    """
+    from tools.stop_robot_runtime import _database_path
+    db = _database_path(root, _environment(env_file))
+    if not db.is_file() or db.is_symlink():
+        return False
+    with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0) as conn:
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("BEGIN")
+        states = conn.execute(
+            "SELECT mode, recovery_status FROM robot_runtime_state "
+            "WHERE trading_account_id='paper'"
+        ).fetchall()
+        if len(states) != 1 or tuple(states[0]) not in (
+            ("ROBOT_STOPPED", "ROBOT_STOPPED"),
+            ("ROBOT_RUNNING", "PAUSED"),
+            ("ROBOT_RUNNING", "READY"),
+        ):
+            return False
+        # Robot ledgers can be empty while a separate manual PAPER position
+        # remains open. Never restart ingress on that unprotected exposure.
+        positions = conn.execute(
+            "SELECT symbol, side, quantity, sync_state FROM position_projections "
+            "WHERE trading_account_id='paper'"
+        ).fetchall()
+        for symbol, side, raw_quantity, sync_state in positions:
+            try:
+                quantity = Decimal(str(raw_quantity))
+            except (ValueError, ArithmeticError):
+                return False
+            if (not symbol or side != "Flat" or not quantity.is_finite()
+                    or quantity != 0 or sync_state not in ("synced", "synchronized")):
+                return False
+        for table, condition in (
+            ("robot_trades", "exit_time_ms IS NULL"),
+            ("robot_candidates", "status IS NULL OR status IN ('APPROVED','OPEN')"),
+            ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
+            ("trading_commands",
+             "current_state IS NULL OR current_state NOT IN "
+             "('filled','cancelled','amended','rejected','failed','owner_attested_closed')"),
+            ("paper_protection_obligations", "status IS NULL OR status != 'RESOLVED'"),
+            ("reconciliation_checkpoints", "completed_at_ms IS NULL"),
+        ):
+            if conn.execute(
+                f"SELECT 1 FROM {table} WHERE trading_account_id='paper' "
+                f"AND ({condition}) LIMIT 1"
+            ).fetchone() is not None:
+                return False
+    return True
+
+
+def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
+    """Read-only, incident-scoped proof before invoking owner Robot reconciliation.
+
+    No candidate/order is retired here. Never reconcile under live exposure,
+    working LIMIT or unresolved dispatch. Only the old JASMY/FLOW orphan
+    identities and exact six frozen entry ideas are eligible.
+    """
+    from tools.stop_robot_runtime import _database_path
+    # Incident identities mirror tools/paper_two_orphan_proof.py. Keep the
+    # maintenance CLI import-light (the full proof imports runtime/scanner).
+    expected_symbols = frozenset({"JASMYUSDT", "FLOWUSDT"})
+    frozen_symbols = frozenset({
+        "1000FLOKIUSDT", "BNCUSDT", "HEMIUSDT", "INUSDT",
+        "PLAYSOUTUSDT", "RUNEUSDT",
+    })
+    path = _database_path(root, _environment(env_file))
+    if not path.is_file() or path.is_symlink():
+        return False
+    with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0) as conn:
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("BEGIN")
+        if conn.execute("PRAGMA quick_check").fetchone() != ("ok",):
+            return False
+        states = conn.execute(
+            "SELECT mode, recovery_status FROM robot_runtime_state "
+            "WHERE trading_account_id='paper'"
+        ).fetchall()
+        if [tuple(x) for x in states] != [("ROBOT_RUNNING", "RECONCILIATION_REQUIRED")]:
+            return False
+        scanner = conn.execute(
+            "SELECT mode FROM scanner_runtime_state WHERE trading_account_id='paper'"
+        ).fetchall()
+        autopilot = conn.execute(
+            "SELECT mode FROM robot_autopilot_state WHERE trading_account_id='paper'"
+        ).fetchall()
+        if scanner != [("SCANNER_STOPPED",)] or autopilot != [("OFF",)]:
+            return False
+        positions = conn.execute(
+            "SELECT symbol, side, quantity, sync_state FROM position_projections "
+            "WHERE trading_account_id='paper'"
+        ).fetchall()
+        if not positions:
+            return False
+        for symbol, side, raw_quantity, sync in positions:
+            quantity = Decimal(str(raw_quantity))
+            if (not symbol or side != "Flat" or not quantity.is_finite()
+                    or quantity != 0 or sync not in ("synced", "synchronized")):
+                return False
+        trades = conn.execute(
+            "SELECT candidate_id, symbol FROM robot_trades "
+            "WHERE trading_account_id='paper' AND exit_time_ms IS NULL"
+        ).fetchall()
+        if (len(trades) > 2 or len(set(trades)) != len(trades)
+                or len({symbol for _, symbol in trades}) != len(trades)
+                or any(symbol not in expected_symbols for _, symbol in trades)):
+            return False
+        for _, symbol in trades:
+            if sum(position[0] == symbol for position in positions) != 1:
+                return False
+        rows = conn.execute(
+            "SELECT candidate_id, symbol, status FROM robot_candidates "
+            "WHERE trading_account_id='paper' "
+            "AND (status IS NULL OR status NOT IN "
+            "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))"
+        ).fetchall()
+        open_owners = {(candidate_id, symbol, "OPEN") for candidate_id, symbol in trades}
+        approvals = [row for row in rows if row[2] == "APPROVED"]
+        if (len(rows) != len(trades) + len(approvals)
+                or len(set(rows)) != len(rows)
+                or {(cid, sym, status) for cid, sym, status in rows if status == "OPEN"}
+                   != open_owners
+                or len({sym for _, sym, _ in approvals}) != len(approvals)
+                or any(sym not in frozen_symbols for _, sym, _ in approvals)):
+            return False
+        for table, condition in (
+            ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
+            ("trading_commands",
+             "current_state IS NULL OR current_state NOT IN "
+             "('filled','cancelled','amended','rejected','failed','owner_attested_closed')"),
+            ("paper_protection_obligations", "status IS NULL OR status != 'RESOLVED'"),
+            ("reconciliation_checkpoints", "completed_at_ms IS NULL"),
+        ):
+            if conn.execute(
+                f"SELECT 1 FROM {table} WHERE trading_account_id='paper' "
+                f"AND ({condition}) LIMIT 1"
+            ).fetchone() is not None:
+                return False
+    return True
+
+
+def _record_editor_reconcile_once(
+    target: str, identity: str, *, journal_root: Path | None = None,
+    trusted_uid: int = 0,
+) -> bool:
+    """Fsync one protected one-shot owner intent. Unknown result cannot replay."""
+    from tools.vps_gitless_release_activate import (
+        TRANSACTIONS, _sync_directory, _trusted_file,
+    )
+    root = journal_root or TRANSACTIONS
+    journal = root / target
+    if (not root.is_dir() or root.is_symlink()
+            or root.stat().st_uid != trusted_uid or root.stat().st_mode & 0o077
+            or not journal.is_dir() or journal.is_symlink()
+            or journal.stat().st_uid != trusted_uid
+            or journal.stat().st_mode & 0o077
+            or _trusted_file(journal / "editor-ready", trusted_uid) != target.encode("ascii")):
+        return False
+    marker = journal / "robot-reconcile-invoked"
+    if marker.exists() or marker.is_symlink():
+        return False
+    try:
+        fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "wb") as stream:
+        stream.write((target + "\n" + identity + "\n").encode("ascii"))
+        stream.flush()
+        os.fsync(stream.fileno())
+    _sync_directory(journal)
+    return True
+
+
+def _editor_reconcile_once(
+    target: str, identity: str, *, root: Path, env_file: Path | None,
+) -> str | None:
+    """One canonical owner reconcile; never retry a POST with unknown outcome."""
+    from tools.runtime_intent import http_post_json
+    try:
+        if not _editor_flat_reconcile_preflight(root, env_file):
+            return "BLOCKED: Editor_Robot_reconcile_preflight_unproven; PAPER_START_not_attempted"
+        if not _record_editor_reconcile_once(target, identity):
+            return "BLOCKED: prior_Editor_Robot_reconcile_outcome_unknown; no_replay"
+        response = http_post_json("http://127.0.0.1:8765/api/robot/reconcile", {}, 180.0)
+        if response.status != 200:
+            return "BLOCKED: canonical_Editor_Robot_reconcile_failed; no_replay"
+        body = response.json()
+        if (not isinstance(body, dict) or body.get("ok") is not True
+                or body.get("success") is not True):
+            return "BLOCKED: canonical_Editor_Robot_reconcile_not_proven; no_replay"
+        # Do not infer success from an HTTP 200 or from a partial candidate
+        # terminalization; actual durable postconditions are checked next.
+        return None
+    except Exception:
+        return "BLOCKED: Editor_Robot_reconcile_outcome_unknown; no_replay"
+
+
 def start_installed_paper_from_editor(
     target: str, *, root: Path = REPO, env_file: Path | None = None,
     runner=subprocess.run, editor_status: str,
@@ -563,6 +768,16 @@ def start_installed_paper_from_editor(
         identity = _durable_editor_freeze(root, env_file)
         if not _editor_runtime_ready(target, identity):
             return "BLOCKED: editor_only_runtime_not_proven"
+        if not _paper_start_quiescent(root, env_file):
+            outcome = _editor_reconcile_once(target, identity, root=root, env_file=env_file)
+            if outcome is not None:
+                return outcome
+            # Re-prove the exact backend, frozen ingress and the entire PAPER
+            # ledger after the owner mutation, before starting any ingress.
+            if (_durable_editor_freeze(root, env_file) != identity
+                    or not _editor_runtime_ready(target, identity)
+                    or not _paper_start_quiescent(root, env_file)):
+                return "BLOCKED: PAPER_stale_owners_after_reconcile; START_not_attempted"
     except (ReleaseIdentityBlocked, OSError, ValueError, sqlite3.Error):
         return "BLOCKED: editor_only_release_or_freeze_unproven"
     try:

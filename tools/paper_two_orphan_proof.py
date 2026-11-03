@@ -35,6 +35,13 @@ INCIDENT_LOT = {
     "FLOWUSDT": ("LONG", "MIRROR", Decimal("6550.8")),
 }
 PROOF_LABEL = "TWO_ORPHANS_IMMUTABLE_CLOSE_EVIDENCE_ONLY"
+# Only this observed frozen incident may retain unfilled, inert APPROVED ideas.
+# New symbols, filled entries or competing Robot owners must still block.
+FROZEN_APPROVAL_SYMBOLS = frozenset({
+    "1000FLOKIUSDT", "BNCUSDT", "HEMIUSDT", "INUSDT",
+    "PLAYSOUTUSDT", "RUNEUSDT",
+})
+STALE_INCIDENT_ARMS = frozenset({"BBUSDT", "KITEUSDT"})
 
 
 def prove_two_flat_orphans(
@@ -43,9 +50,11 @@ def prove_two_flat_orphans(
 ) -> str:
     """Read one stable SQLite snapshot; never call HTTP, migrate or write.
 
-    Requires a separately frozen ingress and a uniquely attributable manual
-    closing execution for EACH Robot lot. No other OPEN or APPROVED owner is
-    allowed. Passing this preflight does not release the canonical stop fence.
+    Requires separately frozen ingress and independent immutable closing
+    executions for both Robot lots. Only the exact observed never-filled
+    APPROVED ideas and stale Flat-only monitor arms are tolerated, with extra
+    durable non-execution proofs. This is not ordinary STOP or admission. 
+    Passing this preflight does not release the canonical stop fence.
     """
     # A coordinator must supply a single already-open, non-writable snapshot.
     # Reading independently committed rows can falsely pair a Flat projection
@@ -67,24 +76,50 @@ def prove_two_flat_orphans(
     )
     _require(scanner.get("mode") == "SCANNER_STOPPED", "scanner_not_stopped")
     _require(autopilot.get("mode") == "OFF", "autopilot_not_off")
-    _require(
-        protection.get("healthy") is True
-        and protection.get("unhealthy_symbols") == {},
-        "protection_unhealthy",
-    )
     covered = protection.get("covered_symbols")
     armed = protection.get("armed_symbols")
     roles = protection.get("coverage_roles")
+    unhealthy = protection.get("unhealthy_symbols")
     _require(
         isinstance(covered, list) and isinstance(armed, list)
-        and isinstance(roles, dict) and not armed
-        and (
-            (covered == [] and roles == {})
-            or (len(covered) == 2 and set(covered) == EXPECTED_SYMBOLS
-                and roles == {symbol: "EXPOSURE" for symbol in EXPECTED_SYMBOLS})
-        ),
+        and isinstance(roles, dict) and isinstance(unhealthy, dict)
+        and all(isinstance(symbol, str) and symbol for symbol in covered + armed)
+        and len(covered) == len(set(covered))
+        and len(armed) == len(set(armed)),
         "unexpected_protection_coverage",
     )
+    if protection.get("healthy") is True:
+        _require(unhealthy == {}, "protection_unhealthy")
+        _require(
+            not armed and (
+                (covered == [] and roles == {})
+                or (len(covered) == 2 and set(covered) == EXPECTED_SYMBOLS
+                    and roles == {symbol: "EXPOSURE" for symbol in EXPECTED_SYMBOLS})
+            ),
+            "unexpected_protection_coverage",
+        )
+    else:
+        # The old f100ef3 monitor has lost continuity for already-FLAT
+        # JASMY/FLOW and retained exact BB/KITE ENTRY_PENDING subscriptions.
+        # Neither an unrelated unhealthy symbol nor an actual pending entry is
+        # an acceptable shutdown exception. Durable entry and Flat proofs below
+        # must pass before the one-shot backend handoff can be authorized.
+        _require(
+            protection.get("healthy") is False and bool(unhealthy)
+            and set(unhealthy) <= EXPECTED_SYMBOLS
+            and all(isinstance(reason, str) and bool(reason.strip())
+                    for reason in unhealthy.values()),
+            "protection_unhealthy",
+        )
+        _require(
+            set(covered) == EXPECTED_SYMBOLS | STALE_INCIDENT_ARMS
+            and set(armed) == STALE_INCIDENT_ARMS
+            and roles == {
+                **{symbol: "EXPOSURE" for symbol in EXPECTED_SYMBOLS},
+                **{symbol: "ENTRY_PENDING" for symbol in STALE_INCIDENT_ARMS},
+            },
+            "unexpected_protection_coverage",
+        )
     _require(tuple(conn.execute("PRAGMA quick_check").fetchone()) == ("ok",),
              "paper_database_integrity_unproven")
     state = conn.execute(
@@ -134,15 +169,22 @@ def prove_two_flat_orphans(
         "unexpected_open_robot_owners",
     )
     candidates = conn.execute(
-        "SELECT candidate_id, symbol, status FROM robot_candidates "
+        "SELECT candidate_id, symbol, status, approved_at_ms FROM robot_candidates "
         "WHERE trading_account_id='paper' "
         "AND (status IS NULL OR status NOT IN "
         "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))",
     ).fetchall()
+    expected_open = {(row[1], row[2], "OPEN") for row in rows}
+    observed_open = {(row[0], row[1], row[2]) for row in candidates
+                     if row[2] == "OPEN"}
+    approvals = [row for row in candidates if row[2] == "APPROVED"]
     _require(
-        len(candidates) == 2
-        and {(row[0], row[1], row[2]) for row in candidates}
-        == {(row[1], row[2], "OPEN") for row in rows},
+        observed_open == expected_open
+        and len(observed_open) == 2
+        and len(candidates) == 2 + len(approvals)
+        and len({row[0] for row in candidates}) == len(candidates)
+        and len({row[1] for row in approvals}) == len(approvals)
+        and {row[1] for row in approvals} <= FROZEN_APPROVAL_SYMBOLS,
         "unexpected_active_robot_candidate",
     )
     for table, condition, reason in (
@@ -164,6 +206,43 @@ def prove_two_flat_orphans(
     # Direct adapter over the existing read-only transaction, not SQLiteStore.open
     # (which may migrate). Any missing ownership proof fails closed.
     store = SQLiteStore(conn, Path("/read-only-snapshot"), 5000)
+    for candidate_id, symbol_text, _status, approved_at_ms in approvals:
+        candidate = store.get_robot_candidate(candidate_id)
+        _require(
+            candidate is not None and candidate.status == "APPROVED"
+            and candidate.candidate_id == candidate_id
+            and candidate.trading_account_id == ACCOUNT
+            and candidate.symbol == Symbol(symbol_text)
+            and type(approved_at_ms) is int and approved_at_ms > 0
+            and candidate.approved_at_ms == approved_at_ms,
+            "frozen_candidate_identity_unproven",
+        )
+        # Never infer an unfilled candidate merely from FLAT or cancelled
+        # orders: a Market command, filled LIMIT or immutable execution after
+        # approval could have created an unclosed lot. Check all three ledgers.
+        for table, condition in (
+            ("executions", "exchange_timestamp_ms >= ?"),
+            ("paper_limit_orders", "created_at_ms >= ? AND "
+             "(status IS NULL OR status != 'cancelled')"),
+            ("trading_commands", "created_at_ms >= ? AND "
+             "(current_state IS NULL OR current_state NOT IN "
+             "('cancelled','rejected','failed','amended'))"),
+        ):
+            _require(
+                conn.execute(
+                    f"SELECT 1 FROM {table} WHERE trading_account_id='paper' "
+                    f"AND symbol=? AND ({condition}) LIMIT 1",
+                    (symbol_text, approved_at_ms),
+                ).fetchone() is None,
+                "frozen_candidate_entry_execution_unproven",
+            )
+        _require(
+            conn.execute(
+                "SELECT 1 FROM robot_trades WHERE trading_account_id='paper' "
+                "AND candidate_id=? LIMIT 1", (candidate_id,),
+            ).fetchone() is None,
+            "frozen_candidate_trade_conflict",
+        )
     for trade_id, candidate_id, symbol_text in rows:
         symbol = Symbol(symbol_text)
         trade = store.get_robot_trade(trade_id)

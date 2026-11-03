@@ -30,6 +30,7 @@ on:
       - "terminal/persistence/**"
       - "terminal/api/**"
       - "tests/test_robot_paper_acceptance.py"
+      - "tests/test_robot_sync_pending_wedge_stop.py"
       - "tests/test_paper_flat_robot_execution_fence.py"
       - "tests/test_robot_nonrobot_close_proof.py"
       - "tests/test_paper_two_orphan_proof.py"
@@ -115,6 +116,7 @@ jobs:
         run: >-
           python -m py_compile
           tests/test_robot_paper_acceptance.py
+          tests/test_robot_sync_pending_wedge_stop.py
           tests/test_paper_two_orphan_proof.py
           tools/paper_two_orphan_proof.py
           tools/flat_paper_recovery_transition.py
@@ -208,6 +210,7 @@ jobs:
         run: >-
           python -m unittest -v
           tests.test_robot_paper_acceptance
+          tests.test_robot_sync_pending_wedge_stop
           tests.test_paper_flat_robot_execution_fence
           tests.test_robot_nonrobot_close_proof
           tests.test_paper_two_orphan_proof
