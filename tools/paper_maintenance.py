@@ -6,6 +6,7 @@ does not advance to git or systemd: protection stays with the current backend.
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import subprocess
 import sys
@@ -199,6 +200,43 @@ SERVICE = "bybitscanner-paper-start.service"
 PREFIX = ("sudo", "-n")
 
 
+
+def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -> bool:
+    """Durably fence STOP replay before the first irreversible owner call.
+
+    This is only a stop-attempt marker, never an install entitlement. A crash
+    before the installer's protected transaction requires a separate verified
+    recovery decision, not a second STOP or an unproven release switch.
+    """
+    from tools.vps_gitless_release_activate import ActivationBlocked, _sync_directory
+
+    parent = journal_root.parent
+    if (not parent.is_dir() or parent.is_symlink()
+            or parent.stat().st_uid != uid or parent.stat().st_mode & 0o022):
+        raise ActivationBlocked("untrusted_stop_intent_parent")
+    if not journal_root.exists():
+        journal_root.mkdir(mode=0o700)
+        _sync_directory(parent)
+    if (not journal_root.is_dir() or journal_root.is_symlink()
+            or journal_root.stat().st_uid != uid
+            or journal_root.stat().st_mode & 0o077):
+        raise ActivationBlocked("untrusted_stop_intent_directory")
+    marker = journal_root / (".stop-invoked-" + target)
+    if marker.exists() or marker.is_symlink():
+        return False
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    try:
+        fd = os.open(marker, flags, 0o600)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(b"STOP_INVOKED; not install authorization\\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    _sync_directory(journal_root)
+    return True
+
+
 def deploy_staged_editor_only(
     target: str, *, stage: Path, root: Path = REPO, env_file: Path | None = None,
     dual_orphan_handoff: bool = False, stop=None, preflight=None,
@@ -260,6 +298,11 @@ def deploy_staged_editor_only(
                 return "BLOCKED: installed_release_postcondition_unknown; do not start"
             return resume_action(target, root=root, env_file=env_file)
         if not journal.is_dir():
+            # An earlier attempt may have died after STOP and before the
+            # installer created its protected rollback journal. Never replay
+            # an irreversible owner action or treat this marker as safe STOP.
+            if (journal_root / (".stop-invoked-" + target)).exists():
+                return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
             (preflight or inspect_staged_release)(
                 target, stage=stage, root=root, manifest=manifest_path,
                 unit_dir=installed_units, uid=trusted_uid,
@@ -274,6 +317,10 @@ def deploy_staged_editor_only(
                 ).run
             else:
                 action = stop
+            if not _record_one_shot_stop_intent(
+                journal_root, target, uid=trusted_uid,
+            ):
+                return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
             result = action(SCOPE_ALL)
             if not (result.ok and result.runtime_stopped):
                 return "BLOCKED: canonical_safe_stop_unproven; no retry, no deployment"
