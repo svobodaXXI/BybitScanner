@@ -64,8 +64,11 @@ def _editor_backend_ready(target: str, database_identity: str) -> bool:
             and h.get("paper_live_safe") is True
             and h.get("build_sha") == target
             and h.get("database_identity") == database_identity
-            and isinstance(s, dict) and s.get("mode") == "SCANNER_STOPPED"
-            and isinstance(a, dict) and a.get("mode") == "OFF"
+            and isinstance(s, dict) and s.get("ok") is True
+            and s.get("mode") == "SCANNER_STOPPED"
+            and isinstance(a, dict) and a.get("ok") is True
+            and a.get("trading_account_id") == {"value": "paper"}
+            and a.get("mode") == "OFF"
         )
     except Exception:
         return False
@@ -511,10 +514,12 @@ def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
                 or any(payload.get("ok") is not True for payload in (p, s, a))
                 or h.get("mode") != "paper" or h.get("paper_live_safe") is not True
                 or h.get("robot_admission_ready") is not True
+                or h.get("scanner_acceptance_ready") is not True
                 or (target is not None and h.get("build_sha") != target)
                 or p.get("healthy") is not True
                 or s.get("mode") != "SCANNER_RUNNING"
-                or a.get("mode") != "PAPER_AUTO"):
+                or a.get("mode") != "PAPER_AUTO"
+                or a.get("trading_account_id") != {"value": "paper"}):
             raise ValueError("PAPER state not ready")
     except (Unreachable, ValueError, KeyError, OSError, TypeError):
         return "BLOCKED: PAPER core started but PAPER_AUTO/protection readiness not proven; do not enable new admission"
