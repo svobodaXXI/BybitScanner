@@ -204,3 +204,24 @@ def test_late_untracked_owner_file_is_not_overwritten_after_preflight(tmp_path, 
     assert owner_file.read_text() == "owner-created-after-preflight"
     assert json.loads(kw["manifest"].read_text())["build_sha"] != kw["sha"]
     assert (kw["transactions"] / kw["sha"] / "old.json").is_file()
+
+
+def test_new_file_publish_refuses_collision_at_atomic_link(tmp_path, monkeypatch):
+    kw = _fixture(tmp_path, monkeypatch)
+    owner_file = kw["root"] / "new_feature.py"
+    real_link = activation.os.link
+    injected = [False]
+
+    def late_owner_link(source, destination, *args, **kwargs):
+        if Path(destination) == owner_file and not injected[0]:
+            injected[0] = True
+            owner_file.write_text("owner-wrote-during-atomic-publish")
+        return real_link(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(activation.os, "link", late_owner_link)
+    with pytest.raises(activation.ActivationBlocked, match="new_owner_file_during_switch"):
+        _activate(kw)
+    assert injected[0]
+    assert owner_file.read_text() == "owner-wrote-during-atomic-publish"
+    assert json.loads(kw["manifest"].read_text())["build_sha"] != kw["sha"]
+    assert (kw["transactions"] / kw["sha"] / "target.json").is_file()
