@@ -754,3 +754,69 @@ def test_standalone_gitless_editor_resume_requires_durable_completion_receipt(mo
         raise ActivationBlocked("untrusted_completed_release_transaction")
     monkeypatch.setattr(maintenance, "_complete_stop_intent", reject_receipt)
     assert maintenance.main([target, "--resume-installed-editor-only"]) == 2
+
+
+def test_gitless_editor_to_full_paper_reuses_owner_oneshot(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    calls = []
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze",
+                        lambda *_: "d" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready",
+                        lambda *_: True)
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "READY: full PAPER verified")
+
+    def runner(args, **_kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0)
+
+    result = maintenance.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="READY: EDITOR_ONLY", runner=runner,
+    )
+    assert result == "READY: full PAPER verified"
+    assert calls == [["sudo", "-n", "systemctl", "start",
+                      "bybitscanner-paper-start.service"]]
+
+
+def test_gitless_full_paper_start_refuses_unproven_editor_and_sha(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    calls = []
+    runner = lambda *_args, **_kw: calls.append("start")
+    assert maintenance.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="BLOCKED: editor",
+        runner=runner,
+    ).startswith("BLOCKED:")
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    assert maintenance.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="READY: EDITOR_ONLY",
+        runner=runner,
+    ) == "BLOCKED: installed_release_differs_from_approved_target"
+    assert calls == []
+
+
+def test_gitless_full_paper_start_unknown_systemd_outcome_never_replays(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    calls = []
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *_: "d" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+
+    def runner(*_args, **_kwargs):
+        calls.append("start")
+        raise subprocess.TimeoutExpired("systemctl", 300)
+
+    result = maintenance.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="READY: EDITOR_ONLY", runner=runner,
+    )
+    assert result == "BLOCKED: PAPER_core_start_outcome_unknown; no replay"
+    assert calls == ["start"]
