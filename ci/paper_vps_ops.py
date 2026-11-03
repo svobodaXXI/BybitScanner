@@ -68,7 +68,8 @@ stage, sha = Path(sys.argv[1]), sys.argv[2]
 try:
     manifest = create_manifest(stage, sha)
     assert manifest["build_sha"] == sha
-    release = inspect_staged_release(sha, stage=stage)
+    release = inspect_staged_release(
+        sha, stage=stage, root=Path("/opt/BybitScanner"))
     assert release["new"]["build_sha"] == sha
     root = Path("/opt/BybitScanner")
     env = _environment(Path("/etc/bybitscanner/paper.env"))
