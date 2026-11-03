@@ -331,10 +331,10 @@ class DualOrphanPreflightTests(TestCase):
 
     def test_pending_command_and_limit_block(self):
         conn, payload, store = fixture()
-        conn.execute("INSERT INTO trading_commands VALUES ('paper','submitting')")
+        conn.execute("INSERT INTO trading_commands VALUES ('paper','submitting','DOGEUSDT',100)")
         with self.assertRaisesRegex(FlatRecoveryBlocked, "unfinished_or_unknown_trading_command"):
             check(conn, payload, store)
         conn.execute("DELETE FROM trading_commands")
-        conn.execute("INSERT INTO paper_limit_orders VALUES ('paper','new')")
+        conn.execute("INSERT INTO paper_limit_orders VALUES ('paper','new','DOGEUSDT',100)")
         with self.assertRaisesRegex(FlatRecoveryBlocked, "active_or_unknown_paper_limit"):
             check(conn, payload, store)
