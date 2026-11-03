@@ -295,7 +295,9 @@ class DualOrphanPreflightTests(TestCase):
         self.assertEqual(
             check(conn, payload, store, evidence=[object(), object()]), PROOF_LABEL,
         )
-        conn.execute("INSERT INTO executions VALUES ('paper','1000FLOKIUSDT',200)")
+        conn.execute("INSERT INTO executions "
+                     "(trading_account_id,symbol,exchange_timestamp_ms) "
+                     "VALUES ('paper','1000FLOKIUSDT',200)")
         with self.assertRaisesRegex(
             FlatRecoveryBlocked, "approved_candidate_execution_or_ownership_unknown",
         ):
