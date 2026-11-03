@@ -620,13 +620,13 @@ def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
     identities and exact six frozen entry ideas are eligible.
     """
     from tools.stop_robot_runtime import _database_path
-    # Incident identities mirror tools/paper_two_orphan_proof.py. Keep the
-    # maintenance CLI import-light (the full proof imports runtime/scanner).
+    from tools.paper_incident_approvals import (
+        IDLE_APPROVALS, prove_six_inert_approvals,
+    )
+    from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
+
     expected_symbols = frozenset({"JASMYUSDT", "FLOWUSDT"})
-    frozen_symbols = frozenset({
-        "1000FLOKIUSDT", "BNCUSDT", "HEMIUSDT", "INUSDT",
-        "PLAYSOUTUSDT", "RUNEUSDT",
-    })
+    frozen_symbols = frozenset(IDLE_APPROVALS)
     path = _database_path(root, _environment(env_file))
     if not path.is_file() or path.is_symlink():
         return False
@@ -672,7 +672,7 @@ def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
             if sum(position[0] == symbol for position in positions) != 1:
                 return False
         rows = conn.execute(
-            "SELECT candidate_id, symbol, status FROM robot_candidates "
+            "SELECT candidate_id, symbol, status, approved_at_ms FROM robot_candidates "
             "WHERE trading_account_id='paper' "
             "AND (status IS NULL OR status NOT IN "
             "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))"
@@ -681,11 +681,20 @@ def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
         approvals = [row for row in rows if row[2] == "APPROVED"]
         if (len(rows) != len(trades) + len(approvals)
                 or len(set(rows)) != len(rows)
-                or {(cid, sym, status) for cid, sym, status in rows if status == "OPEN"}
+                or {(cid, sym, status) for cid, sym, status, _ in rows if status == "OPEN"}
                    != open_owners
-                or len({sym for _, sym, _ in approvals}) != len(approvals)
-                or any(sym not in frozen_symbols for _, sym, _ in approvals)):
+                or len({sym for _, sym, _, _ in approvals}) != len(approvals)
+                or any(sym not in frozen_symbols for _, sym, _, _ in approvals)):
             return False
+        if approvals:
+            # The same immutable six-owner proof used by the protected
+            # handoff must hold before canonical reconciliation can run.
+            # Reusing it here prevents a candidate that merely shares a
+            # symbol from receiving the old incident's authority.
+            try:
+                prove_six_inert_approvals(conn, approvals, positions)
+            except (FlatRecoveryBlocked, sqlite3.Error, ValueError, TypeError):
+                return False
         for table, condition in (
             ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
             ("trading_commands",

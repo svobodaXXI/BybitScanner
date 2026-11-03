@@ -980,6 +980,7 @@ def test_editor_flat_reconcile_preflight_refuses_exposure_or_unexpected_owner(
 ):
     import tools.paper_maintenance as maintenance
     import tools.stop_robot_runtime as shutdown
+    from tools.paper_incident_approvals import IDLE_APPROVALS
 
     db = tmp_path / "paper.sqlite3"
     with sqlite3.connect(db) as conn:
@@ -997,10 +998,22 @@ def test_editor_flat_reconcile_preflight_refuses_exposure_or_unexpected_owner(
                 trading_account_id TEXT, candidate_id TEXT,
                 symbol TEXT, exit_time_ms INTEGER);
             CREATE TABLE robot_candidates (
-                trading_account_id TEXT, candidate_id TEXT, symbol TEXT, status TEXT);
-            CREATE TABLE paper_limit_orders (trading_account_id TEXT, status TEXT);
-            CREATE TABLE trading_commands (trading_account_id TEXT, current_state TEXT);
-            CREATE TABLE paper_protection_obligations (trading_account_id TEXT, status TEXT);
+                trading_account_id TEXT, candidate_id TEXT, symbol TEXT, status TEXT,
+                approved_at_ms INTEGER, state_revision INTEGER, robot_state_json TEXT);
+            CREATE TABLE paper_limit_orders (
+                trading_account_id TEXT, status TEXT, order_id TEXT,
+                symbol TEXT, created_at_ms INTEGER);
+            CREATE TABLE trading_commands (
+                trading_account_id TEXT, current_state TEXT, symbol TEXT,
+                created_at_ms INTEGER);
+            CREATE TABLE executions (
+                trading_account_id TEXT, symbol TEXT, exchange_timestamp_ms INTEGER);
+            CREATE TABLE robot_entry_orders (
+                trading_account_id TEXT, order_id TEXT);
+            CREATE TABLE box_attempt_ownership (
+                trading_account_id TEXT, candidate_id TEXT);
+            CREATE TABLE paper_protection_obligations (
+                trading_account_id TEXT, status TEXT);
             CREATE TABLE reconciliation_checkpoints (
                 trading_account_id TEXT, completed_at_ms INTEGER);
             INSERT INTO robot_runtime_state VALUES
@@ -1016,28 +1029,71 @@ def test_editor_flat_reconcile_preflight_refuses_exposure_or_unexpected_owner(
             INSERT INTO robot_trades VALUES
                 ('paper','flow','FLOWUSDT',NULL);
             INSERT INTO robot_candidates VALUES
-                ('paper','jasmy','JASMYUSDT','OPEN');
+                ('paper','jasmy','JASMYUSDT','OPEN',100,0,NULL);
             INSERT INTO robot_candidates VALUES
-                ('paper','flow','FLOWUSDT','OPEN');
-            INSERT INTO robot_candidates VALUES
-                ('paper','fro','1000FLOKIUSDT','APPROVED');
+                ('paper','flow','FLOWUSDT','OPEN',100,0,NULL);
         """)
+        for symbol, (prefix, suffix) in IDLE_APPROVALS.items():
+            cid = prefix if not suffix else prefix + ("0" * 32) + suffix
+            conn.execute(
+                "INSERT INTO robot_candidates VALUES ('paper',?,?, 'APPROVED',200,0,NULL)",
+                (cid, symbol),
+            )
+
     monkeypatch.setattr(shutdown, "_database_path", lambda *_: db)
-    assert maintenance._editor_flat_reconcile_preflight(tmp_path, None)
+    preflight = lambda: maintenance._editor_flat_reconcile_preflight(tmp_path, None)
+    assert preflight()
+
     with sqlite3.connect(db) as conn:
-        conn.execute("UPDATE position_projections SET side='Long', quantity='1' "
-                     "WHERE symbol='FLOWUSDT'")
-    assert not maintenance._editor_flat_reconcile_preflight(tmp_path, None)
+        conn.execute(
+            "UPDATE position_projections SET side='Long', quantity='1' "
+            "WHERE symbol='FLOWUSDT'"
+        )
+    assert not preflight()
     with sqlite3.connect(db) as conn:
-        conn.execute("UPDATE position_projections SET side='Flat', quantity='0' "
-                     "WHERE symbol='FLOWUSDT'")
-        conn.execute("INSERT INTO robot_candidates VALUES "
-                     "('paper','alien','DOGEUSDT','APPROVED')")
-    assert not maintenance._editor_flat_reconcile_preflight(tmp_path, None)
+        conn.execute(
+            "UPDATE position_projections SET side='Flat', quantity='0' "
+            "WHERE symbol='FLOWUSDT'"
+        )
+        conn.execute(
+            "INSERT INTO robot_candidates VALUES "
+            "('paper','alien','DOGEUSDT','APPROVED',200,0,NULL)"
+        )
+    assert not preflight()
     with sqlite3.connect(db) as conn:
         conn.execute("DELETE FROM robot_candidates WHERE candidate_id='alien'")
-        conn.execute("INSERT INTO paper_limit_orders VALUES ('paper','open')")
-    assert not maintenance._editor_flat_reconcile_preflight(tmp_path, None)
+        conn.execute(
+            "INSERT INTO paper_limit_orders (trading_account_id,status) "
+            "VALUES ('paper','open')"
+        )
+    assert not preflight()
+
+
+    # Neither a familiar symbol nor Flat is identity/admission evidence.
+    bnc = IDLE_APPROVALS["BNCUSDT"][0]
+    with sqlite3.connect(db) as conn:
+        conn.execute("DELETE FROM paper_limit_orders")
+        conn.execute(
+            "UPDATE robot_candidates SET candidate_id='spoofed' WHERE candidate_id=?",
+            (bnc,),
+        )
+    assert not preflight()
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE robot_candidates SET candidate_id=?, state_revision=1 "
+            "WHERE candidate_id='spoofed'", (bnc,),
+        )
+    assert not preflight()
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE robot_candidates SET state_revision=0 WHERE candidate_id=?", (bnc,)
+        )
+        conn.execute("INSERT INTO executions VALUES ('paper','BNCUSDT',200)")
+    assert not preflight()
+    with sqlite3.connect(db) as conn:
+        conn.execute("DELETE FROM executions")
+        conn.execute("INSERT INTO box_attempt_ownership VALUES ('paper',?)", (bnc,))
+    assert not preflight()
 
 
 def test_paper_start_quiescence_checks_durable_frozen_ledgers(monkeypatch, tmp_path):
