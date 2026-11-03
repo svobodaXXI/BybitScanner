@@ -222,7 +222,7 @@ class StoppedPreEntryWedgeTests(unittest.TestCase):
         self.frozen_reconcile_state()
         other = self.frozen_incident_idea("other", symbol="OTHERUSDT")
         future = self.frozen_incident_idea(
-            "future", symbol="HEMIUSDT", approved_at_ms=1_793_703_600_001,
+            "future", symbol="HEMIUSDT", approved_at_ms=1_793_703_654_001,
         )
         assert not self.runtime._terminalize_frozen_incident_never_traded(other)
         assert not self.runtime._terminalize_frozen_incident_never_traded(future)
