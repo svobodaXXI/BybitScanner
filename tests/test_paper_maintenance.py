@@ -721,3 +721,36 @@ def test_staged_gitless_manifest_committed_and_ready_never_reopens_journal(monke
         installer=lambda *_args, **_kw: pytest.fail("no installer against live units"),
         resume=lambda *_args, **_kw: "READY: already installed and running",
     ) == "READY: already installed and running"
+
+
+def test_standalone_gitless_editor_resume_records_completion_only_after_ready(monkeypatch):
+    import tools.paper_maintenance as maintenance
+
+    target = "a" * 40
+    calls = []
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_args, **_kw: "READY: EDITOR_ONLY")
+    monkeypatch.setattr(maintenance, "_complete_stop_intent",
+                        lambda *args, **kw: calls.append((args, kw)))
+    assert maintenance.main([target, "--resume-installed-editor-only"]) == 0
+    assert len(calls) == 1
+    assert calls[0][0][1] == target
+    assert calls[0][1] == {"uid": 0}
+
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_args, **_kw: "BLOCKED: editor_not_ready")
+    assert maintenance.main([target, "--resume-installed-editor-only"]) == 2
+    assert len(calls) == 1
+
+
+def test_standalone_gitless_editor_resume_requires_durable_completion_receipt(monkeypatch):
+    import tools.paper_maintenance as maintenance
+    from tools.vps_gitless_release_activate import ActivationBlocked
+
+    target = "a" * 40
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_args, **_kw: "READY: EDITOR_ONLY")
+    def reject_receipt(*_args, **_kw):
+        raise ActivationBlocked("untrusted_completed_release_transaction")
+    monkeypatch.setattr(maintenance, "_complete_stop_intent", reject_receipt)
+    assert maintenance.main([target, "--resume-installed-editor-only"]) == 2
