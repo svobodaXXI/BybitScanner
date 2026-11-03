@@ -18,6 +18,7 @@ from robot_telegram_feed import (
     build_paper_close_all_confirmation_keyboard,
     build_robot_control_keyboard,
     format_robot_status_text,
+    robot_control_status_note,
     parse_robot_control_callback,
 )
 from terminal.application.robot_admission import (
@@ -812,7 +813,8 @@ def _send_robot_status_panel(
         telegram_bot.send_message(
             config.TELEGRAM_TOKEN,
             chat_id,
-            f"{prefix}\n\nСтатус робота: {format_robot_status_text(mode, recovery_status)}",
+            f"{prefix}\n\nСтатус робота: {format_robot_status_text(mode, recovery_status)}"
+            f"{robot_control_status_note(mode, recovery_status)}",
             reply_markup=build_robot_control_keyboard(mode, recovery_status),
         )
     except Exception as exc:

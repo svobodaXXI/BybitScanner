@@ -49,7 +49,7 @@ from robot_position_view import (
 from robot_telegram_feed import (
     VIEW_POSITIONS, build_robot_control_keyboard,
     format_paper_positions_view,
-    format_robot_status_text, parse_robot_view_callback,
+    format_robot_status_text, robot_control_status_note, parse_robot_view_callback,
 )
 from terminal.application.robot_admission import box_plan_admission_handle
 from terminal.application.robot_control import get_robot_runtime_status
@@ -167,7 +167,8 @@ def _send_robot_status(chat_id):
             chat_id,
             f"{ROBOT_EMOJI} Робот: {_robot_status_text(runtime)}\n"
             f"Статус робота: Наблюдение: {watching} кандидатов\n"
-            f"Открытых позиций: {opened}",
+            f"Открытых позиций: {opened}"
+            f"{robot_control_status_note(mode, recovery_status)}",
             reply_markup=build_robot_control_keyboard(mode, recovery_status),
         )
     except Exception:
