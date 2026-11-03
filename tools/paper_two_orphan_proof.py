@@ -259,8 +259,10 @@ def prove_two_flat_orphans(
         and {row[1] for row in approvals} <= FROZEN_APPROVAL_SYMBOLS,
         "unexpected_active_robot_candidate",
     )
-    if protection.get("healthy") is False:
-        # The stale WebSocket exception is not a general approval waiver.
+    if approvals or protection.get("healthy") is False:
+        # Any surviving approval, even with healthy coverage, must prove the
+        # exact incident owners. A healthy monitor does not confer admission
+        # or handoff authority on a new candidate with a familiar symbol.
         _prove_six_inert_approvals(conn, approvals, positions)
     for table, condition, reason in (
         ("paper_limit_orders", "(status IS NULL OR status NOT IN ('filled','cancelled'))",
