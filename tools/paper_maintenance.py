@@ -484,6 +484,12 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
         return "BLOCKED: PAPER systemd units not proven ready; no start attempted"
     if not command(*PREFIX, "systemctl", "start", SERVICE):
         return "BLOCKED: PAPER core start failed; no admission bypass attempted"
+    return _paper_full_readiness(root=root, env_file=env_file, readiness=readiness,
+                                 target=target)
+
+
+def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
+                          target: str | None = None) -> str:
     # The oneshot says only that startup was requested; do not report READY
     # unless the PAPER backend has independently proven its safety.
     from tools.runtime_intent import http_get
@@ -498,6 +504,7 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
                    (health, protection, scanner, autopilot)):
             raise ValueError("backend verification endpoint failed")
         if (h.get("mode") != "paper" or h.get("paper_live_safe") is not True
+                or (target is not None and h.get("build_sha") != target)
                 or p.get("healthy") is not True
                 or s.get("mode") != "SCANNER_RUNNING"
                 or a.get("mode") != "PAPER_AUTO"):
@@ -528,6 +535,37 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
     return "READY: exact HEAD, PAPER-only, Robot, Scanner, PAPER_AUTO, reentry and protection confirmed"
 
 
+def start_installed_paper_from_editor(
+    target: str, *, root: Path = REPO, env_file: Path | None = None,
+    runner=subprocess.run, editor_status: str,
+) -> str:
+    """Use existing owner PAPER oneshot only after verified Editor recovery."""
+    if not editor_status.startswith("READY:"):
+        return "BLOCKED: editor_only_not_ready; PAPER start not attempted"
+    # Exact installed source is re-proved immediately before trading activation.
+    from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+    try:
+        if verify_release(root) != target:
+            return "BLOCKED: installed_release_differs_from_approved_target"
+        identity = _durable_editor_freeze(root, env_file)
+        if not _editor_runtime_ready(target, identity):
+            return "BLOCKED: editor_only_runtime_not_proven"
+    except (ReleaseIdentityBlocked, OSError, ValueError, sqlite3.Error):
+        return "BLOCKED: editor_only_release_or_freeze_unproven"
+    try:
+        response = runner(
+            [*PREFIX, "systemctl", "start", SERVICE],
+            cwd=root, capture_output=True, text=True, timeout=300, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "BLOCKED: PAPER_core_start_outcome_unknown; no replay"
+    if response.returncode != 0:
+        return "BLOCKED: PAPER_core_start_failed; no replay"
+    # The existing oneshot owns Scanner, Robot and PAPER_AUTO transitions;
+    # these independent postconditions must also prove the exact release.
+    return _paper_full_readiness(root=root, env_file=env_file, target=target)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
@@ -537,11 +575,17 @@ def main(argv=None) -> int:
                         help="only after an exact Gitless release was safely installed")
     parser.add_argument("--staged-gitless-editor-only", type=Path,
                         help="owner-approved exact staged checkout; safe-stop and install once")
+    parser.add_argument("--start-paper-after-editor", action="store_true",
+                        help="after safe Gitless Editor recovery, start owner PAPER oneshot")
     parser.add_argument("--dual-orphan-handoff-20261103", action="store_true",
                         help="separate explicit opt-in to exact JASMY/FLOW protected handoff")
     args = parser.parse_args(argv)
     if args.resume_installed_editor_only and args.staged_gitless_editor_only:
         parser.error("choose exactly one Gitless operation")
+    if args.start_paper_after_editor and not (
+        args.staged_gitless_editor_only or args.resume_installed_editor_only
+    ):
+        parser.error("full PAPER start requires verified Gitless Editor recovery")
     if args.dual_orphan_handoff_20261103 and not args.staged_gitless_editor_only:
         parser.error("exceptional handoff requires staged Gitless operation")
     if args.staged_gitless_editor_only:
@@ -565,6 +609,10 @@ def main(argv=None) -> int:
     else:
         status = run_maintenance(args.sha, env_file=args.env_file,
                                  wait_seconds=args.wait_seconds)
+    if args.start_paper_after_editor and status.startswith("READY:"):
+        status = start_installed_paper_from_editor(
+            args.sha, root=REPO, env_file=args.env_file, editor_status=status,
+        )
     print(status)
     return 0 if status.startswith("READY:") else 2
 
