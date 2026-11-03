@@ -494,7 +494,7 @@ def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
                           require_gitless_telegram: bool = False) -> str:
     # The oneshot says only that startup was requested; do not report READY
     # unless the PAPER backend has independently proven its safety.
-    from tools.runtime_intent import Unreachable, http_get
+    from tools.runtime_intent import Unreachable, expected_database_identity, http_get
     try:
         health = http_get("http://127.0.0.1:8765/api/health", 5)
         protection = http_get("http://127.0.0.1:8765/api/robot/protection-health", 5)
@@ -507,7 +507,9 @@ def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
             raise ValueError("backend verification endpoint failed")
         if not all(isinstance(payload, dict) for payload in (h, p, s, a)):
             raise ValueError("malformed PAPER readiness evidence")
-        if (h.get("mode") != "paper" or h.get("paper_live_safe") is not True
+        if (h.get("ok") is not True or h.get("component") != "paper_backend"
+                or any(payload.get("ok") is not True for payload in (p, s, a))
+                or h.get("mode") != "paper" or h.get("paper_live_safe") is not True
                 or h.get("robot_admission_ready") is not True
                 or (target is not None and h.get("build_sha") != target)
                 or p.get("healthy") is not True
@@ -516,18 +518,19 @@ def _paper_full_readiness(*, root: Path, env_file: Path | None, readiness=None,
             raise ValueError("PAPER state not ready")
     except (Unreachable, ValueError, KeyError, OSError, TypeError):
         return "BLOCKED: PAPER core started but PAPER_AUTO/protection readiness not proven; do not enable new admission"
-    if require_gitless_telegram:
-        # Full Gitless START is not READY while its separately owned Telegram
-        # worker is absent or attached to another PAPER database.
-        from tools.runtime_intent import expected_database_identity
-        try:
-            expected = expected_database_identity(root, _environment(env_file))
-            if (not isinstance(h.get("database_identity"), str)
-                    or h["database_identity"] != expected
-                    or not _editor_telegram_ready(expected)):
-                return "BLOCKED: Gitless_PAPER_Telegram_or_database_identity_unproven"
-        except (OSError, ValueError, TypeError, sqlite3.Error):
-            return "BLOCKED: Gitless_PAPER_Telegram_or_database_identity_unproven"
+    # Both the checkout path and Gitless installer must prove the same PAPER
+    # DB identity as the running Backend. Service health alone is not ownership.
+    identity_block = ("BLOCKED: Gitless_PAPER_Telegram_or_database_identity_unproven"
+                      if require_gitless_telegram
+                      else "BLOCKED: PAPER_backend_database_identity_unproven")
+    try:
+        expected = expected_database_identity(root, _environment(env_file))
+        if h.get("database_identity") != expected:
+            return identity_block
+        if require_gitless_telegram and not _editor_telegram_ready(expected):
+            return identity_block
+    except (OSError, ValueError, TypeError, sqlite3.Error):
+        return identity_block
     # An enabled Autopilot is not proof that Robot can admit trades.
     # Read the canonical durable state without mutating the PAPER DB.
     try:
