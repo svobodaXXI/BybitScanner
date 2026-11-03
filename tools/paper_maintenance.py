@@ -60,14 +60,20 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
     shutdown = stop if stop is not None else RuntimeShutdown(
         root=root, env=_environment(env_file)
     ).run
-    deadline = clock() + wait_seconds
-    while True:
-        result = shutdown(SCOPE_ALL)
-        if result.ok and result.runtime_stopped:
-            break
-        if clock() >= deadline:
-            return "BLOCKED: canonical safe-stop refused; PAPER protection retained"
-        sleep(min(poll_seconds, max(0, deadline - clock())))
+    # The canonical ALL stop is a potentially mutating operation. Repeating it
+    # after a 409, timeout, lost response or uncertain SIGINT outcome may replay
+    # a non-idempotent action. In particular, an old backend may still protect
+    # a PAPER position even if the operator's HTTP response was lost.
+    #
+    # Never retry an entire STOP as a polling mechanism. A future maintenance
+    # resume path must use read-only, identity-bound observed state to determine
+    # whether a *different* stage is now legal.
+    result = shutdown(SCOPE_ALL)
+    if not (result.ok and result.runtime_stopped):
+        return (
+            "BLOCKED: canonical safe-stop not proven; no repeated STOP, "
+            "release switch or start; PAPER backend retained when present"
+        )
 
     if not command("git", "merge", "--ff-only", target):
         return "BLOCKED: fast-forward failed after safe-stop"
