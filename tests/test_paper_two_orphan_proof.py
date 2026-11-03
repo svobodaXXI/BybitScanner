@@ -266,48 +266,48 @@ class DualOrphanPreflightTests(TestCase):
         with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_open_robot_owners"):
             check(conn, payload, store)
 
-    def test_exact_frozen_approved_candidate_requires_no_execution(self):
+    def test_healthy_orphans_reject_unpinned_partial_approval(self):
         conn, payload, store = fixture()
         conn.execute(
             "INSERT INTO robot_candidates VALUES "
-            "('paper','frozen-a','1000FLOKIUSDT','APPROVED',200)"
+            "('paper','unrelated-approved','1000FLOKIUSDT','APPROVED',200)"
         )
-        old = store.get_robot_candidate.side_effect
-        approved = SimpleNamespace(
-            candidate_id="frozen-a", trading_account_id=ACCOUNT,
-            symbol=Symbol("1000FLOKIUSDT"), status="APPROVED",
-            approved_at_ms=200,
-        )
-        store.get_robot_candidate.side_effect = (
-            lambda candidate_id: approved if candidate_id == "frozen-a"
-            else old(candidate_id)
+        # Valid symbol and apparently healthy protection must not authorize
+        # an unrelated candidate during exceptional protected handoff.
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_active_robot_candidate"):
+            check(conn, payload, store, evidence=[object(), object()])
+
+    def test_healthy_orphans_still_verify_all_six_exact_approvals(self):
+        conn, payload, store = stale_incident_fixture()
+        payload["protection"] = dict(
+            healthy=True, unhealthy_symbols={},
+            covered_symbols=["JASMYUSDT", "FLOWUSDT"], armed_symbols=[],
+            coverage_roles={"JASMYUSDT": "EXPOSURE", "FLOWUSDT": "EXPOSURE"},
         )
         self.assertEqual(
             check(conn, payload, store, evidence=[object(), object()]), PROOF_LABEL,
         )
-        conn.execute(
-            "INSERT INTO executions VALUES ('paper','1000FLOKIUSDT',200)"
-        )
+        conn.execute("INSERT INTO executions VALUES ('paper','1000FLOKIUSDT',200)")
         with self.assertRaisesRegex(
-            FlatRecoveryBlocked, "frozen_candidate_entry_execution_unproven",
+            FlatRecoveryBlocked, "approved_candidate_execution_or_ownership_unknown",
         ):
             check(conn, payload, store, evidence=[object(), object()])
         conn.execute("DELETE FROM executions")
         conn.execute(
-            "INSERT INTO paper_limit_orders VALUES "
-            "('paper','filled','1000FLOKIUSDT',201)"
+            "INSERT INTO paper_limit_orders "
+            "(trading_account_id,status,symbol,created_at_ms) "
+            "VALUES ('paper','filled','1000FLOKIUSDT',201)"
         )
         with self.assertRaisesRegex(
-            FlatRecoveryBlocked, "frozen_candidate_entry_execution_unproven",
+            FlatRecoveryBlocked, "approved_candidate_execution_or_ownership_unknown",
         ):
             check(conn, payload, store, evidence=[object(), object()])
         conn.execute("DELETE FROM paper_limit_orders")
         conn.execute(
-            "INSERT INTO trading_commands VALUES "
-            "('paper','filled','1000FLOKIUSDT',201)"
+            "INSERT INTO trading_commands VALUES ('paper','filled','1000FLOKIUSDT',201)"
         )
         with self.assertRaisesRegex(
-            FlatRecoveryBlocked, "frozen_candidate_entry_execution_unproven",
+            FlatRecoveryBlocked, "approved_candidate_execution_or_ownership_unknown",
         ):
             check(conn, payload, store, evidence=[object(), object()])
 
