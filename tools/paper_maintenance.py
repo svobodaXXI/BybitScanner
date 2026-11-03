@@ -214,12 +214,14 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
         return  # An existing release may predate one-shot STOP fencing.
     _trusted_file(marker, uid)
     journal = journal_root / target
+    if not journal.exists():
+        return  # No protected installer transaction to attest.
     if (not journal.is_dir() or journal.is_symlink()
             or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077):
         raise ActivationBlocked("untrusted_completed_release_transaction")
     done = journal / "editor-ready"
     if done.exists():
-        if _trusted_file(done, uid).read_bytes() != target.encode("ascii"):
+        if _trusted_file(done, uid) != target.encode("ascii"):
             raise ActivationBlocked("completed_release_receipt_mismatch")
         return
     fd = os.open(done, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -346,7 +348,7 @@ def deploy_staged_editor_only(
         if current == target:
             # Already-ready installations must be idempotent (and may have
             # live units); never touch their protected journal in that case.
-            observed = resume_action(target, root=root, env_file=env_file)
+            observed = finish_resume()
             if (not journal.is_dir() or
                     (isinstance(observed, str) and observed.startswith("READY:"))):
                 return observed
