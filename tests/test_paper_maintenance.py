@@ -429,3 +429,54 @@ def test_staged_gitless_editor_existing_target_only_resumes(monkeypatch, tmp_pat
         installer=lambda *_args, **_kw: pytest.fail("no repeated install"),
         resume=lambda *_args, **_kw: "READY: existing install",
     ) == "READY: existing install"
+
+
+def test_staged_gitless_manifest_committed_but_units_incomplete_replays_only_install(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    (transactions / target).mkdir(parents=True)
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    steps = []
+    def resume(*_args, **_kw):
+        steps.append("resume")
+        return ("BLOCKED: installed_unit_mismatch" if steps.count("resume") == 1
+                else "READY: EDITOR_ONLY")
+    result = deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=transactions,
+        preflight=lambda *_args, **_kw: pytest.fail("no preflight replay"),
+        stop=lambda *_: pytest.fail("no STOP replay"),
+        installer=lambda *_args, **kw: (
+            steps.append(("install", kw["stopped_proof"] is None)),
+            "INSTALLED_STOPPED: recovered"
+        )[1],
+        resume=resume,
+    )
+    assert result == "READY: EDITOR_ONLY"
+    assert steps == ["resume", ("install", True), "resume"]
+
+
+def test_staged_gitless_manifest_committed_and_ready_never_reopens_journal(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    (transactions / target).mkdir(parents=True)
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    assert deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=transactions,
+        stop=lambda *_: pytest.fail("no STOP after already-ready"),
+        installer=lambda *_args, **_kw: pytest.fail("no installer against live units"),
+        resume=lambda *_args, **_kw: "READY: already installed and running",
+    ) == "READY: already installed and running"
