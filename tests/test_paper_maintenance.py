@@ -235,3 +235,71 @@ def test_resume_installed_service_failure_preserves_backend_and_never_requests_p
     assert result.startswith("BLOCKED: telegram_start_failed_or_unknown")
     assert len(calls) == 3
     assert not any("bybitscanner-paper-start.service" in c for c in calls)
+
+
+def test_partial_editor_resume_only_starts_absent_telegram(monkeypatch, tmp_path):
+    from tools.paper_maintenance import resume_installed_release
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as identity
+    import tools.vps_release_resume as resume
+    import tools.legacy_runtime_process as legacy
+
+    root = tmp_path / "release"
+    original = root / "deploy/systemd/bybitscanner-telegram.service"
+    original.parent.mkdir(parents=True)
+    original.write_text("[Service]\nExecStart=/bin/true\n")
+    units = tmp_path / "systemd"
+    units.mkdir()
+    (units / original.name).write_bytes(original.read_bytes())
+    monkeypatch.setattr(resume, "UNIT_DIR", units)
+    monkeypatch.setattr(resume, "_systemd_state",
+                        lambda unit: {"ActiveState": "inactive", "MainPID": "0"})
+    monkeypatch.setattr(identity, "verify_release", lambda path: "a" * 40)
+    monkeypatch.setattr(legacy, "probe_listener_pids", lambda host, port: ())
+    monkeypatch.setattr(maintenance, "_editor_backend_ready",
+                        lambda target, db_identity: True)
+    calls = []
+    monkeypatch.setattr(maintenance, "_editor_telegram_ready",
+                        lambda identity: len(calls) != 0)
+    def run(argv, **kwargs):
+        calls.append(tuple(argv))
+        return SimpleNamespace(returncode=0)
+    result = resume_installed_release(
+        "a" * 40, root=root, env_file=None, runner=run,
+        freeze_proof=lambda *_: "b" * 64,
+    )
+    assert result.startswith("READY: Telegram recovered")
+    assert calls == [
+        ("sudo", "-n", "systemctl", "start", "bybitscanner-telegram.service"),
+    ]
+
+
+def test_partial_editor_resume_blocked_if_telegram_port_still_owned(monkeypatch, tmp_path):
+    from tools.paper_maintenance import resume_installed_release
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as identity
+    import tools.vps_release_resume as resume
+    import tools.legacy_runtime_process as legacy
+
+    root = tmp_path / "release"
+    original = root / "deploy/systemd/bybitscanner-telegram.service"
+    original.parent.mkdir(parents=True)
+    original.write_text("[Service]\nExecStart=/bin/true\n")
+    units = tmp_path / "systemd"
+    units.mkdir()
+    (units / original.name).write_bytes(original.read_bytes())
+    monkeypatch.setattr(resume, "UNIT_DIR", units)
+    monkeypatch.setattr(resume, "_systemd_state",
+                        lambda unit: {"ActiveState": "inactive", "MainPID": "0"})
+    monkeypatch.setattr(identity, "verify_release", lambda path: "a" * 40)
+    monkeypatch.setattr(legacy, "probe_listener_pids", lambda host, port: (-1,))
+    monkeypatch.setattr(maintenance, "_editor_backend_ready", lambda *args: True)
+    monkeypatch.setattr(maintenance, "_editor_telegram_ready", lambda *_: False)
+    calls = []
+    result = resume_installed_release(
+        "a" * 40, root=root, env_file=None,
+        runner=lambda argv, **_: calls.append(argv),
+        freeze_proof=lambda *_: "b" * 64,
+    )
+    assert result.startswith("BLOCKED: Telegram_owner_or_release_not_proven")
+    assert not calls
