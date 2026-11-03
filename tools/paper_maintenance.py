@@ -6,6 +6,7 @@ does not advance to git or systemd: protection stays with the current backend.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import os
 import sqlite3
 import subprocess
@@ -221,30 +222,32 @@ def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -
             or journal_root.stat().st_uid != uid
             or journal_root.stat().st_mode & 0o077):
         raise ActivationBlocked("untrusted_stop_intent_directory")
-    # An unresolved STOP from another requested release is still the same
-    # runtime side effect. Changing the target SHA must not replay it.
-    for marker in journal_root.glob(".stop-invoked-*"):
-        previous = marker.name.removeprefix(".stop-invoked-")
-        if (len(previous) != 40 or any(ch not in "0123456789abcdef" for ch in previous)
-                or marker.is_symlink() or not marker.is_file()
-                or marker.stat().st_uid != uid or marker.stat().st_mode & 0o077):
-            raise ActivationBlocked("untrusted_prior_STOP_intent")
-        if not (journal_root / previous).is_dir():
+    with (journal_root / ".release.lock").open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # An unresolved STOP from another requested release is still the same
+        # runtime side effect. Changing the target SHA must not replay it.
+        for marker in journal_root.glob(".stop-invoked-*"):
+            previous = marker.name.removeprefix(".stop-invoked-")
+            if (len(previous) != 40 or any(ch not in "0123456789abcdef" for ch in previous)
+                    or marker.is_symlink() or not marker.is_file()
+                    or marker.stat().st_uid != uid or marker.stat().st_mode & 0o077):
+                raise ActivationBlocked("untrusted_prior_STOP_intent")
+            if not (journal_root / previous).is_dir():
+                return False
+        marker = journal_root / (".stop-invoked-" + target)
+        if marker.exists() or marker.is_symlink():
             return False
-    marker = journal_root / (".stop-invoked-" + target)
-    if marker.exists() or marker.is_symlink():
-        return False
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
-    try:
-        fd = os.open(marker, flags, 0o600)
-    except FileExistsError:
-        return False
-    with os.fdopen(fd, "wb") as stream:
-        stream.write(b"STOP_INVOKED; not install authorization\\n")
-        stream.flush()
-        os.fsync(stream.fileno())
-    _sync_directory(journal_root)
-    return True
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        try:
+            fd = os.open(marker, flags, 0o600)
+        except FileExistsError:
+            return False
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(b"STOP_INVOKED; not install authorization\\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        _sync_directory(journal_root)
+        return True
 
 
 def deploy_staged_editor_only(
