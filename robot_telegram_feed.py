@@ -130,7 +130,7 @@ def robot_control_status_note(mode: str, recovery_status: str) -> str:
     """Explain legal recovery choices without offering a mutating bypass."""
     if recovery_status == "RECONCILIATION_REQUIRED":
         return (
-            "\\n⚠ Требуется штатная сверка Robot. "
+            "\n⚠ Требуется штатная сверка Robot. "
             "Старт, пауза и остановка сейчас заблокированы; "
             "кнопка обновления только перечитывает статус."
         )
