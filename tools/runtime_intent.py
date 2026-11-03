@@ -143,6 +143,19 @@ def paper_safe_backend_env(env: Mapping[str, str]) -> dict[str, str]:
     return child
 
 
+def telegram_safe_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Do not inherit the LIVE operator credential into the Telegram worker.
+
+    The worker handles external callbacks and may launch child processes.
+    Keep its existing bot, gateway, workspace and PAPER configuration intact;
+    unlike the PAPER backend it is not a LIVE authority. Never log values.
+    """
+    return {
+        key: value for key, value in env.items()
+        if key.upper() != "BYBITSCANNER_OPERATOR_TOKEN"
+    }
+
+
 def spawn_console(argv: list[str], cwd: Path, env: Mapping[str, str] | None = None) -> None:
     """Start a dependency in its own visible console that closes when the child exits.
 
@@ -317,7 +330,8 @@ class RuntimeIntentBootstrap:
             if self._require_telegram:
                 self._ensure(
                     "Telegram monitoring", self._probe_telegram,
-                    telegram_argv(self._root, self._python), None,
+                    telegram_argv(self._root, self._python),
+                    telegram_safe_env(self._env),
                 )
         except (Mismatch, TimeoutError, OSError) as error:
             return BootstrapResult(
