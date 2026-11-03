@@ -518,7 +518,7 @@ def test_staged_gitless_completed_release_allows_later_target_without_stop_repla
     calls = []
 
     def install(target, **_kw):
-        (transactions / target).mkdir(exist_ok=True)
+        (transactions / target).mkdir(mode=0o700, exist_ok=True)
         return "INSTALLED_STOPPED: exact"
 
     def resume(target, **_kw):
