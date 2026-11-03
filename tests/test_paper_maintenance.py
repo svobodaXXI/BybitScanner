@@ -6,6 +6,17 @@ from tools.paper_maintenance import run_maintenance
 
 
 @pytest.fixture(autouse=True)
+def fake_git_checkout(monkeypatch):
+    # Existing legacy Git-checkout tests intentionally exercise the
+    # pre-verified checkout path with a fake command runner.
+    original = Path.is_dir
+    monkeypatch.setattr(
+        Path, "is_dir",
+        lambda path: True if path.name == ".git" else original(path),
+    )
+
+
+@pytest.fixture(autouse=True)
 def fake_ready_api(monkeypatch):
     def get(url, _timeout):
         if url.endswith("/api/health"):
@@ -86,20 +97,30 @@ def test_unapproved_target_never_updates_or_starts():
     assert not any(cmd[:2] == ("git", "merge") or "systemctl" in cmd for cmd in calls)
 
 
-def test_waits_for_canonical_safe_stop_before_mutating_runtime():
+def test_canonical_stop_ambiguous_result_is_never_retried_even_with_wait():
     calls = []
     attempts = []
     def stop(_scope):
         attempts.append(len(attempts))
-        return SimpleNamespace(ok=len(attempts) >= 2, runtime_stopped=len(attempts) >= 2)
-    now = [0.]
-    def sleep(seconds):
-        now[0] += seconds
+        return SimpleNamespace(ok=False, runtime_stopped=False)
     result = run_maintenance("a" * 40, stop=stop,
         runner=fake_runner(calls), readiness=lambda: True, wait_seconds=60, poll_seconds=10,
-        clock=lambda: now[0], sleep=sleep)
-    assert result.startswith("READY:")
-    assert len(attempts) == 2
+        sleep=lambda _: (_ for _ in ()).throw(AssertionError("no retry sleep")))
+    assert result.startswith("BLOCKED: canonical safe-stop unproven")
+    assert len(attempts) == 1
+    assert not any(cmd[:2] == ("git", "merge") or "systemctl" in cmd for cmd in calls)
+
+
+def test_gitless_vps_rejected_before_stop_and_before_any_git_or_systemd(monkeypatch):
+    monkeypatch.setattr(Path, "is_dir", lambda path: False if path.name == ".git" else True)
+    calls = []
+    result = run_maintenance(
+        "a" * 40, root=Path("/opt/BybitScanner"),
+        runner=lambda argv, **_: calls.append(argv),
+        stop=lambda _: (_ for _ in ()).throw(AssertionError("stop must not be called")),
+    )
+    assert result.startswith("BLOCKED: gitless_install_requires_verified_immutable_release_switch")
+    assert calls == []
 
 
 def test_expired_safe_stop_leaves_code_and_service_untouched():
