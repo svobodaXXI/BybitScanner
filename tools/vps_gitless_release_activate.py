@@ -259,8 +259,17 @@ def activate_staged_release(
             raw = source.read_bytes()
             _demand(git_blob_hash(raw) == digest, "staging_changed_during_switch:" + name)
             destination = _safe_path(root, name)
-            if _blob(destination) == digest:
+            observed = _blob(destination)
+            if observed == digest:
                 continue
+            # A new owner file may appear after preflight or while another
+            # tracked file is installed. Never replace such a collision.
+            if name in old_blobs:
+                _demand(observed == old_blobs[name],
+                        "tracked_file_changed_during_switch:" + name)
+            else:
+                _demand(observed is None,
+                        "new_owner_file_during_switch:" + name)
             _atomic_file(destination, raw, 0o755 if source.stat().st_mode & stat.S_IXUSR else 0o644)
         for name in sorted(set(old_blobs) - set(new_blobs)):
             dest = _safe_path(root, name)
