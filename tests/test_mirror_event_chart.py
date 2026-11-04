@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+import tests.test_telegram_delivery  # tracked-only offline config/API stubs
+
 from mirror_scanner import (
     _frozen_event_chart, frozen_mirror_card_caption, mirror_source_token,
     mirror_subtype, mirror_caption,
@@ -77,7 +79,7 @@ def test_frozen_mirror_card_uses_same_original_provenance_as_chart():
     }
     item = {"level_id": "level-A", "kind": "breakout"}
     caption = frozen_mirror_card_caption("TESTUSDT", "5", item, event)
-    assert caption == "🪞 MIRROR · TESTUSDT · 5m\\nГраница паттерна · Rising Wedge"
+    assert caption == "🪞 MIRROR · TESTUSDT · 5m\nГраница паттерна · Rising Wedge"
     # Projected level metadata may have changed while Telegram was offline.
     # The event's caption must agree with its own original chart, not today's
     # value for the same symbol/level.
@@ -164,13 +166,13 @@ def test_initial_mirror_card_is_concise_and_provenance_driven():
         "symbol": "TESTUSDT", "timeframe": "5",
         "level": {"source": "pattern_boundary", "pattern": "Rising Wedge"},
         "status": "UNTESTED", "breakout": {"direction": "UP"},
-    }, "breakout") == "🪞 MIRROR · TESTUSDT · 5m\\nГраница паттерна · Rising Wedge"
+    }, "breakout") == "🪞 MIRROR · TESTUSDT · 5m\nГраница паттерна · Rising Wedge"
     assert mirror_caption({
         "symbol": "TESTUSDT", "timeframe": "5",
         "level": {"source": "swing_zone", "pattern": None},
         "status": "UNTESTED",
     }, "breakout") == (
-        "🪞 MIRROR · TESTUSDT · 5m\\n"
+        "🪞 MIRROR · TESTUSDT · 5m\n"
         "Горизонтальный уровень · смена роли не подтверждена"
     )
 
