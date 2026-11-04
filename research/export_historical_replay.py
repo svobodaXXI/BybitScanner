@@ -24,6 +24,7 @@ SYMBOL_RE = re.compile(r"^[A-Z0-9]{3,30}$")
 
 def build_market_only_document(
     *, symbol: str, start_ms: int, end_ms: int, run_id: str, fetch_candles,
+    geometry_warmup_bars: int = 0,
 ) -> dict[str, object]:
     """Pure conversion with injected public-market fetch, no filesystem effects."""
     if not SYMBOL_RE.fullmatch(symbol):
@@ -34,14 +35,20 @@ def build_market_only_document(
         raise ValueError("history range exceeds 50000 5m bars or is empty")
     if (end_ms - start_ms) % FIVE_MINUTES_MS:
         raise ValueError("history boundaries must align to 5m")
+    if type(geometry_warmup_bars) is not int or not 0 <= geometry_warmup_bars <= 864:
+        raise ValueError("geometry warmup must be 0..864 closed 5m bars")
     # A bar whose start is in the future must never become a completed candle.
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     if end_ms > (now_ms // FIVE_MINUTES_MS) * FIVE_MINUTES_MS:
         raise ValueError("future/forming candles are not valid history")
-    candles = load_closed_five_minute_history(
-        symbol=symbol, start_ms=start_ms, end_ms=end_ms,
+    preload_start_ms = max(0, start_ms - geometry_warmup_bars * FIVE_MINUTES_MS)
+    all_candles = load_closed_five_minute_history(
+        symbol=symbol, start_ms=preload_start_ms, end_ms=end_ms,
         fetch_candles=fetch_candles,
     )
+    preload_count = (start_ms - preload_start_ms) // FIVE_MINUTES_MS
+    warmup_candles = all_candles[:preload_count]
+    candles = all_candles[preload_count:]
     events = []
     geometry: list[dict[str, object]] = []
     dmi_points: list[dict[str, object]] = []
@@ -87,6 +94,7 @@ def build_market_only_document(
     result = replay_with_closed_context(
         simulation_run_id=run_id,
         candles=candles,
+        geometry_warmup_candles=warmup_candles,
         on_closed_context=collect_context,
         on_visual_event=lambda event: events.append(event.to_payload()),
     )
@@ -101,6 +109,7 @@ def build_market_only_document(
         "from_ms": start_ms, "until_ms": end_ms,
         "events": events,
         "geometry": geometry,
+        "geometry_warmup_hours": len(warmup_candles) // 12,
         "dmi_5m": {
             "source": "SIMULATION", "timeframe": "5m",
             "di_length": 14, "adx_smoothing": 14,
