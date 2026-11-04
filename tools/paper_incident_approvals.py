@@ -36,6 +36,21 @@ _INCIDENT_ADVANCED_APPROVALS = {
     "RUNEUSDT": (3, "BOX_ENTRY_READY"),
 }
 
+# Exact six-candidate metadata vector observed in the SINGLE read-only VPS
+# preflight 41815962339 (2026-11-04) after the interrupted one-shot STOP.
+# This is an incident-specific alternative to the original snapshot, not a
+# +1 policy, a generic revision range, or evidence of an entry/exit.
+# Both generations still require exact candidate identity, status/phase,
+# order/fill/command/Robot/Box provenance and account-wide quiescence below.
+_INCIDENT_POST_STOP_REVISIONS = {
+    "1000FLOKIUSDT": 7,
+    "BNCUSDT": 7,
+    "HEMIUSDT": 7,
+    "INUSDT": 7,
+    "PLAYSOUTUSDT": 5,
+    "RUNEUSDT": 4,
+}
+
 
 def _zero_filled(value: object) -> bool:
     try:
@@ -226,14 +241,15 @@ def _historical_approval_progress(conn, *, candidate_id: str, symbol: str,
         return False
 
     expected_revision, expected_phase = _INCIDENT_ADVANCED_APPROVALS[symbol]
-    # The 2026-11-04 protected STOP attempt left a durable BNCUSDT
-    # APPROVED/RETEST_DETECTED state at revision 7 (confirmed by owner-only
-    # READ-ONLY VPS snapshot). An additional revision is *not* proof of entry:
-    # accept only this incident-specific value, and only after the unchanged
-    # per-order, execution, command, trade and owner checks below.
+    # The fixed READ-ONLY proof exposed all six observed post-STOP
+    # revisions together, with unchanged APPROVED phases and no activity in
+    # five independent diagnostic categories. Treat those observations as
+    # exact incident identities only; the diagnostics alone cannot authorize
+    # acceptance. All of the original independent safety predicates below
+    # and in prove_six_inert_approvals must still pass on the same snapshot.
     allowed_revision = (
         revision == expected_revision
-        or (symbol == "BNCUSDT" and expected_revision == 6 and revision == 7)
+        or revision == _INCIDENT_POST_STOP_REVISIONS[symbol]
     )
     if not allowed_revision or not isinstance(raw_state, str):
         return blocked("revision_or_state_type_mismatch")
