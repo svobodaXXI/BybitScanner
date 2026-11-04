@@ -81,6 +81,54 @@ class MarketOnlyExportTests(unittest.TestCase):
         self.assertTrue(all(x["available_at_ms"] > x["to_ms"] for x in yellow))
         self.assertTrue(all(e["kind"] == "CANDLE_CLOSED" for e in document["events"]))
 
+    def test_preloaded_hourly_pivots_make_line_available_without_visible_prehistory(self):
+        # The original 13h fixture has a strict confirmed 1-3 / 2-4
+        # construction. Displaying only hours 13-15 without prehistory
+        # must not fabricate a line; 13h warmup makes it causally known.
+        hourly = [
+            (105,100), (110,102), (115,104), (107,99), (104,95),
+            (110,103), (118,107), (113,104), (108,99), (112,106),
+            (120,110), (116,108), (112,103), (113,102), (111,101),
+        ]
+        data = []
+        for hour, (high, low) in enumerate(hourly):
+            middle = (high + low)/2
+            for within in range(12):
+                data.append({
+                    "time": str((hour*12 + within)*FIVE_MINUTES_MS),
+                    "open": str(middle), "close": str(middle),
+                    "high": str(high if within == 5 else middle + 1),
+                    "low": str(low if within == 6 else middle - 1),
+                    "volume": "10",
+                })
+        def fetch(_symbol, _interval, limit, *, end_ms):
+            return [x for x in data if int(x["time"]) <= end_ms][-limit:][::-1]
+
+        start_ms, end_ms = 13*12*FIVE_MINUTES_MS, 15*12*FIVE_MINUTES_MS
+        no_seed = build_market_only_document(
+            symbol="BTCUSDT", start_ms=start_ms, end_ms=end_ms,
+            run_id="no-seed", fetch_candles=fetch,
+        )
+        seeded = build_market_only_document(
+            symbol="BTCUSDT", start_ms=start_ms, end_ms=end_ms,
+            run_id="with-seed", fetch_candles=fetch,
+            geometry_warmup_bars=13*12,
+        )
+        self.assertEqual(no_seed["geometry"], [])
+        self.assertEqual(len(seeded["events"]), 24)
+        self.assertEqual(seeded["events"][0]["candle"]["start_ms"], start_ms)
+        self.assertEqual(seeded["geometry_warmup_hours"], 13)
+        kinds = {line["kind"] for line in seeded["geometry"]}
+        self.assertTrue({"MAIN_1H", "TARGET_1H"}.issubset(kinds))
+        self.assertTrue(all(line["from_ms"] < start_ms
+                            for line in seeded["geometry"]
+                            if line["kind"] in {"MAIN_1H", "TARGET_1H"}))
+        self.assertTrue(all(line["available_at_ms"] >= start_ms
+                            for line in seeded["geometry"]))
+        self.assertTrue(all(e["kind"] == "CANDLE_CLOSED"
+                            for e in seeded["events"]))
+        self.assertEqual(seeded["dmi_5m"]["points"][0]["plus_di"], None)
+
     def test_exported_adx_matches_only_closed_5m_bars_and_wilder_warmup(self):
         document = build_market_only_document(
             symbol="BTCUSDT", start_ms=0, end_ms=40 * FIVE_MINUTES_MS,
