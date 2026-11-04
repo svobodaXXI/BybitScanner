@@ -69,6 +69,7 @@ jobs:
           cp ../../research/local_replay_viewer/server.py "$RUNNER_TEMP/machine-time/server.py"
           cp ../../research/local_replay_viewer/START_LOCAL.cmd "$RUNNER_TEMP/machine-time/START_LOCAL.cmd"
           cp ../../research/local_replay_viewer/README.txt "$RUNNER_TEMP/machine-time/README.txt"
+          cp ../../research/local_replay_viewer/smoke_package.py "$RUNNER_TEMP/machine-time/smoke_package.py"
           cp -r ../../research/local_replay_viewer/dist "$RUNNER_TEMP/machine-time/dist"
           cp ../../research/export_historical_replay.py ../../research/historical_candle_feed.py ../../research/historical_market_replay.py ../../research/wilder_dmi.py ../../research/causal_trend_geometry.py "$RUNNER_TEMP/machine-time/research/"
           python "$RUNNER_TEMP/machine-time/server.py" --check
@@ -98,3 +99,22 @@ jobs:
           path: ${{ runner.temp }}/machine-time/
           if-no-files-found: error
           retention-days: 7
+
+  windows-local-package-smoke:
+    runs-on: windows-latest
+    needs: standalone-replay-viewer
+    timeout-minutes: 7
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: machine-time-local-windows
+          path: machine-time
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify extracted Windows package starts and serves local assets
+        shell: pwsh
+        working-directory: machine-time
+        run: |
+          python -B server.py --check
+          python -B smoke_package.py
