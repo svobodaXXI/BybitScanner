@@ -1,4 +1,3 @@
-import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
@@ -25,8 +24,8 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        main: fileURLToPath(new URL("./index.html", import.meta.url)),
-        replay: fileURLToPath(new URL("./replay.html", import.meta.url)),
+        main: "index.html",
+        replay: "replay.html",
       },
     },
   },
