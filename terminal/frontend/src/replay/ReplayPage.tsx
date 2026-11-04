@@ -1,12 +1,12 @@
 import {
-  CandlestickSeries, ColorType, createChart, createSeriesMarkers,
+  CandlestickSeries, ColorType, LineSeries, LineStyle, createChart, createSeriesMarkers,
   type IChartApi, type ISeriesApi, type ISeriesMarkersPluginApi,
   type SeriesMarker, type Time, type UTCTimestamp,
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  parseReplayDocument, syntheticReplay, visibleReplay,
-  type ReplayCandle, type ReplayDocument, type ReplayEvent,
+  parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry,
+  type ReplayCandle, type ReplayDocument, type ReplayEvent, type ReplayGeometry,
 } from "./replayModel";
 import "./replay.css";
 
@@ -30,6 +30,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const lines = useRef<Record<ReplayGeometry["kind"], ISeriesApi<"Line">> | null>(null);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
 
   useEffect(() => {
@@ -46,6 +47,12 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       wickDownColor: "#ed6978", borderVisible: false,
     });
     const markerPlugin = createSeriesMarkers(candles, []);
+    const chartLines = {
+      MAIN_1H: api.addSeries(LineSeries, { color: "#f6dc59", lineWidth: 2, priceLineVisible: false, lastValueVisible: false }),
+      TARGET_1H: api.addSeries(LineSeries, { color: "#f6dc59", lineStyle: LineStyle.Dashed, lineWidth: 2, priceLineVisible: false, lastValueVisible: false }),
+      REFERENCE_5M: api.addSeries(LineSeries, { color: "#57aaff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }),
+    };
+    lines.current = chartLines;
     chart.current = api;
     series.current = candles;
     markers.current = markerPlugin;
@@ -53,6 +60,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       chart.current = null;
       series.current = null;
       markers.current = null;
+      lines.current = null;
       api.remove();
     };
   }, []);
@@ -82,6 +90,26 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
     }
     chartMarkers.sort((a, b) => Number(a.time) - Number(b.time));
     markers.current?.setMarkers(chartMarkers);
+    const allowed = visibleGeometry(document, shown.lastTimeMs);
+    const latest = shown.candles.at(-1)?.start_ms;
+    for (const [kind, lineSeries] of Object.entries(lines.current ?? {}) as [ReplayGeometry["kind"], ISeriesApi<"Line">][]) {
+      const candidate = allowed.find((g) => g.kind === kind);
+      if (!candidate || latest === undefined) {
+        lineSeries.setData([]);
+        continue;
+      }
+      const points = [
+        { time: (candidate.from_ms / 1000) as UTCTimestamp, value: candidate.from_price },
+        { time: (candidate.to_ms / 1000) as UTCTimestamp, value: candidate.to_price },
+      ];
+      if (latest > candidate.to_ms) {
+        const projected = candidate.from_price +
+          (candidate.to_price - candidate.from_price) *
+          (latest - candidate.from_ms) / (candidate.to_ms - candidate.from_ms);
+        points.push({ time: (latest / 1000) as UTCTimestamp, value: projected });
+      }
+      lineSeries.setData(points);
+    }
     chart.current?.timeScale().scrollToPosition(14, false);
   }, [shown, document, cursor]);
 
@@ -176,7 +204,7 @@ export function ReplayPage() {
         <div style={{ width: progress + "%" }} />
       </div>
       {document.mode === "MARKET_ONLY" && <p className="replay-note">
-        РЕАЛЬНЫЕ СВЕЧИ BYBIT · РЕЖИМ БЕЗ СДЕЛОК: стратегия ещё не подключена, торговые сигналы не генерируются.
+        РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ СДЕЛОК: жёлтые 1H и синие 5m линии — предварительные кандидаты из подтверждённых экстремумов, не проверенная стратегия.
       </p>}
       {document.demo && <p className="replay-note">
         ДЕМО: синтетические свечи и условные события, не реальные сигналы стратегии и не результат Bybit.
