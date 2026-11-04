@@ -1,3 +1,4 @@
+import json
 import pytest
 from pathlib import Path
 from types import SimpleNamespace
@@ -6,7 +7,10 @@ from tools.paper_maintenance import run_maintenance
 
 
 @pytest.fixture(autouse=True)
-def fake_ready_api(monkeypatch):
+def fake_ready_api(monkeypatch, tmp_path):
+    # Every isolated fixture has its own durable maintenance stop marker.
+    monkeypatch.setattr("tools.paper_maintenance.STOP_ATTEMPT_PATH",
+                        tmp_path / "maintenance-stop-attempt.json")
     def get(url, _timeout):
         if url.endswith("/api/health"):
             data = {"mode": "paper", "paper_live_safe": True}
@@ -156,3 +160,64 @@ def test_wrong_branch_blocks_before_safe_stop():
         stop=lambda _: (_ for _ in ()).throw(AssertionError("stop must not run")))
     assert result.startswith("BLOCKED:")
     assert not any("systemctl" in cmd for cmd in calls)
+
+
+def test_stop_attempt_claim_survives_uncertain_transport_and_restart(tmp_path):
+    calls = []
+    marker = tmp_path / "durable" / "attempt.json"
+    def timed_out(_scope):
+        calls.append("possibly_sent")
+        assert marker.exists()  # committed before first mutating callback
+        raise TimeoutError("response lost after possible STOP")
+    target = "a" * 40
+    first = run_maintenance(target, attempt_path=marker, stop=timed_out,
+                            runner=fake_runner([]), readiness=lambda: True)
+    assert first.startswith("BLOCKED: canonical safe-stop outcome unknown")
+    evidence = json.loads(marker.read_text())
+    assert evidence == {"schema_version": 1, "target_sha": target,
+                        "stop_attempt": "claimed_before_invocation"}
+    second = run_maintenance(target, attempt_path=marker, stop=timed_out,
+                             runner=fake_runner([]), readiness=lambda: True)
+    assert second.startswith("BLOCKED: prior or unprovable PAPER maintenance STOP attempt")
+    assert calls == ["possibly_sent"]  # no second stop, merge or restart
+
+
+def test_stop_claim_not_reused_for_another_target_or_after_rejection(tmp_path):
+    marker = tmp_path / "attempt.json"
+    attempts = []
+    def rejected(_scope):
+        attempts.append("STOP")
+        return SimpleNamespace(ok=False, runtime_stopped=False)
+    assert run_maintenance("a" * 40, attempt_path=marker, stop=rejected,
+                           runner=fake_runner([])).startswith("BLOCKED:")
+    assert run_maintenance("b" * 40, attempt_path=marker, stop=rejected,
+                           runner=fake_runner([])).startswith("BLOCKED: prior")
+    assert attempts == ["STOP"]
+
+
+def test_corrupt_or_unwritable_stop_claim_fails_closed_without_callback(tmp_path):
+    marker = tmp_path / "attempt.json"
+    marker.write_bytes(b"\\x00\\xff")
+    def forbidden(_scope):
+        raise AssertionError("must not re-send STOP")
+    assert run_maintenance("a" * 40, attempt_path=marker, stop=forbidden,
+                           runner=fake_runner([])).startswith("BLOCKED: prior")
+    # A parent that is a file prevents a durable marker. In particular, do
+    # not fall through to the STOP callback when fsync/creation is impossible.
+    assert run_maintenance("a" * 40, attempt_path=marker / "child.json",
+                           stop=forbidden, runner=fake_runner([])).startswith("BLOCKED: prior")
+
+
+def test_stop_claim_is_exclusive_across_concurrent_invocations(tmp_path):
+    marker = tmp_path / "attempt.json"
+    events = []
+    def first_stop(_scope):
+        events.append("first")
+        nested = run_maintenance("a" * 40, attempt_path=marker,
+                                 stop=lambda _: events.append("second"),
+                                 runner=fake_runner([]))
+        assert nested.startswith("BLOCKED: prior")
+        return SimpleNamespace(ok=False, runtime_stopped=False)
+    assert run_maintenance("a" * 40, attempt_path=marker, stop=first_stop,
+                           runner=fake_runner([])).startswith("BLOCKED:")
+    assert events == ["first"]
