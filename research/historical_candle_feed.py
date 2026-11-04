@@ -11,6 +11,7 @@ from typing import Callable, Mapping, Sequence
 from research.historical_market_replay import (
     Candle, ClosedBarView, EntryIntent, ReplayResult, replay_candles,
 )
+from research.wilder_dmi import DmiSnapshot, WilderDmi
 
 FIVE_MINUTES_MS = 300_000
 ONE_HOUR_MS = 3_600_000
@@ -98,6 +99,9 @@ class ClosedMultiTimeframeView:
     last_closed_4h: Candle | None
     newly_closed_1h: Candle | None
     newly_closed_4h: Candle | None
+    dmi_5m: DmiSnapshot | None = None
+    last_closed_dmi_1h: DmiSnapshot | None = None
+    last_closed_dmi_4h: DmiSnapshot | None = None
 
 
 class ClosedHigherTimeframeFeed:
@@ -167,13 +171,29 @@ def replay_with_closed_context(
 ) -> ReplayResult:
     """Wrap the existing offline executor with causal 1h/4h context."""
     context = ClosedHigherTimeframeFeed()
+    dmi_5m = WilderDmi(timeframe_ms=FIVE_MINUTES_MS)
+    dmi_1h = WilderDmi(timeframe_ms=ONE_HOUR_MS)
+    dmi_4h = WilderDmi(timeframe_ms=FOUR_HOURS_MS)
+    last_dmi_1h: DmiSnapshot | None = None
+    last_dmi_4h: DmiSnapshot | None = None
 
     def on_close(view: ClosedBarView) -> EntryIntent | None:
+        nonlocal last_dmi_1h, last_dmi_4h
         h1, h4, new_h1, new_h4 = context.observe_closed_five_minute(view.bar)
+        dmi5 = dmi_5m.observe_closed(view.bar)
+        if new_h1 is not None:
+            last_dmi_1h = dmi_1h.observe_closed(new_h1)
+        if new_h4 is not None:
+            last_dmi_4h = dmi_4h.observe_closed(new_h4)
         assert h1 is None or h1.end_ms <= view.signal_time_ms
         assert h4 is None or h4.end_ms <= view.signal_time_ms
+        assert last_dmi_1h is None or last_dmi_1h.time_ms <= view.signal_time_ms
+        assert last_dmi_4h is None or last_dmi_4h.time_ms <= view.signal_time_ms
         return on_closed_context(
-            ClosedMultiTimeframeView(view, h1, h4, new_h1, new_h4)
+            ClosedMultiTimeframeView(
+                view, h1, h4, new_h1, new_h4,
+                dmi5, last_dmi_1h, last_dmi_4h,
+            )
         )
 
     return replay_candles(
