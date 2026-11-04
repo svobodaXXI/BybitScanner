@@ -95,6 +95,58 @@ class HistoricalMarketReplayTests(unittest.TestCase):
         self.assertNotEqual(first.trades[0].trade_id, second.trades[0].trade_id)
         self.assertEqual(first.trades[0].source, "SIMULATION")
 
+    def test_visual_event_stream_is_causal_and_preserves_trade_results(self):
+        bars = (
+            candle(0, 100, 101, 99, 100),
+            candle(1, 100, 101, 99, 100),
+            candle(2, 100, 101, 94, 95),
+        )
+        strategy = lambda view: EntryIntent("LONG", 1, 95, 108) if len(view.closed_history) == 1 else None
+        events = []
+        observed = replay_candles(
+            simulation_run_id="visual-one", candles=bars,
+            on_closed_bar=strategy, taker_fee_rate=Decimal("0"),
+            on_visual_event=events.append,
+        )
+        baseline = replay_candles(
+            simulation_run_id="visual-one", candles=bars,
+            on_closed_bar=strategy, taker_fee_rate=Decimal("0"),
+        )
+        self.assertEqual(observed, baseline)
+        self.assertEqual([event.kind for event in events], [
+            "CANDLE_CLOSED", "ENTRY_SIGNAL", "ENTRY_FILLED",
+            "CANDLE_CLOSED", "EXIT_FILLED", "CANDLE_CLOSED",
+        ])
+        self.assertEqual([event.sequence for event in events], list(range(1, 7)))
+        self.assertEqual([event.time_ms for event in events], [
+            300_000, 300_000, 300_000, 600_000, 900_000, 900_000,
+        ])
+        # The order fill is emitted at the next OPEN; no future HIGH/LOW/CLOSE.
+        entry = events[2].to_payload()
+        self.assertEqual(entry["price"], "100")
+        self.assertNotIn("candle", entry)
+        self.assertEqual(entry["trade_id"], observed.trades[0].trade_id)
+        self.assertEqual(events[4].to_payload()["reason"], "STOP")
+        self.assertEqual(events[0].to_payload()["candle"]["end_ms"], 300_000)
+        self.assertEqual(events[-1].to_payload()["candle"]["low"], "94")
+        self.assertTrue(all(x.source == "SIMULATION" for x in events))
+        self.assertTrue(all(x.simulation_run_id == "visual-one" for x in events))
+
+    def test_visual_final_signal_has_no_fabricated_entry(self):
+        events = []
+        result = replay_candles(
+            simulation_run_id="visual-two",
+            candles=(candle(0, 100, 101, 99, 100),),
+            on_closed_bar=lambda _: EntryIntent("SHORT", 1, 105, 95),
+            on_visual_event=events.append,
+        )
+        self.assertFalse(result.open_position)
+        self.assertEqual([x.kind for x in events], [
+            "CANDLE_CLOSED", "ENTRY_SIGNAL",
+        ])
+        self.assertNotIn("trade_id", events[-1].to_payload())
+        self.assertNotIn("candle", events[-1].to_payload())
+
     def test_never_release_future_or_overlapping_bars(self):
         seen = []
         bars = (
