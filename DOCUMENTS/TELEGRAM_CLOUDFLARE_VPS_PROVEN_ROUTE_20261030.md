@@ -35,6 +35,19 @@ VPS /opt/BybitScanner
 6. Start/restart `bybitscanner-paper-start.service` **only on explicit owner authorization after current protected runtime state is checked**; it starts backend and optionally Telegram **and** requests runtime intent ALL (Scanner/Robot) plus PAPER_AUTO opt-in, i.e. it is **not** a Telegram-only test command. Scanner manual launch ownership remains governed by `DOCUMENTS/ASSISTANT_PROTOCOL.md`; do not quietly launch Scanner or autonomous trading as a transport check.
 7. Telegram Gateway is *not* a trading authority: failures must not cause bypass of Admission/protection/STOP/TAKE. No automatic fallback direct to Telegram when Gateway configured; never turn a health check into a trading entrypoint.
 
+## Правило развёртываний Vercel — решение владельца 05.11.2026
+
+**Не развёртывать Telegram Gateway через Vercel при каждом PR, merge или промежуточном изменении.** Рабочий цикл: вести разработку и обязательные тесты через GitHub, **накапливать** готовые изменения; **перед реальным запуском / реальной приёмкой Telegram** выбрать один проверенный согласованный Git SHA, собрать все изменения Gateway и **один раз адресно опубликовать** соответствующую версию Vercel. После публикации отдельно подтвердить цепочку VPS → Cloudflare Worker → Vercel Gateway → Telegram реальной доставкой, включая нужные кнопки/PNG. Если изменений самого Gateway не было и действующая версия подходит, повторный Vercel deploy вообще не нужен.
+
+- Автоматические Preview/Production deployments от каждого push/PR **не нужны**; Git-интеграцию Vercel следует настроить так, чтобы обычная разработка их не создавала. Наличие этого правила в репозитории **само по себе не меняет настройки существующего проекта** — переключение автоматических развёртываний выполнить отдельно при наличии надлежащего доступа и подтверждённого контроля, не удаляя проект и не ломая действующую опубликованную версию.
+- Проверки GitHub Actions, обязательные CI и правила merge **сохраняются**. Ошибка *необязательной* проверки Vercel из-за build-rate-limit не означает дефект кода и сама по себе не должна вынуждать платить, повторять сборки или задерживать документационный/локальный PR; обязательные проверки не обходить.
+- Внеплановое экстренное обновление Gateway допустимо только при фактическом транспортном/безопасностном блокере и с отдельным разрешением владельца, а не по расписанию разработки.
+- **Публикация Gateway не является командой запуска торговли.** VPS, PAPER DB, Scanner, Robot, STOP/TAKE, Gateway credentials и LIVE не менять без соответствующих отдельный разрешений и runtime-gates.
+
+**Цель:** расходовать квоту Vercel только на реальный пользовательский Telegram-результат, не на промежуточные GitHub-сборки.
+
+---
+
 ## Recovery / failures
 
 | Symptom | Narrow diagnosis / response |
