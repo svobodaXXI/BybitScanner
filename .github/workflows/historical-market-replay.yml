@@ -22,6 +22,7 @@ on:
       - "terminal/frontend/vite.config.ts"
       - "terminal/frontend/vite.replay.config.ts"
       - "terminal/frontend/package.json"
+      - "terminal/frontend/e2e/local-replay-browser.mjs"
   workflow_dispatch:
 
 permissions:
@@ -71,6 +72,20 @@ jobs:
           cp -r ../../research/local_replay_viewer/dist "$RUNNER_TEMP/machine-time/dist"
           cp ../../research/export_historical_replay.py ../../research/historical_candle_feed.py ../../research/historical_market_replay.py ../../research/wilder_dmi.py ../../research/causal_trend_geometry.py "$RUNNER_TEMP/machine-time/research/"
           python "$RUNNER_TEMP/machine-time/server.py" --check
+      - name: Install Chromium for isolated browser acceptance
+        run: npx playwright install --with-deps chromium
+      - name: Verify packaged viewer in real browser with mock public history
+        run: node e2e/local-replay-browser.mjs
+        env:
+          LOCAL_REPLAY_E2E_SCREENSHOTS: ${{ runner.temp }}/local-replay-e2e
+      - name: Upload screenshot proof for visual inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: machine-time-browser-proof
+          path: ${{ runner.temp }}/local-replay-e2e/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Attach local-only Windows viewer for manual PC acceptance
         uses: actions/upload-artifact@v4
         with:
