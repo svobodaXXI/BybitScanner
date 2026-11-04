@@ -224,15 +224,22 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
         # without a same-target ordinary STOP marker. Only its *own* protected
         # transaction and proved installed bytes may close EDITOR_ONLY; an
         # arbitrary journal/READY string cannot mint a trading entitlement.
-        from tools.vps_gitless_release_activate import _manifest
+        from tools.paper_interrupted_stop_recovery import (
+            PRIOR_TARGET, _receipt, _trusted_journal,
+        )
         from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+        from tools.vps_gitless_release_activate import _manifest
         try:
+            _trusted_journal(journal_root, uid)
             original = _manifest(_trusted_file(journal / "old.json", uid))
             pinned = _manifest(_trusted_file(journal / "target.json", uid))
             _trusted_file(journal / "units.json", uid)
-            handoff = _trusted_file(journal / "handoff-proven", uid)
-            if (not handoff or pinned["build_sha"] != target
+            prior_stop = _trusted_file(journal_root / (".stop-invoked-" + PRIOR_TARGET), uid)
+            if (pinned["build_sha"] != target
                     or original["build_sha"] == target
+                    or prior_stop != b"STOP_INVOKED; not install authorization\\n"
+                    or not _receipt(journal_root, "handoff-proven", uid, target=target)
+                    or not _receipt(journal_root, "backend-exited", uid, target=target)
                     or verify_release(REPO) != target):
                 raise ActivationBlocked("exceptional_editor_receipt_proof_unproven")
         except (ReleaseIdentityBlocked, OSError, ValueError) as exc:
