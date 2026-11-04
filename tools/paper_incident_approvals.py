@@ -305,6 +305,53 @@ def _historical_approval_progress(conn, *, candidate_id: str, symbol: str,
         return blocked("symbol_limit_not_cancelled_zero_fill:" + detail)
     return True
 
+def _six_approval_progress_snapshot(conn) -> str:
+    """Six fixed labels only; no IDs, quantities, free-text JSON or SQL writes.
+
+    Fail-closed proof diagnostics share its existing read-only transaction.
+    The snapshot never changes which revisions or phases are acceptable.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT symbol,state_revision,robot_state_json FROM robot_candidates "
+            "WHERE trading_account_id='paper' AND status='APPROVED'"
+        ).fetchall()
+        by_symbol = {}
+        for symbol, revision, raw_state in rows:
+            if symbol not in IDLE_APPROVALS:
+                continue
+            rev = str(revision) if type(revision) is int and 0 <= revision < 1000 else "?"
+            kind = "N" if raw_state is None else "X"
+            phase = "?"
+            if isinstance(raw_state, str):
+                try:
+                    parsed = json.loads(raw_state)
+                    if isinstance(parsed, dict):
+                        kind = "O"
+                        phase = {
+                            "BOX_ENTRY_READY": "B",
+                            "RETEST_DETECTED": "R",
+                            "ENTRY_PENDING": "P",
+                        }.get(parsed.get("phase"), "?")
+                except (TypeError, ValueError):
+                    pass
+            if symbol in by_symbol:
+                by_symbol[symbol] = "multiple"
+            else:
+                by_symbol[symbol] = rev + phase + kind
+        labels = {
+            "1000FLOKIUSDT": "FLOKI", "BNCUSDT": "BNC",
+            "HEMIUSDT": "HEMI", "INUSDT": "IN",
+            "PLAYSOUTUSDT": "PLAYS", "RUNEUSDT": "RUNE",
+        }
+        return ",".join(
+            labels[symbol] + "=" + by_symbol.get(symbol, "missing")
+            for symbol in IDLE_APPROVALS
+        )
+    except (TypeError, ValueError):
+        return "unavailable"
+
+
 def prove_six_inert_approvals(conn, approvals, positions) -> None:
     """Attest exact known, unadmitted approvals in the pinned read-only snapshot."""
     _require(
@@ -353,7 +400,8 @@ def prove_six_inert_approvals(conn, approvals, positions) -> None:
         _require(
             proven,
             "approved_candidate_has_admission_progress:"
-            + symbol + ":" + (details[0] if details else "approved_metadata_invalid"),
+            + symbol + ":" + (details[0] if details else "approved_metadata_invalid")
+            + (":six=" + _six_approval_progress_snapshot(conn) if not proven else ""),
         )
         _require(
             sum(projected_symbol == symbol for projected_symbol, *_ in positions) <= 1,
