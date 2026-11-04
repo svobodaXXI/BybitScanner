@@ -72,8 +72,13 @@ jobs:
           cp -r ../../research/local_replay_viewer/dist "$RUNNER_TEMP/machine-time/dist"
           cp ../../research/export_historical_replay.py ../../research/historical_candle_feed.py ../../research/historical_market_replay.py ../../research/wilder_dmi.py ../../research/causal_trend_geometry.py "$RUNNER_TEMP/machine-time/research/"
           python "$RUNNER_TEMP/machine-time/server.py" --check
-      - name: Install Chromium for isolated browser acceptance
-        run: npx playwright install --with-deps chromium
+      - name: Select preinstalled Chrome or install Chromium
+        run: |
+          if command -v google-chrome >/dev/null; then
+            echo "LOCAL_REPLAY_CHROME=$(command -v google-chrome)" >> "$GITHUB_ENV"
+          else
+            npx playwright install chromium
+          fi
       - name: Verify packaged viewer in real browser with mock public history
         run: node e2e/local-replay-browser.mjs
         env:
