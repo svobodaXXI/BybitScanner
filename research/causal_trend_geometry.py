@@ -80,6 +80,13 @@ class ConfirmedSwingStream:
     def bars(self) -> tuple[Candle, ...]:
         return tuple(self._bars)
 
+    @property
+    def recent_pivots(self) -> tuple[ConfirmedPivot, ...]:
+        return tuple(self._pivots[-4:])
+
+    def bars_between(self, first: ConfirmedPivot, last: ConfirmedPivot) -> tuple[Candle, ...]:
+        return tuple(self._bars[first.index + 1:last.index])
+
     def observe_closed(self, bar: Candle) -> ConfirmedPivot | None:
         if bar.interval_ms != self.timeframe_ms:
             raise ValueError("wrong candle interval")
@@ -202,7 +209,7 @@ class CausalGeometryFeed:
         self._five.observe_closed(five_minute)
         if newly_closed_1h is not None:
             self._hourly.observe_closed(newly_closed_1h)
-            proposal = recent_hourly_trend(self._hourly.pivots)
+            proposal = recent_hourly_trend(self._hourly.recent_pivots)
             if proposal is not None:
                 # Redraw only after a NEW confirmed fourth (extreme) pivot,
                 # never simply to hide a trendline break.
@@ -211,10 +218,13 @@ class CausalGeometryFeed:
                     self._hourly_trend.pivot_sequence[3].at_ms
                 ):
                     self._hourly_trend = proposal
+        recent = self._five.recent_pivots
+        # Do not copy/scan all historical 5m bars on every replay tick.
+        between = self._five.bars_between(recent[-3], recent[-1]) if len(recent) >= 3 else ()
         line = last_correction_reference(
             hourly=self._hourly_trend,
-            five_minute_pivots=self._five.pivots,
-            five_minute_bars=self._five.bars,
+            five_minute_pivots=recent,
+            five_minute_bars=between,
         )
         if line is not None and line.available_at_ms > five_minute.end_ms:
             raise AssertionError("future correction slope exposed")
