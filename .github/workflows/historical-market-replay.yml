@@ -16,6 +16,7 @@ on:
       - "tests/test_historical_dmi.py"
       - "tests/test_historical_trend_geometry.py"
       - "tests/test_historical_local_replay_server.py"
+      - "tests/test_historical_demo_dmi_fixture.py"
       - ".github/workflows/historical-market-replay.yml"
       - "terminal/frontend/src/replay/**"
       - "terminal/frontend/replay.html"
@@ -55,8 +56,8 @@ jobs:
           cache-dependency-path: terminal/frontend/package-lock.json
       - name: Install locked frontend dependencies
         run: npm ci
-      - name: Validate standalone replay model
-        run: npm run test -- src/replay/replayModel.test.ts
+      - name: Validate standalone replay model and Telegram-style execution markers
+        run: npm run test -- src/replay/replayModel.test.ts src/replay/executionMarkers.test.ts
       - name: Build main terminal without experimental simulator
         run: |
           npm run build
