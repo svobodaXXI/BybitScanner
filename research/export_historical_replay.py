@@ -43,10 +43,37 @@ def build_market_only_document(
         fetch_candles=fetch_candles,
     )
     events = []
+    geometry: list[dict[str, object]] = []
+    versions: dict[str, tuple[int, int, int]] = {}
+
+    def collect_lines(view) -> None:
+        def collect(kind: str, line, side: str, trend_version: int) -> None:
+            identity = (line.first.at_ms, line.second.at_ms, trend_version)
+            if versions.get(kind) == identity:
+                return
+            if line.available_at_ms > view.five_minute.signal_time_ms:
+                raise ValueError("future geometry in simulated market archive")
+            versions[kind] = identity
+            geometry.append({
+                "kind": kind, "side": side,
+                "available_at_ms": view.five_minute.signal_time_ms,
+                "from_ms": line.first.at_ms, "to_ms": line.second.at_ms,
+                "from_price": str(line.first.price), "to_price": str(line.second.price),
+                "trend_version": trend_version,
+                "classification": "UNVALIDATED_GEOMETRY_ONLY",
+            })
+
+        trend = view.hourly_trend
+        if trend is not None:
+            collect("MAIN_1H", trend.main, trend.side, trend.available_at_ms)
+            collect("TARGET_1H", trend.target, trend.side, trend.available_at_ms)
+            if view.reference_5m is not None:
+                collect("REFERENCE_5M", view.reference_5m, trend.side, trend.available_at_ms)
+
     result = replay_with_closed_context(
         simulation_run_id=run_id,
         candles=candles,
-        on_closed_context=lambda _view: None,
+        on_closed_context=lambda view: (collect_lines(view), None)[1],
         on_visual_event=lambda event: events.append(event.to_payload()),
     )
     if result.trades or result.open_position or len(events) != len(candles):
@@ -57,6 +84,7 @@ def build_market_only_document(
         "symbol": symbol, "timeframe": "5m",
         "from_ms": start_ms, "until_ms": end_ms,
         "events": events,
+        "geometry": geometry,
     }
 
 
