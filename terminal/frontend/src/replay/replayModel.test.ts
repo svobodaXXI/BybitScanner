@@ -148,7 +148,10 @@ describe("standalone SIMULATION viewer contract", () => {
           trend_version: mainAt, classification: "UNVALIDATED_GEOMETRY_ONLY" },
       ],
     };
-    const doc = parseReplayDocument(archive);
+    const doc = parseReplayDocument({ ...archive, geometry_warmup_hours: 72 });
+    expect(doc.geometry_warmup_hours).toBe(72);
+    expect(() => parseReplayDocument({ ...archive, geometry_warmup_hours: 73 }))
+      .toThrow(/предыстория/);
     expect(visibleGeometry(doc, null)).toEqual([]);
     expect(visibleGeometry(doc, mainAt - 1)).toEqual([]);
     expect(visibleGeometry(doc, mainAt).map((x) => x.kind)).toEqual(["MAIN_1H", "TARGET_1H"]);
