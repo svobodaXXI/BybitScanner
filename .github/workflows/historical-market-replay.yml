@@ -8,6 +8,9 @@ on:
       - "tests/test_historical_market_replay.py"
       - "tests/test_historical_candle_feed.py"
       - ".github/workflows/historical-market-replay.yml"
+      - "terminal/frontend/src/replay/**"
+      - "terminal/frontend/replay.html"
+      - "terminal/frontend/vite.config.ts"
   workflow_dispatch:
 
 permissions:
@@ -24,3 +27,23 @@ jobs:
           python-version: "3.11"
       - name: Verify isolated replay and causal timeframe tests
         run: python -m unittest discover -s tests -p 'test_historical_*.py' -v
+
+  standalone-replay-viewer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: terminal/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: terminal/frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Validate standalone replay model
+        run: npm run test -- src/replay/replayModel.test.ts
+      - name: Ensure terminal and replay pages build independently
+        run: npm run build
