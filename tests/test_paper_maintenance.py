@@ -1713,3 +1713,54 @@ def test_full_gitless_readiness_rejects_wrong_backend_db_even_with_telegram(monk
         readiness=lambda: True, require_gitless_telegram=True,
     )
     assert result.startswith("BLOCKED: Gitless_PAPER_Telegram_or_database_identity_unproven")
+
+
+def test_exceptional_gitless_receipt_requires_pinned_handoff_and_installed_release(
+    monkeypatch, tmp_path,
+):
+    import json
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+    from tools.vps_gitless_release_activate import ActivationBlocked
+
+    target, old = "a" * 40, "b" * 40
+    journal_root = tmp_path / "transactions"
+    journal = journal_root / target
+    journal.mkdir(parents=True, mode=0o700)
+    journal_root.chmod(0o700)
+    journal.chmod(0o700)
+    blobs = {
+        "terminal/runtime/paper_http_server.py": "c" * 40,
+        "tools/vps_release_identity.py": "d" * 40,
+    }
+    for filename, sha in (("old.json", old), ("target.json", target)):
+        path = journal / filename
+        path.write_text(json.dumps({"build_sha": sha, "blobs": blobs}))
+        path.chmod(0o600)
+    units = journal / "units.json"
+    units.write_text("{}")
+    units.chmod(0o600)
+    handoff = journal / "handoff-proven"
+    handoff.write_text("verified prior-target exceptional handoff")
+    handoff.chmod(0o600)
+    monkeypatch.setattr(release, "verify_release", lambda *_args: target)
+
+    maintenance._complete_stop_intent(journal_root, target, uid=os.getuid())
+    receipt = journal / "editor-ready"
+    assert receipt.read_bytes() == target.encode()
+    assert receipt.stat().st_mode & 0o777 == 0o600
+    maintenance._complete_stop_intent(journal_root, target, uid=os.getuid())
+    assert receipt.read_bytes() == target.encode()
+
+    receipt.unlink()
+    monkeypatch.setattr(release, "verify_release", lambda *_args: old)
+    with pytest.raises(ActivationBlocked, match="exceptional_editor_receipt_proof_unproven"):
+        maintenance._complete_stop_intent(journal_root, target, uid=os.getuid())
+    assert not receipt.exists()
+    monkeypatch.setattr(release, "verify_release", lambda *_args: target)
+    handoff.unlink()
+    with pytest.raises(ActivationBlocked, match="untrusted_release_metadata"):
+        maintenance._complete_stop_intent(journal_root, target, uid=os.getuid())
+    assert not receipt.exists()
+
+
