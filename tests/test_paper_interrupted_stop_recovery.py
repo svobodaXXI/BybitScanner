@@ -42,6 +42,7 @@ def _fixture(monkeypatch, tmp_path):
 
     monkeypatch.setattr(recovery, "RuntimeShutdown", Owner)
     defaults = dict(
+        target="a" * 40,
         root=root, stage=stage, transactions=journal,
         uid=os.geteuid(), manifest=tmp_path / "manifest",
         inspect=lambda *_args, **_kw: calls.append("stage_check"),
@@ -64,9 +65,9 @@ def test_confirmed_exceptional_handoff_installs_editor_without_stop_or_paper(mon
         "stage_check", "scanner_check", "autopilot_check", "SIGINT",
         "install", "editor_resume",
     ]
-    assert recovery._receipt(journal, "handoff-attempt", os.geteuid())
-    assert recovery._receipt(journal, "backend-exited", os.geteuid())
-    assert recovery._receipt(journal, "handoff-proven", os.geteuid())
+    assert recovery._receipt(journal, "handoff-attempt", os.geteuid(), target="a" * 40)
+    assert recovery._receipt(journal, "backend-exited", os.geteuid(), target="a" * 40)
+    assert recovery._receipt(journal, "handoff-proven", os.geteuid(), target="a" * 40)
     assert (journal / (".stop-invoked-" + recovery.PRIOR_TARGET)).exists()
 
 
@@ -75,8 +76,8 @@ def test_lost_sigint_outcome_blocks_without_retry_or_install(monkeypatch, tmp_pa
     options["handoff"] = lambda: (calls.append("SIGINT"), "OUTCOME_UNKNOWN")[1]
     with pytest.raises(recovery.RecoveryBlocked, match="exceptional_handoff_outcome_unknown_no_retry"):
         recovery.recover_editor_only(**options)
-    assert recovery._receipt(journal, "handoff-attempt", os.geteuid())
-    assert not recovery._receipt(journal, "backend-exited", os.geteuid())
+    assert recovery._receipt(journal, "handoff-attempt", os.geteuid(), target="a" * 40)
+    assert not recovery._receipt(journal, "backend-exited", os.geteuid(), target="a" * 40)
     with pytest.raises(recovery.RecoveryBlocked, match="prior_handoff_outcome_unknown_no_retry"):
         recovery.recover_editor_only(**options)
     assert calls.count("SIGINT") == 1
@@ -102,7 +103,7 @@ def test_missing_previous_chatops_marker_cannot_grant_new_handoff(monkeypatch, t
 def test_backend_exit_receipt_can_resume_install_without_repeating_sigint(monkeypatch, tmp_path):
     journal, calls, options = _fixture(monkeypatch, tmp_path)
     for phase in ("handoff-attempt", "backend-exited", "handoff-proven"):
-        recovery._record(journal, phase, os.geteuid())
+        recovery._record(journal, phase, os.geteuid(), target="a" * 40)
     assert recovery.recover_editor_only(**options) == "READY: EDITOR_ONLY"
     assert calls == ["stage_check", "install", "editor_resume"]
 
@@ -139,8 +140,8 @@ def test_unknown_telegram_shutdown_does_not_replay(monkeypatch, tmp_path):
     options["telegram"] = telegram
     with pytest.raises(OSError):
         recovery.recover_editor_only(**options)
-    assert recovery._receipt(journal, "backend-exited", os.geteuid())
-    assert recovery._receipt(journal, "telegram-attempt", os.geteuid())
+    assert recovery._receipt(journal, "backend-exited", os.geteuid(), target="a" * 40)
+    assert recovery._receipt(journal, "telegram-attempt", os.geteuid(), target="a" * 40)
     with pytest.raises(recovery.RecoveryBlocked, match="telegram_shutdown_outcome_unknown_no_retry"):
         recovery.recover_editor_only(**options)
     assert calls.count("telegram_attempt") == 1
