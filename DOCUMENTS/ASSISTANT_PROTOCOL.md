@@ -292,6 +292,14 @@ run, use `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` section
 incident playbook, not a new standing prerequisite for every launch.
 Existing owner-only runtime, PAPER/LIVE isolation and fail-closed rules prevail.
 
+### MINIMALISM AND SUFFICIENT SIMPLICITY — OWNER DECISION 2026-11-05
+
+**Permanent engineering principle, serving the overarching priority of saved owner time:** choose the simplest sufficient end-to-end solution that produces a verified working result. Complexity, abstractions, additional services, recovery mechanisms, PRs, documents, checks, prompts and owner approvals carry a cost and require a demonstrated necessity. Prefer deletion and consolidation over adding another layer; reuse existing code and proven evidence; repair the narrow owning boundary instead of expanding the system.
+
+**Execution rule:** one owner outcome → minimal code change → targeted required verification → actual acceptance. Do not split a single outcome into serial owner actions, invent speculative future-proofing, or count PRs/CI/diagnostics as product progress. Inspect only what changes the next decision; do not re-prove unchanged facts. When a process gate repeatedly blocks unrelated safe work (for example, staging bound to a moving branch HEAD), simplify the gate at its actual authority boundary while retaining immutable source identity and the necessary evidence.
+
+**Responsibility:** ChatGPT owns engineering decisions, unnecessary complexity and course correction; do not shift that responsibility to the owner or describe assistant-created failures as shared mistakes. Ask for the owner's participation only where it is genuinely required. Existing PAPER/LIVE isolation, STOP/TAKE coverage, durable DB integrity, idempotency/unknown-outcome fences and owner-only runtime/merge permissions remain mandatory. Simplify their implementation and orchestration, never waive their safety purpose.
+
 ### AI-FIRST RESULT DELIVERY — OWNER DECISION 2026-11-02
 
 Apply **inside** the existing Result-First workflow, not as a new gate,
