@@ -44,6 +44,7 @@ def build_market_only_document(
     )
     events = []
     geometry: list[dict[str, object]] = []
+    dmi_points: list[dict[str, object]] = []
     versions: dict[str, tuple[int, int, int]] = {}
 
     def collect_lines(view) -> None:
@@ -70,14 +71,29 @@ def build_market_only_document(
             if view.reference_5m is not None:
                 collect("REFERENCE_5M", view.reference_5m, trend.side, trend.available_at_ms)
 
+    def collect_context(view) -> None:
+        snapshot = view.dmi_5m
+        # The 5m candle and its DMI snapshot become visible at the same close.
+        if snapshot is None or snapshot.time_ms != view.five_minute.signal_time_ms:
+            raise ValueError("DMI snapshot does not match last closed five-minute bar")
+        dmi_points.append({
+            "time_ms": snapshot.time_ms,
+            "plus_di": str(snapshot.plus_di) if snapshot.plus_di is not None else None,
+            "minus_di": str(snapshot.minus_di) if snapshot.minus_di is not None else None,
+            "adx": str(snapshot.adx) if snapshot.adx is not None else None,
+        })
+        collect_lines(view)
+
     result = replay_with_closed_context(
         simulation_run_id=run_id,
         candles=candles,
-        on_closed_context=lambda view: (collect_lines(view), None)[1],
+        on_closed_context=collect_context,
         on_visual_event=lambda event: events.append(event.to_payload()),
     )
     if result.trades or result.open_position or len(events) != len(candles):
         raise ValueError("market-only replay unexpectedly produced trading state")
+    if len(dmi_points) != len(candles):
+        raise ValueError("market-only DMI timeline does not match completed candles")
     return {
         "source": "SIMULATION", "simulation_run_id": run_id,
         "mode": "MARKET_ONLY", "market_data_source": "BYBIT_PUBLIC_KLINE",
@@ -85,6 +101,11 @@ def build_market_only_document(
         "from_ms": start_ms, "until_ms": end_ms,
         "events": events,
         "geometry": geometry,
+        "dmi_5m": {
+            "source": "SIMULATION", "timeframe": "5m",
+            "di_length": 14, "adx_smoothing": 14,
+            "points": dmi_points,
+        },
     }
 
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry } from "./replayModel";
+import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("shows only completed candles and fills revealed at the current cursor", () => {
@@ -149,6 +149,60 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(() => parseReplayDocument({
       ...archive, geometry: [{ ...archive.geometry[0], classification: "TRADE_APPROVED" }],
     })).toThrow(/торговый сигнал/);
+  });
+
+  it("accepts strictly causal Wilder 5m DMI and hides future samples during playback", () => {
+    const base = Date.UTC(2026, 9, 1);
+    const events = Array.from({ length: 40 }, (_, i) => ({
+      source: "SIMULATION", simulation_run_id: "adx_fixture", sequence: i + 1,
+      kind: "CANDLE_CLOSED", time_ms: base + (i + 1) * 300_000,
+      candle: {
+        start_ms: base + i * 300_000, end_ms: base + (i + 1) * 300_000,
+        open: "100", high: "102", low: "98", close: "101", volume: "10",
+      },
+    }));
+    const points = events.map((event, i) => ({
+      time_ms: event.time_ms,
+      plus_di: i < 14 ? null : String(20 + i / 10),
+      minus_di: i < 14 ? null : String(10 + i / 20),
+      adx: i < 27 ? null : String(15 + i / 5),
+    }));
+    const archive = {
+      source: "SIMULATION", simulation_run_id: "adx_fixture",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m",
+      events,
+      dmi_5m: {
+        source: "SIMULATION", timeframe: "5m", di_length: 14, adx_smoothing: 14,
+        points,
+      },
+    };
+    const doc = parseReplayDocument(archive);
+    expect(visibleDmi(doc, 0)).toEqual([]);
+    expect(visibleDmi(doc, 14)).toHaveLength(14);
+    expect(visibleDmi(doc, 14).at(-1)?.plus_di).toBeNull();
+    expect(visibleDmi(doc, 15).at(-1)?.plus_di).toBeCloseTo(21.4);
+    expect(visibleDmi(doc, 27).at(-1)?.adx).toBeNull();
+    expect(visibleDmi(doc, 28).at(-1)?.adx).toBeCloseTo(20.4);
+    expect(visibleDmi(doc, 40)).toHaveLength(40);
+    expect(visibleDmi(doc, 999)).toHaveLength(40);
+    expect(() => parseReplayDocument({
+      ...archive, dmi_5m: { ...archive.dmi_5m,
+        points: points.map((x, i) => i === 2 ? { ...x, adx: "42" } : x) },
+    })).toThrow(/прогрева/);
+    expect(() => parseReplayDocument({
+      ...archive, dmi_5m: { ...archive.dmi_5m,
+        points: points.map((x, i) => i === 29 ? { ...x, time_ms: x.time_ms + 300_000 } : x) },
+    })).toThrow(/будущую/);
+    expect(() => parseReplayDocument({
+      ...archive, dmi_5m: { ...archive.dmi_5m,
+        points: points.map((x, i) => i === 30 ? { ...x, minus_di: "NaN" } : x) },
+    })).toThrow(/числовое поле/);
+    expect(() => parseReplayDocument({
+      ...archive, dmi_5m: { ...archive.dmi_5m,
+        points: points.map((x, i) => i === 30 ? { ...x, plus_di: "101" } : x) },
+    })).toThrow(/диапазона/);
+    expect(parseReplayDocument({ ...archive, dmi_5m: undefined }).dmi_5m).toBeUndefined();
   });
 
   it("rejects overlapping or unfinished candle histories", () => {

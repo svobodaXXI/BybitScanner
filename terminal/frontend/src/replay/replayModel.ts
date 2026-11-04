@@ -34,6 +34,19 @@ export type ReplayGeometry = {
   trend_version: number;
   classification: "UNVALIDATED_GEOMETRY_ONLY";
 };
+export type ReplayDmiPoint = {
+  time_ms: number; // Close time, never the opening time of an unfinished candle.
+  plus_di: number | null;
+  minus_di: number | null;
+  adx: number | null;
+};
+export type ReplayDmi = {
+  source: "SIMULATION";
+  timeframe: "5m";
+  di_length: number;
+  adx_smoothing: number;
+  points: ReplayDmiPoint[];
+};
 export type ReplayDocument = {
   source: "SIMULATION";
   simulation_run_id: string;
@@ -43,6 +56,7 @@ export type ReplayDocument = {
   symbol?: string;
   timeframe?: "5m";
   geometry?: ReplayGeometry[];
+  dmi_5m?: ReplayDmi;
 };
 export type VisibleReplay = {
   candles: ReplayCandle[];
@@ -207,11 +221,54 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       };
     });
   }
+  // Wilder DMI is a read-only series aligned 1:1 with fully closed
+  // market candles. An old JSON archive without DMI remains readable.
+  let dmi_5m: ReplayDmi | undefined;
+  if (object.dmi_5m !== undefined) {
+    if (mode !== "MARKET_ONLY") {
+      throw new Error("ADX разрешён только для локальной истории SIMULATION");
+    }
+    const rawDmi = record(object.dmi_5m);
+    if (rawDmi.source !== "SIMULATION" || rawDmi.timeframe !== "5m" ||
+        !Array.isArray(rawDmi.points) || rawDmi.points.length !== events.length) {
+      throw new Error("ADX не совпадает с последовательностью закрытых свечей");
+    }
+    const di_length = positiveInteger(rawDmi.di_length, "di_length");
+    const adx_smoothing = positiveInteger(rawDmi.adx_smoothing, "adx_smoothing");
+    if (di_length < 2 || di_length > 200 || adx_smoothing < 2 || adx_smoothing > 200) {
+      throw new Error("Неверные периоды ADX");
+    }
+    const parseDmiNumber = (value: unknown, field: string): number | null => {
+      if (value === null) return null;
+      const number = safeNumber(value, field);
+      if (number < 0 || number > 100) throw new Error("ADX / DI вне диапазона 0–100");
+      return number;
+    };
+    const points: ReplayDmiPoint[] = rawDmi.points.map((point, index) => {
+      const raw = record(point);
+      const time_ms = positiveInteger(raw.time_ms, "DMI time_ms");
+      if (events[index].kind !== "CANDLE_CLOSED" ||
+          time_ms !== events[index].time_ms) {
+        throw new Error("ADX использует незакрытую, будущую или чужую свечу");
+      }
+      const plus_di = parseDmiNumber(raw.plus_di, "+DI");
+      const minus_di = parseDmiNumber(raw.minus_di, "-DI");
+      const adx = parseDmiNumber(raw.adx, "ADX");
+      if ((plus_di === null) !== (minus_di === null) ||
+          (index < di_length) !== (plus_di === null) ||
+          (index < di_length + adx_smoothing - 1) !== (adx === null)) {
+        throw new Error("ADX нарушает последовательность прогрева Wilder");
+      }
+      return { time_ms, plus_di, minus_di, adx };
+    });
+    dmi_5m = { source: "SIMULATION", timeframe: "5m", di_length, adx_smoothing, points };
+  }
   return {
     source: "SIMULATION", simulation_run_id: id, events, demo: object.demo === true,
     ...(mode ? { mode } : {}),
     ...(mode === "MARKET_ONLY" ? { symbol: object.symbol as string, timeframe: "5m" as const } : {}),
     ...(geometry ? { geometry } : {}),
+    ...(dmi_5m ? { dmi_5m } : {}),
   };
 }
 
@@ -280,4 +337,12 @@ export function visibleGeometry(
     current.delete("REFERENCE_5M");
   }
   return [...current.values()];
+}
+
+/** For MARKET_ONLY, DMI has exactly one observation per completed 5m candle. */
+export function visibleDmi(document: ReplayDocument, closedCandles: number): ReplayDmiPoint[] {
+  if (document.mode !== "MARKET_ONLY" || !document.dmi_5m) return [];
+  return document.dmi_5m.points.slice(
+    0, Math.max(0, Math.min(Math.floor(closedCandles), document.dmi_5m.points.length)),
+  );
 }

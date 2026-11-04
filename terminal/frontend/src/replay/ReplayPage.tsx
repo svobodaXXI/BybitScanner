@@ -5,7 +5,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry,
+  parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi,
   type ReplayCandle, type ReplayDocument, type ReplayEvent, type ReplayGeometry,
 } from "./replayModel";
 import "./replay.css";
@@ -31,7 +31,11 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
   const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const lines = useRef<Record<ReplayGeometry["kind"], ISeriesApi<"Line">> | null>(null);
+  const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
+  const observedDmi = useMemo(() => visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
+  const latestDmi = observedDmi.at(-1);
+  const dmiValue = (value: number | null | undefined) => value == null ? "—" : value.toFixed(1);
 
   useEffect(() => {
     if (!container.current) return;
@@ -53,6 +57,23 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       REFERENCE_5M: api.addSeries(LineSeries, { color: "#57aaff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }),
     };
     lines.current = chartLines;
+    // Lightweight Charts v5: a second pane shares the exact candle time axis
+    // and crosshair. Unlike an overlay, ADX uses its own 0..100 value scale.
+    const paneOptions = {
+      lineWidth: 2 as const, priceLineVisible: false, lastValueVisible: true,
+      priceFormat: { type: "price" as const, precision: 1, minMove: 0.1 },
+    };
+    const indicatorLines = {
+      PLUS: api.addSeries(LineSeries, { ...paneOptions, title: "+DI", color: "#25c776" }, 1),
+      MINUS: api.addSeries(LineSeries, { ...paneOptions, title: "-DI", color: "#f16a72" }, 1),
+      ADX: api.addSeries(LineSeries, { ...paneOptions, title: "ADX", color: "#60a5fa" }, 1),
+      LEVEL: api.addSeries(LineSeries, {
+        ...paneOptions, title: "20", color: "#8595ab", lineWidth: 1,
+        lineStyle: LineStyle.Dashed, lastValueVisible: false,
+      }, 1),
+    };
+    api.panes()[1]?.setHeight(185);
+    indicators.current = indicatorLines;
     chart.current = api;
     series.current = candles;
     markers.current = markerPlugin;
@@ -61,6 +82,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       series.current = null;
       markers.current = null;
       lines.current = null;
+      indicators.current = null;
       api.remove();
     };
   }, []);
@@ -90,6 +112,35 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
     }
     chartMarkers.sort((a, b) => Number(a.time) - Number(b.time));
     markers.current?.setMarkers(chartMarkers);
+    const dmiSeries = indicators.current;
+    if (dmiSeries) {
+      const linePoints = (key: "plus_di" | "minus_di" | "adx") => {
+        const values: { time: UTCTimestamp; value: number }[] = [];
+        observedDmi.forEach((sample, index) => {
+          const value = sample[key];
+          if (value !== null) {
+            values.push({
+              // Chart bar's X is its START, while the sample becomes known
+              // only at the CLOSE. We reveal it only after that close event.
+              time: (shown.candles[index].start_ms / 1000) as UTCTimestamp,
+              value,
+            });
+          }
+        });
+        return values;
+      };
+      dmiSeries.PLUS.setData(linePoints("plus_di"));
+      dmiSeries.MINUS.setData(linePoints("minus_di"));
+      dmiSeries.ADX.setData(linePoints("adx"));
+      const first = shown.candles[0];
+      const last = shown.candles.at(-1);
+      dmiSeries.LEVEL.setData(first && last ? [
+        { time: (first.start_ms / 1000) as UTCTimestamp, value: 20 },
+        ...(last.start_ms !== first.start_ms
+          ? [{ time: (last.start_ms / 1000) as UTCTimestamp, value: 20 }]
+          : []),
+      ] : []);
+    }
     const allowed = visibleGeometry(document, shown.lastTimeMs);
     const latest = shown.candles.at(-1)?.start_ms;
     for (const [kind, lineSeries] of Object.entries(lines.current ?? {}) as [ReplayGeometry["kind"], ISeriesApi<"Line">][]) {
@@ -111,9 +162,27 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       lineSeries.setData(points);
     }
     chart.current?.timeScale().scrollToPosition(14, false);
-  }, [shown, document, cursor]);
+  }, [shown, document, cursor, observedDmi]);
 
-  return <div className="replay-chart" ref={container} aria-label="Свечной график ускоренной симуляции" />;
+  return (
+    <div className="replay-chart-shell">
+      <div className="replay-chart" ref={container}
+        aria-label="Свечной график и нижняя панель ADX DMI" />
+      <div className="replay-dmi-legend" role="group" aria-label="Индикатор ADX DMI">
+        <strong>ADX/DMI {document.dmi_5m
+          ? `(${document.dmi_5m.di_length}, ${document.dmi_5m.adx_smoothing})`
+          : "(14, 14)"} · 5м</strong>
+        <span className="replay-dmi-plus">+DI {dmiValue(latestDmi?.plus_di)}</span>
+        <span className="replay-dmi-minus">−DI {dmiValue(latestDmi?.minus_di)}</span>
+        <span className="replay-dmi-adx">ADX {dmiValue(latestDmi?.adx)}</span>
+        <span className="replay-dmi-level">Уровень 20</span>
+        {document.mode === "MARKET_ONLY" && !document.dmi_5m &&
+          <span>Старый архив: расчёт ADX отсутствует</span>}
+        {document.dmi_5m && latestDmi?.adx == null &&
+          <span>Прогрев ADX: 28 закрытых свечей</span>}
+      </div>
+    </div>
+  );
 }
 
 function utcDayOffset(daysAgo: number): string {

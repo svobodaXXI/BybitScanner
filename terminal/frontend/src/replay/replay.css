@@ -25,8 +25,15 @@
 .replay-progress > div { height: 100%; background: #7db6ef; transition: width .08s linear; }
 .replay-note { padding: 9px 12px; background: #28251b; border: 1px solid #55442e; color: #d4be85; border-radius: 7px; }
 .replay-grid { display: grid; grid-template-columns: minmax(0, 1fr) 255px; gap: 12px; margin-top: 12px; }
-.replay-chart-panel { min-width: 0; min-height: 470px; background: #121923; border: 1px solid #273649; border-radius: 9px; overflow: hidden; }
-.replay-chart { width: 100%; height: 500px; }
+.replay-chart-panel { min-width: 0; min-height: 710px; background: #121923; border: 1px solid #273649; border-radius: 9px; overflow: hidden; }
+.replay-chart-shell { width: 100%; }
+.replay-chart { width: 100%; height: 660px; }
+.replay-dmi-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 10px 14px; border-top: 1px solid #2e3f54; background: #111b29; font-size: 12px; color: #9cacc0; }
+.replay-dmi-legend strong { color: #e4eafa; font-weight: 600; }
+.replay-dmi-plus { color: #25c776; font-variant-numeric: tabular-nums; }
+.replay-dmi-minus { color: #f16a72; font-variant-numeric: tabular-nums; }
+.replay-dmi-adx { color: #60a5fa; font-variant-numeric: tabular-nums; }
+.replay-dmi-level { color: #a5b2c4; }
 .replay-events { background: #141d28; border: 1px solid #273649; border-radius: 9px; padding: 14px; min-height: 470px; }
 .replay-events h2 { margin: 0 0 13px; font-size: 15px; }
 .replay-events p { color: #8799b0; }
@@ -41,7 +48,7 @@
   .replay-rate { margin-left: 0; }
   .replay-meta { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .replay-grid { grid-template-columns: 1fr; }
-  .replay-chart { height: 420px; }
-  .replay-chart-panel { min-height: 420px; }
+  .replay-chart { height: 560px; }
+  .replay-chart-panel { min-height: 610px; }
   .replay-events { min-height: 140px; }
 }
