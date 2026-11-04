@@ -116,14 +116,16 @@ def test_reopen_prefers_last_geometry_review_saved_in_same_millisecond(tmp_path)
             _payload(source, token="test-unique-idempotency-00001"),
             source, directory=tmp_path,
         )
-        second = record_review(
-            _payload(source, token="test-unique-idempotency-00002"),
-            source, directory=tmp_path,
-        )
+        second_payload = _payload(source, token="test-unique-idempotency-00002")
+        second_payload["corrected_boundaries"][0]["anchors"][0]["price"] = 13.8
+        second = record_review(second_payload, source, directory=tmp_path)
     assert first["received_at_ms"] == second["received_at_ms"]
     assert first["review_id"] > second["review_id"]
     assert second["received_at_ns"] > first["received_at_ns"]
-    assert latest_review(source["signal_id"], snapshot=source, directory=tmp_path) == second
+    restored = latest_review(source["signal_id"], snapshot=source, directory=tmp_path)
+    assert restored == second
+    assert restored["submission"]["corrected_boundaries"][0]["anchors"][0]["price"] == 13.8
+    assert first["submission"]["corrected_boundaries"][0]["anchors"][0]["price"] == 13.5
     assert len(list(tmp_path.rglob("*.json"))) == 2
     # Replaying the same review token preserves its immutable receipt.
     assert record_review(
