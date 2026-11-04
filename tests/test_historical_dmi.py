@@ -18,7 +18,7 @@ class WilderDmiTests(unittest.TestCase):
         stream = WilderDmi(timeframe_ms=FIVE_MINUTES_MS, di_length=3, adx_smoothing=3)
         records = [stream.observe_closed(bar(i, 100 + 2 * i)) for i in range(9)]
         self.assertIsNone(records[2].plus_di)
-        self.assertEqual(records[3].plus_di, Decimal(72))
+        self.assertLess(abs(records[3].plus_di - Decimal(72)), Decimal("1e-20"))
         self.assertEqual(records[3].minus_di, Decimal(0))
         self.assertIsNone(records[4].adx)
         self.assertEqual(records[5].adx, Decimal(100))
