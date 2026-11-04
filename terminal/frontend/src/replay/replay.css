@@ -24,6 +24,7 @@
 .replay-progress { height: 5px; border-radius: 5px; background: #29384c; overflow: hidden; }
 .replay-progress > div { height: 100%; background: #7db6ef; transition: width .08s linear; }
 .replay-note { padding: 9px 12px; background: #28251b; border: 1px solid #55442e; color: #d4be85; border-radius: 7px; }
+.replay-geometry-note { padding: 7px 11px; color: #9eb2cb; font-size: 12px; border: 1px solid #28394c; border-radius: 7px; margin: 8px 0; }
 .replay-grid { display: grid; grid-template-columns: minmax(0, 1fr) 255px; gap: 12px; margin-top: 12px; }
 .replay-chart-panel { min-width: 0; min-height: 710px; background: #121923; border: 1px solid #273649; border-radius: 9px; overflow: hidden; }
 .replay-chart-shell { width: 100%; }
