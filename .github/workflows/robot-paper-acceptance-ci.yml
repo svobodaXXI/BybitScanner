@@ -35,6 +35,7 @@ on:
       - "tests/test_robot_nonrobot_close_proof.py"
       - "tests/test_paper_two_orphan_proof.py"
       - "tools/paper_two_orphan_proof.py"
+      - "tools/paper_incident_approvals.py"
       - "tools/flat_paper_recovery_transition.py"
       - "tests/test_flat_paper_recovery_transition.py"
       - "tests/test_stop_reentry_paper_e2e.py"
