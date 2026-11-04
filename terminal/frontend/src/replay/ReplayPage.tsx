@@ -5,9 +5,10 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi,
-  type ReplayCandle, type ReplayDocument, type ReplayEvent, type ReplayGeometry,
+  type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
+import { rayEndPoint } from "../chart/drawingGeometry";
 import "./replay.css";
 
 function label(event: ReplayEvent): string {
@@ -18,14 +19,13 @@ function label(event: ReplayEvent): string {
     case "EXIT_FILLED": return "Выход " + (event.reason ?? "");
   }
 }
-  function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: number }) {
+function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: number }) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const executionCanvas = useRef<HTMLCanvasElement>(null);
   const renderExecutions = useRef<() => void>(() => {});
-  const lines = useRef<Record<ReplayGeometry["kind"], ISeriesApi<"Line">> | null>(null);
-  const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
+   const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const observedDmi = useMemo(() => visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
   const latestDmi = observedDmi.at(-1);
@@ -44,13 +44,7 @@ function label(event: ReplayEvent): string {
       upColor: "#2fc596", downColor: "#ed6978", wickUpColor: "#2fc596",
       wickDownColor: "#ed6978", borderVisible: false,
     });
-    const chartLines = {
-      MAIN_1H: api.addSeries(LineSeries, { color: "#f6dc59", lineWidth: 2, priceLineVisible: false, lastValueVisible: false }),
-      TARGET_1H: api.addSeries(LineSeries, { color: "#f6dc59", lineStyle: LineStyle.Dashed, lineWidth: 2, priceLineVisible: false, lastValueVisible: false }),
-      REFERENCE_5M: api.addSeries(LineSeries, { color: "#57aaff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }),
-    };
-    lines.current = chartLines;
-    // Lightweight Charts v5: a second pane shares the exact candle time axis
+     // Lightweight Charts v5: a second pane shares the exact candle time axis
     // and crosshair. Unlike an overlay, ADX uses its own 0..100 value scale.
     const paneOptions = {
       lineWidth: 2 as const, priceLineVisible: false, lastValueVisible: true,
@@ -81,8 +75,7 @@ function label(event: ReplayEvent): string {
       api.timeScale().unsubscribeVisibleLogicalRangeChange(refresh);
       chart.current = null;
       series.current = null;
-       lines.current = null;
-      indicators.current = null;
+       indicators.current = null;
       api.remove();
     };
   }, []);
@@ -123,27 +116,7 @@ function label(event: ReplayEvent): string {
           : []),
       ] : []);
     }
-    const allowed = visibleGeometry(document, shown.lastTimeMs);
-    const latest = shown.candles.at(-1)?.start_ms;
-    for (const [kind, lineSeries] of Object.entries(lines.current ?? {}) as [ReplayGeometry["kind"], ISeriesApi<"Line">][]) {
-      const candidate = allowed.find((g) => g.kind === kind);
-      if (!candidate || latest === undefined) {
-        lineSeries.setData([]);
-        continue;
-      }
-      const points = [
-        { time: (candidate.from_ms / 1000) as UTCTimestamp, value: candidate.from_price },
-        { time: (candidate.to_ms / 1000) as UTCTimestamp, value: candidate.to_price },
-      ];
-      if (latest > candidate.to_ms) {
-        const projected = candidate.from_price +
-          (candidate.to_price - candidate.from_price) *
-          (latest - candidate.from_ms) / (candidate.to_ms - candidate.from_ms);
-        points.push({ time: (latest / 1000) as UTCTimestamp, value: projected });
-      }
-      lineSeries.setData(points);
-    }
-    // Match robot_position_chart.py's true-price filled triangles, not
+     // Match robot_position_chart.py's true-price filled triangles, not
     // Lightweight Charts' aboveBar/belowBar markers (which shift the Y).
     // The overlay is visual only, no API/Robot/PAPER connection.
     renderExecutions.current = () => {
@@ -163,6 +136,36 @@ function label(event: ReplayEvent): string {
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.clearRect(0, 0, width, height);
       const paneHeight = api.panes()[0]?.getHeight() ?? height;
+      const priceWidth = Math.min(width, api.timeScale().width());
+      context.save();
+      context.beginPath();
+      context.rect(0, 0, priceWidth, paneHeight);
+      context.clip();
+
+      // Reuse the terminal's existing two-anchor ray projection. Source
+      // anchors/time of knowledge come from the frozen causal geometry feed;
+      // DrawingOverlay's rayEndPoint extends the line to the price pane edge.
+      // Never refit the line to the replayed price candles.
+      const knownLines = visibleGeometry(document, shown.lastTimeMs);
+      for (const line of knownLines) {
+        const x1 = api.timeScale().timeToCoordinate((line.from_ms / 1000) as UTCTimestamp);
+        const x2 = api.timeScale().timeToCoordinate((line.to_ms / 1000) as UTCTimestamp);
+        const y1 = candleSeries.priceToCoordinate(line.from_price);
+        const y2 = candleSeries.priceToCoordinate(line.to_price);
+        if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
+        const end = rayEndPoint(
+          { x: x1, y: y1 }, { x: x2, y: y2 },
+          { width: priceWidth, height: paneHeight },
+        );
+        context.beginPath();
+        context.strokeStyle = line.kind === "REFERENCE_5M" ? "#57aaff" : "#f6dc59";
+        context.lineWidth = line.kind === "REFERENCE_5M" ? 1.5 : 2;
+        context.setLineDash(line.kind === "TARGET_1H" ? [6, 4] : []);
+        context.moveTo(x1, y1);
+        context.lineTo(end.x, end.y);
+        context.stroke();
+      }
+      context.setLineDash([]);
       const fills = visibleExecutionMarkers(document.events.slice(0, cursor), shown.candles);
       let rendered = 0;
       for (const fill of fills) {
@@ -190,7 +193,9 @@ function label(event: ReplayEvent): string {
         context.stroke();
         rendered += 1;
       }
+      context.restore();
       canvas.dataset.visibleFills = String(rendered);
+      canvas.dataset.visibleGeometry = String(knownLines.length);
     };
     chart.current?.timeScale().scrollToPosition(14, false);
     renderExecutions.current();
