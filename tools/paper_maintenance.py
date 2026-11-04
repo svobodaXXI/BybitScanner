@@ -6,6 +6,8 @@ does not advance to git or systemd: protection stays with the current backend.
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import subprocess
 import sys
 import time
@@ -16,12 +18,50 @@ from tools.stop_robot_runtime import RuntimeShutdown, SCOPE_ALL, _environment
 REPO = Path("/opt/BybitScanner")
 SERVICE = "bybitscanner-paper-start.service"
 PREFIX = ("sudo", "-n")
+# Stable outside an immutable release tree: a process restart or failed
+# deploy must not erase evidence that a mutating STOP might have been sent.
+STOP_ATTEMPT_PATH = Path("/var/lib/bybitscanner/paper-maintenance/stop-attempt.json")
+
+
+def _claim_stop_once(path: Path, target: str) -> bool:
+    """Durably claim this host's one STOP attempt *before* any mutation.
+
+    O_EXCL prevents a concurrent second caller. A truncated/unknown receipt
+    also remains consumed after a crash: never infer that STOP did not happen.
+    There is deliberately no delete/reset/retry path in this command.
+    """
+    try:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if path.parent.is_symlink():
+            return False
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags, 0o600)
+    except OSError:
+        return False
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump({"schema_version": 1, "target_sha": target,
+                       "stop_attempt": "claimed_before_invocation"}, stream)
+            stream.write("\\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        return True
+    except (OSError, ValueError):
+        # Leave even a partially written marker intact: STOP could already
+        # have been sent in a different process with the same durable path.
+        return False
 
 
 def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
                     stop=None, env_file: Path | None = None,
                     wait_seconds: float = 0, poll_seconds: float = 30,
-                    clock=time.monotonic, sleep=time.sleep, readiness=None) -> str:
+                    clock=time.monotonic, sleep=time.sleep, readiness=None,
+                    attempt_path: Path | None = None) -> str:
     if len(target) != 40 or any(char not in "0123456789abcdef" for char in target):
         return "BLOCKED: target must be an exact 40-character commit SHA"
     if wait_seconds < 0 or poll_seconds <= 0:
@@ -68,6 +108,16 @@ def run_maintenance(target: str, *, root: Path = REPO, runner=subprocess.run,
     # Never retry an entire STOP as a polling mechanism. A future maintenance
     # resume path must use read-only, identity-bound observed state to determine
     # whether a *different* stage is now legal.
+    # Claim is intentionally after read-only preflight and before the first
+    # irreversible stop step. The claim is never cleared on 409, timeout,
+    # crash, successful STOP, restart or a different target SHA.
+    if not _claim_stop_once(attempt_path if attempt_path is not None else STOP_ATTEMPT_PATH,
+                            target):
+        return (
+            "BLOCKED: prior or unprovable PAPER maintenance STOP attempt; "
+            "no repeated STOP, release switch or start; use read-only "
+            "identity-bound recovery"
+        )
     try:
         result = shutdown(SCOPE_ALL)
     except Exception:
