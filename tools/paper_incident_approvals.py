@@ -226,7 +226,16 @@ def _historical_approval_progress(conn, *, candidate_id: str, symbol: str,
         return False
 
     expected_revision, expected_phase = _INCIDENT_ADVANCED_APPROVALS[symbol]
-    if revision != expected_revision or not isinstance(raw_state, str):
+    # The 2026-11-04 protected STOP attempt left a durable BNCUSDT
+    # APPROVED/RETEST_DETECTED state at revision 7 (confirmed by owner-only
+    # READ-ONLY VPS snapshot). An additional revision is *not* proof of entry:
+    # accept only this incident-specific value, and only after the unchanged
+    # per-order, execution, command, trade and owner checks below.
+    allowed_revision = (
+        revision == expected_revision
+        or (symbol == "BNCUSDT" and expected_revision == 6 and revision == 7)
+    )
+    if not allowed_revision or not isinstance(raw_state, str):
         return blocked("revision_or_state_type_mismatch")
     try:
         state = json.loads(raw_state)

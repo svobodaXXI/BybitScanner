@@ -419,11 +419,49 @@ class DualOrphanPreflightTests(TestCase):
             "UPDATE paper_limit_orders SET filled_quantity='0' "
             "WHERE symbol='BNCUSDT'"
         )
+        # The host's protected STOP left this exact APPROVED/RETEST
+        # metadata at revision 7. Revision alone is not admission.
         conn.execute(
             "UPDATE robot_candidates SET state_revision=7 WHERE symbol='BNCUSDT'"
         )
-        with self.assertRaisesRegex(FlatRecoveryBlocked, "approved_candidate_has_admission_progress:BNCUSDT:revision_or_state_type_mismatch"):
+        self.assertEqual(
+            check(conn, payload, store, evidence=[object(), object()]),
+            PROOF_LABEL,
+        )
+        conn.execute(
+            "UPDATE robot_candidates SET state_revision=8 WHERE symbol='BNCUSDT'"
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked,
+            "approved_candidate_has_admission_progress:BNCUSDT:revision_or_state_type_mismatch",
+        ):
             check(conn, payload, store)
+        conn.execute(
+            "UPDATE robot_candidates SET state_revision=7, robot_state_json=? "
+            "WHERE symbol='BNCUSDT'",
+            (json.dumps({"phase": "ENTRY_PENDING", "state_version": "1.0"}),),
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked,
+            "approved_candidate_has_admission_progress:BNCUSDT:state_phase_mismatch",
+        ):
+            check(conn, payload, store)
+        conn.execute(
+            "UPDATE robot_candidates SET robot_state_json=? WHERE symbol='BNCUSDT'",
+            (json.dumps({"phase": "RETEST_DETECTED", "state_version": "1.0"}),),
+        )
+        conn.execute(
+            "INSERT INTO executions (trading_account_id,symbol,exchange_timestamp_ms,order_id) "
+            "VALUES ('paper','BNCUSDT',202,'unexpected-bnc-fill')"
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked,
+            "approved_candidate_execution_or_ownership_unknown",
+        ):
+            check(conn, payload, store)
+        conn.execute(
+            "DELETE FROM executions WHERE order_id='unexpected-bnc-fill'"
+        )
         conn.execute(
             "UPDATE robot_candidates SET state_revision=6 WHERE symbol='BNCUSDT'"
         )
