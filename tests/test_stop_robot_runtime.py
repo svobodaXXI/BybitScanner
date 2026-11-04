@@ -1021,7 +1021,9 @@ class ShutdownArmFixture:
 
         def get(url, timeout):
             if url == BACKEND + "/api/robot/protection-health":
-                return 200, json.loads(json.dumps(self.manager.health()))
+                # The public HTTP handler supplies ok; manager.health()
+                # alone is an internal fragment, not an API response.
+                return 200, json.loads(json.dumps({"ok": True, **self.manager.health()}))
             return original_get(url, timeout)
 
         def post(url, payload, timeout):
