@@ -60,6 +60,21 @@ try {
   await page.getByRole("button", { name: "В начало" }).click();
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
 
+  // The synthetic demo now contains enough true closed candles to show ADX
+  // after its 14/14 warmup. Check TRUE-price markers, not shifted chart arrows.
+  const demoIndicator = page.getByRole("group", { name: "Индикатор ADX DMI" });
+  await page.locator(".replay-rate input").fill("60");
+  await page.getByRole("button", { name: "Пуск", exact: false }).click();
+  await page.waitForFunction(() => document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow") === "100");
+  assert.match(await demoIndicator.innerText(), /\+DI [0-9]/);
+  assert.match(await demoIndicator.innerText(), /−DI [0-9]/);
+  assert.match(await demoIndicator.innerText(), /ADX [0-9]/);
+  assert.match(await page.locator("body").innerText(), /64 \/ 1 \/ 1/);
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "2");
+  assert.equal(await page.locator(".replay-chart .series-markers").count(), 0);
+  await page.getByRole("button", { name: "В начало" }).click();
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
+
   // Public history response is mocked at the HTTP boundary. A separate Python
   // fixture covers the real server handler and unsigned public GET adapter.
   const t = Date.UTC(2026, 9, 1);
@@ -115,6 +130,8 @@ try {
   assert.match(await indicator.innerText(), /\+DI 23\.9/);
   assert.match(await indicator.innerText(), /ADX 22\.8/);
   assert.ok((await page.locator(".replay-chart canvas").count()) >= 4);
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "1");
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
 
   assert.deepEqual(errors, [], "Browser runtime errors: " + errors.join("; "));

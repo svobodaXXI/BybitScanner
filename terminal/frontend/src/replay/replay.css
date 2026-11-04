@@ -27,7 +27,12 @@
 .replay-grid { display: grid; grid-template-columns: minmax(0, 1fr) 255px; gap: 12px; margin-top: 12px; }
 .replay-chart-panel { min-width: 0; min-height: 710px; background: #121923; border: 1px solid #273649; border-radius: 9px; overflow: hidden; }
 .replay-chart-shell { width: 100%; }
+.replay-chart-frame { position: relative; width: 100%; }
 .replay-chart { width: 100%; height: 660px; }
+.replay-execution-overlay {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  z-index: 3; pointer-events: none;
+}
 .replay-dmi-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 10px 14px; border-top: 1px solid #2e3f54; background: #111b29; font-size: 12px; color: #9cacc0; }
 .replay-dmi-legend strong { color: #e4eafa; font-weight: 600; }
 .replay-dmi-plus { color: #25c776; font-variant-numeric: tabular-nums; }

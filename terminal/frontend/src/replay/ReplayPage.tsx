@@ -1,13 +1,14 @@
 import {
-  CandlestickSeries, ColorType, LineSeries, LineStyle, createChart, createSeriesMarkers,
-  type IChartApi, type ISeriesApi, type ISeriesMarkersPluginApi,
-  type SeriesMarker, type Time, type UTCTimestamp,
+  CandlestickSeries, ColorType, LineSeries, LineStyle, createChart,
+  type IChartApi, type ISeriesApi, type UTCTimestamp,
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi,
-  type ReplayCandle, type ReplayDocument, type ReplayEvent, type ReplayGeometry,
+  type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
+import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
+import { rayEndPoint } from "../chart/drawingGeometry";
 import "./replay.css";
 
 function label(event: ReplayEvent): string {
@@ -18,20 +19,13 @@ function label(event: ReplayEvent): string {
     case "EXIT_FILLED": return "Выход " + (event.reason ?? "");
   }
 }
-function markerTime(event: ReplayEvent, candles: readonly ReplayCandle[]): number | null {
-  if (event.kind === "ENTRY_FILLED") {
-    return candles.find((c) => c.start_ms === event.time_ms)?.start_ms ?? null;
-  }
-  return [...candles].reverse().find((c) => c.end_ms === event.time_ms)?.start_ms ?? null;
-}
-
 function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: number }) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
-  const lines = useRef<Record<ReplayGeometry["kind"], ISeriesApi<"Line">> | null>(null);
-  const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
+  const executionCanvas = useRef<HTMLCanvasElement>(null);
+  const renderExecutions = useRef<() => void>(() => {});
+   const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const observedDmi = useMemo(() => visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
   const latestDmi = observedDmi.at(-1);
@@ -50,14 +44,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       upColor: "#2fc596", downColor: "#ed6978", wickUpColor: "#2fc596",
       wickDownColor: "#ed6978", borderVisible: false,
     });
-    const markerPlugin = createSeriesMarkers(candles, []);
-    const chartLines = {
-      MAIN_1H: api.addSeries(LineSeries, { color: "#f6dc59", lineWidth: 2, priceLineVisible: false, lastValueVisible: false }),
-      TARGET_1H: api.addSeries(LineSeries, { color: "#f6dc59", lineStyle: LineStyle.Dashed, lineWidth: 2, priceLineVisible: false, lastValueVisible: false }),
-      REFERENCE_5M: api.addSeries(LineSeries, { color: "#57aaff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false }),
-    };
-    lines.current = chartLines;
-    // Lightweight Charts v5: a second pane shares the exact candle time axis
+     // Lightweight Charts v5: a second pane shares the exact candle time axis
     // and crosshair. Unlike an overlay, ADX uses its own 0..100 value scale.
     const paneOptions = {
       lineWidth: 2 as const, priceLineVisible: false, lastValueVisible: true,
@@ -76,13 +63,19 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
     indicators.current = indicatorLines;
     chart.current = api;
     series.current = candles;
-    markers.current = markerPlugin;
+    // Repaint true-price execution triangles when chart scroll/zoom/resize moves.
+    const refresh = () => renderExecutions.current();
+    api.timeScale().subscribeVisibleLogicalRangeChange(refresh);
+    api.subscribeCrosshairMove(refresh);
+    const resize = new ResizeObserver(refresh);
+    resize.observe(container.current);
     return () => {
+      resize.disconnect();
+      api.unsubscribeCrosshairMove(refresh);
+      api.timeScale().unsubscribeVisibleLogicalRangeChange(refresh);
       chart.current = null;
       series.current = null;
-      markers.current = null;
-      lines.current = null;
-      indicators.current = null;
+       indicators.current = null;
       api.remove();
     };
   }, []);
@@ -94,25 +87,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       time: (c.start_ms / 1000) as UTCTimestamp,
       open: c.open, high: c.high, low: c.low, close: c.close,
     })));
-    const chartMarkers: SeriesMarker<Time>[] = [];
-    for (const event of document.events.slice(0, cursor)) {
-      if (event.kind === "CANDLE_CLOSED") continue;
-      const time = markerTime(event, shown.candles);
-      if (time === null) continue; // Do not draw a future candle for an open fill.
-      const isSignal = event.kind === "ENTRY_SIGNAL";
-      const isExit = event.kind === "EXIT_FILLED";
-      const down = event.side === "SHORT";
-      chartMarkers.push({
-        time: (time / 1000) as UTCTimestamp,
-        position: isExit ? "aboveBar" : down ? "aboveBar" : "belowBar",
-        shape: isExit ? "circle" : down ? "arrowDown" : "arrowUp",
-        color: isExit ? "#ffcf76" : isSignal ? "#91aafa" : down ? "#ed6978" : "#2fc596",
-        text: isSignal ? "Сигнал" : isExit ? (event.reason ?? "Выход") : "Вход",
-      });
-    }
-    chartMarkers.sort((a, b) => Number(a.time) - Number(b.time));
-    markers.current?.setMarkers(chartMarkers);
-    const dmiSeries = indicators.current;
+     const dmiSeries = indicators.current;
     if (dmiSeries) {
       const linePoints = (key: "plus_di" | "minus_di" | "adx") => {
         const values: { time: UTCTimestamp; value: number }[] = [];
@@ -141,33 +116,102 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
           : []),
       ] : []);
     }
-    const allowed = visibleGeometry(document, shown.lastTimeMs);
-    const latest = shown.candles.at(-1)?.start_ms;
-    for (const [kind, lineSeries] of Object.entries(lines.current ?? {}) as [ReplayGeometry["kind"], ISeriesApi<"Line">][]) {
-      const candidate = allowed.find((g) => g.kind === kind);
-      if (!candidate || latest === undefined) {
-        lineSeries.setData([]);
-        continue;
+     // Match robot_position_chart.py's true-price filled triangles, not
+    // Lightweight Charts' aboveBar/belowBar markers (which shift the Y).
+    // The overlay is visual only, no API/Robot/PAPER connection.
+    renderExecutions.current = () => {
+      const canvas = executionCanvas.current;
+      const api = chart.current;
+      if (!canvas || !api) return;
+      const ratio = window.devicePixelRatio || 1;
+      const bounds = canvas.getBoundingClientRect();
+      const width = bounds.width, height = bounds.height;
+      if (canvas.width !== Math.round(width * ratio) ||
+          canvas.height !== Math.round(height * ratio)) {
+        canvas.width = Math.round(width * ratio);
+        canvas.height = Math.round(height * ratio);
       }
-      const points = [
-        { time: (candidate.from_ms / 1000) as UTCTimestamp, value: candidate.from_price },
-        { time: (candidate.to_ms / 1000) as UTCTimestamp, value: candidate.to_price },
-      ];
-      if (latest > candidate.to_ms) {
-        const projected = candidate.from_price +
-          (candidate.to_price - candidate.from_price) *
-          (latest - candidate.from_ms) / (candidate.to_ms - candidate.from_ms);
-        points.push({ time: (latest / 1000) as UTCTimestamp, value: projected });
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      context.clearRect(0, 0, width, height);
+      const paneHeight = api.panes()[0]?.getHeight() ?? height;
+      const priceWidth = Math.min(width, api.timeScale().width());
+      context.save();
+      context.beginPath();
+      context.rect(0, 0, priceWidth, paneHeight);
+      context.clip();
+
+      // Reuse the terminal's existing two-anchor ray projection. Source
+      // anchors/time of knowledge come from the frozen causal geometry feed;
+      // DrawingOverlay's rayEndPoint extends the line to the price pane edge.
+      // Never refit the line to the replayed price candles.
+      const knownLines = visibleGeometry(document, shown.lastTimeMs);
+      for (const line of knownLines) {
+        const x1 = api.timeScale().timeToCoordinate((line.from_ms / 1000) as UTCTimestamp);
+        const x2 = api.timeScale().timeToCoordinate((line.to_ms / 1000) as UTCTimestamp);
+        const y1 = candleSeries.priceToCoordinate(line.from_price);
+        const y2 = candleSeries.priceToCoordinate(line.to_price);
+        if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
+        const end = rayEndPoint(
+          { x: x1, y: y1 }, { x: x2, y: y2 },
+          { width: priceWidth, height: paneHeight },
+        );
+        context.beginPath();
+        context.strokeStyle = line.kind === "REFERENCE_5M" ? "#57aaff" : "#f6dc59";
+        context.lineWidth = line.kind === "REFERENCE_5M" ? 1.5 : 2;
+        context.setLineDash(line.kind === "TARGET_1H" ? [6, 4] : []);
+        context.moveTo(x1, y1);
+        context.lineTo(end.x, end.y);
+        context.stroke();
       }
-      lineSeries.setData(points);
-    }
+      context.setLineDash([]);
+      const fills = visibleExecutionMarkers(document.events.slice(0, cursor), shown.candles);
+      let rendered = 0;
+      for (const fill of fills) {
+        const x = api.timeScale().timeToCoordinate((fill.candle_start_ms / 1000) as UTCTimestamp);
+        const y = candleSeries.priceToCoordinate(fill.price);
+        if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y)
+            || x < -7 || x > width + 7 || y < -7 || y > paneHeight + 7) {
+          continue; // Never move an off-screen fill to a fictitious price.
+        }
+        context.beginPath();
+        if (fill.side === "Buy") {
+          context.moveTo(x, y - 7);
+          context.lineTo(x - 7, y + 6);
+          context.lineTo(x + 7, y + 6);
+        } else {
+          context.moveTo(x, y + 7);
+          context.lineTo(x - 7, y - 6);
+          context.lineTo(x + 7, y - 6);
+        }
+        context.closePath();
+        context.fillStyle = fill.side === "Buy" ? TELEGRAM_BUY_COLOR : TELEGRAM_SELL_COLOR;
+        context.fill();
+        context.lineWidth = 0.8;
+        context.strokeStyle = "#000000";
+        context.stroke();
+        rendered += 1;
+      }
+      context.restore();
+      canvas.dataset.visibleFills = String(rendered);
+      canvas.dataset.visibleGeometry = String(knownLines.length);
+    };
     chart.current?.timeScale().scrollToPosition(14, false);
+    renderExecutions.current();
+    // Chart recalculates pixel coordinates after updating series/timescale.
+    const redrawId = requestAnimationFrame(() => renderExecutions.current());
+    return () => cancelAnimationFrame(redrawId);
   }, [shown, document, cursor, observedDmi]);
 
   return (
     <div className="replay-chart-shell">
-      <div className="replay-chart" ref={container}
-        aria-label="Свечной график и нижняя панель ADX DMI" />
+      <div className="replay-chart-frame">
+        <div className="replay-chart" ref={container}
+          aria-label="Свечной график и нижняя панель ADX DMI" />
+        <canvas ref={executionCanvas} className="replay-execution-overlay"
+          aria-hidden="true" data-visible-fills="0" />
+      </div>
       <div className="replay-dmi-legend" role="group" aria-label="Индикатор ADX DMI">
         <strong>ADX/DMI {document.dmi_5m
           ? `(${document.dmi_5m.di_length}, ${document.dmi_5m.adx_smoothing})`

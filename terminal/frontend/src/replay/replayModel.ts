@@ -1,4 +1,5 @@
 /** Read-only contract for SIMULATION event logs, independent of PAPER and order APIs. */
+import syntheticDmiFixture from "./syntheticDmiFixture.json";
 export type ReplayKind = "CANDLE_CLOSED" | "ENTRY_SIGNAL" | "ENTRY_FILLED" | "EXIT_FILLED";
 export type ReplayCandle = {
   start_ms: number;
@@ -225,12 +226,13 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
   // market candles. An old JSON archive without DMI remains readable.
   let dmi_5m: ReplayDmi | undefined;
   if (object.dmi_5m !== undefined) {
-    if (mode !== "MARKET_ONLY") {
-      throw new Error("ADX разрешён только для локальной истории SIMULATION");
+    if (mode !== "MARKET_ONLY" && !(mode === "STRATEGY" && object.demo === true)) {
+      throw new Error("ADX разрешён только для локальной истории и демо SIMULATION");
     }
     const rawDmi = record(object.dmi_5m);
+    const closedEvents = events.filter((event) => event.kind === "CANDLE_CLOSED");
     if (rawDmi.source !== "SIMULATION" || rawDmi.timeframe !== "5m" ||
-        !Array.isArray(rawDmi.points) || rawDmi.points.length !== events.length) {
+        !Array.isArray(rawDmi.points) || rawDmi.points.length !== closedEvents.length) {
       throw new Error("ADX не совпадает с последовательностью закрытых свечей");
     }
     const di_length = positiveInteger(rawDmi.di_length, "di_length");
@@ -247,8 +249,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     const points: ReplayDmiPoint[] = rawDmi.points.map((point, index) => {
       const raw = record(point);
       const time_ms = positiveInteger(raw.time_ms, "DMI time_ms");
-      if (events[index].kind !== "CANDLE_CLOSED" ||
-          time_ms !== events[index].time_ms) {
+      if (time_ms !== closedEvents[index].time_ms) {
         throw new Error("ADX использует незакрытую, будущую или чужую свечу");
       }
       const plus_di = parseDmiNumber(raw.plus_di, "+DI");
@@ -295,7 +296,14 @@ export function visibleReplay(events: readonly ReplayEvent[], cursor: number): V
 export function syntheticReplay(): ReplayDocument {
   const id = "SYNTHETIC_DEMO";
   const base = Date.UTC(2026, 10, 4, 0, 0);
-  const prices = [100, 101, 99, 102, 103, 104, 106, 107, 105, 104, 102, 101, 103, 105, 106, 105];
+  // Versioned synthetic fixture: enough closed bars for the 14/14 ADX warmup.
+  // Its values are cross-checked against research.wilder_dmi in offline CI.
+  const prices = [
+    100, 101, 99, 102, 103, 104, 106, 107, 105, 104, 102, 101, 103, 105, 106, 105,
+    103, 102, 100, 99, 101, 103, 105, 107, 109, 108, 107, 104, 101, 100, 99, 101,
+    104, 107, 110, 112, 111, 109, 107, 105, 103, 106, 109, 112, 114, 113, 111, 108,
+    106, 104, 103, 105, 108, 111, 115, 118, 116, 113, 110, 107, 108, 111, 114, 117,
+  ];
   const events: Record<string, unknown>[] = [];
   const push = (kind: ReplayKind, time_ms: number, more: Record<string, unknown> = {}) => {
     events.push({ source: "SIMULATION", simulation_run_id: id, sequence: events.length + 1, kind, time_ms, ...more });
@@ -318,7 +326,25 @@ export function syntheticReplay(): ReplayDocument {
       side: "LONG", price: close, stop: 98, take: 108,
     });
   }
-  return parseReplayDocument({ source: "SIMULATION", simulation_run_id: id, events, demo: true });
+  if (syntheticDmiFixture.values.length !== prices.length ||
+      syntheticDmiFixture.di_length !== 14 || syntheticDmiFixture.adx_smoothing !== 14) {
+    throw new Error("Несоответствие эталонного примера ADX");
+  }
+  const closedEvents = events.filter((e) => e.kind === "CANDLE_CLOSED");
+  const dmi_5m = {
+    source: "SIMULATION", timeframe: "5m",
+    di_length: 14, adx_smoothing: 14,
+    points: closedEvents.map((event, index) => ({
+      time_ms: event.time_ms,
+      plus_di: syntheticDmiFixture.values[index][0],
+      minus_di: syntheticDmiFixture.values[index][1],
+      adx: syntheticDmiFixture.values[index][2],
+    })),
+  };
+  return parseReplayDocument({
+    source: "SIMULATION", simulation_run_id: id, mode: "STRATEGY",
+    events, demo: true, dmi_5m,
+  });
 }
 
 /** Reveal ONLY candidate lines already confirmed at the virtual-time playhead. */
@@ -341,7 +367,7 @@ export function visibleGeometry(
 
 /** For MARKET_ONLY, DMI has exactly one observation per completed 5m candle. */
 export function visibleDmi(document: ReplayDocument, closedCandles: number): ReplayDmiPoint[] {
-  if (document.mode !== "MARKET_ONLY" || !document.dmi_5m) return [];
+  if (!document.dmi_5m || (document.mode !== "MARKET_ONLY" && document.demo !== true)) return [];
   return document.dmi_5m.points.slice(
     0, Math.max(0, Math.min(Math.floor(closedCandles), document.dmi_5m.points.length)),
   );
