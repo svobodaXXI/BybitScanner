@@ -105,7 +105,7 @@ class HistoricalCandleFeedTests(unittest.TestCase):
 
         result = replay_with_closed_context(
             simulation_run_id="context-a",
-            candles=[bar(i) for i in range(13)],
+            candles=[bar(i) if i != 12 else Candle(12 * FIVE_MINUTES_MS, FIVE_MINUTES_MS, 100, 102, 94, 100, 3) for i in range(13)],
             on_closed_context=strategy,
             taker_fee_rate=Decimal(0),
         )
