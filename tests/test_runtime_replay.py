@@ -248,16 +248,15 @@ class RuntimeReplayEntryPendingIngressBoundaryTests(unittest.TestCase):
             symbol = event_id.split(":", 1)[0]
             first = next(e for e in result.overflow_event_ids if e.startswith(f"{symbol}:"))
             self.assertLess(ids.index(first), ids.index(event_id))
-        # While saturated the durable fence itself cannot be admitted (one refusal per
-        # symbol); the in-memory unhealthy state is the only immediate fail-closed signal.
-        self.assertEqual(result.fence_overflows, len(INCIDENT_SYMBOLS))
-        # DIAGNOSTIC DEFECT (evidence only, not fixed here): the refused fence enqueue
-        # (symbol="") overwrites last_overflow_symbol/role, so the ingress metrics logged
-        # and served during the incident hide which protection symbol overflowed.
+        # The continuity fence has its own owner request path: saturation
+        # still rejects market evidence, but must not reject the safety fence.
+        self.assertEqual(result.fence_overflows, 0)
+        # The last real overflow retains its symbol/role attribution; the
+        # fence must not overwrite it with UNKNOWN.
         self.assertEqual(
             (result.health_during_overflow["ingress"]["last_overflow_symbol"],
              result.health_during_overflow["ingress"]["last_overflow_role"]),
-            (None, "UNKNOWN"),
+            ("ARKUSDT", "ENTRY_PENDING"),
         )
 
         for health in (result.health_during_overflow, result.health_after_resync):
