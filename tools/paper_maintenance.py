@@ -302,6 +302,56 @@ def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -
         return True
 
 
+
+def _confirmed_stop_receipt(
+    journal_root: Path, target: str, old_sha: str, *, uid: int,
+    record: bool = False,
+) -> bool:
+    """A durable successful STOP return, distinct from the pre-call intent.
+
+    Only the canonical successful response may create this receipt. Recovery
+    also re-proves the old installed release, exact stage and stopped host;
+    neither a STOP attempt marker nor absent listeners alone can grant it.
+    """
+    from tools.vps_gitless_release_activate import (
+        ActivationBlocked, _sync_directory, _trusted_file,
+    )
+
+    parent = journal_root.parent
+    if (not parent.is_dir() or parent.is_symlink()
+            or parent.stat().st_uid != uid or parent.stat().st_mode & 0o022
+            or not journal_root.is_dir() or journal_root.is_symlink()
+            or journal_root.stat().st_uid != uid
+            or journal_root.stat().st_mode & 0o077):
+        raise ActivationBlocked("untrusted_stop_receipt_directory")
+    if (not isinstance(old_sha, str) or len(old_sha) != 40
+            or any(ch not in "0123456789abcdef" for ch in old_sha)):
+        raise ActivationBlocked("old_release_identity_unproven")
+    marker = journal_root / (".stop-invoked-" + target)
+    if _trusted_file(marker, uid) != b"STOP_INVOKED; not install authorization\\n":
+        raise ActivationBlocked("stop_intent_receipt_mismatch")
+    payload = f"CANONICAL_ALL_STOP_CONFIRMED:{old_sha}:{target}\n".encode("ascii")
+    receipt = journal_root / (".stop-confirmed-" + target)
+    if record:
+        # O_EXCL means even a pre-existing apparently valid receipt cannot
+        # turn another STOP invocation into a second confirmation.
+        fd = os.open(
+            receipt, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+        )
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        _sync_directory(journal_root)
+        return True
+    if not receipt.exists() and not receipt.is_symlink():
+        return False
+    if _trusted_file(receipt, uid) != payload:
+        raise ActivationBlocked("stop_completed_receipt_mismatch")
+    return True
+
+
+
 def deploy_staged_editor_only(
     target: str, *, stage: Path, root: Path = REPO, env_file: Path | None = None,
     dual_orphan_handoff: bool = False, stop=None, preflight=None,
@@ -369,43 +419,66 @@ def deploy_staged_editor_only(
                 return "BLOCKED: installed_release_postcondition_unknown; do not start"
             return finish_resume()
         if not journal.is_dir():
-            # Preserve a pending intent for any release SHA; a later operator
-            # cannot bypass a failed STOP merely by changing the target.
-            if journal_root.is_dir() and any(
-                marker.is_file() or marker.is_symlink()
-                for marker in journal_root.glob(".stop-invoked-*")
+            # A pending STOP for any other SHA remains a global one-shot fence.
+            # For this SHA, only a separately fsynced successful STOP return
+            # can bridge the crash window before the installer creates a journal.
+            pending = [
+                marker for marker in journal_root.glob(".stop-invoked-*")
                 if not (journal_root / marker.name.removeprefix(".stop-invoked-")).is_dir()
-            ):
-                return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
-            (preflight or inspect_staged_release)(
-                target, stage=stage, root=root, manifest=manifest_path,
-                unit_dir=installed_units, uid=trusted_uid,
-            )
-            # Ordinary STOP is a single mutating action. The exact dual-orphan
-            # fallback requires its own explicit opt-in, never implied by update.
-            if stop is None:
-                env = _environment(env_file)
-                callback = build_dual_orphan_handoff(env) if dual_orphan_handoff else None
-                action = RuntimeShutdown(
-                    root=root, env=env, dual_orphan_handoff=callback,
-                ).run
+            ] if journal_root.is_dir() else []
+            if pending:
+                if (len(pending) != 1
+                        or pending[0].name != ".stop-invoked-" + target
+                        or not _confirmed_stop_receipt(
+                            journal_root, target, current, uid=trusted_uid,
+                        )):
+                    return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
+                (preflight or inspect_staged_release)(
+                    target, stage=stage, root=root, manifest=manifest_path,
+                    unit_dir=installed_units, uid=trusted_uid,
+                )
+                # An fsynced receipt documents the canonical success already
+                # observed, not a guess based on missing processes. The real
+                # installer independently reattests stopped units/listeners.
+                result = ShutdownResult(
+                    SCOPE_ALL, True, "Verified prior canonical stop receipt",
+                    runtime_stopped=True,
+                )
             else:
-                action = stop
-            if not _record_one_shot_stop_intent(
-                journal_root, target, uid=trusted_uid,
-            ):
-                return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
-            try:
-                result = action(SCOPE_ALL)
-            except Exception as exc:
-                # The stop may already have performed a trading/runtime action.
-                # The durable intent prevents replay; never install on an
-                # exception or try to infer completion from missing processes.
-                return ("BLOCKED: canonical_safe_stop_outcome_unknown:"
-                        + type(exc).__name__ + "; no retry, no deployment")
-            if not (getattr(result, "ok", False) is True
-                    and getattr(result, "runtime_stopped", False) is True):
-                return "BLOCKED: canonical_safe_stop_unproven; no retry, no deployment"
+                (preflight or inspect_staged_release)(
+                    target, stage=stage, root=root, manifest=manifest_path,
+                    unit_dir=installed_units, uid=trusted_uid,
+                )
+                # Ordinary STOP is a single mutating action. The exact dual-orphan
+                # fallback requires its own explicit opt-in, never implied by update.
+                if stop is None:
+                    env = _environment(env_file)
+                    callback = build_dual_orphan_handoff(env) if dual_orphan_handoff else None
+                    action = RuntimeShutdown(
+                        root=root, env=env, dual_orphan_handoff=callback,
+                    ).run
+                else:
+                    action = stop
+                if not _record_one_shot_stop_intent(
+                    journal_root, target, uid=trusted_uid,
+                ):
+                    return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
+                try:
+                    result = action(SCOPE_ALL)
+                except Exception as exc:
+                    # The stop may already have performed a trading/runtime action.
+                    # The durable intent prevents replay; never install on an
+                    # exception or try to infer completion from missing processes.
+                    return ("BLOCKED: canonical_safe_stop_outcome_unknown:"
+                            + type(exc).__name__ + "; no retry, no deployment")
+                if not (getattr(result, "ok", False) is True
+                        and getattr(result, "runtime_stopped", False) is True):
+                    return "BLOCKED: canonical_safe_stop_unproven; no retry, no deployment"
+                # Write the receipt only after a confirmed successful canonical
+                # STOP. If this write fails, do not install or repeat STOP.
+                _confirmed_stop_receipt(
+                    journal_root, target, current, uid=trusted_uid, record=True,
+                )
         else:
             result = None  # Already recorded protected transaction; no STOP replay.
         receipt = install_action(
