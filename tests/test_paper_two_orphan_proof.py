@@ -465,6 +465,23 @@ class DualOrphanPreflightTests(TestCase):
         conn.execute(
             "UPDATE robot_candidates SET state_revision=6 WHERE symbol='BNCUSDT'"
         )
+        # A single failed proof includes all six statuses in one compact
+        # read-only snapshot; never infer another candidate is inert from rev.
+        conn.execute(
+            "UPDATE robot_candidates SET state_revision=5 WHERE symbol='PLAYSOUTUSDT'"
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked,
+            "approved_candidate_has_admission_progress:PLAYSOUTUSDT:revision_or_state_type_mismatch",
+        ) as failure:
+            check(conn, payload, store)
+        self.assertIn(
+            "six=FLOKI=6BO,BNC=6RO,HEMI=6BO,IN=6BO,PLAYS=5RO,RUNE=3BO",
+            str(failure.exception),
+        )
+        conn.execute(
+            "UPDATE robot_candidates SET state_revision=4 WHERE symbol='PLAYSOUTUSDT'"
+        )
         conn.execute(
             "UPDATE box_order_ownership SET role='EXIT' WHERE order_id='cancelled-HEMIUSDT-0'"
         )
