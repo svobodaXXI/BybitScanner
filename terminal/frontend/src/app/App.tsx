@@ -1391,46 +1391,46 @@ export function App() {
           )}
           {mode !== "EDITOR" && (
             <>
-          <button
-            aria-expanded={marketSidePanelOpen}
-            aria-label={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
-            className="market-side-panel-toggle"
-            onClick={() => setMarketSidePanelOpen((open) => !open)}
-            title={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
-            type="button"
-          >
-            {marketSidePanelOpen ? "›" : "‹"}
-          </button>
-          <aside
-            aria-hidden={!marketSidePanelOpen}
-            className={`market-sidecar workspace-side-panel${marketSidePanelOpen ? "" : " is-hidden"}`}
-            aria-label="Market depth and tape"
-          >
-              <TapePanel
-                book={market.book}
-                centerPrice={ladderCenterPrice}
-                trades={market.trades}
-                positionSide={positionSide}
-                averageEntryPrice={positionAverageEntry}
-                currentPrice={liveMidPrice}
-                compression={domCompression}
-                viewportGeometry={domViewportGeometry}
-              />
-              <DomPanel
-                book={market.book}
-                centerPrice={ladderCenterPrice}
-                onCenterPriceChange={setLadderCenterPrice}
-                ownOrders={mode === "EDITOR" ? [] : domOwnOrders}
-                onOwnOrderCancel={mode === "EDITOR" ? undefined : (orderId) => {
-                  void cancelPaperLimit(orderId).catch(() => {});
-                }}
-                compression={domCompression}
-                onCompressionChange={setDomCompression}
-                fastLimitActive={mode !== "EDITOR" && fastLimitIntent !== null}
-                onFastLimitPriceSelect={submitDomLimit}
-                onViewportGeometryChange={setDomViewportGeometry}
-              />
-          </aside>
+              <button
+                aria-expanded={marketSidePanelOpen}
+                aria-label={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
+                className="market-side-panel-toggle"
+                onClick={() => setMarketSidePanelOpen((open) => !open)}
+                title={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
+                type="button"
+              >
+                {marketSidePanelOpen ? "›" : "‹"}
+              </button>
+              <aside
+                aria-hidden={!marketSidePanelOpen}
+                className={`market-sidecar workspace-side-panel${marketSidePanelOpen ? "" : " is-hidden"}`}
+                aria-label="Market depth and tape"
+              >
+                  <TapePanel
+                    book={market.book}
+                    centerPrice={ladderCenterPrice}
+                    trades={market.trades}
+                    positionSide={positionSide}
+                    averageEntryPrice={positionAverageEntry}
+                    currentPrice={liveMidPrice}
+                    compression={domCompression}
+                    viewportGeometry={domViewportGeometry}
+                  />
+                  <DomPanel
+                    book={market.book}
+                    centerPrice={ladderCenterPrice}
+                    onCenterPriceChange={setLadderCenterPrice}
+                    ownOrders={mode === "EDITOR" ? [] : domOwnOrders}
+                    onOwnOrderCancel={mode === "EDITOR" ? undefined : (orderId) => {
+                      void cancelPaperLimit(orderId).catch(() => {});
+                    }}
+                    compression={domCompression}
+                    onCompressionChange={setDomCompression}
+                    fastLimitActive={mode !== "EDITOR" && fastLimitIntent !== null}
+                    onFastLimitPriceSelect={submitDomLimit}
+                    onViewportGeometryChange={setDomViewportGeometry}
+                  />
+              </aside>
             </>
           )}
         </div>
