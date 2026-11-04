@@ -43,6 +43,44 @@ class MarketOnlyExportTests(unittest.TestCase):
         )
         self.assertTrue(all("trade_id" not in e and "side" not in e for e in doc["events"]))
 
+    def test_export_draws_new_yellow_candidate_only_after_1h_pivots_confirmed(self):
+        # Strict 2-left/2-right swings: L4-H6-L8-H10, known only
+        # after hour 12 closes; no replay overlay may appear earlier.
+        hourly = [
+            (105,100), (110,102), (115,104), (107,99), (104,95),
+            (110,103), (118,107), (113,104), (108,99), (112,106),
+            (120,110), (116,108), (112,103),
+        ]
+        data = []
+        for hour, (high, low) in enumerate(hourly):
+            middle = (high + low)/2
+            for minute in range(12):
+                i = hour*12 + minute
+                data.append({
+                    "time": str(i*FIVE_MINUTES_MS),
+                    "open": str(middle),
+                    "close": str(middle),
+                    "high": str(high if minute == 5 else middle + 1),
+                    "low": str(low if minute == 6 else middle - 1),
+                    "volume": "10",
+                })
+        def fetch(_symbol, _interval, limit, *, end_ms):
+            return [x for x in data if int(x["time"]) <= end_ms][-limit:][::-1]
+
+        document = build_market_only_document(
+            symbol="BTCUSDT", start_ms=0,
+            end_ms=13*12*FIVE_MINUTES_MS, run_id="visible-yellow",
+            fetch_candles=fetch,
+        )
+        self.assertEqual(len(document["events"]), 13*12)
+        yellow = [e for e in document["geometry"] if e["kind"] in ("MAIN_1H","TARGET_1H")]
+        self.assertEqual(len(yellow), 2)
+        self.assertEqual({x["kind"] for x in yellow}, {"MAIN_1H", "TARGET_1H"})
+        self.assertEqual({x["available_at_ms"] for x in yellow}, {13*12*FIVE_MINUTES_MS})
+        self.assertTrue(all(x["classification"] == "UNVALIDATED_GEOMETRY_ONLY" for x in yellow))
+        self.assertTrue(all(x["available_at_ms"] > x["to_ms"] for x in yellow))
+        self.assertTrue(all(e["kind"] == "CANDLE_CLOSED" for e in document["events"]))
+
     def test_missing_history_fails_without_a_report(self):
         with self.assertRaisesRegex(ValueError, "missing historical"):
             build_market_only_document(
