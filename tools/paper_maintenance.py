@@ -214,12 +214,29 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
         ActivationBlocked, _sync_directory, _trusted_file,
     )
     marker = journal_root / (".stop-invoked-" + target)
-    if not marker.exists():
-        return  # An existing release may predate one-shot STOP fencing.
-    _trusted_file(marker, uid)
     journal = journal_root / target
     if not journal.exists():
         return  # No protected installer transaction to attest.
+    if marker.exists() or marker.is_symlink():
+        _trusted_file(marker, uid)
+    else:
+        # An exceptional prior-target handoff can install the pinned release
+        # without a same-target ordinary STOP marker. Only its *own* protected
+        # transaction and proved installed bytes may close EDITOR_ONLY; an
+        # arbitrary journal/READY string cannot mint a trading entitlement.
+        from tools.vps_gitless_release_activate import _manifest
+        from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+        try:
+            original = _manifest(_trusted_file(journal / "old.json", uid))
+            pinned = _manifest(_trusted_file(journal / "target.json", uid))
+            _trusted_file(journal / "units.json", uid)
+            handoff = _trusted_file(journal / "handoff-proven", uid)
+            if (not handoff or pinned["build_sha"] != target
+                    or original["build_sha"] == target
+                    or verify_release(REPO) != target):
+                raise ActivationBlocked("exceptional_editor_receipt_proof_unproven")
+        except (ReleaseIdentityBlocked, OSError, ValueError) as exc:
+            raise ActivationBlocked("exceptional_editor_receipt_proof_unproven") from exc
     if (not journal.is_dir() or journal.is_symlink()
             or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077):
         raise ActivationBlocked("untrusted_completed_release_transaction")
