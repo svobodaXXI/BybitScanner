@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseReplayDocument, syntheticReplay, visibleReplay } from "./replayModel";
+import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("shows only completed candles and fills revealed at the current cursor", () => {
@@ -105,6 +105,50 @@ describe("standalone SIMULATION viewer contract", () => {
     })).toThrow(/не должен содержать сделок/);
     expect(() => parseReplayDocument({ ...archive, demo: true })).toThrow(/идентичность/);
     expect(() => parseReplayDocument({ ...archive, source: "PAPER" })).toThrow(/SIMULATION/);
+  });
+
+  it("reveals provisional hourly lines and the blue slope only after their confirmation", () => {
+    const example = syntheticReplay();
+    const bars = example.events.filter((x) => x.kind === "CANDLE_CLOSED")
+      .map((x, i) => ({ ...x, sequence: i + 1 }));
+    const t0 = bars[0].candle!.start_ms;
+    const mainAt = bars[7].time_ms;
+    const refAt = bars[11].time_ms;
+    const archive = {
+      source: "SIMULATION",
+      simulation_run_id: example.simulation_run_id,
+      mode: "MARKET_ONLY",
+      market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m",
+      events: bars,
+      geometry: [
+        { kind: "MAIN_1H", side: "BULL", available_at_ms: mainAt,
+          from_ms: t0, to_ms: bars[3].candle!.start_ms, from_price: "99",
+          to_price: "101", trend_version: mainAt, classification: "UNVALIDATED_GEOMETRY_ONLY" },
+        { kind: "TARGET_1H", side: "BULL", available_at_ms: mainAt,
+          from_ms: bars[1].candle!.start_ms, to_ms: bars[4].candle!.start_ms,
+          from_price: "107", to_price: "108",
+          trend_version: mainAt, classification: "UNVALIDATED_GEOMETRY_ONLY" },
+        { kind: "REFERENCE_5M", side: "BULL", available_at_ms: refAt,
+          from_ms: bars[5].candle!.start_ms, to_ms: bars[9].candle!.start_ms,
+          from_price: "106", to_price: "104",
+          trend_version: mainAt, classification: "UNVALIDATED_GEOMETRY_ONLY" },
+      ],
+    };
+    const doc = parseReplayDocument(archive);
+    expect(visibleGeometry(doc, null)).toEqual([]);
+    expect(visibleGeometry(doc, mainAt - 1)).toEqual([]);
+    expect(visibleGeometry(doc, mainAt).map((x) => x.kind)).toEqual(["MAIN_1H", "TARGET_1H"]);
+    expect(visibleGeometry(doc, refAt - 1).map((x) => x.kind)).toEqual(["MAIN_1H", "TARGET_1H"]);
+    expect(visibleGeometry(doc, refAt).map((x) => x.kind)).toEqual([
+      "MAIN_1H", "TARGET_1H", "REFERENCE_5M",
+    ]);
+    expect(() => parseReplayDocument({
+      ...archive, geometry: [{ ...archive.geometry[0], available_at_ms: bars.at(-1)!.time_ms + 1 }],
+    })).toThrow(/будущее/);
+    expect(() => parseReplayDocument({
+      ...archive, geometry: [{ ...archive.geometry[0], classification: "TRADE_APPROVED" }],
+    })).toThrow(/торговый сигнал/);
   });
 
   it("rejects overlapping or unfinished candle histories", () => {
