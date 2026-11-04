@@ -8,6 +8,8 @@ protected maintenance coordinator call. This is not a LIVE executor.
 from __future__ import annotations
 
 import json
+import sqlite3
+from urllib import request as urlrequest
 import os
 from pathlib import Path
 import re
@@ -22,12 +24,12 @@ ISSUE = 823
 BRANCH = "stable/adfb50b-forward"
 ORIGIN = "https://github.com/svobodaXXI/BybitScanner.git"
 SHA = re.compile(r"[0-9a-f]{40}\Z")
-REQUEST = re.compile(r"/paper-vps (preflight|execute) ([0-9a-f]{40})\Z")
+REQUEST = re.compile(r"/paper-vps (preflight|execute|diagnose) ([0-9a-f]{40})\Z")
 TARGET = re.compile(r"root@[A-Za-z0-9.-]{1,253}\Z")
 VENV = Path("/opt/BybitScanner/venv/bin/python")
 TRANSACTIONS = Path("/var/lib/bybitscanner-release-transactions")
 PINNED_REMOTE = Path("/usr/local/libexec/bybitscanner-paper-vps.py")
-REMOTE_REQUEST = re.compile(r"(preflight|execute) ([0-9a-f]{40})\Z")
+REMOTE_REQUEST = re.compile(r"(preflight|execute|diagnose) ([0-9a-f]{40})\Z")
 
 
 def authorized_remote_request(original: str | None) -> tuple[str, str]:
@@ -176,14 +178,156 @@ def _record_one_shot(sha: str) -> None:
         os.close(fd)
 
 
+# Restricted diagnostics: fixed GET/SELECT and systemctl is-active only.
+# No shell, arbitrary filesystem reads, user-supplied SQL, journal dumps, or
+# secrets. This mode never stages code or writes one-shot transaction markers.
+def _read_only_diag(sha: str, *, root: Path = Path("/opt/BybitScanner"),
+                    env_file: Path = Path("/etc/bybitscanner/paper.env"),
+                    transactions: Path = TRANSACTIONS) -> dict:
+    db_value = "paper_runtime.sqlite3"
+    if env_file.is_file():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("BYBITSCANNER_PAPER_DB="):
+                db_value = line.partition("=")[2].strip().strip("\\\"'")
+    if not db_value or any(c in db_value for c in ("\\x00", "\\n", "$")):
+        raise ValueError("invalid_database_path")
+    db_path = Path(db_value)
+    if not db_path.is_absolute():
+        db_path = root / db_path
+    result = {"kind": "PAPER_STOP_READ_ONLY", "version": 1, "sha": sha,
+              "units": {}, "api": {}, "db": {},
+              "transaction": {
+                  "chatops_marker": (transactions / (".chatops-invoked-" + sha)).is_file(),
+                  "stop_marker": (transactions / (".stop-invoked-" + sha)).is_file(),
+                  "install_journal": (transactions / sha).is_dir(),
+              }}
+    for unit in ("bybitscanner-paper-backend.service",
+                 "bybitscanner-telegram.service",
+                 "bybitscanner-paper-start.service"):
+        try:
+            p = subprocess.run(
+                ["/usr/bin/systemctl", "is-active", unit],
+                capture_output=True, text=True, timeout=4, check=False)
+            status = p.stdout.strip()
+            result["units"][unit] = (
+                status if status in ("active", "inactive", "failed",
+                                     "activating", "deactivating") else "unknown")
+        except (OSError, subprocess.TimeoutExpired):
+            result["units"][unit] = "unknown"
+    for label, endpoint in (
+        ("health", "/api/health"), ("scanner", "/api/scanner/status"),
+        ("autopilot", "/api/robot/autopilot"),
+        ("protection", "/api/robot/protection-health"),
+    ):
+        try:
+            req = urlrequest.Request("http://127.0.0.1:8765" + endpoint, method="GET")
+            with urlrequest.urlopen(req, timeout=3) as response:
+                raw = response.read(32769)
+                if response.status != 200 or len(raw) > 32768:
+                    raise ValueError("bad_http_result")
+                payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                raise ValueError("bad_api_shape")
+            if label == "health":
+                build = payload.get("build_sha")
+                result["api"][label] = {
+                    "reachable": True, "ok": payload.get("ok") is True,
+                    "paper": payload.get("mode") == "paper",
+                    "paper_live_safe": payload.get("paper_live_safe") is True,
+                    "build_sha": build if isinstance(build, str)
+                                 and SHA.fullmatch(build) else "unknown",
+                }
+            elif label in ("scanner", "autopilot"):
+                state = payload.get("mode")
+                result["api"][label] = {
+                    "reachable": True,
+                    "mode": state if state in (
+                        "SCANNER_STOPPED", "SCANNER_RUNNING", "OFF", "PAPER_AUTO"
+                    ) else "unknown",
+                }
+            else:
+                failures = payload.get("unhealthy_symbols")
+                result["api"][label] = {
+                    "reachable": True, "healthy": payload.get("healthy") is True,
+                    "unhealthy_count": len(failures) if isinstance(failures, dict) else None,
+                }
+        except (OSError, ValueError, TypeError, UnicodeError):
+            result["api"][label] = {"reachable": False}
+    if not db_path.is_file() or db_path.is_symlink():
+        result["db"] = {"available": False, "reason": "missing_or_symlink"}
+        return result
+    try:
+        with sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro",
+                             uri=True, timeout=3) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            try:
+                def one(sql: str, params: tuple = ()):
+                    row = conn.execute(sql, params).fetchone()
+                    return row[0] if row else None
+                runtime = conn.execute(
+                    "SELECT mode,recovery_status FROM robot_runtime_state "
+                    "WHERE trading_account_id='paper'").fetchone()
+                bnc_rows = conn.execute(
+                    "SELECT state_revision,robot_state_json "
+                    "FROM robot_candidates WHERE trading_account_id='paper' "
+                    "AND symbol='BNCUSDT' AND status='APPROVED'").fetchall()
+                bnc = {"approved_count": len(bnc_rows)}
+                if len(bnc_rows) == 1:
+                    revision, raw_state = bnc_rows[0]
+                    bnc["revision"] = revision if type(revision) is int else "invalid"
+                    try:
+                        state = json.loads(raw_state) if isinstance(raw_state, str) else None
+                        phase = state.get("phase") if isinstance(state, dict) else None
+                        bnc["phase"] = phase if phase in (
+                            "RETEST_DETECTED", "BOX_ENTRY_READY", "ENTRY_PENDING",
+                            "CLOSED", "EXPIRED"
+                        ) else "unknown"
+                        bnc["state_type"] = (
+                            "null" if raw_state is None else
+                            "json_object" if isinstance(state, dict) else "invalid")
+                    except (ValueError, TypeError):
+                        bnc["state_type"] = "invalid"
+                        bnc["phase"] = "unknown"
+                result["db"] = {
+                    "available": True, "quick_check": one("PRAGMA quick_check") == "ok",
+                    "robot_mode": runtime[0] if runtime else "missing",
+                    "robot_recovery": runtime[1] if runtime else "missing",
+                    "scanner_mode": one("SELECT mode FROM scanner_runtime_state "
+                                        "WHERE trading_account_id='paper'"),
+                    "autopilot_mode": one("SELECT mode FROM robot_autopilot_state "
+                                          "WHERE trading_account_id='paper'"),
+                    "pending_limits": one(
+                        "SELECT COUNT(*) FROM paper_limit_orders "
+                        "WHERE trading_account_id='paper' "
+                        "AND status NOT IN ('cancelled','filled')"),
+                    "open_robot_trades": one(
+                        "SELECT COUNT(*) FROM robot_trades "
+                        "WHERE trading_account_id='paper' AND exit_time_ms IS NULL"),
+                    "approvals": one(
+                        "SELECT COUNT(*) FROM robot_candidates "
+                        "WHERE trading_account_id='paper' AND status='APPROVED'"),
+                    "bnc": bnc,
+                }
+            finally:
+                conn.rollback()
+    except (sqlite3.Error, OSError, ValueError):
+        result["db"] = {"available": False, "reason": "readonly_snapshot_unavailable"}
+    return result
+
+
 def remote(mode: str, sha: str) -> int:
-    if mode not in {"preflight", "execute"} or SHA.fullmatch(sha) is None:
+    if mode not in {"preflight", "execute", "diagnose"} or SHA.fullmatch(sha) is None:
         print("BLOCKED: invalid_exact_operation_or_sha", flush=True)
         return 2
     if os.geteuid() != 0 or not VENV.is_file():
         print("BLOCKED: root_operator_or_existing_venv_unavailable", flush=True)
         return 2
     try:
+        if mode == "diagnose":
+            print("DIAGNOSE_READ_ONLY: " +
+                  json.dumps(_read_only_diag(sha), sort_keys=True), flush=True)
+            return 0
         stage = _stage(sha)
         print("STAGING_PASS: exact SHA " + sha, flush=True)
         env = {**os.environ, "PYTHONPATH": str(stage),
