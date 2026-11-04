@@ -147,3 +147,45 @@ def test_unknown_telegram_shutdown_does_not_replay(monkeypatch, tmp_path):
     assert calls.count("telegram_attempt") == 1
     assert calls.count("SIGINT") == 1
     assert "install" not in calls
+
+
+def test_cli_bootstrap_separates_installed_gitless_root_from_staging(monkeypatch, tmp_path, capsys):
+    """PR #845 regression: staging imports must not redirect release ownership."""
+    stage = tmp_path / "checked-out-stage"
+    stage.mkdir()
+    (stage / ".git").mkdir()
+    observed = []
+
+    def fake_recover(**kwargs):
+        observed.append(kwargs)
+        return "READY: EDITOR_ONLY"
+
+    monkeypatch.setattr(recovery, "recover_editor_only", fake_recover)
+    code = recovery.main([
+        "--stage", str(stage), "--target", "a" * 40,
+        "--execute-exceptional-handoff",
+    ])
+    assert code == 0
+    assert observed == [{
+        "target": "a" * 40, "stage": stage,
+        "root": Path("/opt/BybitScanner"),
+    }]
+    assert recovery.INSTALLED_ROOT != stage
+    assert "READY: EDITOR_ONLY" in capsys.readouterr().out
+
+
+def test_cli_denies_execution_without_explicit_handoff_optin(monkeypatch, tmp_path):
+    called = []
+    monkeypatch.setattr(recovery, "recover_editor_only",
+                        lambda **kwargs: called.append(kwargs))
+    assert recovery.main([
+        "--stage", str(tmp_path), "--target", "a" * 40,
+    ]) == 2
+    assert called == []
+
+
+def test_recovery_default_root_is_fixed_gitless_install_not_source_tree():
+    import inspect
+    default = inspect.signature(recovery.recover_editor_only).parameters["root"].default
+    assert default == Path("/opt/BybitScanner")
+    assert default != Path(recovery.__file__).resolve().parents[1]
