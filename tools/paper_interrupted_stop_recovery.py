@@ -24,13 +24,16 @@ from tools.vps_gitless_release_activate import (
     ActivationBlocked, TRANSACTIONS, _sync_directory, _trusted_file,
     activate_staged_release, inspect_staged_release,
 )
-from tools.vps_release_identity import MANIFEST, ROOT, ReleaseIdentityBlocked, verify_release
+from tools.vps_release_identity import MANIFEST, ReleaseIdentityBlocked, verify_release
 from tools.vps_release_resume import _systemd_state
 
 # Only the actually attempted operation and the verified old backend.
 PRIOR_TARGET = "094d74f6699528b47578cb740e8e06a45d8c7840"
 OLD_BACKEND = "f100ef369a1105443332b5729b558464c27be48f"
 BACKEND_UNIT = "bybitscanner-paper-backend.service"
+# Running a module from a verified Git staging checkout must never make that
+# checkout the installed root. The Gitless release is a fixed VPS location.
+INSTALLED_ROOT = Path("/opt/BybitScanner")
 MARKER_PREFIX = ".editor-only-dual-orphan-"
 
 
@@ -92,7 +95,7 @@ def _backend_stopped() -> bool:
 
 
 def recover_editor_only(
-    *, target: str, stage: Path, root: Path = ROOT, transactions: Path = TRANSACTIONS,
+    *, target: str, stage: Path, root: Path = INSTALLED_ROOT, transactions: Path = TRANSACTIONS,
     manifest: Path = MANIFEST, uid: int = 0,
     proof=None, handoff=None, telegram=None, installer=None, resume=None,
     backend_stopped=None, inspect=None,
@@ -231,7 +234,9 @@ def main(argv=None) -> int:
         print("BLOCKED: exact target and separately authorized handoff required")
         return 2
     try:
-        outcome = recover_editor_only(target=args.target, stage=args.stage)
+        outcome = recover_editor_only(
+            target=args.target, stage=args.stage, root=INSTALLED_ROOT,
+        )
     except Exception as exc:
         # Preserve every one-shot receipt. Never retry an unknown result or
         # expose env/secrets/HTTP bodies to the operator.
