@@ -36,7 +36,10 @@ async function waitForLocalUrl() {
 
 try {
   const localUrl = await waitForLocalUrl();
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({
+    headless: true,
+    ...(process.env.LOCAL_REPLAY_CHROME ? { executablePath: process.env.LOCAL_REPLAY_CHROME } : {}),
+  });
   const page = await browser.newPage({ viewport: { width: 1440, height: 920 }, deviceScaleFactor: 1 });
   const errors = [];
   const requests = [];
