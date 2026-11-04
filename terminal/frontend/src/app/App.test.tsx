@@ -8,7 +8,15 @@ vi.mock("../components/AccountMenu", () => ({ AccountMenu: () => null }));
 vi.mock("../components/DomPanel", () => ({
   DomPanel: () => <div data-testid="dom-panel" />,
 }));
-vi.mock("../components/ModePanel", () => ({ ModePanel: () => null }));
+vi.mock("../components/ModePanel", () => ({
+  ModePanel: ({ onModeChange }: { onModeChange: (mode: "TERMINAL" | "AUTOPILOT" | "EDITOR") => void }) => (
+    <div>
+      <button onClick={() => onModeChange("TERMINAL")} type="button">Open Terminal</button>
+      <button onClick={() => onModeChange("AUTOPILOT")} type="button">Open Autopilot</button>
+      <button onClick={() => onModeChange("EDITOR")} type="button">Open Editor</button>
+    </div>
+  ),
+}));
 vi.mock("../components/TapePanel", () => ({
   TapePanel: () => <div data-testid="tape-panel" />,
 }));
@@ -129,6 +137,36 @@ it("collapses and restores one DOM plus Smart Tape side panel", () => {
   expect(sidePanel).not.toHaveClass("is-hidden");
   expect(screen.getByTestId("tape-panel")).toBe(tapePanel);
   expect(screen.getByTestId("dom-panel")).toBe(domPanel);
+});
+
+it("uses full chart width in Editor and keeps DOM plus Smart Tape in trading modes", () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false })));
+  render(<App />);
+
+  const row = screen.getByTestId("chart-region").closest(".workspace-market-row");
+  expect(row).toHaveClass("side-panel-open");
+  expect(screen.getByTestId("dom-panel")).toBeInTheDocument();
+  expect(screen.getByTestId("tape-panel")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Open Editor" }));
+  expect(row).toHaveClass("side-panel-closed");
+  expect(screen.queryByLabelText("Market depth and tape", { selector: "aside" })).toBeNull();
+  expect(screen.queryByTestId("dom-panel")).toBeNull();
+  expect(screen.queryByTestId("tape-panel")).toBeNull();
+  expect(screen.queryByRole("button", { name: /DOM and Smart Tape/ })).toBeNull();
+  expect(screen.getByTestId("chart-region")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Open Autopilot" }));
+  expect(row).toHaveClass("side-panel-open");
+  expect(screen.getByTestId("dom-panel")).toBeInTheDocument();
+  expect(screen.getByTestId("tape-panel")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Hide DOM and Smart Tape" }));
+  expect(row).toHaveClass("side-panel-closed");
+  fireEvent.click(screen.getByRole("button", { name: "Open Editor" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open Terminal" }));
+  expect(row).toHaveClass("side-panel-closed");
+  expect(screen.getByRole("button", { name: "Show DOM and Smart Tape" })).toBeInTheDocument();
 });
 
 it("changes the local symbol only after the backend authoritative switch succeeds", async () => {
