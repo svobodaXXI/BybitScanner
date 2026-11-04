@@ -81,6 +81,35 @@ class MarketOnlyExportTests(unittest.TestCase):
         self.assertTrue(all(x["available_at_ms"] > x["to_ms"] for x in yellow))
         self.assertTrue(all(e["kind"] == "CANDLE_CLOSED" for e in document["events"]))
 
+    def test_exported_adx_matches_only_closed_5m_bars_and_wilder_warmup(self):
+        document = build_market_only_document(
+            symbol="BTCUSDT", start_ms=0, end_ms=40 * FIVE_MINUTES_MS,
+            run_id="dmi-40", fetch_candles=fake_public_candles(40),
+        )
+        indicator = document["dmi_5m"]
+        self.assertEqual(indicator["source"], "SIMULATION")
+        self.assertEqual(indicator["timeframe"], "5m")
+        self.assertEqual((indicator["di_length"], indicator["adx_smoothing"]), (14, 14))
+        points = indicator["points"]
+        self.assertEqual(len(points), 40)
+        self.assertEqual(
+            [x["time_ms"] for x in points],
+            [e["time_ms"] for e in document["events"]],
+        )
+        self.assertTrue(all(p["plus_di"] is None and p["minus_di"] is None
+                            for p in points[:14]))
+        self.assertTrue(all(p["adx"] is None for p in points[:27]))
+        self.assertIsNotNone(points[14]["plus_di"])
+        self.assertIsNotNone(points[14]["minus_di"])
+        self.assertIsNotNone(points[27]["adx"])
+        # Later OHLC history must not change an already-known indicator sample.
+        shorter = build_market_only_document(
+            symbol="BTCUSDT", start_ms=0, end_ms=30 * FIVE_MINUTES_MS,
+            run_id="dmi-30", fetch_candles=fake_public_candles(40),
+        )
+        self.assertEqual(shorter["dmi_5m"]["points"], points[:30])
+        self.assertTrue(all(e["kind"] == "CANDLE_CLOSED" for e in document["events"]))
+
     def test_missing_history_fails_without_a_report(self):
         with self.assertRaisesRegex(ValueError, "missing historical"):
             build_market_only_document(
