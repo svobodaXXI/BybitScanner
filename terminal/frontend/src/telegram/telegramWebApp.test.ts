@@ -16,6 +16,7 @@ describe("Telegram Mini App adapter", () => {
     const webApp: TelegramWebApp = {
       contentSafeAreaInset: { top: 12, right: 3, bottom: 18, left: 4 },
       expand: vi.fn(),
+      disableVerticalSwipes: vi.fn(),
       ready: vi.fn(),
       setBackgroundColor: vi.fn(),
       setHeaderColor: vi.fn(),
@@ -24,6 +25,7 @@ describe("Telegram Mini App adapter", () => {
     const root = document.createElement("div");
     expect(initializeTelegramMiniApp(root).embedded).toBe(true);
     expect(webApp.expand).toHaveBeenCalledOnce();
+    expect(webApp.disableVerticalSwipes).toHaveBeenCalledOnce();
     expect(webApp.ready).toHaveBeenCalledOnce();
     expect(
       root.style.getPropertyValue("--tg-content-safe-area-inset-bottom"),
