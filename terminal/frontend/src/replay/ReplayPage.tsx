@@ -165,7 +165,7 @@ export function ReplayPage() {
       {error && <p role="alert" className="replay-error">{error}</p>}
       <section className="replay-meta" aria-label="Состояние симулятора">
         <div><span>Источник</span><strong>{fileLabel}</strong></div>
-        <div><span>Прогон</span><strong>{document.simulation_run_id}</strong></div>
+        <div><span>Прогон / рынок</span><strong>{document.simulation_run_id}{document.symbol ? " · " + document.symbol + " · 5m" : ""}</strong></div>
         <div><span>Время рынка</span><strong>{shown.lastTimeMs === null ? "До первого события" :
           new Date(shown.lastTimeMs).toLocaleString("ru-RU", { timeZone: "UTC" }) + " UTC"}</strong></div>
         <div><span>Свечи / входы / выходы</span>
@@ -175,6 +175,9 @@ export function ReplayPage() {
         aria-valuenow={progress} aria-label="Прогресс воспроизведения">
         <div style={{ width: progress + "%" }} />
       </div>
+      {document.mode === "MARKET_ONLY" && <p className="replay-note">
+        РЕАЛЬНЫЕ СВЕЧИ BYBIT · РЕЖИМ БЕЗ СДЕЛОК: стратегия ещё не подключена, торговые сигналы не генерируются.
+      </p>}
       {document.demo && <p className="replay-note">
         ДЕМО: синтетические свечи и условные события, не реальные сигналы стратегии и не результат Bybit.
       </p>}
