@@ -1273,10 +1273,17 @@ class RuntimeShutdown:
             status, health = self._get(self._backend + "/api/robot/protection-health", PROBE_TIMEOUT_S)
         except Unreachable as exc:
             raise SafeStopError("Robot protection health is unavailable") from exc
+        # Each field is a separate view of the same protection ownership.
+        # Empty covered/armed lists alone do not prove quiescence if the
+        # canonical role map still reports EXPOSURE or ENTRY_PENDING.
+        # A failed/malformed API payload is not positive shutdown evidence.
         return (
-            status == 200 and isinstance(health, dict) and health.get("healthy") is True
-            and health.get("covered_symbols") == [] and health.get("unhealthy_symbols") == {}
+            status == 200 and isinstance(health, dict)
+            and health.get("ok") is True and health.get("healthy") is True
+            and health.get("covered_symbols") == []
             and health.get("armed_symbols") == []
+            and health.get("coverage_roles") == {}
+            and health.get("unhealthy_symbols") == {}
         )
 
     def _shutdown(self, shutdown_url: str, health_url: str, name: str, kind: str, step: str) -> str:
