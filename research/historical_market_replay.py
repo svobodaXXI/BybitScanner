@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Callable, Literal, Sequence
 
 Side = Literal["LONG", "SHORT"]
+VisualEventKind = Literal["CANDLE_CLOSED", "ENTRY_SIGNAL", "ENTRY_FILLED", "EXIT_FILLED"]
 
 
 def _decimal(value: object) -> Decimal:
@@ -91,6 +92,51 @@ class SimulatedTrade:
 
 
 @dataclass(frozen=True)
+class ReplayVisualEvent:
+    """Read-only chart event. ENTRY_FILLED never carries the forming bar's OHLC."""
+
+    simulation_run_id: str
+    sequence: int
+    kind: VisualEventKind
+    time_ms: int
+    candle: Candle | None = None
+    trade_id: str | None = None
+    side: Side | None = None
+    price: Decimal | None = None
+    stop: Decimal | None = None
+    take: Decimal | None = None
+    reason: str | None = None
+    source: str = "SIMULATION"
+
+    def to_payload(self) -> dict[str, object]:
+        """Primitive JSON-ready projection shared by future desktop/terminal views."""
+        payload: dict[str, object] = {
+            "source": self.source,
+            "simulation_run_id": self.simulation_run_id,
+            "sequence": self.sequence,
+            "kind": self.kind,
+            "time_ms": self.time_ms,
+        }
+        if self.candle is not None:
+            bar = self.candle
+            payload["candle"] = {
+                "start_ms": bar.start_ms, "end_ms": bar.end_ms,
+                "open": str(bar.open), "high": str(bar.high),
+                "low": str(bar.low), "close": str(bar.close),
+                "volume": str(bar.volume),
+            }
+        for field in ("trade_id", "side", "reason"):
+            value = getattr(self, field)
+            if value is not None:
+                payload[field] = value
+        for field in ("price", "stop", "take"):
+            value = getattr(self, field)
+            if value is not None:
+                payload[field] = str(value)
+        return payload
+
+
+@dataclass(frozen=True)
 class ReplayResult:
     simulation_run_id: str
     source: str
@@ -110,6 +156,7 @@ def replay_candles(
     initial_cash: Decimal = Decimal("5000"),
     taker_fee_rate: Decimal = Decimal("0.0006"),
     adverse_slippage_rate: Decimal = Decimal("0"),
+    on_visual_event: Callable[[ReplayVisualEvent], None] | None = None,
 ) -> ReplayResult:
     """Run an isolated chronological simulation without network, file or DB writes.
 
@@ -138,6 +185,17 @@ def replay_candles(
     pending: EntryIntent | None = None
     position: tuple[EntryIntent, Decimal, int, Decimal] | None = None
     history: list[Candle] = []
+    event_sequence = 0
+
+    def emit(kind: VisualEventKind, time_ms: int, **details: object) -> None:
+        nonlocal event_sequence
+        if on_visual_event is None:
+            return
+        event_sequence += 1
+        on_visual_event(ReplayVisualEvent(
+            simulation_run_id=simulation_run_id,
+            sequence=event_sequence, kind=kind, time_ms=time_ms, **details,
+        ))
 
     def entry_fill(price: Decimal, side: Side) -> Decimal:
         return price * (1 + slip if side == "LONG" else 1 - slip)
@@ -160,6 +218,10 @@ def replay_candles(
                 if executable * pending.quantity + entry_fee <= cash:
                     position = (pending, executable, bar.start_ms, entry_fee)
                     cash -= entry_fee
+                    emit("ENTRY_FILLED", bar.start_ms,
+                         trade_id=f"SIMULATION:{simulation_run_id}:{len(trades) + 1}",
+                         side=pending.side, price=executable,
+                         stop=pending.stop, take=pending.take)
                 pending = None
 
         if position is not None:
@@ -180,9 +242,10 @@ def replay_candles(
                 gross = (exit_price - entry) * intent.quantity * direction
                 net = gross - entry_fee - exit_fee
                 cash += gross - exit_fee
+                trade_id = f"SIMULATION:{simulation_run_id}:{len(trades) + 1}"
                 trades.append(
                     SimulatedTrade(
-                        trade_id=f"SIMULATION:{simulation_run_id}:{len(trades) + 1}",
+                        trade_id=trade_id,
                         side=intent.side,
                         quantity=intent.quantity,
                         entry_time_ms=entry_ms,
@@ -196,8 +259,12 @@ def replay_candles(
                     )
                 )
                 position = None
+                emit("EXIT_FILLED", bar.end_ms, trade_id=trade_id,
+                     side=intent.side, price=exit_price,
+                     reason="STOP" if stop_hit else "TAKE")
 
         history.append(bar)
+        emit("CANDLE_CLOSED", bar.end_ms, candle=bar)
         # A strategy is called only AFTER bar completion; the view is frozen
         # to bars released up to this moment (not future/final pivot data).
         response = on_closed_bar(
@@ -208,6 +275,9 @@ def replay_candles(
                 raise TypeError("strategy must return EntryIntent or None")
             if position is None and pending is None:
                 pending = response
+                emit("ENTRY_SIGNAL", bar.end_ms,
+                     side=response.side, price=bar.close,
+                     stop=response.stop, take=response.take)
 
     equity = cash
     if position is not None:
