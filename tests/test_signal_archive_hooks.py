@@ -1,5 +1,6 @@
 """Scanner senders archive the exact original signal; archiving never affects delivery."""
 from contextlib import ExitStack
+import json
 from pathlib import Path
 import tempfile
 import types
@@ -28,7 +29,8 @@ class _ArchiveDir(unittest.TestCase):
 
 
 class WedgeSenderArchiveTests(_ArchiveDir):
-    def _send(self, *, candidate_id="cand-wedge", photo_response=PHOTO_OK, recipients=("owner", "friend")):
+    def _send(self, *, candidate_id="cand-wedge", photo_response=PHOTO_OK, recipients=("owner", "friend"),
+              geometry=None, frozen_candles=None):
         with tempfile.TemporaryDirectory() as charts, ExitStack() as stack:
             (Path(charts) / "BTCUSDT_analysis.png").write_bytes(b"ORIGINAL-CHART-BYTES")
             stack.enter_context(patch.object(notification.config, "TELEGRAM_CHAT_IDS", recipients))
@@ -43,7 +45,8 @@ class WedgeSenderArchiveTests(_ArchiveDir):
                 return_value=types.SimpleNamespace(candidate_id=candidate_id, persistence_failed=False)))
             return notification.send_signal({
                 "symbol": "BTCUSDT", "pattern": "Falling Wedge", "final_score": 80, "timeframe": "5",
-                "robot_handoff_ready": True, "confirmation": {"direction": "LONG", "confirmed": True}})
+                "robot_handoff_ready": True, "confirmation": {"direction": "LONG", "confirmed": True},
+                "geometry": geometry, "_frozen_geometry_candles": frozen_candles})
 
     def test_owner_delivery_archives_exact_image_text_and_file_id(self):
         self.assertTrue(self._send())
@@ -52,6 +55,34 @@ class WedgeSenderArchiveTests(_ArchiveDir):
         self.assertIn("BTCUSDT", original["text"])
         self.assertEqual(original["photo_file_id"], "FID-1")
         self.assertEqual((original["symbol"], original["timeframe"]), ("BTCUSDT", "5"))
+
+    def test_robot_candidate_repost_has_exact_frozen_rays_and_candles(self):
+        # The candidate archive is the source of the repost Editor link. It
+        # must not silently fall back to fresh symbol candles when reopened.
+        from tests.test_signal_geometry_producer import Candles, GEOMETRY
+
+        self.assertTrue(self._send(
+            candidate_id="cand-wedge", geometry=GEOMETRY,
+            frozen_candles=Candles(),
+        ))
+        candidate = signal_archive.load_frozen_signal_geometry("cand-wedge")
+        self.assertIsNotNone(candidate)
+        source_ids = [
+            json.loads(path.read_text())["candidate_id"]
+            for path in self.archive.glob("*.json")
+            if path.name.endswith(".json") and not path.name.endswith(".geometry.json")
+            and json.loads(path.read_text()).get("candidate_id", "").startswith("source-original:")
+        ]
+        self.assertEqual(len(source_ids), 1)
+        source = signal_archive.load_frozen_signal_geometry(source_ids[0])
+        self.assertIsNotNone(source)
+        self.assertEqual(candidate["signal_id"], "cand-wedge")
+        self.assertEqual(source["signal_id"], source_ids[0])
+        self.assertEqual(candidate["bars"], source["bars"])
+        self.assertEqual(candidate["boundaries"], source["boundaries"])
+        self.assertEqual(candidate["symbol"], source["symbol"])
+        self.assertEqual(candidate["timeframe"], source["timeframe"])
+
 
     def test_next_signal_for_the_same_ticker_does_not_replace_an_older_original(self):
         self._send(candidate_id="cand-1")
