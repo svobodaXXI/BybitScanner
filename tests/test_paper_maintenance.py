@@ -1715,11 +1715,12 @@ def test_full_gitless_readiness_rejects_wrong_backend_db_even_with_telegram(monk
     assert result.startswith("BLOCKED: Gitless_PAPER_Telegram_or_database_identity_unproven")
 
 
-def test_exceptional_gitless_receipt_requires_pinned_handoff_and_installed_release(
+def test_exceptional_gitless_receipt_reuses_original_protected_handoff(
     monkeypatch, tmp_path,
 ):
     import json
     import tools.paper_maintenance as maintenance
+    import tools.paper_interrupted_stop_recovery as recovery
     import tools.vps_release_identity as release
     from tools.vps_gitless_release_activate import ActivationBlocked
 
@@ -1740,27 +1741,37 @@ def test_exceptional_gitless_receipt_requires_pinned_handoff_and_installed_relea
     units = journal / "units.json"
     units.write_text("{}")
     units.chmod(0o600)
-    handoff = journal / "handoff-proven"
-    handoff.write_text("verified prior-target exceptional handoff")
-    handoff.chmod(0o600)
+    stop = journal_root / (".stop-invoked-" + recovery.PRIOR_TARGET)
+    stop.write_bytes(b"STOP_INVOKED; not install authorization\\\\n")
+    stop.chmod(0o600)
+    for phase in ("handoff-proven", "backend-exited"):
+        receipt = journal_root / (
+            recovery.MARKER_PREFIX + phase + "-" + recovery.PRIOR_TARGET
+        )
+        receipt.write_text(target + "\\n")
+        receipt.chmod(0o600)
     monkeypatch.setattr(release, "verify_release", lambda *_args: target)
 
     maintenance._complete_stop_intent(journal_root, target, uid=os.getuid())
-    receipt = journal / "editor-ready"
-    assert receipt.read_bytes() == target.encode()
-    assert receipt.stat().st_mode & 0o777 == 0o600
+    ready = journal / "editor-ready"
+    assert ready.read_bytes() == target.encode()
+    assert ready.stat().st_mode & 0o777 == 0o600
     maintenance._complete_stop_intent(journal_root, target, uid=os.getuid())
-    assert receipt.read_bytes() == target.encode()
+    assert ready.read_bytes() == target.encode()
 
-    receipt.unlink()
+    ready.unlink()
     monkeypatch.setattr(release, "verify_release", lambda *_args: old)
     with pytest.raises(ActivationBlocked, match="exceptional_editor_receipt_proof_unproven"):
         maintenance._complete_stop_intent(journal_root, target, uid=os.getuid())
-    assert not receipt.exists()
+    assert not ready.exists()
+
     monkeypatch.setattr(release, "verify_release", lambda *_args: target)
+    handoff = journal_root / (
+        recovery.MARKER_PREFIX + "handoff-proven-" + recovery.PRIOR_TARGET
+    )
     handoff.unlink()
-    with pytest.raises(ActivationBlocked, match="untrusted_release_metadata"):
+    with pytest.raises(ActivationBlocked, match="exceptional_editor_receipt_proof_unproven"):
         maintenance._complete_stop_intent(journal_root, target, uid=os.getuid())
-    assert not receipt.exists()
+    assert not ready.exists()
 
 
