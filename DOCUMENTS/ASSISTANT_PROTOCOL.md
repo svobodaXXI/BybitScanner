@@ -317,6 +317,65 @@ quest, agent role, approval or required document.
 All protected trading, runtime, merge and fail-closed rules remain unchanged.
 Evidence and application examples: DEVELOPMENT_VALIDATION_LOOP_PLAN §14.
 
+### SINGLE-OUTCOME RECOVERY AND NON-REPEAT — OWNER DECISION 2026-11-04
+
+This applies **inside** RESULT-FIRST / STRATEGIC EXECUTION, not as a new
+workflow, gate, issue, document, quest, permission or review cycle. The
+overarching owner priority is **owner time saved**; technical BACKLOG P0 is
+the current engineering dependency, not a replacement for that priority.
+
+**One bounded critical path:** finish the already authorized protected PAPER
+transition to an actually verified EDITOR_ONLY Backend + Telegram state;
+then finish the existing monolithic PAPER coordinator
+(freeze → protected drain → FLAT/quiescence and orphan proof → one-shot
+handoff → immutable switch → safe runtime restoration → end-to-end acceptance).
+Do not create a parallel "PAPER liberation" project or promote Editor/Telegram
+acceptance, diagnostics, CI, PR count or game mechanics above the active safety
+boundary. Resume Scanner/Robot/PAPER_AUTO and any reconcile only under their
+own explicit authority; EDITOR_ONLY does not imply trading permission.
+
+**Preflight once, including post-stop races:** before an irreversible action,
+the executor uses the existing contracts and already available evidence to
+map the entire authorized dependency chain, including CLI source versus
+installed Gitless root, immutable stage/manifest, protected transaction
+ownership, exact receipts and target SHA, systemd unit/drop-in origins, listener
+ownership, PAPER DB identity, and transition states. A stopped listener alone
+does not prove systemd inactive: the *same unit set* required by the installer
+must reach its accepted stable states before recording a completion proof or
+installing. Race-safe bounded observation belongs in the owning orchestration
+code with focused regression coverage, not in repeated owner-driven VPS checks.
+A timeout or ambiguous state remains BLOCKED; do not weaken the gates.
+
+**Phase-oriented failure handling:** durable one-shot receipts describe what
+already happened. After BLOCKED/unknown outcome, never blindly rerun the
+recovery CLI, installer, STOP, handoff, SIGINT or a service shutdown. First
+classify the last proved phase and the *exact* exception/reason with the
+smallest READ-ONLY inspection, independently reattest current host reality,
+and distinguish a safe continuation from a replay of an irreversible effect.
+An existing receipt is not permission to resume: resume only if the existing
+code supports that exact phase, its safety checks pass, and the owner explicitly
+authorizes the new runtime mutation after a terminated one-shot attempt.
+Unknown outcome stays BLOCKED; no marker editing, fake receipt, alternative
+installer or ad-hoc source patch on VPS. When safely possible, finish the
+original objective rather than spinning up successive diagnostic quests.
+
+**Prevent recurrence at the owning boundary:** following a proven root cause,
+make one minimal GitHub fix and exercise the **real external entrypoint** and
+transition timing/state boundary—not only internal helpers or mocked success
+paths. A passing targeted test and required CI qualify the code for a separate
+authorized merge; neither is runtime acceptance. Do not interrupt a pending,
+safe, expressly authorized operational continuation solely to merge preventive
+code unless that code is a proven prerequisite. Codex is a VPS executor only;
+ChatGPT owns GitHub implementation.
+
+**One result to the owner:** return verified postconditions or a single
+specific BLOCKED cause and the next truly owner-only authorization. Do not
+require serial prompts, separate manual diagnostics, progress documents, or
+new PRs unless they advance that edge. Preserve unrelated user work and
+existing protected artifacts.
+
+
+
 ### Owner desktop launch surface — HARD UX CONTRACT (OWNER RULE 2026-09-27)
 
 The owner's canonical manual runtime UX is the existing desktop shortcut surface.
