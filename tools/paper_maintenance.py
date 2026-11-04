@@ -225,7 +225,7 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
         # transaction and proved installed bytes may close EDITOR_ONLY; an
         # arbitrary journal/READY string cannot mint a trading entitlement.
         from tools.paper_interrupted_stop_recovery import (
-            PRIOR_TARGET, _receipt, _trusted_journal,
+            PRIOR_TARGET, RecoveryBlocked, _receipt, _trusted_journal,
         )
         from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
         from tools.vps_gitless_release_activate import _manifest
@@ -242,7 +242,7 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
                     or not _receipt(journal_root, "backend-exited", uid, target=target)
                     or verify_release(REPO) != target):
                 raise ActivationBlocked("exceptional_editor_receipt_proof_unproven")
-        except (ReleaseIdentityBlocked, OSError, ValueError) as exc:
+        except (RecoveryBlocked, ReleaseIdentityBlocked, OSError, ValueError) as exc:
             raise ActivationBlocked("exceptional_editor_receipt_proof_unproven") from exc
     if (not journal.is_dir() or journal.is_symlink()
             or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077):
