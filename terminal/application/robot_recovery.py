@@ -208,6 +208,18 @@ class RobotRecoveryCoordinator:
                 if decision.candidate_id not in by_candidate or decision.state is None:
                     raise RobotRecoveryError("restart decision lacks durable candidate state")
                 candidate = by_candidate[decision.candidate_id]
+                # A no-op RESUME_WAITING decision must not mutate durable
+                # identity or advance the CAS revision. In particular, an
+                # explicit reconcile that later fails on orphan ownership
+                # must not increment every inert APPROVED Box/L-shape row.
+                # The planner removes its transient "revision" wrapper; do
+                # the same when comparing, but preserve the original record.
+                current_state = dict(candidate.robot_state or {})
+                current_state.pop("revision", None)
+                if (decision.status == RESUME_WAITING
+                        and candidate.status == "APPROVED"
+                        and current_state == dict(decision.state)):
+                    continue
                 self._store.save_robot_candidate_state(
                     candidate.candidate_id,
                     status="EXPIRED" if decision.status == EXPIRED_AT_APEX else "APPROVED",
