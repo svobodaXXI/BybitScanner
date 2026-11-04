@@ -19,7 +19,15 @@ def test_gateway_photo_failure_cools_down_without_losing_pending(monkeypatch):
     monkeypatch.setattr(mirror, "_MIRROR_SEND_NEXT_AT", 0.0)
 
     items = [{"level_id": f"level-{i}", "kind": "breakout",
-              "chart": {"event_open_time_ms": 1000}} for i in range(100)]
+              "chart": {
+                  "symbol": "TESTUSDT", "timeframe": "5",
+                  "level_id": f"level-{i}", "event_kind": "breakout",
+                  "event_open_time_ms": 1000,
+                  "source": "pattern_boundary", "pattern": "Rising Wedge",
+                  "levels": [{"level_id": f"level-{i}", "selected": True,
+                              "source": "pattern_boundary", "pattern": "Rising Wedge"}],
+                  "candles": [{"open_time_ms": 1000}],
+              }} for i in range(100)]
     state = {"pending_notifications": items, "records": {
         item["level_id"]: {"notified": []} for item in items
     }}
