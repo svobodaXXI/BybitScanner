@@ -777,6 +777,29 @@ class FullShutdownTests(unittest.TestCase):
                 self.assertNotIn("backend:shutdown", runtime.calls)
                 self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
+    def test_contradictory_protection_roles_or_failed_health_never_shutdown(self):
+        # A malformed/untrusted health reply must not certify quiescence just
+        # because its two summary lists are empty. The role map is independent
+        # protection ownership evidence.
+        for field, value in (
+            ("coverage_roles", {"JASMYUSDT": "EXPOSURE"}),
+            ("coverage_roles", {"BBUSDT": "ENTRY_PENDING"}),
+            ("coverage_roles", None),
+            ("coverage_roles", []),
+            ("ok", False),
+            ("ok", None),
+        ):
+            with self.subTest(field=field, value=value):
+                runtime = FakeRuntime(robot=STOPPED)
+                runtime.protection[field] = value
+                self.assertFalse(runtime.orchestrator()._protection_quiescent())
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.runtime_stopped)
+                self.assertNotIn("backend:shutdown", runtime.calls)
+                self.assertNotIn("telegram:shutdown", runtime.calls)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+
     def test_active_protection_coverage_keeps_runtime_alive(self):
         runtime = FakeRuntime(robot=READY)
         runtime.protection["covered_symbols"] = ["BTCUSDT"]
@@ -998,7 +1021,9 @@ class ShutdownArmFixture:
 
         def get(url, timeout):
             if url == BACKEND + "/api/robot/protection-health":
-                return 200, json.loads(json.dumps(self.manager.health()))
+                # The public HTTP handler supplies ok; manager.health()
+                # alone is an internal fragment, not an API response.
+                return 200, json.loads(json.dumps({"ok": True, **self.manager.health()}))
             return original_get(url, timeout)
 
         def post(url, payload, timeout):
