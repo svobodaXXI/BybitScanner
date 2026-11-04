@@ -28,6 +28,9 @@ export type ReplayDocument = {
   simulation_run_id: string;
   events: ReplayEvent[];
   demo?: boolean;
+  mode?: "MARKET_ONLY" | "STRATEGY";
+  symbol?: string;
+  timeframe?: "5m";
 };
 export type VisibleReplay = {
   candles: ReplayCandle[];
@@ -70,6 +73,18 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
   if (typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(id)) {
     throw new Error("Неизвестный идентификатор SIMULATION");
   }
+  const mode = object.mode;
+  if (mode !== undefined && mode !== "MARKET_ONLY" && mode !== "STRATEGY") {
+    throw new Error("Неизвестный режим воспроизведения");
+  }
+  if (mode === "MARKET_ONLY" && (
+    object.market_data_source !== "BYBIT_PUBLIC_KLINE" ||
+    typeof object.symbol !== "string" ||
+    !/^[A-Z0-9]{3,30}$/.test(object.symbol) ||
+    object.timeframe !== "5m" || object.demo === true
+  )) {
+    throw new Error("Неверная идентичность реальной рыночной истории");
+  }
   if (!Array.isArray(object.events) || !object.events.length || object.events.length > 100_000) {
     throw new Error("Ожидается от 1 до 100000 событий");
   }
@@ -88,6 +103,9 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     if (time_ms < previousTime) throw new Error("История событий идёт назад");
     previousTime = time_ms;
     const kind = e.kind as ReplayKind;
+    if (mode === "MARKET_ONLY" && kind !== "CANDLE_CLOSED") {
+      throw new Error("Рыночный архив не должен содержать сделок или сигналов");
+    }
     let candle: ReplayCandle | undefined;
     if (kind === "CANDLE_CLOSED") {
       const c = record(e.candle);
@@ -136,7 +154,11 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       ...(e.take !== undefined ? { take: parseOptionalNumber(e.take, "take") } : {}),
     };
   });
-  return { source: "SIMULATION", simulation_run_id: id, events, demo: object.demo === true };
+  return {
+    source: "SIMULATION", simulation_run_id: id, events, demo: object.demo === true,
+    ...(mode ? { mode } : {}),
+    ...(mode === "MARKET_ONLY" ? { symbol: object.symbol as string, timeframe: "5m" as const } : {}),
+  };
 }
 
 /** The UI receives ONLY the prefix requested by the virtual-time playhead. */
