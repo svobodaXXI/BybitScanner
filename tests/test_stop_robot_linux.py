@@ -50,7 +50,8 @@ class FakeHost:
             return 200, {"ok": True, "mode": "OFF",
                          "trading_account_id": {"value": "paper"}}
         if url == BACKEND + "/api/robot/protection-health":
-            return 200, {"healthy": True, "covered_symbols": [], "unhealthy_symbols": {}, "armed_symbols": []}
+            return 200, {"ok": True, "healthy": True, "covered_symbols": [],
+                         "coverage_roles": {}, "unhealthy_symbols": {}, "armed_symbols": []}
         raise AssertionError(f"unexpected GET {url}")
 
     def post(self, url, payload, timeout):
