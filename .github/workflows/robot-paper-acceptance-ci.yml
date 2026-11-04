@@ -11,6 +11,7 @@ on:
       - "tests/test_retest_account_risk.py"
       - "mirror_retest_live_sources.py"
       - "mirror_scanner.py"
+      - "mirror_event_chart.py"
       - "tests/test_mirror_event_chart.py"
       - "tests/test_mirror_delivery_backpressure.py"
       - "terminal/application/robot_breakout_monitor.py"
