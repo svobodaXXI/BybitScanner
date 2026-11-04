@@ -21,7 +21,7 @@ import webbrowser
 
 HERE = Path(__file__).resolve().parent
 # Works both in GitHub source tree and in the packaged Windows zip.
-ROOT = HERE if (HERE / "research").is_dir() else HERE.parents[2]
+ROOT = HERE if (HERE / "research").is_dir() else HERE.parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
