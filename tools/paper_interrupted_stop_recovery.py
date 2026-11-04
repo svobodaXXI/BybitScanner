@@ -30,7 +30,6 @@ from tools.vps_release_resume import _systemd_state
 # Only the actually attempted operation and the verified old backend.
 PRIOR_TARGET = "094d74f6699528b47578cb740e8e06a45d8c7840"
 OLD_BACKEND = "f100ef369a1105443332b5729b558464c27be48f"
-EDITOR_TARGET = "42efacfdc750f71d692bedf3399a074310cd3af2"
 BACKEND_UNIT = "bybitscanner-paper-backend.service"
 MARKER_PREFIX = ".editor-only-dual-orphan-"
 
@@ -56,7 +55,7 @@ def _trusted_journal(transactions: Path, uid: int) -> None:
              "untrusted_transaction_parent")
 
 
-def _receipt(transactions: Path, phase: str, uid: int) -> bool:
+def _receipt(transactions: Path, phase: str, uid: int, *, target: str) -> bool:
     path = transactions / (MARKER_PREFIX + phase + "-" + PRIOR_TARGET)
     if not path.exists() and not path.is_symlink():
         return False
@@ -64,17 +63,17 @@ def _receipt(transactions: Path, phase: str, uid: int) -> bool:
         content = _trusted_file(path, uid)
     except (ActivationBlocked, OSError, ValueError) as exc:
         raise RecoveryBlocked("untrusted_recovery_receipt:" + phase) from exc
-    _require(content == (EDITOR_TARGET + "\n").encode("ascii"),
+    _require(content == (target + "\n").encode("ascii"),
              "recovery_receipt_mismatch:" + phase)
     return True
 
 
-def _record(transactions: Path, phase: str, uid: int) -> None:
+def _record(transactions: Path, phase: str, uid: int, *, target: str) -> None:
     path = transactions / (MARKER_PREFIX + phase + "-" + PRIOR_TARGET)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
     fd = os.open(path, flags, 0o600)
     with os.fdopen(fd, "wb") as stream:
-        stream.write((EDITOR_TARGET + "\n").encode("ascii"))
+        stream.write((target + "\n").encode("ascii"))
         stream.flush()
         os.fsync(stream.fileno())
     _sync_directory(transactions)
@@ -93,7 +92,7 @@ def _backend_stopped() -> bool:
 
 
 def recover_editor_only(
-    *, stage: Path, root: Path = ROOT, transactions: Path = TRANSACTIONS,
+    *, target: str, stage: Path, root: Path = ROOT, transactions: Path = TRANSACTIONS,
     manifest: Path = MANIFEST, uid: int = 0,
     proof=None, handoff=None, telegram=None, installer=None, resume=None,
     backend_stopped=None, inspect=None,
@@ -107,6 +106,8 @@ def recover_editor_only(
     """
     from tools.paper_maintenance import resume_installed_release
 
+    _require(len(target) == 40 and all(c in "0123456789abcdef" for c in target)
+             and target not in (OLD_BACKEND, PRIOR_TARGET), "invalid_approved_target")
     _require(os.geteuid() == uid, "root_operator_required")
     _require(root.is_dir() and not root.is_symlink() and not (root / ".git").exists(),
              "unexpected_installed_layout")
@@ -138,22 +139,22 @@ def recover_editor_only(
     _require(bool(expected_db) and len(expected_db) == 64,
              "paper_database_identity_unproven")
     prior_release = verify_release(root, manifest)
-    _require(prior_release in (OLD_BACKEND, EDITOR_TARGET),
+    _require(prior_release in (OLD_BACKEND, target),
              "installed_release_changed")
-    if prior_release == EDITOR_TARGET:
-        _require(_receipt(transactions, "handoff-proven", uid),
+    if prior_release == target:
+        _require(_receipt(transactions, "handoff-proven", uid, target=target),
                  "target_installed_without_confirmed_handoff")
         status = (resume or resume_installed_release)(
-            EDITOR_TARGET, root=root, env_file=Path("/etc/bybitscanner/paper.env"))
+            target, root=root, env_file=Path("/etc/bybitscanner/paper.env"))
         return status
 
     # The old release must still be byte-for-byte pinned before either proof
     # or activation. No tracked files are hot-swapped under the live Backend.
     (inspect or inspect_staged_release)(
-        EDITOR_TARGET, stage=stage, root=root, manifest=manifest, uid=uid)
-    started = _receipt(transactions, "handoff-attempt", uid)
-    backend_confirmed = _receipt(transactions, "backend-exited", uid)
-    handoff_proven = _receipt(transactions, "handoff-proven", uid)
+        target, stage=stage, root=root, manifest=manifest, uid=uid)
+    started = _receipt(transactions, "handoff-attempt", uid, target=target)
+    backend_confirmed = _receipt(transactions, "backend-exited", uid, target=target)
+    handoff_proven = _receipt(transactions, "handoff-proven", uid, target=target)
     _require(not handoff_proven or backend_confirmed,
              "handoff_receipt_order_invalid")
     _require(not backend_confirmed or started,
@@ -173,13 +174,13 @@ def recover_editor_only(
         owner._require_scanner_stopped()
         owner._require_autopilot_off()
         owner._probe_telegram()  # fail closed on foreign Telegram owner
-        _record(transactions, "handoff-attempt", uid)
+        _record(transactions, "handoff-attempt", uid, target=target)
         # The existing incident-specific function repeats immutable SQL proof
         # under BEGIN IMMEDIATE and reattests exact PID/listener/cgroup.
         outcome = (handoff or build_dual_orphan_handoff(env))()
         _require(outcome == "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed",
                  "exceptional_handoff_outcome_unknown_no_retry")
-        _record(transactions, "backend-exited", uid)
+        _record(transactions, "backend-exited", uid, target=target)
         backend_confirmed = True
     else:
         _require(backend_confirmed, "prior_handoff_outcome_unknown_no_retry")
@@ -189,10 +190,10 @@ def recover_editor_only(
     if not handoff_proven:
         owner = RuntimeShutdown(root=root, env=env)
         state = owner._probe_telegram()
-        telegram_attempted = _receipt(transactions, "telegram-attempt", uid)
+        telegram_attempted = _receipt(transactions, "telegram-attempt", uid, target=target)
         if state == PRESENT:
             _require(not telegram_attempted, "telegram_shutdown_outcome_unknown_no_retry")
-            _record(transactions, "telegram-attempt", uid)
+            _record(transactions, "telegram-attempt", uid, target=target)
             # Existing canonical Telegram shutdown uses exact DB identity.
             if telegram is None:
                 from tools.stop_robot_runtime import TELEGRAM
@@ -204,10 +205,10 @@ def recover_editor_only(
         _require(owner._probe_telegram() == ABSENT,
                  "telegram_absence_unproven")
         # Installation still rechecks every systemd unit and listener.
-        _record(transactions, "handoff-proven", uid)
+        _record(transactions, "handoff-proven", uid, target=target)
 
     receipt = (installer or activate_staged_release)(
-        EDITOR_TARGET, stage=stage,
+        target, stage=stage,
         stopped_proof=ShutdownResult(
             SCOPE_ALL, True, "Fresh separately authorized dual-orphan handoff",
             runtime_stopped=True,
@@ -217,7 +218,7 @@ def recover_editor_only(
     _require(isinstance(receipt, str) and receipt.startswith("INSTALLED_STOPPED:"),
              "immutable_release_install_unproven")
     return (resume or resume_installed_release)(
-        EDITOR_TARGET, root=root, env_file=Path("/etc/bybitscanner/paper.env"))
+        target, root=root, env_file=Path("/etc/bybitscanner/paper.env"))
 
 
 def main(argv=None) -> int:
@@ -226,11 +227,11 @@ def main(argv=None) -> int:
     parser.add_argument("--target", required=True)
     parser.add_argument("--execute-exceptional-handoff", action="store_true")
     args = parser.parse_args(argv)
-    if args.target != EDITOR_TARGET or not args.execute_exceptional_handoff:
+    if not args.execute_exceptional_handoff:
         print("BLOCKED: exact target and separately authorized handoff required")
         return 2
     try:
-        outcome = recover_editor_only(stage=args.stage)
+        outcome = recover_editor_only(target=args.target, stage=args.stage)
     except Exception as exc:
         # Preserve every one-shot receipt. Never retry an unknown result or
         # expose env/secrets/HTTP bodies to the operator.
