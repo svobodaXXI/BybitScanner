@@ -985,6 +985,46 @@ def mirror_caption(row: Mapping[str, Any], kind: str) -> str:
     ))
 
 
+def frozen_mirror_card_caption(symbol: str, timeframe: str, item: Mapping[str, Any],
+                               frozen: Mapping[str, Any]) -> str:
+    """Use the same immutable event identity for chart, text and source link.
+
+    Delayed delivery must not read a newer projected level/status to caption
+    a historical breakout. Mismatched evidence cannot be sent as this event.
+    """
+    if not isinstance(frozen, Mapping) or (
+        frozen.get("symbol") != symbol
+        or str(frozen.get("timeframe")) != str(timeframe)
+        or frozen.get("level_id") != item.get("level_id")
+        or frozen.get("event_kind") != item.get("kind")
+        or type(frozen.get("event_open_time_ms")) is not int
+        or frozen["event_open_time_ms"] < 0
+    ):
+        raise ValueError("MIRROR frozen event identity mismatch")
+    levels = frozen.get("levels")
+    selected = (
+        [level for level in levels if isinstance(level, Mapping) and level.get("selected") is True]
+        if isinstance(levels, list) else []
+    )
+    if (len(selected) != 1
+        or selected[0].get("level_id") != item["level_id"]
+        or selected[0].get("source") != frozen.get("source")
+        or selected[0].get("pattern") != frozen.get("pattern")):
+        raise ValueError("MIRROR frozen selected level mismatch")
+    candles = frozen.get("candles")
+    if not isinstance(candles, list) or not any(
+        isinstance(bar, Mapping) and bar.get("open_time_ms") == frozen["event_open_time_ms"]
+        for bar in candles
+    ):
+        raise ValueError("MIRROR frozen event candle absent")
+    return mirror_caption({
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "level": {"source": frozen.get("source"), "pattern": frozen.get("pattern")},
+        "status": STATUS_RETESTED if frozen.get("retest_confirmed") is True else STATUS_UNTESTED,
+    }, item["kind"])
+
+
 # Observation-delivery backpressure: Scanner coverage takes precedence over
 # retrying a Telegram Gateway outage. Pending events remain durable.
 _MIRROR_SEND_NEXT_AT = 0.0
@@ -1039,10 +1079,12 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
         elif not getattr(config, "TELEGRAM_ENABLED", False):
             delivered = "telegram_disabled"
         else:
-            text = mirror_caption(row, item["kind"]) + ("\n🧪 TEST MODE" if test_mode else "")
             frozen = item.get("chart")
             if frozen:
                 try:
+                    text = frozen_mirror_card_caption(symbol, timeframe, item, frozen)
+                    if test_mode:
+                        text += "\n🧪 TEST MODE"
                     with tempfile.TemporaryDirectory(prefix="mirror_event_") as directory:
                         chart_path = Path(directory) / "event.png"
                         render_mirror_chart(frozen, chart_path)
@@ -1063,12 +1105,12 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
                             # never overwrite it with a retest or later chart.
                             record_original_signal(
                                 first_id, symbol=symbol, timeframe=timeframe,
-                                pattern=row.get("level_label", "MIRROR"), text=text,
+                                pattern=frozen.get("pattern") or "MIRROR", text=text,
                                 image_bytes=image_bytes,
                                 geometry_snapshot=build_mirror_geometry_snapshot(first_id, frozen))
                         source_ready = False if test_mode else record_original_signal(
                             source_id, symbol=symbol, timeframe=timeframe,
-                            pattern=row.get("level_label", "MIRROR"), text=text,
+                            pattern=frozen.get("pattern") or "MIRROR", text=text,
                             image_bytes=image_bytes, source_formation_ids=source_ids,
                             source_campaign_first_id=first_id,
                             geometry_snapshot=build_mirror_geometry_snapshot(source_id, frozen))
