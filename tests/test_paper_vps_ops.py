@@ -83,6 +83,42 @@ class OwnerBridgeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             bridge.parse_request(wrong_repo)
 
+    def test_diagnose_is_fixed_owner_only_and_not_general_ssh(self):
+        self.assertEqual(
+            bridge.parse_request(event("/paper-vps diagnose " + SHA)),
+            ("diagnose", SHA),
+        )
+        for bad in ("/paper-vps shell " + SHA,
+                    "/paper-vps diagnose " + SHA + " --file=/etc/shadow",
+                    "/paper-vps diagnose " + SHA + "; id"):
+            with self.assertRaises(ValueError):
+                bridge.parse_request(event(bad))
+
+    def test_diagnose_does_not_stage_or_record_or_invoke_maintenance(self):
+        output = {"kind": "PAPER_STOP_READ_ONLY", "db": {"available": False}}
+        with (
+            mock.patch.object(bridge.os, "geteuid", return_value=0),
+            mock.patch("pathlib.Path.is_file", return_value=True),
+            mock.patch.object(bridge, "_read_only_diag", return_value=output) as read,
+            mock.patch.object(bridge, "_stage") as stage,
+            mock.patch.object(bridge, "_record_one_shot") as marker,
+            mock.patch.object(bridge, "_run") as run,
+        ):
+            self.assertEqual(bridge.remote("diagnose", SHA), 0)
+            read.assert_called_once_with(SHA)
+            stage.assert_not_called()
+            marker.assert_not_called()
+            run.assert_not_called()
+
+    def test_diagnostic_upgrade_preserves_original_ssh_credentials(self):
+        script = Path("tools/upgrade_paper_vps_diagnostics.ps1").read_text()
+        self.assertIn("fe3290e74323fdf368fd01a788fb0fdadb4f3171", script)
+        self.assertIn('test "$(sha256sum "$target" | cut -d \' \' -f1)" = "$old"', script)
+        self.assertIn("DIAGNOSTICS_HANDLER_INSTALLED", script)
+        for forbidden in ("authorized_keys", "gh secret set", "systemctl stop",
+                          "systemctl restart", "sqlite3 ", "rm -rf"):
+            self.assertNotIn(forbidden, script)
+
     def test_ssh_target_must_be_exact_root_hostname(self):
         self.assertEqual(bridge.validate_target("root@vps.example"), "root@vps.example")
         for item in ("", "user@host", "root@host;cmd", "root@host -oProxyCommand=x",
@@ -185,6 +221,10 @@ class OwnerBridgeTests(unittest.TestCase):
             self.assertEqual(
                 bridge.authorized_remote_request("execute " + SHA),
                 ("execute", SHA),
+            )
+            self.assertEqual(
+                bridge.authorized_remote_request("diagnose " + SHA),
+                ("diagnose", SHA),
             )
             for command in (
                 None, "", "execute " + SHA + " --force",
