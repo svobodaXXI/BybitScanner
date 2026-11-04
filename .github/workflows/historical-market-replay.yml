@@ -7,6 +7,7 @@ on:
       - "research/historical_candle_feed.py"
       - "research/wilder_dmi.py"
       - "research/causal_trend_geometry.py"
+      - "research/local_replay_viewer/**"
       - "research/export_historical_replay.py"
       - "research/simulation_runs/.gitignore"
       - "tests/test_historical_replay_export.py"
@@ -14,10 +15,13 @@ on:
       - "tests/test_historical_candle_feed.py"
       - "tests/test_historical_dmi.py"
       - "tests/test_historical_trend_geometry.py"
+      - "tests/test_historical_local_replay_server.py"
       - ".github/workflows/historical-market-replay.yml"
       - "terminal/frontend/src/replay/**"
       - "terminal/frontend/replay.html"
       - "terminal/frontend/vite.config.ts"
+      - "terminal/frontend/vite.replay.config.ts"
+      - "terminal/frontend/package.json"
   workflow_dispatch:
 
 permissions:
@@ -52,5 +56,25 @@ jobs:
         run: npm ci
       - name: Validate standalone replay model
         run: npm run test -- src/replay/replayModel.test.ts
-      - name: Ensure terminal and replay pages build independently
-        run: npm run build
+      - name: Build main terminal without experimental simulator
+        run: |
+          npm run build
+          test ! -e dist/replay.html
+      - name: Build standalone Windows simulator viewer separately
+        run: npm run build:replay
+      - name: Assemble self-contained local Windows simulator package
+        run: |
+          mkdir -p "$RUNNER_TEMP/machine-time/research"
+          cp ../../research/local_replay_viewer/server.py "$RUNNER_TEMP/machine-time/server.py"
+          cp ../../research/local_replay_viewer/START_LOCAL.cmd "$RUNNER_TEMP/machine-time/START_LOCAL.cmd"
+          cp ../../research/local_replay_viewer/README.txt "$RUNNER_TEMP/machine-time/README.txt"
+          cp -r ../../research/local_replay_viewer/dist "$RUNNER_TEMP/machine-time/dist"
+          cp ../../research/export_historical_replay.py ../../research/historical_candle_feed.py ../../research/historical_market_replay.py ../../research/wilder_dmi.py ../../research/causal_trend_geometry.py "$RUNNER_TEMP/machine-time/research/"
+          python "$RUNNER_TEMP/machine-time/server.py" --check
+      - name: Attach local-only Windows viewer for manual PC acceptance
+        uses: actions/upload-artifact@v4
+        with:
+          name: machine-time-local-windows
+          path: ${{ runner.temp }}/machine-time/
+          if-no-files-found: error
+          retention-days: 7
