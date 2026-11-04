@@ -116,8 +116,17 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
   return <div className="replay-chart" ref={container} aria-label="Свечной график ускоренной симуляции" />;
 }
 
+function utcDayOffset(daysAgo: number): string {
+  return new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+}
+
 export function ReplayPage() {
   const [document, setDocument] = useState<ReplayDocument>(() => syntheticReplay());
+  const [symbol, setSymbol] = useState("BTCUSDT");
+  const [startDate, setStartDate] = useState(() => utcDayOffset(3));
+  const [endDate, setEndDate] = useState(() => utcDayOffset(1));
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const historyRequest = useRef<AbortController | null>(null);
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(8);
@@ -143,6 +152,9 @@ export function ReplayPage() {
 
   async function loadFile(file?: File) {
     if (!file) return;
+    historyRequest.current?.abort();
+    historyRequest.current = null;
+    setHistoryLoading(false);
     setPlaying(false);
     try {
       if (file.size > 24 * 1024 * 1024) throw new Error("Файл больше 24 МБ");
@@ -159,6 +171,43 @@ export function ReplayPage() {
     }
   }
 
+  async function loadLocalHistory() {
+    historyRequest.current?.abort();
+    const controller = new AbortController();
+    historyRequest.current = controller;
+    setHistoryLoading(true);
+    setPlaying(false);
+    setError(null);
+    try {
+      const query = new URLSearchParams({ symbol: symbol.trim().toUpperCase(), start: startDate, end: endDate });
+      // Only the loopback Python viewer implements this research-only GET.
+      // Never call /api: Vite's /api proxy belongs to the main PAPER backend.
+      const response = await fetch("/local-replay/history?" + query.toString(), {
+        method: "GET", cache: "no-store", signal: controller.signal,
+      });
+      const raw: unknown = await response.json();
+      if (!response.ok) {
+        const reason = typeof raw === "object" && raw !== null && "error" in raw &&
+          typeof raw.error === "string" ? raw.error : "История недоступна";
+        throw new Error(reason);
+      }
+      const imported = parseReplayDocument(raw);
+      if (imported.mode !== "MARKET_ONLY") throw new Error("История не соответствует режиму MARKET_ONLY");
+      if (historyRequest.current !== controller) return;
+      setDocument(imported);
+      setCursor(0);
+      setFileLabel("Bybit · публичные свечи · без сделок");
+    } catch (e) {
+      if (historyRequest.current !== controller) return;
+      setError(e instanceof Error ? e.message : "Не удалось загрузить историю");
+    } finally {
+      if (historyRequest.current === controller) {
+        setHistoryLoading(false);
+        historyRequest.current = null;
+      }
+    }
+  }
+
   return (
     <main className="replay-shell">
       <header className="replay-header">
@@ -169,6 +218,17 @@ export function ReplayPage() {
         <span className="replay-badge">SIMULATION ONLY</span>
       </header>
 
+      <section className="replay-history-controls" aria-label="Публичная история Bybit">
+        <label>Инструмент <input aria-label="Инструмент" value={symbol} maxLength={30}
+          onChange={(e) => setSymbol(e.target.value.toUpperCase())} /></label>
+        <label>С UTC <input aria-label="С UTC" type="date" value={startDate}
+          onChange={(e) => setStartDate(e.target.value)} /></label>
+        <label>По UTC (не включительно) <input aria-label="По UTC" type="date" value={endDate}
+          onChange={(e) => setEndDate(e.target.value)} /></label>
+        <button type="button" onClick={() => void loadLocalHistory()} disabled={historyLoading}>
+          {historyLoading ? "Загружаю историю…" : "Загрузить Bybit (без сделок)"}
+        </button>
+      </section>
       <section className="replay-controls" aria-label="Управление воспроизведением">
         <label className="replay-file">
           Загрузить JSON прогона
@@ -176,7 +236,8 @@ export function ReplayPage() {
             onChange={(e) => void loadFile(e.target.files?.[0])} />
         </label>
         <button type="button" onClick={() => {
-          setPlaying(false); setCursor(0); setError(null);
+          historyRequest.current?.abort(); historyRequest.current = null;
+          setHistoryLoading(false); setPlaying(false); setCursor(0); setError(null);
           setDocument(syntheticReplay()); setFileLabel("Синтетический пример");
         }}>Пример</button>
         <button type="button" onClick={() => { if (cursor === total) setCursor(0); setPlaying((s) => !s); }}>
@@ -228,7 +289,7 @@ export function ReplayPage() {
       </div>
       <footer className="replay-footer">
         {cursor} из {total} событий. Вход на следующем открытии не раскрывает будущую свечу.
-        Никаких запросов к API, торговли или записи в PAPER нет.
+        Только публичные GET-запросы к истории Bybit; без приватных API, торговли и записи в PAPER.
       </footer>
     </main>
   );
