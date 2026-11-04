@@ -61,6 +61,8 @@ on:
       - "tests/test_signal_admission.py"
       - "tests/test_telegram_delivery.py"
       - "tests/test_signal_archive_hooks.py"
+      - "geometry_feedback_store.py"
+      - "tests/test_geometry_feedback_store.py"
       - "tests/test_scanner_control_runtime.py"
       - "tests/test_dual_timeframe_scanner.py"
       - "stop_robot_runtime.bat"
