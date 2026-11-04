@@ -12,6 +12,7 @@ from research.historical_market_replay import (
     Candle, ClosedBarView, EntryIntent, ReplayResult, replay_candles,
 )
 from research.wilder_dmi import DmiSnapshot, WilderDmi
+from research.causal_trend_geometry import CausalGeometryFeed, CausalLine, TrendCandidate
 
 FIVE_MINUTES_MS = 300_000
 ONE_HOUR_MS = 3_600_000
@@ -102,6 +103,8 @@ class ClosedMultiTimeframeView:
     dmi_5m: DmiSnapshot | None = None
     last_closed_dmi_1h: DmiSnapshot | None = None
     last_closed_dmi_4h: DmiSnapshot | None = None
+    hourly_trend: TrendCandidate | None = None
+    reference_5m: CausalLine | None = None
 
 
 class ClosedHigherTimeframeFeed:
@@ -171,6 +174,7 @@ def replay_with_closed_context(
 ) -> ReplayResult:
     """Wrap the existing offline executor with causal 1h/4h context."""
     context = ClosedHigherTimeframeFeed()
+    geometry = CausalGeometryFeed()
     dmi_5m = WilderDmi(timeframe_ms=FIVE_MINUTES_MS)
     dmi_1h = WilderDmi(timeframe_ms=ONE_HOUR_MS)
     dmi_4h = WilderDmi(timeframe_ms=FOUR_HOURS_MS)
@@ -181,6 +185,7 @@ def replay_with_closed_context(
         nonlocal last_dmi_1h, last_dmi_4h
         h1, h4, new_h1, new_h4 = context.observe_closed_five_minute(view.bar)
         dmi5 = dmi_5m.observe_closed(view.bar)
+        hourly_trend, reference_5m = geometry.observe_closed(view.bar, new_h1)
         if new_h1 is not None:
             last_dmi_1h = dmi_1h.observe_closed(new_h1)
         if new_h4 is not None:
@@ -193,6 +198,7 @@ def replay_with_closed_context(
             ClosedMultiTimeframeView(
                 view, h1, h4, new_h1, new_h4,
                 dmi5, last_dmi_1h, last_dmi_4h,
+                hourly_trend, reference_5m,
             )
         )
 
