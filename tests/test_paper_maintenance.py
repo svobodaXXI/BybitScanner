@@ -1742,7 +1742,7 @@ def test_exceptional_gitless_receipt_reuses_original_protected_handoff(
     units.write_text("{}")
     units.chmod(0o600)
     stop = journal_root / (".stop-invoked-" + recovery.PRIOR_TARGET)
-    stop.write_bytes(b"STOP_INVOKED; not install authorization\\\\n")
+    stop.write_bytes(b"STOP_INVOKED; not install authorization\n")
     stop.chmod(0o600)
     for phase in ("handoff-proven", "backend-exited"):
         receipt = journal_root / (
