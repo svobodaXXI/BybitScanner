@@ -8,6 +8,7 @@ with rollback bytes, never by replaying a trading action or sending a signal.
 from __future__ import annotations
 
 import fcntl
+import grp
 import json
 import os
 from pathlib import Path
@@ -103,12 +104,15 @@ def _sync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def _atomic_file(path: Path, data: bytes, mode: int = 0o644) -> None:
+def _atomic_file(path: Path, data: bytes, mode: int = 0o644, *, group_gid: int | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=".paper-release-", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as stream:
             os.fchmod(stream.fileno(), mode)
+            if group_gid is not None:
+                # Ownership is committed atomically with the verified marker.
+                os.fchown(stream.fileno(), -1, group_gid)
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
@@ -328,8 +332,25 @@ def activate_staged_release(
         installed_manifest = _manifest(_trusted_file(manifest, uid))
         _demand(installed_manifest in (rec, original),
                 "manifest_changed_during_switch")
+        # The verifier runs as User=bybitscanner, not root. Keep the manifest
+        # root-owned, group-readable only to the PAPER runtime group, never
+        # group-writable or world-readable. Fail closed if that group is absent.
+        try:
+            runtime_gid = grp.getgrnam("bybitscanner").gr_gid
+        except KeyError as exc:
+            raise ActivationBlocked("paper_runtime_group_missing") from exc
         if installed_manifest != rec:
-            _atomic_file(manifest, json.dumps(rec, sort_keys=True).encode(), 0o600)
+            _atomic_file(
+                manifest, json.dumps(rec, sort_keys=True).encode(), 0o640,
+                group_gid=runtime_gid,
+            )
+        manifest_stat = manifest.stat()
+        _demand(
+            manifest_stat.st_uid == uid
+            and manifest_stat.st_gid == runtime_gid
+            and stat.S_IMODE(manifest_stat.st_mode) == 0o640,
+            "runtime_manifest_permissions_unproven",
+        )
         try:
             actual = verify_release(root, manifest, require_protected_manifest=True)
         except ReleaseIdentityBlocked as exc:
