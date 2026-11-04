@@ -170,6 +170,7 @@ def replay_with_closed_context(
     simulation_run_id: str,
     candles: Sequence[Candle],
     on_closed_context: Callable[[ClosedMultiTimeframeView], EntryIntent | None],
+    geometry_warmup_candles: Sequence[Candle] = (),
     **replay_options: object,
 ) -> ReplayResult:
     """Wrap the existing offline executor with causal 1h/4h context."""
@@ -180,6 +181,21 @@ def replay_with_closed_context(
     dmi_4h = WilderDmi(timeframe_ms=FOUR_HOURS_MS)
     last_dmi_1h: DmiSnapshot | None = None
     last_dmi_4h: DmiSnapshot | None = None
+
+    # Geometry needs confirmed pivots BEFORE the requested display window.
+    # Seed only the causal, read-only H1/H4 and geometry streams. These bars
+    # are deliberately NOT passed to the replay executor, visual events, or
+    # 5m DMI output: the displayed simulation still starts at the requested time.
+    if geometry_warmup_candles:
+        if candles and geometry_warmup_candles[-1].end_ms != candles[0].start_ms:
+            raise ValueError("geometry warmup must end exactly at replay start")
+        for prior in geometry_warmup_candles:
+            _, _, new_hour, new_four = context.observe_closed_five_minute(prior)
+            geometry.observe_closed(prior, new_hour)
+            if new_hour is not None:
+                last_dmi_1h = dmi_1h.observe_closed(new_hour)
+            if new_four is not None:
+                last_dmi_4h = dmi_4h.observe_closed(new_four)
 
     def on_close(view: ClosedBarView) -> EntryIntent | None:
         nonlocal last_dmi_1h, last_dmi_4h
