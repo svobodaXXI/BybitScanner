@@ -23,6 +23,17 @@ export type ReplayEvent = {
   take?: number;
   reason?: string;
 };
+export type ReplayGeometry = {
+  kind: "MAIN_1H" | "TARGET_1H" | "REFERENCE_5M";
+  side: "BULL" | "BEAR";
+  available_at_ms: number;
+  from_ms: number;
+  to_ms: number;
+  from_price: number;
+  to_price: number;
+  trend_version: number;
+  classification: "UNVALIDATED_GEOMETRY_ONLY";
+};
 export type ReplayDocument = {
   source: "SIMULATION";
   simulation_run_id: string;
@@ -31,6 +42,7 @@ export type ReplayDocument = {
   mode?: "MARKET_ONLY" | "STRATEGY";
   symbol?: string;
   timeframe?: "5m";
+  geometry?: ReplayGeometry[];
 };
 export type VisibleReplay = {
   candles: ReplayCandle[];
@@ -154,10 +166,52 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       ...(e.take !== undefined ? { take: parseOptionalNumber(e.take, "take") } : {}),
     };
   });
+  // Geometry is a separate, read-only candidate layer, not order events.
+  // Reject any line whose anchors or publication time lie beyond the archive.
+  let geometry: ReplayGeometry[] | undefined;
+  if (object.geometry !== undefined) {
+    if (mode !== "MARKET_ONLY" || !Array.isArray(object.geometry) || object.geometry.length > 100_000) {
+      throw new Error("Геометрия разрешена только для рынка SIMULATION");
+    }
+    let previousAvailable = -1;
+    geometry = object.geometry.map((raw) => {
+      const item = record(raw);
+      const kind = item.kind;
+      if (kind !== "MAIN_1H" && kind !== "TARGET_1H" && kind !== "REFERENCE_5M") {
+        throw new Error("Неверный вид трендовой линии");
+      }
+      const side = item.side;
+      if (side !== "BULL" && side !== "BEAR" ||
+          item.classification !== "UNVALIDATED_GEOMETRY_ONLY") {
+        throw new Error("Нельзя выдавать непроверенную геометрию за торговый сигнал");
+      }
+      const available_at_ms = positiveInteger(item.available_at_ms, "available_at_ms");
+      const from_ms = positiveInteger(item.from_ms, "from_ms");
+      const to_ms = positiveInteger(item.to_ms, "to_ms");
+      const trend_version = positiveInteger(item.trend_version, "trend_version");
+      const from_price = safeNumber(item.from_price, "from_price");
+      const to_price = safeNumber(item.to_price, "to_price");
+      if (
+        available_at_ms < previousAvailable ||
+        from_ms >= to_ms || to_ms >= available_at_ms ||
+        available_at_ms > previousTime ||
+        trend_version > available_at_ms ||
+        from_price <= 0 || to_price <= 0
+      ) {
+        throw new Error("Трендовая линия использует неизвестное будущее");
+      }
+      previousAvailable = available_at_ms;
+      return {
+        kind, side, available_at_ms, from_ms, to_ms, from_price, to_price,
+        trend_version, classification: "UNVALIDATED_GEOMETRY_ONLY" as const,
+      };
+    });
+  }
   return {
     source: "SIMULATION", simulation_run_id: id, events, demo: object.demo === true,
     ...(mode ? { mode } : {}),
     ...(mode === "MARKET_ONLY" ? { symbol: object.symbol as string, timeframe: "5m" as const } : {}),
+    ...(geometry ? { geometry } : {}),
   };
 }
 
@@ -208,4 +262,22 @@ export function syntheticReplay(): ReplayDocument {
     });
   }
   return parseReplayDocument({ source: "SIMULATION", simulation_run_id: id, events, demo: true });
+}
+
+/** Reveal ONLY candidate lines already confirmed at the virtual-time playhead. */
+export function visibleGeometry(
+  document: ReplayDocument, closedTimeMs: number | null,
+): ReplayGeometry[] {
+  if (closedTimeMs === null || !document.geometry) return [];
+  const current = new Map<ReplayGeometry["kind"], ReplayGeometry>();
+  for (const candidate of document.geometry) {
+    if (candidate.available_at_ms > closedTimeMs) break;
+    current.set(candidate.kind, candidate);
+  }
+  const main = current.get("MAIN_1H");
+  const reference = current.get("REFERENCE_5M");
+  if (reference && (!main || reference.trend_version !== main.trend_version)) {
+    current.delete("REFERENCE_5M");
+  }
+  return [...current.values()];
 }
