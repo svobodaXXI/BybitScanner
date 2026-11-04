@@ -4,7 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from mirror_scanner import _frozen_event_chart, mirror_source_token, mirror_subtype, mirror_caption
+from mirror_scanner import (
+    _frozen_event_chart, frozen_mirror_card_caption, mirror_source_token,
+    mirror_subtype, mirror_caption,
+)
 
 
 class Level:
@@ -60,6 +63,34 @@ def test_mirror_card_shows_source_not_merged_alias_or_visual_line():
     card = mirror_caption(row, "breakout")
     assert "Граница паттерна · Triangle Compression" in card
     assert "Зеркальный уровень" not in card
+
+
+def test_frozen_mirror_card_uses_same_original_provenance_as_chart():
+    event = {
+        "symbol": "TESTUSDT", "timeframe": "5", "level_id": "level-A",
+        "event_kind": "breakout", "event_open_time_ms": 300_000,
+        "source": "pattern_boundary", "pattern": "Rising Wedge",
+        "candles": [{"open_time_ms": 300_000, "open": 1, "high": 2,
+                     "low": 0.9, "close": 1.5}],
+        "levels": [{"level_id": "level-A", "selected": True,
+                    "source": "pattern_boundary", "pattern": "Rising Wedge"}],
+    }
+    item = {"level_id": "level-A", "kind": "breakout"}
+    caption = frozen_mirror_card_caption("TESTUSDT", "5", item, event)
+    assert caption == "🪞 MIRROR · TESTUSDT · 5m\\nГраница паттерна · Rising Wedge"
+    # Projected level metadata may have changed while Telegram was offline.
+    # The event's caption must agree with its own original chart, not today's
+    # value for the same symbol/level.
+    for key, value in (
+        ("symbol", "OTHERUSDT"), ("timeframe", "1"),
+        ("level_id", "other-level"), ("event_kind", "first_retest"),
+        ("event_open_time_ms", 999_999),
+        ("source", "swing_zone"), ("pattern", "Triangle Compression"),
+        ("levels", [{"level_id": "level-B", "selected": True,
+                     "source": "pattern_boundary", "pattern": "Rising Wedge"}]),
+    ):
+        with pytest.raises(ValueError, match="MIRROR frozen"):
+            frozen_mirror_card_caption("TESTUSDT", "5", item, {**event, key: value})
 
 
 def test_snapshot_contains_only_exact_source_boundaries():
