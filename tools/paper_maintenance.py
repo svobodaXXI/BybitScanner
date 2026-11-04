@@ -42,7 +42,6 @@ def _claim_stop_once(path: Path, target: str) -> bool:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump({"schema_version": 1, "target_sha": target,
                        "stop_attempt": "claimed_before_invocation"}, stream)
-            stream.write("\\n")
             stream.flush()
             os.fsync(stream.fileno())
         directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
