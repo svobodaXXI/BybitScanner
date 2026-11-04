@@ -43,7 +43,7 @@ class ConfirmedGeometryTests(unittest.TestCase):
             first.target.value_at(3*ONE_HOUR_MS) - first.main.value_at(3*ONE_HOUR_MS),
             first.target.value_at(5*ONE_HOUR_MS) - first.main.value_at(5*ONE_HOUR_MS)
         )
-        self.assertEqual(snapshots[7], first)
+        self.assertIsNone(snapshots[7])  # 1h newest pivot is only the intervening low
         second = snapshots[8]
         self.assertEqual([p.index for p in second.pivot_sequence], [4,5,6,7])
         self.assertGreater(second.available_at_ms, first.available_at_ms)
