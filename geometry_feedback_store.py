@@ -165,6 +165,15 @@ def _verified_stored_review(record: dict, snapshot: dict, *, review_id: str) -> 
             or record["source_boundaries"] != snapshot["boundaries"]
         ):
             raise GeometryFeedbackError("invalid_stored_review")
+        # Legacy receipts only have millisecond precision; newer receipts
+        # include a nanosecond clock to preserve save order within the same
+        # millisecond. A malformed high-resolution timestamp is not evidence.
+        received_ns = record.get("received_at_ns")
+        if received_ns is not None and (
+            type(received_ns) is not int or received_ns <= 0
+            or received_ns // 1_000_000 != record["received_at_ms"]
+        ):
+            raise GeometryFeedbackError("invalid_stored_review")
         ingress = {
             **submission,
             "corrected_boundaries": [
@@ -194,9 +203,11 @@ def record_review(payload: dict, snapshot: dict, *, directory=None) -> dict:
     directory_path = _signal_path(signal_id, directory)
     review_id = hashlib.sha256((signal_id + "\0" + normalized["idempotency_key"]).encode("utf-8")).hexdigest()
     target = directory_path / (review_id + ".json")
+    received_at_ns = time.time_ns()
     record = {
         "review_id": review_id,
-        "received_at_ms": int(time.time() * 1000),
+        "received_at_ms": received_at_ns // 1_000_000,
+        "received_at_ns": received_at_ns,
         "reviewer_source": "workspace_owner_ingress",
         "source_boundaries": snapshot["boundaries"],
         "submission": normalized,
@@ -252,4 +263,14 @@ def latest_review(signal_id: str, *, snapshot: dict, directory=None) -> dict | N
             reviews.append(_verified_stored_review(value, snapshot, review_id=file.stem))
         except (OSError, ValueError, TypeError) as exc:
             raise GeometryFeedbackError("unreadable_stored_review") from exc
-    return max(reviews, key=lambda item: (item["received_at_ms"], item["review_id"])) if reviews else None
+    # Millisecond ties must not choose a random SHA-ordered older correction.
+    # Old append-only files remain readable and sort at the beginning of
+    # their millisecond; no backfill or rewrite of historical evidence.
+    return max(
+        reviews,
+        key=lambda item: (
+            item["received_at_ms"],
+            item.get("received_at_ns", item["received_at_ms"] * 1_000_000),
+            item["review_id"],
+        ),
+    ) if reviews else None
