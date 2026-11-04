@@ -1,6 +1,7 @@
 """Owner geometry-feedback evidence: immutable source, revision and idempotency."""
 from copy import deepcopy
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -104,6 +105,45 @@ def test_append_only_reviews_preserve_prior_correction(tmp_path):
     ])
 
 
+def test_reopen_prefers_last_geometry_review_saved_in_same_millisecond(tmp_path):
+    source = _source()
+    # The SHA of token 00001 sorts *after* token 00002. Previously a same-ms
+    # pair reopened the older correction regardless of actual save sequence.
+    with patch("geometry_feedback_store.time.time_ns", side_effect=[
+        1_800_000_000_000_000_001, 1_800_000_000_000_000_777,
+    ]):
+        first = record_review(
+            _payload(source, token="test-unique-idempotency-00001"),
+            source, directory=tmp_path,
+        )
+        second = record_review(
+            _payload(source, token="test-unique-idempotency-00002"),
+            source, directory=tmp_path,
+        )
+    assert first["received_at_ms"] == second["received_at_ms"]
+    assert first["review_id"] > second["review_id"]
+    assert second["received_at_ns"] > first["received_at_ns"]
+    assert latest_review(source["signal_id"], snapshot=source, directory=tmp_path) == second
+    assert len(list(tmp_path.rglob("*.json"))) == 2
+    # Replaying the same review token preserves its immutable receipt.
+    assert record_review(
+        _payload(source, token="test-unique-idempotency-00001"),
+        source, directory=tmp_path,
+    ) == first
+
+
+def test_old_millisecond_only_feedback_can_still_reopen(tmp_path):
+    source = _source()
+    review = record_review(_payload(source), source, directory=tmp_path)
+    path, = list(tmp_path.rglob("*.json"))
+    old = json.loads(path.read_text(encoding="utf-8"))
+    old.pop("received_at_ns")
+    path.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+    assert latest_review(source["signal_id"], snapshot=source, directory=tmp_path) == old
+    assert record_review(_payload(source), source, directory=tmp_path) == old
+    assert review["review_id"] == old["review_id"]
+
+
 def test_rejects_stale_snapshot_or_reused_token_with_new_data(tmp_path):
     source = _source()
     payload = _payload(source)
@@ -163,6 +203,8 @@ def test_no_corrected_boundaries_on_non_edit_reviews(tmp_path):
     lambda value: value["submission"].update(signal_id="foreign:TESTUSDT:5"),
     lambda value: value["submission"].update(idempotency_key="another-review-token-0001"),
     lambda value: value.update(reviewer_source="not_the_owner_workspace"),
+    lambda value: value.update(received_at_ns=123),
+    lambda value: value.update(received_at_ns="not-an-integer"),
 ])
 def test_editor_reopen_fails_closed_on_corrupted_review_evidence(tmp_path, mutate):
     source = _source()
