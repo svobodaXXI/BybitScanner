@@ -57,6 +57,7 @@ export type ReplayDocument = {
   symbol?: string;
   timeframe?: "5m";
   geometry?: ReplayGeometry[];
+  geometry_warmup_hours?: number;
   dmi_5m?: ReplayDmi;
 };
 export type VisibleReplay = {
@@ -181,6 +182,11 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       ...(e.take !== undefined ? { take: parseOptionalNumber(e.take, "take") } : {}),
     };
   });
+  const geometry_warmup_hours = object.geometry_warmup_hours === undefined
+    ? undefined : positiveInteger(object.geometry_warmup_hours, "geometry_warmup_hours");
+  if (geometry_warmup_hours !== undefined && (mode !== "MARKET_ONLY" || geometry_warmup_hours > 72)) {
+    throw new Error("Неверная предыстория геометрии");
+  }
   // Geometry is a separate, read-only candidate layer, not order events.
   // Reject any line whose anchors or publication time lie beyond the archive.
   let geometry: ReplayGeometry[] | undefined;
@@ -269,6 +275,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     ...(mode ? { mode } : {}),
     ...(mode === "MARKET_ONLY" ? { symbol: object.symbol as string, timeframe: "5m" as const } : {}),
     ...(geometry ? { geometry } : {}),
+    ...(geometry_warmup_hours !== undefined ? { geometry_warmup_hours } : {}),
     ...(dmi_5m ? { dmi_5m } : {}),
   };
 }
