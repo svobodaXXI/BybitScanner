@@ -30,7 +30,8 @@ from research.export_historical_replay import (
 )
 from research.historical_candle_feed import FIVE_MINUTES_MS
 
-MAX_LOCAL_BARS = 2016  # 7 days, 3+ paginated Bybit requests
+MAX_LOCAL_BARS = 2016  # 7 days of VISIBLE candles
+GEOMETRY_PRELOAD_BARS = 864  # 72h of earlier CLOSED context; never shown as replay
 BYBIT_PUBLIC_KLINE = "https://api.bybit.com/v5/market/kline"
 STATIC_DIR = HERE / "dist"
 MAX_RESPONSE_BYTES = 2_000_000
@@ -93,6 +94,7 @@ def load_public_history(
     return build_market_only_document(
         symbol=symbol, start_ms=start_ms, end_ms=end_ms,
         run_id="local_" + token_hex(8), fetch_candles=fetch_candles,
+        geometry_warmup_bars=GEOMETRY_PRELOAD_BARS,
     )
 
 

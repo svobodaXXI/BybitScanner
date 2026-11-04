@@ -47,16 +47,17 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
      // Lightweight Charts v5: a second pane shares the exact candle time axis
     // and crosshair. Unlike an overlay, ADX uses its own 0..100 value scale.
     const paneOptions = {
-      lineWidth: 2 as const, priceLineVisible: false, lastValueVisible: true,
+      lineWidth: 2 as const, priceLineVisible: false, lastValueVisible: false,
+      crosshairMarkerVisible: false, title: "",
       priceFormat: { type: "price" as const, precision: 1, minMove: 0.1 },
     };
     const indicatorLines = {
-      PLUS: api.addSeries(LineSeries, { ...paneOptions, title: "+DI", color: "#25c776" }, 1),
-      MINUS: api.addSeries(LineSeries, { ...paneOptions, title: "-DI", color: "#f16a72" }, 1),
-      ADX: api.addSeries(LineSeries, { ...paneOptions, title: "ADX", color: "#60a5fa" }, 1),
+      PLUS: api.addSeries(LineSeries, { ...paneOptions, color: "#25c776" }, 1),
+      MINUS: api.addSeries(LineSeries, { ...paneOptions, color: "#f16a72" }, 1),
+      ADX: api.addSeries(LineSeries, { ...paneOptions, color: "#60a5fa" }, 1),
       LEVEL: api.addSeries(LineSeries, {
-        ...paneOptions, title: "20", color: "#8595ab", lineWidth: 1,
-        lineStyle: LineStyle.Dashed, lastValueVisible: false,
+        ...paneOptions, color: "#8595ab", lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
       }, 1),
     };
     api.panes()[1]?.setHeight(185);
@@ -147,11 +148,21 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       // DrawingOverlay's rayEndPoint extends the line to the price pane edge.
       // Never refit the line to the replayed price candles.
       const knownLines = visibleGeometry(document, shown.lastTimeMs);
+      let paintedGeometry = 0;
       for (const line of knownLines) {
-        const x1 = api.timeScale().timeToCoordinate((line.from_ms / 1000) as UTCTimestamp);
-        const x2 = api.timeScale().timeToCoordinate((line.to_ms / 1000) as UTCTimestamp);
-        const y1 = candleSeries.priceToCoordinate(line.from_price);
-        const y2 = candleSeries.priceToCoordinate(line.to_price);
+        // Line anchors can predate the requested playback window. Lightweight
+        // Charts returns null for timestamps not present in loaded candles.
+        // Project the original, frozen two-point slope (CausalLine.value_at)
+        // onto two actual VISIBLE candle times, without any new fitting.
+        const startingBar = shown.candles.find(bar => bar.start_ms >= line.from_ms);
+        const endingBar = shown.candles.at(-1);
+        if (!startingBar || !endingBar || startingBar.start_ms >= endingBar.start_ms) continue;
+        const priceAt = (at_ms: number) => line.from_price +
+          (line.to_price - line.from_price) * (at_ms - line.from_ms) / (line.to_ms - line.from_ms);
+        const x1 = api.timeScale().timeToCoordinate((startingBar.start_ms / 1000) as UTCTimestamp);
+        const x2 = api.timeScale().timeToCoordinate((endingBar.start_ms / 1000) as UTCTimestamp);
+        const y1 = candleSeries.priceToCoordinate(priceAt(startingBar.start_ms));
+        const y2 = candleSeries.priceToCoordinate(priceAt(endingBar.start_ms));
         if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
         const end = rayEndPoint(
           { x: x1, y: y1 }, { x: x2, y: y2 },
@@ -164,6 +175,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
         context.moveTo(x1, y1);
         context.lineTo(end.x, end.y);
         context.stroke();
+        paintedGeometry += 1;
       }
       context.setLineDash([]);
       const fills = visibleExecutionMarkers(document.events.slice(0, cursor), shown.candles);
@@ -196,6 +208,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       context.restore();
       canvas.dataset.visibleFills = String(rendered);
       canvas.dataset.visibleGeometry = String(knownLines.length);
+      canvas.dataset.paintedGeometry = String(paintedGeometry);
     };
     chart.current?.timeScale().scrollToPosition(14, false);
     renderExecutions.current();
@@ -379,6 +392,15 @@ export function ReplayPage() {
       </div>
       {document.mode === "MARKET_ONLY" && <p className="replay-note">
         РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ СДЕЛОК: жёлтые 1H и синие 5m линии — предварительные кандидаты из подтверждённых экстремумов, не проверенная стратегия.
+      </p>}
+      {document.mode === "MARKET_ONLY" && cursor > 0 && <p className="replay-geometry-note"
+        role="status" aria-label="Статус трендовой геометрии">
+        {visibleGeometry(document, shown.lastTimeMs).length
+          ? "Геометрия: показаны только подтверждённые часовые линии 1–3 / 2–4 и опорные 5m."
+          : "Геометрия: в выбранном отрезке пока нет подтверждённой конструкции 1–3 / 2–4. Неподтверждённые наклонки не дорисовываются."}
+        {document.geometry_warmup_hours
+          ? ` Предыстория для экстремумов: ${document.geometry_warmup_hours} ч.`
+          : ""}
       </p>}
       {document.demo && <p className="replay-note">
         ДЕМО: синтетические свечи и условные события, не реальные сигналы стратегии и не результат Bybit.

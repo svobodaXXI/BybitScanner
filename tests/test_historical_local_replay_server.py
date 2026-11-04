@@ -91,10 +91,12 @@ class PublicKlineTests(unittest.TestCase):
 
     def test_local_history_uses_closed_bars_no_trade_and_unique_run(self):
         start = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        # Pre-window public bars warm only the causal hourly detector.
+        # They must never appear in the requested 1-day visual replay.
         candles = [
             dict(time=start+i*FIVE_MINUTES_MS, open="100", high="102",
                  low="98", close="101", volume="1")
-            for i in range(288)
+            for i in range(-local.GEOMETRY_PRELOAD_BARS, 288)
         ]
         def fake_fetch(_symbol, _interval, limit, *, end_ms):
             return [c for c in candles if c["time"] <= end_ms][-limit:][::-1]
@@ -110,6 +112,9 @@ class PublicKlineTests(unittest.TestCase):
         self.assertEqual(first["mode"], "MARKET_ONLY")
         self.assertEqual(first["source"], "SIMULATION")
         self.assertEqual(len(first["events"]), 288)
+        self.assertEqual(first["geometry_warmup_hours"], 72)
+        self.assertEqual(first["events"][0]["candle"]["start_ms"], start)
+        self.assertTrue(all(e["time_ms"] > start for e in first["events"]))
         self.assertEqual(first["events"][-1]["candle"]["end_ms"], start+288*FIVE_MINUTES_MS)
         self.assertTrue(all(e["kind"] == "CANDLE_CLOSED" and "trade_id" not in e
                             for e in first["events"]))

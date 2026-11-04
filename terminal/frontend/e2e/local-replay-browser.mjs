@@ -103,9 +103,11 @@ try {
         adx: i < 27 ? null : String(15 + i / 5),
       })),
     },
+    geometry_warmup_hours: 72,
     geometry: [{
       kind: "MAIN_1H", side: "BULL",
-      available_at_ms: t + 900000, from_ms: t, to_ms: t + 300000,
+      available_at_ms: t + 900000, from_ms: t - 12*300000,
+      to_ms: t - 6*300000,
       from_price: "98", to_price: "99",
       trend_version: t + 900000, classification: "UNVALIDATED_GEOMETRY_ONLY",
     }],
@@ -132,6 +134,9 @@ try {
   assert.ok((await page.locator(".replay-chart canvas").count()) >= 4);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "1");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "1");
+  assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(), /Предыстория.*72 ч/);
+  await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
 
   assert.deepEqual(errors, [], "Browser runtime errors: " + errors.join("; "));
