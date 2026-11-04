@@ -21,14 +21,6 @@ const paperBackendUrl = (
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  build: {
-    rollupOptions: {
-      input: {
-        main: "index.html",
-        replay: "replay.html",
-      },
-    },
-  },
   server: {
     host: "0.0.0.0",
     allowedHosts: [
