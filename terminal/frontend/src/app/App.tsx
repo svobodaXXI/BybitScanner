@@ -1420,13 +1420,13 @@ export function App() {
                     book={market.book}
                     centerPrice={ladderCenterPrice}
                     onCenterPriceChange={setLadderCenterPrice}
-                    ownOrders={mode === "EDITOR" ? [] : domOwnOrders}
-                    onOwnOrderCancel={mode === "EDITOR" ? undefined : (orderId) => {
+                    ownOrders={domOwnOrders}
+                    onOwnOrderCancel={(orderId) => {
                       void cancelPaperLimit(orderId).catch(() => {});
                     }}
                     compression={domCompression}
                     onCompressionChange={setDomCompression}
-                    fastLimitActive={mode !== "EDITOR" && fastLimitIntent !== null}
+                    fastLimitActive={fastLimitIntent !== null}
                     onFastLimitPriceSelect={submitDomLimit}
                     onViewportGeometryChange={setDomViewportGeometry}
                   />
