@@ -19,7 +19,7 @@ assert (ROOT / "START_LOCAL.cmd").is_file(), "Windows launcher missing"
 assert (ROOT / "dist" / "replay.html").is_file(), "Standalone build missing"
 
 proc = subprocess.Popen(
-    [sys.executable, "-B", str(ROOT / "server.py")],
+    [sys.executable, "-B", str(ROOT / "server.py"), "--no-browser"],
     cwd=ROOT,
     stdin=subprocess.DEVNULL,
     stdout=subprocess.PIPE,
