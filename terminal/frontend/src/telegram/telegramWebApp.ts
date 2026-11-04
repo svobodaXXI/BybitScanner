@@ -7,6 +7,7 @@ export interface TelegramSafeArea {
 export interface TelegramWebApp {
   contentSafeAreaInset?: TelegramSafeArea;
   expand(): void;
+  disableVerticalSwipes?(): void;
   ready(): void;
   setBackgroundColor?(color: string): void;
   setHeaderColor?(color: string): void;
@@ -52,6 +53,8 @@ export function initializeTelegramMiniApp(
   webApp.setHeaderColor?.("#11161c");
   webApp.setBackgroundColor?.("#090c10");
   webApp.expand();
+  // The chart uses vertical drag/pinch; let it own gestures rather than Telegram's minimize gesture.
+  webApp.disableVerticalSwipes?.();
   webApp.ready();
   webApp.onEvent?.("contentSafeAreaChanged", updateSafeArea);
   return {

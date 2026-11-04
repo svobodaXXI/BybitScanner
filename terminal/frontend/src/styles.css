@@ -3729,3 +3729,21 @@ button {
     top: 2.15rem;
   }
 }
+
+/* Editor owns the mobile viewport: no empty trading-action row below the chart. */
+@media (max-width: 620px) {
+  .workspace-editor .workspace-grid {
+    grid-template-rows: minmax(0, 1fr);
+    min-height: 0;
+  }
+  .workspace-editor .mode-panel {
+    display: none;
+  }
+  .workspace-editor .workspace-market-row {
+    min-height: 0;
+  }
+  .workspace-editor .chart-stage,
+  .workspace-editor .chart-engine {
+    min-height: 0;
+  }
+}
