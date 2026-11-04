@@ -76,6 +76,37 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(fill.candle).toBeUndefined();
   });
 
+  it("accepts real Bybit candle-only runs and refuses fake trade activity", () => {
+    const base = syntheticReplay();
+    const onlyBars = base.events.filter((event) => event.kind === "CANDLE_CLOSED")
+      .map((event, i) => ({
+        ...event,
+        sequence: i + 1,
+      }));
+    const archive = {
+      source: "SIMULATION" as const,
+      simulation_run_id: base.simulation_run_id,
+      mode: "MARKET_ONLY",
+      market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT",
+      timeframe: "5m",
+      events: onlyBars,
+    };
+    const parsed = parseReplayDocument(archive);
+    expect(parsed.mode).toBe("MARKET_ONLY");
+    expect(parsed.symbol).toBe("BTCUSDT");
+    expect(parsed.events).toHaveLength(16);
+    expect(visibleReplay(parsed.events, parsed.events.length).fills).toHaveLength(0);
+    expect(visibleReplay(parsed.events, parsed.events.length).candles).toHaveLength(16);
+    expect(() => parseReplayDocument({
+      ...archive,
+      events: [...onlyBars, { ...base.events.find((e) => e.kind === "ENTRY_SIGNAL")!,
+        sequence: onlyBars.length + 1, time_ms: onlyBars.at(-1)!.time_ms }],
+    })).toThrow(/не должен содержать сделок/);
+    expect(() => parseReplayDocument({ ...archive, demo: true })).toThrow(/идентичность/);
+    expect(() => parseReplayDocument({ ...archive, source: "PAPER" })).toThrow(/SIMULATION/);
+  });
+
   it("rejects overlapping or unfinished candle histories", () => {
     const doc = syntheticReplay();
     expect(() => parseReplayDocument({
