@@ -9,6 +9,7 @@ on:
       - 'ci/paper_vps_ops.py'
       - 'tests/test_paper_vps_ops.py'
       - 'tools/bootstrap_paper_vps_bridge.ps1'
+      - 'tools/upgrade_paper_vps_diagnostics.ps1'
       - '.github/workflows/paper-vps-owner-bridge.yml'
   issue_comment:
     types: [created]
@@ -41,11 +42,15 @@ jobs:
         run: |
           $tokens = $null
           $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            'tools/bootstrap_paper_vps_bridge.ps1',
-            [ref]$tokens, [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error; exit 1 }
+          foreach ($file in @('tools/bootstrap_paper_vps_bridge.ps1',
+                             'tools/upgrade_paper_vps_diagnostics.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file, [ref]$tokens, [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error; exit 1 }
+          }
 
   owner-vps-operation:
     if: >-
