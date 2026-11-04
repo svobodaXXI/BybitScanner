@@ -18,8 +18,21 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(visibleReplay(doc.events, fillIndex + 1).candles).toHaveLength(4);
     expect(visibleReplay(doc.events, fillIndex + 1).candles.at(-1)?.close).toBe(102);
     const ending = visibleReplay(doc.events, doc.events.length);
-    expect(ending.candles).toHaveLength(16);
+    expect(ending.candles).toHaveLength(64);
     expect(ending.exits).toHaveLength(1);
+  });
+
+  it("warmed synthetic ADX is displayed only on completed 5m candles", () => {
+    const doc = syntheticReplay();
+    expect(doc.demo).toBe(true);
+    expect(doc.mode).toBe("STRATEGY");
+    expect(doc.dmi_5m?.points).toHaveLength(64);
+    expect(doc.dmi_5m?.points[26].adx).toBeNull();
+    expect(doc.dmi_5m?.points[27].adx).not.toBeNull();
+    expect(visibleDmi(doc, 0)).toEqual([]);
+    expect(visibleDmi(doc, 27).at(-1)?.adx).toBeNull();
+    expect(visibleDmi(doc, 28).at(-1)?.adx).not.toBeNull();
+    expect(visibleDmi(doc, 64).at(-1)?.plus_di).toBeGreaterThan(0);
   });
 
   it("round trips emitted JSON string-number prices from the Python replay kernel", () => {
@@ -95,9 +108,9 @@ describe("standalone SIMULATION viewer contract", () => {
     const parsed = parseReplayDocument(archive);
     expect(parsed.mode).toBe("MARKET_ONLY");
     expect(parsed.symbol).toBe("BTCUSDT");
-    expect(parsed.events).toHaveLength(16);
+    expect(parsed.events).toHaveLength(64);
     expect(visibleReplay(parsed.events, parsed.events.length).fills).toHaveLength(0);
-    expect(visibleReplay(parsed.events, parsed.events.length).candles).toHaveLength(16);
+    expect(visibleReplay(parsed.events, parsed.events.length).candles).toHaveLength(64);
     expect(() => parseReplayDocument({
       ...archive,
       events: [...onlyBars, { ...base.events.find((e) => e.kind === "ENTRY_SIGNAL")!,
