@@ -5,11 +5,13 @@ on:
     paths:
       - "research/historical_market_replay.py"
       - "research/historical_candle_feed.py"
+      - "research/wilder_dmi.py"
       - "research/export_historical_replay.py"
       - "research/simulation_runs/.gitignore"
       - "tests/test_historical_replay_export.py"
       - "tests/test_historical_market_replay.py"
       - "tests/test_historical_candle_feed.py"
+      - "tests/test_historical_dmi.py"
       - ".github/workflows/historical-market-replay.yml"
       - "terminal/frontend/src/replay/**"
       - "terminal/frontend/replay.html"
