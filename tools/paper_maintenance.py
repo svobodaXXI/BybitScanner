@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from decimal import Decimal
 
-from tools.stop_robot_runtime import RuntimeShutdown, SCOPE_ALL, _environment
+from tools.stop_robot_runtime import RuntimeShutdown, ShutdownResult, SCOPE_ALL, _environment
 
 
 def _durable_editor_freeze(root: Path, env_file: Path | None) -> str:
