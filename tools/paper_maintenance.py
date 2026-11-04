@@ -227,6 +227,11 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
         from tools.paper_interrupted_stop_recovery import (
             PRIOR_TARGET, RecoveryBlocked, _receipt, _trusted_journal,
         )
+        # Only the known prior-target exceptional STOP has a protected
+        # alternate handoff. Legacy ordinary resumptions without either
+        # marker keep their former no-receipt behavior.
+        if not (journal_root / (".stop-invoked-" + PRIOR_TARGET)).exists():
+            return
         from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
         from tools.vps_gitless_release_activate import _manifest
         try:
