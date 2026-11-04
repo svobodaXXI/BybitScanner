@@ -214,12 +214,41 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
         ActivationBlocked, _sync_directory, _trusted_file,
     )
     marker = journal_root / (".stop-invoked-" + target)
-    if not marker.exists():
-        return  # An existing release may predate one-shot STOP fencing.
-    _trusted_file(marker, uid)
     journal = journal_root / target
     if not journal.exists():
         return  # No protected installer transaction to attest.
+    if marker.exists() or marker.is_symlink():
+        _trusted_file(marker, uid)
+    else:
+        # An exceptional prior-target handoff can install the pinned release
+        # without a same-target ordinary STOP marker. Only its *own* protected
+        # transaction and proved installed bytes may close EDITOR_ONLY; an
+        # arbitrary journal/READY string cannot mint a trading entitlement.
+        from tools.paper_interrupted_stop_recovery import (
+            PRIOR_TARGET, RecoveryBlocked, _receipt, _trusted_journal,
+        )
+        # Only the known prior-target exceptional STOP has a protected
+        # alternate handoff. Legacy ordinary resumptions without either
+        # marker keep their former no-receipt behavior.
+        if not (journal_root / (".stop-invoked-" + PRIOR_TARGET)).exists():
+            return
+        from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+        from tools.vps_gitless_release_activate import _manifest
+        try:
+            _trusted_journal(journal_root, uid)
+            original = _manifest(_trusted_file(journal / "old.json", uid))
+            pinned = _manifest(_trusted_file(journal / "target.json", uid))
+            _trusted_file(journal / "units.json", uid)
+            prior_stop = _trusted_file(journal_root / (".stop-invoked-" + PRIOR_TARGET), uid)
+            if (pinned["build_sha"] != target
+                    or original["build_sha"] == target
+                    or prior_stop != b"STOP_INVOKED; not install authorization\\n"
+                    or not _receipt(journal_root, "handoff-proven", uid, target=target)
+                    or not _receipt(journal_root, "backend-exited", uid, target=target)
+                    or verify_release(REPO) != target):
+                raise ActivationBlocked("exceptional_editor_receipt_proof_unproven")
+        except (RecoveryBlocked, ReleaseIdentityBlocked, OSError, ValueError) as exc:
+            raise ActivationBlocked("exceptional_editor_receipt_proof_unproven") from exc
     if (not journal.is_dir() or journal.is_symlink()
             or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077):
         raise ActivationBlocked("untrusted_completed_release_transaction")
