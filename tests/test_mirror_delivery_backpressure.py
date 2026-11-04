@@ -3,6 +3,8 @@
 from types import SimpleNamespace
 import sys
 
+import tests.test_telegram_delivery  # tracked-only offline config/API stubs
+
 import mirror_scanner as mirror
 
 
