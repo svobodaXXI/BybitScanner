@@ -1278,7 +1278,7 @@ export function App() {
       )}
       <section className="workspace-grid" aria-label="Trading workspace">
         <div
-          className={`workspace-market-row ${marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
+          className={`workspace-market-row ${mode !== "EDITOR" && marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
         >
           {mode === "EDITOR" && launchLink?.signalId && !frozenSignal ? (
             <div role="status" aria-live="polite">
@@ -1389,6 +1389,8 @@ export function App() {
           )}
           />
           )}
+          {mode !== "EDITOR" && (
+            <>
           <button
             aria-expanded={marketSidePanelOpen}
             aria-label={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
@@ -1429,6 +1431,8 @@ export function App() {
                 onViewportGeometryChange={setDomViewportGeometry}
               />
           </aside>
+            </>
+          )}
         </div>
         <ModePanel
           mode={mode}
