@@ -431,6 +431,151 @@ def test_staged_gitless_unknown_stop_never_replayed_without_install_journal(monk
     assert not (transactions / target).exists()
 
 
+
+def test_staged_gitless_confirmed_stop_crash_window_resumes_without_stop(
+    monkeypatch, tmp_path,
+):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    root = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    transactions = tmp_path / "transactions"
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    events = []
+    fail = [True]
+
+    def stop(scope):
+        events.append(("stop", scope))
+        return SimpleNamespace(ok=True, runtime_stopped=True)
+
+    def install(_sha, **kwargs):
+        events.append(("install", kwargs["stopped_proof"].runtime_stopped))
+        if fail[0]:
+            raise OSError("crash before journal creation")
+        return "INSTALLED_STOPPED: verified"
+
+    def preflight(*_args, **_kw):
+        events.append(("preflight", True))
+
+    args = dict(
+        stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(), preflight=preflight,
+        stop=stop, installer=install,
+        resume=lambda *_args, **_kw: "READY: EDITOR_ONLY",
+    )
+    assert deploy_staged_editor_only(target, **args).startswith(
+        "BLOCKED: Gitless_switch_unproven:OSError"
+    )
+    assert (transactions / (".stop-confirmed-" + target)).is_file()
+    assert not (transactions / target).exists()
+    fail[0] = False
+    assert deploy_staged_editor_only(target, **args) == "READY: EDITOR_ONLY"
+    assert events == [
+        ("preflight", True), ("stop", "all"), ("install", True),
+        ("preflight", True), ("install", True),
+    ]
+
+
+def test_staged_gitless_old_sha_change_blocks_stop_receipt_reuse(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    root = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    transactions = tmp_path / "transactions"
+    root.mkdir()
+    stage.mkdir()
+    old = ["b" * 40]
+    monkeypatch.setattr(release, "verify_release", lambda *_: old[0])
+    events = []
+
+    def stop(_scope):
+        events.append("stop")
+        return SimpleNamespace(ok=True, runtime_stopped=True)
+
+    def install(*_args, **_kw):
+        events.append("install")
+        raise OSError("crash before journal")
+
+    args = dict(
+        stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(), preflight=lambda *_args, **_kw: None,
+        stop=stop, installer=install,
+    )
+    assert deploy_staged_editor_only("a" * 40, **args).startswith("BLOCKED:")
+    old[0] = "c" * 40
+    assert "stop_completed_receipt_mismatch" in deploy_staged_editor_only(
+        "a" * 40, **args
+    )
+    assert events == ["stop", "install"]
+
+
+def test_staged_gitless_corrupted_stop_confirmation_blocks_without_mutation(
+    monkeypatch, tmp_path,
+):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    root = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    transactions = tmp_path / "transactions"
+    root.mkdir()
+    stage.mkdir()
+    transactions.mkdir(mode=0o700)
+    target = "a" * 40
+    (transactions / (".stop-invoked-" + target)).write_bytes(
+        b"STOP_INVOKED; not install authorization\\n"
+    )
+    (transactions / (".stop-confirmed-" + target)).write_text("tampered")
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    result = deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: pytest.fail("no preflight for corrupt receipt"),
+        stop=lambda *_a: pytest.fail("no STOP replay"),
+        installer=lambda *_a, **_kw: pytest.fail("no install"),
+    )
+    assert "stop_completed_receipt_mismatch" in result
+
+
+def test_staged_gitless_unwritten_stop_confirmation_never_authorizes_install(
+    monkeypatch, tmp_path,
+):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    root = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    transactions = tmp_path / "transactions"
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    actual = maintenance._confirmed_stop_receipt
+    def failed_record(*args, **kwargs):
+        if kwargs.get("record"):
+            raise OSError("write failed")
+        return actual(*args, **kwargs)
+    monkeypatch.setattr(maintenance, "_confirmed_stop_receipt", failed_record)
+    calls = []
+    kwargs = dict(
+        stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(), preflight=lambda *_a, **_kw: None,
+        stop=lambda *_: (calls.append("stop"),
+                         SimpleNamespace(ok=True, runtime_stopped=True))[1],
+        installer=lambda *_a, **_kw: pytest.fail("no install"),
+    )
+    assert deploy_staged_editor_only("a" * 40, **kwargs).startswith("BLOCKED:")
+    assert deploy_staged_editor_only("a" * 40, **kwargs).startswith(
+        "BLOCKED: prior_STOP_outcome_unproven_without_install_journal"
+    )
+    assert calls == ["stop"]
+
+
 def test_staged_gitless_rejects_symlink_release_lock_before_stop(monkeypatch, tmp_path):
     from tools.paper_maintenance import deploy_staged_editor_only
     import tools.vps_release_identity as release
