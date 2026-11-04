@@ -70,7 +70,7 @@ try {
     market_data_source: "BYBIT_PUBLIC_KLINE",
     symbol: "BTCUSDT",
     timeframe: "5m",
-    events: Array.from({ length: 4 }, (_, i) => ({
+    events: Array.from({ length: 40 }, (_, i) => ({
       source: "SIMULATION", simulation_run_id: "browser_fixture",
       sequence: i + 1, kind: "CANDLE_CLOSED",
       time_ms: t + (i + 1) * 300000,
@@ -79,6 +79,15 @@ try {
         open: "100", high: "102", low: "98", close: "101", volume: "100",
       },
     })),
+    dmi_5m: {
+      source: "SIMULATION", timeframe: "5m", di_length: 14, adx_smoothing: 14,
+      points: Array.from({ length: 40 }, (_, i) => ({
+        time_ms: t + (i + 1) * 300000,
+        plus_di: i < 14 ? null : String(20 + i / 10),
+        minus_di: i < 14 ? null : String(10 + i / 20),
+        adx: i < 27 ? null : String(15 + i / 5),
+      })),
+    },
     geometry: [{
       kind: "MAIN_1H", side: "BULL",
       available_at_ms: t + 900000, from_ms: t, to_ms: t + 300000,
@@ -96,10 +105,16 @@ try {
   await page.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
   await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
   assert.match(await page.locator("body").innerText(), /browser_fixture/);
+  const indicator = page.getByRole("group", { name: "Индикатор ADX DMI" });
+  assert.match(await indicator.innerText(), /ADX\/DMI \(14, 14\)/);
+  assert.match(await indicator.innerText(), /Уровень 20/);
+  assert.match(await indicator.innerText(), /ADX —/);
   await page.getByRole("button", { name: "Пуск", exact: false }).click();
   await page.waitForFunction(() => document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow") === "100");
-  assert.match(await page.locator("body").innerText(), /4 \/ 0 \/ 0/);
-  assert.ok((await page.locator(".replay-chart canvas").count()) > 0);
+  assert.match(await page.locator("body").innerText(), /40 \/ 0 \/ 0/);
+  assert.match(await indicator.innerText(), /\+DI 23\.9/);
+  assert.match(await indicator.innerText(), /ADX 22\.8/);
+  assert.ok((await page.locator(".replay-chart canvas").count()) >= 4);
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
 
   assert.deepEqual(errors, [], "Browser runtime errors: " + errors.join("; "));
