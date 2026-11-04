@@ -190,6 +190,7 @@ def handler_factory(static_dir: Path = STATIC_DIR,
 def main() -> None:
     parser = argparse.ArgumentParser(description="Local-only read-only historical simulator viewer")
     parser.add_argument("--check", action="store_true", help="verify packaged assets/imports, no network")
+    parser.add_argument("--no-browser", action="store_true", help="run loopback server without opening the browser")
     args = parser.parse_args()
     if not (STATIC_DIR / "replay.html").is_file():
         raise SystemExit("Missing standalone replay build: dist/replay.html")
@@ -201,7 +202,8 @@ def main() -> None:
     uri = f"http://127.0.0.1:{port}/replay.html"
     print("Local research simulation viewer: " + uri, flush=True)
     print("NO PAPER / NO VPS / NO LIVE. Close this window to stop.", flush=True)
-    webbrowser.open(uri)
+    if not args.no_browser:
+        webbrowser.open(uri)
     try:
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:
