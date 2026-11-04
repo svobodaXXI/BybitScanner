@@ -4,6 +4,11 @@
 .replay-header h1 { font-size: 26px; font-weight: 650; margin: 0 0 4px; letter-spacing: -.03em; }
 .replay-header p { margin: 0; color: #a8b7cb; }
 .replay-badge { color: #d9b774; background: #30271b; border: 1px solid #665036; padding: 7px 10px; border-radius: 5px; font-size: 11px; letter-spacing: .12em; white-space: nowrap; }
+.replay-history-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; padding: 13px; background: #141d28; border: 1px solid #273649; border-radius: 10px; margin-bottom: 12px; }
+.replay-history-controls label { display: grid; gap: 5px; color: #9eb2cb; font-size: 12px; }
+.replay-history-controls input { min-width: 138px; max-width: 230px; background: #0c141f; color: #eef4ff; border: 1px solid #40526b; border-radius: 6px; padding: 8px; font: inherit; }
+.replay-history-controls button { cursor: pointer; background: #275b78; border: 1px solid #4f99c8; color: #fff; border-radius: 7px; padding: 10px 14px; font-weight: 600; }
+.replay-history-controls button:disabled { cursor: wait; opacity: .6; }
 .replay-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; padding: 13px; background: #141d28; border: 1px solid #273649; border-radius: 10px; margin-bottom: 14px; }
 .replay-controls button, .replay-file { background: #243247; border: 1px solid #435773; color: #f3f6fc; padding: 9px 14px; border-radius: 7px; cursor: pointer; font-weight: 550; }
 .replay-controls button:hover, .replay-file:hover { background: #34445d; }
