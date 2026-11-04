@@ -769,6 +769,44 @@ PAPER_AUTO runtime change is authorized.
 
 ---
 
+# 7D. HOURLY TRENDLINE AND FIVE-MINUTE REFERENCE-SLOPE RESEARCH (OWNER 2026-11-04)
+
+## H-017 CONVERGING TRENDLINE / REFERENCE-SLOPE CONTINUATION AND REVERSAL
+
+**Status:** `HYPOTHESIS / NEEDS VALIDATION`. **Classification:** `NEW_SETUP`, with separate entry-mode cohorts; no production authorization. Owner's ONUSDT 5m screenshots and oral drawing explanation are observation sources, not validated outcomes or a no-look-ahead detector.
+
+* **Geometry:** On the hourly chart the illustrated principal trendline passes through points **1–3**, while the opposing **target line** (`целевая`) passes through **2–4**. Converging lines form a narrowing corridor/wedge; a possible bounce from the main trendline targets the opposing line. Anchors, pivots, confirmation delays, expiration, boundary-tolerance and re-drawing rules need formalization. This proposal **does not supersede** existing Scanner Wedge geometry rules.
+* **Continuously maintained lines:** Search for, version, confirm, update, invalidate and retire hourly trends and 5m reference slopes as newly available bars arrive. Replay historical states using only then-confirmed pivots; later lines cannot be back-painted into an earlier decision.
+* **Distinct potential entry modes:** (A) **main-trendline breakout:** owner rule is a 5m candle **closing** beyond the time-evaluated sloping trendline, with the **next candle's opening** as signal time; (B) **main-trendline bounce** within the narrowing corridor, with opposing target line as candidate objective; (C) **blue reference-slope continuation:** owner criterion is a **new 5m candle opening beyond** its time-evaluated blue signal slope, even if the preceding candle did not clearly close beyond it; (D) near the target line, search for the **last 5m acceleration** as a candidate reversal. Do not conflate rules (A) and (C), force an automatic reverse, or infer confirmation conditions not given by the owner.
+* **Measured-wave post-breakout potential:** Find the largest **already-known/confirmed** wave in the trend under a frozen wave definition. In the owner's illustrated **upward** wave from first to second extreme, the internal-side measurement reaches the **highest candle LOW in that wave** (`max(low)`), **not** its highest high nor necessarily the low of the highest-high candle. This yields a candidate distance from the first/lower pivot. The exact projection anchor after breakout, symmetric bearish rule, tie-breaking and stop/target mechanics remain unresolved; **do not assume** the potential is offset mechanically from breakout price.
+* **Prior / `приор`:** Auxiliary horizontal level at the owner's **penultimate main-trendline-touching extreme**, hypothesized as possible stop-loss concentration. The level may lie **before, at or beyond** the measured target. Crossing can coincide with acceleration; a roughly **50% partial realization** was an illustrative research option, **not** a fixed rule. It is **low priority**: not a standalone entry, compulsory profit target, automatic add-on or proof of actual stops. Adding would need a separately approved risk-budget design.
+* **Data and comparisons:** timestamped source OHLCV (hourly + 5m), versioned confirmed pivots/line endpoints and time-dependent line prices, breakout/open status, target-wave extrema, prior-level location, acceleration, candidate risk and realized MFE/MAE/costs. Compare each mode with simple trendline-only and matched non-signal controls; test geometry/target/prior ablations, missing-signal rates and stale-line failures by symbol and regime.
+* **Promotion / kill:** only robust holdout and walk-forward after-cost expectancy, causal reproducibility and acceptable tail risk may warrant separately authorized PAPER/shadow study. Reject/narrow when decisions require hindsight extrema, ambiguous candle timing, fragile lines, untradeable corridor or nonpositive incremental outcome.
+
+---
+
+# 7E. SHARED ADX/DMI AND PRE-IMPULSE FEATURE RESEARCH (OWNER 2026-11-04)
+
+## H-018 CROSS-PATTERN DIRECTIONAL-MOVEMENT SIGNAL CLUSTERS
+
+**Status:** `HYPOTHESIS / NEEDS VALIDATION`. **Classification:** `CROSS-PATTERN CONFIRMATION / MECHANICS_REFINEMENT` and independent from H-017 geometry. **Scope requested by owner:** a **shared research-level** ADX/DMI assessment for both the **experimental trendline strategy** and the **main Robot's existing patterns**; it is not yet an executable rule or evidence that two robots are running. Current trade entry, Admission, STOP/TAKE, risk and PAPER/LIVE boundaries remain unchanged.
+
+**Indicator semantics and reproduction:** Green `+DI` represents positive directional movement, red `-DI` negative directional movement, blue `ADX` smoothed directional-trend strength regardless of direction. The owner's working heuristic is blue ADX **below 20 = weak**, **above 20 = strong**; treat threshold and actual predictive value as test candidates, not truth guarantees. Distinguish **a directional DI line** crossing numerical **20** from **ADX itself** crossing 20. Verify OHLC-derived Wilder-style calculation against TradingView DMI (`ta.dmi`) with versioned DI/ADX periods (14/14 as initial candidate, not asserted chart setting).
+
+**Observed crossing hypotheses:** When green `+DI` crosses red `-DI`, blue `ADX`, or its own numerical `20` threshold **upward**, it may signal stronger positive directional movement; upward red `-DI` crossings are bearish analogues. When a DI line is **crossed by** another line from below, or crosses a comparator downward, the owner interprets that side's weakening and potentially opposite impulse. **These are candidate observations, not universal directional laws.** Test single crosses, two crosses (red/green plus numeric 20), and all **three comparator crosses** (opposite DI, blue ADX, numerical 20), both on the **same bar** and on **nearby consecutive bars**; distinguish one large impulse from separate consecutive impulses. Proximity window and comparison thresholds must be frozen prior to holdout. Mere convergence of red, green and blue is a *potential* leading feature, not entry permission.
+
+**4h priority context — explicit owner hypothesis:** Study `240`-minute (4h) DMI crossings/clusters for association with the **largest subsequent price impulses** and test whether 4h context helps **rank** 5m/1h breakout/pattern candidates in **both** strategies. Evaluate ranking versus baseline/no-4h/ADX-only and avoid making a new hard admission veto before evidence. Align all 5m events to **last fully CLOSED 4h candle**; do not read a forming 4h candle's later value in historical backtests. Define top-tail impulse using predeclared horizon and future ATR-normalized excursion in a **label only**, never a feature.
+
+**Go beneath ADX to raw inputs (owner's stated objective):** ADX/DMI is built on **OHLC prices, not volume**. For bar `t`, calculate `upMove=high[t]-high[t-1]`, `downMove=low[t-1]-low[t]`; positive `+DM` is `upMove` only if it is positive and greater than `downMove`; negative `-DM` symmetrically selects `downMove`; `TR=max(high-low, abs(high-prevClose), abs(low-prevClose))`. Wilder-smoothed `+DM/-DM` divided by smoothed `TR` yields `+DI/-DI`; `DX=100*abs(+DI--DI)/(+DI+-DI)` (zero-denominator handled explicitly), and Wilder-smoothed `DX` yields `ADX`. Thus ADX describes normalized **directional range expansion/imbalance**, not traded volume, the order book or a causal explanation of an impulse.
+
+**Independent pre-impulse research beyond indicator crossings:** From same raw data, test time-causal features such as `+DM/-DM` acceleration, directional dominance and changes in their ratio, `TR/ATR` contraction then expansion, range/body/wick structure, persistence, and relative position to confirmed trendlines — **including features that lead DI or ADX crossovers**. Compare against standard ADX/DMI-only and simple volatility/momentum baselines; use volume, executed trade flow, order-book imbalance or open interest **only as separate additional datasets with verified historical availability**, never pretend they were ADX inputs or causal proof. Study true conditional predictive value, lead time, false positives and incremental information after matched controls.
+
+**Validation protocol:** Historical Bybit OHLCV is accessible through the repository's `bybit_api.py:get_candles` (`pybit.session.get_kline`, optional end-time); use safely paginated versioned history, closed-candle timestamp alignment, consistent symbol/market and indicator warm-up. Build all eligible signals across regimes; define baseline, single/double/triple/near-cross/4h and raw-feature variants **before** holdout. Quantify impulse probability, top-tail recall/precision, timing, MFE/MAE, drift, opportunity loss, fee/spread/slippage/funding-adjusted expectancy and tail drawdown. Use chronological holdout/walk-forward, guard repeated overlapping labels and train/test leakage, report per-pattern and per-timeframe results. A convincing chart or apparently accurate prediction is not an edge.
+
+**Promotion / kill:** Promote **only** stable out-of-sample incremental value in identifying *future* impulses or improving a chosen pattern's after-cost expectancy while preserving risk contracts and separately authorized PAPER/shadow acceptance; narrow/kill if crossings primarily lag the move, 4h context worsens selection, raw features add no value, or effects vanish after leakage/cost/regime controls. No code, Robot, Scanner, deployment or LIVE authorization follows from this research record.
+
+---
+
 # 8. AKEUSDT CASE STUDY
 
 **Status:** `OBSERVATION / HYPOTHESIS SOURCE`, not proof.
@@ -900,6 +938,8 @@ explicit unique ID and evidence plan.
 | H-014 | Post-Impulse Channel Midline Harvesting | `HYPOTHESIS` | Post-impulse rising/falling channel | Channel-fraction entry with midline-first realization may outperform absolute-extreme entry or full opposite-boundary targeting after costs. | Channel version/boundaries/midline, normalized position, entry bin, ladder variant, exit policy, invalidation, fills, costs, MAE/MFE and outcomes. | Mode-specific event study and matched policy comparison across holdout symbols/regimes, then walk-forward and PAPER/shadow gates. | Robust positive post-cost expectancy with acceptable tail risk and an out-of-sample advantage over frozen control policies. | No robust advantage, insufficient harvestable width, unstable/no-look-ahead channel definition or unacceptable fill/tail-risk behavior. |
 | H-015 | Rounded Deceleration Breakout / Parabolic Compression Reversal | `HYPOTHESIS` | Post-bearish-impulse nonlinear deceleration/compression | Measured curvature/deceleration followed by bullish structural breakout may have distinguishable post-cost expectancy, and curvature may or may not add information beyond deceleration alone. | Versioned fit/derivatives, slopes and decay, velocity, swing/ATR/range/volume contraction, breakout/retest, regime/liquidity, entry/exit variant, MAE/MFE, costs and outcome. | Curvature-versus-deceleration ablation and matched-control event study, then holdout, walk-forward, sensitivity and PAPER/shadow. | Robust post-cost result plus stable out-of-sample incremental value for the retained feature model with acceptable tail risk. | No incremental/stable effect, look-ahead-dependent geometry, non-robust parameters, or failed post-cost/tail-risk gates. |
 | H-016 | Unprepared Breakout Deep Retest / "Naked" Breakout Candle | `HYPOTHESIS` | Cross-pattern breakout/retest behavior | Abrupt breakout without preceding accumulation may have a higher near-term deep-retest or failed-breakout probability than matched prepared breakouts. | Accumulation score, boundary/level metadata, breakout candle/volume/velocity, return timing, penetration, acceptance side, MAE/MFE and costs. | Matched-control event study by level/pattern/regime, then holdout, walk-forward and sensitivity analysis. | Stable economically actionable difference versus frozen matched prepared-breakout controls without hindsight-dependent definitions. | Effect disappears under controls/costs, definition is unstable/look-ahead-dependent, or no robust actionable difference remains. |
+| H-017 | Hourly Trendline / 5m Reference-Slope Trades | `HYPOTHESIS` | Converging hourly lines and 5m slope entries | Distinct bounce, breakout, continuation and target-reversal modes can add after-cost value if built without hindsight. | Frozen hourly/5m lines, pivots, break/open, wave/potential, prior, event times, costs, MFE/MAE. | Mode-specific matched controls, no-look-ahead replay, holdout and walk-forward. | Stable after-cost improvement and implementable confirmed geometry with acceptable risk. | Hindsight dependency, unstable line rules, no incremental post-cost result. |
+| H-018 | Shared DMI Crossings, 4h Prioritization and Raw Pre-Impulse Features | `HYPOTHESIS` | Cross-pattern direction/strength confluence | 4h DMI crossing clusters and/or causal raw OHLC features may identify future large impulses and improve ranking for both Robot strategies. | Time-causal 5m/1h/4h OHLC, Wilder DI/ADX, cross events, lead times, top-tail impulse labels, costs, setup identity. | Matched DMI-only/no-4h controls, crossover ablations, raw-input feature study, holdout/walk-forward. | Stable out-of-sample lead and incremental after-cost signal value without harmful missed opportunities. | Lag-only explanation, poor precision, leakage, nonrobust features or no improvement. |
 
 ---
 
@@ -1041,6 +1081,9 @@ No item below authorizes code.
 
 ## P0 — definitions and evidence capture
 
+* H-017: freeze owner-drawn hourly (1–3 / 2–4) anchor, 5m reference-slope, time-of-open, potential and low-priority prior definitions without inventing stop/entry parameters;
+* H-018: reproduce closed-bar Wilder ADX/+DI/-DI on Bybit OHLC; capture single/double/triple and near-cross clusters, 4h alignment and causal pre-impulse raw-price features separately for the experimental and main Robot pattern families;
+
 * formalize H-011 mirror-zone detector inputs, zone tolerance and formation identity;
 * formalize economically valid range width, independent reactions and invalidation;
 * define event dataset, timestamps, eligible-event denominator and cost/latency model;
@@ -1064,6 +1107,9 @@ No item below authorizes code.
 * preserve the AKEUSDT source/reference case only if original evidence and case identity are supplied.
 
 ## P1 — comparative validation
+
+* H-017: historical matched event comparison of trendline breakout, bounce, 5m slope continuation and target reversal, with ablations for opposing line/potential/prior and realistic costs;
+* H-018: rank large 4h impulse candidates by DI crossings/clusters; measure top-tail recall, precision, lead time and post-cost incremental value; compare main Robot pattern signals with/without 4h context and ADX confirmation, plus the same study for experimental 5m signals. Test early raw OHLC directional-movement features versus standard DMI-only and basic momentum/ATR baselines; holdout and walk-forward are required before any admission change;
 
 * compare breakout, breakout-plus-retest and pre-breakout/corridor entries without cohort mixing;
 * compare Falling Wedge lower-edge entries with versus without bullish engulfing, hammer-plus-confirmation,
@@ -1194,6 +1240,7 @@ Version 1.7 tightens that candidate selector to `2%` and adds a separate candida
 reward-to-risk admission gate after costs for Falling Wedge lower-edge pre-breakout entries.
 Version 1.8 defines the contemporaneous upper Falling Wedge boundary as the primary pre-breakout expected-reward
 reference for that `1:1` gate and explicitly excludes unconfirmed post-breakout potential from admission.
+Version 1.10 records owner-defined H-017 trendline/5m-slope research and H-018 cross-pattern DMI, 4h impulse prioritization and indicator-input/root-feature research; documentation only, with no deployed/trading effect.
 Version 1.9 adds confirmation-strength-based `0.5/0.75/1.0 WV` initial sizing, closed-confirmation-candle entry
 trigger and immediate whole-size Market execution, with no pullback wait and explicit slippage/latency research.
 These revisions change documentation only and create no detector, signal, order, risk or runtime behavior.
