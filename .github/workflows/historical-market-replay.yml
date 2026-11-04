@@ -5,6 +5,9 @@ on:
     paths:
       - "research/historical_market_replay.py"
       - "research/historical_candle_feed.py"
+      - "research/export_historical_replay.py"
+      - "research/simulation_runs/.gitignore"
+      - "tests/test_historical_replay_export.py"
       - "tests/test_historical_market_replay.py"
       - "tests/test_historical_candle_feed.py"
       - ".github/workflows/historical-market-replay.yml"
