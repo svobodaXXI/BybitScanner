@@ -722,6 +722,35 @@ export function visiblePriorBreaks(
   return result;
 }
 
+/** Immutable versions retained for review after revisions and structural breaks. */
+export type ReplayGeometryVersion = ReplayGeometry & { superseded_at_ms?: number };
+
+export function visibleGeometryHistory(
+  document: ReplayDocument, closedTimeMs: number | null,
+): ReplayGeometryVersion[] {
+  if (document.mode !== "MARKET_ONLY" || closedTimeMs === null) return [];
+  const versions: ReplayGeometryVersion[] = [];
+  const latest = new Map<ReplayGeometry["kind"], number>();
+  for (const line of document.geometry ?? []) {
+    if (line.available_at_ms > closedTimeMs) break;
+    const prev = latest.get(line.kind);
+    if (prev !== undefined) versions[prev].superseded_at_ms = line.available_at_ms;
+    latest.set(line.kind, versions.length);
+    versions.push({ ...line });
+  }
+  const breaks = new Map(
+    visiblePriorBreaks(document, closedTimeMs).map(event =>
+      [event.trend_version, event.confirmed_at_ms] as const),
+  );
+  for (const version of versions) {
+    const brokenAt = breaks.get(version.trend_version);
+    if (brokenAt !== undefined) {
+      version.superseded_at_ms = Math.min(version.superseded_at_ms ?? Infinity, brokenAt);
+    }
+  }
+  return versions;
+}
+
 /** Reveal ONLY candidate lines already confirmed at the virtual-time playhead. */
 export function visibleGeometry(
   document: ReplayDocument, closedTimeMs: number | null,
@@ -733,6 +762,10 @@ export function visibleGeometry(
     current.set(candidate.kind, candidate);
   }
   const main = current.get("MAIN_1H");
+  // A broken trend is historical, never active while the research stream
+  // waits for confirmed opposite 1--3/2--4 anchors.
+  if (main && visiblePriorBreaks(document, closedTimeMs)
+    .some(event => event.trend_version === main.trend_version)) return [];
   const reference = current.get("REFERENCE_5M");
   if (reference && (!main || reference.trend_version !== main.trend_version)) {
     current.delete("REFERENCE_5M");
