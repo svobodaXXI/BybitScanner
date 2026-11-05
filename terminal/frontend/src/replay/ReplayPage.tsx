@@ -170,7 +170,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
         const startingBar = shown.candles.find(bar => bar.start_ms >= line.from_ms);
         const breakEvent = brokenByVersion.get(line.trend_version);
         const endingBar = breakEvent && breakEvent.previous_side === line.side
-          ? shown.candles.findLast(bar => bar.start_ms < breakEvent.confirmed_at_ms)
+          ? shown.candles.slice().reverse().find(bar => bar.start_ms < breakEvent.confirmed_at_ms)
           : shown.candles.at(-1);
         if (!startingBar || !endingBar || startingBar.start_ms >= endingBar.start_ms) continue;
         const priceAt = (at_ms: number) => line.from_price +
