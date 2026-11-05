@@ -2322,6 +2322,13 @@ class RobotProtectionCoverageManager:
             }
         if hasattr(self._runtime, "protection_ingress_metrics"):
             health["ingress"] = self._runtime.protection_ingress_metrics()
+        if hasattr(self._runtime, "protection_ingress_recent"):
+            # Reuse the Autopilot admission window for a read-only proof of
+            # drained ingress after an overload. Lifetime high-water marks
+            # never decay and must not be mistaken for current queue pressure.
+            health["ingress_recent"] = self._runtime.protection_ingress_recent(
+                AUTOPILOT_INGRESS_WINDOW_S
+            )
         if hasattr(self._runtime, "autopilot_shadow_deferred_metrics"):
             health["autopilot_shadow_deferred"] = self._runtime.autopilot_shadow_deferred_metrics()
         return health
