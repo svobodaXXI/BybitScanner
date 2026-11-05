@@ -53,6 +53,7 @@ MUTATION_TIMEOUT_S = 15.0
 LEGACY_WRITER_BARRIER_TIMEOUT_S = 5.0
 LEGACY_HEALTH_REPROOF_WAIT_S = 30.0
 NATURAL_ROBOT_DRAIN_WAIT_S = 10.0
+SCANNER_WORKER_DRAIN_WAIT_S = 15.0
 
 ROBOT_STOPPED_PAIR = ("ROBOT_STOPPED", "ROBOT_STOPPED")
 ROBOT_STOPPABLE = {("ROBOT_RUNNING", "READY"), ("ROBOT_RUNNING", "PAUSED")}
@@ -1007,15 +1008,42 @@ class RuntimeShutdown:
             self._sleep(POLL_INTERVAL_S)
 
     def _require_scanner_stopped(self) -> None:
-        try:
-            status, body = self._get(self._backend + "/api/scanner/status", PROBE_TIMEOUT_S)
-        except Unreachable as exc:
-            raise SafeStopError("Scanner state is unavailable from legacy PAPER backend") from exc
-        if not (
-            status == 200 and isinstance(body, dict) and body.get("ok") is True
-            and body.get("mode") == "SCANNER_STOPPED"
-        ):
-            raise SafeStopError("Scanner is not proven STOPPED on legacy PAPER backend")
+        # Modern Scanner commits STOPPED before its child-supervisor has fully
+        # returned. Poll only the read-only worker observation off the PAPER
+        # owner, and never advance Robot/Backend shutdown with a live child.
+        # Legacy runtimes without this optional proof preserve their existing
+        # shutdown semantics for upgrade compatibility.
+        deadline = self._monotonic() + SCANNER_WORKER_DRAIN_WAIT_S
+        while True:
+            try:
+                status, body = self._get(
+                    self._backend + "/api/scanner/status", PROBE_TIMEOUT_S,
+                )
+            except Unreachable as exc:
+                raise SafeStopError(
+                    "Scanner state is unavailable from legacy PAPER backend"
+                ) from exc
+            if not (
+                status == 200 and isinstance(body, dict) and body.get("ok") is True
+                and body.get("mode") == "SCANNER_STOPPED"
+            ):
+                raise SafeStopError(
+                    "Scanner is not proven STOPPED on legacy PAPER backend"
+                )
+            if "worker_quiescent" not in body:
+                return  # Pre-upgrade backend; retain its existing proof.
+            settled = body["worker_quiescent"]
+            if settled is True:
+                return
+            if settled is not False:
+                raise SafeStopError(
+                    "Scanner worker quiescence evidence is malformed; backend retained"
+                )
+            if self._monotonic() >= deadline:
+                raise SafeStopError(
+                    "Scanner STOPPED but child is still active; backend retained"
+                )
+            self._sleep(min(POLL_INTERVAL_S, deadline - self._monotonic()))
 
     def _require_temporary_entry_arm_shape(self) -> dict[str, object]:
         try:
