@@ -397,6 +397,66 @@ describe("standalone SIMULATION viewer contract", () => {
       .toEqual([85]);
   });
 
+  it("uses CLOSED warmup H1 wicks to move a purple prior when the first anchor predates the replay", () => {
+    const hour = 3_600_000, step = 300_000;
+    const base = Date.UTC(2026, 10, 2);
+    const t = (h: number) => base + h * hour;
+    const context_1h = [
+      { start_ms: t(0), end_ms: t(1), open: 100, high: 125,
+        low: 92, close: 100, volume: 12 },
+      { start_ms: t(1), end_ms: t(2), open: 100, high: 120,
+        low: 90, close: 100, volume: 12 },
+    ];
+    const events = Array.from({ length: 24 }, (_, i) => {
+      const start_ms = t(2) + i * step;
+      return {
+        source: "SIMULATION", simulation_run_id: "h1_warmup",
+        sequence: i + 1, kind: "CANDLE_CLOSED", time_ms: start_ms + step,
+        candle: { start_ms, end_ms: start_ms + step,
+          open: 100, high: 105, low: i === 15 ? 80 : 95,
+          close: 100, volume: 1 },
+      };
+    });
+    const firstKnown = events[0].time_ms;
+    const secondKnown = events[11].time_ms;
+    const geometry = [
+      { kind: "MAIN_1H", side: "BEAR", available_at_ms: firstKnown,
+        from_ms: t(0), to_ms: t(1), from_price: "120",
+        to_price: "115", trend_version: firstKnown,
+        classification: "UNVALIDATED_GEOMETRY_ONLY" },
+      { kind: "MAIN_1H", side: "BEAR", available_at_ms: secondKnown,
+        from_ms: t(0), to_ms: t(2), from_price: "120",
+        to_price: "110", trend_version: secondKnown,
+        classification: "UNVALIDATED_GEOMETRY_ONLY" },
+    ];
+    const input = {
+      source: "SIMULATION", simulation_run_id: "h1_warmup",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events, geometry,
+      geometry_warmup_hours: 2, context_1h,
+    };
+    const doc = parseReplayDocument(input);
+    expect(doc.context_1h).toHaveLength(2);
+    expect(visibleReplay(doc.events, doc.events.length).candles).toHaveLength(24);
+    expect(visiblePriorLevels(doc, secondKnown).map(prior => prior.price)).toEqual([115]);
+    expect(visiblePriorLevels(doc, events[22].time_ms).map(prior => prior.price))
+      .toEqual([115]); // The new lower LOW belongs to an unfinished hour.
+    const moved = visiblePriorLevels(doc, events[23].time_ms);
+    expect(moved.map(prior => prior.price)).toEqual([115, 110]);
+    expect(moved[1].available_at_ms).toBe(t(4));
+    expect(visiblePriorLevels(doc, events[22].time_ms).map(prior => prior.price))
+      .toEqual([115]); // Deterministic rewind.
+    const legacy = parseReplayDocument({ ...input, context_1h: undefined });
+    expect(visiblePriorLevels(legacy, events[23].time_ms).map(prior => prior.price))
+      .toEqual([115]); // Missing archival proof must not fake the shift.
+    expect(() => parseReplayDocument({
+      ...input, context_1h: [{ ...context_1h[0], end_ms: t(3) }, context_1h[1]],
+    })).toThrow(); // Impossible H1 duration.
+    expect(() => parseReplayDocument({
+      ...input, context_1h: [context_1h[0], { ...context_1h[1], end_ms: t(3) }],
+    })).toThrow(); // Prehistory overlaps the first visible M5.
+  });
+
   it("confirms a prior break only after a full H1 close and next H1 open beyond the level", () => {
     const hourMs = 3_600_000, step = 300_000;
     const start = Date.UTC(2026, 9, 1);
