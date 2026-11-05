@@ -181,17 +181,46 @@ def last_correction_reference(
             return None
         if q.price <= p.price:
             return None
-    available = max(q.confirmed_at_ms, hourly.available_at_ms)
-    line = CausalLine(p, q, available)
+    # Keep the first known correction extreme fixed. For a descending upper
+    # bound choose the candle with the greatest slope from that anchor;
+    # for a rising lower bound choose the smallest slope. A mere absolute
+    # max/min wick is not enough to keep every intervening candle inside.
+    # No future data: only already closed candles through pivot q are used.
+    selected = q
+    slope = (q.price - p.price) / Decimal(q.at_ms - p.at_ms)
     for bar in five_minute_bars:
-        if p.at_ms < bar.start_ms < q.at_ms:
+        if not (p.at_ms < bar.start_ms <= q.at_ms):
+            continue
+        price = bar.high if hourly.side == "BULL" else bar.low
+        trial = (price - p.price) / Decimal(bar.start_ms - p.at_ms)
+        tighter = trial > slope if hourly.side == "BULL" else trial < slope
+        if tighter:
+            slope = trial
+            # A closed candle's wick is known at its close, not a pivot
+            # inferred from future bars. It is still a geometry-only anchor.
+            selected = ConfirmedPivot(
+                kind=p.kind,
+                index=p.index + (bar.start_ms - p.at_ms) // bar.interval_ms,
+                at_ms=bar.start_ms,
+                confirmed_at_ms=bar.end_ms,
+                price=price,
+            )
+    if not (slope < 0 if hourly.side == "BULL" else slope > 0):
+        return None
+    available = max(q.confirmed_at_ms, selected.confirmed_at_ms,
+                    hourly.available_at_ms)
+    line = CausalLine(p, selected, available)
+    # Verify the whole known segment, including wicks after the chosen
+    # second anchor. Do not hide a later breakout by retroactively moving
+    # this frozen candidate once emitted.
+    for bar in five_minute_bars:
+        if p.at_ms < bar.start_ms <= q.at_ms:
             level = line.value_at(bar.start_ms)
             if (hourly.side == "BULL" and bar.high > level) or (
                 hourly.side == "BEAR" and bar.low < level
             ):
                 return None
     return line
-
 
 
 def main_line_contact(trend: TrendCandidate | None, bar: Candle) -> Decimal | None:
