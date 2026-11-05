@@ -153,6 +153,8 @@ export type ReplayDocument = {
   observations?: ReplayObservation[];
   h017_blue_risk_previews?: H017BlueRiskPreview[];
   geometry_warmup_hours?: number;
+  /** Closed H1 evidence before the visible replay; never counted as playhead candles. */
+  context_1h?: ReplayCandle[];
   dmi_5m?: ReplayDmi;
 };
 /** Counterfactual first-touch observations; NEVER simulated fills or trade results. */
@@ -292,6 +294,44 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     ? undefined : positiveInteger(object.geometry_warmup_hours, "geometry_warmup_hours");
   if (geometry_warmup_hours !== undefined && (mode !== "MARKET_ONLY" || geometry_warmup_hours > 72)) {
     throw new Error("Неверная предыстория геометрии");
+  }
+  // Strictly CLOSED H1 context preceding the first displayed M5, never
+  // arbitrary extra market events and never a future look-ahead source.
+  let context_1h: ReplayCandle[] | undefined;
+  if (object.context_1h !== undefined) {
+    if (mode !== "MARKET_ONLY" || !Array.isArray(object.context_1h) ||
+        object.context_1h.length > 72 ||
+        geometry_warmup_hours === undefined ||
+        object.context_1h.length > geometry_warmup_hours) {
+      throw new Error("Недостоверная часовая предыстория");
+    }
+    const firstVisible = events.find(event => event.kind === "CANDLE_CLOSED")?.candle?.start_ms;
+    if (firstVisible === undefined) throw new Error("Нет начальной рыночной свечи");
+    let priorEnd = -1;
+    context_1h = object.context_1h.map(raw => {
+      const item = record(raw);
+      const bar = {
+        start_ms: positiveInteger(item.start_ms, "context H1 start"),
+        end_ms: positiveInteger(item.end_ms, "context H1 end"),
+        open: safeNumber(item.open, "context H1 open"),
+        high: safeNumber(item.high, "context H1 high"),
+        low: safeNumber(item.low, "context H1 low"),
+        close: safeNumber(item.close, "context H1 close"),
+        volume: safeNumber(item.volume, "context H1 volume"),
+      };
+      if (bar.start_ms % 3_600_000 !== 0 ||
+          bar.end_ms !== bar.start_ms + 3_600_000 ||
+          (priorEnd >= 0 && bar.start_ms !== priorEnd) ||
+          bar.start_ms < firstVisible - 72 * 3_600_000 ||
+          bar.end_ms > firstVisible ||
+          bar.low <= 0 || bar.volume < 0 ||
+          bar.low > Math.min(bar.open, bar.close) ||
+          bar.high < Math.max(bar.open, bar.close)) {
+        throw new Error("Часовая предыстория содержит будущую или неполную свечу");
+      }
+      priorEnd = bar.end_ms;
+      return bar;
+    });
   }
   // Geometry is a separate, read-only candidate layer, not order events.
   // Reject any line whose anchors or publication time lie beyond the archive.
@@ -641,6 +681,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     ...(observations ? { observations } : {}),
     ...(h017_blue_risk_previews ? { h017_blue_risk_previews } : {}),
     ...(geometry_warmup_hours !== undefined ? { geometry_warmup_hours } : {}),
+    ...(context_1h ? { context_1h } : {}),
     ...(dmi_5m ? { dmi_5m } : {}),
   };
 }
@@ -767,7 +808,7 @@ export function visiblePriorLevels(
   const knownM5 = document.events.filter(event =>
     event.kind === "CANDLE_CLOSED" && event.time_ms <= closedTimeMs,
   ).map(event => event.candle!);
-  const hours = completeHourlyCandles(knownM5);
+  const hours = [...(document.context_1h ?? []), ...completeHourlyCandles(knownM5)];
   const mainLines = (document.geometry ?? []).filter(line =>
     line.kind === "MAIN_1H" && line.available_at_ms <= closedTimeMs);
   const proposals: ReplayPriorLevel[] = [];
