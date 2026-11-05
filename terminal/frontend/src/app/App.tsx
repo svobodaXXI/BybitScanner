@@ -23,7 +23,7 @@ import {
 } from "../marketData/workspaceSwitch";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
-import { projectSignalGeometry } from "../geometryFeedback/signalChartBridge";
+import { projectSignalGeometry, restoreSavedSignalCorrection } from "../geometryFeedback/signalChartBridge";
 import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
 import type { DrawingObject } from "../chart/drawingModel";
@@ -171,12 +171,9 @@ export function App() {
           const reviewedLines: TimestampDrawing[] = savedReview.submission.corrected_boundaries.map((line) => ({
             id: line.boundary_id, type: line.kind, anchors: line.anchors,
           }));
-          const restored = projectSignalGeometry(reviewedLines, candles);
-          if (restored.referenceDrawings.length !== projected.referenceDrawings.length
-              || restored.referenceDrawings.some((line, i) =>
-                line.id !== projected.referenceDrawings[i].id || line.type !== projected.referenceDrawings[i].type))
-            throw new Error("Saved correction topology does not match source lines");
-          editableDrawings = restored.editableDrawings;
+          editableDrawings = restoreSavedSignalCorrection(
+            projected.referenceDrawings, reviewedLines, candles,
+          );
         }
         if (!controller.signal.aborted) {
           setFrozenSignal({
