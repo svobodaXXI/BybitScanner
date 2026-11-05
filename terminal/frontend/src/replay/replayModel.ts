@@ -669,26 +669,50 @@ export function syntheticReplay(): ReplayDocument {
 }
 
 /**
- * Historic purple priors are derived from the already-confirmed 1--3 H1 line's
- * SECOND wick extremum (point 3), not from an extra fitted candle or a
- * speculative 5m contact. The market feed updates this MAIN line only when
- * another four-pivot structure is confirmed, including a new extreme in the
- * direction of the trend. A touch alone cannot move the prior.
+ * Purple prior at a confirmed H1 MAIN touch. An updated MAIN line is not
+ * sufficient to move the level: after the newer touch, price must establish
+ * a NEW directional extreme (lower LOW for BEAR, higher HIGH for BULL).
+ * Until then the old purple level remains authoritative. All comparisons
+ * use CLOSED M5 bars available at each line's confirmation timestamp.
  *
- * Each prefix has its own immutable visible versions, with no look-ahead.
- * Structural reversal is NOT inferred from a wick piercing this price.
+ * These are retrospective visual annotations ONLY, not entry signals.
  */
 export function visiblePriorLevels(
   document: ReplayDocument, closedTimeMs: number | null,
 ): ReplayPriorLevel[] {
   if (document.mode !== "MARKET_ONLY" || closedTimeMs === null) return [];
+  const candles = document.events.filter(event => event.kind === "CANDLE_CLOSED")
+    .map(event => event.candle!);
   const result: ReplayPriorLevel[] = [];
+  let extreme: number | undefined;
+  let lineOrigin = 0;
+  const directionalExtreme = (
+    side: "BULL" | "BEAR", fromMs: number, toMs: number,
+  ): number | undefined => {
+    const known = candles.filter(bar =>
+      bar.start_ms >= fromMs && bar.end_ms <= toMs);
+    if (!known.length) return undefined;
+    return side === "BULL" ? Math.max(...known.map(bar => bar.high)) :
+      Math.min(...known.map(bar => bar.low));
+  };
   for (const line of document.geometry ?? []) {
     if (line.available_at_ms > closedTimeMs) break;
     if (line.kind !== "MAIN_1H") continue;
     const last = result.at(-1);
     if (last && last.at_ms === line.to_ms &&
         last.price === line.to_price && last.side === line.side) continue;
+    if (!last || last.side !== line.side) {
+      // A new direction starts a separate history. Never reuse a prior
+      // trend's extreme to license a new line.
+      lineOrigin = line.from_ms;
+      extreme = directionalExtreme(line.side, lineOrigin, line.available_at_ms);
+    } else {
+      const observed = directionalExtreme(line.side, last.at_ms, line.available_at_ms);
+      const newExtreme = observed !== undefined && extreme !== undefined &&
+        (line.side === "BEAR" ? observed < extreme : observed > extreme);
+      if (!newExtreme) continue;
+      extreme = observed;
+    }
     if (last) last.superseded_at_ms = line.available_at_ms;
     result.push({
       side: line.side, at_ms: line.to_ms, price: line.to_price,
