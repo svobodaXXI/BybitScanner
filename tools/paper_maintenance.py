@@ -722,7 +722,7 @@ def _paper_start_quiescent(root: Path, env_file: Path | None) -> bool:
     return True
 
 
-def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool:
+def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool | None:
     """Use canonical Robot STOP for frozen APPROVED ideas left after reconcile.
 
     STOP owns cancellation and candidate lifecycle. Do not synthesize
@@ -735,13 +735,13 @@ def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool:
 
     db = _database_path(root, _environment(env_file))
     if not db.is_file() or db.is_symlink():
-        return False
+        return None
     try:
         with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0) as conn:
             conn.execute("PRAGMA query_only=ON")
             conn.execute("BEGIN")
             if conn.execute("PRAGMA quick_check").fetchone() != ("ok",):
-                return False
+                return None
             state = conn.execute(
                 "SELECT mode, recovery_status FROM robot_runtime_state "
                 "WHERE trading_account_id='paper'"
@@ -754,18 +754,18 @@ def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool:
             ).fetchall()
             if (state != [("ROBOT_RUNNING", "PAUSED")]
                     or scanner != [("SCANNER_STOPPED",)] or autopilot != [("OFF",)]):
-                return False
+                return None
             positions = conn.execute(
                 "SELECT symbol, side, quantity, sync_state FROM position_projections "
                 "WHERE trading_account_id='paper'"
             ).fetchall()
             if not positions:
-                return False
+                return None
             for symbol, side, raw, sync in positions:
                 quantity = Decimal(str(raw))
                 if (not symbol or side != "Flat" or not quantity.is_finite()
                         or quantity != 0 or sync not in ("synced", "synchronized")):
-                    return False
+                    return None
             candidates = conn.execute(
                 "SELECT candidate_id, symbol, status, approved_at_ms "
                 "FROM robot_candidates WHERE trading_account_id='paper' "
@@ -775,7 +775,7 @@ def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool:
             if (not candidates or len(candidates) > len(IDLE_APPROVALS)
                     or any(row[2] != "APPROVED" or row[1] not in IDLE_APPROVALS
                            for row in candidates)):
-                return False
+                return None
             for table, condition in (
                 ("robot_trades", "exit_time_ms IS NULL"),
                 ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
@@ -788,10 +788,10 @@ def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool:
                     f"SELECT 1 FROM {table} WHERE trading_account_id='paper' "
                     f"AND ({condition}) LIMIT 1"
                 ).fetchone() is not None:
-                    return False
+                    return None
             prove_six_inert_approvals(conn, candidates, positions)
     except (FlatRecoveryBlocked, sqlite3.Error, ValueError, TypeError, ArithmeticError):
-        return False
+        return None
 
     # One canonical operation. Its existing synchronous bridge terminalizes
     # proven never-traded Box owners in ROBOT_STOPPED; ambiguity fails closed.
@@ -977,21 +977,30 @@ def start_installed_paper_from_editor(
         if not _editor_runtime_ready(target, identity):
             return "BLOCKED: editor_only_runtime_not_proven"
         if not _paper_start_quiescent(root, env_file):
-            outcome = _editor_reconcile_once(target, identity, root=root, env_file=env_file)
-            if outcome is not None:
-                return outcome
-            # Re-prove the exact backend, frozen ingress and the entire PAPER
-            # ledger after the owner mutation, before starting any ingress.
-            if (_durable_editor_freeze(root, env_file) != identity
-                    or not _editor_runtime_ready(target, identity)):
-                return "BLOCKED: PAPER_editor_identity_changed_after_reconcile"
-            if not _paper_start_quiescent(root, env_file):
-                if not _editor_retire_inert_approvals(root, env_file):
-                    return "BLOCKED: PAPER_stale_owners_after_reconcile; START_not_attempted"
+            # Resume the *observed* phase. A prior successful reconcile may
+            # have left PAUSED with inert APPROVED rows; it cannot be replayed.
+            retired = _editor_retire_inert_approvals(root, env_file)
+            if retired is False:
+                return "BLOCKED: PAPER_Robot_STOP_outcome_unknown_or_unproven; no_replay"
+            if retired is None:
+                outcome = _editor_reconcile_once(
+                    target, identity, root=root, env_file=env_file,
+                )
+                if outcome is not None:
+                    return outcome
                 if (_durable_editor_freeze(root, env_file) != identity
-                        or not _editor_runtime_ready(target, identity)
-                        or not _paper_start_quiescent(root, env_file)):
-                    return "BLOCKED: PAPER_post_stop_reproof_failed; START_not_attempted"
+                        or not _editor_runtime_ready(target, identity)):
+                    return "BLOCKED: PAPER_editor_identity_changed_after_reconcile"
+                if not _paper_start_quiescent(root, env_file):
+                    retired = _editor_retire_inert_approvals(root, env_file)
+                    if retired is not True:
+                        return "BLOCKED: PAPER_stale_owners_after_reconcile; START_not_attempted"
+            # Re-prove frozen ingress and complete ownership after the
+            # actual canonical STOP, before starting the PAPER core.
+            if (_durable_editor_freeze(root, env_file) != identity
+                    or not _editor_runtime_ready(target, identity)
+                    or not _paper_start_quiescent(root, env_file)):
+                return "BLOCKED: PAPER_post_transition_reproof_failed; START_not_attempted"
     except (ReleaseIdentityBlocked, OSError, ValueError, sqlite3.Error):
         return "BLOCKED: editor_only_release_or_freeze_unproven"
     try:
