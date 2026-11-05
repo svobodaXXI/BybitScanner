@@ -3058,11 +3058,22 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/scanner/status":
             try:
-                result = self.server.runtime.call(lambda runtime: runtime.scanner_status())
+                def scanner_snapshot(runtime):
+                    state = runtime.scanner_status()
+                    observer = getattr(runtime, "scanner_worker_quiescent", None)
+                    settled = observer() if callable(observer) else None
+                    return state, settled
+
+                result, settled = self.server.runtime.call(scanner_snapshot)
             except Exception:
                 self._json_response(503, {"ok": False, "error": "scanner_control_unavailable"})
                 return
-            self._json_response(200, {"ok": True, **to_primitive(result)})
+            snapshot = {"ok": True, **to_primitive(result)}
+            # Legacy/test runtimes without this observation retain their
+            # existing response shape. Modern runtimes expose a real bool.
+            if type(settled) is bool:
+                snapshot["worker_quiescent"] = settled
+            self._json_response(200, snapshot)
             return
 
         if parsed.path == "/api/scanner/progress":
