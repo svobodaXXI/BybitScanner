@@ -16,6 +16,8 @@ Data Layer BybitScanner.
 - Telegram.
 """
 
+import sys
+
 from pybit.unified_trading import HTTP
 import pandas as pd
 
@@ -30,12 +32,24 @@ session = HTTP(
     testnet=False
 )
 
-# Route both requests and DNS resolution through the local Happ SOCKS5 proxy.
+WINDOWS_BYBIT_PROXY = "socks5h://127.0.0.1:10808"
+
+
+def default_bybit_proxies(platform: str) -> dict[str, str]:
+    """Proxies for the Bybit session by platform.
+
+    The Windows workstation reaches Bybit only through the local Happ SOCKS5
+    proxy (requests and DNS). A Linux server (the VPS PAPER contour) connects
+    directly: there is no such proxy on it, and a dead 127.0.0.1:10808 made the
+    Scanner exit on its first market-data request.
+    """
+    if platform == "win32":
+        return {"http": WINDOWS_BYBIT_PROXY, "https": WINDOWS_BYBIT_PROXY}
+    return {}
+
+
 session.client.trust_env = False
-session.client.proxies.update({
-    "http": "socks5h://127.0.0.1:10808",
-    "https": "socks5h://127.0.0.1:10808",
-})
+session.client.proxies.update(default_bybit_proxies(sys.platform))
 
 
 # ==================================================
@@ -134,7 +148,9 @@ def get_symbols():
 def get_candles(
     symbol,
     interval,
-    limit
+    limit,
+    *,
+    end_ms=None,
 ):
     """
     Загружает свечи Bybit
@@ -143,12 +159,12 @@ def get_candles(
 
     try:
 
-        data = session.get_kline(
-            category=BYBIT_CATEGORY,
-            symbol=symbol,
-            interval=interval,
-            limit=limit
-        )
+        params = dict(category=BYBIT_CATEGORY, symbol=symbol,
+                      interval=interval, limit=limit)
+        if end_ms is not None:
+            # Historical preview; do not request candles later than signal time.
+            params['end'] = int(end_ms)
+        data = session.get_kline(**params)
 
         rows = (
             data

@@ -38,10 +38,12 @@ const fmtDuration = (seconds: number) =>
 
 export function DrawingOverlay({
   drawings,
+  referenceDrawings = [],
   selectedId,
   tool,
   magnet,
   candles,
+  candleAligned = false,
   coordinates,
   onCommit,
   onSelect,
@@ -50,10 +52,14 @@ export function DrawingOverlay({
   priceFormatter = (price) => price.toFixed(4),
 }: {
   drawings: DrawingObject[];
+  /** Immutable Scanner geometry: displayed but never included in hit testing or commits. */
+  referenceDrawings?: readonly DrawingObject[];
   selectedId: string | null;
   tool: DrawingTool;
   magnet: boolean;
   candles: readonly Candle[];
+  /** Review-only: submitted pivot times must refer to exact frozen candles. */
+  candleAligned?: boolean;
   coordinates: DrawingCoordinates;
   onCommit: (drawings: DrawingObject[]) => void;
   onSelect: (id: string | null) => void;
@@ -87,7 +93,13 @@ export function DrawingOverlay({
       const logical = coordinates.xToLogical(event.clientX - rect.left),
         price = coordinates.yToPrice(event.clientY - rect.top);
       if (logical === null || price === null) return null;
-      const a = { logical, price };
+      // The chart library reports fractional logical coordinates. For an
+      // owner review, snap only the time to a real frozen candle; keep price
+      // freely editable unless the existing OHLC magnet catches a nearby bar.
+      // Never clamp a drag beyond the frozen window to its first/last bar.
+      if (candleAligned && (logical < 0 || logical > candles.length - 1))
+        return null;
+      const a = { logical: candleAligned ? Math.round(logical) : logical, price };
       return magnet
         ? nearestOhlcAnchor(
             a,
@@ -97,7 +109,7 @@ export function DrawingOverlay({
           )
         : a;
     },
-    [candles, coordinates, magnet],
+    [candles, coordinates, magnet, candleAligned],
   );
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -116,6 +128,7 @@ export function DrawingOverlay({
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
     for (const drawing of [
+      ...referenceDrawings,
       ...drawings,
       ...(draftRef.current && !drawings.some((item) => item.id === draftRef.current?.id)
         ? [draftRef.current]
@@ -126,6 +139,8 @@ export function DrawingOverlay({
         .map(pointOf)
         .filter((p): p is Point => p !== null);
       if (!points.length) continue;
+      const isReference = referenceDrawings.includes(drawing);
+      if (isReference) ctx.setLineDash([6, 4]);
       ctx.strokeStyle = drawing.style.color;
       ctx.fillStyle = drawing.style.color;
       ctx.lineWidth = drawing.style.lineWidth;
@@ -192,7 +207,8 @@ export function DrawingOverlay({
           b.y - 8,
         );
       }
-      if (drawing.id === selectedId) {
+      if (isReference) ctx.setLineDash([]);
+      if (!isReference && drawing.id === selectedId) {
         for (const p of points) {
           ctx.beginPath();
           ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
@@ -216,7 +232,7 @@ export function DrawingOverlay({
       ctx.stroke();
       ctx.restore();
     }
-  }, [drawings, pointOf, selectedId, coordinates, priceFormatter]);
+  }, [drawings, referenceDrawings, pointOf, selectedId, coordinates, priceFormatter]);
   useEffect(() => {
     redraw();
     const id = requestAnimationFrame(redraw);
@@ -289,6 +305,10 @@ export function DrawingOverlay({
       if (pts.length === 1) {
         if (
           (d.type === "horizontal" &&
+            Math.abs(point.y - pts[0].y) < HIT_RADIUS) ||
+          (d.type === "horizontal-ray" &&
+            point.x >= pts[0].x - HIT_RADIUS &&
+            point.x <= bounds.width + HIT_RADIUS &&
             Math.abs(point.y - pts[0].y) < HIT_RADIUS) ||
           (d.type === "vertical" && Math.abs(point.x - pts[0].x) < HIT_RADIUS)
         )

@@ -22,11 +22,16 @@ from terminal.api.models import (
     PaperStopMutationRequest,
 )
 
-MAX_STOP_DISTANCE = Decimal("0.02")
+# Maximum STOP distance from actual entry for every non-Box Robot pattern
+# (Wedge and L-shape, LONG and SHORT; RM-STRUCT-2, owner 2026-10-17). A
+# structural STOP that is invalid or beyond it is replaced by the fallback at
+# exactly this distance; the entry is not rejected. Ikigai Box has its own policy.
+MAX_STOP_DISTANCE = Decimal("0.015")
 TAKE_REALIZATION = Decimal("0.90")
 PROTECTION_DEADLINE_MS = 5_000
 # Minimum planned take/stop ratio for a new entry (retest LIMIT and late Market entry).
-MIN_ENTRY_RR = Decimal("1.5")
+MIN_ENTRY_RR = Decimal("1.5")  # Legacy non-Wedge default.
+WEDGE_MIN_ENTRY_RR = Decimal("2")  # Owner #419 hard Wedge entry floor
 MIN_ENTRY_RR_ENV = "ROBOT_MIN_ENTRY_RR"
 MIN_ENTRY_RR_BOUNDS = (Decimal("0"), Decimal("10"))
 
@@ -58,6 +63,14 @@ def min_entry_rr() -> Decimal:
         return MIN_ENTRY_RR
     low, high = MIN_ENTRY_RR_BOUNDS
     return value if value.is_finite() and low <= value <= high else MIN_ENTRY_RR
+
+
+def wedge_min_entry_rr() -> Decimal:
+    """Keep the 2R Wedge owner floor even if the optional env value is lower.
+
+    A stricter valid operator setting still applies. L-shape/Box unchanged.
+    """
+    return max(WEDGE_MIN_ENTRY_RR, min_entry_rr())
 
 
 class ProtectionSubmitter(Protocol):
@@ -119,6 +132,38 @@ def _action_id(candidate_id: str, leg: str, price: Decimal | None = None) -> Cli
     return ClientActionId(f"robot-{leg}-{digest}")
 
 
+def stop_within_limit(direction: str, *, entry_price: Decimal, stop_price: Decimal) -> bool:
+    """True when STOP is on the protective side of entry and within MAX_STOP_DISTANCE."""
+
+    entry = _decimal(entry_price, "entry_price")
+    stop = _decimal(stop_price, "stop_price")
+    normalized_direction = str(direction).strip().upper()
+    if normalized_direction == DIRECTION_LONG:
+        return stop < entry and (entry - stop) / entry <= MAX_STOP_DISTANCE
+    if normalized_direction == DIRECTION_SHORT:
+        return stop > entry and (stop - entry) / entry <= MAX_STOP_DISTANCE
+    raise RobotProtectionError("unsupported Robot direction")
+
+
+def limited_stop(direction: str, *, entry_price: Decimal, preferred_stop: Decimal) -> Decimal:
+    """Preferred STOP when within MAX_STOP_DISTANCE on the protective side,
+    else the fallback exactly MAX_STOP_DISTANCE from entry (LONG below, SHORT above)."""
+
+    entry = _decimal(entry_price, "entry_price")
+    normalized_direction = str(direction).strip().upper()
+    if normalized_direction == DIRECTION_LONG:
+        fallback = entry * (Decimal("1") - MAX_STOP_DISTANCE)
+    elif normalized_direction == DIRECTION_SHORT:
+        fallback = entry * (Decimal("1") + MAX_STOP_DISTANCE)
+    else:
+        raise RobotProtectionError("unsupported Robot direction")
+    if preferred_stop <= 0:
+        return fallback
+    if stop_within_limit(normalized_direction, entry_price=entry, stop_price=preferred_stop):
+        return preferred_stop
+    return fallback
+
+
 def structural_stop(
     direction: str,
     *,
@@ -126,11 +171,13 @@ def structural_stop(
     structural_extreme: Decimal,
     tick_size: Decimal,
 ) -> Decimal:
-    """Return structural STOP with a hard 2% distance fallback.
+    """Return structural STOP with the 1.5% distance fallback.
 
     LONG structural stop is one tick below the relevant low. SHORT is one tick
-    above the relevant high. If that stop is farther than 2% from authoritative
-    average entry, use exactly the 2% fallback instead.
+    above the relevant high. If that stop is farther than MAX_STOP_DISTANCE
+    (1.5%) from the entry, use exactly the 1.5% fallback instead; the entry is
+    not rejected for distance alone. The same function serves planned entries
+    (RR gates) and filled positions.
 
     A filled Robot position must never end up with no STOP at all. The
     structural candidate is derived from the frozen signal geometry, but
@@ -139,7 +186,7 @@ def structural_stop(
     leave the structural extreme on the wrong side of, or equal to, the
     actual entry. Rather than fail closed and leave a filled position with no
     protection at all (CR-PAPER-PROTECTION-LIFECYCLE-001 post-BATUSDT-defect
-    fix), an invalid structural candidate falls back to the same 2% distance
+    fix), an invalid structural candidate falls back to the same fallback distance
     already used for a too-far structural stop, always on the safe side of
     entry.
     """
@@ -150,17 +197,11 @@ def structural_stop(
     normalized_direction = str(direction).strip().upper()
     if normalized_direction == DIRECTION_LONG:
         candidate = extreme - tick
-        if candidate <= 0 or candidate >= entry:
-            return entry * (Decimal("1") - MAX_STOP_DISTANCE)
-        distance = (entry - candidate) / entry
-        return entry * (Decimal("1") - MAX_STOP_DISTANCE) if distance > MAX_STOP_DISTANCE else candidate
-    if normalized_direction == DIRECTION_SHORT:
+    elif normalized_direction == DIRECTION_SHORT:
         candidate = extreme + tick
-        if candidate <= entry:
-            return entry * (Decimal("1") + MAX_STOP_DISTANCE)
-        distance = (candidate - entry) / entry
-        return entry * (Decimal("1") + MAX_STOP_DISTANCE) if distance > MAX_STOP_DISTANCE else candidate
-    raise RobotProtectionError("unsupported Robot direction")
+    else:
+        raise RobotProtectionError("unsupported Robot direction")
+    return limited_stop(normalized_direction, entry_price=entry, preferred_stop=candidate)
 
 
 def tighten_stop(direction: str, *, existing_stop: Decimal | None, proposed_stop: Decimal) -> Decimal:
@@ -249,6 +290,38 @@ def build_protection_plan(
         stop_request=PaperStopMutationRequest(_action_id(candidate_id, "stop", stop), symbol, stop),
         take_request=PaperStopMutationRequest(_action_id(candidate_id, "take", take), symbol, take),
     )
+
+
+def post_fill_net_rr(
+    direction: str, *, average_entry: Decimal, quantity: Decimal,
+    entry_fee: Decimal, stop_price: Decimal, take_price: Decimal,
+    exit_fee_rate: Decimal = Decimal("0.0006"),
+) -> Decimal:
+    """Fee-aware RR on durable entry fills and final executable protection.
+
+    Conservative PAPER exit fees use the taker rate; negative/unknown entry
+    costs and invalid geometry fail closed rather than admitting a trade.
+    """
+    entry = _decimal(average_entry, "actual average entry")
+    size = _decimal(quantity, "actual filled quantity")
+    stop = _decimal(stop_price, "final STOP")
+    take = _decimal(take_price, "final TAKE")
+    if not entry_fee.is_finite() or entry_fee < 0:
+        raise RobotProtectionError("actual entry fee is invalid")
+    if not exit_fee_rate.is_finite() or not Decimal(0) <= exit_fee_rate < 1:
+        raise RobotProtectionError("PAPER exit fee rate is invalid")
+    if direction == DIRECTION_LONG and not (stop < entry < take):
+        raise RobotProtectionError("actual LONG protection geometry is invalid")
+    if direction == DIRECTION_SHORT and not (take < entry < stop):
+        raise RobotProtectionError("actual SHORT protection geometry is invalid")
+    if direction not in (DIRECTION_LONG, DIRECTION_SHORT):
+        raise RobotProtectionError("actual entry direction is invalid")
+    sign = Decimal(1 if direction == DIRECTION_LONG else -1)
+    reward = sign * (take - entry) * size - entry_fee - take * size * exit_fee_rate
+    risk = sign * (entry - stop) * size + entry_fee + stop * size * exit_fee_rate
+    if risk <= 0:
+        raise RobotProtectionError("actual STOP carries no positive risk")
+    return reward / risk
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,6 +435,14 @@ def box_stop_for_actual_entry(
             raise RobotProtectionError("SHORT Box STOP/P4/entry geometry is invalid")
         if existing_stop is not None and current > frozen_stop:
             raise RobotProtectionError("existing SHORT Box STOP widens frozen risk")
+
+    # Price of an armed Box STOP is frozen for the whole attempt. Top-ups
+    # change quantity/VWAP, never STOP price (AAVE incident). Actual-fill
+    # net RR remains recorded separately and may be below the full-grid RR.
+    if existing_stop is not None:
+        if current % tick != 0:
+            raise RobotProtectionError("existing Box STOP is not tick-aligned")
+        return current
 
     reward = sign * (take - entry) - entry * entry_fee - take * target_fee
     if reward <= 0:
@@ -549,6 +630,12 @@ def build_box_stop_only_plan(
                 "frozen Box STOP is not tick-aligned strictly beyond P4"
             ) from shortfall
         basis = "FROZEN_FIRST_FILL"
+    # Preserving an armed STOP can leave a partial/top-up position below net
+    # 2:1. Record the truthful basis; do not represent it as RR-compliant.
+    if (existing_stop is not None and box_actual_fill_net_rr(
+        snapshot, average_entry=entry, stop=stop,
+    ) < Decimal("2")):
+        basis = "FROZEN_FIRST_FILL"
     take = _decimal(snapshot["plan"].get("take_price"), "frozen Box TAKE")
     if direction == DIRECTION_LONG and not (stop < entry < take):
         raise RobotProtectionError("LONG Box protection geometry is invalid")
@@ -587,8 +674,12 @@ def build_l_shape_protection_plan(
     state: Mapping[str, Any],
     *,
     average_entry: Decimal,
+    tick_size: Decimal | None = None,
 ) -> ProtectionPlan:
-    """Build shared protection requests from immutable L-shape STOP/target terms."""
+    """Build shared protection requests from immutable L-shape STOP/target terms.
+
+    ``tick_size`` is required for a standalone MIRROR entry (one-tick STOP buffer).
+    """
     if candidate.get("status") != "APPROVED":
         raise RobotProtectionError("candidate must be APPROVED")
     snapshot = candidate.get("signal_snapshot")
@@ -608,7 +699,12 @@ def build_l_shape_protection_plan(
         raise RobotProtectionError("L-shape direction conflicts with frozen terms")
 
     entry = _decimal(average_entry, "average_entry")
-    stop = terms.stop
+    # Frozen L-shape STOP within 1.5% of the actual entry, else the 1.5% fallback.
+    try:
+        preferred = robot_l_shape.preferred_stop(snapshot, terms, tick_size=tick_size)
+    except robot_l_shape.RobotLShapeError as exc:
+        raise RobotProtectionError(str(exc)) from exc
+    stop = limited_stop(direction, entry_price=entry, preferred_stop=preferred)
     take = terms.target
     if direction == DIRECTION_LONG and not (stop < entry < take):
         raise RobotProtectionError("LONG L-shape protection geometry is invalid")

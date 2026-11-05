@@ -1,0 +1,362 @@
+"""Exceptional PAPER FLAT-only backend lifecycle handoff.
+
+No trading or SQL mutation. Unlike canonical STOP this may interrupt the old
+backend while its reconciliation is stuck; it is NOT an ordinary operator stop.
+Requires explicit operator --execute and exact expected PID, process identity,
+immutable process start token and fresh FLAT proof under a writer barrier.
+The incident-scoped legacy-unversioned case never claims to prove Git SHA.
+
+Does not deploy or restart anything. Never escalates to SIGKILL or retries an
+ambiguous interruption. Production use additionally requires owner approval.
+"""
+from __future__ import annotations
+
+from contextlib import contextmanager
+import argparse
+import os
+from pathlib import Path
+import signal
+import sqlite3
+import subprocess
+import time
+
+from tools.flat_paper_recovery_gate import FlatRecoveryBlocked, prove_flat_recovery
+from tools.jasmy_flat_handoff_proof import (
+    OLD_SHA as JASMY_OLD_SHA, PROOF_LABEL as JASMY_PROOF_LABEL,
+    prove_jasmy_legacy_flat,
+)
+from tools.runtime_intent import expected_database_identity, http_get
+from tools.paper_two_orphan_proof import (
+    PROOF_LABEL as TWO_ORPHAN_PROOF_LABEL, prove_two_flat_orphans,
+)
+from tools.stop_robot_runtime import _database_path, _environment
+
+UNIT = "bybitscanner-paper-backend.service"
+# One-off identity for the original unversioned, still-running PAPER process.
+# These are constraints, NOT proof of any Git commit or an authorization to signal.
+LEGACY_UNVERSIONED_PID = 500879
+LEGACY_UNVERSIONED_START = "52729568"
+LEGACY_UNVERSIONED_INSTANCE = "367ef560-cd92-4dc2-8029-0b56a3540428"
+LEGACY_UNVERSIONED_EXPECTED_MARKER = "d345411c95a079a2c8ac3cd02d9f875700ba8ca3"
+
+ROOT = Path("/opt/BybitScanner")
+PAPER_HTTP = "http://127.0.0.1:8765"
+ROUTES = {
+    "backend": "/api/health",
+    "scanner": "/api/scanner/status",
+    "autopilot": "/api/robot/autopilot",
+    "protection": "/api/robot/protection-health",
+}
+
+
+def _assert(value: bool, reason: str) -> None:
+    if not value:
+        raise FlatRecoveryBlocked(reason)
+
+
+def get_snapshots():
+    result = {}
+    for name, route in ROUTES.items():
+        response = http_get(PAPER_HTTP + route, 5)
+        _assert(response.status == 200, name + "_api_unavailable")
+        body = response.json()
+        _assert(isinstance(body, dict), name + "_api_invalid")
+        result[name] = body
+    return result
+
+
+def _service_pid() -> int:
+    def show(property_name: str) -> str:
+        r = subprocess.run(
+            ["systemctl", "show", "--property", property_name, "--value", UNIT],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+        _assert(r.returncode == 0, "systemd_identity_unavailable")
+        return r.stdout.strip()
+
+    _assert(show("ActiveState") == "active", "backend_unit_not_active")
+    _assert(show("Restart") == "no", "automatic_backend_restart_not_disabled")
+    pid = show("MainPID")
+    _assert(pid.isdecimal() and int(pid) > 1, "backend_main_pid_unproven")
+    return int(pid)
+
+
+def _process_start_token(pid: int) -> str:
+    try:
+        # proc stat field 22 is starttime; comm may contain whitespace or ')'.
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        start = stat.rsplit(")", 1)[1].strip().split()[19]
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+        cgroup = Path(f"/proc/{pid}/cgroup").read_text()
+    except (OSError, IndexError, ValueError) as exc:
+        raise FlatRecoveryBlocked("backend_process_provenance_missing") from exc
+    _assert(
+        b"-m" in cmdline and b"terminal.runtime.paper_http_server" in cmdline
+        and "bybitscanner-paper-backend.service" in cgroup,
+        "backend_process_command_or_unit_unproven",
+    )
+    _assert(start.isdecimal() and int(start) > 0, "backend_process_start_unproven")
+    return start
+
+
+def _send_exact_sigint(pid: int, start_token: str) -> None:
+    """Pin the Linux task before signaling; PID reuse must never retarget SIGINT."""
+    try:
+        fd = os.pidfd_open(pid, 0)
+    except (OSError, AttributeError) as exc:
+        raise FlatRecoveryBlocked("linux_pidfd_unavailable") from exc
+    try:
+        _assert(
+            _service_pid() == pid and _process_start_token(pid) == start_token,
+            "backend_process_changed_before_signal",
+        )
+        signal.pidfd_send_signal(fd, signal.SIGINT, None, 0)
+    finally:
+        os.close(fd)
+
+
+
+def _has_exact_local_listener(pid: int) -> bool:
+    """Prove the systemd MainPID itself owns the 127.0.0.1:8765 LISTEN fd."""
+    try:
+        listening = set()
+        for row in Path("/proc/net/tcp").read_text().splitlines()[1:]:
+            fields = row.split()
+            if fields[1].upper() == "0100007F:223D" and fields[3] == "0A":
+                listening.add(fields[9])
+        if len(listening) != 1:
+            return False
+        fds = Path(f"/proc/{pid}/fd")
+        return any(
+            fd.is_symlink() and os.readlink(fd) == f"socket:[{next(iter(listening))}]"
+            for fd in fds.iterdir()
+        )
+    except (OSError, IndexError, ValueError):
+        return False
+
+
+def _attest_legacy_unversioned(
+    pid: int, start_token: str, backend: dict,
+) -> None:
+    """Authorize only the *exact* legacy process identity, not its unproven SHA."""
+    _assert(
+        pid == LEGACY_UNVERSIONED_PID
+        and start_token == LEGACY_UNVERSIONED_START
+        and backend.get("process_instance_id") == LEGACY_UNVERSIONED_INSTANCE
+        and backend.get("build_sha") == "",
+        "legacy_unversioned_identity_mismatch",
+    )
+    try:
+        environment = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+    except OSError as exc:
+        raise FlatRecoveryBlocked("legacy_process_environment_unreadable") from exc
+    _assert(
+        not any(item.startswith(b"BYBITSCANNER_BUILD_SHA=") for item in environment),
+        "legacy_build_environment_changed",
+    )
+    _assert(_has_exact_local_listener(pid), "backend_listener_owner_unproven")
+
+
+@contextmanager
+def _frozen_snapshot(path: Path):
+    _assert(path.is_file(), "paper_database_missing")
+    conn = None
+    try:
+        # BEGIN IMMEDIATE reserves the writer slot; no SQL is edited. The
+        # reservation spans final durable proof and the one lifecycle signal.
+        conn = sqlite3.connect(path.resolve().as_uri() + "?mode=rw", uri=True, timeout=5)
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("PRAGMA query_only=ON")
+        yield conn
+    except sqlite3.Error as exc:
+        raise FlatRecoveryBlocked("paper_writer_barrier_unavailable") from exc
+    finally:
+        if conn is not None:
+            conn.rollback()
+            conn.close()
+
+
+def execute_flat_handoff(
+    *, db_path: Path, expected_identity: str, expected_pid: int,
+    expected_build_sha: str, execute: bool, snapshots=None,
+    legacy_unversioned: bool = False, legacy_attestor=_attest_legacy_unversioned,
+    jasmy_incident_20261102: bool = False,
+    dual_orphan_incident_20261103: bool = False,
+    service_pid=_service_pid, start_token=_process_start_token,
+    send_interrupt=None, is_alive=None, writer_guard=_frozen_snapshot,
+    listener_owner=_has_exact_local_listener,
+    monotonic=time.monotonic, sleep=time.sleep,
+) -> str:
+    """One-shot SIGINT, not a systemd override and never a SIGKILL fallback."""
+    _assert(expected_pid > 1, "expected_pid_invalid")
+    if jasmy_incident_20261102 or dual_orphan_incident_20261103:
+        _assert(not (jasmy_incident_20261102 and dual_orphan_incident_20261103),
+                "mutually_exclusive_flat_incident_proofs")
+        _assert(not legacy_unversioned and expected_build_sha == JASMY_OLD_SHA,
+                "incident_old_sha_mismatch")
+    if dual_orphan_incident_20261103:
+        _assert(expected_database_identity(ROOT, {"BYBITSCANNER_PAPER_DB": str(db_path)})
+                == expected_identity, "dual_orphan_database_identity_mismatch")
+    _assert(len(expected_build_sha) == 40 and
+            all(c in "0123456789abcdef" for c in expected_build_sha),
+            "expected_build_sha_invalid")
+    snapshots_from_live = snapshots is None
+    snapshots = snapshots if snapshots is not None else get_snapshots()
+    _assert(snapshots["backend"].get("process_instance_id"),
+            "backend_process_instance_unproven")
+    _assert(service_pid() == expected_pid, "systemd_main_pid_changed")
+    token = start_token(expected_pid)
+    _assert(bool(token), "backend_start_token_missing")
+    if legacy_unversioned:
+        _assert(expected_build_sha == LEGACY_UNVERSIONED_EXPECTED_MARKER,
+                "legacy_expected_release_marker_mismatch")
+        legacy_attestor(expected_pid, token, snapshots["backend"])
+    else:
+        _assert(snapshots["backend"].get("build_sha") == expected_build_sha,
+                "installed_build_sha_changed")
+    # IMPORTANT: all HTTP reads precede BEGIN IMMEDIATE. The backend's HTTP
+    # handler can itself need the PAPER SQLite writer slot; an HTTP request
+    # while holding that slot deadlocks the owner and times out.
+    # The second snapshot refreshes all in-process protection immediately before
+    # the barrier, which then fixes the durable state until the one signal.
+    if snapshots_from_live:
+        fresh = get_snapshots()
+        _assert(
+            fresh["backend"].get("process_instance_id")
+            == snapshots["backend"].get("process_instance_id"),
+            "backend_instance_changed",
+        )
+        if legacy_unversioned:
+            legacy_attestor(expected_pid, token, fresh["backend"])
+        else:
+            _assert(
+                fresh["backend"].get("build_sha") == expected_build_sha,
+                "installed_build_sha_changed_during_proof",
+            )
+        snapshots = fresh
+    with writer_guard(db_path) as conn:
+        # Hold the writer reservation only for durable attestation and
+        # the single process signal; NEVER call the backend HTTP API here.
+        if jasmy_incident_20261102:
+            # This exceptional proof reuses SQLiteStore's named-column row
+            # parsers. The writer guard uses sqlite3.connect() directly,
+            # unlike SQLiteStore.open(), and defaults to tuple rows. This
+            # changes only the row representation, never the durable state.
+            # Do not apply it to the generic legacy proof: that older gate
+            # deliberately compares raw sqlite tuples.
+            conn.row_factory = sqlite3.Row
+            proof = prove_jasmy_legacy_flat(
+                conn, expected_identity=expected_identity, **snapshots,
+            )
+            _assert(proof == JASMY_PROOF_LABEL,
+                    "jasmy_flat_evidence_missing")
+        elif dual_orphan_incident_20261103:
+            # Bind the actual opened SQLite main database, not just a path
+            # resolved before the writer reservation (symlink/rename TOCTOU).
+            databases = conn.execute("PRAGMA database_list").fetchall()
+            main_paths = [str(row[2]) for row in databases if row[1] == "main"]
+            _assert(len(main_paths) == 1 and bool(main_paths[0]),
+                    "dual_orphan_open_database_unproven")
+            opened_db = Path(main_paths[0]).resolve()
+            _assert(
+                opened_db == db_path.resolve()
+                and expected_database_identity(
+                    ROOT, {"BYBITSCANNER_PAPER_DB": str(opened_db)},
+                ) == expected_identity,
+                "dual_orphan_open_database_identity_mismatch",
+            )
+            # This branch is separate from JASMY-only and cannot silently
+            # accept APPROVED candidates, a third owner or stale protection.
+            # The caller already holds BEGIN IMMEDIATE in writer_guard.
+            conn.row_factory = sqlite3.Row
+            proof = prove_two_flat_orphans(
+                conn, expected_identity=expected_identity,
+                **snapshots,
+            )
+            _assert(proof == TWO_ORPHAN_PROOF_LABEL,
+                    "dual_orphan_flat_evidence_missing")
+        else:
+            proof = prove_flat_recovery(
+                conn, expected_identity=expected_identity, **snapshots,
+            )
+            _assert(proof == "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY",
+                    "flat_recovery_evidence_missing")
+        _assert(service_pid() == expected_pid and start_token(expected_pid) == token,
+                "backend_process_changed_during_proof")
+        # A healthy HTTP response from a different owner must never authorize
+        # SIGINT to the systemd MainPID. Require the exact PAPER listener for
+        # every execution path, not just the incident-scoped JASMY exception.
+        # Preserve JASMY's stronger preflight requirement as well.
+        if execute or jasmy_incident_20261102 or dual_orphan_incident_20261103:
+            _assert(
+                listener_owner(expected_pid),
+                "jasmy_backend_listener_owner_unproven" if jasmy_incident_20261102
+                else "backend_listener_owner_unproven",
+            )
+        if not execute:
+            return "PRECHECK_ONLY: FLAT proven under writer barrier; no process action"
+        # SIGINT allows Python main() to unwind its finally: server, market
+        # data, protection manager and owner runtime. Never send twice.
+        if send_interrupt is None:
+            _send_exact_sigint(expected_pid, token)
+        else:
+            send_interrupt(expected_pid, signal.SIGINT)
+    # Release SQLite's writer reservation immediately after the single SIGINT.
+    # Backend cleanup may need to write durable final state before the process
+    # disappears; polling while holding BEGIN IMMEDIATE can starve that exit.
+    probe = is_alive if is_alive is not None else (
+        lambda pid: Path(f"/proc/{pid}/stat").exists()
+    )
+    deadline = monotonic() + 15
+    while monotonic() < deadline:
+        # Do not call _service_pid after SIGINT: it requires ActiveState=active
+        # and raises backend_unit_not_active when the intended exit succeeds.
+        # Only disappearance of the exact previously attested /proc PID
+        # proves exit. A changed/failed unit alone cannot prove exit.
+        if not probe(expected_pid):
+            return "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
+        sleep(0.25)
+    return "OUTCOME_UNKNOWN: single SIGINT sent, do not retry or deploy"
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Exceptional FLAT-only PAPER backend handoff")
+    parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
+    parser.add_argument("--expected-pid", type=int, required=True)
+    parser.add_argument("--expected-build-sha", required=True)
+    parser.add_argument(
+        "--legacy-unversioned-20261031", action="store_true",
+        help="Only known PID/starttime/instance with unset build SHA; Git SHA NOT proven",
+    )
+    parser.add_argument(
+        "--jasmy-incident-20261102", action="store_true",
+        help="Only exact JASMY Flat/OPEN ledger on verified f100ef3 old release",
+    )
+    parser.add_argument(
+        "--dual-orphan-incident-20261103", action="store_true",
+        help="Only verified JASMY+FLOW Flat/OPEN ownership on exact f100ef3 backend",
+    )
+    parser.add_argument("--execute", action="store_true",
+                        help="One exceptional SIGINT; needs separate owner authorization")
+    args = parser.parse_args(argv)
+    env = _environment(args.env_file)
+    try:
+        result = execute_flat_handoff(
+            db_path=_database_path(ROOT, env),
+            expected_identity=expected_database_identity(ROOT, env),
+            expected_pid=args.expected_pid,
+            expected_build_sha=args.expected_build_sha,
+            execute=args.execute,
+            legacy_unversioned=args.legacy_unversioned_20261031,
+            jasmy_incident_20261102=args.jasmy_incident_20261102,
+            dual_orphan_incident_20261103=args.dual_orphan_incident_20261103,
+        )
+    except (FlatRecoveryBlocked, OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(f"BLOCKED: {exc}; no new signal is authorized")
+        return 2
+    print(result)
+    return 0 if result.startswith(("PRECHECK_ONLY:", "INTERRUPT_EXIT_OBSERVED:")) else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

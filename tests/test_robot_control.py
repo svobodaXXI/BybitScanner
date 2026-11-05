@@ -417,6 +417,22 @@ class RobotControlCommandTests(unittest.TestCase):
         self.assertEqual(state.mode, "ROBOT_RUNNING")
         self.assertEqual(state.recovery_status, "PAUSED")
 
+    def test_stop_robot_rejects_flat_orphan_trade_without_mutating_runtime(self):
+        # APPROVED is not OPEN candidate ownership, but the durable Robot
+        # trade remains OPEN; net Flat must not allow monolithic safe-stop.
+        for mode in ("READY", "PAUSED"):
+            with self.subTest(mode=mode):
+                self._set_state(mode="ROBOT_RUNNING", recovery_status=mode)
+                if mode == "READY":
+                    self._open_candidate(candidate_id="stale-flat-trade")
+                with self.assertRaisesRegex(RobotControlRejected, "OPEN Robot trades remain"):
+                    stop_robot(
+                        database_path=self.db_path, clock_ms=lambda: 2000,
+                        http_post=lambda url, payload: self.fail("must not reach backend"),
+                    )
+                state = self._read_state()
+                self.assertEqual((state.mode, state.recovery_status), ("ROBOT_RUNNING", mode))
+
     def test_stop_robot_rejected_from_reconciliation_required(self):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
         with self.assertRaises(RobotControlRejected):
@@ -451,6 +467,40 @@ class RobotControlCommandTests(unittest.TestCase):
         url, payload = calls[0]
         self.assertEqual(url, "http://127.0.0.1:8765/api/robot/close-all-now")
         self.assertIn("client_action_id", payload)
+
+    def test_close_all_explicit_id_is_stable_across_redelivery(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        sent = []
+        for timestamp in (2000, 9999):
+            close_all_now(
+                database_path=self.db_path, clock_ms=lambda: timestamp,
+                client_action_id="robot-close-all-cb-fixed",
+                http_post=lambda url, payload: sent.append((url, payload)) or {"ok": True},
+            )
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(sent[0], sent[1])
+        self.assertEqual(
+            sent[0][1]["client_action_id"],
+            "robot-close-all-cb-fixed",
+        )
+
+    def test_close_all_default_id_remains_time_derived(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        sent = []
+        close_all_now(
+            database_path=self.db_path, clock_ms=lambda: 2345,
+            http_post=lambda url, payload: sent.append(payload) or {"ok": True},
+        )
+        self.assertEqual(sent[0], {"client_action_id": "robot-close-all-2345"})
+
+    def test_close_all_explicit_action_id_must_be_valid(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        with self.assertRaisesRegex(ValueError, "client_action_id"):
+            close_all_now(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                client_action_id="bad" + chr(10) + "newline",
+                http_post=lambda url, payload: self.fail("must not reach backend"),
+            )
 
     def test_close_all_now_from_running_paused_posts_to_backend(self):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="PAUSED")

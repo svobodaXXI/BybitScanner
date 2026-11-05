@@ -50,6 +50,17 @@ def broadening_signal_text(symbol, timeframe, formation):
     )
 
 
+def broadening_caption(symbol, timeframe, formation):
+    """Ticker, timeframe, pattern, stage and anchor count. No direction."""
+    return "{} · {} · {} · {} · опорных точек: {}\nНаблюдение: без направления сделки и без торговли".format(
+        symbol,
+        format_timeframe_ru(timeframe),
+        PATTERN_NAME,
+        STAGE_LABELS.get(formation.stage, formation.stage),
+        len(formation.anchors),
+    )
+
+
 def _msk(ms):
     return (
         pd.to_datetime(int(ms), unit="ms", utc=True)

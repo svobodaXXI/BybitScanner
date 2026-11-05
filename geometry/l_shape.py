@@ -216,6 +216,11 @@ def iter_l_shapes(
 
 SIGNAL_MIN_POTENTIAL_PERCENT = 0.8
 SIGNAL_MIN_REWARD_RISK = 2.0
+# The Robot adds two entry ticks and exact PAPER fees. Exactly gross 2:1
+# can never pass its independently enforced NET 2:1 gate. Keep the frozen
+# structural STOP when already valid; narrow only the fallback risk so
+# qualifying setups have a realistic buffer, without relaxing Robot gates.
+FALLBACK_GROSS_REWARD_RISK = 3.0
 
 STOP_STRUCTURAL = "STRUCTURAL"
 STOP_RATIO_FALLBACK = "RATIO_FALLBACK"
@@ -255,8 +260,9 @@ def l_shape_signal_plan(formation):
     if 0 < structural_risk <= reward / 2:
         stop, stop_kind, risk = structural_stop, STOP_STRUCTURAL, structural_risk
     else:
-        # Default ratio-based STOP: half the target distance, adverse side.
-        risk = reward / 2
+        # Fallback has enough headroom for entry ticks + round-trip fees
+        # while the Robot still verifies instrument-specific NET RR >= 2.
+        risk = reward / FALLBACK_GROSS_REWARD_RISK
         stop, stop_kind = reference + adverse * risk, STOP_RATIO_FALLBACK
     reward_risk = reward / risk if risk > 0 else 0.0
     potential = abs(formation.potential_percent)

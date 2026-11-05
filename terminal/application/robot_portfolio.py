@@ -156,7 +156,28 @@ def collect_portfolio_facts(
         def canonical_owner(candidate_id):
             if candidate_id in ambiguous_handoffs:
                 raise Unavailable("order ownership is ambiguous")
-            return handoffs.get(candidate_id, candidate_id)
+            candidate_id = handoffs.get(candidate_id, candidate_id)
+            child = candidates.get(candidate_id)
+            state = (child.robot_state or {}) if child is not None else {}
+            parent_id = state.get("mirror_parent_candidate_id")
+            if not isinstance(parent_id, str) or not parent_id.strip():
+                return candidate_id
+            parent = candidates.get(parent_id)
+            if (
+                parent is None
+                or child is None
+                or child.signal_snapshot.get("pattern") != "IKIGAI_BOX"
+                or child.robot_state.get("source_box_candidate_id")
+                    != child.signal_snapshot.get("source_box_candidate_id")
+                or parent.status != "APPROVED"
+                or parent.symbol != child.symbol
+                or parent.snapshot_sha256 != state.get("mirror_parent_snapshot_sha256")
+                or str((parent.robot_state or {}).get("direction", "")).upper()
+                    != str(state.get("mirror_parent_direction", "")).upper()
+            ):
+                # An invalid/stale link never releases capital fail-open.
+                return candidate_id
+            return parent_id
 
         def reserve(key, symbol, ro=1):
             previous = reservations.get(key)
@@ -178,7 +199,7 @@ def collect_portfolio_facts(
 
         for c in candidates.values():
             if c.status in {"APPROVED", "OPEN"}:
-                reserve("robot:" + c.candidate_id, c.symbol.value)
+                reserve("robot:" + canonical_owner(c.candidate_id), c.symbol.value)
             execution = (c.robot_state or {}).get("execution") or {}
             ids = list(execution.get("limit_order_ids") or []) + list(execution.get("market_order_ids") or [])
             if execution.get("limit_order_id"):
@@ -197,7 +218,7 @@ def collect_portfolio_facts(
         for trade in trades:
             if trade.candidate_id not in candidates:
                 raise Unavailable("trade has no candidate")
-            reserve("robot:" + trade.candidate_id, trade.symbol.value)
+            reserve("robot:" + canonical_owner(trade.candidate_id), trade.symbol.value)
 
         def identity(order_id):
             return "robot:" + owners[order_id] if order_id in owners else "manual-order:" + order_id
@@ -309,7 +330,7 @@ def collect_portfolio_facts(
                 raise Unavailable("SHADOW selection has ambiguous real handoff")
             if linked:
                 c = linked[0]
-                key = "robot:" + c.candidate_id
+                key = "robot:" + canonical_owner(c.candidate_id)
                 if key in physical:
                     continue  # virtual selection became this same physical idea
                 if c.status in {"CLOSED", "EXPIRED", "INVALIDATED"}:

@@ -21,6 +21,7 @@ from notification import (
     send_photo,
     warn_owner_robot_candidate_failed,
 )
+from signal_archive import record_original_signal
 from signal_memory import load_memory, save_memory
 
 import config
@@ -146,6 +147,13 @@ def send_ikigai_box_observation(
     )
     message = ikigai_box_signal_text(symbol, timeframe, formation)
     delivered = True
+    archived_image = None
+    if robot_handle:
+        try:
+            with open(chart_path, "rb") as chart_file:
+                archived_image = chart_file.read()
+        except OSError:
+            archived_image = None
     for chat_id in recipients:
         is_owner = chat_id == owner_chat_id and bool(owner_chat_id)
         markup = build_tradingview_keyboard(
@@ -167,6 +175,12 @@ def send_ikigai_box_observation(
             )
             if not isinstance(response, dict) or not response.get("ok"):
                 delivered = False
+            elif is_owner and robot_handle and archived_image:
+                record_original_signal(
+                    robot_handle, symbol=symbol, timeframe=timeframe,
+                    pattern="Ikigai Box", text=message, image_bytes=archived_image,
+                    photo_response=response, text_response=text_response,
+                )
         except Exception as exc:
             print(f"[IKIGAI BOX TELEGRAM] {symbol}: {exc}")
             delivered = False

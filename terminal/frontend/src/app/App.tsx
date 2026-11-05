@@ -22,6 +22,11 @@ import {
   type WorkspaceSemanticFailure,
 } from "../marketData/workspaceSwitch";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
+import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
+import { projectSignalGeometry } from "../geometryFeedback/signalChartBridge";
+import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
+import type { Candle } from "../contracts/marketData";
+import type { DrawingObject } from "../chart/drawingModel";
 import {
   createLimitDraft,
   EMPTY_LIMIT_DRAFT_STATE,
@@ -91,7 +96,106 @@ const sameProtectionPrice = (left: string | null, right: string | null) => {
 };
 
 export function App() {
-  const [mode, setMode] = useState<WorkspaceMode>("TERMINAL");
+  const launchLink = useMemo(() => parseSignalWorkspaceLink(window.location.search), []);
+  const [mode, setMode] = useState<WorkspaceMode>(launchLink?.mode ?? "TERMINAL");
+  const [frozenSignal, setFrozenSignal] = useState<{
+    candles: Candle[];
+    referenceDrawings: DrawingObject[];
+    editableDrawings: DrawingObject[];
+    signalId: string;
+    snapshotRevision: string;
+    barsSha256: string;
+    savedReviewId: string | null;
+    savedReviewLabel: GeometryReviewDraft["label"] | null;
+    savedReviewNote: string | null;
+  } | null>(null);
+  const [frozenGeometryStatus, setFrozenGeometryStatus] = useState<"loading" | "unavailable" | "ready">("loading");
+  useEffect(() => {
+    const link = launchLink;
+    if (!link || link.mode !== "EDITOR" || !link.signalId) return;
+    const controller = new AbortController();
+    const load = async () => {
+      try {
+        const response = await fetch(
+          `/api/workspace/signal-geometry?signal_id=${encodeURIComponent(link.signalId!)}`,
+          { signal: controller.signal, credentials: "same-origin" },
+        );
+        if (!response.ok) throw new Error("Source snapshot not found");
+        const payload = await response.json();
+        const snapshot = payload.snapshot;
+        const expectedTimeframe = ({ "15s": "15s", "1m": "1", "5m": "5", "15m": "15", "1h": "60", "1d": "D" } as Record<string, string>)[link.timeframe];
+        if (!payload.ok || !snapshot || snapshot.signal_id !== link.signalId ||
+            snapshot.symbol !== link.symbol || String(snapshot.timeframe) !== expectedTimeframe)
+          throw new Error("Source identity mismatch");
+        if (!Array.isArray(snapshot.bars) || !Array.isArray(snapshot.boundaries))
+          throw new Error("Incomplete immutable geometry");
+        const candles: Candle[] = snapshot.bars.map((bar: {
+          open_time_ms: number; open: number; high: number; low: number; close: number;
+        }) => ({
+          time: new Date(bar.open_time_ms).toISOString(),
+          open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+        }));
+        const boundaries: TimestampDrawing[] = snapshot.boundaries.map((line: {
+          boundary_id: string; kind: "ray" | "segment" | "horizontal" | "horizontal-ray";
+          anchors: { bar_open_time_ms: number; price: number }[];
+        }) => ({ id: line.boundary_id, type: line.kind, anchors: line.anchors }));
+        const projected = projectSignalGeometry(boundaries, candles);
+        if (typeof payload.snapshot_revision !== "string" || !/^[0-9a-f]{64}$/i.test(payload.snapshot_revision)
+            || typeof payload.bars_sha256 !== "string" || !/^[0-9a-f]{64}$/i.test(payload.bars_sha256))
+          throw new Error("Frozen snapshot provenance is unavailable");
+        const savedReview = payload.latest_review as {
+          review_id?: string;
+          submission?: {
+            signal_id?: string; snapshot_revision?: string; bars_sha256?: string;
+            label?: GeometryReviewDraft["label"]; note?: string;
+            corrected_boundaries?: Array<{
+              boundary_id: string; kind: TimestampDrawing["type"]; anchors: TimestampDrawing["anchors"];
+            }>;
+          };
+        } | null;
+        const savedReviewLabel = savedReview?.submission?.label ?? null;
+        if (savedReview && (
+          typeof savedReview.review_id !== "string"
+          || !/^[0-9a-f]{64}$/i.test(savedReview.review_id)
+          || savedReview.submission?.signal_id !== link.signalId
+          || savedReview.submission?.snapshot_revision !== payload.snapshot_revision
+          || savedReview.submission?.bars_sha256 !== payload.bars_sha256
+          || !["CONFIRMED", "GEOMETRY_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"].includes(savedReviewLabel ?? "")
+          || typeof savedReview.submission?.note !== "string"
+          || savedReview.submission.note.length > 1024
+        )) throw new Error("Saved review does not match source signal");
+        let editableDrawings = projected.editableDrawings;
+        if (savedReviewLabel === "GEOMETRY_CORRECTED") {
+          if (!Array.isArray(savedReview?.submission?.corrected_boundaries))
+            throw new Error("Saved correction does not match source signal");
+          const reviewedLines: TimestampDrawing[] = savedReview.submission.corrected_boundaries.map((line) => ({
+            id: line.boundary_id, type: line.kind, anchors: line.anchors,
+          }));
+          const restored = projectSignalGeometry(reviewedLines, candles);
+          if (restored.referenceDrawings.length !== projected.referenceDrawings.length
+              || restored.referenceDrawings.some((line, i) =>
+                line.id !== projected.referenceDrawings[i].id || line.type !== projected.referenceDrawings[i].type))
+            throw new Error("Saved correction topology does not match source lines");
+          editableDrawings = restored.editableDrawings;
+        }
+        if (!controller.signal.aborted) {
+          setFrozenSignal({
+            candles, ...projected, editableDrawings, signalId: link.signalId!,
+            snapshotRevision: payload.snapshot_revision, barsSha256: payload.bars_sha256,
+            savedReviewId: typeof savedReview?.review_id === "string" ? savedReview.review_id : null,
+            savedReviewLabel,
+            savedReviewNote: savedReview?.submission?.note ?? null,
+          });
+          setFrozenGeometryStatus("ready");
+        }
+      } catch {
+        // No live-candle refit or symbol-only fallback for missing source lines.
+        if (!controller.signal.aborted) setFrozenGeometryStatus("unavailable");
+      }
+    };
+    void load();
+    return () => controller.abort();
+  }, [launchLink]);
   const [accountOpen, setAccountOpen] = useState(false);
   const [marketSidePanelOpen, setMarketSidePanelOpen] = useState(true);
   const [domCompression, setDomCompression] = useState(3);
@@ -100,7 +204,7 @@ export function App() {
     rowHeightPx: DOM_ROW_HEIGHT_REM * 16,
     viewportHeightPx: DOM_ROW_HEIGHT_REM * 16 * DOM_VISIBLE_ROWS,
   });
-  const [timeframe, setTimeframe] = useState<ChartTimeframe>("5m");
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>(launchLink?.timeframe ?? "5m");
   const [instruments, setInstruments] = useState<string[]>([]);
   const [workspaceSwitchError, setWorkspaceSwitchError] = useState<WorkspaceSemanticFailure | null>(null);
   const workspaceSwitchAttempt = useRef(0);
@@ -271,6 +375,13 @@ export function App() {
     setPositionAverageEntry(null);
     setMarketSymbol(result.symbol, result.generation);
   }, [tradingSymbol]);
+  const initialLinkConsumed = useRef(false);
+  useEffect(() => {
+    if (initialLinkConsumed.current || !launchLink) return;
+    initialLinkConsumed.current = true;
+    setMarketTimeframe(launchLink.timeframe);
+    void switchWorkspaceSymbol(launchLink.symbol);
+  }, [launchLink, switchWorkspaceSymbol]);
   useEffect(() => {
     const oneWvUsdt = accountProjection?.one_wv_usdt ?? currentPaperState?.one_wv_usdt ?? null;
     if (!accountProjection || !oneWvUsdt || !isValidSelectedVolume(oneWvUsdt)) return;
@@ -1143,7 +1254,7 @@ export function App() {
     (limitDraftState.draft ? [limitDraftState.draft] : []);
 
   return (
-    <main className="workspace-shell">
+    <main className={`workspace-shell${mode === "EDITOR" ? " workspace-editor" : ""}`}>
       {workspaceSwitchError && (
         <output
           aria-live="polite"
@@ -1160,22 +1271,65 @@ export function App() {
         </output>
       )}
       <TelegramMiniAppBridge />
+      {mode === "EDITOR" && launchLink?.mode === "EDITOR" && !launchLink.signalId && (
+        <output role="status" aria-live="polite">
+          Исходный сигнал не указан в ссылке. Показаны текущие свечи без сохранённых линий паттерна.
+        </output>
+      )}
       <section className="workspace-grid" aria-label="Trading workspace">
         <div
-          className={`workspace-market-row ${marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
+          className={`workspace-market-row ${mode !== "EDITOR" && marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
         >
+          {mode === "EDITOR" && launchLink?.signalId && !frozenSignal ? (
+            <div role="status" aria-live="polite">
+              {frozenGeometryStatus === "loading"
+                ? "Загрузка сохранённых линий исходного сигнала…"
+                : "Исходная геометрия недоступна. Текущие свечи не заменяют исходный сигнал."}
+            </div>
+          ) : (
           <ChartPanel
-          key={`${market.book.symbol}:${timeframe}`}
-          candles={market.candles}
-          tickSize={market.tickSize}
-          symbol={market.book.symbol}
-          timeframe={timeframe}
+          key={mode === "EDITOR" && frozenSignal ? `frozen:${frozenSignal.signalId}:${frozenSignal.savedReviewId ?? "initial"}` : `${market.book.symbol}:${timeframe}:${mode}`}
+          candles={mode === "EDITOR" && frozenSignal ? frozenSignal.candles : market.candles}
+          editorMode={mode === "EDITOR"}
+          referenceDrawings={mode === "EDITOR" ? frozenSignal?.referenceDrawings ?? [] : []}
+          editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
+          signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
+          snapshotRevision={mode === "EDITOR" ? frozenSignal?.snapshotRevision ?? null : null}
+          barsSha256={mode === "EDITOR" ? frozenSignal?.barsSha256 ?? null : null}
+          savedReviewId={mode === "EDITOR" ? frozenSignal?.savedReviewId ?? null : null}
+          savedReviewLabel={mode === "EDITOR" ? frozenSignal?.savedReviewLabel ?? null : null}
+          savedReviewNote={mode === "EDITOR" ? frozenSignal?.savedReviewNote ?? null : null}
+          onSaveGeometryReview={mode === "EDITOR" && frozenSignal ? async (
+            review: GeometryReviewDraft & { note: string; idempotency_key: string },
+          ) => {
+            if (review.signal_id !== frozenSignal.signalId
+                || review.snapshot_revision !== frozenSignal.snapshotRevision
+                || review.bars_sha256 !== frozenSignal.barsSha256)
+              throw new Error("Несовпадение исходного сигнала");
+            const response = await fetch("/api/workspace/geometry-feedback", {
+              method: "POST", credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(review),
+            });
+            const result = await response.json();
+            const record = result.review;
+            const stored = record?.submission;
+            if (!response.ok || result.ok !== true
+                || typeof record?.review_id !== "string"
+                || !/^[0-9a-f]{64}$/.test(record.review_id)
+                || !matchesStoredGeometryReview(review, stored))
+              throw new Error(result.error || "Сервер не подтвердил точное сохранение отзыва");
+            return { reviewId: record.review_id, label: review.label };
+          } : undefined}
+          tickSize={mode === "EDITOR" && frozenSignal ? null : market.tickSize}
+          symbol={mode === "EDITOR" && frozenSignal ? launchLink?.symbol ?? market.book.symbol : market.book.symbol}
+          timeframe={mode === "EDITOR" && frozenSignal ? launchLink?.timeframe ?? timeframe : timeframe}
           activeLimitOrders={
-            currentPaperState?.ok ? currentPaperState.active_limit_orders : []
+            mode !== "EDITOR" && currentPaperState?.ok ? currentPaperState.active_limit_orders : []
           }
-          pendingLimitDraft={limitDraftState.draft}
+          pendingLimitDraft={mode === "EDITOR" ? null : limitDraftState.draft}
           liveLimitDrafts={accountProjection?.provider === "BYBIT"}
-          pendingLimitDrafts={visibleLimitDrafts}
+          pendingLimitDrafts={mode === "EDITOR" ? [] : visibleLimitDrafts}
           pendingLimitVolumeValid={{
             Buy: sideDraftVolumesValid(visibleLimitDrafts, "Buy", selectedVolumes.Buy),
             Sell: sideDraftVolumesValid(visibleLimitDrafts, "Sell", selectedVolumes.Sell),
@@ -1193,12 +1347,12 @@ export function App() {
             dispatchLimitDraft({ type: "update-price", price, draftId })
           }
           onPendingLimitConfirm={submitLimitDraft}
-          fastLimitActive={fastLimitIntent !== null}
+          fastLimitActive={mode !== "EDITOR" && fastLimitIntent !== null}
           onFastLimitPriceSelect={createFastLimitDraft}
           onActiveLimitAmend={amendPaperLimit}
           onActiveLimitCancel={cancelPaperLimit}
-          authoritativeStopPrice={activeStopPrice}
-          stopDraft={stopDraft}
+          authoritativeStopPrice={mode === "EDITOR" ? null : activeStopPrice}
+          stopDraft={mode === "EDITOR" ? null : stopDraft}
           onStopDraftPriceChange={updateStopDraftPrice}
           onStopConfirm={() => {
             setProtectionSettings(null);
@@ -1210,8 +1364,8 @@ export function App() {
           }}
           onStopEdit={beginStopEdit}
           onStopDelete={() => deleteProtection("STOP")}
-          authoritativeTakePrice={activeTakePrice}
-          takeDraft={takeDraft}
+          authoritativeTakePrice={mode === "EDITOR" ? null : activeTakePrice}
+          takeDraft={mode === "EDITOR" ? null : takeDraft}
           onTakeDraftPriceChange={updateTakeDraftPrice}
           onTakeConfirm={() => {
             setProtectionSettings(null);
@@ -1223,7 +1377,7 @@ export function App() {
           }}
           onTakeEdit={beginTakeEdit}
           onTakeDelete={() => deleteProtection("TAKE")}
-          averageEntryPrice={protectionPositionSide !== "Flat" ? protectionAverageEntry : null}
+          averageEntryPrice={mode !== "EDITOR" && protectionPositionSide !== "Flat" ? protectionAverageEntry : null}
           workspaceControls={(
             <WorkspaceHeader
               instruments={instruments}
@@ -1234,46 +1388,51 @@ export function App() {
             />
           )}
           />
-          <button
-            aria-expanded={marketSidePanelOpen}
-            aria-label={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
-            className="market-side-panel-toggle"
-            onClick={() => setMarketSidePanelOpen((open) => !open)}
-            title={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
-            type="button"
-          >
-            {marketSidePanelOpen ? "›" : "‹"}
-          </button>
-          <aside
-            aria-hidden={!marketSidePanelOpen}
-            className={`market-sidecar workspace-side-panel${marketSidePanelOpen ? "" : " is-hidden"}`}
-            aria-label="Market depth and tape"
-          >
-              <TapePanel
-                book={market.book}
-                centerPrice={ladderCenterPrice}
-                trades={market.trades}
-                positionSide={positionSide}
-                averageEntryPrice={positionAverageEntry}
-                currentPrice={liveMidPrice}
-                compression={domCompression}
-                viewportGeometry={domViewportGeometry}
-              />
-              <DomPanel
-                book={market.book}
-                centerPrice={ladderCenterPrice}
-                onCenterPriceChange={setLadderCenterPrice}
-                ownOrders={domOwnOrders}
-                onOwnOrderCancel={(orderId) => {
-                  void cancelPaperLimit(orderId).catch(() => {});
-                }}
-                compression={domCompression}
-                onCompressionChange={setDomCompression}
-                fastLimitActive={fastLimitIntent !== null}
-                onFastLimitPriceSelect={submitDomLimit}
-                onViewportGeometryChange={setDomViewportGeometry}
-              />
-          </aside>
+          )}
+          {mode !== "EDITOR" && (
+            <>
+              <button
+                aria-expanded={marketSidePanelOpen}
+                aria-label={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
+                className="market-side-panel-toggle"
+                onClick={() => setMarketSidePanelOpen((open) => !open)}
+                title={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
+                type="button"
+              >
+                {marketSidePanelOpen ? "›" : "‹"}
+              </button>
+              <aside
+                aria-hidden={!marketSidePanelOpen}
+                className={`market-sidecar workspace-side-panel${marketSidePanelOpen ? "" : " is-hidden"}`}
+                aria-label="Market depth and tape"
+              >
+                  <TapePanel
+                    book={market.book}
+                    centerPrice={ladderCenterPrice}
+                    trades={market.trades}
+                    positionSide={positionSide}
+                    averageEntryPrice={positionAverageEntry}
+                    currentPrice={liveMidPrice}
+                    compression={domCompression}
+                    viewportGeometry={domViewportGeometry}
+                  />
+                  <DomPanel
+                    book={market.book}
+                    centerPrice={ladderCenterPrice}
+                    onCenterPriceChange={setLadderCenterPrice}
+                    ownOrders={domOwnOrders}
+                    onOwnOrderCancel={(orderId) => {
+                      void cancelPaperLimit(orderId).catch(() => {});
+                    }}
+                    compression={domCompression}
+                    onCompressionChange={setDomCompression}
+                    fastLimitActive={fastLimitIntent !== null}
+                    onFastLimitPriceSelect={submitDomLimit}
+                    onViewportGeometryChange={setDomViewportGeometry}
+                  />
+              </aside>
+            </>
+          )}
         </div>
         <ModePanel
           mode={mode}

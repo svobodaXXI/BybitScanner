@@ -1,4 +1,4 @@
-"""HORN-4/HORN-5: observation-only Broadening («Рупор») Scanner integration.
+"""HORN-4: observation-only Broadening («Рупор») Scanner integration.
 
 Detection on the closed prefix, chart rendering, Telegram delivery and
 deduplication, incremental evidence, visible progress, coexistence with Wedge
@@ -151,6 +151,7 @@ class DeliveryTest(unittest.TestCase):
                 patch.object(horn_scanner, "get_telegram_owner_chat_id", return_value="owner"), \
                 patch.object(horn_scanner, "load_memory", side_effect=lambda: self.memory), \
                 patch.object(horn_scanner, "save_memory", side_effect=lambda m: self.memory.update(m)), \
+                patch.object(horn_scanner, "archive_source_chart", return_value=("horn-frozen-100", True)) as archive, \
                 patch.object(horn_scanner, "send_message", side_effect=responder(texts, "text")), \
                 patch.object(horn_scanner, "send_photo", side_effect=responder(photos, "photo")):
             result = horn_scanner.send_broadening_observation(
@@ -184,13 +185,20 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(calls[1][2][0], observation["chart_path"])
         self.assertEqual(calls[1][3]["caption"], "")
         # Exactly the shared builder's keyboards: owner review set, friend TradingView only.
-        self.assertEqual(calls[1][3]["reply_markup"],
-                         notification.build_tradingview_keyboard("TESTUSDT", "5", include_review_actions=True))
+        owner_markup = notification.build_tradingview_keyboard(
+            "TESTUSDT", "5", include_review_actions=True)
+        owner_markup["inline_keyboard"].insert(0, [{
+            "text": "↩️ К сигналу",
+            "callback_data": "signal:source:horn-frozen-100",
+        }])
+        self.assertEqual(calls[1][3]["reply_markup"], owner_markup)
         self.assertEqual(calls[3][3]["reply_markup"],
                          notification.build_tradingview_keyboard("TESTUSDT", "5", include_review_actions=False))
         owner = {b["callback_data"] for b in self.buttons(calls[1]) if "callback_data" in b}
         self.assertLessEqual({f"review:{a}:TESTUSDT:5" for a in ("queue", "good", "geometry", "anchor")}, owner)
-        self.assertIn("url", self.buttons(calls[1])[0])
+        self.assertEqual(self.buttons(calls[1])[0]["callback_data"],
+                         "signal:source:horn-frozen-100")
+        self.assertTrue(any("url" in button for button in self.buttons(calls[1])))
         friend = self.buttons(calls[3])
         self.assertTrue(all("url" in b and "callback_data" not in b for b in friend), friend)
         events = [(e["event"], e["chat_id"], e["ok"], e["message_id"])
@@ -264,6 +272,10 @@ class DeliveryTest(unittest.TestCase):
         _, calls = self.send(self.observation(), [self.OK] * 2, [self.OK] * 2, test_mode=True)
         self.assertTrue(calls[0][2][0].endswith("🧪 TEST MODE"))
         self.assertEqual(self.memory, {})
+        self.assertFalse(any(
+            button.get("callback_data", "").startswith("signal:source:")
+            for button in self.buttons(calls[1])
+        ))
 
 
 class NoTradingPathTest(unittest.TestCase):
@@ -282,6 +294,8 @@ class ScanLoopTest(unittest.TestCase):
             stack.enter_context(patch.dict(os.environ, {
                 "BYBITSCANNER_IKIGAI_BOX_SIGNALS": "0",
                 "BYBITSCANNER_HORN_OBSERVATION": "1",
+                # HORN-only accounting fixture: MIRROR has independent inputs/errors.
+                "BYBITSCANNER_MIRROR_OBSERVATION": "0",
                 "BYBITSCANNER_HORN_EVIDENCE_DIR": os.path.join(tmp, "evidence"),
             }))
             stack.enter_context(patch.object(main, "MAX_SYMBOLS", None))
@@ -298,6 +312,9 @@ class ScanLoopTest(unittest.TestCase):
             finished = stack.enter_context(patch.object(main, "send_message"))
             stack.enter_context(patch.object(main, "prepare_signal", return_value={"score": 90}))
             stack.enter_context(patch.object(main, "update_signal", return_value="NEW"))
+            # This HORN test's abbreviated signal has no symbol/pattern, so
+            # the unrelated delivery-identity sink must also be mocked.
+            stack.enter_context(patch.object(main, "record_telegram_delivery"))
             stack.enter_context(patch.object(main, "record_scanner_diary_observation", return_value=SimpleNamespace(setup_instance_id=None)))
             robot = stack.enter_context(patch("notification.prepare_robot_handoff"))
             stack.enter_context(contextlib.redirect_stdout(out))

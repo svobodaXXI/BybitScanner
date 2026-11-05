@@ -1,0 +1,101 @@
+{
+ "label": "before",
+ "sidecar_file": "C:\\BybitScanner-mirror-int5\\mirror_retest_sidecar.py",
+ "profile": {
+  "count_robot_auto_decisions": {
+   "cpu_s_min": 0.016,
+   "wall_s_min": 0.01
+  },
+  "load_robot_auto_decision_heads": {
+   "cpu_s_min": 2.391,
+   "wall_s_min": 6.358
+  },
+  "paper_daily_equity_facts_in_transaction": {
+   "cpu_s_min": 0.047,
+   "wall_s_min": 0.074
+  },
+  "load_robot_auto_decisions_for_admission": {
+   "cpu_s_min": 0.047,
+   "wall_s_min": 0.104
+  },
+  "load_open_robot_trades": {
+   "cpu_s_min": 0.0,
+   "wall_s_min": 0.004
+  },
+  "load_open_position_projections": {
+   "cpu_s_min": 0.016,
+   "wall_s_min": 0.013
+  },
+  "load_robot_candidates_by_status": {
+   "cpu_s_min": 0.016,
+   "wall_s_min": 0.053
+  },
+  "load_active_paper_limits(one symbol)": {
+   "cpu_s_min": 0.0,
+   "wall_s_min": 0.005
+  },
+  "read_account_facts (whole)": {
+   "cpu_s_min": 4.703,
+   "wall_s_min": 8.264
+  }
+ },
+ "empty_source_cycles": [
+  {
+   "cycle": 1,
+   "cpu_s": 10.0,
+   "wall_s": 29.435,
+   "tracked": 364
+  },
+  {
+   "cycle": 2,
+   "cpu_s": 5.609,
+   "wall_s": 6.686,
+   "tracked": 364
+  },
+  {
+   "cycle": 3,
+   "cpu_s": 6.156,
+   "wall_s": 10.888,
+   "tracked": 364
+  },
+  {
+   "cycle": 4,
+   "cpu_s": 6.062,
+   "wall_s": 11.349,
+   "tracked": 364
+  },
+  {
+   "cycle": 5,
+   "cpu_s": 6.344,
+   "wall_s": 12.945,
+   "tracked": 364
+  },
+  {
+   "cycle": 6,
+   "cpu_s": 6.156,
+   "wall_s": 10.524,
+   "tracked": 364
+  }
+ ],
+ "event_cycle": {
+  "cpu_s": 6.047,
+  "wall_s": 9.708,
+  "records": []
+ },
+ "after_event_empty_cycle": {
+  "cpu_s": 7.266,
+  "wall_s": 18.464
+ },
+ "metrics": {
+  "cycles": 8,
+  "skipped_for_protection": 0,
+  "read_failures": 0,
+  "candidates_tracked": 364,
+  "duplicates_ignored": 5,
+  "candidates_unusable": 317,
+  "observations_submitted": 0,
+  "observations_dropped": 0,
+  "fine_unavailable": 0
+ },
+ "db_unchanged": true
+}

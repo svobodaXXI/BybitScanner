@@ -47,6 +47,8 @@ import {
 import { chartPriceFormat } from "../chart/priceFormat";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
+import { buildEditorGeometryReview, compareEditorRayChanges, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
+import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
 import { normalizedLimitDraftPrice } from "../orders/limitDraft";
@@ -135,6 +137,16 @@ export function ChartPanel({
   onTakeDelete,
   averageEntryPrice = null,
   workspaceControls,
+  editorMode = false,
+  referenceDrawings = [],
+  editableSeedDrawings = [],
+  signalIdentity = null,
+  snapshotRevision = null,
+  barsSha256 = null,
+  savedReviewId = null,
+  savedReviewLabel = null,
+  savedReviewNote = null,
+  onSaveGeometryReview,
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
@@ -170,6 +182,18 @@ export function ChartPanel({
   onTakeDelete?: () => void | Promise<void>;
   averageEntryPrice?: string | null;
   workspaceControls?: ReactNode;
+  editorMode?: boolean;
+  /** Read-only source geometry; only supplied from a verified signal snapshot. */
+  referenceDrawings?: readonly DrawingObject[];
+  editableSeedDrawings?: readonly DrawingObject[];
+  signalIdentity?: string | null;
+  snapshotRevision?: string | null;
+  barsSha256?: string | null;
+  savedReviewId?: string | null;
+  savedReviewLabel?: GeometryReviewDraft["label"] | null;
+  savedReviewNote?: string | null;
+  onSaveGeometryReview?: (review: GeometryReviewDraft & { note: string; idempotency_key: string }) =>
+    Promise<{ reviewId: string; label: GeometryReviewDraft["label"] }>;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -185,32 +209,171 @@ export function ChartPanel({
     timer: ReturnType<typeof setTimeout> | null;
   }>({ state: { mode: "IDLE" }, pointerId: null, last: null, timer: null });
   const followLatestRef = useRef(true);
+  const initialSourceFrameApplied = useRef(false);
   const panBatcherRef = useRef<ReturnType<typeof createFrameBatcher> | null>(null);
   const [renderTick, setRenderTick] = useState(0),
     [tool, setTool] = useState<DrawingTool>("select"),
-    [magnet, setMagnet] = useState(false),
+    [magnet, setMagnet] = useState(editorMode),
     [selectedId, setSelectedId] = useState<string | null>(null),
     [clearConfirmationOpen, setClearConfirmationOpen] = useState(false),
     [confirmAllPendingOpen, setConfirmAllPendingOpen] = useState(false),
     [dismissAllPendingOpen, setDismissAllPendingOpen] = useState(false);
-  const storageKey = `bybitscanner:drawings:v1:${symbol}:${timeframe}`;
+  const storageKey = `bybitscanner:${editorMode ? "editor-drawings" : "drawings"}:v1:${symbol}:${timeframe}${editorMode && signalIdentity ? `:${signalIdentity}${savedReviewId ? `:review-${savedReviewId}` : ""}` : ""}`;
   const historyRef = useRef(
     new DrawingHistory(
-      deserializeDrawings(globalThis.localStorage?.getItem(storageKey) ?? null),
+      (() => {
+        // For a server-confirmed review, the verified frozen source and
+        // reviewed rays are authoritative. Local drafts from an earlier session
+        // must never override those immutable UTC anchors.
+        // Unsaved initial Editor work and ordinary trading drawings retain
+        // their existing local draft recovery behavior.
+        if (!(editorMode && signalIdentity && savedReviewId)) {
+          // Browser storage can throw SecurityError or QuotaExceededError
+          // (private mode, managed devices, storage disabled). Optional local
+          // drafts cannot prevent an authenticated frozen Editor opening.
+          try {
+            const stored = globalThis.localStorage?.getItem(storageKey);
+            if (stored !== null && stored !== undefined) {
+              const recovered = deserializeDrawings(stored);
+              // Only Editor requires exact original topology and valid frozen
+              // anchors; preserve regular trading drawing recovery as before.
+              if (!editorMode || !signalIdentity ||
+                  isValidCachedEditorDraft(recovered, referenceDrawings, candles))
+                return recovered;
+            }
+          } catch {
+            // Fall back to immutable Scanner/review seed; never refit live bars.
+          }
+        }
+        return editableSeedDrawings.map((drawing) => ({
+          ...drawing,
+          anchors: drawing.anchors.map((anchor) => ({ ...anchor })),
+          style: { ...drawing.style },
+        }));
+      })(),
     ),
   );
   const [drawings, setDrawings] = useState<DrawingObject[]>(
     historyRef.current.current,
   );
+  const rayComparison = useMemo(() => {
+    if (!editorMode || !signalIdentity || !referenceDrawings.length) return null;
+    try {
+      return compareEditorRayChanges({
+        referenceDrawings, editableDrawings: drawings, frozenCandles: candles,
+      });
+    } catch {
+      // Incomplete/stale coordinates must never produce misleading deltas.
+      return null;
+    }
+  }, [editorMode, signalIdentity, referenceDrawings, drawings, candles]);
+  const [correctionExportStatus, setCorrectionExportStatus] = useState("");
+  const [reviewLabel, setReviewLabel] = useState<GeometryReviewDraft["label"]>(
+    savedReviewLabel ?? "GEOMETRY_CORRECTED",
+  );
+  // Persisted review text belongs to the same immutable review ID as the
+  // restored editable rays. A fresh editor must not silently erase the note.
+  const [reviewNote, setReviewNote] = useState(savedReviewNote ?? "");
+  const [reviewPending, setReviewPending] = useState(false);
+  const [reviewStatus, setReviewStatus] = useState("");
+  const [savedReceipt, setSavedReceipt] = useState<{
+    reviewId: string; label: GeometryReviewDraft["label"];
+  } | null>(null);
+  const reviewEditSequence = useRef(0);
+  const [reviewDirty, setReviewDirty] = useState(() =>
+    Boolean(editorMode && signalIdentity && (
+      drawings.length !== editableSeedDrawings.length ||
+      drawings.some((drawing) => {
+        const source = editableSeedDrawings.find((seed) => seed.id === drawing.id);
+        return !source || JSON.stringify(drawing.anchors) !== JSON.stringify(source.anchors);
+      })
+    )),
+  );
+  const markReviewEdited = useCallback(() => {
+    if (!editorMode || !signalIdentity) return;
+    reviewEditSequence.current += 1;
+    setReviewDirty(true);
+    setReviewStatus("");
+  }, [editorMode, signalIdentity]);
+  const latestReceipt = savedReceipt ?? (savedReviewId && savedReviewLabel
+    ? { reviewId: savedReviewId, label: savedReviewLabel } : null);
+  const reviewVerdicts: Record<GeometryReviewDraft["label"], string> = {
+    CONFIRMED: "Верный сигнал",
+    GEOMETRY_CORRECTED: "Исправлена геометрия",
+    FALSE_POSITIVE: "Ложный сигнал",
+    UNCERTAIN: "Неоднозначно",
+  };
+  const submitToken = useRef<{ content: string; key: string } | null>(null);
+  const saveCorrection = async () => {
+    if (!editorMode || !signalIdentity || !snapshotRevision || !barsSha256 || !onSaveGeometryReview || reviewPending) return;
+    try {
+      const draft = buildEditorGeometryReview({
+        signalId: signalIdentity, snapshotRevision, barsSha256,
+        label: reviewLabel, frozenCandles: candles,
+        referenceDrawings, editableDrawings: drawings,
+      });
+      const note = reviewNote.trim();
+      const content = JSON.stringify({ ...draft, note });
+      if (submitToken.current?.content !== content) {
+        const key = globalThis.crypto?.randomUUID?.() ?? `geometry-review-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        submitToken.current = { content, key };
+      }
+      const submittedSequence = reviewEditSequence.current;
+      setReviewPending(true);
+      setReviewStatus("Сохранение исправления…");
+      const receipt = await onSaveGeometryReview({
+        ...draft, note, idempotency_key: submitToken.current.key,
+      });
+      setSavedReceipt(receipt);
+      if (submittedSequence === reviewEditSequence.current) {
+        setReviewDirty(false);
+        setReviewStatus("Исправление сохранено в дневнике обратной связи. Scanner автоматически не менялся.");
+      } else {
+        setReviewDirty(true);
+        setReviewStatus("Отзыв сохранён, но изменения после отправки ещё не сохранены.");
+      }
+    } catch (error) {
+      setReviewStatus(`Не удалось сохранить: ${error instanceof Error ? error.message : "неизвестная ошибка"}`);
+    } finally {
+      setReviewPending(false);
+    }
+  };
+  const copyCorrectionDraft = async () => {
+    if (!editorMode || !signalIdentity) return;
+    try {
+      if (!snapshotRevision || !barsSha256) throw new Error("Исходный снимок недоступен");
+      // Export the same canonical source IDs and frozen timestamp anchors as
+      // the validated feedback submission, never "editable:*" drawing IDs.
+      const draft = buildEditorGeometryReview({
+        signalId: signalIdentity, snapshotRevision, barsSha256,
+        label: "GEOMETRY_CORRECTED", frozenCandles: candles,
+        referenceDrawings, editableDrawings: drawings,
+      });
+      await navigator.clipboard.writeText(JSON.stringify({
+        ...draft,
+        status: "DRAFT_ONLY",
+      }, null, 2));
+      setCorrectionExportStatus("Черновик коррекции скопирован. Scanner не обучен автоматически.");
+    } catch {
+      setCorrectionExportStatus("Не удалось скопировать черновик. Проверьте линии и доступ к буферу обмена.");
+    }
+  };
+
   const commit = useCallback((next: DrawingObject[]) => {
     historyRef.current.commit(next);
     setDrawings(next);
-  }, []);
+    markReviewEdited();
+  }, [markReviewEdited]);
   const applyFollowLatest = useCallback((next: boolean) => {
     followLatestRef.current = next;
   }, []);
   useEffect(() => {
-    globalThis.localStorage?.setItem(storageKey, serializeDrawings(drawings));
+    try {
+      globalThis.localStorage?.setItem(storageKey, serializeDrawings(drawings));
+    } catch {
+      // Persisted review delivery is server-owned; a failed optional browser
+      // drawing cache must not crash the Editor or alter feedback authority.
+    }
   }, [drawings, storageKey]);
   useEffect(() => {
     const host = hostRef.current;
@@ -316,8 +479,16 @@ export function ChartPanel({
       series,
       timeScale,
     );
+    if (editorMode && signalIdentity && !initialSourceFrameApplied.current) {
+      const sourceRange = initialSourceGeometryRange(referenceDrawings);
+      if (sourceRange) {
+        timeScale.setVisibleLogicalRange(sourceRange);
+        followLatestRef.current = false;
+        initialSourceFrameApplied.current = true;
+      }
+    }
     setRenderTick((v) => v + 1);
-  }, [candles]);
+  }, [candles, editorMode, signalIdentity, referenceDrawings]);
   useEffect(() => {
     const priceFormat = tickSize === null ? null : chartPriceFormat(tickSize);
     if (priceFormat) seriesRef.current?.applyOptions({ priceFormat });
@@ -714,6 +885,12 @@ export function ChartPanel({
   }, [commit, drawings, selectedId]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
+      // This listener is global: typing or deleting an owner review note (or
+      // another workspace form value) must never delete a selected chart ray.
+      const target = event.target;
+      if (event.isComposing || (target instanceof Element && target.closest(
+        "input, textarea, select, button, [contenteditable], [role='textbox'], [role='combobox']",
+      ))) return;
       if (event.key === "Delete" || event.key === "Backspace") deleteSelected();
       if (event.key === "Escape") {
         setSelectedId(null);
@@ -729,13 +906,70 @@ export function ChartPanel({
       aria-label="Candlestick chart"
     >
       <div className="chart-content-row">
+        {editorMode && signalIdentity && (
+          <div className="editor-correction-export">
+            <button type="button" onClick={() => void copyCorrectionDraft()}>
+              Скопировать исправленную геометрию
+            </button>
+            <select
+              aria-label="Оценка сигнала"
+              value={reviewLabel}
+              onChange={(event) => { setReviewLabel(event.target.value as GeometryReviewDraft["label"]); markReviewEdited(); }}
+            >
+              <option value="GEOMETRY_CORRECTED">Исправлена геометрия</option>
+              <option value="CONFIRMED">Верный сигнал</option>
+              <option value="FALSE_POSITIVE">Ложный сигнал</option>
+              <option value="UNCERTAIN">Неоднозначно</option>
+            </select>
+            <input
+              aria-label="Комментарий к исправлению"
+              placeholder="Комментарий (необязательно)"
+              maxLength={1024}
+              value={reviewNote}
+              onChange={(event) => { setReviewNote(event.target.value); markReviewEdited(); }}
+            />
+            <button type="button" disabled={reviewPending || !snapshotRevision || !barsSha256 || !onSaveGeometryReview}
+              onClick={() => void saveCorrection()}>
+              {reviewPending ? "Сохранение…" : "Передать исправление"}
+            </button>
+            {latestReceipt && (
+              <span>
+                Сохранённый отзыв: {latestReceipt.reviewId.slice(0, 12)}
+                {" · "}{reviewVerdicts[latestReceipt.label]}
+                {reviewDirty ? " (предыдущая версия)" : ""}
+              </span>
+            )}
+            {reviewDirty && <output aria-label="Несохранённый отзыв">Новые изменения не сохранены</output>}
+            {reviewLabel === "GEOMETRY_CORRECTED" && rayComparison && (
+              <output aria-label="Сравнение линий Scanner и исправления">
+                {rayComparison.map((ray) => (
+                  <span key={ray.boundaryId}>
+                    {ray.boundaryId}: Δ точка 1 {ray.anchorChanges[0].priceShiftPercent.toFixed(2)}%
+                    {ray.anchorChanges.length === 2 && (
+                      <>; Δ точка 2 {ray.anchorChanges[1].priceShiftPercent.toFixed(2)}%; Δ наклон {ray.slopeDeltaPerHour.toPrecision(3)}/ч</>
+                    )}{" "}
+                  </span>
+                ))}
+              </output>
+            )}
+            {correctionExportStatus && <output role="status" aria-live="polite">{correctionExportStatus}</output>}
+            {reviewStatus && <output role="status" aria-live="polite">{reviewStatus}</output>}
+          </div>
+        )}
         <DrawingToolbar
           activeTool={tool}
           magnet={magnet}
           selected={selectedId !== null}
           onTool={setTool}
           onMagnet={() => setMagnet((v) => !v)}
-          onUndo={() => setDrawings(historyRef.current.undo())}
+          onUndo={() => {
+            const previous = drawings;
+            const undone = historyRef.current.undo();
+            if (undone !== previous) {
+              setDrawings(undone);
+              markReviewEdited();
+            }
+          }}
           onDelete={deleteSelected}
           onClear={() => {
             if (drawings.length) setClearConfirmationOpen(true);
@@ -777,10 +1011,12 @@ export function ChartPanel({
         <div ref={hostRef} className="chart-engine" />
         <DrawingOverlay
           drawings={drawings}
+          referenceDrawings={editorMode ? referenceDrawings : []}
           selectedId={selectedId}
           tool={tool}
           magnet={magnet}
           candles={candles}
+          candleAligned={editorMode && signalIdentity !== null}
           coordinates={coordinates}
           priceFormatter={drawingPriceFormatter}
           onCommit={commit}
@@ -1083,6 +1319,7 @@ export function ChartPanel({
             onCancel={() => setClearConfirmationOpen(false)}
             onConfirm={() => {
               setDrawings(clearDrawingHistory(historyRef.current));
+              markReviewEdited();
               setSelectedId(null);
               setClearConfirmationOpen(false);
             }}

@@ -6,9 +6,7 @@ HORN-4 (DOCUMENTS/SCANNER_BROADENING_FORMATION_HORN_1.md, issue #504):
 - 4 confirmed alternating pivots = PRELIMINARY (shown, explicitly provisional),
   5+ = MATURE; no LONG/SHORT;
 - observation only: no Robot candidate, no admission, no order, no Autopilot;
-  HORN-5 (#509): the Telegram card is the canonical short text, then the chart
-  with the shared keyboard (TradingView; owner also MetaScalp and review), and
-  never a Robot button;
+  HORN-5 sends a short observation text and a chart with the shared\n  reviewer controls; never Robot admission;
 - Horn never suppresses or replaces Wedge/Triangle/Box/L-shape; a Wedge result
   on the same snapshot is stored next to the Horn for owner comparison;
 - evidence is appended per event and fsynced immediately (detection, OHLC,
@@ -24,11 +22,8 @@ import config
 from geometry.broadening import detect_broadening
 from geometry.broadening_chart import broadening_signal_text, render_broadening_chart
 from notification import (
-    build_tradingview_keyboard,
-    get_telegram_chat_ids,
-    get_telegram_owner_chat_id,
-    send_message,
-    send_photo,
+    archive_source_chart, build_tradingview_keyboard, get_telegram_chat_ids,
+    get_telegram_owner_chat_id, send_message, send_photo,
 )
 from signal_memory import load_memory, save_memory
 
@@ -69,6 +64,63 @@ def write_progress(progress, root=None):
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temporary, path)
+
+
+def read_progress(root=None):
+    """Bounded, allow-listed LAST-WRITTEN Scanner snapshot, without PAPER owner/DB.
+
+    Old or malformed progress files are not interpreted as completion.
+    Nothing in this file proves the Scanner process is currently running:
+    its timestamp and pass ID are part of the returned evidence.
+    """
+    path = os.path.join(root or evidence_root(), PROGRESS_FILE)
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read(8193)
+    except FileNotFoundError:
+        return None
+    if len(raw) > 8192:
+        raise ValueError("scanner progress exceeds bounded read")
+    try:
+        value = json.loads(raw)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise ValueError("scanner progress malformed") from error
+    if not isinstance(value, dict):
+        raise ValueError("scanner progress not a record")
+    fields = (
+        "updated_at_ms", "symbols_done", "symbols_total",
+        "timeframes_done", "timeframes_total",
+        "horn_found", "horn_sent", "mirror_candidates",
+        "sent_to_telegram", "errors",
+    )
+    if any(type(value.get(k)) is not int or value[k] < 0 for k in fields):
+        raise ValueError("scanner progress counters invalid")
+    if not (value["symbols_done"] <= value["symbols_total"] <= 100000
+            and value["timeframes_total"] == 2 * value["symbols_total"]
+            and value["timeframes_done"] <= value["timeframes_total"]
+            and value["symbols_done"] * 2 <= value["timeframes_done"]):
+        raise ValueError("scanner progress counts inconsistent")
+    status = value.get("status")
+    if status not in ("RUNNING", "COMPLETE", "INTERRUPTED"):
+        raise ValueError("scanner progress state unknown")
+    if status == "COMPLETE" and (
+        value["symbols_done"] != value["symbols_total"]
+        or value["timeframes_done"] != value["timeframes_total"]
+    ):
+        raise ValueError("scanner COMPLETE proof inconsistent")
+    pass_id = value.get("scan_pass_id")
+    if not isinstance(pass_id, str) or not re.fullmatch(r"[0-9]{1,12}:[0-9]{1,24}", pass_id):
+        raise ValueError("scanner pass identity invalid")
+    symbol = value.get("symbol")
+    if not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9]{0,35}", symbol):
+        raise ValueError("scanner progress symbol invalid")
+    timeframe = value.get("timeframe")
+    if timeframe not in ("", "1", "5"):
+        raise ValueError("scanner progress timeframe invalid")
+    # Never return unrecognized fields from a file: it might contain secrets,
+    # error text, or local filesystem details. API output is a fixed schema.
+    return {**{k: value[k] for k in fields}, "status": status,
+            "scan_pass_id": pass_id, "symbol": symbol, "timeframe": timeframe}
 
 
 def _line(line, closed):
@@ -211,6 +263,15 @@ def send_broadening_observation(symbol, observation, *, timeframe, test_mode=Fal
     if test_mode:
         message += "\n🧪 TEST MODE"
     owner_chat_id = get_telegram_owner_chat_id()
+    # Preserve newer frozen-source archive navigation: HORN's shared review
+    # keyboard must not lose its source identity when delivered as two messages.
+    source_token = None
+    if owner_chat_id and not test_mode:
+        source_token, _ = archive_source_chart(
+            symbol=symbol, timeframe=timeframe, pattern="Broadening",
+            text=message, chart_path=observation["chart_path"],
+            formation_id=observation.get("identity"),
+        )
 
     def remember():
         if test_mode:
@@ -236,6 +297,11 @@ def send_broadening_observation(symbol, observation, *, timeframe, test_mode=Fal
             remember()
         is_owner = bool(owner_chat_id) and chat_id == owner_chat_id
         markup = build_tradingview_keyboard(symbol, timeframe, include_review_actions=is_owner)
+        if is_owner and source_token:
+            markup["inline_keyboard"].insert(0, [{
+                "text": "↩️ К сигналу",
+                "callback_data": f"signal:source:{source_token}",
+            }])
         if not _deliver("horn_delivery",
                         lambda: send_photo(config.TELEGRAM_TOKEN, chat_id, observation["chart_path"],
                                            caption="", reply_markup=markup),

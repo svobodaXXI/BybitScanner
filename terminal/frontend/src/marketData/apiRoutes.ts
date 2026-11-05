@@ -13,7 +13,11 @@ export const marketApiRoutes = {
   diaryTrades: "/api/diary/trades",
   diarySetups: "/api/diary/setups",
   diaryStatistics: "/api/diary/statistics",
+  scannerMirrorLevels: "/api/scanner/mirror-levels",
   trades: (symbol: string) => `/api/public-trades/stream?symbol=${encodeURIComponent(symbol)}`,
   workspaceState: "/api/workspace/state",
   workspaceSymbol: "/api/workspace/symbol",
+  health: "/api/health",
+  robotAutopilot: "/api/robot/autopilot",
+  robotProtectionHealth: "/api/robot/protection-health",
 };

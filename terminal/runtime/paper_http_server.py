@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import hmac
 import logging
@@ -10,10 +11,14 @@ import os
 import queue
 import socket
 import ssl
+import sys
 import threading
 import math
 import time
+from terminal.protection_timing import capture_callback, protection_span
+from terminal.runtime.incident_telemetry import report_incident, start_incident_telemetry
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -73,7 +78,7 @@ from terminal.market_data.workspace_errors import (
     UpstreamWorkspaceMarketDataFailure,
 )
 from terminal.application.robot_breakout_monitor import DEFAULT_TICK_INTERVAL_S as DEFAULT_ROBOT_TICK_INTERVAL_S
-from terminal.runtime.paper_runtime import PaperRuntime, ScannerControlRuntimeError
+from terminal.runtime.paper_runtime import PaperRuntime, PaperCloseAllRejected, ScannerControlRuntimeError
 from terminal.exchange.bybit_account_validation import AccountValidationError, BybitAccountValidator
 from terminal.exchange.bybit_v5_mutation_adapter import BybitV5MutationAdapter
 from terminal.persistence.credential_store import (
@@ -83,6 +88,7 @@ from terminal.persistence.live_account_store import LiveAccountProjectionStore
 from terminal.persistence.active_account_preference import ActiveAccountPreferenceStore
 from terminal.application.live_account_reconciliation import LiveAccountReconciliationError
 from terminal.application.runtime_intent import RuntimeIntent, RuntimeIntentReconciler
+from terminal.application.robot_control import ROBOT_CLOSE_ALL_ALLOWED_STATES
 
 
 LOGGER = logging.getLogger(__name__)
@@ -268,10 +274,7 @@ def _require_robot_route_legality(runtime: PaperRuntime, command: str) -> None:
         raise RobotRouteLegalityError("Robot runtime state is unavailable")
     pair = (state.mode, state.recovery_status)
     allowed = {
-        "close_all_now": {
-            ("ROBOT_RUNNING", "READY"),
-            ("ROBOT_RUNNING", "PAUSED"),
-        },
+        "close_all_now": ROBOT_CLOSE_ALL_ALLOWED_STATES,
         "synchronize_pending_entries": {
             ("ROBOT_RUNNING", "PAUSED"),
             ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
@@ -1074,6 +1077,47 @@ class LiveOrderBookProvider:
             return None
         return self._load_rest_book(symbol)
 
+    def get_mark_prices(self, symbols: tuple[str, ...]):
+        """Read real Bybit ticker markPrice for every open PAPER position off-owner."""
+        from terminal.application.paper_daily_equity import MarkPrice
+
+        required = frozenset(symbols)
+        if not required:
+            return {}
+        if self._rest_session is None or any(not symbol.isalnum() for symbol in required):
+            return {}
+        try:
+            response = self._rest_session.get(
+                "https://api.bybit.com/v5/market/tickers",
+                params={"category": "linear"}, timeout=4,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("retCode") != 0:
+                return {}
+            observed_at_ms = payload.get("time")
+            now_ms = int(time.time() * 1000)
+            if type(observed_at_ms) is not int or not 0 <= now_ms - observed_at_ms <= 5000:
+                return {}
+            tickers = payload.get("result", {}).get("list")
+            if not isinstance(tickers, list):
+                return {}
+            marks = {}
+            for item in tickers:
+                if not isinstance(item, dict) or item.get("symbol") not in required:
+                    continue
+                symbol = item["symbol"]
+                if symbol in marks:
+                    return {}
+                price = Decimal(str(item["markPrice"]))
+                if not price.is_finite() or price <= 0:
+                    return {}
+                marks[symbol] = MarkPrice(price, observed_at_ms)
+            return marks if marks.keys() == required else {}
+        except (AttributeError, InvalidOperation, KeyError, TypeError,
+                ValueError, requests.RequestException):
+            return {}
+
     def get_streamed_book(self, symbol: Symbol) -> NormalizedOrderBook | None:
         """Current READY book from an already-streamed buffer, never REST.
 
@@ -1171,6 +1215,8 @@ class _BookUpdateNotification:
 
 
 SLOW_OWNER_TASK_WARNING_MS = 200.0
+# Minimum spacing of deferred continuity-fence release retries (each warms candles).
+DEFERRED_RELEASE_RETRY_INTERVAL_S = 10.0
 
 # Autopilot admission gate (#448 S2). Owner-tunable; any breach is WAIT, never ALLOW.
 AUTOPILOT_INGRESS_WINDOW_S = 60.0
@@ -1195,10 +1241,30 @@ class _OwnerTask:
     enqueued_at: float
     symbol: str
     coverage_role: str
+    event_id: str = ""
 
 
 # Wakes the owner thread when protection work is pending; carries no work itself.
 _PROTECTION_WAKE = object()
+
+# MDC-DIAG-1: the ingress snapshot kept with the first continuity fence.
+_CONTINUITY_INGRESS_FIELDS = (
+    "capacity", "current_pending", "high_watermark", "max_queue_latency_ms",
+    "max_processing_ms", "slowest_task_label", "slowest_task_ms",
+    "last_symbol", "last_overflow_symbol",
+)
+
+
+def _fence_with_evidence(runtime, symbol: str, reason: str, evidence) -> bool:
+    """Owner task: note diagnostics best-effort, then the unchanged fence call."""
+    if evidence:
+        note = getattr(runtime, "note_continuity_evidence", None)
+        if note is not None:
+            try:
+                note(symbol, evidence)
+            except Exception:
+                pass
+    return runtime.fence_robot_protection_continuity_loss(symbol, reason)
 
 
 class ProtectionIngressOverflow(RuntimeError):
@@ -1282,6 +1348,11 @@ class SerializedPaperRuntime:
         if protection_ingress_capacity <= 0:
             raise ValueError("protection_ingress_capacity must be positive")
         self._requests: queue.Queue = queue.Queue()
+        # A successful final shutdown proof seals *future* owner operations.
+        # Admission and the seal share this lock, so queued-but-not-yet-run
+        # requests cannot slip through the gap between proof and exit.
+        self._shutdown_gate = threading.Lock()
+        self._shutdown_sealed = False
         self._book_update_lock = threading.Lock()
         self._latest_book_update_id: str | None = None
         self._book_update_pending = False
@@ -1332,17 +1403,35 @@ class SerializedPaperRuntime:
             raise RuntimeError("PAPER runtime initialization failed") from self._initialization_error
 
     def call(self, operation, timeout: float = 15.0):
-        if not self._thread.is_alive():
-            raise RuntimeError("PAPER runtime owner is unavailable")
         completed = threading.Event()
         response: dict[str, object] = {}
-        self._requests.put((operation, completed, response))
+        with self._shutdown_gate:
+            if self._shutdown_sealed:
+                raise RuntimeError("PAPER shutdown sealed; new owner work refused")
+            if not self._thread.is_alive():
+                raise RuntimeError("PAPER runtime owner is unavailable")
+            self._requests.put((operation, completed, response))
         if not completed.wait(timeout):
             raise TimeoutError("PAPER runtime operation timed out")
         error = response.get("error")
         if isinstance(error, BaseException):
             raise error
         return response.get("result")
+
+    def seal_shutdown(self) -> None:
+        """Only the owner thread may seal after proving full PAPER quiescence.
+
+        Refuse if protected ingress arrived during the proof. All later owner
+        calls, including ones queued behind the proof callback, must fail.
+        The normal close() sentinel remains legal after sealing.
+        """
+        if threading.get_ident() != self._thread.ident:
+            raise RuntimeError("shutdown seal requires PAPER owner thread")
+        with self._shutdown_gate:
+            with self._protection_ingress_lock:
+                if self._protection_ingress_pending:
+                    raise RuntimeError("protection ingress pending during shutdown proof")
+                self._shutdown_sealed = True
 
     def start_robot_monitor(self) -> None:
         """Bind self.call as the owned PaperRuntime's Robot command dispatcher
@@ -1358,14 +1447,17 @@ class SerializedPaperRuntime:
     def enqueue_book_update(self, book_update_id: str) -> None:
         if not book_update_id:
             raise ValueError("book_update_id must be non-empty")
-        if not self._thread.is_alive():
-            raise RuntimeError("PAPER runtime owner is unavailable")
-        with self._book_update_lock:
-            self._latest_book_update_id = book_update_id
-            if self._book_update_pending:
-                return
-            self._book_update_pending = True
-        self._requests.put(_BookUpdateNotification(book_update_id))
+        with self._shutdown_gate:
+            if self._shutdown_sealed:
+                raise RuntimeError("PAPER shutdown sealed; book update refused")
+            if not self._thread.is_alive():
+                raise RuntimeError("PAPER runtime owner is unavailable")
+            with self._book_update_lock:
+                self._latest_book_update_id = book_update_id
+                if self._book_update_pending:
+                    return
+                self._book_update_pending = True
+            self._requests.put(_BookUpdateNotification(book_update_id))
 
     def enqueue(
         self,
@@ -1373,6 +1465,7 @@ class SerializedPaperRuntime:
         *,
         symbol: str = "",
         coverage_role: str = "UNKNOWN",
+        event_id: str = "",
     ) -> None:
         """Submit ``operation`` to the serialized owner without waiting for it.
 
@@ -1389,36 +1482,69 @@ class SerializedPaperRuntime:
         a fail-closed continuity-loss signal, never a silent drop -- this
         method never coalesces, drops, or blocks to paper over overload.
         """
-        if not self._thread.is_alive():
-            raise RuntimeError("PAPER runtime owner is unavailable")
         normalized_symbol = symbol.strip().upper()
         normalized_role = coverage_role.strip().upper() or "UNKNOWN"
-        with self._protection_ingress_lock:
-            if self._protection_ingress_pending >= self._protection_ingress_capacity:
-                self._protection_ingress_last_overflow_symbol = normalized_symbol or None
-                self._protection_ingress_last_overflow_role = normalized_role
-                raise ProtectionIngressOverflow(
-                    "Robot protection ingress is saturated "
-                    f"(capacity={self._protection_ingress_capacity}, "
-                    f"symbol={normalized_symbol or 'UNKNOWN'}, role={normalized_role})"
+        with self._shutdown_gate:
+            if self._shutdown_sealed:
+                raise RuntimeError("PAPER shutdown sealed; ingress refused")
+            if not self._thread.is_alive():
+                raise RuntimeError("PAPER runtime owner is unavailable")
+            with self._protection_ingress_lock:
+                if self._protection_ingress_pending >= self._protection_ingress_capacity:
+                    self._protection_ingress_last_overflow_symbol = normalized_symbol or None
+                    self._protection_ingress_last_overflow_role = normalized_role
+                    report_incident(
+                        "INGRESS_OVERFLOW", event_id=event_id,
+                        capacity=self._protection_ingress_capacity,
+                        pending=self._protection_ingress_pending,
+                        symbol=normalized_symbol, role=normalized_role,
+                    )
+                    raise ProtectionIngressOverflow(
+                        "Robot protection ingress is saturated "
+                        f"(capacity={self._protection_ingress_capacity}, "
+                        f"symbol={normalized_symbol or 'UNKNOWN'}, role={normalized_role})"
+                    )
+                self._protection_ingress_pending += 1
+                self._protection_ingress_high_watermark = max(
+                    self._protection_ingress_high_watermark,
+                    self._protection_ingress_pending,
                 )
-            self._protection_ingress_pending += 1
-            self._protection_ingress_high_watermark = max(
-                self._protection_ingress_high_watermark,
-                self._protection_ingress_pending,
-            )
-            self._protection_ingress_last_symbol = normalized_symbol or None
-            self._protection_ingress_last_role = normalized_role
-            self._protection_tasks.append(_OwnerTask(
-                operation,
-                time.perf_counter(),
-                normalized_symbol,
-                normalized_role,
-            ))
-            wake = not self._protection_wake_pending
-            self._protection_wake_pending = True
-        if wake:
-            self._requests.put(_PROTECTION_WAKE)
+                self._protection_ingress_last_symbol = normalized_symbol or None
+                self._protection_ingress_last_role = normalized_role
+                if self._protection_ingress_pending in (
+                    max(1, self._protection_ingress_capacity // 2),
+                    self._protection_ingress_capacity,
+                ):
+                    report_incident(
+                        "INGRESS_WATERMARK", event_id=event_id,
+                        pending=self._protection_ingress_pending,
+                        capacity=self._protection_ingress_capacity,
+                        symbol=normalized_symbol, role=normalized_role,
+                    )
+                self._protection_tasks.append(_OwnerTask(
+                    operation,
+                    time.perf_counter(),
+                    normalized_symbol,
+                    normalized_role,
+                    event_id,
+                ))
+                wake = not self._protection_wake_pending
+                self._protection_wake_pending = True
+            if wake:
+                self._requests.put(_PROTECTION_WAKE)
+
+    def enqueue_continuity_fence(self, operation: Callable[[object], None]) -> None:
+        """Submit a safety fence without re-entering saturated market-event ingress.
+
+        The owner drains all previously admitted protection tasks before this
+        request. Honor the same shutdown admission gate as normal enqueue().
+        """
+        with self._shutdown_gate:
+            if self._shutdown_sealed:
+                raise RuntimeError("PAPER shutdown sealed; continuity fence refused")
+            if not self._thread.is_alive():
+                raise RuntimeError("PAPER runtime owner is unavailable")
+            self._requests.put((operation, threading.Event(), {}))
 
     def fetch_manual_evidence(self, symbols) -> dict[str, object]:
         """Execution-time books for manual PAPER commands, read OFF the owner.
@@ -1437,8 +1563,20 @@ class SerializedPaperRuntime:
 
         def read(symbol: str):
             try:
-                book = streamed(Symbol(symbol)) if streamed is not None else None
-                return symbol, book if book is not None else provider.get_book(Symbol(symbol))
+                key = Symbol(symbol)
+                book = streamed(key) if streamed is not None else None
+                # A stream can be present yet too old for the PAPER Market
+                # executor's 1000ms limit. Refresh OFF the owner thread,
+                # rather than sending a stale non-None book and never trying
+                # the existing provider fallback.
+                now_ms = int(time.time() * 1000)
+                if (
+                    book is not None
+                    and book.symbol == key
+                    and 0 <= now_ms - book.received_at_ms <= 1000
+                ):
+                    return symbol, book
+                return symbol, provider.get_book(key)
             except Exception:
                 LOGGER.warning("manual PAPER evidence read failed symbol=%s", symbol, exc_info=True)
                 return symbol, None
@@ -1538,6 +1676,8 @@ class SerializedPaperRuntime:
 
     def _observe_owner_task(
         self, kind: str, label_source: object, processing_ms: float, detail: str = "",
+        *, event_id: str = "", ingress_queue_latency_ms: float = 0.0,
+        ingress_pending: int = 0, symbol: str = "", role: str = "",
     ) -> None:
         """Owner thread only. Cheap unless the task is slow or the slowest so far.
 
@@ -1554,6 +1694,13 @@ class SerializedPaperRuntime:
                     "Slow PAPER owner task: kind=%s task=%s processing_ms=%.1f queue_depth=%d%s",
                     kind, _owner_task_label(label_source), processing_ms,
                     self._requests.qsize(), detail,
+                )
+                report_incident(
+                    "OWNER_SLOW", event_id=event_id,
+                    task_kind=kind, task_label=_owner_task_label(label_source),
+                    processing_ms=processing_ms, queue_depth=self._requests.qsize(),
+                    ingress_queue_latency_ms=ingress_queue_latency_ms,
+                    ingress_pending=ingress_pending, symbol=symbol, role=role,
                 )
         except Exception:
             self._owner_diagnostics_disabled = True
@@ -1574,8 +1721,10 @@ class SerializedPaperRuntime:
     def _run_protection_task(self, runtime, task: _OwnerTask) -> None:
         started_at = time.perf_counter()
         queue_latency_ms = (started_at - task.enqueued_at) * 1000
+        trace = None
         try:
-            task.operation(runtime)
+            with capture_callback() as trace:
+                task.operation(runtime)
         except BaseException:
             LOGGER.exception("PAPER owner task failed")
         finally:
@@ -1600,11 +1749,21 @@ class SerializedPaperRuntime:
                     self._protection_ingress_recent.popleft()
                 self._protection_ingress_recent.append(
                     (completed_at, queue_latency_ms, processing_ms))
+            timing_detail = ""
+            if processing_ms > SLOW_OWNER_TASK_WARNING_MS and trace is not None:
+                try:
+                    timing_detail = " protection_timing=" + json.dumps(
+                        trace.report(task.event_id, processing_ms), separators=(",", ":"),
+                    )
+                except Exception:
+                    timing_detail = " protection_timing=unavailable"
             self._observe_owner_task(
                 "protection", task.operation, processing_ms,
                 f" queue_latency_ms={queue_latency_ms:.1f} protection_pending={pending}"
-                f" symbol={task.symbol or 'UNKNOWN'} role={task.coverage_role}"
+                f" symbol={task.symbol or 'UNKNOWN'} role={task.coverage_role}" + timing_detail
                 if processing_ms > SLOW_OWNER_TASK_WARNING_MS else "",
+                event_id=task.event_id, ingress_queue_latency_ms=queue_latency_ms,
+                ingress_pending=pending, symbol=task.symbol, role=task.coverage_role,
             )
 
     def _run(self, factory) -> None:
@@ -1624,9 +1783,23 @@ class SerializedPaperRuntime:
             while True:
                 request = self._requests.get()
                 # Strict priority: protection admitted before this point runs
-                # before the ordinary request just dequeued.
+                # before the ordinary request just dequeued. A final seal is
+                # legal only with no outstanding protection ingress.
                 self._drain_protection_tasks(runtime)
                 if request is _PROTECTION_WAKE:
+                    continue
+                if self._shutdown_sealed:
+                    if isinstance(request, _BookUpdateNotification):
+                        with self._book_update_lock:
+                            self._book_update_pending = False
+                        continue
+                    operation, completed, response = request
+                    if operation is None:
+                        completed.set()
+                        return
+                    response["error"] = RuntimeError(
+                        "PAPER shutdown sealed; queued owner work refused")
+                    completed.set()
                     continue
                 if isinstance(request, _BookUpdateNotification):
                     with self._book_update_lock:
@@ -2141,6 +2314,9 @@ class RobotProtectionCoverageManager:
         # that symbol succeeds again. Never cleared by silently continuing.
         self._unhealthy: dict[str, str] = {}
         self._recovery_inflight: set[str] = set()
+        # Proven-recovered fences whose release waits for off-owner candle evidence.
+        self._release_retry: set[str] = set()
+        self._release_retry_not_before = 0.0
         # Temporary ENTRY_PENDING arms taken before a resting entry LIMIT exists
         # (arm_entry_coverage). resync() keeps them covered and ends each one in
         # the pass that first sees the symbol's durable coverage role.
@@ -2174,6 +2350,13 @@ class RobotProtectionCoverageManager:
             }
         if hasattr(self._runtime, "protection_ingress_metrics"):
             health["ingress"] = self._runtime.protection_ingress_metrics()
+        if hasattr(self._runtime, "protection_ingress_recent"):
+            # Reuse the Autopilot admission window for a read-only proof of
+            # drained ingress after an overload. Lifetime high-water marks
+            # never decay and must not be mistaken for current queue pressure.
+            health["ingress_recent"] = self._runtime.protection_ingress_recent(
+                AUTOPILOT_INGRESS_WINDOW_S
+            )
         if hasattr(self._runtime, "autopilot_shadow_deferred_metrics"):
             health["autopilot_shadow_deferred"] = self._runtime.autopilot_shadow_deferred_metrics()
         return health
@@ -2238,7 +2421,8 @@ class RobotProtectionCoverageManager:
                 try:
                     self._attach(symbol)
                 except Exception:
-                    self._mark_unhealthy(symbol, "subscribe_failed")
+                    self._mark_unhealthy(
+                        symbol, "subscribe_failed", self._continuity_evidence(symbol))
                     LOGGER.exception("Robot protection coverage subscribe failed; symbol=%s", symbol)
             for symbol in sorted(to_drop):
                 if shutdown_strict:
@@ -2306,6 +2490,18 @@ class RobotProtectionCoverageManager:
         with self._lock:
             self._armed.discard(symbol.strip().upper())
 
+    @contextmanager
+    def shutdown_idle_guard(self):
+        """Exclude Robot ticks and subscription changes across the final proof.
+
+        Never acquire the monitor guard on the owner thread: its worker may
+        itself be waiting for the owner.
+        """
+        guard = self._runtime.call(lambda runtime: runtime.robot_shutdown_idle_guard())
+        with guard:
+            with self._subscription_lock:
+                yield
+
     def retire_shutdown_entry_arms(self, database_identity: str) -> dict[str, object]:
         """Shutdown only: prove no future entry ownership before retiring temporary arms."""
         guard = self._runtime.call(lambda runtime: runtime.robot_shutdown_idle_guard())
@@ -2321,9 +2517,16 @@ class RobotProtectionCoverageManager:
                         "ROBOT_STOPPED", "ROBOT_STOPPED",
                     ) or runtime.scanner_status().mode != "SCANNER_STOPPED":
                         raise RobotRouteLegalityError("runtime_still_required")
+                    # Retiring entry arms is a shutdown mutation, not just a
+                    # stopped-Robot check. Another controller may have
+                    # re-enabled PAPER_AUTO after Scanner STOP: prove durable
+                    # Autopilot OFF on this same serialized owner callback.
+                    account = TradingAccountId("paper")
+                    autopilot = runtime.store.get_robot_autopilot_state(account)
+                    if autopilot is None or autopilot.mode != "OFF":
+                        raise RobotRouteLegalityError("autopilot_not_durably_off")
                     if runtime.robot_protection_coverage_symbols():
                         raise RobotRouteLegalityError("durable_protection_required")
-                    account = TradingAccountId("paper")
                     if runtime.store.load_active_robot_candidate_states(account):
                         raise RobotRouteLegalityError("robot_entry_ownership_unresolved")
                     with self._lock:
@@ -2457,11 +2660,11 @@ class RobotProtectionCoverageManager:
             coverage_role = self._roles.get(symbol, "UNKNOWN")
             continuity_reason = f"websocket_disconnect:{reason or 'UNKNOWN'}"
             self._unhealthy[symbol] = continuity_reason
+        evidence = self._continuity_evidence(
+            symbol, source_generation=generation, coverage_role=coverage_role)
 
         def _fence_after_prior_events(runtime):
-            return runtime.fence_robot_protection_continuity_loss(
-                symbol, continuity_reason,
-            )
+            return _fence_with_evidence(runtime, symbol, continuity_reason, evidence)
 
         try:
             self._runtime.enqueue(
@@ -2498,7 +2701,9 @@ class RobotProtectionCoverageManager:
             return
         expected_event_id = f"{symbol}:{book.source_sequence}:{book.source_update_id}"
         if book_update_id != expected_event_id:
-            self._mark_unhealthy(symbol, "event_identity_mismatch")
+            self._mark_unhealthy(symbol, "event_identity_mismatch", self._continuity_evidence(
+                symbol, source_generation=book.source_generation, coverage_role=coverage_role,
+                event_id=book_update_id, snapshot_event_id=expected_event_id))
             LOGGER.error(
                 "Robot protection book identity mismatch; symbol=%s "
                 "listener_event=%s snapshot_event=%s",
@@ -2518,17 +2723,18 @@ class RobotProtectionCoverageManager:
             # barrier. Owner-queue latency must not retroactively invalidate
             # valid old-generation evidence by rereading reconnect_count.
             if continuity_reason is not None:
-                recovered = runtime.recover_robot_protection_continuity_loss(
-                    symbol,
-                    book,
-                    event_id=book_update_id,
-                    received_at_ms=received_at_ms,
-                    reason=continuity_reason,
-                )
-                if recovered:
-                    self._mark_healthy(symbol)
-                    self._release_continuity_fence(runtime, symbol)
-                return recovered
+                with protection_span("recovery"):
+                    recovered = runtime.recover_robot_protection_continuity_loss(
+                        symbol,
+                        book,
+                        event_id=book_update_id,
+                        received_at_ms=received_at_ms,
+                        reason=continuity_reason,
+                    )
+                    if recovered:
+                        self._mark_healthy(symbol)
+                        self._release_continuity_fence(runtime, symbol)
+                    return recovered
             return runtime.process_robot_market_event(
                 symbol, book, event_id=book_update_id, received_at_ms=received_at_ms,
             )
@@ -2538,9 +2744,12 @@ class RobotProtectionCoverageManager:
                 _evaluate_ordered_event,
                 symbol=symbol,
                 coverage_role=coverage_role,
+                event_id=book_update_id,
             )
         except ProtectionIngressOverflow:
-            self._mark_unhealthy(symbol, "ingress_overflow")
+            self._mark_unhealthy(symbol, "ingress_overflow", self._continuity_evidence(
+                symbol, source_generation=book.source_generation, coverage_role=coverage_role,
+                event_id=book_update_id))
             metrics = (
                 self._runtime.protection_ingress_metrics()
                 if hasattr(self._runtime, "protection_ingress_metrics")
@@ -2553,19 +2762,25 @@ class RobotProtectionCoverageManager:
             )
             return
         except Exception:
-            self._mark_unhealthy(symbol, "admission_failed")
+            self._mark_unhealthy(symbol, "admission_failed", self._continuity_evidence(
+                symbol, source_generation=book.source_generation, coverage_role=coverage_role,
+                event_id=book_update_id))
             LOGGER.exception(
                 "Robot protection coverage admission failed; symbol=%s event=%s",
                 symbol, book_update_id,
             )
             return
-    def _enqueue_runtime_fence(self, symbol: str, reason: str) -> None:
+    def _enqueue_runtime_fence(
+        self, symbol: str, reason: str, evidence: Mapping[str, object] | None = None,
+    ) -> None:
         try:
-            self._runtime.enqueue(
-                lambda runtime: runtime.fence_robot_protection_continuity_loss(
-                    symbol, reason,
-                )
-            )
+            fence = lambda runtime: _fence_with_evidence(runtime, symbol, reason, evidence)
+            submit_fence = getattr(self._runtime, "enqueue_continuity_fence", None)
+            if submit_fence is not None:
+                submit_fence(fence)
+            else:
+                # Compatibility for existing isolated mock runtime contracts.
+                self._runtime.enqueue(fence)
         except Exception:
             LOGGER.exception(
                 "Robot protection coverage could not durably fence admission; "
@@ -2573,10 +2788,31 @@ class RobotProtectionCoverageManager:
                 symbol, reason,
             )
 
-    def _mark_unhealthy(self, symbol: str, reason: str) -> None:
+    def _mark_unhealthy(
+        self, symbol: str, reason: str, evidence: Mapping[str, object] | None = None,
+    ) -> None:
         with self._lock:
             self._unhealthy[symbol] = reason
-        self._enqueue_runtime_fence(symbol, reason)
+        self._enqueue_runtime_fence(symbol, reason, evidence)
+
+    def _continuity_evidence(self, symbol: str, **known: object) -> dict[str, object]:
+        """MDC-DIAG-1: bounded facts for the fence about to be queued; never raises.
+
+        Captured here, off the owner, when continuity is lost: the owner keeps only
+        the first fence's copy and writes it through its background diagnostics writer.
+        """
+        try:
+            evidence: dict[str, object] = {"evidence_captured_at_ms": int(time.time() * 1000)}
+            evidence.update({key: value for key, value in known.items() if value is not None})
+            try:
+                metrics = self._runtime.protection_ingress_metrics()
+                for key in _CONTINUITY_INGRESS_FIELDS:
+                    evidence["ingress_" + key] = metrics.get(key)
+            except Exception:
+                evidence["ingress_metrics"] = "UNAVAILABLE"
+            return evidence
+        except Exception:
+            return {}  # the fail-closed fence that follows must never depend on this
 
     def _mark_healthy(self, symbol: str) -> None:
         with self._lock:
@@ -2594,10 +2830,53 @@ class RobotProtectionCoverageManager:
             LOGGER.exception(
                 "Robot protection continuity fence release failed; symbol=%s", symbol,
             )
+        # The runtime defers the release (fence untouched, admission closed) while a
+        # reconciliation would need closed-candle evidence that was not prepared off
+        # the owner thread; retry it from the coverage thread after warming the cache.
+        deferred = False
+        try:
+            deferred = bool(runtime.robot_continuity_release_deferred())
+        except Exception:
+            LOGGER.exception("Robot continuity release deferral check failed")
+        with self._lock:
+            if deferred:
+                self._release_retry.add(symbol)
+            else:
+                self._release_retry.discard(symbol)
+
+    def _retry_deferred_fence_releases(self) -> None:
+        """Coverage thread, never the owner: warm candles, then retry on the owner."""
+        with self._lock:
+            pending = sorted(self._release_retry)
+        if not pending:
+            return
+        now = time.monotonic()
+        if now < self._release_retry_not_before:
+            return
+        self._release_retry_not_before = now + DEFERRED_RELEASE_RETRY_INTERVAL_S
+        warm = getattr(self._runtime, "warm_robot_closed_candles", None)
+        if warm is not None:
+            try:
+                warm()
+            except Exception:
+                LOGGER.warning("Robot candle cache warm-up failed", exc_info=True)
+        for symbol in pending:
+            try:
+                self._runtime.call(
+                    lambda runtime, symbol=symbol: self._release_continuity_fence(runtime, symbol)
+                )
+            except Exception:
+                LOGGER.exception(
+                    "Robot continuity fence deferred release failed; symbol=%s", symbol,
+                )
 
     def _run(self) -> None:
         while not self._stop.wait(self._resync_interval_s):
             self.resync()
+            try:
+                self._retry_deferred_fence_releases()
+            except Exception:
+                LOGGER.exception("Robot continuity fence release retry failed")
 
     def close(self) -> None:
         self._stop.set()
@@ -2692,6 +2971,42 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **to_primitive(result)})
             return
 
+        if parsed.path == "/api/scanner/progress":
+            # #449: last-written child progress is read-only filesystem
+            # evidence, NEVER a request through the serialized PAPER owner.
+            # Neither a completed old file nor a RUNNING snapshot proves
+            # current process liveness or safe STOP/deploy.
+            try:
+                from horn_scanner import read_progress
+
+                snapshot = read_progress()
+            except (OSError, ValueError):
+                self._json_response(503, {
+                    "ok": False, "error": "scanner_progress_unavailable",
+                })
+                return
+            self._json_response(200, {
+                "ok": True, "available": snapshot is not None,
+                "scope": "last_written_snapshot_only",
+                "progress": snapshot,
+            })
+            return
+
+        if parsed.path == "/api/scanner/mirror-levels":
+            # Read-only projection of the Scanner's durable MIRROR state files; it never
+            # touches the PAPER owner thread or the PAPER DB.
+            try:
+                from mirror_scanner import project_mirror_levels
+
+                include_waiting = parse_qs(parsed.query).get("include_waiting", ["0"])[0] == "1"
+                projection = project_mirror_levels(include_waiting=include_waiting)
+            except Exception:
+                LOGGER.exception("Scanner MIRROR levels projection failed")
+                self._json_response(503, {"ok": False, "error": "mirror_levels_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
         if parsed.path == "/api/instruments":
             self._json_response(200, {"ok": True, "instruments": self.server.market_data.instruments})
             return
@@ -2753,6 +3068,36 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 )
                 return
             self._json_response(200, {"ok": True, **projection})
+            return
+
+        if parsed.path == "/api/workspace/signal-geometry":
+            # Read-only exact immutable source evidence, behind the same
+            # Nginx owner-auth gate as the other /api/workspace/ routes.
+            # Backend remains loopback-only; never expose :8765 publicly.
+            import re
+            from signal_archive import load_frozen_signal_geometry
+            ids = parse_qs(parsed.query).get("signal_id", [])
+            if (len(ids) != 1 or
+                    not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", ids[0])):
+                self._json_response(400, {"ok": False, "error": "signal_id_required"})
+                return
+            snapshot = load_frozen_signal_geometry(ids[0])
+            if snapshot is None:
+                self._json_response(404, {"ok": False, "error": "signal_geometry_not_found"})
+                return
+            from geometry_feedback_store import bars_digest, latest_review, source_revision
+            try:
+                review = latest_review(ids[0], snapshot=snapshot)
+            except Exception:
+                LOGGER.exception("Geometry feedback lookup failed")
+                self._json_response(503, {"ok": False, "error": "geometry_review_unavailable"})
+                return
+            self._json_response(200, {
+                "ok": True, "snapshot": snapshot,
+                "snapshot_revision": source_revision(snapshot),
+                "bars_sha256": bars_digest(snapshot),
+                "latest_review": review,
+            })
             return
 
         if parsed.path == "/api/workspace/account":
@@ -3208,6 +3553,42 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/workspace/geometry-feedback":
+            # Isolated append-only owner annotations, never PAPER trading state.
+            from geometry_feedback_store import (
+                GeometryFeedbackConflict, GeometryFeedbackError, MAX_REQUEST_BYTES,
+                record_review,
+            )
+            from signal_archive import load_frozen_signal_geometry
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if size <= 0 or size > MAX_REQUEST_BYTES:
+                    raise GeometryFeedbackError("invalid_review_size")
+                payload = self._payload({
+                    "schema_version", "signal_id", "snapshot_revision", "bars_sha256",
+                    "label", "corrected_boundaries", "idempotency_key",
+                }, frozenset({"note"}))
+                signal_id = payload.get("signal_id")
+                import re
+                if not isinstance(signal_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", signal_id):
+                    raise GeometryFeedbackError("invalid_signal_id")
+                snapshot = load_frozen_signal_geometry(signal_id)
+                if snapshot is None:
+                    self._json_response(404, {"ok": False, "error": "signal_geometry_not_found"})
+                    return
+                review = record_review(payload, snapshot)
+            except GeometryFeedbackConflict as exc:
+                self._json_response(409, {"ok": False, "error": str(exc)})
+                return
+            except (GeometryFeedbackError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                self._json_response(400, {"ok": False, "error": str(exc)})
+                return
+            except Exception:
+                LOGGER.exception("Geometry feedback persistence failed")
+                self._json_response(503, {"ok": False, "error": "geometry_feedback_unavailable"})
+                return
+            self._json_response(200, {"ok": True, "review": review})
+            return
         if path in {OPERATOR_ARM_PATH, OPERATOR_REVOKE_PATH}:
             if not self._operator_authorized():
                 self._json_response(403, {"ok": False, "error": "operator_unauthorized"})
@@ -3475,12 +3856,29 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 request = CloseAllCommandRequest(ClientActionId(payload["client_action_id"]))
                 evidence = self._manual_close_all_evidence()
                 result = self.server.runtime.call(
-                    lambda runtime: runtime.close_all(request, **evidence)
+                    lambda runtime: runtime.coordinated_paper_close_all(request, **evidence)
                 )
-            except Exception:
+            except PaperCloseAllRejected as exc:
+                # A specific safety refusal is not a validation error or a
+                # successful flatten. Operator sees the exact blocking gate.
+                self._json_response(409, {"ok": False, "error": exc.reason})
+                return
+            except (ValueError, TypeError, KeyError, json.JSONDecodeError):
                 self._json_response(400, to_primitive(_validation_error()))
                 return
-            self._json_response(200, {"ok": True, **to_primitive(result)})
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "paper_close_all_unavailable"})
+                return
+            # HTTP 200 must prove account FLAT, not just that a Market command
+            # was accepted. Keep the same result and position DTO on failures.
+            success = (
+                not result.positions
+                and all(item.status is CommandResultStatus.COMPLETED for item in result.results)
+            )
+            self._json_response(
+                200 if success else 409,
+                {"ok": success, **to_primitive(result)},
+            )
             return
 
         if self.path == "/api/robot/close-all-now":
@@ -3575,42 +3973,57 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             coverage = getattr(self.server, "robot_protection_coverage", None)
 
             def _shutdown_evidence(runtime):
+                # All owner operations before this callback are drained first.
+                # With the monitor tick + subscription guard held externally,
+                # inspect durable and current protection evidence together.
+                identity = runtime.live_limit_acceptance_diagnostics()["database_identity"]
+                if not isinstance(identity, str) or not hmac.compare_digest(identity, claimed):
+                    return "database_identity_mismatch"
                 robot = runtime.robot_runtime_state()
-                return (
-                    runtime.live_limit_acceptance_diagnostics()["database_identity"],
-                    None if robot is None else (robot.mode, robot.recovery_status),
-                    runtime.scanner_status().mode,
-                )
+                scanner = runtime.scanner_status().mode
+                durable_blocker = runtime.paper_shutdown_blocker()
+                protection = coverage.health()
+                if (
+                    durable_blocker is not None
+                    or robot is None
+                    or (robot.mode, robot.recovery_status) != ("ROBOT_STOPPED", "ROBOT_STOPPED")
+                    or scanner != "SCANNER_STOPPED"
+                    or not isinstance(protection, Mapping)
+                    or protection.get("healthy") is not True
+                    # Absence or malformed evidence is not empty coverage.
+                    # Shutdown must see all three authoritative collections,
+                    # not merely a truthy healthy flag.
+                    or protection.get("covered_symbols") != []
+                    or protection.get("armed_symbols") != []
+                    or protection.get("unhealthy_symbols") != {}
+                ):
+                    return "runtime_still_required"
+                # Atomic with owner-call admission. Reject every later owner
+                # request (even one already queued behind this proof) before
+                # responding success and scheduling serve_forever() exit.
+                self.server.runtime.seal_shutdown()
+                return None
 
             try:
                 if coverage is None:
                     raise RuntimeError("protection coverage is unavailable")
-                identity, robot, scanner = self.server.runtime.call(_shutdown_evidence)
-                protection = coverage.health()
+                with coverage.shutdown_idle_guard():
+                    blocked = self.server.runtime.call(_shutdown_evidence)
             except Exception:
                 self._json_response(503, {"ok": False, "error": "runtime_shutdown_unavailable"})
                 return
-            if not (isinstance(identity, str) and hmac.compare_digest(identity, claimed)):
-                self._json_response(409, {"ok": False, "error": "database_identity_mismatch"})
+            if blocked is not None:
+                self._json_response(409, {"ok": False, "error": blocked})
                 return
-            # The backend is the last Robot/protection authority; never exit while it is needed.
-            if (
-                robot != ("ROBOT_STOPPED", "ROBOT_STOPPED")
-                or scanner != "SCANNER_STOPPED"
-                or not isinstance(protection, Mapping)
-                or protection.get("healthy") is not True
-                or protection.get("covered_symbols")
-                or protection.get("armed_symbols")
-                or protection.get("unhealthy_symbols")
-            ):
-                self._json_response(409, {"ok": False, "error": "runtime_still_required"})
-                return
-            self._json_response(200, {"ok": True, "shutdown": "scheduled"})
-            # serve_forever() must be stopped from outside this handler thread; main()'s
-            # finally then closes coverage, market data and the runtime normally.
-            threading.Thread(
-                target=self.server.shutdown, name="paper-runtime-shutdown", daemon=True,
-            ).start()
+            try:
+                self._json_response(200, {"ok": True, "shutdown": "scheduled"})
+            finally:
+                # The seal is irreversible for this process; even if the
+                # socket reply fails, continue shutdown rather than leaving
+                # a sealed backend running indefinitely.
+                threading.Thread(
+                    target=self.server.shutdown, name="paper-runtime-shutdown", daemon=True,
+                ).start()
             return
 
         if self.path == "/api/robot/autopilot":
@@ -4023,11 +4436,58 @@ def _install_console_log_queue(level, fmt: str, *, stream=None,
     return listener
 
 
+class _QueuedConsoleText(io.TextIOBase):
+    """Route print()/stderr text through the existing bounded console queue."""
+
+    def __init__(self, logger_name: str, level: int) -> None:
+        super().__init__()
+        self._logger = logging.getLogger(logger_name)
+        self._logger.setLevel(level)
+        self._level = level
+        self._pending = ""
+        self._lock = threading.Lock()
+
+    @property
+    def encoding(self) -> str:
+        return "utf-8"
+
+    def writable(self) -> bool:
+        return True
+
+    def isatty(self) -> bool:
+        return False
+
+    def write(self, text) -> int:
+        text = str(text)
+        with self._lock:
+            *lines, self._pending = (self._pending + text).split("\n")
+        for line in lines:
+            self._emit(line)
+        return len(text)
+
+    def flush(self) -> None:
+        with self._lock:
+            line, self._pending = self._pending, ""
+        self._emit(line)
+
+    def _emit(self, line: str) -> None:
+        line = line.rstrip("\r")
+        if line:
+            self._logger.log(self._level, line)
+
+
+def _route_console_text_to_log_queue() -> None:
+    """Keep the real stderr on the queue listener; enqueue later text writes."""
+    sys.stdout = _QueuedConsoleText("console.stdout", logging.INFO)
+    sys.stderr = _QueuedConsoleText("console.stderr", logging.WARNING)
+
+
 def main() -> None:
     _install_console_log_queue(
         os.environ.get("BYBITSCANNER_LOG_LEVEL", "INFO").upper(),
         "%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    _route_console_text_to_log_queue()
     database_path = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
     port = int(os.environ.get("BYBITSCANNER_PAPER_PORT", str(PORT)))
 
@@ -4035,6 +4495,9 @@ def main() -> None:
     # before any network, persistence, runtime, or recovery side effect.
     server = ThreadingHTTPServer((HOST, port), PaperHttpHandler)
     try:
+        # Logging evidence begins only AFTER the port-ownership barrier.
+        # File rotation/pruning happens on a dedicated daemon, never the owner.
+        start_incident_telemetry()
         validate_bybit_proxy(configure_bybit_proxy_environment())
         rest_session = create_bybit_rest_session()
         instruments = InstrumentRegistry(rest_session)

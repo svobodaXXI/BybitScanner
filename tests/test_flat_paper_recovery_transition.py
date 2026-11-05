@@ -1,0 +1,635 @@
+"""Exceptional FLAT-only transition: synthetic process and in-memory SQLite."""
+from contextlib import contextmanager
+from pathlib import Path
+import signal
+import sqlite3
+import tempfile
+import unittest
+from unittest import mock
+
+from tests.test_flat_paper_recovery_gate import fixture, IDENTITY
+from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
+from tools.jasmy_flat_handoff_proof import OLD_SHA as JASMY_OLD_SHA, PROOF_LABEL as JASMY_PROOF
+from tools.paper_two_orphan_proof import PROOF_LABEL as DUAL_PROOF
+from tools.runtime_intent import expected_database_identity
+from tools.flat_paper_recovery_transition import ROOT
+from tools.flat_paper_recovery_transition import (execute_flat_handoff, _send_exact_sigint,
+    _attest_legacy_unversioned, LEGACY_UNVERSIONED_PID,
+    LEGACY_UNVERSIONED_START, LEGACY_UNVERSIONED_INSTANCE)
+
+
+SHA = "d345411c95a079a2c8ac3cd02d9f875700ba8ca3"
+PID = 500879
+
+
+class TransitionCase(unittest.TestCase):
+    def case(self, *, execute=False, mutate=None, token=None, pid=None, exit_after=True,
+             jasmy_incident=False, listener_owned=True):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")  # passed independently by handoff
+        snapshots["backend"]["build_sha"] = JASMY_OLD_SHA if jasmy_incident else SHA
+        snapshots["backend"]["process_instance_id"] = "old-paper-process"
+        if mutate:
+            mutate(conn, snapshots)
+        events = []
+        live = [True]
+        @contextmanager
+        def barrier(_):
+            events.append("barrier:enter")
+            try:
+                yield conn
+            finally:
+                events.append("barrier:exit")
+        def interrupt(p, signum):
+            events.append(("signal", p, signum))
+            if exit_after:
+                live[0] = False
+        tick = [0]
+        def advancing_clock():
+            tick[0] += 1
+            return tick[0]
+        result = execute_flat_handoff(
+            db_path=Path("/no-vps-access"),
+            expected_identity=IDENTITY, expected_pid=PID,
+            expected_build_sha=JASMY_OLD_SHA if jasmy_incident else SHA,
+            execute=execute, snapshots=snapshots,
+            jasmy_incident_20261102=jasmy_incident,
+            listener_owner=lambda p: listener_owned,
+            service_pid=pid or (lambda: PID if live[0] else 0),
+            start_token=token or (lambda p: "start-77"),
+            send_interrupt=interrupt, is_alive=lambda p: live[0],
+            writer_guard=barrier,
+            monotonic=advancing_clock,
+            sleep=lambda n: None,
+        )
+        return result, events, conn
+
+    def test_dual_orphan_attested_once_under_writer_barrier(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db_path = Path(tmp.name) / "paper.sqlite3"
+        with sqlite3.connect(db_path) as destination:
+            conn.backup(destination)
+        conn.close()
+        conn = sqlite3.connect(db_path)
+        self.addCleanup(conn.close)
+        identity = expected_database_identity(
+            ROOT, {"BYBITSCANNER_PAPER_DB": str(db_path)},
+        )
+        snapshots["backend"].update(
+            build_sha=JASMY_OLD_SHA, process_instance_id="old-paper-process",
+            database_identity=identity,
+        )
+        events = []
+        @contextmanager
+        def barrier(_):
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("PRAGMA query_only=ON")
+            events.append("barrier:enter")
+            try:
+                yield conn
+            finally:
+                conn.rollback()
+                events.append("barrier:exit")
+        def prove(held, **kwargs):
+            self.assertIs(held.row_factory, sqlite3.Row)
+            self.assertTrue(held.in_transaction)
+            self.assertEqual(tuple(held.execute("PRAGMA query_only").fetchone()), (1,))
+            return DUAL_PROOF
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_two_flat_orphans",
+            side_effect=prove,
+        ) as proof:
+            result = execute_flat_handoff(
+                db_path=db_path, expected_identity=identity, expected_pid=PID,
+                expected_build_sha=JASMY_OLD_SHA, execute=False,
+                dual_orphan_incident_20261103=True, snapshots=snapshots,
+                service_pid=lambda: PID, start_token=lambda p: "start-77",
+                listener_owner=lambda p: True, writer_guard=barrier,
+            )
+        self.assertTrue(result.startswith("PRECHECK_ONLY:"))
+        self.assertEqual(events, ["barrier:enter", "barrier:exit"])
+        proof.assert_called_once()
+
+    def test_dual_orphan_rejects_writer_barrier_without_query_only(self):
+        # This synthetic writer guard deliberately omits the production
+        # query_only seal. Even BEGIN IMMEDIATE must not waive it.
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "paper.sqlite3"
+        with sqlite3.connect(path) as destination:
+            conn.backup(destination)
+        conn.close()
+        conn = sqlite3.connect(path)
+        self.addCleanup(conn.close)
+        identity = expected_database_identity(
+            ROOT, {"BYBITSCANNER_PAPER_DB": str(path)},
+        )
+        snapshots["backend"].update(
+            build_sha=JASMY_OLD_SHA, process_instance_id="old-paper-process",
+            database_identity=identity,
+        )
+        signals = []
+        @contextmanager
+        def unsealed_barrier(_):
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+            finally:
+                conn.rollback()
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "read_only_snapshot_required"):
+            execute_flat_handoff(
+                db_path=path, expected_identity=identity, expected_pid=PID,
+                expected_build_sha=JASMY_OLD_SHA, execute=True,
+                dual_orphan_incident_20261103=True, snapshots=snapshots,
+                service_pid=lambda: PID, start_token=lambda p: "start-77",
+                listener_owner=lambda p: True, writer_guard=unsealed_barrier,
+                send_interrupt=lambda *args: signals.append(args),
+            )
+        self.assertEqual(signals, [])
+
+    def test_dual_orphan_wrong_db_identity_or_ambiguous_proof_never_signals(self):
+        conn, snapshots = fixture()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db_path = Path(tmp.name) / "paper.sqlite3"
+        with sqlite3.connect(db_path) as destination:
+            conn.backup(destination)
+        conn.close()
+        conn = sqlite3.connect(db_path)
+        self.addCleanup(conn.close)
+        identity = expected_database_identity(
+            ROOT, {"BYBITSCANNER_PAPER_DB": str(db_path)},
+        )
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(
+            build_sha=JASMY_OLD_SHA, process_instance_id="old-paper-process",
+            database_identity=identity,
+        )
+        signals = []
+        @contextmanager
+        def barrier(_):
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("PRAGMA query_only=ON")
+            try:
+                yield conn
+            finally:
+                conn.rollback()
+        common = dict(
+            db_path=db_path, expected_pid=PID, expected_build_sha=JASMY_OLD_SHA,
+            execute=True, dual_orphan_incident_20261103=True,
+            snapshots=snapshots, service_pid=lambda: PID,
+            start_token=lambda p: "start-77", listener_owner=lambda p: True,
+            writer_guard=barrier, send_interrupt=lambda *args: signals.append(args),
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "dual_orphan_database_identity_mismatch"):
+            execute_flat_handoff(expected_identity="wrong", **common)
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_two_flat_orphans",
+            side_effect=FlatRecoveryBlocked("unproven_FLOW_exit"),
+        ):
+            with self.assertRaisesRegex(FlatRecoveryBlocked, "unproven_FLOW_exit"):
+                execute_flat_handoff(expected_identity=identity, **common)
+        self.assertEqual(signals, [])
+
+    def test_dual_orphan_rejects_different_open_main_db_under_barrier(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        with tempfile.TemporaryDirectory() as tmp:
+            intended = Path(tmp) / "intended.sqlite3"
+            substituted = Path(tmp) / "other.sqlite3"
+            with sqlite3.connect(substituted) as dest:
+                conn.backup(dest)
+            conn.close()
+            identity = expected_database_identity(
+                ROOT, {"BYBITSCANNER_PAPER_DB": str(intended)},
+            )
+            snapshots["backend"].update(
+                build_sha=JASMY_OLD_SHA, process_instance_id="old-paper-process",
+                database_identity=identity,
+            )
+            signals = []
+            @contextmanager
+            def wrong_file_barrier(_):
+                with sqlite3.connect(substituted) as actual:
+                    actual.execute("BEGIN IMMEDIATE")
+                    actual.execute("PRAGMA query_only=ON")
+                    yield actual
+            with self.assertRaisesRegex(
+                FlatRecoveryBlocked, "dual_orphan_open_database_identity_mismatch",
+            ):
+                execute_flat_handoff(
+                    db_path=intended, expected_identity=identity, expected_pid=PID,
+                    expected_build_sha=JASMY_OLD_SHA, execute=True,
+                    dual_orphan_incident_20261103=True, snapshots=snapshots,
+                    service_pid=lambda: PID, start_token=lambda p: "start-77",
+                    listener_owner=lambda p: True, writer_guard=wrong_file_barrier,
+                    send_interrupt=lambda *args: signals.append(args),
+                )
+            self.assertEqual(signals, [])
+
+    def test_dual_orphan_cannot_combine_jasmy_or_legacy_exceptions(self):
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "mutually_exclusive_flat_incident_proofs"):
+            execute_flat_handoff(
+                db_path=Path("/no-vps-access"), expected_identity=IDENTITY,
+                expected_pid=PID, expected_build_sha=JASMY_OLD_SHA,
+                execute=False, dual_orphan_incident_20261103=True,
+                jasmy_incident_20261102=True, snapshots={},
+            )
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "incident_old_sha_mismatch"):
+            execute_flat_handoff(
+                db_path=Path("/no-vps-access"), expected_identity=IDENTITY,
+                expected_pid=PID, expected_build_sha=SHA,
+                execute=False, dual_orphan_incident_20261103=True, snapshots={},
+            )
+
+    def test_jasmy_incident_uses_named_rows_inside_barrier_only(self):
+        # Production _frozen_snapshot opens an ordinary sqlite3.Connection:
+        # unlike SQLiteStore.open(), it does not set sqlite3.Row. The legacy
+        # proof reuses SQLiteStore's mapping-based row parsers read-only.
+        def prove(conn, **_snapshots):
+            self.assertIs(conn.row_factory, sqlite3.Row)
+            self.assertEqual(
+                conn.execute("SELECT * FROM robot_runtime_state").fetchone()["mode"],
+                "ROBOT_RUNNING",
+            )
+            return JASMY_PROOF
+
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_jasmy_legacy_flat",
+            side_effect=prove,
+        ) as proof:
+            result, events, conn = self.case(jasmy_incident=True)
+        self.assertTrue(result.startswith("PRECHECK_ONLY:"))
+        self.assertEqual(events, ["barrier:enter", "barrier:exit"])
+        self.assertIs(conn.row_factory, sqlite3.Row)
+        proof.assert_called_once()
+
+    def test_jasmy_incident_one_pid_signal_only_after_proof(self):
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_jasmy_legacy_flat",
+            return_value=JASMY_PROOF,
+        ) as proof:
+            result, events, _ = self.case(jasmy_incident=True, execute=True)
+        self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
+        self.assertEqual(len([e for e in events if isinstance(e, tuple)
+                              and e[0] == "signal"]), 1)
+        self.assertEqual(events, [
+            "barrier:enter", ("signal", PID, signal.SIGINT), "barrier:exit",
+        ])
+        proof.assert_called_once()
+
+    def test_jasmy_incident_refuses_unowned_listener_without_signal(self):
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_jasmy_legacy_flat",
+            return_value=JASMY_PROOF,
+        ) as proof:
+            with self.assertRaisesRegex(
+                FlatRecoveryBlocked, "jasmy_backend_listener_owner_unproven",
+            ):
+                self.case(jasmy_incident=True, execute=True, listener_owned=False)
+        proof.assert_called_once()
+
+    def test_generic_handoff_refuses_unowned_listener_before_sigint(self):
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "backend_listener_owner_unproven",
+        ):
+            self.case(execute=True, listener_owned=False)
+
+    def test_generic_preflight_without_signal_does_not_claim_owner(self):
+        # Preflight proves FLAT only; execution must independently prove the
+        # listener after the final SQLite evidence check.
+        result, events, _ = self.case(execute=False, listener_owned=False)
+        self.assertTrue(result.startswith("PRECHECK_ONLY:"))
+        self.assertEqual(events, ["barrier:enter", "barrier:exit"])
+
+    def test_jasmy_incident_refuses_unowned_listener_even_for_preflight(self):
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_jasmy_legacy_flat",
+            return_value=JASMY_PROOF,
+        ) as proof:
+            with self.assertRaisesRegex(
+                FlatRecoveryBlocked, "jasmy_backend_listener_owner_unproven",
+            ):
+                self.case(jasmy_incident=True, execute=False, listener_owned=False)
+        proof.assert_called_once()
+
+    def test_jasmy_incident_rejects_missing_proof_without_signal(self):
+        with self.assertRaises(FlatRecoveryBlocked):
+            self.case(jasmy_incident=True)
+
+    def test_preflight_never_signals_and_does_not_modify_sqlite(self):
+        result, events, conn = self.case()
+        self.assertTrue(result.startswith("PRECHECK_ONLY:"))
+        self.assertEqual(events, ["barrier:enter", "barrier:exit"])
+        self.assertEqual(conn.execute(
+            "SELECT status FROM paper_protection_obligations"
+        ).fetchone(), ("DISPATCHING",))
+
+    def test_live_http_snapshots_finish_before_writer_barrier(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(build_sha=SHA, process_instance_id="old-paper-process")
+        events = []
+        @contextmanager
+        def barrier(_):
+            events.append("barrier:enter")
+            try:
+                yield conn
+            finally:
+                events.append("barrier:exit")
+        def fetch():
+            # Deliberately fails if the old deadlocking ordering returns.
+            self.assertNotIn("barrier:enter", events)
+            events.append("http")
+            return snapshots
+        with mock.patch("tools.flat_paper_recovery_transition.get_snapshots", side_effect=fetch):
+            result = execute_flat_handoff(
+                db_path=Path("/no-vps-access"),
+                expected_identity=IDENTITY, expected_pid=PID,
+                expected_build_sha=SHA, execute=False,
+                service_pid=lambda: PID, start_token=lambda p: "start-77",
+                writer_guard=barrier,
+            )
+        self.assertTrue(result.startswith("PRECHECK_ONLY:"))
+        self.assertEqual(events, ["http", "http", "barrier:enter", "barrier:exit"])
+
+    def test_live_protection_changes_block_before_writer_barrier_and_signal(self):
+        conn, first = fixture()
+        first.pop("expected_identity")
+        first["backend"].update(build_sha=SHA, process_instance_id="old-paper-process")
+        second = {**first, "protection": {
+            **first["protection"], "armed_symbols": ["UNEXPECTEDUSDT"]}}
+        events = []
+        @contextmanager
+        def barrier(_):
+            events.append("barrier:enter")
+            try:
+                yield conn
+            finally:
+                events.append("barrier:exit")
+        with mock.patch("tools.flat_paper_recovery_transition.get_snapshots",
+                        side_effect=[first, second]):
+            with self.assertRaises(FlatRecoveryBlocked):
+                execute_flat_handoff(
+                    db_path=Path("/no-vps-access"),
+                    expected_identity=IDENTITY, expected_pid=PID,
+                    expected_build_sha=SHA, execute=True,
+                    service_pid=lambda: PID, start_token=lambda p: "start-77",
+                    send_interrupt=lambda *args: events.append("signal"),
+                    writer_guard=barrier,
+                )
+        self.assertEqual(events, ["barrier:enter", "barrier:exit"])
+
+    def test_one_signal_only_inside_barrier_after_proof(self):
+        result, events, _ = self.case(execute=True)
+        self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
+        self.assertEqual(events, [
+            "barrier:enter", ("signal", PID, signal.SIGINT), "barrier:exit",
+        ])
+
+    def test_backend_exit_probe_runs_only_after_writer_barrier_release(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(build_sha=SHA, process_instance_id="old-paper-process")
+        events = []
+        writer_held = [False]
+        @contextmanager
+        def barrier(_):
+            writer_held[0] = True
+            events.append("barrier:enter")
+            try:
+                yield conn
+            finally:
+                writer_held[0] = False
+                events.append("barrier:exit")
+        def interrupt(pid, sig):
+            self.assertTrue(writer_held[0])
+            events.append("signal")
+        def probe(pid):
+            self.assertFalse(writer_held[0], "Backend exit needs released SQLite writer")
+            events.append("exit:probe")
+            return False
+        result = execute_flat_handoff(
+            db_path=Path("/no-vps-access"), expected_identity=IDENTITY,
+            expected_pid=PID, expected_build_sha=SHA, execute=True,
+            snapshots=snapshots, service_pid=lambda: PID,
+            start_token=lambda p: "start-77", writer_guard=barrier,
+            send_interrupt=interrupt, is_alive=probe, listener_owner=lambda p: True,
+            monotonic=lambda: 0, sleep=lambda seconds: None,
+        )
+        self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
+        self.assertEqual(events, [
+            "barrier:enter", "signal", "barrier:exit", "exit:probe",
+        ])
+
+    def test_failed_systemd_unit_after_signal_is_successful_exit(self):
+        # In production _service_pid raises backend_unit_not_active once
+        # systemd marks the expected, now-dead owner process as failed.
+        observations = []
+        live = [True]
+        def service_pid():
+            observations.append("active" if live[0] else "failed")
+            if not live[0]:
+                raise FlatRecoveryBlocked("backend_unit_not_active")
+            return PID
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(build_sha=SHA, process_instance_id="old-paper-process")
+        signals = []
+        @contextmanager
+        def barrier(_):
+            yield conn
+        def interrupt(pid, sig):
+            signals.append((pid, sig))
+            live[0] = False
+        result = execute_flat_handoff(
+            db_path=Path("/no-vps-access"), expected_identity=IDENTITY,
+            expected_pid=PID, expected_build_sha=SHA, execute=True,
+            snapshots=snapshots, service_pid=service_pid,
+            start_token=lambda p: "start-77", writer_guard=barrier,
+            send_interrupt=interrupt, is_alive=lambda p: live[0],
+            listener_owner=lambda p: True,
+            monotonic=lambda: 0, sleep=lambda seconds: None,
+        )
+        self.assertTrue(result.startswith("INTERRUPT_EXIT_OBSERVED:"))
+        self.assertEqual(signals, [(PID, signal.SIGINT)])
+        self.assertEqual(observations, ["active", "active"])
+
+    def test_failed_unit_alone_does_not_prove_backend_exit(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(build_sha=SHA, process_instance_id="old-paper-process")
+        signals = []
+        @contextmanager
+        def barrier(_):
+            yield conn
+        ticks = iter([0, 16, 16])
+        result = execute_flat_handoff(
+            db_path=Path("/no-vps-access"), expected_identity=IDENTITY,
+            expected_pid=PID, expected_build_sha=SHA, execute=True,
+            snapshots=snapshots,
+            service_pid=lambda: PID,
+            start_token=lambda p: "start-77", writer_guard=barrier,
+            send_interrupt=lambda pid, sig: signals.append((pid, sig)),
+            listener_owner=lambda p: True, is_alive=lambda pid: True,
+            monotonic=lambda: next(ticks), sleep=lambda seconds: None,
+        )
+        self.assertTrue(result.startswith("OUTCOME_UNKNOWN:"))
+        self.assertEqual(signals, [(PID, signal.SIGINT)])
+
+    def test_any_open_exposure_blocks_without_signal(self):
+        def mutate(conn, snapshots):
+            conn.execute("UPDATE position_projections SET quantity='422',side='Short' "
+                         "WHERE symbol='VIRTUALUSDT'")
+        with self.assertRaises(FlatRecoveryBlocked):
+            self.case(execute=True, mutate=mutate)
+
+    def test_mismatched_build_blocks(self):
+        def mutate(conn, snapshots):
+            snapshots["backend"]["build_sha"] = "0" * 40
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "installed_build_sha_changed"):
+            self.case(execute=True, mutate=mutate)
+
+    def test_changed_systemd_pid_blocks(self):
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "systemd_main_pid_changed"):
+            self.case(execute=True, pid=lambda: PID+1)
+
+    def test_changed_start_token_blocks(self):
+        attempts = iter(["start-77", "start-78"])
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "backend_process_changed"):
+            self.case(execute=True, token=lambda p: next(attempts))
+
+    def test_busdt_evidence_ambiguity_blocks(self):
+        def mutate(conn, snapshots):
+            conn.execute("UPDATE executions SET quantity='486'")
+        with self.assertRaises(FlatRecoveryBlocked):
+            self.case(execute=True, mutate=mutate)
+
+    def test_unfinished_market_blocks(self):
+        def mutate(conn, snapshots):
+            conn.execute("INSERT INTO trading_commands VALUES ('paper','unknown')")
+        with self.assertRaises(FlatRecoveryBlocked):
+            self.case(execute=True, mutate=mutate)
+
+    def test_unknown_exit_never_retries_signal(self):
+        result, events, _ = self.case(execute=True, exit_after=False)
+        self.assertTrue(result.startswith("OUTCOME_UNKNOWN:"))
+        self.assertEqual(
+            [event for event in events if isinstance(event, tuple) and event[0] == "signal"],
+            [("signal", PID, signal.SIGINT)],
+        )
+
+    def test_linux_pidfd_pins_process_before_signal(self):
+        with (mock.patch("tools.flat_paper_recovery_transition.os.pidfd_open", return_value=19) as open_fd,
+              mock.patch("tools.flat_paper_recovery_transition._service_pid", return_value=PID),
+              mock.patch("tools.flat_paper_recovery_transition._process_start_token", return_value="start-77"),
+              mock.patch("tools.flat_paper_recovery_transition.signal.pidfd_send_signal") as send,
+              mock.patch("tools.flat_paper_recovery_transition.os.close") as close):
+            _send_exact_sigint(PID, "start-77")
+            open_fd.assert_called_once_with(PID, 0)
+            send.assert_called_once_with(19, signal.SIGINT, None, 0)
+            close.assert_called_once_with(19)
+
+    def test_reused_pidfd_blocks_signal_and_closes_handle(self):
+        with (mock.patch("tools.flat_paper_recovery_transition.os.pidfd_open", return_value=19),
+              mock.patch("tools.flat_paper_recovery_transition._service_pid", return_value=PID),
+              mock.patch("tools.flat_paper_recovery_transition._process_start_token", return_value="new-instance"),
+              mock.patch("tools.flat_paper_recovery_transition.signal.pidfd_send_signal") as send,
+              mock.patch("tools.flat_paper_recovery_transition.os.close") as close):
+            with self.assertRaisesRegex(FlatRecoveryBlocked, "backend_process_changed"):
+                _send_exact_sigint(PID, "old-instance")
+            send.assert_not_called()
+            close.assert_called_once_with(19)
+
+    def test_legacy_unversioned_identity_is_narrow_and_non_mutating(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(build_sha="", process_instance_id=LEGACY_UNVERSIONED_INSTANCE)
+        observed = []
+        @contextmanager
+        def barrier(_):
+            yield conn
+        result = execute_flat_handoff(
+            db_path=Path("/no-vps-access"), expected_identity=IDENTITY,
+            expected_pid=LEGACY_UNVERSIONED_PID, expected_build_sha=SHA,
+            execute=False, legacy_unversioned=True, snapshots=snapshots,
+            service_pid=lambda: LEGACY_UNVERSIONED_PID,
+            start_token=lambda p: LEGACY_UNVERSIONED_START,
+            legacy_attestor=lambda p, t, h: observed.append(
+                (p,t,h["process_instance_id"],h["build_sha"])),
+            writer_guard=barrier,
+        )
+        self.assertTrue(result.startswith("PRECHECK_ONLY:"))
+        self.assertEqual(observed, [(
+            LEGACY_UNVERSIONED_PID, LEGACY_UNVERSIONED_START,
+            LEGACY_UNVERSIONED_INSTANCE, "",
+        )])
+
+    def test_legacy_mode_rejects_other_expected_release(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        snapshots["backend"].update(build_sha="", process_instance_id=LEGACY_UNVERSIONED_INSTANCE)
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "legacy_expected_release_marker_mismatch"):
+            execute_flat_handoff(
+                db_path=Path("/none"), expected_identity=IDENTITY,
+                expected_pid=LEGACY_UNVERSIONED_PID,
+                expected_build_sha="f"*40, execute=False,
+                legacy_unversioned=True, snapshots=snapshots,
+                service_pid=lambda: LEGACY_UNVERSIONED_PID,
+                start_token=lambda p: LEGACY_UNVERSIONED_START,
+            )
+
+    def test_legacy_attestation_rejects_changed_incident_identity(self):
+        examples = [
+            (LEGACY_UNVERSIONED_PID+1, LEGACY_UNVERSIONED_START,
+             LEGACY_UNVERSIONED_INSTANCE, ""),
+            (LEGACY_UNVERSIONED_PID, "52729569",
+             LEGACY_UNVERSIONED_INSTANCE, ""),
+            (LEGACY_UNVERSIONED_PID, LEGACY_UNVERSIONED_START,
+             "different-instance", ""),
+            (LEGACY_UNVERSIONED_PID, LEGACY_UNVERSIONED_START,
+             LEGACY_UNVERSIONED_INSTANCE, SHA),
+        ]
+        for pid, started, instance, sha in examples:
+            with self.subTest(pid=pid, started=started, instance=instance, sha=sha):
+                with self.assertRaisesRegex(FlatRecoveryBlocked,
+                                            "legacy_unversioned_identity_mismatch"):
+                    _attest_legacy_unversioned(
+                        pid, started,
+                        {"process_instance_id": instance, "build_sha": sha},
+                    )
+
+    def test_legacy_attestation_requires_unset_env_and_exact_listener(self):
+        backend = {"process_instance_id": LEGACY_UNVERSIONED_INSTANCE, "build_sha": ""}
+        with (mock.patch("tools.flat_paper_recovery_transition.Path.read_bytes",
+                         return_value=b"BYBITSCANNER_BUILD_SHA=other\\x00"),
+              mock.patch("tools.flat_paper_recovery_transition._has_exact_local_listener",
+                         return_value=True)):
+            with self.assertRaisesRegex(FlatRecoveryBlocked, "legacy_build_environment_changed"):
+                _attest_legacy_unversioned(
+                    LEGACY_UNVERSIONED_PID, LEGACY_UNVERSIONED_START, backend,
+                )
+        with (mock.patch("tools.flat_paper_recovery_transition.Path.read_bytes",
+                         return_value=b"BYBITSCANNER_PAPER_DB=/tmp/paper\\x00"),
+              mock.patch("tools.flat_paper_recovery_transition._has_exact_local_listener",
+                         return_value=False)):
+            with self.assertRaisesRegex(FlatRecoveryBlocked, "backend_listener_owner_unproven"):
+                _attest_legacy_unversioned(
+                    LEGACY_UNVERSIONED_PID, LEGACY_UNVERSIONED_START, backend,
+                )
+
+    def test_owner_authorization_requires_exact_pid(self):
+        with self.assertRaisesRegex(FlatRecoveryBlocked, "expected_pid_invalid"):
+            execute_flat_handoff(
+                db_path=Path("/none"), expected_identity=IDENTITY,
+                expected_pid=0, expected_build_sha=SHA, execute=True,
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

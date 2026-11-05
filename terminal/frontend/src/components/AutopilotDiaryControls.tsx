@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DiaryOverlay, type DiarySection } from "./DiaryOverlay";
 
 type DiaryLaunch = {
@@ -9,11 +9,20 @@ type DiaryLaunch = {
 export function AutopilotDiaryControls({
   accountKey,
   tradeEpisodeId = null,
+  requestedTradeEpisodeId = null,
+  onRequestConsumed,
 }: {
   accountKey: string;
   tradeEpisodeId?: string | null;
+  requestedTradeEpisodeId?: string | null;
+  onRequestConsumed?: () => void;
 }) {
   const [launch, setLaunch] = useState<DiaryLaunch | null>(null);
+  useEffect(() => {
+    if (!requestedTradeEpisodeId) return;
+    setLaunch({ section: "TRADES", tradeEpisodeId: requestedTradeEpisodeId });
+    onRequestConsumed?.();
+  }, [requestedTradeEpisodeId, onRequestConsumed]);
 
   return (
     <>
@@ -39,6 +48,7 @@ export function AutopilotDiaryControls({
 
       {launch ? (
         <DiaryOverlay
+          key={`${accountKey}:${launch.section}:${launch.tradeEpisodeId ?? ""}`}
           accountKey={accountKey}
           initialSection={launch.section}
           initialTradeEpisodeId={launch.tradeEpisodeId}

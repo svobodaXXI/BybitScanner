@@ -39,7 +39,8 @@ def _snapshot(*, apex_index=130):
             "current_index": 100,
             "touches": {
                 "lower_touch_points": [
-                    {"index": 99, "price": 90.0, "counted": True},
+                    # STOP 98.5: within the 1.5% non-Box limit of the 100 ask.
+                    {"index": 99, "price": 98.6, "counted": True},
                 ],
                 "upper_touch_points": [
                     {"index": 99, "price": 110.0, "counted": True},

@@ -1,0 +1,140 @@
+{
+ "slippage": {
+  "n_stop_exits": 34,
+  "adverse_fraction": {
+   "min": -0.011840739927763255,
+   "max": 0.21195787170097355,
+   "P50": 0.0007723657078443544,
+   "P75": 0.003042057770320109,
+   "P90": 0.03367841248627397
+  },
+  "better_than_stop": 2,
+  "worse_than_1pct": 8,
+  "other_exit_reasons": {
+   "EMERGENCY_CLOSE": 16,
+   "STOP": 34,
+   "TAKE": 12
+  },
+  "caveats": [
+   "stop_price is the recorded protective stop of the trade; a stop moved after entry or a long hold can make the gap larger than a single stop-trigger slippage",
+   "PAPER simulator fills, not exchange fills; EMERGENCY_CLOSE exits have no reference price and are excluded"
+  ]
+ },
+ "scenarios": {
+  "ZERO": {
+   "slippage_fraction": "0",
+   "BASE": {
+    "closed": 16,
+    "net_pnl_pct_wv_closed": -3.8821066941837588,
+    "wins": 4,
+    "losses": 12,
+    "exits": {
+     "STOP": 12,
+     "TAKE": 4
+    }
+   },
+   "MIRROR": {
+    "closed": 8,
+    "net_pnl_pct_wv_closed": 0.9271604230633047,
+    "wins": 2,
+    "losses": 6,
+    "exits": {
+     "RETEST": 2,
+     "STOP": 6
+    }
+   }
+  },
+  "P50": {
+   "slippage_fraction": "0.0007723657078443544",
+   "BASE": {
+    "closed": 16,
+    "net_pnl_pct_wv_closed": -4.811620334530708,
+    "wins": 4,
+    "losses": 12,
+    "exits": {
+     "STOP": 12,
+     "TAKE": 4
+    }
+   },
+   "MIRROR": {
+    "closed": 8,
+    "net_pnl_pct_wv_closed": 0.37772570861318344,
+    "wins": 2,
+    "losses": 6,
+    "exits": {
+     "RETEST": 2,
+     "STOP": 6
+    }
+   }
+  },
+  "P75": {
+   "slippage_fraction": "0.003042057770320109",
+   "BASE": {
+    "closed": 16,
+    "net_pnl_pct_wv_closed": -7.543111013145299,
+    "wins": 4,
+    "losses": 12,
+    "exits": {
+     "STOP": 12,
+     "TAKE": 4
+    }
+   },
+   "MIRROR": {
+    "closed": 8,
+    "net_pnl_pct_wv_closed": -1.2368560854394541,
+    "wins": 2,
+    "losses": 6,
+    "exits": {
+     "RETEST": 2,
+     "STOP": 6
+    }
+   }
+  },
+  "P90": {
+   "slippage_fraction": "0.03367841248627397",
+   "BASE": {
+    "closed": 16,
+    "net_pnl_pct_wv_closed": -44.41283387858006,
+    "wins": 4,
+    "losses": 12,
+    "exits": {
+     "STOP": 12,
+     "TAKE": 4
+    }
+   },
+   "MIRROR": {
+    "closed": 6,
+    "net_pnl_pct_wv_closed": -15.190181880541296,
+    "wins": 1,
+    "losses": 5,
+    "exits": {
+     "RETEST": 2,
+     "STOP": 4
+    }
+   }
+  },
+  "CEILING_0_5PCT": {
+   "slippage_fraction": "0.005",
+   "BASE": {
+    "closed": 16,
+    "net_pnl_pct_wv_closed": -9.899422267017703,
+    "wins": 4,
+    "losses": 12,
+    "exits": {
+     "STOP": 12,
+     "TAKE": 4
+    }
+   },
+   "MIRROR": {
+    "closed": 8,
+    "net_pnl_pct_wv_closed": -2.6296696437684703,
+    "wins": 2,
+    "losses": 6,
+    "exits": {
+     "RETEST": 2,
+     "STOP": 6
+    }
+   }
+  }
+ }
+}

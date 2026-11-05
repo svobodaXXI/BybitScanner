@@ -14,11 +14,15 @@ from geometry.broadening import (
     STAGE_MATURE,
     STAGE_PRELIMINARY,
     _expanding_run,
+    _line,
+    _positive_width,
+    _value,
     detect_broadening,
 )
 from tests.geometry_gold import ROOT, _load_frame, load_manifest
 
 GOLD = ROOT / "tests" / "fixtures" / "geometry_gold"
+HORN_GEOMETRY = ROOT / "tests" / "fixtures" / "horn_geometry"
 
 
 def zigzag(points, length):
@@ -161,6 +165,48 @@ class GoldNegativeTest(unittest.TestCase):
             with self.subTest(symbol=symbol):
                 frame = _load_frame(cases[symbol])
                 self.assertIsNone(detect_broadening(frame, len(frame) - 1))
+
+
+class PositiveWidthTest(unittest.TestCase):
+    """The channel must be open on the whole formation: upper(t) > lower(t) from START on."""
+
+    def test_uniusdt_5m_crossed_boundaries_are_not_a_formation(self):
+        # Exact closed OHLC the live Scanner read (horn_observations/ohlc, decision
+        # 1792253400000). The pre-fix detector reported PRELIMINARY H165 L175 H179
+        # L194 although the lines cross near index 169.6, between P1 and P2.
+        frame = pd.read_csv(HORN_GEOMETRY / "UNIUSDT_5_1792253400000.csv")
+        self.assertEqual(len(frame), 199)
+        run = _expanding_run(
+            sorted([(165, "H", 7.162), (175, "L", 7.154), (179, "H", 7.211), (194, "L", 7.07)]), 198)
+        self.assertEqual(len(run), 4)
+        upper, lower = _line(run[0], run[2]), _line(run[1], run[3])
+        self.assertLess(_value(upper, 165), _value(lower, 165))
+        self.assertGreater(_value(upper, 198), _value(lower, 198))
+        self.assertFalse(_positive_width(upper, lower, 165, 198))
+        self.assertIsNone(detect_broadening(frame))
+        self.assertIsNone(detect_broadening(frame, len(frame) - 1))
+
+    def test_synthetic_crossing_between_p1_and_p2_is_rejected(self):
+        # Same shape as UNIUSDT: a tiny first wave and a steep lower boundary
+        # projected back above HIGH72. Expanding run, HH/LL and width growth all hold.
+        frame = zigzag([(0, 99.0), (72, 100.0), (84, 99.9), (96, 100.6), (156, 98.0), (168, 99.0)], 169)
+        self.assertIsNone(detect_broadening(frame, 159))
+
+    def test_four_pivot_megaphone_keeps_positive_width(self):
+        formation = detect_broadening(zigzag(FOUR, 121), 111)
+        self.assertIsNotNone(formation)
+        for index in range(formation.start_index, formation.as_of_index + 1):
+            upper, lower = formation.project(index)
+            self.assertGreater(upper, lower)
+
+    def test_touching_or_rounding_only_width_is_not_positive(self):
+        lower = _line((0, "L", 0.3), (10, "L", 0.0))
+        touching = _line((0, "H", 0.3), (10, "H", 1.0))
+        rounding = _line((0, "H", 0.1 + 0.2), (10, "H", 1.0))  # 0.30000000000000004
+        self.assertGreater(_value(rounding, 0) - _value(lower, 0), 0)
+        self.assertFalse(_positive_width(touching, lower, 0, 10))
+        self.assertFalse(_positive_width(rounding, lower, 0, 10))
+        self.assertTrue(_positive_width(_line((0, "H", 0.31), (10, "H", 1.0)), lower, 0, 10))
 
 
 if __name__ == "__main__":
