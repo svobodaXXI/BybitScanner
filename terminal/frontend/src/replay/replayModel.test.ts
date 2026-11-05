@@ -171,8 +171,8 @@ describe("standalone SIMULATION viewer contract", () => {
     const demo = syntheticReplay();
     const events = demo.events.filter(e => e.kind === "CANDLE_CLOSED")
       .map((event, i) => ({ ...event, sequence: i + 1 }));
-    const first = events[10].time_ms;
-    const second = events[11].time_ms;
+    const first = events[11].time_ms;
+    const second = events[12].time_ms;
     const version = events[5].time_ms;
     const archive = {
       source: "SIMULATION", simulation_run_id: "observation_fixture",
@@ -180,12 +180,19 @@ describe("standalone SIMULATION viewer contract", () => {
       symbol: "BTCUSDT", timeframe: "5m", events: events.map(e => ({
         ...e, simulation_run_id: "observation_fixture",
       })),
+      geometry: [{
+        kind: "MAIN_1H", side: "BULL", available_at_ms: version,
+        from_ms: events[0].candle!.start_ms,
+        to_ms: events[1].candle!.start_ms,
+        from_price: "100", to_price: "100", trend_version: version,
+        classification: "UNVALIDATED_GEOMETRY_ONLY",
+      }],
       observations: [
         { kind: "MAIN_1H_TOUCH", side: "BULL", time_ms: first,
           price: "101", line_price: "100", trend_version: version,
           classification: "UNVALIDATED_GEOMETRY_ONLY" },
         { kind: "MAIN_1H_REACTION", side: "BULL", time_ms: second,
-          touch_time_ms: first, price: "102", line_price: "100.1",
+          touch_time_ms: first, price: "103", line_price: "100",
           trend_version: version, classification: "UNVALIDATED_GEOMETRY_ONLY" },
       ],
     };
@@ -196,6 +203,21 @@ describe("standalone SIMULATION viewer contract", () => {
       "MAIN_1H_TOUCH", "MAIN_1H_REACTION",
     ]);
     expect(visibleReplay(doc.events, doc.events.length).fills).toHaveLength(0);
+    expect(() => parseReplayDocument({
+      ...archive, geometry: undefined,
+    })).toThrow(/часовой линии/);
+    expect(() => parseReplayDocument({
+      ...archive, observations: [{ ...archive.observations[0], trend_version: version + 300_000 }],
+    })).toThrow(/часовой линии/);
+    expect(() => parseReplayDocument({
+      ...archive, observations: [{ ...archive.observations[0], side: "BEAR" }],
+    })).toThrow(/часовой линии/);
+    expect(() => parseReplayDocument({
+      ...archive, observations: [{ ...archive.observations[0], price: "999" }],
+    })).toThrow(/закрытой свечой/);
+    expect(() => parseReplayDocument({
+      ...archive, observations: [{ ...archive.observations[0], line_price: "101" }],
+    })).toThrow(/трендовой/);
     expect(() => parseReplayDocument({
       ...archive, observations: [archive.observations[1]],
     })).toThrow(/без предыдущего/);
