@@ -491,8 +491,10 @@ class ScannerControlRuntime:
                     break
                 if not self._start_requested.is_set():
                     continue
-                self._start_requested.clear()
+                # Publish in-flight ownership before consuming START:
+                # no observer may see both flags clear in the handoff gap.
                 self._start_inflight.set()
+                self._start_requested.clear()
                 failure_reason = None
                 try:
                     # One owner START retains RUNNING across successful passes.
