@@ -20,7 +20,7 @@ function label(event: ReplayEvent): string {
     case "EXIT_FILLED": return "Выход " + (event.reason ?? "");
   }
 }
-function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: number }) {
+function ReplayChart({ document, cursor, showDebug }: { document: ReplayDocument; cursor: number; showDebug: boolean }) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -232,7 +232,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       context.setLineDash([]);
       // Hollow marks are geometry observations, never entry/fill triangles.
       let paintedObservations = 0;
-      for (const item of observedTouches) {
+      for (const item of (showDebug ? observedTouches : [])) {
         const x = api.timeScale().timeToCoordinate(((item.time_ms - 300_000) / 1000) as UTCTimestamp);
         const y = candleSeries.priceToCoordinate(
           item.kind === "MAIN_1H_TOUCH" ? item.line_price : item.price,
@@ -253,7 +253,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       }
       // Hollow squares are H-017 blue-line risk previews, never fills.
       let paintedBlueRisk = 0;
-      for (const item of blueRiskPreviews) {
+      for (const item of (showDebug ? blueRiskPreviews : [])) {
         const x = api.timeScale().timeToCoordinate((item.open_ms / 1000) as UTCTimestamp);
         const y = candleSeries.priceToCoordinate(item.entry_price);
         if (x === null || y === null || x < 0 || x > priceWidth || y < 0 || y > paneHeight) continue;
@@ -304,7 +304,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks]);
+  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug]);
 
   return (
     <div className="replay-chart-shell">
@@ -345,6 +345,7 @@ export function ReplayPage() {
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(8);
+  const [showDebug, setShowDebug] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileLabel, setFileLabel] = useState("Синтетический пример");
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
@@ -550,6 +551,9 @@ export function ReplayPage() {
       {document.mode === "MARKET_ONLY" && <p className="replay-note">
         РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ СДЕЛОК: жёлтые 1H и синие 5m линии — предварительные кандидаты из подтверждённых экстремумов, не проверенная стратегия.
       </p>}
+      <details className="replay-diagnostics">
+        <summary>Диагностика</summary>
+        <label><input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} /> Показать опорные маркеры</label>
       {document.mode === "MARKET_ONLY" && cursor > 0 && <p className="replay-geometry-note"
         role="status" aria-label="Статус трендовой геометрии">
         {visibleGeometry(document, shown.lastTimeMs).length
@@ -597,12 +601,13 @@ export function ReplayPage() {
           {dmiCrossings.length > 0 && ` Последнее: ${dmiCrossings.slice(-1)[0].side === "PLUS" ? "+DI" : "−DI"} ${dmiCrossings.slice(-1)[0].direction === "UP" ? "↑" : "↓"} ${dmiCrossings.slice(-1)[0].comparator === "OPPOSITE_DI" ? "противоположная DI" : dmiCrossings.slice(-1)[0].comparator === "ADX" ? "ADX" : "уровень 20"}.`}
           {" "}Пересечения — дополнительные аргументы, не входы и не обязательный фильтр.
         </p>}
+      </details>
       {document.demo && <p className="replay-note">
         ДЕМО: синтетические свечи и условные события, не реальные сигналы стратегии и не результат Bybit.
       </p>}
       <div className="replay-grid">
         <section className="replay-chart-panel">
-          <ReplayChart document={document} cursor={cursor} />
+          <ReplayChart document={document} cursor={cursor} showDebug={showDebug} />
         </section>
         <aside className="replay-events" aria-label="Журнал событий">
           <h2>События</h2>
