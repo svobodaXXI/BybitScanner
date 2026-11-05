@@ -249,13 +249,21 @@ describe("standalone SIMULATION viewer contract", () => {
       to_ms: events[22].candle!.start_ms,
       from_price: "115", to_price: "110", trend_version: nextKnown,
     };
-    const doc = parseReplayDocument({
+    const archive = {
       source: "SIMULATION", simulation_run_id: "purple_fixture",
       mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
       symbol: "BTCUSDT", timeframe: "5m",
       events: events.map(e => ({ ...e, simulation_run_id: "purple_fixture" })),
       geometry: [first, next],
-    });
+    };
+    // A later confirmed touch alone cannot shift the purple level.
+    const untouched = parseReplayDocument(archive);
+    expect(visiblePriorLevels(untouched, nextKnown).map(p => p.price)).toEqual([115]);
+    // The new lower LOW is closed AFTER the candidate touch and BEFORE
+    // its confirmed availability. Only then may the prior move.
+    const withNewLow = archive.events.map((event, index) => index === 26
+      ? { ...event, candle: { ...event.candle!, low: 50 } } : event);
+    const doc = parseReplayDocument({ ...archive, events: withNewLow });
     expect(visiblePriorLevels(doc, null)).toEqual([]);
     expect(visiblePriorLevels(doc, firstKnown - 1)).toEqual([]);
     expect(visiblePriorLevels(doc, firstKnown).map(p => p.price)).toEqual([115]);
