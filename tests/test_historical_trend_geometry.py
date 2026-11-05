@@ -431,11 +431,14 @@ class ConfirmedGeometryTests(unittest.TestCase):
         # the old 102 yellow anchor.
         feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
         observed = {}
+        actual_breaks = []
         for hour, (high, low) in enumerate(BULL + [(113, 95), (112, 96)]):
             for minute in range(12 if hour < 10 else 1):
                 bar = make_bar(hour * 12 + minute, high, low, FIVE_MINUTES_MS)
                 newly_closed = make_bar(hour, high, low) if minute == 11 else None
                 trend, _ = feed.observe_closed(bar, newly_closed)
+                if feed.confirmed_hourly_prior_break is not None:
+                    actual_breaks.append(feed.confirmed_hourly_prior_break)
                 if minute == 11 or hour == 10:
                     observed[hour, minute] = (
                         trend.side if trend is not None else None,
@@ -449,6 +452,14 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual(observed[10, 0][0], None)
         self.assertEqual(feed._waiting_for_side, "BEAR")
         self.assertEqual(feed._reversal_known_at_ms,
+                         10 * ONE_HOUR_MS + FIVE_MINUTES_MS)
+        self.assertEqual(len(actual_breaks), 1)
+        self.assertEqual(actual_breaks[0]["prior_price"], Decimal(106))
+        self.assertEqual(actual_breaks[0]["previous_side"], "BULL")
+        self.assertEqual(actual_breaks[0]["new_side"], "BEAR")
+        self.assertEqual(actual_breaks[0]["hourly_close_ms"], 10 * ONE_HOUR_MS)
+        self.assertEqual(actual_breaks[0]["next_hour_open_ms"], 10 * ONE_HOUR_MS)
+        self.assertEqual(actual_breaks[0]["confirmed_at_ms"],
                          10 * ONE_HOUR_MS + FIVE_MINUTES_MS)
 
     def test_yellow_prior_break_needs_close_and_next_open_not_a_wick_or_recovery(self):

@@ -345,11 +345,13 @@ class CausalGeometryFeed:
         self._prior_movement: tuple[TrendSide, int, Decimal] | None = None
         self._prior_price: Decimal | None = None
         self._prior_touch_ms: int | None = None
+        self._prior_trend_version: int | None = None
+        self._last_hourly_prior_break: dict[str, object] | None = None
         self._last_prior_candidate_touch_ms: int | None = None
         # (second-touch time, wick price, prior trend extreme, side, known-at).
         self._prior_candidates: list[tuple[int, Decimal, Decimal, TrendSide, int]] = []
-        # (H1 close timestamp, frozen prior price, prior trend side).
-        self._pending_break: tuple[int, Decimal, TrendSide] | None = None
+        # H1 close, frozen prior, side, contact, publication version.
+        self._pending_break: tuple[int, Decimal, TrendSide, int, int] | None = None
         self._waiting_for_side: TrendSide | None = None
         self._reversal_known_at_ms: int | None = None
         # The M5 correction is its own stateful movement: new pivots must
@@ -372,6 +374,11 @@ class CausalGeometryFeed:
         """H1 second-contact wick timestamp that licensed the current prior."""
         return self._prior_touch_ms
 
+    @property
+    def confirmed_hourly_prior_break(self) -> dict[str, object] | None:
+        """Only the break confirmed by this closed M5, never a later guess."""
+        return self._last_hourly_prior_break
+
     def _advance_hourly_prior(self, closed_at_ms: int) -> None:
         trend = self._hourly_trend
         if trend is None:
@@ -382,6 +389,7 @@ class CausalGeometryFeed:
             self._prior_movement = movement
             self._prior_price = line.second.price
             self._prior_touch_ms = line.second.at_ms
+            self._prior_trend_version = trend.available_at_ms
             self._last_prior_candidate_touch_ms = line.second.at_ms
             self._prior_candidates = []
             return
@@ -425,6 +433,7 @@ class CausalGeometryFeed:
             ):
                 self._prior_price = price
                 self._prior_touch_ms = touch
+                self._prior_trend_version = trend.available_at_ms
 
     def _install_opposite_if_confirmed(self, at_ms: int) -> None:
         if self._waiting_for_side is None:
@@ -455,14 +464,25 @@ class CausalGeometryFeed:
         self, five_minute: Candle, newly_closed_1h: Candle | None,
     ) -> tuple[TrendCandidate | None, CausalLine | None]:
         self._five.observe_closed(five_minute)
+        self._last_hourly_prior_break = None
         if self._pending_break is not None:
-            hourly_end, prior, old_side = self._pending_break
+            hourly_end, prior, old_side, prior_touch, prior_version = self._pending_break
             # Only the first M5 of the very next H1 can confirm its OPEN.
             self._pending_break = None
             if five_minute.start_ms == hourly_end:
                 beyond = (five_minute.open < prior if old_side == "BULL" else
                           five_minute.open > prior)
                 if beyond:
+                    self._last_hourly_prior_break = {
+                        "confirmed_at_ms": five_minute.end_ms,
+                        "previous_side": old_side,
+                        "new_side": "BEAR" if old_side == "BULL" else "BULL",
+                        "prior_price": prior,
+                        "prior_at_ms": prior_touch,
+                        "trend_version": prior_version,
+                        "hourly_close_ms": hourly_end,
+                        "next_hour_open_ms": five_minute.start_ms,
+                    }
                     self._hourly_trend = None
                     self._waiting_for_side = "BEAR" if old_side == "BULL" else "BULL"
                     self._reversal_known_at_ms = five_minute.end_ms
@@ -478,8 +498,11 @@ class CausalGeometryFeed:
                     newly_closed_1h.close < prior if old.side == "BULL" else
                     newly_closed_1h.close > prior
                 )
-                if outside:
-                    self._pending_break = (newly_closed_1h.end_ms, prior, old.side)
+                if outside and self._prior_touch_ms is not None and self._prior_trend_version is not None:
+                    self._pending_break = (
+                        newly_closed_1h.end_ms, prior, old.side,
+                        self._prior_touch_ms, self._prior_trend_version,
+                    )
             self._hourly.observe_closed(newly_closed_1h)
             if self._waiting_for_side is None:
                 proposal = recent_hourly_trend(self._hourly.recent_pivots)
@@ -503,8 +526,14 @@ class CausalGeometryFeed:
                         if fitted is not None:
                             self._hourly_trend = fitted
         self._install_opposite_if_confirmed(five_minute.end_ms)
-        if newly_closed_1h is not None:
-            self._advance_hourly_prior(newly_closed_1h.end_ms)
+        trend = self._hourly_trend
+        movement = ((trend.side, trend.main.first.at_ms, trend.main.first.price)
+                    if trend is not None else None)
+        # A new opposite trend may be confirmed on an M5 CLOSE. Do not
+        # attach the retired movement's purple prior until another H1 closes.
+        if trend is not None and (newly_closed_1h is not None or
+                                  movement != self._prior_movement):
+            self._advance_hourly_prior(five_minute.end_ms)
         trend = self._hourly_trend
         # A structurally retired/reversed H1 trend also ends its associated M5
         # correction; a mere H1 re-fit inside the SAME movement does not.

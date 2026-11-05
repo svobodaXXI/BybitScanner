@@ -76,6 +76,7 @@ def build_market_only_document(
     blue_risk_previews: list[dict[str, object]] = []
     blue_retirements: list[dict[str, object]] = []
     hourly_prior_updates: list[dict[str, object]] = []
+    hourly_prior_breaks: list[dict[str, object]] = []
     last_prior_identity: tuple[str, int, object] | None = None
     risk_policy = H017LocalRiskPolicy()
     previous_trend = None
@@ -195,6 +196,20 @@ def build_market_only_document(
                 last_prior_identity = identity
         else:
             last_prior_identity = None
+        break_event = getattr(view, "hourly_prior_break", None)
+        if break_event is not None:
+            # Never attribute a warmup-only break to an unpublished prior.
+            if any(
+                level["trend_version"] == break_event["trend_version"] and
+                level["at_ms"] == break_event["prior_at_ms"] and
+                level["price"] == str(break_event["prior_price"])
+                for level in hourly_prior_updates
+            ):
+                hourly_prior_breaks.append({
+                    "kind": "PRIOR_CLOSE_NEXT_OPEN",
+                    **{key: str(value) if key == "prior_price" else value
+                       for key, value in break_event.items()},
+                })
         collect_main_line_observations(view)
         # The old frozen correction remains active through later M5 pivots.
         # The first known M5 OPEN on the H1 trend side of that line retires
@@ -248,6 +263,7 @@ def build_market_only_document(
         "events": events,
         "geometry": geometry,
         "hourly_prior_updates": hourly_prior_updates,
+        "hourly_prior_breaks": hourly_prior_breaks,
         "reference_5m_retirements": blue_retirements,
         "observations": observations,
         "h017_blue_risk_previews": blue_risk_previews,

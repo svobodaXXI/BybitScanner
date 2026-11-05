@@ -108,6 +108,7 @@ class ClosedMultiTimeframeView:
     reference_5m: CausalLine | None = None
     hourly_prior_price: Decimal | None = None
     hourly_prior_touch_ms: int | None = None
+    hourly_prior_break: dict[str, object] | None = None
 
 
 class ClosedHigherTimeframeFeed:
@@ -220,6 +221,7 @@ def replay_with_closed_context(
                 hourly_trend, reference_5m,
                 geometry.confirmed_hourly_prior if hourly_trend is not None else None,
                 geometry.confirmed_hourly_prior_touch_ms if hourly_trend is not None else None,
+                geometry.confirmed_hourly_prior_break,
             )
         )
 
