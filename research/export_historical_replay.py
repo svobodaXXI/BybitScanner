@@ -15,6 +15,8 @@ import secrets
 from research.historical_candle_feed import (
     FIVE_MINUTES_MS, load_closed_five_minute_history, replay_with_closed_context,
 )
+from research.h017_blue_open_preview import blue_open_risk_preview
+from research.h017_local_risk import H017LocalRiskPolicy
 from research.causal_trend_geometry import main_line_contact
 
 SIMULATION_OUTPUT = Path(__file__).resolve().parent / "simulation_runs"
@@ -53,6 +55,10 @@ def build_market_only_document(
     events = []
     geometry: list[dict[str, object]] = []
     observations: list[dict[str, object]] = []
+    blue_risk_previews: list[dict[str, object]] = []
+    risk_policy = H017LocalRiskPolicy()
+    previous_trend = None
+    previous_blue = None
     dmi_points: list[dict[str, object]] = []
     pending_contact: tuple[int, int, str, object] | None = None
     versions: dict[str, tuple[int, int, int]] = {}
@@ -118,6 +124,14 @@ def build_market_only_document(
         pending_contact = (bar.end_ms, trend.available_at_ms, trend.side, bar.close)
 
     def collect_context(view) -> None:
+        nonlocal previous_trend, previous_blue
+        # Only geometry known at the PRIOR close may qualify this bar OPEN.
+        preview = blue_open_risk_preview(
+            bar=view.five_minute.bar, known_trend=previous_trend,
+            known_blue=previous_blue, policy=risk_policy,
+        )
+        if preview is not None:
+            blue_risk_previews.append(preview)
         snapshot = view.dmi_5m
         # The 5m candle and its DMI snapshot become visible at the same close.
         if snapshot is None or snapshot.time_ms != view.five_minute.signal_time_ms:
@@ -130,6 +144,8 @@ def build_market_only_document(
         })
         collect_lines(view)
         collect_main_line_observations(view)
+        previous_trend = view.hourly_trend
+        previous_blue = view.reference_5m
 
     result = replay_with_closed_context(
         simulation_run_id=run_id,
@@ -150,6 +166,7 @@ def build_market_only_document(
         "events": events,
         "geometry": geometry,
         "observations": observations,
+        "h017_blue_risk_previews": blue_risk_previews,
         "geometry_warmup_hours": len(warmup_candles) // 12,
         "dmi_5m": {
             "source": "SIMULATION", "timeframe": "5m",

@@ -5,6 +5,7 @@ Does not touch trading accounts or local PAPER files.
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from queue import Queue, Empty
 import re
@@ -17,6 +18,15 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parent
 assert (ROOT / "START_LOCAL.cmd").is_file(), "Windows launcher missing"
 assert (ROOT / "dist" / "replay.html").is_file(), "Standalone build missing"
+
+# Local H-017 risk module must ship in the extracted Windows archive.
+from research.h017_local_risk import H017LocalRiskPolicy
+policy = H017LocalRiskPolicy()
+assert policy.initial_cash == 200 and policy.slot_budget == 10
+assert policy.max_open_positions == 20
+proposal = policy.proposal(side="LONG", expected_entry="100", target="101")
+assert proposal is not None and proposal.stop == Decimal("99.3")
+
 
 proc = subprocess.Popen(
     [sys.executable, "-B", str(ROOT / "server.py"), "--no-browser"],

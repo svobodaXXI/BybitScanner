@@ -7,7 +7,7 @@ This kernel is not an approved trading strategy or a live execution adapter.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Callable, Literal, Sequence
 
 Side = Literal["LONG", "SHORT"]
@@ -73,6 +73,7 @@ class ClosedBarView:
     closed_history: tuple[Candle, ...]
     signal_time_ms: int
     in_position: bool
+    open_positions_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -146,6 +147,7 @@ class ReplayResult:
     open_position: bool
     final_mark_to_market_equity: Decimal
     processed_bars: int
+    peak_open_positions: int = 0
 
 
 def replay_candles(
@@ -157,11 +159,18 @@ def replay_candles(
     taker_fee_rate: Decimal = Decimal("0.0006"),
     adverse_slippage_rate: Decimal = Decimal("0"),
     on_visual_event: Callable[[ReplayVisualEvent], None] | None = None,
+    max_open_positions: int = 1,
+    position_slot_budget: Decimal | None = None,
+    minimum_reward_risk: Decimal | None = None,
+    maximum_stop_fraction: Decimal | None = None,
 ) -> ReplayResult:
-    """Run an isolated chronological simulation without network, file or DB writes.
+    """Deterministic SIMULATION-only replay; optional 20-slot research portfolio.
 
-    No leverage/margin is modelled: initial entry notional must be cash-funded.
-    Outputs are entirely in memory, never a PAPER trade or report.
+    Defaults preserve the legacy single-position replay. Slots are *capital
+    allocations*, not leverage, and fees are paid from the same cash balance.
+    A slot budget includes its entry fee; no PAPER/Robot/order endpoints exist.
+    A single candle feed can hold multiple independent positions of its symbol;
+    multi-symbol time-synchronization is NOT provided by this kernel.
     """
     if not simulation_run_id or not simulation_run_id.strip() or any(
         not (c.isalnum() or c in "-_") for c in simulation_run_id
@@ -170,8 +179,19 @@ def replay_candles(
     cash = _decimal(initial_cash)
     fee_rate = _decimal(taker_fee_rate)
     slip = _decimal(adverse_slippage_rate)
+    budget = _decimal(position_slot_budget) if position_slot_budget is not None else None
+    min_rr = _decimal(minimum_reward_risk) if minimum_reward_risk is not None else None
+    max_stop = _decimal(maximum_stop_fraction) if maximum_stop_fraction is not None else None
     if cash <= 0 or not (Decimal("0") <= fee_rate < 1) or not (Decimal("0") <= slip < 1):
         raise ValueError("invalid replay capital or costs")
+    if type(max_open_positions) is not int or max_open_positions < 1:
+        raise ValueError("invalid maximum simultaneous positions")
+    if budget is not None and (budget <= 0 or budget * max_open_positions > cash):
+        raise ValueError("slot allocation exceeds starting deposit")
+    if min_rr is not None and min_rr <= 0:
+        raise ValueError("invalid minimum reward/risk")
+    if max_stop is not None and not (Decimal("0") < max_stop < 1):
+        raise ValueError("invalid maximum stop fraction")
     bars = tuple(candles)
     if not bars:
         raise ValueError("replay needs historical candles")
@@ -183,7 +203,11 @@ def replay_candles(
 
     trades: list[SimulatedTrade] = []
     pending: EntryIntent | None = None
-    position: tuple[EntryIntent, Decimal, int, Decimal] | None = None
+    # (immutable ID, sized intent, actual fill, entry time, entry fee, locked notional)
+    positions: list[tuple[str, EntryIntent, Decimal, int, Decimal, Decimal]] = []
+    reserved_notional = Decimal(0)
+    next_trade_number = 0
+    peak_positions = 0
     history: list[Candle] = []
     event_sequence = 0
 
@@ -204,29 +228,47 @@ def replay_candles(
         return price * (1 - slip if side == "LONG" else 1 + slip)
 
     for bar in bars:
-        # At bar open: only current OPEN is known. Its HIGH/LOW/CLOSE cannot
-        # influence entry; pending requests were created at a *previous* close.
+        # Only the new OPEN is known here. A pending close-based signal is
+        # rechecked at its actual executable price, including adverse gaps.
         if pending is not None:
             executable = entry_fill(bar.open, pending.side)
-            if (
-                (pending.side == "LONG" and not pending.stop < executable < pending.take)
-                or (pending.side == "SHORT" and not pending.take < executable < pending.stop)
-            ):
-                pending = None  # stale/gap-invalidated entry; do not chase
-            else:
-                entry_fee = executable * pending.quantity * fee_rate
-                if executable * pending.quantity + entry_fee <= cash:
-                    position = (pending, executable, bar.start_ms, entry_fee)
+            risk = executable - pending.stop if pending.side == "LONG" else pending.stop - executable
+            reward = pending.take - executable if pending.side == "LONG" else executable - pending.take
+            eligible = (
+                len(positions) < max_open_positions and risk > 0 and reward > 0
+                and (min_rr is None or reward >= min_rr * risk)
+                and (max_stop is None or risk / executable <= max_stop)
+            )
+            if eligible:
+                quantity = pending.quantity
+                if budget is not None:
+                    # All 20 slots must fit inside 200 USDT, INCLUDING entry fees.
+                    # Round DOWN internal simulated quantity to avoid Decimal
+                    # repeating-division dust blocking the twentieth funded
+                    # slot. This is not a Bybit instrument lot-step rule.
+                    budget_quantity = (budget / (executable * (1 + fee_rate))).quantize(
+                        Decimal("1e-18"), rounding=ROUND_DOWN,
+                    )
+                    quantity = min(quantity, budget_quantity)
+                notional = executable * quantity
+                entry_fee = notional * fee_rate
+                if quantity > 0 and reserved_notional + notional + entry_fee <= cash:
+                    next_trade_number += 1
+                    trade_id = f"SIMULATION:{simulation_run_id}:{next_trade_number}"
+                    intent = EntryIntent(pending.side, quantity, pending.stop, pending.take)
+                    positions.append((trade_id, intent, executable, bar.start_ms, entry_fee, notional))
+                    reserved_notional += notional
                     cash -= entry_fee
+                    peak_positions = max(peak_positions, len(positions))
                     emit("ENTRY_FILLED", bar.start_ms,
-                         trade_id=f"SIMULATION:{simulation_run_id}:{len(trades) + 1}",
-                         side=pending.side, price=executable,
-                         stop=pending.stop, take=pending.take)
-                pending = None
+                         trade_id=trade_id, side=pending.side,
+                         price=executable, stop=pending.stop, take=pending.take)
+            pending = None
 
-        if position is not None:
-            intent, entry, entry_ms, entry_fee = position
-            # Gap through stop is filled at worse open, never at an ideal stop.
+        still_open: list[tuple[str, EntryIntent, Decimal, int, Decimal, Decimal]] = []
+        for trade_id, intent, entry, entry_ms, entry_fee, notional in positions:
+            # Gap through stop is filled at worse open. If STOP and TAKE
+            # both touch within this candle, the STOP wins, as before.
             if intent.side == "LONG":
                 stop_hit = bar.low <= intent.stop
                 take_hit = bar.high >= intent.take
@@ -242,55 +284,42 @@ def replay_candles(
                 gross = (exit_price - entry) * intent.quantity * direction
                 net = gross - entry_fee - exit_fee
                 cash += gross - exit_fee
-                trade_id = f"SIMULATION:{simulation_run_id}:{len(trades) + 1}"
-                trades.append(
-                    SimulatedTrade(
-                        trade_id=trade_id,
-                        side=intent.side,
-                        quantity=intent.quantity,
-                        entry_time_ms=entry_ms,
-                        entry_price=entry,
-                        exit_time_ms=bar.end_ms,
-                        exit_price=exit_price,
-                        exit_reason="STOP" if stop_hit else "TAKE",
-                        gross_pnl=gross,
-                        fees=entry_fee + exit_fee,
-                        net_pnl=net,
-                    )
-                )
-                position = None
+                reserved_notional -= notional
+                trades.append(SimulatedTrade(
+                    trade_id=trade_id, side=intent.side, quantity=intent.quantity,
+                    entry_time_ms=entry_ms, entry_price=entry,
+                    exit_time_ms=bar.end_ms, exit_price=exit_price,
+                    exit_reason="STOP" if stop_hit else "TAKE",
+                    gross_pnl=gross, fees=entry_fee + exit_fee, net_pnl=net,
+                ))
                 emit("EXIT_FILLED", bar.end_ms, trade_id=trade_id,
                      side=intent.side, price=exit_price,
                      reason="STOP" if stop_hit else "TAKE")
+            else:
+                still_open.append((trade_id, intent, entry, entry_ms, entry_fee, notional))
+        positions = still_open
 
         history.append(bar)
         emit("CANDLE_CLOSED", bar.end_ms, candle=bar)
-        # A strategy is called only AFTER bar completion; the view is frozen
-        # to bars released up to this moment (not future/final pivot data).
-        response = on_closed_bar(
-            ClosedBarView(bar, tuple(history), bar.end_ms, position is not None)
-        )
+        response = on_closed_bar(ClosedBarView(
+            bar, tuple(history), bar.end_ms, bool(positions), len(positions),
+        ))
         if response is not None:
             if not isinstance(response, EntryIntent):
                 raise TypeError("strategy must return EntryIntent or None")
-            if position is None and pending is None:
+            if len(positions) < max_open_positions and pending is None:
                 pending = response
-                emit("ENTRY_SIGNAL", bar.end_ms,
-                     side=response.side, price=bar.close,
-                     stop=response.stop, take=response.take)
+                emit("ENTRY_SIGNAL", bar.end_ms, side=response.side,
+                     price=bar.close, stop=response.stop, take=response.take)
 
     equity = cash
-    if position is not None:
-        intent, entry, _, _ = position
+    for _, intent, entry, _, _, _ in positions:
         direction = Decimal(1) if intent.side == "LONG" else Decimal(-1)
         equity += (bars[-1].close - entry) * intent.quantity * direction
     return ReplayResult(
-        simulation_run_id=simulation_run_id,
-        source="SIMULATION",
-        trades=tuple(trades),
-        initial_cash=_decimal(initial_cash),
-        realized_cash=cash,
-        open_position=position is not None,
+        simulation_run_id=simulation_run_id, source="SIMULATION",
+        trades=tuple(trades), initial_cash=_decimal(initial_cash),
+        realized_cash=cash, open_position=bool(positions),
         final_mark_to_market_equity=equity,
-        processed_bars=len(bars),
+        processed_bars=len(bars), peak_open_positions=peak_positions,
     )

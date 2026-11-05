@@ -45,6 +45,22 @@ export type ReplayObservation = {
   trend_version: number;
   classification: "UNVALIDATED_GEOMETRY_ONLY";
 };
+export type H017BlueRiskPreview = {
+  source: "SIMULATION";
+  kind: "BLUE_5M_OPEN";
+  classification: "UNVALIDATED_GEOMETRY_ONLY";
+  time_ms: number; // Released only after this 5m candle closes.
+  open_ms: number;
+  trend_version: number;
+  blue_available_at_ms: number;
+  side: "LONG" | "SHORT";
+  entry_price: number;
+  blue_price: number;
+  target_price: number;
+  risk_status: "RISK_PASS" | "RISK_BELOW_1R";
+  stop_price?: number;
+  quantity?: number;
+};
 export type ReplayDmiPoint = {
   time_ms: number; // Close time, never the opening time of an unfinished candle.
   plus_di: number | null;
@@ -68,6 +84,7 @@ export type ReplayDocument = {
   timeframe?: "5m";
   geometry?: ReplayGeometry[];
   observations?: ReplayObservation[];
+  h017_blue_risk_previews?: H017BlueRiskPreview[];
   geometry_warmup_hours?: number;
   dmi_5m?: ReplayDmi;
 };
@@ -239,6 +256,93 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       };
     });
   }
+  // H-017: evaluate known blue-line OPENs, but never turn previews into fills.
+  let h017_blue_risk_previews: H017BlueRiskPreview[] | undefined;
+  if (object.h017_blue_risk_previews !== undefined) {
+    if (mode !== "MARKET_ONLY" || !Array.isArray(object.h017_blue_risk_previews) ||
+        object.h017_blue_risk_previews.length > 100_000) {
+      throw new Error("H-017 допускается только для рыночной SIMULATION");
+    }
+    const closedByStart = new Map(events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map(e => [e.candle!.start_ms, e.candle!] as const));
+    const active = new Map<ReplayGeometry["kind"], ReplayGeometry>();
+    let lineIndex = 0;
+    let previousOpen = -1;
+    const projected = (line: ReplayGeometry, at: number) =>
+      line.from_price + (line.to_price - line.from_price) *
+        (at - line.from_ms) / (line.to_ms - line.from_ms);
+    const closeEnough = (x: number, y: number) =>
+      Math.abs(x - y) <= (1 + Math.abs(y)) * 1e-9; // Decimal -> JS tolerance, not a market filter
+    h017_blue_risk_previews = object.h017_blue_risk_previews.map(raw => {
+      const item = record(raw);
+      const open_ms = positiveInteger(item.open_ms, "H-017 open_ms");
+      const time_ms = positiveInteger(item.time_ms, "H-017 time_ms");
+      const trend_version = positiveInteger(item.trend_version, "H-017 trend_version");
+      const blue_available_at_ms = positiveInteger(item.blue_available_at_ms, "H-017 blue available");
+      const entry_price = safeNumber(item.entry_price, "H-017 entry");
+      const blue_price = safeNumber(item.blue_price, "H-017 reference");
+      const target_price = safeNumber(item.target_price, "H-017 target");
+      const side = item.side;
+      const risk_status = item.risk_status;
+      const candle = closedByStart.get(open_ms);
+      if (item.source !== "SIMULATION" || item.kind !== "BLUE_5M_OPEN" ||
+          item.classification !== "UNVALIDATED_GEOMETRY_ONLY" ||
+          (side !== "LONG" && side !== "SHORT") ||
+          (risk_status !== "RISK_PASS" && risk_status !== "RISK_BELOW_1R") ||
+          !candle || candle.end_ms !== time_ms || open_ms <= previousOpen ||
+          time_ms > previousTime || entry_price <= 0 || blue_price <= 0 ||
+          target_price <= 0 || blue_available_at_ms > open_ms || trend_version > open_ms ||
+          !closeEnough(entry_price, candle.open) || item.trade_id !== undefined) {
+        throw new Error("Недостоверный H-017 кандидат или будущая свеча");
+      }
+      previousOpen = open_ms;
+      while (geometry && lineIndex < geometry.length &&
+          geometry[lineIndex].available_at_ms <= open_ms) {
+        const line = geometry[lineIndex++];
+        active.set(line.kind, line);
+      }
+      const blue = active.get("REFERENCE_5M");
+      const main = active.get("MAIN_1H");
+      const target = active.get("TARGET_1H");
+      const trendSide = side === "LONG" ? "BULL" : "BEAR";
+      if (!blue || !main || !target || blue.side !== trendSide ||
+          main.side !== trendSide || target.side !== trendSide ||
+          main.trend_version !== trend_version ||
+          target.trend_version !== trend_version ||
+          blue.trend_version !== trend_version ||
+          !closeEnough(projected(blue, open_ms), blue_price) ||
+          !closeEnough(projected(target, open_ms), target_price) ||
+          (side === "LONG" ? entry_price <= blue_price : entry_price >= blue_price)) {
+        throw new Error("Кандидат H-017 не соответствует известной геометрии");
+      }
+      const reward = side === "LONG" ? target_price - entry_price : entry_price - target_price;
+      const risk = entry_price * 0.007;
+      const qualifies = reward + 1e-9 * (1 + entry_price) >= risk;
+      if ((risk_status === "RISK_PASS") !== qualifies) {
+        throw new Error("Неверная проверка H-017 по 1:1");
+      }
+      if (risk_status === "RISK_PASS") {
+        const stop_price = safeNumber(item.stop_price, "H-017 stop");
+        const quantity = safeNumber(item.quantity, "H-017 quantity");
+        const fixedStop = entry_price * (side === "LONG" ? 0.993 : 1.007);
+        if (!closeEnough(stop_price, fixedStop) || quantity <= 0 ||
+            quantity > 10 / entry_price + 1e-9) {
+          throw new Error("Неверная проверка H-017 0,7% или 10 USDT");
+        }
+        return { source: "SIMULATION", kind: "BLUE_5M_OPEN",
+          classification: "UNVALIDATED_GEOMETRY_ONLY" as const,
+          time_ms, open_ms, trend_version, blue_available_at_ms, side,
+          entry_price, blue_price, target_price, risk_status, stop_price, quantity };
+      }
+      if (item.stop_price !== undefined || item.quantity !== undefined) {
+        throw new Error("Отклонённый H-017 кандидат не может быть исполнением");
+      }
+      return { source: "SIMULATION", kind: "BLUE_5M_OPEN",
+        classification: "UNVALIDATED_GEOMETRY_ONLY" as const,
+        time_ms, open_ms, trend_version, blue_available_at_ms, side,
+        entry_price, blue_price, target_price, risk_status };
+    });
+  }
   // Separate research-only OHLC touch/reaction observations; NEVER trade events.
   let observations: ReplayObservation[] | undefined;
   if (object.observations !== undefined) {
@@ -363,6 +467,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     ...(mode === "MARKET_ONLY" ? { symbol: object.symbol as string, timeframe: "5m" as const } : {}),
     ...(geometry ? { geometry } : {}),
     ...(observations ? { observations } : {}),
+    ...(h017_blue_risk_previews ? { h017_blue_risk_previews } : {}),
     ...(geometry_warmup_hours !== undefined ? { geometry_warmup_hours } : {}),
     ...(dmi_5m ? { dmi_5m } : {}),
   };
@@ -468,6 +573,14 @@ export function visibleObservations(
     return [];
   }
   return document.observations.filter(item => item.time_ms <= closedTimeMs);
+}
+
+/** Only completed blue-open research previews, never trade signal/fill events. */
+export function visibleH017BlueRiskPreviews(
+  document: ReplayDocument, lastClosedMs: number | null,
+): H017BlueRiskPreview[] {
+  if (document.mode !== "MARKET_ONLY" || lastClosedMs === null) return [];
+  return (document.h017_blue_risk_previews ?? []).filter(c => c.time_ms <= lastClosedMs);
 }
 
 /** For MARKET_ONLY, DMI has exactly one observation per completed 5m candle. */

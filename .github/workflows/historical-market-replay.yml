@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "research/historical_market_replay.py"
+      - "research/h017_local_risk.py"
+      - "research/h017_blue_open_preview.py"
       - "research/historical_candle_feed.py"
       - "research/wilder_dmi.py"
       - "research/causal_trend_geometry.py"
@@ -12,6 +14,8 @@ on:
       - "research/simulation_runs/.gitignore"
       - "tests/test_historical_replay_export.py"
       - "tests/test_historical_market_replay.py"
+      - "tests/test_historical_h017_local_risk.py"
+      - "tests/test_historical_h017_blue_preview.py"
       - "tests/test_historical_candle_feed.py"
       - "tests/test_historical_dmi.py"
       - "tests/test_historical_trend_geometry.py"
@@ -72,7 +76,7 @@ jobs:
           cp ../../research/local_replay_viewer/README.txt "$RUNNER_TEMP/machine-time/README.txt"
           cp ../../research/local_replay_viewer/smoke_package.py "$RUNNER_TEMP/machine-time/smoke_package.py"
           cp -r ../../research/local_replay_viewer/dist "$RUNNER_TEMP/machine-time/dist"
-          cp ../../research/export_historical_replay.py ../../research/historical_candle_feed.py ../../research/historical_market_replay.py ../../research/wilder_dmi.py ../../research/causal_trend_geometry.py "$RUNNER_TEMP/machine-time/research/"
+          cp ../../research/export_historical_replay.py ../../research/historical_candle_feed.py ../../research/historical_market_replay.py ../../research/h017_local_risk.py ../../research/h017_blue_open_preview.py ../../research/wilder_dmi.py ../../research/causal_trend_geometry.py "$RUNNER_TEMP/machine-time/research/"
           python "$RUNNER_TEMP/machine-time/server.py" --check
       - name: Select preinstalled Chrome or install Chromium
         run: |
@@ -119,3 +123,17 @@ jobs:
         run: |
           python -B server.py --check
           python -B smoke_package.py
+
+  real-bybit-h017-readonly-acceptance:
+    # A single research PR trial, or a manual rerun when separately requested.
+    # No scheduled network cost and no synthetic fallbacks.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.head_ref == 'test/h017-real-bybit-grass-readonly-20261105')
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check actual public Bybit GRASSUSDT 5m history and H-017 risk previews
+        run: python -m research.h017_real_bybit_readonly_acceptance
