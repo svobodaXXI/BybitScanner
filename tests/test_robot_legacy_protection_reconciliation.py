@@ -290,14 +290,15 @@ class LegacyProtectionReconciliationAcceptanceTests(unittest.TestCase):
             try:
                 def seed(owner):
                     obligation = _seed_legacy_trigger(owner)
-                    candidate = owner.store.get_robot_candidate(CANDIDATE_ID)
-                    owner.store.save_robot_candidate_state(
-                        CANDIDATE_ID,
-                        status="INVALIDATED",
-                        robot_state=candidate.robot_state,
-                        expected_revision=candidate.state_revision,
-                        updated_at_ms=int(time.time() * 1000) + 1000,
-                    )
+                    # This impossible OPEN -> INVALIDATED transition is
+                    # seeded only in the isolated test database, not through
+                    # the rightly guarded production lifecycle API.
+                    with owner.store._transaction():
+                        owner.store._connection.execute(
+                            "UPDATE robot_candidates SET status='INVALIDATED', "
+                            "updated_at_ms=? WHERE candidate_id=?",
+                            (int(time.time() * 1000) + 1000, CANDIDATE_ID),
+                        )
                     return obligation.obligation_id
 
                 obligation_id = runtime.call(seed)
