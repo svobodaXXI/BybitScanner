@@ -293,9 +293,29 @@ class CausalGeometryFeed:
                     elif (proposal.side == self._hourly_trend.side and
                           proposal.pivot_sequence[3].at_ms >
                           self._hourly_trend.pivot_sequence[3].at_ms):
-                        # Same-direction versions continue; a contrary
-                        # candidate alone cannot switch the structural trend.
-                        self._hourly_trend = proposal
+                        # The original 1/2 anchors belong to this movement.
+                        # New extrema may revise points 3/4, never shift the
+                        # first pair forward by taking the last four pivots.
+                        previous = self._hourly_trend
+                        a, b = previous.pivot_sequence[:2]
+                        c, d = proposal.pivot_sequence[2:]
+                        if c.index > a.index and d.index > b.index:
+                            main = CausalLine(a, c, proposal.available_at_ms)
+                            target = CausalLine(b, d, proposal.available_at_ms)
+                            # Retain only a narrowing positive corridor;
+                            # otherwise keep the last proven geometry.
+                            t2, t4 = b.at_ms, d.at_ms
+                            if proposal.side == "BULL":
+                                width2 = target.value_at(t2) - main.value_at(t2)
+                                width4 = target.value_at(t4) - main.value_at(t4)
+                            else:
+                                width2 = main.value_at(t2) - target.value_at(t2)
+                                width4 = main.value_at(t4) - target.value_at(t4)
+                            if width2 > width4 > 0:
+                                self._hourly_trend = TrendCandidate(
+                                    proposal.side, main, target,
+                                    (a, b, c, d), proposal.available_at_ms,
+                                )
         self._install_opposite_if_confirmed(five_minute.end_ms)
         recent = self._five.recent_pivots
         # Do not copy/scan all historical 5m bars on every replay tick.
