@@ -144,6 +144,64 @@ class ConfirmedGeometryTests(unittest.TestCase):
             self.assertIsNone(main_line_contact(trend, failed))
             self.assertIsNone(main_line_contact(None, touch))
 
+    def test_opposite_yellow_trend_waits_for_closed_h1_prior_break_and_confirmed_anchors(self):
+        # First a BULL 1--3/2--4 candidate is confirmed; an H1 close below
+        # its prior LOW=106 at hour 9 and the next H1 OPEN below it at hour 10
+        # retire it. A later BEAR line is revealed only when its own fourth
+        # alternating swing is confirmed, never projected backward to break.
+        hours = BULL + [
+            (103, 93), (99, 90), (103, 90), (96, 83), (98, 89),
+            (92, 80), (97, 86), (91, 77),
+        ]
+        feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
+        observations = {}
+        for hour, (high, low) in enumerate(hours):
+            for minute in range(12):
+                m5 = make_bar(hour * 12 + minute, high, low, FIVE_MINUTES_MS)
+                newly_closed = make_bar(hour, high, low) if minute == 11 else None
+                trend, _ = feed.observe_closed(m5, newly_closed)
+                observations[hour, minute] = trend
+
+        original = observations[8, 11]
+        self.assertIsNotNone(original)
+        self.assertEqual(original.side, "BULL")
+        self.assertEqual(original.main.second.price, Decimal(106))
+        self.assertEqual(observations[9, 11].side, "BULL")
+        # A first H1 OPEN outside the purple prior is observed only after the
+        # first completed M5; until then the last H1 close alone isn't enough.
+        self.assertIsNone(observations[10, 0])
+        self.assertIsNone(observations[14, 11])
+        reversed_trend = observations[15, 11]
+        self.assertIsNotNone(reversed_trend)
+        self.assertEqual(reversed_trend.side, "BEAR")
+        self.assertEqual(reversed_trend.main.first.kind, "HIGH")
+        self.assertEqual(reversed_trend.main.second.kind, "HIGH")
+        self.assertLess(reversed_trend.main.second.price, reversed_trend.main.first.price)
+        self.assertEqual(reversed_trend.main.available_at_ms, 16 * ONE_HOUR_MS)
+        self.assertEqual(reversed_trend.available_at_ms, 16 * ONE_HOUR_MS)
+        self.assertTrue(all(
+            observations[hour, minute] is None
+            for hour in range(10, 15) for minute in range(12)
+        ))
+
+    def test_yellow_prior_break_needs_close_and_next_open_not_a_wick_or_recovery(self):
+        for breaking, continued in (
+            # Wick through the prior but close remains above 106.
+            ((120, 102), (99, 90)),
+            # H1 close beyond prior, but next hour OPENS back above.
+            ((103, 93), (120, 110)),
+        ):
+            feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
+            result = None
+            for hour, (high, low) in enumerate(BULL + [breaking, continued]):
+                for minute in range(12):
+                    bar = make_bar(hour * 12 + minute, high, low, FIVE_MINUTES_MS)
+                    hour_bar = make_bar(hour, high, low) if minute == 11 else None
+                    result, _ = feed.observe_closed(bar, hour_bar)
+                    if hour == 10 and minute == 0:
+                        self.assertIsNotNone(result)
+                        self.assertEqual(result.side, "BULL")
+
     def test_geometry_feed_does_not_emit_lines_before_confirmed_hourly(self):
         geometry = CausalGeometryFeed(wing_1h=1, wing_5m=1)
         first_times = []
