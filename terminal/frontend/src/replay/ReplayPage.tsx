@@ -43,7 +43,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       autoSize: true,
       layout: { background: { type: ColorType.Solid, color: "#121923" }, textColor: "#bcc8d8" },
       grid: { vertLines: { color: "#202d3d" }, horzLines: { color: "#202d3d" } },
-      timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 14 },
+      timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 42 },
       crosshair: { mode: 1 },
     });
     const candles = api.addSeries(CandlestickSeries, {
@@ -53,7 +53,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
      // Lightweight Charts v5: a second pane shares the exact candle time axis
     // and crosshair. Unlike an overlay, ADX uses its own 0..100 value scale.
     const paneOptions = {
-      lineWidth: 2 as const, priceLineVisible: false, lastValueVisible: false,
+      lineWidth: 1 as const, priceLineVisible: false, lastValueVisible: false,
       crosshairMarkerVisible: false, title: "",
       priceFormat: { type: "price" as const, precision: 1, minMove: 0.1 },
     };
@@ -176,7 +176,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
         );
         context.beginPath();
         context.strokeStyle = line.kind === "REFERENCE_5M" ? "#57aaff" : "#f6dc59";
-        context.lineWidth = line.kind === "REFERENCE_5M" ? 1.5 : 2;
+        context.lineWidth = 1;
         context.setLineDash(line.kind === "TARGET_1H" ? [6, 4] : []);
         context.moveTo(x1, y1);
         context.lineTo(end.x, end.y);
@@ -252,7 +252,6 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       canvas.dataset.visibleObservations = String(paintedObservations);
       canvas.dataset.visibleBlueRisk = String(paintedBlueRisk);
     };
-    chart.current?.timeScale().scrollToPosition(14, false);
     renderExecutions.current();
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
