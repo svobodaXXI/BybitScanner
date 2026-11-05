@@ -248,3 +248,116 @@ def has_reversal_exception(candles, index, atr_value=None):
         return True
 
     return False
+
+# Shared observation-only primitives for fully CLOSED Mirror M1/M5 candles.
+# Existing Falling-Wedge exceptions above retain their separate semantics.
+# A recognition result does not authorize entry; each pattern still owns its
+# next-close confirmation, stop geometry and Robot admission.
+from decimal import Decimal, InvalidOperation
+from typing import Any, Mapping, Sequence
+
+
+def directional_engulfing(previous: Mapping[str, Any], current: Mapping[str, Any],
+                          direction: str) -> bool:
+    """Exactly the pre-existing MIRROR Engulfing parity, both directions.
+
+    The caller owns candle-close/timeframe gating. The SHORT transformation
+    intentionally mirrors the historic price-negation algorithm; thresholds
+    and classification are not recalibrated by this extraction.
+    """
+    if direction not in ("LONG", "SHORT"):
+        return False
+    import pandas as pd
+
+    def view(row: Mapping[str, Any]) -> dict[str, object]:
+        if direction == "LONG":
+            return {k: row[k] for k in ("open", "high", "low", "close")}
+        return {
+            "open": -row["open"], "high": -row["low"],
+            "low": -row["high"], "close": -row["close"],
+        }
+
+    return bool(is_bullish_engulfing(pd.DataFrame([view(previous), view(current)]), 1))
+
+
+def closed_candle_numbers(row: Mapping[str, Any]):
+    """Positive finite OHLC of an explicitly closed, physically valid candle."""
+    if row.get("closed") is not True:
+        return None
+    try:
+        o, h, lo, c = (Decimal(str(row[k])) for k in ("open", "high", "low", "close"))
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        return None
+    if (not all(x.is_finite() and x > 0 for x in (o, h, lo, c))
+            or lo > min(o, c) or h < max(o, c) or h <= lo):
+        return None
+    return o, h, lo, c
+
+
+def is_nison_lower_wick(
+    candle: Mapping[str, Any], direction: str,
+    preceding: Sequence[Mapping[str, Any]], *,
+    upper_to_body: object,
+) -> bool:
+    """Exact existing MIRROR Hammer LONG / Hanging-Man SHORT recognition.
+
+    Two prior consecutive close trends and the upper-wick tolerance belong to
+    MIRROR policy; another caller must provide its own policy input.
+    Doji is deliberately NOT a trade trigger.
+    """
+    if direction not in ("LONG", "SHORT") or len(preceding) < 2:
+        return False
+    values = closed_candle_numbers(candle)
+    before = [closed_candle_numbers(x) for x in preceding[-2:]]
+    if values is None or any(x is None for x in before):
+        return False
+    older, newer = before
+    try:
+        duration = int(candle["close_time_ms"]) - int(candle["open_time_ms"])
+        if (duration <= 0
+                or any(int(row["close_time_ms"]) - int(row["open_time_ms"]) != duration
+                       for row in preceding[-2:])
+                or int(preceding[-2]["close_time_ms"]) != int(preceding[-1]["open_time_ms"])
+                or int(preceding[-1]["close_time_ms"]) != int(candle["open_time_ms"])):
+            return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    if direction == "LONG" and not older[3] > newer[3]:
+        return False
+    if direction == "SHORT" and not older[3] < newer[3]:
+        return False
+    o, h, lo, c = values
+    body = abs(c - o)
+    if body == 0:
+        return False
+    lower_wick = min(o, c) - lo
+    upper_wick = h - max(o, c)
+    return (lower_wick >= 2 * body
+            and upper_wick <= Decimal(upper_to_body) * body)
+
+
+def confirms_next_body_close(
+    formation: Sequence[Mapping[str, Any]],
+    following: Mapping[str, Any], direction: str, step: int,
+) -> bool:
+    """Existing MIRROR next full candle closes past the REAL BODY, not wick.
+
+    This shared check returns evidence, not admission or an order signal.
+    """
+    candles = [*formation, following]
+    values = [closed_candle_numbers(x) for x in candles]
+    if direction not in ("LONG", "SHORT") or not formation or any(x is None for x in values):
+        return False
+    try:
+        if any(int(right["open_time_ms"]) != int(left["close_time_ms"])
+               or int(left["close_time_ms"]) - int(left["open_time_ms"]) != step
+               for left, right in zip(candles, candles[1:])):
+            return False
+        if int(following["close_time_ms"]) - int(following["open_time_ms"]) != step:
+            return False
+    except (KeyError, ValueError, TypeError):
+        return False
+    real_body_top = max(max(o, c) for o, _, _, c in values[:-1])
+    real_body_bottom = min(min(o, c) for o, _, _, c in values[:-1])
+    return (values[-1][3] > real_body_top if direction == "LONG"
+            else values[-1][3] < real_body_bottom)
