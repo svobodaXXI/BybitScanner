@@ -572,6 +572,9 @@ class RuntimeShutdown:
             raise SafeStopError("durable Robot state is unavailable; runtime kept alive")
         if state not in (ROBOT_STOPPED_PAIR, None):
             if scope == SCOPE_SCANNER:
+                # A competing owner may have restarted Scanner after its
+                # STOP acknowledgement. Do not report a false stopped state.
+                self._require_scanner_stopped()
                 return ShutdownResult(
                     scope, True, f"Scanner STOPPED; Robot {state[0]}/{state[1]} keeps the runtime alive.",
                     tuple(steps),
@@ -582,6 +585,7 @@ class RuntimeShutdown:
             self._mark("checking Robot protection quiescence")
         if backend == PRESENT and not self._protection_quiescent():
             if scope == SCOPE_SCANNER:
+                self._require_scanner_stopped()
                 return ShutdownResult(
                     scope, True, "Scanner STOPPED; Robot protection coverage keeps the runtime alive.",
                     tuple(steps),
@@ -634,11 +638,12 @@ class RuntimeShutdown:
         # owner control and diagnosis until backend exit has been confirmed.
         # This also supports retry after a partial stop (backend absent).
         if backend == PRESENT:
+            # Final Scanner re-proof applies to both scopes. The scanner-only
+            # path can also reach Backend shutdown when Robot is STOPPED.
+            self._require_scanner_stopped()
             if scope == SCOPE_ALL:
-                # Final ingress re-proof immediately before the irreversible
-                # backend shutdown request. Earlier OFF/STOPPED observations
-                # may have become stale while Robot/protection were drained.
-                self._require_scanner_stopped()
+                # Another controller may have enabled PAPER_AUTO while
+                # Robot/protection were drained.
                 self._require_autopilot_off()
             self._mark("shutting down PAPER backend")
             steps.append(self._shutdown(
