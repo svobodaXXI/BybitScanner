@@ -799,7 +799,8 @@ export function visiblePriorLevels(
     // anchor, that comparison is not provable: retain the existing prior.
     if (!hours.length || hours[0].start_ms > line.from_ms) continue;
     const before = hours.filter(bar =>
-      bar.start_ms >= line.from_ms && bar.start_ms <= line.to_ms);
+      bar.start_ms >= line.from_ms && bar.start_ms < line.to_ms &&
+      bar.end_ms <= line.available_at_ms);
     if (!before.length) continue;
     const oldExtreme = line.side === "BULL"
       ? Math.max(...before.map(bar => bar.high))
