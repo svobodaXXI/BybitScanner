@@ -190,11 +190,11 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
               { width: priceWidth, height: paneHeight },
             );
         context.beginPath();
-        context.strokeStyle = line.kind === "REFERENCE_5M"
-          ? isHistorical ? "rgba(87, 170, 255, 0.50)" : "#57aaff"
-          : isHistorical ? "rgba(246, 220, 89, 0.50)" : "#f6dc59";
+        // Main H1 and reference M5 stay solid and fully opaque in the archive.
+        // Dashed yellow exclusively identifies a TARGET_1H line.
+        context.strokeStyle = line.kind === "REFERENCE_5M" ? "#57aaff" : "#f6dc59";
         context.lineWidth = 1;
-        context.setLineDash(isHistorical ? [3, 4] : line.kind === "TARGET_1H" ? [6, 4] : []);
+        context.setLineDash(line.kind === "TARGET_1H" ? [6, 4] : []);
         context.moveTo(x1, y1);
         context.lineTo(end.x, end.y);
         context.stroke();
