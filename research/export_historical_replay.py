@@ -56,6 +56,7 @@ def build_market_only_document(
     geometry: list[dict[str, object]] = []
     observations: list[dict[str, object]] = []
     blue_risk_previews: list[dict[str, object]] = []
+    blue_retirements: list[dict[str, object]] = []
     risk_policy = H017LocalRiskPolicy()
     previous_trend = None
     previous_blue = None
@@ -149,6 +150,24 @@ def build_market_only_document(
         })
         collect_lines(view)
         collect_main_line_observations(view)
+        # The old frozen correction remains active through later M5 pivots.
+        # The first known M5 OPEN on the H1 trend side of that line retires
+        # it at this CLOSED M5, without revising earlier chart history.
+        if (previous_blue is not None and view.reference_5m is None and
+                previous_trend is not None and view.hourly_trend is not None and
+                previous_trend.side == view.hourly_trend.side and
+                previous_trend.main.first.at_ms == view.hourly_trend.main.first.at_ms):
+            bar = view.five_minute.bar
+            level = previous_blue.value_at(bar.start_ms)
+            beyond = ((previous_trend.side == "BULL" and bar.open > level) or
+                      (previous_trend.side == "BEAR" and bar.open < level))
+            if beyond:
+                blue_retirements.append({
+                    "kind": "REFERENCE_5M_OPEN_BREAK",
+                    "time_ms": bar.end_ms, "open_ms": bar.start_ms,
+                    "blue_available_at_ms": previous_blue.available_at_ms,
+                    "trend_version": previous_trend.available_at_ms,
+                })
         previous_trend = view.hourly_trend
         previous_blue = view.reference_5m
 
@@ -170,6 +189,7 @@ def build_market_only_document(
         "from_ms": start_ms, "until_ms": end_ms,
         "events": events,
         "geometry": geometry,
+        "reference_5m_retirements": blue_retirements,
         "observations": observations,
         "h017_blue_risk_previews": blue_risk_previews,
         "geometry_warmup_hours": len(warmup_candles) // 12,
