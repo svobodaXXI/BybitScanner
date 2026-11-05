@@ -17,6 +17,7 @@ from decimal import Decimal
 from urllib.request import Request, urlopen
 
 from research.local_replay_viewer.server import load_public_history
+from research.h017_blue_execution_scenario import simulate_blue_open_scenario
 
 SYMBOL = "GRASSUSDT"
 START = "2026-07-29"
@@ -248,6 +249,10 @@ def check() -> dict[str, object]:
         "simulated_fills": 0,
         "net_pnl": None,
         "geometry_owner_verified": False,
+        "counterfactual_blue_open_only": {
+            key: value for key, value in simulate_blue_open_scenario(doc).items()
+            if key not in ("closed_simulated_trades", "open_simulated_positions")
+        },
     }
     return summary
 
