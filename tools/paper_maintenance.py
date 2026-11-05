@@ -728,8 +728,15 @@ def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool | 
     STOP owns cancellation and candidate lifecycle. Do not synthesize
     INVALIDATED rows or retry reconciliation from a completed PAUSED state.
     """
-    from tools.paper_incident_approvals import IDLE_APPROVALS, prove_six_inert_approvals
-    from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
+    # Exact four owners independently observed after the completed one-shot
+    # reconcile; neither the earlier six-owner proof nor its old revisions
+    # are valid for this later phase.
+    expected = {
+        "HEMIUSDT": "box-robot-feaae41e8ce05ecd2f0f96b7bf4b5ee7ea873c08cdcb34c4b15d71c9ee524c43",
+        "RUNEUSDT": "box-robot-358e379f7faa07382115d3dea70419c172c9f426ae2339a07ab0e459a334dd3b",
+        "1000FLOKIUSDT": "box-robot-aa55ab080dba361a15f6ba004ec29a9f1d1a782faf7b01ba662caf1cb26af8c6",
+        "INUSDT": "box-robot-9631f1a3a33c0bbfd41fc0b75e2930e91fbb31c57fb0afae53c98d12bb6e84e8",
+    }
     from tools.stop_robot_runtime import _database_path, _environment, _post_robot_json
     from terminal.application.robot_control import stop_robot
 
@@ -772,10 +779,21 @@ def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool | 
                 "AND (status IS NULL OR status NOT IN "
                 "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))"
             ).fetchall()
-            if (not candidates or len(candidates) > len(IDLE_APPROVALS)
-                    or any(row[2] != "APPROVED" or row[1] not in IDLE_APPROVALS
+            if (len(candidates) != len(expected)
+                    or {row[1] for row in candidates} != set(expected)
+                    or any(row[0] != expected[row[1]] or row[2] != "APPROVED"
+                           or type(row[3]) is not int or row[3] <= 0
                            for row in candidates)):
                 return None
+            # Approval-date boundary: historical INUSDT partial fills
+            # predate approval and are not mistaken for new entry work.
+            for _, symbol, _, approved_at in candidates:
+                if conn.execute(
+                    "SELECT 1 FROM executions WHERE trading_account_id='paper' "
+                    "AND symbol=? AND exchange_timestamp_ms>=? LIMIT 1",
+                    (symbol, approved_at),
+                ).fetchone() is not None:
+                    return None
             for table, condition in (
                 ("robot_trades", "exit_time_ms IS NULL"),
                 ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
@@ -789,8 +807,7 @@ def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool | 
                     f"AND ({condition}) LIMIT 1"
                 ).fetchone() is not None:
                     return None
-            prove_six_inert_approvals(conn, candidates, positions)
-    except (FlatRecoveryBlocked, sqlite3.Error, ValueError, TypeError, ArithmeticError):
+    except (sqlite3.Error, ValueError, TypeError, ArithmeticError):
         return None
 
     # One canonical operation. Its existing synchronous bridge terminalizes
