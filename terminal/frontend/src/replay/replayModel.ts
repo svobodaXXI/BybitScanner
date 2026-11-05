@@ -45,6 +45,18 @@ export type ReplayPriorLevel = {
   /** End of this version's reign, known only after another qualifying trend appears. */
   superseded_at_ms?: number;
 };
+/** A closed H1 candle beyond the prior, followed by the next H1 OPEN beyond it. */
+export type ReplayPriorBreak = {
+  kind: "PRIOR_CLOSE_NEXT_OPEN";
+  confirmed_at_ms: number;
+  previous_side: "BULL" | "BEAR";
+  new_side: "BULL" | "BEAR";
+  prior_price: number;
+  trend_version: number;
+  prior_at_ms: number;
+  hourly_close_ms: number;
+  next_hour_open_ms: number;
+};
 export type ReplayObservation = {
   kind: "MAIN_1H_TOUCH" | "MAIN_1H_REACTION";
   side: "BULL" | "BEAR";
@@ -651,6 +663,60 @@ export function visiblePriorLevels(
     result.push({
       side: line.side, at_ms: line.to_ms, price: line.to_price,
       available_at_ms: line.available_at_ms, trend_version: line.trend_version,
+    });
+  }
+  return result;
+}
+
+/**
+ * Evidence of the owner's close-beyond-prior / next-hour-open-beyond-prior
+ * sequence. No wick-only violation, guessed threshold or unfinished H1 close.
+ * The first fully closed M5 of the next H1 is the earliest replay observation
+ * that exposes the new hour's actual OPEN. This is structural research only,
+ * NEVER an entry/fill or licence to fabricate an opposite yellow line.
+ */
+export function visiblePriorBreaks(
+  document: ReplayDocument, closedTimeMs: number | null,
+): ReplayPriorBreak[] {
+  if (document.mode !== "MARKET_ONLY" || closedTimeMs === null) return [];
+  const candles = document.events.filter(e => e.kind === "CANDLE_CLOSED").map(e => e.candle!);
+  const result: ReplayPriorBreak[] = [];
+  const emitted = new Set<string>();
+  const hourMs = 3_600_000, fiveMs = 300_000;
+  for (let i = 12; i < candles.length; i++) {
+    const next = candles[i];
+    if (next.end_ms > closedTimeMs) break;
+    if (next.start_ms % hourMs !== 0 || next.end_ms !== next.start_ms + fiveMs) continue;
+    const first = candles[i - 12];
+    if (first.start_ms !== next.start_ms - hourMs) continue;
+    let completeHour = true;
+    for (let j = 0; j < 12; j++) {
+      const bar = candles[i - 12 + j];
+      if (bar.start_ms !== first.start_ms + j * fiveMs ||
+          bar.end_ms !== bar.start_ms + fiveMs) {
+        completeHour = false;
+        break;
+      }
+    }
+    if (!completeHour) continue;
+    const previousHourClose = candles[i - 1];
+    const prior = visiblePriorLevels(document, previousHourClose.end_ms).at(-1);
+    // The prior must already have existed BEFORE the candle being tested
+    // closed, or the event would be a hindsight-confirmed violation.
+    if (!prior || prior.available_at_ms >= previousHourClose.end_ms) continue;
+    const broken = prior.side === "BULL"
+      ? previousHourClose.close < prior.price && next.open < prior.price
+      : previousHourClose.close > prior.price && next.open > prior.price;
+    if (!broken) continue;
+    const key = [prior.side, prior.at_ms, prior.trend_version].join(":");
+    if (emitted.has(key)) continue;
+    emitted.add(key);
+    result.push({
+      kind: "PRIOR_CLOSE_NEXT_OPEN", confirmed_at_ms: next.end_ms,
+      previous_side: prior.side, new_side: prior.side === "BULL" ? "BEAR" : "BULL",
+      prior_price: prior.price, prior_at_ms: prior.at_ms,
+      trend_version: prior.trend_version,
+      hourly_close_ms: previousHourClose.end_ms, next_hour_open_ms: next.start_ms,
     });
   }
   return result;
