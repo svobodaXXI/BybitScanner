@@ -448,6 +448,25 @@ class RuntimeShutdown:
         except (SafeStopError, RobotControlRejected) as exc:
             return ShutdownResult(scope, False, f"STOP BLOCKED: {exc}", tuple(steps))
 
+    def freeze_ingress_for_required_recovery(self) -> tuple[str, ...]:
+        """Freeze new PAPER admissions only; retain Robot, protection and Backend.
+
+        This is the first internal phase of an explicitly authorized one-action
+        start/recovery, not a complete stop. Reuse canonical OFF/STOP transitions
+        and their existing no-replay/identity checks.
+        """
+        steps: list[str] = []
+        if self._probe_backend() != PRESENT:
+            raise SafeStopError("PAPER Backend absent; recovery not attempted")
+        self._probe_telegram()  # if present, must match this PAPER DB
+        if self._freeze_autopilot():
+            steps.append("autopilot:off")
+        if self._stop_scanner():
+            steps.append("scanner:stop")
+        self._require_autopilot_off()
+        self._require_scanner_stopped()
+        return tuple(steps)
+
     def _run(self, scope: str, steps: list[str]) -> ShutdownResult:
         # Both identities are proven before the first mutation of anything.
         self._mark("probing PAPER backend identity")
