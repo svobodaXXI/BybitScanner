@@ -866,7 +866,11 @@ export function visiblePriorBreaks(
 }
 
 /** Immutable versions retained for review after revisions and structural breaks. */
-export type ReplayGeometryVersion = ReplayGeometry & { superseded_at_ms?: number };
+export type ReplayGeometryVersion = ReplayGeometry & {
+  superseded_at_ms?: number;
+  /** Confirmed cancellation, distinct from a new historical slope revision. */
+  retired_at_ms?: number;
+};
 
 export function visibleGeometryHistory(
   document: ReplayDocument, closedTimeMs: number | null,
@@ -893,25 +897,47 @@ export function visibleGeometryHistory(
     latest.set(line.kind, versions.length);
     versions.push({ ...line });
   }
-  const breaks = new Map(
-    visiblePriorBreaks(document, closedTimeMs).map(event =>
-      [event.trend_version, event.confirmed_at_ms] as const),
-  );
-  const blueRetirements = (document.reference_5m_retirements ?? [])
-    .filter(event => event.time_ms <= closedTimeMs);
-  for (const version of versions) {
-    if (version.kind === "REFERENCE_5M") {
-      const retired = blueRetirements.find(event =>
-        event.blue_available_at_ms === version.available_at_ms &&
-        event.trend_version === version.trend_version);
-      if (retired) {
-        version.superseded_at_ms = Math.min(
-          version.superseded_at_ms ?? Infinity, retired.time_ms);
-      }
+  // Publication of a revised slope changes the active VERSION, not the
+  // underlying movement. Historical solid lines continue until a confirmed
+  // break. Keep superseded_at_ms for chronology, but never use it as the
+  // chart's cancellation time.
+  const movementByVersion = new Map<number, string>();
+  for (const line of versions) {
+    if (line.kind === "MAIN_1H") {
+      movementByVersion.set(
+        line.trend_version, `${line.side}:${line.from_ms}:${line.from_price}`,
+      );
     }
-    const brokenAt = breaks.get(version.trend_version);
-    if (brokenAt !== undefined) {
-      version.superseded_at_ms = Math.min(version.superseded_at_ms ?? Infinity, brokenAt);
+  }
+  const movementBreaks = new Map<string, number>();
+  for (const event of visiblePriorBreaks(document, closedTimeMs)) {
+    const movement = movementByVersion.get(event.trend_version);
+    if (movement !== undefined) {
+      movementBreaks.set(movement,
+        Math.min(movementBreaks.get(movement) ?? Infinity, event.confirmed_at_ms));
+    }
+  }
+  const correctionKey = (line: ReplayGeometry) =>
+    `${line.side}:${line.from_ms}:${line.from_price}`;
+  const blueBreaks = new Map<string, number>();
+  for (const event of document.reference_5m_retirements ?? []) {
+    if (event.time_ms > closedTimeMs) break;
+    const line = versions.find(candidate =>
+      candidate.kind === "REFERENCE_5M" &&
+      candidate.available_at_ms === event.blue_available_at_ms &&
+      candidate.trend_version === event.trend_version);
+    if (!line) continue;
+    const key = correctionKey(line);
+    blueBreaks.set(key, Math.min(blueBreaks.get(key) ?? Infinity, event.time_ms));
+  }
+  for (const version of versions) {
+    const parentBreak = movementBreaks.get(movementByVersion.get(version.trend_version) ?? "");
+    const correctionBreak = version.kind === "REFERENCE_5M"
+      ? blueBreaks.get(correctionKey(version)) : undefined;
+    const retired = Math.min(parentBreak ?? Infinity, correctionBreak ?? Infinity);
+    if (Number.isFinite(retired)) {
+      version.retired_at_ms = retired;
+      version.superseded_at_ms = Math.min(version.superseded_at_ms ?? Infinity, retired);
     }
   }
   return versions;
