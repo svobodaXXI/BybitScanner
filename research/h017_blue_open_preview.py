@@ -28,6 +28,7 @@ def blue_open_risk_preview(
         known_trend is None or known_blue is None
         or known_trend.available_at_ms > bar.start_ms
         or known_blue.available_at_ms > bar.start_ms
+        or known_blue.available_at_ms < known_trend.available_at_ms
     ):
         return None
     # The blue line must be the known opposite-direction correction slope,
