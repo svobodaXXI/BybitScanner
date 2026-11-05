@@ -429,8 +429,32 @@ export function ReplayPage() {
         <button type="button" onClick={() => { if (cursor === total) setCursor(0); setPlaying((s) => !s); }}>
           {playing ? "Пауза" : "▶ Пуск"}
         </button>
-        <button type="button" onClick={() => { setPlaying(false); setCursor((x) => Math.min(total, x + 1)); }}
-          disabled={cursor >= total}>Шаг</button>
+        <button type="button" onClick={() => {
+          setPlaying(false);
+          setCursor((current) => {
+            const events = document.events;
+            // Rewind one complete candle step, not just one trade/event row.
+            const closed = events.slice(0, current).filter(event => event.kind === "CANDLE_CLOSED");
+            if (closed.length <= 1) return 0;
+            const previousClose = closed[closed.length - 2].time_ms;
+            let next = 0;
+            while (next < events.length && events[next].time_ms <= previousClose) next++;
+            return next;
+          });
+        }} disabled={shown.candles.length === 0}>◀ Шаг назад</button>
+        <button type="button" onClick={() => {
+          setPlaying(false);
+          setCursor((current) => {
+            const events = document.events;
+            const nextClose = events.findIndex((event, index) => index >= current && event.kind === "CANDLE_CLOSED");
+            if (nextClose < 0) return total;
+            const closeTime = events[nextClose].time_ms;
+            let next = nextClose + 1;
+            // All same-time trade actions belong to this candle step.
+            while (next < total && events[next].time_ms === closeTime) next++;
+            return next;
+          });
+        }} disabled={cursor >= total}>Шаг вперёд ▶</button>
         <button type="button" onClick={() => { setPlaying(false); setCursor(0); }}>В начало</button>
         <label className="replay-rate">Скорость {rate} событий/с
           <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
