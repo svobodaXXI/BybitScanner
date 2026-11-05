@@ -20,6 +20,38 @@ Default flow:
 
 Do not insert a local publication round-trip between GitHub-authored changes and GitHub integration merely because the local harness exists.
 
+## Codex on VPS: execution-only, strict token budget (owner decision 2026-10-29)
+
+Codex is a **thin routine VPS terminal/SSH intermediary**, not the investigator,
+architect, task planner or autonomous troubleshooter. Codex usage is deliberately
+minimized because its limits are scarce.
+
+- **ChatGPT owns** diagnosis, source/GitHub investigation, solution design,
+  exact commands, safety preconditions, interpretation of returned evidence,
+  and any code or documentation changes via GitHub.
+- **Codex performs only** explicitly scoped, already designed VPS commands
+  supplied by ChatGPT. Return the exact exit status and concise factual output;
+  do not explore alternative solutions, browse repository history, run broad
+  audits/tests, develop patches, create PRs or invent extra steps.
+- Issue a Codex task only when an operation or runtime fact requires VPS access
+  unavailable to ChatGPT. Prefer one compact, copy-ready command or bounded
+  command sequence with a clear STOP condition. No iterative log fishing.
+- On unexpected output, denied safety gate, unproven FLAT/protection or missing
+  authority, **STOP and return the concrete error**. ChatGPT evaluates it and
+  prepares the next exact instruction; Codex must not improvise recovery.
+- Owner approval and existing safety constraints still govern every protected
+  runtime action. Never bypass Admission, STOP/TAKE, exclusive PAPER SQLite
+  ownership, LIVE prohibition or fail-closed controls.
+- For the current #678 outcome: ChatGPT plans safe active closing of AIOZUSDT
+  and AKEUSDT, then target-stable update and PAPER_AUTO acceptance. Codex only
+  transmits the predetermined authorized commands on VPS and returns evidence.
+  Do not wait passively for STOP/TAKE if a safe authorized close procedure
+  exists; never force close past a refusal.
+
+This execution-only assignment supersedes any general guidance here to leave
+ordinary technical step selection to a delegated executor **when that executor
+is Codex serving as the VPS intermediary**.
+
 ## Result-first hand-off between delivery stages
 
 At each transition (scoped implementation → evidence → PR/CI review →
