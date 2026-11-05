@@ -1176,12 +1176,24 @@ class PaperRuntime:
         self._observe_autopilot_with_prepared_evidence(SOURCE_SCANNER, candidate_id)
 
     def _observe_autopilot_with_prepared_evidence(self, source: str, candidate_ref: str) -> None:
-        """A8: closed-candle evidence is fetched here, off the owner, then observed.
+        """Keep blocked PAPER_AUTO callbacks off the serialized protection owner.
 
-        Runs on the Scanner/handler thread. The owner only reads the prepared
-        result; a failed preparation leaves no evidence, so the freshness proof
-        is unknown and the Autopilot WAITs. It never reaches the Scanner pass.
+        SHADOW still evaluates and commits on its read-only deferred path.
+        PAPER_AUTO starts expensive candle/mark preparation only after its
+        off-owner protection-load gate has proved there is room for entry work.
+        A saturated ingress is already a trading WAIT, not a reason to queue
+        heavyweight discretionary work ahead of STOP/TAKE. Scanner retains
+        the source candidate; no order or audit ALLOW is fabricated here.
         """
+        # No owner round trip is needed for the SHADOW->PAPER_AUTO handover
+        # decision. This also avoids fetching candles for SHADOW/OFF.
+        if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
+            return
+        if self._shadow_protection_health() is False:
+            # Proven unhealthy or overloaded: suppress this optional arrival
+            # rather than spend the owner's next slot on an impossible entry.
+            # No new entry is admitted, and no protection event is discarded.
+            return
         try:
             self._prepare_autopilot_evidence(source, candidate_ref)
         except Exception as error:
@@ -1190,13 +1202,8 @@ class PaperRuntime:
                 f"source={source} candidate_ref={candidate_ref} "
                 f"error_class={type(error).__name__}"
             )
-        # Fetch exchange mark prices on the Scanner/handler thread, never under
-        # the owner's serialized admission transaction. Capture immutable marks
-        # for this one decision; late arrivals remain fail-closed by age.
-        # SHADOW: evaluated here, off the owner; only a bounded commit reaches the owner.
-        # No ticker REST request unless a real PAPER_AUTO handover is due.
-        if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
-            return
+        # Marks are prepared off-owner only when PAPER_AUTO can evaluate.
+        # A late state change is rechecked at the canonical owner admission.
         prepared_marks = self._prepare_autopilot_daily_marks()
         try:
             self._dispatch_robot_command(
