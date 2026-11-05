@@ -10,6 +10,35 @@ export type ReplayCandle = {
   close: number;
   volume: number;
 };
+/** True closed H1 OHLCV bars aggregated from twelve contiguous public Bybit M5 bars.
+ * Partial H1 hours and gaps are never painted: the 12th M5 close is required.
+ * This is candle aggregation, not changing the chart's visual zoom.
+ */
+export function completeHourlyCandles(fiveMinuteBars: ReplayCandle[]): ReplayCandle[] {
+  const hourMs = 3_600_000;
+  const fiveMs = 300_000;
+  const result: ReplayCandle[] = [];
+  for (let i = 0; i + 11 < fiveMinuteBars.length; i++) {
+    const first = fiveMinuteBars[i];
+    if (first.start_ms % hourMs !== 0) continue;
+    const group = fiveMinuteBars.slice(i, i + 12);
+    if (!group.every((bar, j) =>
+      bar.start_ms === first.start_ms + j * fiveMs &&
+      bar.end_ms === first.start_ms + (j + 1) * fiveMs)) continue;
+    result.push({
+      start_ms: first.start_ms,
+      end_ms: first.start_ms + hourMs,
+      open: first.open,
+      high: Math.max(...group.map(bar => bar.high)),
+      low: Math.min(...group.map(bar => bar.low)),
+      close: group[11].close,
+      volume: group.reduce((sum, bar) => sum + bar.volume, 0),
+    });
+    i += 11;
+  }
+  return result;
+}
+
 export type ReplayEvent = {
   source: "SIMULATION";
   simulation_run_id: string;
