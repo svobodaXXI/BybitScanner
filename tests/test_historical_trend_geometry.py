@@ -5,6 +5,7 @@ import unittest
 from research.causal_trend_geometry import (
     CausalGeometryFeed, ConfirmedPivot, ConfirmedSwingStream,
     last_correction_reference, main_line_contact, recent_hourly_trend,
+    wick_tight_hourly_line,
 )
 from research.historical_candle_feed import FIVE_MINUTES_MS, ONE_HOUR_MS
 from research.historical_market_replay import Candle
@@ -68,10 +69,74 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual(next_version.main.first.index, 2)
         self.assertEqual(next_version.target.first.index, 3)
         self.assertGreater(next_version.main.second.index, first.main.second.index)
-        self.assertGreater(next_version.target.second.index, first.target.second.index)
+        self.assertGreaterEqual(next_version.target.second.index, first.target.second.index)
+        # An earlier higher wick may become the correct slope-tight second
+        # anchor even after a later, absolute high pivot is confirmed.
+        for candidate_line, upper in (
+            (next_version.main, False), (next_version.target, True),
+        ):
+            for bar in feed._hourly.bars[candidate_line.first.index + 1:
+                                        next_version.pivot_sequence[3].index + 1]:
+                level = candidate_line.value_at(bar.start_ms)
+                if upper:
+                    self.assertGreaterEqual(level, bar.high)
+                else:
+                    self.assertLessEqual(level, bar.low)
         self.assertEqual(first.main.first.price, Decimal(98))
         self.assertEqual(next_version.main.first.price, Decimal(98))
         self.assertGreater(next_version.available_at_ms, first.available_at_ms)
+
+    def test_h1_wick_envelope_uses_worst_slope_not_absolute_wick(self):
+        bars = (
+            make_bar(0, 120, 100),
+            make_bar(1, 119, 106),
+            make_bar(2, 130, 108),
+            make_bar(3, 125, 115),
+            make_bar(4, 135, 116),
+        )
+        start = ConfirmedPivot("HIGH", 0, bars[0].start_ms,
+                               bars[1].end_ms, Decimal(120))
+        candidate = ConfirmedPivot("HIGH", 4, bars[4].start_ms,
+                                   bars[4].end_ms, Decimal(135))
+        line = wick_tight_hourly_line(
+            start, candidate, bars, boundary="UPPER",
+            available_at_ms=bars[-1].end_ms,
+        )
+        self.assertIsNotNone(line)
+        self.assertEqual(line.first, start)
+        # HIGH at hour 2 (130) gives a steeper upper envelope than
+        # the absolute maximum 135 at hour 4.
+        self.assertEqual(line.second.index, 2)
+        self.assertEqual(line.second.price, Decimal(130))
+        for bar in bars[1:]:
+            self.assertGreaterEqual(line.value_at(bar.start_ms), bar.high)
+        self.assertIsNone(wick_tight_hourly_line(
+            start, candidate, bars, boundary="UPPER",
+            available_at_ms=bars[3].end_ms,
+        ))
+
+    def test_h1_lower_envelope_mirrors_upper_wick_constraint(self):
+        bars = (
+            make_bar(0, 110, 100),
+            make_bar(1, 113, 102),
+            make_bar(2, 117, 103),
+            make_bar(3, 119, 108),
+            make_bar(4, 120, 110),
+        )
+        start = ConfirmedPivot("LOW", 0, bars[0].start_ms,
+                               bars[1].end_ms, Decimal(100))
+        candidate = ConfirmedPivot("LOW", 4, bars[4].start_ms,
+                                   bars[4].end_ms, Decimal(110))
+        line = wick_tight_hourly_line(
+            start, candidate, bars, boundary="LOWER",
+            available_at_ms=bars[-1].end_ms,
+        )
+        self.assertIsNotNone(line)
+        self.assertEqual(line.first, start)
+        self.assertEqual(line.second.index, 2)
+        self.assertEqual(line.second.price, Decimal(103))
+        for bar in bars[1:]:
+            self.assertLessEqual(line.value_at(bar.start_ms), bar.low)
 
     def test_bear_main_is_through_highs_and_target_through_lows(self):
         stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
