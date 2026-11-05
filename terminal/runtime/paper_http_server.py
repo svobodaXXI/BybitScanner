@@ -2892,7 +2892,30 @@ class RobotProtectionCoverageManager:
     def _release_continuity_fence(self, runtime, symbol: str) -> None:
         """Owner thread only, after a proven recovery. The runtime releases only
         the barrier this coverage-loss event created, and only while every
-        covered symbol's ingress is healthy."""
+        covered symbol's ingress is healthy.
+
+        Reconciliation may scan durable entry/exit ownership for seconds.
+        Never start that optional heavy pass while ordered STOP/TAKE events
+        are already backed up behind this owner. The existing coverage
+        watchdog retries after the ingress drains. A deferred release keeps
+        the original durable admission fence intact.
+        """
+        measure = getattr(self._runtime, "protection_ingress_metrics", None)
+        if callable(measure):
+            try:
+                metrics = measure()
+                pending = metrics.get("current_pending")
+                capacity = metrics.get("capacity")
+                if (type(pending) is int and type(capacity) is int
+                        and capacity > 0 and pending >= max(2, capacity // 8)):
+                    with self._lock:
+                        self._release_retry.add(symbol)
+                    return
+            except Exception:
+                # Metrics are advisory. The canonical Robot reconciliation
+                # remains evidence-gated; do not alter trading on an invalid
+                # telemetry read.
+                pass
         try:
             runtime.release_robot_protection_continuity_fence(
                 symbol, ingress_healthy=self.is_healthy,
