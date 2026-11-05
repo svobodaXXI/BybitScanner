@@ -723,77 +723,85 @@ def _paper_start_quiescent(root: Path, env_file: Path | None) -> bool:
 
 
 def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool | None:
-    """Use canonical Robot STOP for frozen APPROVED ideas left after reconcile.
+    """Retire proven inert APPROVED ideas via the existing canonical Robot STOP.
 
-    STOP owns cancellation and candidate lifecycle. Do not synthesize
-    INVALIDATED rows or retry reconciliation from a completed PAUSED state.
+    None: not in PAUSED (reconcile may be needed); False: unsafe or unknown
+    PAUSED/STOP outcome (do not replay reconcile); True: STOP and quiescence
+    confirmed. No new candidate lifecycle writer or incident-specific IDs.
     """
-    # Exact four owners independently observed after the completed one-shot
-    # reconcile; neither the earlier six-owner proof nor its old revisions
-    # are valid for this later phase.
-    expected = {
-        "HEMIUSDT": "box-robot-feaae41e8ce05ecd2f0f96b7bf4b5ee7ea873c08cdcb34c4b15d71c9ee524c43",
-        "RUNEUSDT": "box-robot-358e379f7faa07382115d3dea70419c172c9f426ae2339a07ab0e459a334dd3b",
-        "1000FLOKIUSDT": "box-robot-aa55ab080dba361a15f6ba004ec29a9f1d1a782faf7b01ba662caf1cb26af8c6",
-        "INUSDT": "box-robot-9631f1a3a33c0bbfd41fc0b75e2930e91fbb31c57fb0afae53c98d12bb6e84e8",
-    }
     from tools.stop_robot_runtime import _database_path, _environment, _post_robot_json
     from terminal.application.robot_control import stop_robot
 
     db = _database_path(root, _environment(env_file))
     if not db.is_file() or db.is_symlink():
-        return None
+        return False
     try:
         with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0) as conn:
             conn.execute("PRAGMA query_only=ON")
             conn.execute("BEGIN")
             if conn.execute("PRAGMA quick_check").fetchone() != ("ok",):
-                return None
+                return False
             state = conn.execute(
                 "SELECT mode, recovery_status FROM robot_runtime_state "
                 "WHERE trading_account_id='paper'"
             ).fetchall()
+            if state != [("ROBOT_RUNNING", "PAUSED")]:
+                return None
             scanner = conn.execute(
                 "SELECT mode FROM scanner_runtime_state WHERE trading_account_id='paper'"
             ).fetchall()
             autopilot = conn.execute(
                 "SELECT mode FROM robot_autopilot_state WHERE trading_account_id='paper'"
             ).fetchall()
-            if (state != [("ROBOT_RUNNING", "PAUSED")]
-                    or scanner != [("SCANNER_STOPPED",)] or autopilot != [("OFF",)]):
-                return None
+            if scanner != [("SCANNER_STOPPED",)] or autopilot != [("OFF",)]:
+                return False
             positions = conn.execute(
                 "SELECT symbol, side, quantity, sync_state FROM position_projections "
                 "WHERE trading_account_id='paper'"
             ).fetchall()
             if not positions:
-                return None
+                return False
             for symbol, side, raw, sync in positions:
                 quantity = Decimal(str(raw))
                 if (not symbol or side != "Flat" or not quantity.is_finite()
                         or quantity != 0 or sync not in ("synced", "synchronized")):
-                    return None
+                    return False
             candidates = conn.execute(
                 "SELECT candidate_id, symbol, status, approved_at_ms "
                 "FROM robot_candidates WHERE trading_account_id='paper' "
                 "AND (status IS NULL OR status NOT IN "
                 "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))"
             ).fetchall()
-            if (len(candidates) != len(expected)
-                    or {row[1] for row in candidates} != set(expected)
-                    or any(row[0] != expected[row[1]] or row[2] != "APPROVED"
-                           or type(row[3]) is not int or row[3] <= 0
-                           for row in candidates)):
-                return None
-            # Approval-date boundary: historical INUSDT partial fills
-            # predate approval and are not mistaken for new entry work.
-            for _, symbol, _, approved_at in candidates:
-                if conn.execute(
+            if (not candidates
+                    or len({row[0] for row in candidates}) != len(candidates)
+                    or len({row[1] for row in candidates}) != len(candidates)
+                    or any(not isinstance(cid, str) or not cid
+                           or not isinstance(symbol, str) or not symbol
+                           or status != "APPROVED"
+                           or type(approved) is not int or approved <= 0
+                           for cid, symbol, status, approved in candidates)):
+                return False
+            # Historical fills before approval are not new entry work.
+            # A later fill/order/command/trade must instead block the STOP path.
+            for cid, symbol, _, approved in candidates:
+                if (conn.execute(
                     "SELECT 1 FROM executions WHERE trading_account_id='paper' "
                     "AND symbol=? AND exchange_timestamp_ms>=? LIMIT 1",
-                    (symbol, approved_at),
-                ).fetchone() is not None:
-                    return None
+                    (symbol, approved),
+                ).fetchone() is not None or conn.execute(
+                    "SELECT 1 FROM paper_limit_orders WHERE trading_account_id='paper' "
+                    "AND symbol=? AND created_at_ms>=? LIMIT 1",
+                    (symbol, approved),
+                ).fetchone() is not None or conn.execute(
+                    "SELECT 1 FROM trading_commands WHERE trading_account_id='paper' "
+                    "AND symbol=? AND created_at_ms>=? LIMIT 1",
+                    (symbol, approved),
+                ).fetchone() is not None or conn.execute(
+                    "SELECT 1 FROM robot_trades WHERE trading_account_id='paper' "
+                    "AND candidate_id=? LIMIT 1",
+                    (cid,),
+                ).fetchone() is not None):
+                    return False
             for table, condition in (
                 ("robot_trades", "exit_time_ms IS NULL"),
                 ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
@@ -806,18 +814,17 @@ def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool | 
                     f"SELECT 1 FROM {table} WHERE trading_account_id='paper' "
                     f"AND ({condition}) LIMIT 1"
                 ).fetchone() is not None:
-                    return None
+                    return False
     except (sqlite3.Error, ValueError, TypeError, ArithmeticError):
-        return None
+        return False
 
-    # One canonical operation. Its existing synchronous bridge terminalizes
-    # proven never-traded Box owners in ROBOT_STOPPED; ambiguity fails closed.
+    # One canonical operation, including its own safety checks and synchronous
+    # candidate terminalization. No direct SQLite writes or repeated STOP.
     try:
         stop_robot(http_post=_post_robot_json, database_path=db)
     except Exception:
         return False  # STOP may have committed: never replay it here.
     return _paper_start_quiescent(root, env_file)
-
 
 def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
     """Read-only, incident-scoped proof before invoking owner Robot reconciliation.
