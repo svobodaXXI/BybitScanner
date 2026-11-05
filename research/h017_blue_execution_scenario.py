@@ -228,7 +228,7 @@ def simulate_blue_open_scenario(
         peak_equity = max(peak_equity, last_mark)
         max_drawdown = max(max_drawdown, (peak_equity - last_mark) / peak_equity)
         if not Decimal(0) <= reserved <= cash:
-            raise AssertionError("counterfactual slot accounting inconsistent")
+            raise AssertionError(f"counterfactual slot accounting inconsistent: t={bar['start_ms']} cash={cash} reserved={reserved} opens={len(positions)} last={completed[-1] if completed else None}")
 
     return {
         "source": "SIMULATION",
