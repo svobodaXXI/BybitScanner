@@ -123,3 +123,17 @@ jobs:
         run: |
           python -B server.py --check
           python -B smoke_package.py
+
+  real-bybit-h017-readonly-acceptance:
+    # A single research PR trial, or a manual rerun when separately requested.
+    # No scheduled network cost and no synthetic fallbacks.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.head_ref == 'test/h017-real-bybit-grass-readonly-20261105')
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check actual public Bybit GRASSUSDT 5m history and H-017 risk previews
+        run: python -m research.h017_real_bybit_readonly_acceptance
