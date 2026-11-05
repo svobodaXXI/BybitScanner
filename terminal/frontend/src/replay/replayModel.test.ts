@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("shows only completed candles and fills revealed at the current cursor", () => {
@@ -20,6 +20,35 @@ describe("standalone SIMULATION viewer contract", () => {
     const ending = visibleReplay(doc.events, doc.events.length);
     expect(ending.candles).toHaveLength(64);
     expect(ending.exits).toHaveLength(1);
+  });
+
+  it("exports only recorded virtual actions and never erases them on rewind", () => {
+    const demo = syntheticReplay();
+    const report = simulationActionJournal(demo);
+    expect(report.source).toBe("SIMULATION");
+    expect(report.report_kind).toBe("RECORDED_ACTIONS_ONLY");
+    expect(report.actions.map(item => item.kind)).toEqual([
+      "ENTRY_SIGNAL", "ENTRY_FILLED", "EXIT_FILLED",
+    ]);
+    expect(report.actions.map(item => item.event_id)).toEqual(
+      report.actions.map(item => `${item.simulation_run_id}:${item.sequence}`),
+    );
+    expect(report.actions[0]).toMatchObject({ side: "LONG", comment: "Сигнал LONG" });
+    expect(report.actions[1]).toMatchObject({ side: "LONG", comment: "Вход LONG" });
+    expect(report.actions[2]).toMatchObject({ reason: "DEMO_EXIT", comment: "Выход DEMO_EXIT" });
+    const original = JSON.stringify(report);
+    const firstFill = demo.events.findIndex(item => item.kind === "ENTRY_FILLED");
+    expect(visibleReplay(demo.events, firstFill).fills).toHaveLength(0);
+    expect(visibleReplay(demo.events, demo.events.length).exits).toHaveLength(1);
+    expect(JSON.stringify(simulationActionJournal(demo))).toBe(original);
+    const marketOnly = parseReplayDocument({
+      source: "SIMULATION", simulation_run_id: "history", mode: "MARKET_ONLY",
+      market_data_source: "BYBIT_PUBLIC_KLINE", symbol: "BTCUSDT", timeframe: "5m",
+      events: demo.events.filter(item => item.kind === "CANDLE_CLOSED").map(item => ({
+        ...item, simulation_run_id: "history",
+      })),
+    });
+    expect(simulationActionJournal(marketOnly).actions).toEqual([]);
   });
 
   it("warmed synthetic ADX is displayed only on completed 5m candles", () => {
