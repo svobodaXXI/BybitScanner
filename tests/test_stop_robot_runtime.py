@@ -416,6 +416,39 @@ class FullShutdownTests(unittest.TestCase):
                 self.assertEqual(runtime.robot, READY)
                 self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
+    def test_scanner_only_reactivation_blocks_false_stopped_success(self):
+        runtime = FakeRuntime(robot=READY)
+        owner = runtime.orchestrator()
+
+        def concurrent_restart():
+            # Scanner STOP has already returned when the Robot state is read.
+            runtime.scanner_mode = "SCANNER_RUNNING"
+            return READY
+
+        owner._robot_state = concurrent_restart
+        result = owner.run("scanner")
+        self.assertFalse(result.ok)
+        self.assertIn("Scanner is not proven STOPPED", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_scanner_only_protected_runtime_rechecks_before_success(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.protection["covered_symbols"] = ["BTCUSDT"]
+        original_get = runtime.get
+
+        def concurrent_restart_during_protection_read(url, timeout):
+            if url == BACKEND + "/api/robot/protection-health":
+                runtime.scanner_mode = "SCANNER_RUNNING"
+            return original_get(url, timeout)
+
+        runtime.get = concurrent_restart_during_protection_read
+        result = runtime.orchestrator().run("scanner")
+        self.assertFalse(result.ok)
+        self.assertIn("Scanner is not proven STOPPED", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_full_stop_orders_scanner_robot_telegram_backend(self):
         for robot in (READY, PAUSED):
             with self.subTest(robot=robot):
