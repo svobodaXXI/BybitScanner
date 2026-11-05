@@ -1527,6 +1527,100 @@ def test_gitless_repeated_full_start_is_read_only(monkeypatch):
     assert calls == []
 
 
+def test_monolithic_start_active_required_fails_closed_without_stop_or_restart(
+    monkeypatch, tmp_path, capsys,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as runtime_intent
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    identity = "d" * 64
+    db = tmp_path / "paper.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE robot_runtime_state "
+            "(trading_account_id TEXT, mode TEXT, recovery_status TEXT, reason TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO robot_runtime_state VALUES "
+            "('paper','ROBOT_RUNNING','RECONCILIATION_REQUIRED',"
+            "'ROBOT_PROTECTION_COVERAGE_LOST ingress_overflow RDWUSDT')"
+        )
+    monkeypatch.setattr(maintenance, "REPO", tmp_path)
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_environment",
+                        lambda *_: {"BYBITSCANNER_PAPER_DB": str(db)})
+    monkeypatch.setattr(runtime_intent, "expected_database_identity",
+                        lambda *_: identity)
+    monkeypatch.setattr(runtime_intent, "http_get", lambda *_a: SimpleNamespace(
+        status=200, json=lambda: {
+            "ok": True, "component": "paper_backend", "mode": "paper",
+            "build_sha": target, "database_identity": identity,
+            "paper_live_safe": True, "robot_admission_ready": False,
+        },
+    ))
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "BLOCKED: admission not ready")
+    for name in ("resume_installed_release", "deploy_staged_editor_only",
+                 "start_installed_paper_from_editor"):
+        monkeypatch.setattr(
+            maintenance, name,
+            lambda *_a, **_kw: pytest.fail("active PAPER must never be restarted"),
+        )
+
+    result = maintenance.main([
+        target, "--resume-installed-editor-only", "--start-paper-after-editor",
+    ])
+    assert result == 2
+    output = capsys.readouterr().out
+    assert "active_PAPER_Robot_RECONCILIATION_REQUIRED" in output
+    assert "ingress_overflow" in output
+    assert "admission_closed" in output
+    assert "protection_preserved" in output
+
+
+def test_monolithic_start_active_nonready_exact_release_does_not_deploy(
+    monkeypatch, tmp_path, capsys,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as runtime_intent
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    db = tmp_path / "paper.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE robot_runtime_state "
+            "(trading_account_id TEXT, mode TEXT, recovery_status TEXT, reason TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO robot_runtime_state VALUES "
+            "('paper','ROBOT_RUNNING','READY',NULL)"
+        )
+    monkeypatch.setattr(maintenance, "REPO", tmp_path)
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_environment",
+                        lambda *_: {"BYBITSCANNER_PAPER_DB": str(db)})
+    monkeypatch.setattr(runtime_intent, "expected_database_identity",
+                        lambda *_: "d" * 64)
+    monkeypatch.setattr(runtime_intent, "http_get", lambda *_a: SimpleNamespace(
+        status=200, json=lambda: {
+            "ok": True, "component": "paper_backend", "mode": "paper",
+            "build_sha": target, "database_identity": "d" * 64,
+            "paper_live_safe": True, "robot_admission_ready": True,
+        },
+    ))
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "BLOCKED: protection uncertain")
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_a, **_kw: pytest.fail("must not change running PAPER"))
+    assert maintenance.main([
+        target, "--resume-installed-editor-only", "--start-paper-after-editor",
+    ]) == 2
+    assert "active_exact_PAPER_not_ready" in capsys.readouterr().out
+
+
 def test_gitless_full_start_unproven_runtime_does_not_skip_recovery(monkeypatch):
     import tools.paper_maintenance as maintenance
     import tools.vps_release_identity as release
