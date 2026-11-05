@@ -2298,6 +2298,13 @@ def test_protection_resync_reaps_only_proven_abandoned_pre_limit_arms():
 
     runtime.busy = False
     manager.resync()
+    # A fresh arm must survive resync until its first LIMIT handover.
+    assert set(manager.health()["armed_symbols"]) == {"FOLKSUSDT", "LITEUSDT"}
+    import time
+    with manager._lock:
+        manager._armed_since["FOLKSUSDT"] = time.monotonic() - 500
+        manager._armed_since["LITEUSDT"] = time.monotonic() - 500
+    manager.resync()
     assert not hub.has_context("FOLKSUSDT")
     assert hub.has_context("LITEUSDT")
     assert manager.health()["armed_symbols"] == ("LITEUSDT",)
