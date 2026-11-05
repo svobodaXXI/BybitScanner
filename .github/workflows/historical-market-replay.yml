@@ -137,5 +137,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Check actual public Bybit GRASSUSDT 5m history and H-017 risk previews
-        run: python -m research.h017_real_bybit_readonly_acceptance
+      - name: Check archived GRASSUSDT baseline and an independent later H1 reversal window
+        run: |
+          python -m research.h017_real_bybit_readonly_acceptance
+          python -m research.h017_real_bybit_readonly_acceptance --start 2026-09-01 --end 2026-09-08

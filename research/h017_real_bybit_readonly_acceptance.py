@@ -6,6 +6,7 @@ The 7 visible UTC days have 72h of earlier closed-candle geometry warmup.
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import gzip
 import hashlib
@@ -29,17 +30,17 @@ MAX_COMPRESSED_DAY = 24_000_000
 MAX_TRADES_PER_DAY = 750_000
 
 
-def archived_trade_klines():
+def archived_trade_klines(*, start: str = START, end: str = END):
     """Fetch official Bybit linear trades and rebuild only time-complete M5 bars.
 
     Historical trade prices are NOT the v5 kline endpoint. The test report
     preserves this distinction, never passing the archive as authenticated
     Bybit candle API data. Missing minutes or invalid archives fail closed.
     """
-    day = datetime.strptime(START, "%Y-%m-%d").replace(
+    day = datetime.strptime(start, "%Y-%m-%d").replace(
         tzinfo=timezone.utc,
     ) - timedelta(hours=72)
-    stop = datetime.strptime(END, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    stop = datetime.strptime(end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     archive_hashes = {}
     by_bucket = {}
     global_sequence = 0
@@ -93,7 +94,7 @@ def archived_trade_klines():
             raise ValueError("official Bybit archive has no trades " + stamp)
         day += timedelta(days=1)
 
-    first_ms = int((datetime.strptime(START, "%Y-%m-%d").replace(
+    first_ms = int((datetime.strptime(start, "%Y-%m-%d").replace(
         tzinfo=timezone.utc) - timedelta(hours=72)).timestamp() * 1000)
     end_ms = int(stop.timestamp() * 1000)
     times = list(range(first_ms, end_ms, M5))
@@ -388,9 +389,13 @@ def retrospective_first_touch_study(bars, previews, dmi_points):
     return groups
 
 
-def check() -> dict[str, object]:
-    fetch, archive_hashes = archived_trade_klines()
-    doc = load_public_history(symbol=SYMBOL, start=START, end=END,
+def check(*, start: str = START, end: str = END) -> dict[str, object]:
+    start_date = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    end_date = datetime.strptime(end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    if end_date - start_date != timedelta(days=7) or end_date > datetime.now(timezone.utc):
+        raise ValueError("read-only acceptance requires seven complete past UTC days")
+    fetch, archive_hashes = archived_trade_klines(start=start, end=end)
+    doc = load_public_history(symbol=SYMBOL, start=start, end=end,
                               fetch_candles=fetch)
     # Explicitly correct the in-memory archival provenance: this is NOT a
     # direct response from the public /v5/market/kline API and is not a
@@ -455,8 +460,8 @@ def check() -> dict[str, object]:
         "archive_compressed_sha256_by_day": archive_hashes,
         "market_data_source": doc["market_data_source"],
         "symbol": SYMBOL,
-        "start_utc_inclusive": START,
-        "end_utc_exclusive": END,
+        "start_utc_inclusive": start,
+        "end_utc_exclusive": end,
         "warmup_hours": doc["geometry_warmup_hours"],
         "closed_m5_bars": len(bars),
         "bar_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
@@ -485,4 +490,9 @@ def check() -> dict[str, object]:
 
 
 if __name__ == "__main__":
-    print(json.dumps(check(), ensure_ascii=False, sort_keys=True))
+    parser = argparse.ArgumentParser(description="Read-only public Bybit H1 historical acceptance")
+    parser.add_argument("--start", default=START, help="UTC date inclusive")
+    parser.add_argument("--end", default=END, help="UTC date exclusive, seven days later")
+    args = parser.parse_args()
+    print(json.dumps(check(start=args.start, end=args.end),
+                     ensure_ascii=False, sort_keys=True))
