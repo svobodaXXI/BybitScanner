@@ -913,14 +913,15 @@ export function visiblePriorBreaks(
     }
     if (!completeHour) continue;
     const previousHourClose = candles[i - 1];
+    // Freeze the prior at the START of the H1 that is about to close
+    // beyond it. This matches the Python causal feed: a new high/low on
+    // that H1 cannot retroactively move the level being broken.
     while (priorIndex + 1 < priors.length &&
-           priors[priorIndex + 1].available_at_ms <= previousHourClose.end_ms) {
+           priors[priorIndex + 1].available_at_ms <= first.start_ms) {
       priorIndex++;
     }
     const prior = priorIndex >= 0 ? priors[priorIndex] : undefined;
-    // A level first published on the closing H1 candle cannot authorize
-    // that same candle's break; only its earlier published predecessor can.
-    if (!prior || prior.available_at_ms >= previousHourClose.end_ms) continue;
+    if (!prior) continue;
     const broken = prior.side === "BULL"
       ? previousHourClose.close < prior.price && next.open < prior.price
       : previousHourClose.close > prior.price && next.open > prior.price;
