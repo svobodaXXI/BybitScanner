@@ -13,7 +13,8 @@ import re
 import secrets
 
 from research.historical_candle_feed import (
-    FIVE_MINUTES_MS, load_closed_five_minute_history, replay_with_closed_context,
+    ClosedHigherTimeframeFeed, FIVE_MINUTES_MS, load_closed_five_minute_history,
+    replay_with_closed_context,
 )
 from research.h017_blue_open_preview import blue_open_risk_preview
 from research.h017_local_risk import H017LocalRiskPolicy
@@ -52,6 +53,23 @@ def build_market_only_document(
     preload_count = (start_ms - preload_start_ms) // FIVE_MINUTES_MS
     warmup_candles = all_candles[:preload_count]
     candles = all_candles[preload_count:]
+    # Closed H1 evidence used during hidden warmup, never a visible replay bar.
+    # The viewer needs it to compare prior H1 extremes when the immutable
+    # first trendline wick predates the seven-day display window.
+    context = ClosedHigherTimeframeFeed()
+    context_1h = []
+    for earlier in warmup_candles:
+        _, _, newly_closed_hour, _ = context.observe_closed_five_minute(earlier)
+        if newly_closed_hour is not None:
+            context_1h.append({
+                "start_ms": newly_closed_hour.start_ms,
+                "end_ms": newly_closed_hour.end_ms,
+                "open": str(newly_closed_hour.open),
+                "high": str(newly_closed_hour.high),
+                "low": str(newly_closed_hour.low),
+                "close": str(newly_closed_hour.close),
+                "volume": str(newly_closed_hour.volume),
+            })
     events = []
     geometry: list[dict[str, object]] = []
     observations: list[dict[str, object]] = []
@@ -209,6 +227,7 @@ def build_market_only_document(
         "observations": observations,
         "h017_blue_risk_previews": blue_risk_previews,
         "geometry_warmup_hours": len(warmup_candles) // 12,
+        "context_1h": context_1h,
         "dmi_5m": {
             "source": "SIMULATION", "timeframe": "5m",
             "di_length": 14, "adx_smoothing": 14,
