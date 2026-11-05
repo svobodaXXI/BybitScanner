@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visiblePriorLevels, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("shows only completed candles and fills revealed at the current cursor", () => {
@@ -199,6 +199,45 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(() => parseReplayDocument({
       ...archive, geometry: [{ ...archive.geometry[0], classification: "TRADE_APPROVED" }],
     })).toThrow(/торговый сигнал/);
+  });
+
+  it("replays purple priors at the second confirmed H1 touch and retains previous versions", () => {
+    const demo = syntheticReplay();
+    const events = demo.events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map((e, index) => ({ ...e, sequence: index + 1 }));
+    const t0 = events[0].candle!.start_ms;
+    const firstKnown = events[8].time_ms;
+    const nextKnown = events[28].time_ms;
+    const first = {
+      kind: "MAIN_1H", side: "BEAR", available_at_ms: firstKnown,
+      from_ms: t0, to_ms: events[3].candle!.start_ms,
+      from_price: "120", to_price: "115", trend_version: firstKnown,
+      classification: "UNVALIDATED_GEOMETRY_ONLY",
+    };
+    const next = {
+      ...first, available_at_ms: nextKnown,
+      from_ms: events[3].candle!.start_ms,
+      to_ms: events[22].candle!.start_ms,
+      from_price: "115", to_price: "110", trend_version: nextKnown,
+    };
+    const doc = parseReplayDocument({
+      source: "SIMULATION", simulation_run_id: "purple_fixture",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m",
+      events: events.map(e => ({ ...e, simulation_run_id: "purple_fixture" })),
+      geometry: [first, next],
+    });
+    expect(visiblePriorLevels(doc, null)).toEqual([]);
+    expect(visiblePriorLevels(doc, firstKnown - 1)).toEqual([]);
+    expect(visiblePriorLevels(doc, firstKnown).map(p => p.price)).toEqual([115]);
+    expect(visiblePriorLevels(doc, nextKnown - 1).map(p => p.price)).toEqual([115]);
+    const after = visiblePriorLevels(doc, nextKnown);
+    expect(after.map(p => p.price)).toEqual([115, 110]);
+    expect(after[0].superseded_at_ms).toBe(nextKnown);
+    expect(after[1].superseded_at_ms).toBeUndefined();
+    expect(after[1].at_ms).toBe(events[22].candle!.start_ms);
+    expect(visiblePriorLevels(doc, firstKnown)).toHaveLength(1); // rewind
+    expect(visiblePriorLevels(demo, nextKnown)).toEqual([]); // no real-market prior in demo
   });
 
   it("reveals only completed H1 touch/reaction observations, never simulated fills", () => {
