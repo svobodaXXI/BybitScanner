@@ -60,6 +60,38 @@ class ScannerControlRuntimeTests(unittest.TestCase):
         self.runtime.close()
         self.temp_dir.cleanup()
 
+    def test_durable_stop_precedes_child_exit_and_worker_quiescence_proof(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocked_child(*, child_started, **_callbacks):
+            if not child_started(7777):
+                return
+            entered.set()
+            release.wait(timeout=5)
+
+        runtime = ScannerControlRuntime(
+            lambda: SQLiteStore.open(self.db_path), ACCOUNT_ID,
+            scan_pass=blocked_child, clock_ms=self.clock,
+            scan_interval_s=0.05,
+        )
+        runtime.start()
+        try:
+            self.assertEqual(runtime.start_scanner().mode, SCANNER_RUNNING)
+            self.assertTrue(entered.wait(3))
+            self.assertEqual(runtime.stop_scanner().mode, SCANNER_STOPPED)
+            # The child deliberately ignores stop_requested until released.
+            self.assertFalse(runtime.worker_quiescent())
+            release.set()
+            for _ in range(100):
+                if runtime.worker_quiescent():
+                    break
+                time.sleep(0.01)
+            self.assertTrue(runtime.worker_quiescent())
+        finally:
+            release.set()
+            runtime.close()
+
     def test_initial_status_is_stopped(self):
         status = self.runtime.status()
         self.assertEqual(status.mode, SCANNER_STOPPED)
