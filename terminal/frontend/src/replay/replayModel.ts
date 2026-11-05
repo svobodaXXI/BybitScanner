@@ -35,6 +35,16 @@ export type ReplayGeometry = {
   trend_version: number;
   classification: "UNVALIDATED_GEOMETRY_ONLY";
 };
+export type ReplayObservation = {
+  kind: "MAIN_1H_TOUCH" | "MAIN_1H_REACTION";
+  side: "BULL" | "BEAR";
+  time_ms: number; // Released only when the M5 observation candle closes.
+  touch_time_ms?: number; // Required for a follow-through after a prior touch.
+  price: number;
+  line_price: number;
+  trend_version: number;
+  classification: "UNVALIDATED_GEOMETRY_ONLY";
+};
 export type ReplayDmiPoint = {
   time_ms: number; // Close time, never the opening time of an unfinished candle.
   plus_di: number | null;
@@ -57,6 +67,7 @@ export type ReplayDocument = {
   symbol?: string;
   timeframe?: "5m";
   geometry?: ReplayGeometry[];
+  observations?: ReplayObservation[];
   geometry_warmup_hours?: number;
   dmi_5m?: ReplayDmi;
 };
@@ -228,6 +239,47 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       };
     });
   }
+  // Separate research-only OHLC touch/reaction observations; NEVER trade events.
+  let observations: ReplayObservation[] | undefined;
+  if (object.observations !== undefined) {
+    if (mode !== "MARKET_ONLY" || !Array.isArray(object.observations) ||
+        object.observations.length > 100_000) {
+      throw new Error("Наблюдения трендовой разрешены только в рыночной SIMULATION");
+    }
+    const closedTimes = new Set(events.filter(e => e.kind === "CANDLE_CLOSED").map(e => e.time_ms));
+    let lastTime = -1;
+    const touches = new Set<string>();
+    observations = object.observations.map(item => {
+      const observation = record(item);
+      const kind = observation.kind;
+      const side = observation.side;
+      const time_ms = positiveInteger(observation.time_ms, "observation.time_ms");
+      const trend_version = positiveInteger(observation.trend_version, "trend_version");
+      const price = safeNumber(observation.price, "observation.price");
+      const line_price = safeNumber(observation.line_price, "line_price");
+      if ((kind !== "MAIN_1H_TOUCH" && kind !== "MAIN_1H_REACTION") ||
+          (side !== "BULL" && side !== "BEAR") ||
+          observation.classification !== "UNVALIDATED_GEOMETRY_ONLY" ||
+          !closedTimes.has(time_ms) || time_ms < lastTime ||
+          trend_version > time_ms - 300_000 || price <= 0 || line_price <= 0) {
+        throw new Error("Недостоверное или будущее наблюдение линии");
+      }
+      lastTime = time_ms;
+      const key = (stamp: number) => `${stamp}:${trend_version}:${side}`;
+      if (kind === "MAIN_1H_TOUCH") {
+        if (observation.touch_time_ms !== undefined) throw new Error("Касание содержит чужое время");
+        touches.add(key(time_ms));
+        return { kind, side, time_ms, price, line_price, trend_version,
+          classification: "UNVALIDATED_GEOMETRY_ONLY" as const };
+      }
+      const touch_time_ms = positiveInteger(observation.touch_time_ms, "touch_time_ms");
+      if (touch_time_ms !== time_ms - 300_000 || !touches.has(key(touch_time_ms))) {
+        throw new Error("Реакция без предыдущего подтверждённого касания");
+      }
+      return { kind, side, time_ms, touch_time_ms, price, line_price, trend_version,
+        classification: "UNVALIDATED_GEOMETRY_ONLY" as const };
+    });
+  }
   // Wilder DMI is a read-only series aligned 1:1 with fully closed
   // market candles. An old JSON archive without DMI remains readable.
   let dmi_5m: ReplayDmi | undefined;
@@ -275,6 +327,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     ...(mode ? { mode } : {}),
     ...(mode === "MARKET_ONLY" ? { symbol: object.symbol as string, timeframe: "5m" as const } : {}),
     ...(geometry ? { geometry } : {}),
+    ...(observations ? { observations } : {}),
     ...(geometry_warmup_hours !== undefined ? { geometry_warmup_hours } : {}),
     ...(dmi_5m ? { dmi_5m } : {}),
   };
@@ -370,6 +423,16 @@ export function visibleGeometry(
     current.delete("REFERENCE_5M");
   }
   return [...current.values()];
+}
+
+/** Reveal only geometry observations whose M5 candle has actually closed. */
+export function visibleObservations(
+  document: ReplayDocument, closedTimeMs: number | null,
+): ReplayObservation[] {
+  if (document.mode !== "MARKET_ONLY" || !document.observations || closedTimeMs === null) {
+    return [];
+  }
+  return document.observations.filter(item => item.time_ms <= closedTimeMs);
 }
 
 /** For MARKET_ONLY, DMI has exactly one observation per completed 5m candle. */
