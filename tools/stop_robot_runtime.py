@@ -448,6 +448,25 @@ class RuntimeShutdown:
         except (SafeStopError, RobotControlRejected) as exc:
             return ShutdownResult(scope, False, f"STOP BLOCKED: {exc}", tuple(steps))
 
+    def freeze_ingress_for_required_recovery(self) -> tuple[str, ...]:
+        """Freeze new PAPER admissions only; retain Robot, protection and Backend.
+
+        This is the first internal phase of an explicitly authorized one-action
+        start/recovery, not a complete stop. Reuse canonical OFF/STOP transitions
+        and their existing no-replay/identity checks.
+        """
+        steps: list[str] = []
+        if self._probe_backend() != PRESENT:
+            raise SafeStopError("PAPER Backend absent; recovery not attempted")
+        self._probe_telegram()  # if present, must match this PAPER DB
+        if self._freeze_autopilot():
+            steps.append("autopilot:off")
+        if self._stop_scanner():
+            steps.append("scanner:stop")
+        self._require_autopilot_off()
+        self._require_scanner_stopped()
+        return tuple(steps)
+
     def _run(self, scope: str, steps: list[str]) -> ShutdownResult:
         # Both identities are proven before the first mutation of anything.
         self._mark("probing PAPER backend identity")
@@ -473,13 +492,17 @@ class RuntimeShutdown:
                 if self._freeze_autopilot():
                     steps.append("autopilot:off")
             self._mark("requesting Scanner STOPPED")
-            self._stop_scanner()
-            steps.append("scanner:stop")
+            if self._stop_scanner():
+                steps.append("scanner:stop")
             self._mark("Scanner STOPPED confirmed")
             if scope == SCOPE_ALL:
                 # Revalidate after Scanner STOP: another controller may have
                 # re-enabled PAPER_AUTO while the stop was in flight.
                 self._require_autopilot_off()
+                # A concurrent owner may restart Scanner after STOP's own
+                # acknowledgement. Fence Robot mutations at this boundary,
+                # not only at the final Backend shutdown preflight.
+                self._require_scanner_stopped()
                 state = self._robot_state()
                 if state == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
                     self._mark("requesting Robot reconciliation")
@@ -568,6 +591,9 @@ class RuntimeShutdown:
             raise SafeStopError("durable Robot state is unavailable; runtime kept alive")
         if state not in (ROBOT_STOPPED_PAIR, None):
             if scope == SCOPE_SCANNER:
+                # A competing owner may have restarted Scanner after its
+                # STOP acknowledgement. Do not report a false stopped state.
+                self._require_scanner_stopped()
                 return ShutdownResult(
                     scope, True, f"Scanner STOPPED; Robot {state[0]}/{state[1]} keeps the runtime alive.",
                     tuple(steps),
@@ -578,6 +604,7 @@ class RuntimeShutdown:
             self._mark("checking Robot protection quiescence")
         if backend == PRESENT and not self._protection_quiescent():
             if scope == SCOPE_SCANNER:
+                self._require_scanner_stopped()
                 return ShutdownResult(
                     scope, True, "Scanner STOPPED; Robot protection coverage keeps the runtime alive.",
                     tuple(steps),
@@ -630,11 +657,12 @@ class RuntimeShutdown:
         # owner control and diagnosis until backend exit has been confirmed.
         # This also supports retry after a partial stop (backend absent).
         if backend == PRESENT:
+            # Final Scanner re-proof applies to both scopes. The scanner-only
+            # path can also reach Backend shutdown when Robot is STOPPED.
+            self._require_scanner_stopped()
             if scope == SCOPE_ALL:
-                # Final ingress re-proof immediately before the irreversible
-                # backend shutdown request. Earlier OFF/STOPPED observations
-                # may have become stale while Robot/protection were drained.
-                self._require_scanner_stopped()
+                # Another controller may have enabled PAPER_AUTO while
+                # Robot/protection were drained.
                 self._require_autopilot_off()
             self._mark("shutting down PAPER backend")
             steps.append(self._shutdown(
@@ -795,17 +823,45 @@ class RuntimeShutdown:
         ):
             raise SafeStopError("Autopilot OFF post-Scanner state unproven; runtime kept alive")
 
-    def _stop_scanner(self) -> None:
+    def _stop_scanner(self) -> bool:
+        """One phase-aware STOP; no duplicate mutation when already stopped.
+
+        Return whether STOP was issued. A proved STOPPED scanner is a
+        successful no-op after a partial shutdown; any unknown state blocks.
+        """
         try:
-            status, body = self._post(self._backend + "/api/scanner/stop", {}, MUTATION_TIMEOUT_S)
+            status, body = self._get(
+                self._backend + "/api/scanner/status", PROBE_TIMEOUT_S,
+            )
+        except Exception as exc:
+            raise SafeStopError(
+                "Scanner state unavailable before STOP; runtime kept alive"
+            ) from exc
+        if (status != 200 or not isinstance(body, dict)
+                or body.get("ok") is not True):
+            raise SafeStopError(
+                "Scanner state unproven before STOP; runtime kept alive"
+            )
+        mode = body.get("mode")
+        if mode == "SCANNER_STOPPED":
+            return False
+        if mode != "SCANNER_RUNNING":
+            raise SafeStopError(
+                "Scanner is not in a legal stoppable state; runtime kept alive"
+            )
+
+        try:
+            status, body = self._post(
+                self._backend + "/api/scanner/stop", {}, MUTATION_TIMEOUT_S,
+            )
         except Exception as exc:
             raise SafeStopError("Scanner stop outcome is unknown; not retried") from exc
         if status != 200 or not isinstance(body, dict) or body.get("ok") is not True:
             raise SafeStopError("Scanner stop was rejected")
-        # A successful command acknowledgement is not proof that the Scanner
-        # has stopped. Never proceed to Robot/protection shutdown on stale state.
-        # The read-only postcondition is safe to repeat; do not retry POST.
+        # A successful command acknowledgement is not proof that Scanner
+        # stopped. Never proceed to Robot/protection on stale state.
         self._require_scanner_stopped()
+        return True
 
     def _reconcile_robot(self) -> None:
         # The backend owns evidence and recovery. Never retry an ambiguous mutation.
@@ -1273,10 +1329,17 @@ class RuntimeShutdown:
             status, health = self._get(self._backend + "/api/robot/protection-health", PROBE_TIMEOUT_S)
         except Unreachable as exc:
             raise SafeStopError("Robot protection health is unavailable") from exc
+        # Each field is a separate view of the same protection ownership.
+        # Empty covered/armed lists alone do not prove quiescence if the
+        # canonical role map still reports EXPOSURE or ENTRY_PENDING.
+        # A failed/malformed API payload is not positive shutdown evidence.
         return (
-            status == 200 and isinstance(health, dict) and health.get("healthy") is True
-            and health.get("covered_symbols") == [] and health.get("unhealthy_symbols") == {}
+            status == 200 and isinstance(health, dict)
+            and health.get("ok") is True and health.get("healthy") is True
+            and health.get("covered_symbols") == []
             and health.get("armed_symbols") == []
+            and health.get("coverage_roles") == {}
+            and health.get("unhealthy_symbols") == {}
         )
 
     def _shutdown(self, shutdown_url: str, health_url: str, name: str, kind: str, step: str) -> str:

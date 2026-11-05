@@ -31,7 +31,7 @@ from terminal.paper.matching import (
 )
 
 
-MIN_LATE_ADMISSION_RR = robot_protection.MIN_ENTRY_RR  # same default as the retest-LIMIT filter
+MIN_LATE_ADMISSION_RR = robot_protection.WEDGE_MIN_ENTRY_RR  # same 2R floor as retest-LIMIT
 MIN_LATE_ADMISSION_REWARD = MIN_EXPECTED_REWARD
 MAX_LATE_ADMISSION_SLIPPAGE = MAX_ADVERSE_MOVE
 
@@ -249,7 +249,7 @@ def evaluate_late_admission(
         "expected_reward": expected_reward,
         "rr": rr,
     }
-    if rr < MIN_LATE_ADMISSION_RR:
+    if rr < robot_protection.wedge_min_entry_rr():
         return _metrics_decision(DECISION_SKIPPED_POOR_RR, **metrics)
     if expected_reward < MIN_LATE_ADMISSION_REWARD:
         return _metrics_decision(DECISION_SKIPPED_LOW_REWARD, **metrics)

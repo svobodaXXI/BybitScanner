@@ -202,6 +202,8 @@ class ScanLoopTest(unittest.TestCase):
             stack.enter_context(patch.dict(os.environ, {
                 "BYBITSCANNER_IKIGAI_BOX_SIGNALS": "0",
                 "BYBITSCANNER_HORN_OBSERVATION": "1",
+                # HORN-only accounting fixture: MIRROR has independent inputs/errors.
+                "BYBITSCANNER_MIRROR_OBSERVATION": "0",
                 "BYBITSCANNER_HORN_EVIDENCE_DIR": os.path.join(tmp, "evidence"),
             }))
             stack.enter_context(patch.object(main, "MAX_SYMBOLS", None))
@@ -218,6 +220,9 @@ class ScanLoopTest(unittest.TestCase):
             finished = stack.enter_context(patch.object(main, "send_message"))
             stack.enter_context(patch.object(main, "prepare_signal", return_value={"score": 90}))
             stack.enter_context(patch.object(main, "update_signal", return_value="NEW"))
+            # This HORN test's abbreviated signal has no symbol/pattern, so
+            # the unrelated delivery-identity sink must also be mocked.
+            stack.enter_context(patch.object(main, "record_telegram_delivery"))
             stack.enter_context(patch.object(main, "record_scanner_diary_observation", return_value=SimpleNamespace(setup_instance_id=None)))
             robot = stack.enter_context(patch("notification.prepare_robot_handoff"))
             stack.enter_context(contextlib.redirect_stdout(out))

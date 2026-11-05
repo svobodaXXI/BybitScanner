@@ -530,3 +530,45 @@ class ProductionPrimitivesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BackendSystemdReadinessGateTests(unittest.TestCase):
+    """Telegram ExecStartPre waits only for an existing owner; never creates one."""
+
+    def _gate(self, world, listeners):
+        return RuntimeIntentBootstrap(
+            root=ROOT, env={}, get=world.get, post=world.post,
+            systemd_managed=True, sleep=world.sleep,
+            monotonic=lambda: world.now, out=world.lines.append,
+            listener_probe=lambda host, port: listeners,
+            require_telegram=False,
+        )
+
+    def test_existing_listener_becomes_ready_within_bounded_window(self):
+        world = FakeWorld(expected_database_identity(ROOT, {}))
+        world.backend = [None, None, world.backend_health()]
+        gate = self._gate(world, (1234,))
+        self.assertEqual(gate.wait_backend(), runtime_intent.EXIT_OK)
+        self.assertLess(world.now, runtime_intent.READY_TIMEOUT_S)
+        self.assertEqual(world.spawns, [])
+        self.assertEqual(world.posts, [])
+
+    def test_existing_listener_never_ready_times_out_without_restart(self):
+        world = FakeWorld(expected_database_identity(ROOT, {}))
+        world.backend = None
+        gate = self._gate(world, (1234,))
+        self.assertEqual(gate.wait_backend(), runtime_intent.EXIT_BOOTSTRAP_FAILED)
+        self.assertGreaterEqual(world.now, runtime_intent.READY_TIMEOUT_S)
+        self.assertEqual(world.spawns, [])
+        self.assertEqual(world.posts, [])
+
+    def test_wrong_backend_identity_fails_immediately_without_waiting(self):
+        world = FakeWorld(expected_database_identity(ROOT, {}))
+        world.backend = world.backend_health(database_identity="0" * 64)
+        gate = self._gate(world, (1234,))
+        self.assertEqual(gate.wait_backend(), runtime_intent.EXIT_BOOTSTRAP_FAILED)
+        self.assertEqual(world.now, 0)
+        self.assertEqual(world.spawns, [])
+        self.assertEqual(world.posts, [])
+
+

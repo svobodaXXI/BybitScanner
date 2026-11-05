@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 from types import SimpleNamespace
 
@@ -73,6 +74,7 @@ def _fixture(tmp_path: Path, monkeypatch):
             assert git_blob_hash((root / name).read_bytes()) == digest
         return obj["build_sha"]
     monkeypatch.setattr(activation, "verify_release", verify)
+    monkeypatch.setattr(activation.grp, "getgrnam", lambda name: SimpleNamespace(gr_gid=os.getgid()) if name == "bybitscanner" else None)
 
     return dict(
         sha=sha, stage=stage, root=root, manifest=manifest_path,
@@ -232,11 +234,11 @@ def test_crash_at_manifest_commit_resumes_with_existing_journal_without_new_stop
     original = activation._atomic_file
     interrupted = [False]
 
-    def fail_at_commit(path, data, mode=0o644):
+    def fail_at_commit(path, data, mode=0o644, **kwargs):
         if Path(path) == kw["manifest"] and not interrupted[0]:
             interrupted[0] = True
             raise OSError("simulated crash before release commit marker")
-        return original(path, data, mode)
+        return original(path, data, mode, **kwargs)
 
     monkeypatch.setattr(activation, "_atomic_file", fail_at_commit)
     with pytest.raises(OSError, match="simulated crash"):
@@ -284,3 +286,27 @@ def test_installer_rejects_symlink_release_lock_without_mutating_owner_file(tmp_
     assert owner_file.read_text() == "preserve"
     assert not (kw["transactions"] / kw["sha"]).exists()
     assert json.loads(kw["manifest"].read_text())["build_sha"] != kw["sha"]
+
+
+def test_installed_manifest_is_atomically_group_readable_without_writes(tmp_path, monkeypatch):
+    """Regression: startup guard runs as bybitscanner, not root."""
+    kw = _fixture(tmp_path, monkeypatch)
+    assert _activate(kw).startswith("INSTALLED_STOPPED:")
+    meta = kw["manifest"].stat()
+    assert meta.st_uid == os.geteuid()
+    assert meta.st_gid == os.getgid()
+    assert stat.S_IMODE(meta.st_mode) == 0o640
+    assert json.loads(kw["manifest"].read_text())["build_sha"] == kw["sha"]
+    # Owner-created files and sealed rollback journal remain untouched.
+    assert (kw["root"] / "untracked-secret.conf").read_text() == "owner must keep"
+    assert stat.S_IMODE((kw["transactions"] / kw["sha"] / "target.json").stat().st_mode) == 0o600
+
+
+def test_runtime_group_missing_blocks_before_manifest_commit(tmp_path, monkeypatch):
+    kw = _fixture(tmp_path, monkeypatch)
+    before = kw["manifest"].read_bytes()
+    monkeypatch.setattr(activation.grp, "getgrnam", lambda _name: (_ for _ in ()).throw(KeyError("bybitscanner")))
+    with pytest.raises(activation.ActivationBlocked, match="paper_runtime_group_missing"):
+        _activate(kw)
+    assert kw["manifest"].read_bytes() == before
+    assert (kw["transactions"] / kw["sha"] / "old.json").is_file()

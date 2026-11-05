@@ -173,6 +173,77 @@ def check(conn, payload, store, *, evidence=None):
         conn.execute("PRAGMA query_only=OFF")
 
 
+class SixApprovalDiagnosticTests(TestCase):
+    def test_one_readonly_snapshot_distinguishes_all_five_activity_risks(self):
+        from tools.paper_incident_approvals import _six_approval_progress_snapshot
+
+        conn, _, _ = stale_incident_fixture()
+        # Synthetic evidence only; no production database is opened.
+        conn.execute(
+            "INSERT INTO executions (trading_account_id,symbol,exchange_timestamp_ms) "
+            "VALUES ('paper','BNCUSDT',201)"
+        )
+        conn.execute(
+            "INSERT INTO paper_limit_orders "
+            "(trading_account_id,symbol,status,created_at_ms,filled_quantity) "
+            "VALUES ('paper','HEMIUSDT','open',201,'0')"
+        )
+        conn.execute(
+            "INSERT INTO trading_commands "
+            "(trading_account_id,symbol,current_state,created_at_ms) "
+            "VALUES ('paper','INUSDT','submitting',201)"
+        )
+        conn.execute(
+            "INSERT INTO robot_trades "
+            "(trading_account_id,trade_id,candidate_id,symbol,exit_time_ms) "
+            "VALUES ('paper','synthetic-trade',?,'PLAYSOUTUSDT',NULL)",
+            (IDLE_APPROVALS["PLAYSOUTUSDT"][0],),
+        )
+        prefix, suffix = IDLE_APPROVALS["RUNEUSDT"]
+        conn.execute(
+            "INSERT INTO box_attempt_ownership (trading_account_id,candidate_id) "
+            "VALUES ('paper',?)",
+            (prefix + "0" * 32 + suffix,),
+        )
+        conn.commit()
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("BEGIN")
+        try:
+            result = _six_approval_progress_snapshot(conn)
+            self.assertIn(
+                ";act=F:00000,B:10000,H:01000,I:00100,P:00010,R:00001",
+                result,
+            )
+            self.assertNotIn("synthetic-trade", result)
+            self.assertLessEqual(
+                len("FlatRecoveryBlocked:approved_candidate_has_admission_progress:"
+                    "PLAYSOUTUSDT:revision_or_state_type_mismatch:six=" + result),
+                240,
+            )
+            self.assertEqual(tuple(conn.execute("PRAGMA query_only").fetchone()), (1,))
+        finally:
+            conn.rollback()
+            conn.execute("PRAGMA query_only=OFF")
+
+    def test_unknown_candidate_timestamp_never_reports_no_activity(self):
+        from tools.paper_incident_approvals import _six_approval_progress_snapshot
+
+        conn, _, _ = stale_incident_fixture()
+        conn.execute(
+            "UPDATE robot_candidates SET approved_at_ms=NULL "
+            "WHERE symbol='BNCUSDT' AND status='APPROVED'"
+        )
+        conn.commit()
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("BEGIN")
+        try:
+            result = _six_approval_progress_snapshot(conn)
+            self.assertIn("B:?????", result)
+        finally:
+            conn.rollback()
+            conn.execute("PRAGMA query_only=OFF")
+
+
 class DualOrphanPreflightTests(TestCase):
     def test_proof_rejects_autocommit_and_write_capable_snapshot(self):
         conn, payload, store = fixture()
@@ -345,6 +416,103 @@ class DualOrphanPreflightTests(TestCase):
         with self.assertRaisesRegex(FlatRecoveryBlocked, "unexpected_active_robot_candidate"):
             check(conn, payload, store)
 
+    def test_all_six_observed_post_stop_revisions_require_full_proof(self):
+        # One exact, whole-vector historical observation from READ-ONLY
+        # preflight 41815962339, not a policy allowing arbitrary revision
+        # growth or independent per-symbol drift.
+        conn, payload, store = stale_incident_fixture()
+        observed = {
+            "1000FLOKIUSDT": (7, "BOX_ENTRY_READY"),
+            "BNCUSDT": (7, "RETEST_DETECTED"),
+            "HEMIUSDT": (7, "BOX_ENTRY_READY"),
+            "INUSDT": (7, "BOX_ENTRY_READY"),
+            "PLAYSOUTUSDT": (5, "RETEST_DETECTED"),
+            "RUNEUSDT": (4, "BOX_ENTRY_READY"),
+        }
+        for symbol, (revision, phase) in observed.items():
+            prefix, suffix = IDLE_APPROVALS[symbol]
+            candidate_id = prefix if not suffix else prefix + ("0" * 32) + suffix
+            state = {"phase": phase, "state_version": "1.0"}
+            if phase == "BOX_ENTRY_READY":
+                state["source_box_candidate_id"] = (
+                    "box-plan-" + candidate_id.removeprefix("box-robot-")
+                )
+            conn.execute(
+                "UPDATE robot_candidates SET state_revision=?,robot_state_json=? "
+                "WHERE symbol=? AND status='APPROVED'",
+                (revision, json.dumps(state), symbol),
+            )
+        self.assertEqual(
+            check(conn, payload, store, evidence=[object(), object()]),
+            PROOF_LABEL,
+        )
+
+        # Every next revision must fail, including a seventh revision on
+        # another symbol after the original STOP; no unbounded +1 rule.
+        for symbol, (revision, _) in observed.items():
+            with self.subTest(symbol=symbol, case="next_revision"):
+                conn.execute(
+                    "UPDATE robot_candidates SET state_revision=? WHERE symbol=?",
+                    (revision + 1, symbol),
+                )
+                with self.assertRaisesRegex(
+                    FlatRecoveryBlocked,
+                    "approved_candidate_has_admission_progress:"
+                    + symbol + ":revision_or_state_type_mismatch",
+                ):
+                    check(conn, payload, store)
+                conn.execute(
+                    "UPDATE robot_candidates SET state_revision=? WHERE symbol=?",
+                    (revision, symbol),
+                )
+
+        # The exact revision is NOT sufficient: admission phase, immutable
+        # executions and ownership must still block unsafe handoff.
+        conn.execute(
+            "UPDATE robot_candidates SET robot_state_json=? "
+            "WHERE symbol='PLAYSOUTUSDT'",
+            (json.dumps({"phase": "ENTRY_PENDING"}),),
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked,
+            "PLAYSOUTUSDT:state_phase_mismatch",
+        ):
+            check(conn, payload, store)
+        conn.execute(
+            "UPDATE robot_candidates SET robot_state_json=? "
+            "WHERE symbol='PLAYSOUTUSDT'",
+            (json.dumps({"phase": "RETEST_DETECTED", "state_version": "1.0"}),),
+        )
+        conn.execute(
+            "INSERT INTO executions "
+            "(trading_account_id,symbol,exchange_timestamp_ms,order_id) "
+            "VALUES ('paper','RUNEUSDT',201,'synthetic-after-approval')"
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "approved_candidate_execution_or_ownership_unknown",
+        ):
+            check(conn, payload, store)
+        conn.execute(
+            "DELETE FROM executions WHERE order_id='synthetic-after-approval'"
+        )
+        candidate_id = IDLE_APPROVALS["BNCUSDT"][0]
+        conn.execute(
+            "INSERT INTO box_attempt_ownership VALUES ('paper',?)",
+            (candidate_id,),
+        )
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "approved_candidate_execution_or_ownership_unknown",
+        ):
+            check(conn, payload, store)
+        conn.execute(
+            "DELETE FROM box_attempt_ownership WHERE candidate_id=?",
+            (candidate_id,),
+        )
+        self.assertEqual(
+            check(conn, payload, store, evidence=[object(), object()]),
+            PROOF_LABEL,
+        )
+
     def test_six_exact_progressed_approvals_with_cancelled_zero_fill_are_inert(self):
         conn, payload, store = stale_incident_fixture()
         revisions = {
@@ -468,7 +636,7 @@ class DualOrphanPreflightTests(TestCase):
         # A single failed proof includes all six statuses in one compact
         # read-only snapshot; never infer another candidate is inert from rev.
         conn.execute(
-            "UPDATE robot_candidates SET state_revision=5 WHERE symbol='PLAYSOUTUSDT'"
+            "UPDATE robot_candidates SET state_revision=6 WHERE symbol='PLAYSOUTUSDT'"
         )
         with self.assertRaisesRegex(
             FlatRecoveryBlocked,
@@ -476,7 +644,7 @@ class DualOrphanPreflightTests(TestCase):
         ) as failure:
             check(conn, payload, store)
         self.assertIn(
-            "six=FLOKI=6BO,BNC=6RO,HEMI=6BO,IN=6BO,PLAYS=5RO,RUNE=3BO",
+            "six=FLOKI=6BO,BNC=6RO,HEMI=6BO,IN=6BO,PLAYS=6RO,RUNE=3BO",
             str(failure.exception),
         )
         conn.execute(
