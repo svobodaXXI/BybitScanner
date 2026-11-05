@@ -255,6 +255,87 @@ def verify_archived_prior_timeline(doc):
     }
 
 
+def verify_archived_prior_break_timeline(doc):
+    """Audit kernel-confirmed close/next OPEN breaks on archived CLOSED H1.
+
+    Never infer a breakout from a wick or declare an opposite yellow line
+    unless the kernel actually published its H1 pivots in the JSON geometry.
+    """
+    from research.historical_candle_feed import ClosedHigherTimeframeFeed
+    from research.historical_market_replay import Candle
+
+    hours = {bar["start_ms"]: bar for bar in doc["context_1h"]}
+    stream = ClosedHigherTimeframeFeed()
+    bars_by_start = {}
+    for event in doc["events"]:
+        c = event["candle"]
+        bars_by_start[c["start_ms"]] = c
+        _, _, h1, _ = stream.observe_closed_five_minute(
+            Candle(c["start_ms"], M5, c["open"], c["high"],
+                   c["low"], c["close"], c["volume"])
+        )
+        if h1 is not None:
+            hours[h1.start_ms] = {
+                "start_ms": h1.start_ms, "end_ms": h1.end_ms,
+                "close": str(h1.close),
+            }
+    priors = doc.get("hourly_prior_updates", [])
+    lines = [g for g in doc["geometry"] if g["kind"] == "MAIN_1H"]
+    breaks = doc.get("hourly_prior_breaks", [])
+    last_confirmed = -1
+    outcomes = []
+    for event in breaks:
+        at = event["confirmed_at_ms"]
+        close_at = event["hourly_close_ms"]
+        first = bars_by_start.get(close_at)
+        hour = hours.get(close_at - 3_600_000)
+        frozen = next((p for p in reversed(priors)
+                       if p["available_at_ms"] <= close_at - 3_600_000), None)
+        previous_side = event["previous_side"]
+        price = Decimal(event["prior_price"])
+        close = Decimal(str(hour["close"])) if hour else None
+        opening = Decimal(str(first["open"])) if first else None
+        proven = (previous_side == "BULL" and
+                  close is not None and opening is not None and
+                  close < price and opening < price) or (
+                  previous_side == "BEAR" and
+                  close is not None and opening is not None and
+                  close > price and opening > price)
+        if (event["kind"] != "PRIOR_CLOSE_NEXT_OPEN" or
+                at <= last_confirmed or close_at % 3_600_000 or
+                event["next_hour_open_ms"] != close_at or
+                at != close_at + M5 or first is None or
+                first["end_ms"] != at or hour is None or
+                hour["end_ms"] != close_at or frozen is None or
+                Decimal(frozen["price"]) != price or
+                frozen["side"] != previous_side or
+                frozen["at_ms"] != event["prior_at_ms"] or
+                frozen["trend_version"] != event["trend_version"] or
+                event["new_side"] != ("BEAR" if previous_side == "BULL" else "BULL") or
+                not proven):
+            raise AssertionError("kernel breakout lacks CLOSED H1 and next OPEN evidence")
+        # The opposite H1 line must be a separately published confirmed
+        # geometry version, never synthesized at the moment of prior break.
+        opposite = [g for g in lines if
+                    g["side"] == event["new_side"] and
+                    g["available_at_ms"] >= at]
+        outcomes.append({
+            "confirmed_at_ms": at, "previous_side": previous_side,
+            "new_side": event["new_side"], "prior_price": event["prior_price"],
+            "hourly_close_ms": close_at,
+            "opposite_h1_first_published_ms": (
+                opposite[0]["available_at_ms"] if opposite else None),
+        })
+        last_confirmed = at
+    return {
+        "confirmed_close_next_open_breaks": len(breaks),
+        "breaks_with_later_published_opposite_h1": sum(
+            item["opposite_h1_first_published_ms"] is not None for item in outcomes),
+        "break_events": outcomes[:12],
+        "truncated": len(outcomes) > 12,
+    }
+
+
 def retrospective_first_touch_study(bars, previews, dmi_points):
     """Independent, non-executable first-touch count on a bounded market sample.
 
@@ -364,6 +445,7 @@ def check() -> dict[str, object]:
             raise AssertionError("rejected H-017 candidate contains execution fields")
     verified_h1 = verify_archived_hourly_wick_geometry(doc)
     verified_priors = verify_archived_prior_timeline(doc)
+    verified_breaks = verify_archived_prior_break_timeline(doc)
     # Hash the actual returned closed OHLCV bars, not mock fixtures or rendered pixels.
     canonical = json.dumps(bars, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     summary = {
@@ -382,6 +464,7 @@ def check() -> dict[str, object]:
         "hourly_target_lines": sum(x["kind"] == "TARGET_1H" for x in doc["geometry"]),
         "closed_h1_wick_verified_lines": verified_h1,
         "closed_h1_prior_timeline": verified_priors,
+        "closed_h1_prior_breaks": verified_breaks,
         "hourly_main_contacts": sum(x["kind"] == "MAIN_1H_TOUCH" for x in doc["observations"]),
         "hourly_main_reactions": sum(x["kind"] == "MAIN_1H_REACTION" for x in doc["observations"]),
         "blue_open_candidates": len(doc["h017_blue_risk_previews"]),
