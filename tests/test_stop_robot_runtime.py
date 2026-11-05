@@ -354,6 +354,48 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
         self.assertEqual(runtime.calls, ["scanner:stop"])
 
+    def test_partial_stop_skips_already_stopped_scanner(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_mode = "SCANNER_STOPPED"
+        runtime.autopilot_mode = "PAPER_AUTO"
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "robot:stop", "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertNotIn("scanner:stop", result.steps)
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_scanner_only_is_noop_when_already_stopped(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_mode = "SCANNER_STOPPED"
+        runtime.autopilot_mode = "PAPER_AUTO"
+
+        result = runtime.orchestrator().run("scanner")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(runtime.calls, [])
+        self.assertEqual(runtime.robot, READY)
+        self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_unproven_scanner_phase_blocks_before_stop_or_robot_mutation(self):
+        for value in ("SCANNER_STARTING", "", None):
+            with self.subTest(mode=value):
+                runtime = FakeRuntime(robot=READY)
+                runtime.scanner_mode = value
+
+                result = runtime.orchestrator().run("all")
+
+                self.assertFalse(result.ok)
+                self.assertIn("Scanner is not in a legal stoppable state", result.message)
+                self.assertEqual(runtime.calls, [])
+                self.assertEqual(runtime.robot, READY)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_full_stop_orders_scanner_robot_telegram_backend(self):
         for robot in (READY, PAUSED):
             with self.subTest(robot=robot):
