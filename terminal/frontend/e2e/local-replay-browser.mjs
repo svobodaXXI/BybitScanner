@@ -179,6 +179,9 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "3");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "3");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-priors"), "1");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-priors"), "1");
+  assert.match(await page.getByRole("status", { name: "Приор H1" }).innerText(), /99\\.1/);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-blue-risk"), "1");
   assert.match(await page.getByRole("status", { name: "H-017 риск синей M5" }).innerText(),
     /открытий за линией 1, из них риск ≥1:1 — 1/);
