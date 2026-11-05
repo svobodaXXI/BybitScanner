@@ -217,7 +217,14 @@ def main_line_contact(trend: TrendCandidate | None, bar: Candle) -> Decimal | No
 
 
 class CausalGeometryFeed:
-    """Continuous research-only states at a 5m candle-close boundary."""
+    """Time-causal local H1 state: trend continuation, prior break, opposite line.
+
+    A contrary four-pivot candidate alone never reverses the active trend.
+    A full H1 close beyond the confirmed second main-line pivot followed by
+    the next H1 open beyond it first retires the trend. Only an already
+    confirmed, directionally opposite four-pivot candidate may start the new
+    yellow 1--3/2--4 geometry. No provisional future pivot is painted.
+    """
 
     def __init__(self, *, wing_1h: int = 2, wing_5m: int = 2) -> None:
         from research.historical_candle_feed import FIVE_MINUTES_MS, ONE_HOUR_MS
@@ -225,22 +232,71 @@ class CausalGeometryFeed:
         self._hourly = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=wing_1h)
         self._five = ConfirmedSwingStream(timeframe_ms=FIVE_MINUTES_MS, wing=wing_5m)
         self._hourly_trend: TrendCandidate | None = None
+        # (H1 close timestamp, prior price, prior trend side).
+        self._pending_break: tuple[int, Decimal, TrendSide] | None = None
+        self._waiting_for_side: TrendSide | None = None
+        self._reversal_known_at_ms: int | None = None
+
+    def _install_opposite_if_confirmed(self, at_ms: int) -> None:
+        if self._waiting_for_side is None:
+            return
+        proposal = recent_hourly_trend(self._hourly.recent_pivots)
+        if proposal is None or proposal.side != self._waiting_for_side:
+            return
+        if proposal.available_at_ms > at_ms:
+            raise AssertionError("future opposite hourly trend exposed")
+        # An older candidate cannot acquire the status of the NEW trend
+        # before the prior broke. Preserve its frozen wick anchors, but
+        # make the new version known no earlier than confirmation.
+        available = max(proposal.available_at_ms, self._reversal_known_at_ms or at_ms)
+        self._hourly_trend = TrendCandidate(
+            proposal.side,
+            CausalLine(proposal.main.first, proposal.main.second, available),
+            CausalLine(proposal.target.first, proposal.target.second, available),
+            proposal.pivot_sequence,
+            available,
+        )
+        self._waiting_for_side = None
+        self._reversal_known_at_ms = None
 
     def observe_closed(
         self, five_minute: Candle, newly_closed_1h: Candle | None,
     ) -> tuple[TrendCandidate | None, CausalLine | None]:
         self._five.observe_closed(five_minute)
+        if self._pending_break is not None:
+            hourly_end, prior, old_side = self._pending_break
+            # Only the first M5 of the very next H1 can confirm its OPEN.
+            self._pending_break = None
+            if five_minute.start_ms == hourly_end:
+                beyond = (five_minute.open < prior if old_side == "BULL" else
+                          five_minute.open > prior)
+                if beyond:
+                    self._hourly_trend = None
+                    self._waiting_for_side = "BEAR" if old_side == "BULL" else "BULL"
+                    self._reversal_known_at_ms = five_minute.end_ms
         if newly_closed_1h is not None:
+            # Evaluate the PREVIOUSLY KNOWN trend, before today's H1
+            # extrema can confirm a different pivot or revise the prior.
+            old = self._hourly_trend
+            if old is not None and old.available_at_ms <= newly_closed_1h.start_ms:
+                prior = old.main.second.price
+                outside = (newly_closed_1h.close < prior if old.side == "BULL" else
+                           newly_closed_1h.close > prior)
+                if outside:
+                    self._pending_break = (newly_closed_1h.end_ms, prior, old.side)
             self._hourly.observe_closed(newly_closed_1h)
-            proposal = recent_hourly_trend(self._hourly.recent_pivots)
-            if proposal is not None:
-                # Redraw only after a NEW confirmed fourth (extreme) pivot,
-                # never simply to hide a trendline break.
-                if self._hourly_trend is None or (
-                    proposal.pivot_sequence[3].at_ms >
-                    self._hourly_trend.pivot_sequence[3].at_ms
-                ):
-                    self._hourly_trend = proposal
+            if self._waiting_for_side is None:
+                proposal = recent_hourly_trend(self._hourly.recent_pivots)
+                if proposal is not None:
+                    if self._hourly_trend is None:
+                        self._hourly_trend = proposal
+                    elif (proposal.side == self._hourly_trend.side and
+                          proposal.pivot_sequence[3].at_ms >
+                          self._hourly_trend.pivot_sequence[3].at_ms):
+                        # Same-direction versions continue; a contrary
+                        # candidate alone cannot switch the structural trend.
+                        self._hourly_trend = proposal
+        self._install_opposite_if_confirmed(five_minute.end_ms)
         recent = self._five.recent_pivots
         # Do not copy/scan all historical 5m bars on every replay tick.
         between = self._five.bars_between(recent[-3], recent[-1]) if len(recent) >= 3 else ()
