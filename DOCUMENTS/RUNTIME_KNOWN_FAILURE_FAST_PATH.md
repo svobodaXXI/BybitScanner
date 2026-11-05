@@ -5,6 +5,22 @@ Date: 2026-09-27
 Purpose: compact evidence-first runbook for recurring Scanner / PAPER Robot / Telegram / desktop-launch failures.  
 Primary objective: minimize owner time. Known failure classes are diagnosed from repository authority and one bounded host snapshot before any exploratory sequence.
 
+## PAPER P0 — Gitless EDITOR_ONLY после #855: неудачный immutable staging (05.11.2026)
+
+**Инцидент и безопасная граница.** Установленный VPS release `4090641514b8f558a0054fd577b2750b944fd8d6`; Robot `ROBOT_RUNNING / RECONCILIATION_REQUIRED`, Scanner STOPPED, Autopilot OFF. По последнему отчёту Codex JASMYUSDT/FLOWUSDT подтверждены FLAT встречными executions, `nonrobot_close_proof` и ownership PASS; unfinished LIMIT/commands/protection obligations = 0, protection healthy, PAPER DB integrity OK. Это **предыдущий снимок, не текущая runtime-аттестация**. Reconcile POST и `runtime_intent ROBOT` ещё не выполнялись; READY не доказан.
+
+**Два воспроизведённых отказа, один класс:** immutable staging `c3219ab73bfb0054af8d2c0257b1919ec6d76a9d` отказал, потому что HEAD stable уже был `dec84f01a7d4e84d0878296edcebf0489914606e`; повторная попытка staging `dec84f01…` отказала после движения HEAD на `1121f5ac2f8e923c20133a14d9146e902c662032`. Оба `command_failed_exit_128` были **до staging**: STOP, deploy, restart, receipt, reconcile и runtime_intent не выполнены, DB и установленный release не изменились. Позднее HEAD продвигался дальше. Привязка staging к HEAD является **доказанным источником отказа**, а не признаком повреждения PAPER или новой ошибки Robot.
+
+**Уже реализовано:** PR #855 (merged, `c3219ab…`) исправил финализацию защищённого `editor-ready` для exceptional prior-target Gitless handoff с повторным использованием оригинальных receipts и сверкой установленного release; код `tools/paper_maintenance.py` имел одинаковый Git blob на `c3219ab…` и `1121f5ac…`. Это **исправление кода**, не receipt, не выполненный reconcile и не runtime acceptance.
+
+**Кратчайший путь при повторении:**
+1. Если staging вернул exit 128 **до начала VPS-операций**, не повторять STOP/deploy и не трактовать это как неизвестный исход торгового действия. Проверить только фазу операции и актуальную допустимую ревизию через существующий GitHub-мост.
+2. Если текущий мост требует HEAD=target, брать актуальный HEAD *непосредственно в разрешённой операции* и проверять наличие #855 и нужных неизменных инструментов. Не пересылать владельцу цепочку устаревающих SHA. Это **временный способ обхода гонки**, не гарантированное решение при новом изменении HEAD.
+3. **Постоянный инженерный фикс — ещё НЕ реализован:** в существующем мосте однократно аттестовать разрешённый immutable commit/content и затем продолжать staging на этой идентичности, без повторной зависимости от изменяющегося HEAD. Найти и исправить именно владеющий этим сравнением компонент; не ослаблять проверку источника, целостности и разрешений, не строить второй мост.
+4. Только после реально успешного staging: по уже разрешённому bounded recovery проверить защищённые exceptional receipts/EDITOR_ONLY, завершить `editor-ready` без повторного STOP/deploy, подтвердить JASMY/FLOW ownership/FLAT и отсутствие obligations, максимум один canonical reconcile (только после всех gates), затем существующий `runtime_intent ROBOT` и проверка READY/Admission/protection/DB. Scanner — только владелец, PAPER_AUTO не включать без соответствующих полномочий. Не выполнять команду с неизвестным результатом повторно.
+
+**Правило принятия решения:** `exit_128 before staging` = проблема GitHub-моста, не причина нового торгового recovery. `editor-ready` = подтверждение перехода установленного редакторского контура, **не** право на торговлю. `READY` объявлять только по свежему VPS-доказательству. LIVE, raw Market, ручная правка SQLite и обход STOP/TAKE запрещены.
+
 ## PAPER P0 — цепочка блокировок доказательства APPROVED после незавершённого STOP (2026-11-04)
 
 **Назначение:** готовый путь повторного применения, не новый квест. Цель владельца прежняя: безопасно завершить монолитное обслуживание PAPER, установить готовый релиз и принять редактор через Telegram. **Нельзя** «лечить» инцидент последовательным разрешением всё новых ревизий, повторением STOP или обнулением одноразовых маркеров.
