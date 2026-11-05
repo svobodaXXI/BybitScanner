@@ -6,6 +6,7 @@ import unittest
 from research.export_historical_replay import (
     MAX_BARS, build_market_only_document, write_run_document,
 )
+from research.h017_real_bybit_readonly_acceptance import retrospective_first_touch_study
 from research.historical_candle_feed import FIVE_MINUTES_MS
 
 
@@ -242,6 +243,42 @@ class MarketOnlyExportTests(unittest.TestCase):
             run_id="dmi-crosses-prefix", fetch_candles=fetch,
         )
         self.assertEqual(prefix["dmi_5m"]["points"], points[:40])
+
+    def test_real_archive_first_touch_study_keeps_ambiguous_and_dmi_timing_honest(self):
+        m5 = FIVE_MINUTES_MS
+        bars = [
+            {"start_ms": i * m5, "end_ms": (i + 1) * m5,
+             "high": h, "low": lo, "open": "100"}
+            for i, (h, lo) in enumerate([
+                ("101", "99.5"), ("101", "99.5"),
+                ("106", "99.5"), ("106", "98"),
+                ("101", "98"), ("101", "99.5"),
+            ])
+        ]
+        def candidate(index):
+            return {"open_ms": index * m5, "time_ms": (index + 1) * m5,
+                    "side": "LONG", "stop_price": "99.3",
+                    "target_price": "105", "risk_status": "RISK_PASS"}
+        dmi = [
+            {"time_ms": (i + 1) * m5, "adx": "21",
+             "crossings": [{"time_ms": m5, "side": "PLUS"}] if i == 0 else []}
+            for i in range(len(bars))
+        ]
+        results = retrospective_first_touch_study(
+            bars, [candidate(i) for i in (1, 3, 4, 5)], dmi,
+        )
+        self.assertEqual(results["DMI_PREVIOUS_CLOSE_ONE_OR_MORE"]["TARGET_FIRST"], 1)
+        self.assertEqual(results["DMI_PREVIOUS_CLOSE_ZERO"]["BOTH_SAME_M5"], 1)
+        self.assertEqual(results["DMI_PREVIOUS_CLOSE_ZERO"]["STOP_FIRST"], 1)
+        self.assertEqual(results["DMI_PREVIOUS_CLOSE_ZERO"]["UNRESOLVED"], 1)
+        self.assertEqual(sum(sum(x.values()) for x in results.values()), 4)
+        self.assertEqual(retrospective_first_touch_study(bars, [candidate(1)], [])[
+            "DMI_UNAVAILABLE_OR_NOT_WARM"]["TARGET_FIRST"], 1)
+        # No look-ahead: a crossover on candidate bar's own close is not prior evidence.
+        dmi[0]["crossings"] = []
+        dmi[1]["crossings"] = [{"time_ms": 2 * m5, "side": "PLUS"}]
+        self.assertEqual(retrospective_first_touch_study(bars, [candidate(1)], dmi)[
+            "DMI_PREVIOUS_CLOSE_ZERO"]["TARGET_FIRST"], 1)
 
     def test_missing_history_fails_without_a_report(self):
         with self.assertRaisesRegex(ValueError, "missing historical"):

@@ -114,6 +114,58 @@ def archived_trade_klines():
     return fetch_public_derived, archive_hashes
 
 
+def retrospective_first_touch_study(bars, previews, dmi_points):
+    """Independent, non-executable first-touch count on a bounded market sample.
+
+    Each RISK_PASS preview is an overlapping hypothetical scenario, NOT a fill.
+    Frozen target and stop prices are observed from its actual OPEN onward;
+    when both touch within one M5, the order remains unknowable.
+    A crossover may corroborate the OPEN only if it was visible on the
+    immediately preceding fully closed candle (not that OPEN's own close).
+    """
+    by_open = {bar["start_ms"]: i for i, bar in enumerate(bars)}
+    at_close = {point["time_ms"]: point for point in dmi_points}
+    outcomes = ("TARGET_FIRST", "STOP_FIRST", "BOTH_SAME_M5", "UNRESOLVED")
+    groups = {label: {status: 0 for status in outcomes} for label in (
+        "DMI_PREVIOUS_CLOSE_ONE_OR_MORE", "DMI_PREVIOUS_CLOSE_ZERO",
+        "DMI_UNAVAILABLE_OR_NOT_WARM",
+    )}
+    for p in previews:
+        if p["risk_status"] != "RISK_PASS":
+            continue
+        start = by_open.get(p["open_ms"])
+        if start is None or p["open_ms"] != p["time_ms"] - M5:
+            raise AssertionError("candidate not aligned with closed M5")
+        last = at_close.get(p["open_ms"])
+        label = (
+            "DMI_UNAVAILABLE_OR_NOT_WARM" if last is None or last["adx"] is None
+            or "crossings" not in last else
+            "DMI_PREVIOUS_CLOSE_ONE_OR_MORE" if last["crossings"] else
+            "DMI_PREVIOUS_CLOSE_ZERO"
+        )
+        stop = Decimal(p["stop_price"])
+        target = Decimal(p["target_price"])
+        outcome = "UNRESOLVED"
+        for bar in bars[start:]:
+            high, low = Decimal(str(bar["high"])), Decimal(str(bar["low"]))
+            if p["side"] == "LONG":
+                target_hit, stop_hit = high >= target, low <= stop
+            elif p["side"] == "SHORT":
+                target_hit, stop_hit = low <= target, high >= stop
+            else:
+                raise AssertionError("unrecognized H-017 direction")
+            if target_hit or stop_hit:
+                outcome = ("BOTH_SAME_M5" if target_hit and stop_hit else
+                           "TARGET_FIRST" if target_hit else "STOP_FIRST")
+                break
+        groups[label][outcome] += 1
+    if sum(sum(counts.values()) for counts in groups.values()) != sum(
+        p["risk_status"] == "RISK_PASS" for p in previews
+    ):
+        raise AssertionError("H-017 observational cohort totals do not match")
+    return groups
+
+
 def check() -> dict[str, object]:
     fetch, archive_hashes = archived_trade_klines()
     doc = load_public_history(symbol=SYMBOL, start=START, end=END,
@@ -190,6 +242,9 @@ def check() -> dict[str, object]:
         "blue_open_candidates": len(doc["h017_blue_risk_previews"]),
         "passes_1R": sum(x["risk_status"] == "RISK_PASS" for x in doc["h017_blue_risk_previews"]),
         "below_1R": sum(x["risk_status"] == "RISK_BELOW_1R" for x in doc["h017_blue_risk_previews"]),
+        "first_touch_research_only": retrospective_first_touch_study(
+            bars, doc["h017_blue_risk_previews"], doc["dmi_5m"]["points"]
+        ),
         "simulated_fills": 0,
         "net_pnl": None,
         "geometry_owner_verified": False,
