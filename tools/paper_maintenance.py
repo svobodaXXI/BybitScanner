@@ -722,6 +722,110 @@ def _paper_start_quiescent(root: Path, env_file: Path | None) -> bool:
     return True
 
 
+def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool | None:
+    """Retire proven inert APPROVED ideas via the existing canonical Robot STOP.
+
+    None: not in PAUSED (reconcile may be needed); False: unsafe or unknown
+    PAUSED/STOP outcome (do not replay reconcile); True: STOP and quiescence
+    confirmed. No new candidate lifecycle writer or incident-specific IDs.
+    """
+    from tools.stop_robot_runtime import _database_path, _environment, _post_robot_json
+    from terminal.application.robot_control import stop_robot
+
+    db = _database_path(root, _environment(env_file))
+    if not db.is_file() or db.is_symlink():
+        return False
+    try:
+        with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            if conn.execute("PRAGMA quick_check").fetchone() != ("ok",):
+                return False
+            state = conn.execute(
+                "SELECT mode, recovery_status FROM robot_runtime_state "
+                "WHERE trading_account_id='paper'"
+            ).fetchall()
+            if state != [("ROBOT_RUNNING", "PAUSED")]:
+                return None
+            scanner = conn.execute(
+                "SELECT mode FROM scanner_runtime_state WHERE trading_account_id='paper'"
+            ).fetchall()
+            autopilot = conn.execute(
+                "SELECT mode FROM robot_autopilot_state WHERE trading_account_id='paper'"
+            ).fetchall()
+            if scanner != [("SCANNER_STOPPED",)] or autopilot != [("OFF",)]:
+                return False
+            positions = conn.execute(
+                "SELECT symbol, side, quantity, sync_state FROM position_projections "
+                "WHERE trading_account_id='paper'"
+            ).fetchall()
+            if not positions:
+                return False
+            for symbol, side, raw, sync in positions:
+                quantity = Decimal(str(raw))
+                if (not symbol or side != "Flat" or not quantity.is_finite()
+                        or quantity != 0 or sync not in ("synced", "synchronized")):
+                    return False
+            candidates = conn.execute(
+                "SELECT candidate_id, symbol, status, approved_at_ms "
+                "FROM robot_candidates WHERE trading_account_id='paper' "
+                "AND (status IS NULL OR status NOT IN "
+                "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))"
+            ).fetchall()
+            if (not candidates
+                    or len({row[0] for row in candidates}) != len(candidates)
+                    or len({row[1] for row in candidates}) != len(candidates)
+                    or any(not isinstance(cid, str) or not cid
+                           or not isinstance(symbol, str) or not symbol
+                           or status != "APPROVED"
+                           or type(approved) is not int or approved <= 0
+                           for cid, symbol, status, approved in candidates)):
+                return False
+            # Historical fills before approval are not new entry work.
+            # A later fill/order/command/trade must instead block the STOP path.
+            for cid, symbol, _, approved in candidates:
+                if (conn.execute(
+                    "SELECT 1 FROM executions WHERE trading_account_id='paper' "
+                    "AND symbol=? AND exchange_timestamp_ms>=? LIMIT 1",
+                    (symbol, approved),
+                ).fetchone() is not None or conn.execute(
+                    "SELECT 1 FROM paper_limit_orders WHERE trading_account_id='paper' "
+                    "AND symbol=? AND created_at_ms>=? LIMIT 1",
+                    (symbol, approved),
+                ).fetchone() is not None or conn.execute(
+                    "SELECT 1 FROM trading_commands WHERE trading_account_id='paper' "
+                    "AND symbol=? AND created_at_ms>=? LIMIT 1",
+                    (symbol, approved),
+                ).fetchone() is not None or conn.execute(
+                    "SELECT 1 FROM robot_trades WHERE trading_account_id='paper' "
+                    "AND candidate_id=? LIMIT 1",
+                    (cid,),
+                ).fetchone() is not None):
+                    return False
+            for table, condition in (
+                ("robot_trades", "exit_time_ms IS NULL"),
+                ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
+                ("trading_commands", "current_state IS NULL OR current_state NOT IN "
+                 "('filled','cancelled','amended','rejected','failed','owner_attested_closed')"),
+                ("paper_protection_obligations", "status IS NULL OR status != 'RESOLVED'"),
+                ("reconciliation_checkpoints", "completed_at_ms IS NULL"),
+            ):
+                if conn.execute(
+                    f"SELECT 1 FROM {table} WHERE trading_account_id='paper' "
+                    f"AND ({condition}) LIMIT 1"
+                ).fetchone() is not None:
+                    return False
+    except (sqlite3.Error, ValueError, TypeError, ArithmeticError):
+        return False
+
+    # One canonical operation, including its own safety checks and synchronous
+    # candidate terminalization. No direct SQLite writes or repeated STOP.
+    try:
+        stop_robot(http_post=_post_robot_json, database_path=db)
+    except Exception:
+        return False  # STOP may have committed: never replay it here.
+    return _paper_start_quiescent(root, env_file)
+
 def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
     """Read-only, incident-scoped proof before invoking owner Robot reconciliation.
 
@@ -897,15 +1001,30 @@ def start_installed_paper_from_editor(
         if not _editor_runtime_ready(target, identity):
             return "BLOCKED: editor_only_runtime_not_proven"
         if not _paper_start_quiescent(root, env_file):
-            outcome = _editor_reconcile_once(target, identity, root=root, env_file=env_file)
-            if outcome is not None:
-                return outcome
-            # Re-prove the exact backend, frozen ingress and the entire PAPER
-            # ledger after the owner mutation, before starting any ingress.
+            # Resume the *observed* phase. A prior successful reconcile may
+            # have left PAUSED with inert APPROVED rows; it cannot be replayed.
+            retired = _editor_retire_inert_approvals(root, env_file)
+            if retired is False:
+                return "BLOCKED: PAPER_Robot_STOP_outcome_unknown_or_unproven; no_replay"
+            if retired is None:
+                outcome = _editor_reconcile_once(
+                    target, identity, root=root, env_file=env_file,
+                )
+                if outcome is not None:
+                    return outcome
+                if (_durable_editor_freeze(root, env_file) != identity
+                        or not _editor_runtime_ready(target, identity)):
+                    return "BLOCKED: PAPER_editor_identity_changed_after_reconcile"
+                if not _paper_start_quiescent(root, env_file):
+                    retired = _editor_retire_inert_approvals(root, env_file)
+                    if retired is not True:
+                        return "BLOCKED: PAPER_stale_owners_after_reconcile; START_not_attempted"
+            # Re-prove frozen ingress and complete ownership after the
+            # actual canonical STOP, before starting the PAPER core.
             if (_durable_editor_freeze(root, env_file) != identity
                     or not _editor_runtime_ready(target, identity)
                     or not _paper_start_quiescent(root, env_file)):
-                return "BLOCKED: PAPER_stale_owners_after_reconcile; START_not_attempted"
+                return "BLOCKED: PAPER_post_transition_reproof_failed; START_not_attempted"
     except (ReleaseIdentityBlocked, OSError, ValueError, sqlite3.Error):
         return "BLOCKED: editor_only_release_or_freeze_unproven"
     try:

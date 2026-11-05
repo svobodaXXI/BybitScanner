@@ -991,6 +991,7 @@ def test_editor_only_never_starts_paper_with_frozen_orphan_or_approvals(
     monkeypatch.setattr(release, "verify_release", lambda *_: target)
     monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *_: "d" * 64)
     monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals", lambda *_: None)
     monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: False)
     monkeypatch.setattr(
         maintenance, "_editor_reconcile_once",
@@ -1016,7 +1017,8 @@ def test_editor_only_reconciles_once_then_starts_only_after_full_postproof(
     monkeypatch.setattr(maintenance, "_durable_editor_freeze",
                         lambda *_: "d" * 64)
     monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
-    proofs = iter([False, True])
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals", lambda *_: None)
+    proofs = iter([False, True, True])
     monkeypatch.setattr(maintenance, "_paper_start_quiescent",
                         lambda *_: next(proofs))
     monkeypatch.setattr(maintenance, "_editor_reconcile_once",
@@ -1048,6 +1050,7 @@ def test_editor_only_does_not_start_on_failed_reconcile_postproof(
                         lambda *_: "d" * 64)
     monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
     monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: False)
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals", lambda *_: None)
     monkeypatch.setattr(maintenance, "_editor_reconcile_once",
                         lambda *_a, **_kw: events.append("reconcile"))
     assert maintenance.start_installed_paper_from_editor(
@@ -1055,6 +1058,126 @@ def test_editor_only_does_not_start_on_failed_reconcile_postproof(
         runner=lambda *_a, **_kw: events.append("start"),
     ) == "BLOCKED: PAPER_stale_owners_after_reconcile; START_not_attempted"
     assert events == ["reconcile"]
+
+
+def _frozen_approval_test_db(tmp_path, monkeypatch):
+    db = tmp_path / "incident.sqlite3"
+    monkeypatch.setenv("BYBITSCANNER_PAPER_DB", str(db))
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
+            CREATE TABLE robot_runtime_state (
+                trading_account_id TEXT, mode TEXT, recovery_status TEXT);
+            CREATE TABLE scanner_runtime_state (trading_account_id TEXT, mode TEXT);
+            CREATE TABLE robot_autopilot_state (trading_account_id TEXT, mode TEXT);
+            CREATE TABLE position_projections (
+                trading_account_id TEXT, symbol TEXT, side TEXT, quantity TEXT,
+                sync_state TEXT);
+            CREATE TABLE robot_candidates (
+                trading_account_id TEXT, candidate_id TEXT, symbol TEXT,
+                status TEXT, approved_at_ms INTEGER);
+            CREATE TABLE executions (
+                trading_account_id TEXT, symbol TEXT, exchange_timestamp_ms INTEGER);
+            CREATE TABLE robot_trades (
+                trading_account_id TEXT, candidate_id TEXT, exit_time_ms INTEGER);
+            CREATE TABLE paper_limit_orders (
+                trading_account_id TEXT, symbol TEXT, created_at_ms INTEGER, status TEXT);
+            CREATE TABLE trading_commands (
+                trading_account_id TEXT, symbol TEXT, created_at_ms INTEGER,
+                current_state TEXT);
+            CREATE TABLE paper_protection_obligations (
+                trading_account_id TEXT, status TEXT);
+            CREATE TABLE reconciliation_checkpoints (
+                trading_account_id TEXT, completed_at_ms INTEGER);
+        """)
+        conn.execute("INSERT INTO robot_runtime_state VALUES ('paper','ROBOT_RUNNING','PAUSED')")
+        conn.execute("INSERT INTO scanner_runtime_state VALUES ('paper','SCANNER_STOPPED')")
+        conn.execute("INSERT INTO robot_autopilot_state VALUES ('paper','OFF')")
+        conn.execute("INSERT INTO position_projections VALUES ('paper','NEWUSDT','Flat','0','synced')")
+        conn.execute("INSERT INTO robot_candidates VALUES "
+                     "('paper','candidate-new','NEWUSDT','APPROVED',1000)")
+    return db
+
+
+def test_editor_retirement_uses_canonical_stop_for_new_inert_owner(monkeypatch, tmp_path):
+    from tools import paper_maintenance as maintenance
+    from terminal.application import robot_control
+
+    db = _frozen_approval_test_db(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(robot_control, "stop_robot",
+                        lambda **kw: calls.append(kw["database_path"]))
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: True)
+    assert maintenance._editor_retire_inert_approvals(tmp_path, None) is True
+    assert calls == [db]
+
+
+def test_editor_retirement_refuses_new_execution_and_non_paused_phase(
+    monkeypatch, tmp_path,
+):
+    from tools import paper_maintenance as maintenance
+    from terminal.application import robot_control
+
+    db = _frozen_approval_test_db(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(robot_control, "stop_robot", lambda **_: calls.append("stop"))
+    with sqlite3.connect(db) as conn:
+        conn.execute("INSERT INTO executions VALUES ('paper','NEWUSDT',1001)")
+    assert maintenance._editor_retire_inert_approvals(tmp_path, None) is False
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE robot_runtime_state SET recovery_status='RECONCILIATION_REQUIRED'")
+    assert maintenance._editor_retire_inert_approvals(tmp_path, None) is None
+    assert calls == []
+
+
+def test_editor_resumes_paused_frozen_candidates_without_replaying_reconcile(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    events = []
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *_: "d" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent",
+                        lambda *_: len(events) > 0 and events[0] == "stop")
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals",
+                        lambda *_: events.append("stop") or True)
+    monkeypatch.setattr(maintenance, "_editor_reconcile_once",
+                        lambda *_a, **_kw: events.append("reconcile"))
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "READY: full PAPER proven")
+    result = maintenance.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="READY: EDITOR_ONLY",
+        runner=lambda *_a, **_kw: events.append("start") or SimpleNamespace(returncode=0),
+    )
+    assert result == "READY: full PAPER proven"
+    assert events == ["stop", "start"]
+
+
+def test_editor_unknown_robot_stop_does_not_reconcile_or_start(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    events = []
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *_: "d" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: False)
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals",
+                        lambda *_: events.append("stop") or False)
+    monkeypatch.setattr(maintenance, "_editor_reconcile_once",
+                        lambda *_a, **_kw: events.append("reconcile"))
+    result = maintenance.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="READY: EDITOR_ONLY",
+        runner=lambda *_a, **_kw: events.append("start"),
+    )
+    assert result == "BLOCKED: PAPER_Robot_STOP_outcome_unknown_or_unproven; no_replay"
+    assert events == ["stop"]
 
 
 def test_editor_reconcile_never_retries_unknown_owner_outcome(monkeypatch, tmp_path):
