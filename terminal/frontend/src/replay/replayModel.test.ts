@@ -296,6 +296,9 @@ describe("standalone SIMULATION viewer contract", () => {
       known(27), known(27), known(27), known(44), known(44), known(44),
       undefined,
     ]);
+    // These are new versions of the same unbroken movement, not a reason to
+    // truncate the prior solid slopes on the chart.
+    expect(fullHistory.every(item => item.retired_at_ms === undefined)).toBe(true);
     expect(visibleGeometryHistory(doc, known(27) - 1)).toHaveLength(3);
     expect(visibleGeometryHistory(doc, known(27) - 1)
       .every(item => item.superseded_at_ms === undefined)).toBe(true);
@@ -465,6 +468,28 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(visibleGeometryHistory(doc, atBreak - 1).at(-1)?.superseded_at_ms)
       .toBeUndefined();
     expect(visibleGeometry(doc, atBreak - 1)).toHaveLength(3);
+    // Refining a correction must not retire its earlier solid slope. Both
+    // immutable versions end only when the CURRENT correction truly breaks.
+    const revisedBlue = {
+      ...geometry[2], available_at_ms: events[9].time_ms,
+      to_ms: t(4), to_price: "103",
+    };
+    const revised = parseReplayDocument({
+      ...archive, geometry: [...geometry, revisedBlue],
+      reference_5m_retirements: [{
+        ...retirement, blue_available_at_ms: revisedBlue.available_at_ms,
+      }],
+    });
+    const stillOpen = visibleGeometryHistory(revised, events[10].time_ms)
+      .filter(item => item.kind === "REFERENCE_5M");
+    expect(stillOpen).toHaveLength(2);
+    expect(stillOpen.map(item => item.retired_at_ms)).toEqual([undefined, undefined]);
+    expect(stillOpen[0].superseded_at_ms).toBe(revisedBlue.available_at_ms);
+    const closed = visibleGeometryHistory(revised, atBreak)
+      .filter(item => item.kind === "REFERENCE_5M");
+    expect(closed.map(item => item.retired_at_ms)).toEqual([atBreak, atBreak]);
+    expect(visibleGeometry(revised, atBreak).map(item => item.kind))
+      .toEqual(["MAIN_1H", "TARGET_1H"]);
     expect(() => parseReplayDocument({
       ...archive, reference_5m_retirements: [{ ...retirement, open_ms: t(0) }],
     })).toThrow();
