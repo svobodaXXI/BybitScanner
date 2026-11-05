@@ -1044,6 +1044,64 @@ def start_installed_paper_from_editor(
     )
 
 
+def _active_exact_paper_blocker(
+    target: str, *, root: Path, env_file: Path | None,
+) -> str | None:
+    """Report active, exact-release PAPER without mutating it on failed START.
+
+    A running backend with closed admission (notably Robot REQUIRED) is
+    not EDITOR_ONLY. Never route it through a second STOP/deploy/start merely
+    because the normal READY proof failed. The canonical owner must resolve
+    the underlying durable reason under a separately authorized operation.
+    """
+    from tools.runtime_intent import expected_database_identity, http_get
+    from tools.stop_robot_runtime import _database_path
+
+    try:
+        env = _environment(env_file)
+        identity = expected_database_identity(root, env)
+        reply = http_get("http://127.0.0.1:8765/api/health", 3)
+        health = reply.json()
+        if (reply.status != 200 or not isinstance(health, dict)
+                or health.get("ok") is not True
+                or health.get("component") != "paper_backend"
+                or health.get("mode") != "paper"
+                or health.get("build_sha") != target
+                or health.get("database_identity") != identity):
+            return None
+        if health.get("paper_live_safe") is not True:
+            return "BLOCKED: active_exact_PAPER_live_isolation_unproven; no_stop_or_restart"
+
+        db = _database_path(root, env)
+        if not db.is_file() or db.is_symlink():
+            return "BLOCKED: active_exact_PAPER_database_unproven; no_stop_or_restart"
+        with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            rows = conn.execute(
+                "SELECT mode, recovery_status, reason FROM robot_runtime_state "
+                "WHERE trading_account_id='paper'"
+            ).fetchall()
+        if len(rows) != 1:
+            return "BLOCKED: active_exact_PAPER_Robot_state_unproven; no_stop_or_restart"
+        mode, recovery, reason = rows[0]
+        if (mode, recovery) == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
+            # Diagnostic only. Do not auto-reconcile unknown exposure or
+            # invent an exit to manufacture admission readiness.
+            detail = " ".join(str(reason or "unavailable").split())[:180]
+            return (
+                "BLOCKED: active_PAPER_Robot_RECONCILIATION_REQUIRED; "
+                "admission_closed; protection_preserved; reason=" + detail
+            )
+        return (
+            "BLOCKED: active_exact_PAPER_not_ready; "
+            "Robot=" + str(mode)[:40] + "/" + str(recovery)[:40]
+            + "; no_stop_or_restart"
+        )
+    except (OSError, TypeError, ValueError, sqlite3.Error):
+        return None
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
@@ -1088,6 +1146,15 @@ def main(argv=None) -> int:
                 if observed.startswith("READY:"):
                     print("READY: exact installed Gitless PAPER already running; no mutation")
                     return 0
+                # A degraded but live PAPER owner must not be mistaken for a
+                # stopped EDITOR_ONLY state. In particular REQUIRED with
+                # PAPER_AUTO still configured is closed admission, not READY.
+                blocked = _active_exact_paper_blocker(
+                    args.sha, root=REPO, env_file=args.env_file,
+                )
+                if blocked is not None:
+                    print(blocked)
+                    return 2
     if args.staged_gitless_editor_only:
         status = deploy_staged_editor_only(
             args.sha, stage=args.staged_gitless_editor_only,
