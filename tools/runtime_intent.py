@@ -89,6 +89,10 @@ class Mismatch(Exception):
     """Something answered, but it is not the expected canonical dependency."""
 
 
+class BackendListenerStarting(Mismatch):
+    """A proven existing Backend listener may still be initializing HTTP."""
+
+
 class HttpResponse:
     def __init__(self, status: int, body: bytes) -> None:
         self.status = status
@@ -371,15 +375,23 @@ class RuntimeIntentBootstrap:
     def wait_backend(self) -> int:
         """Readiness gate for dependent units: 0 once the canonical PAPER backend for the expected
         PAPER DB answers its health probe, 1 otherwise. Never spawns, never sends an intent."""
-        try:
-            state = self._probe_backend()
-            deadline = self._monotonic() + READY_TIMEOUT_S
-            while state != READY and self._monotonic() < deadline:
-                self._sleep(POLL_INTERVAL_S)
+        deadline = self._monotonic() + READY_TIMEOUT_S
+        while True:
+            try:
                 state = self._probe_backend()
-        except Mismatch as error:
-            self._out(f"FAILED: {error}")
-            return EXIT_BOOTSTRAP_FAILED
+            except BackendListenerStarting:
+                # systemd Type=simple can report started while the existing
+                # listener has not yet exposed /api/health. Wait for the same
+                # canonical Backend; never spawn/restart a second owner.
+                state = STARTING
+            except Mismatch as error:
+                self._out(f"FAILED: {error}")
+                return EXIT_BOOTSTRAP_FAILED
+            if state == READY:
+                break
+            if self._monotonic() >= deadline:
+                break
+            self._sleep(POLL_INTERVAL_S)
         if state == READY:
             self._out("PAPER backend READY")
             return EXIT_OK
@@ -401,7 +413,7 @@ class RuntimeIntentBootstrap:
             except (LegacyOwnerUnproven, ValueError) as exc:
                 raise Mismatch("PAPER backend listener state cannot be proven; not starting another owner") from exc
             if listeners:
-                raise Mismatch("PAPER backend listener is alive but health is unavailable; not starting another owner")
+                raise BackendListenerStarting("PAPER backend listener is alive but health is unavailable; not starting another owner")
             return ABSENT
         health = _json_or_none(response)
         if (

@@ -111,6 +111,32 @@ PAPER Market для повторного **того же** Close-All запро�
 
 **Observed status:** mechanism still incomplete; JASMY forensic proof and end-to-end unified-stop acceptance PENDING. Keep this in the same P0 shutdown/deploy queue; not a separate trading feature. XP cannot be awarded for a document or green CI.
 
+### 05.11.2026: защита от повторного `protection ingress_overflow` внутри START
+
+READ-ONLY VPS evidence: Robot `ROBOT_RUNNING / RECONCILIATION_REQUIRED`, `PAPER_AUTO`
+настроен, но Admission NOT READY; Protection HEALTHY. Причина
+`ROBOT_PROTECTION_COVERAGE_LOST symbol=MSTUUSDT reason=ingress_overflow`;
+event `MSTUUSDT:190402711884:3824963`, очередь `64/64`, max latency `2356ms`,
+самый медленный owner callback Autopilot `1436ms`.
+Кандидат MSTUUSDT `d6223996117e1f7b4aab5ffa` — APPROVED/RETEST_DETECTED,
+без привязанного trade/fill/entry order или активного LIMIT.
+Открытые позиции/trades, unfinished commands, LIMIT и obligations — 0;
+FOLKSUSDT/LITEUSDT покрыты как ENTRY_PENDING. Это **новый эпизод класса
+ingress_overflow**, не повтор JASMY/FLOW.
+
+Узкий путь внутри **одной явно разрешённой штатной команды START**:
+проверить точный running SHA, DB и LIVE isolation; штатными OFF/Scanner STOPPED
+заморозить ingress, не останавливая Backend/MIRROR/защиту; доказать FLAT,
+отсутствие незавершённых владельцев и **два спокойных замера текущей + 60-секундной
+очереди**. Исторические high-watermark не считать текущей загрузкой. Затем
+один canonical `/api/robot/reconcile` с долговременным no-replay receipt;
+только из подтверждённого PAUSED — штатный runtime intent ROBOT → READY,
+после чего при сохранённой безопасности вернуть Scanner и авторизованный
+PAPER_AUTO. Любая ошибка/неизвестный результат: `BLOCKED`, Admission закрыт,
+Backend и STOP/TAKE сохранены. Не подменять причину простым restart и не
+превращать эту процедуру в отдельную ручную операцию. Реальная VPS-приёмка
+не следует из CI/PR и требует отдельного разрешения владельца.
+
 ## 9. P0 — освобождение PAPER-контура как внутренняя фаза монолитной остановки/обновления (решение владельца 02.11.2026)
 
 **Нормативное решение владельца.** Подготовка безопасного освобождения PAPER-контура от новых входов и ожидание доказанного FLAT — **не отдельный этап/квест, не отдельная команда пользователя и не новая ручная процедура**. Это обязательная внутренняя часть **одного end-to-end workflow**: монолитная остановка → безопасный immutable switch → восстановление Robot/JASMY → эксплуатационная проверка. Система сама выполняет законные внутренние переходы и проверяет доказательства; владелец получает один результат либо конкретный BLOCKED. Данный документ не является разрешением на торговые действия, остановку VPS или deployment.

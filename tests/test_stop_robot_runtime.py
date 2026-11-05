@@ -319,6 +319,26 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.robot, READY)
         self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
+    def test_scanner_reactivated_after_stop_blocks_before_robot_mutation(self):
+        runtime = FakeRuntime(robot=READY)
+        original_get = runtime.get
+
+        def scanner_restarted_during_autopilot_reproof(url, timeout):
+            if (url == BACKEND + "/api/robot/autopilot"
+                    and runtime.scanner_mode == "SCANNER_STOPPED"):
+                # Scanner STOP has already been acknowledged; an independent
+                # owner starts it again before the Robot boundary.
+                runtime.scanner_mode = "SCANNER_RUNNING"
+            return original_get(url, timeout)
+
+        runtime.get = scanner_restarted_during_autopilot_reproof
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Scanner is not proven STOPPED", result.message)
+        self.assertEqual(runtime.robot, READY)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_ingress_reactivation_after_robot_stop_blocks_backend_shutdown(self):
         for changed in ("scanner", "autopilot"):
             with self.subTest(changed=changed):
@@ -353,6 +373,81 @@ class FullShutdownTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
         self.assertEqual(runtime.calls, ["scanner:stop"])
+
+    def test_partial_stop_skips_already_stopped_scanner(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_mode = "SCANNER_STOPPED"
+        runtime.autopilot_mode = "PAPER_AUTO"
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "robot:stop", "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertNotIn("scanner:stop", result.steps)
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_scanner_only_is_noop_when_already_stopped(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_mode = "SCANNER_STOPPED"
+        runtime.autopilot_mode = "PAPER_AUTO"
+
+        result = runtime.orchestrator().run("scanner")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(runtime.calls, [])
+        self.assertEqual(runtime.robot, READY)
+        self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_unproven_scanner_phase_blocks_before_stop_or_robot_mutation(self):
+        for value in ("SCANNER_STARTING", "", None):
+            with self.subTest(mode=value):
+                runtime = FakeRuntime(robot=READY)
+                runtime.scanner_mode = value
+
+                result = runtime.orchestrator().run("all")
+
+                self.assertFalse(result.ok)
+                self.assertIn("Scanner is not in a legal stoppable state", result.message)
+                self.assertEqual(runtime.calls, [])
+                self.assertEqual(runtime.robot, READY)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_scanner_only_reactivation_blocks_false_stopped_success(self):
+        runtime = FakeRuntime(robot=READY)
+        owner = runtime.orchestrator()
+
+        def concurrent_restart():
+            # Scanner STOP has already returned when the Robot state is read.
+            runtime.scanner_mode = "SCANNER_RUNNING"
+            return READY
+
+        owner._robot_state = concurrent_restart
+        result = owner.run("scanner")
+        self.assertFalse(result.ok)
+        self.assertIn("Scanner is not proven STOPPED", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_scanner_only_protected_runtime_rechecks_before_success(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.protection["covered_symbols"] = ["BTCUSDT"]
+        original_get = runtime.get
+
+        def concurrent_restart_during_protection_read(url, timeout):
+            if url == BACKEND + "/api/robot/protection-health":
+                runtime.scanner_mode = "SCANNER_RUNNING"
+            return original_get(url, timeout)
+
+        runtime.get = concurrent_restart_during_protection_read
+        result = runtime.orchestrator().run("scanner")
+        self.assertFalse(result.ok)
+        self.assertIn("Scanner is not proven STOPPED", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
     def test_full_stop_orders_scanner_robot_telegram_backend(self):
         for robot in (READY, PAUSED):
@@ -619,7 +714,7 @@ class FullShutdownTests(unittest.TestCase):
         self.assertTrue(second.ok, second.message)
         self.assertTrue(second.runtime_stopped)
         self.assertEqual(runtime.calls, [
-            "scanner:stop", "robot:pause", "scanner:stop", "robot:stop",
+            "scanner:stop", "robot:pause", "robot:stop",
             "backend:shutdown", "telegram:shutdown",
         ])
 
@@ -776,6 +871,29 @@ class FullShutdownTests(unittest.TestCase):
                 self.assertFalse(result.ok)
                 self.assertNotIn("backend:shutdown", runtime.calls)
                 self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_contradictory_protection_roles_or_failed_health_never_shutdown(self):
+        # A malformed/untrusted health reply must not certify quiescence just
+        # because its two summary lists are empty. The role map is independent
+        # protection ownership evidence.
+        for field, value in (
+            ("coverage_roles", {"JASMYUSDT": "EXPOSURE"}),
+            ("coverage_roles", {"BBUSDT": "ENTRY_PENDING"}),
+            ("coverage_roles", None),
+            ("coverage_roles", []),
+            ("ok", False),
+            ("ok", None),
+        ):
+            with self.subTest(field=field, value=value):
+                runtime = FakeRuntime(robot=STOPPED)
+                runtime.protection[field] = value
+                self.assertFalse(runtime.orchestrator()._protection_quiescent())
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.runtime_stopped)
+                self.assertNotIn("backend:shutdown", runtime.calls)
+                self.assertNotIn("telegram:shutdown", runtime.calls)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
 
     def test_active_protection_coverage_keeps_runtime_alive(self):
         runtime = FakeRuntime(robot=READY)
@@ -998,7 +1116,9 @@ class ShutdownArmFixture:
 
         def get(url, timeout):
             if url == BACKEND + "/api/robot/protection-health":
-                return 200, json.loads(json.dumps(self.manager.health()))
+                # The public HTTP handler supplies ok; manager.health()
+                # alone is an internal fragment, not an API response.
+                return 200, json.loads(json.dumps({"ok": True, **self.manager.health()}))
             return original_get(url, timeout)
 
         def post(url, payload, timeout):

@@ -644,10 +644,23 @@ def send_signal(
             )
 
     if robot_candidate_id and archived_image and owner_photo_response is not None:
+        # A Robot candidate repost links its Editor to the candidate archive,
+        # not the source-original handle on the first Telegram card. Freeze
+        # that same validated detector evidence under the candidate identity,
+        # or the repost would open an Editor without its original rays.
+        frozen_source = (
+            load_frozen_signal_geometry(f"source-original:{source_token}")
+            if source_token else None
+        )
+        candidate_geometry = (
+            {**frozen_source, "signal_id": robot_candidate_id}
+            if frozen_source is not None else None
+        )
         record_original_signal(
             robot_candidate_id, symbol=symbol, timeframe=timeframe,
             pattern=result.get("pattern", ""), text=message,
             image_bytes=archived_image, photo_response=owner_photo_response,
+            geometry_snapshot=candidate_geometry,
         )
 
     # After the ordinary card/photo delivery, tell the owner (only) why the
