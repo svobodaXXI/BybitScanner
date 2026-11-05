@@ -991,6 +991,7 @@ def test_editor_only_never_starts_paper_with_frozen_orphan_or_approvals(
     monkeypatch.setattr(release, "verify_release", lambda *_: target)
     monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *_: "d" * 64)
     monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals", lambda *_: None)
     monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: False)
     monkeypatch.setattr(
         maintenance, "_editor_reconcile_once",
@@ -1016,6 +1017,7 @@ def test_editor_only_reconciles_once_then_starts_only_after_full_postproof(
     monkeypatch.setattr(maintenance, "_durable_editor_freeze",
                         lambda *_: "d" * 64)
     monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals", lambda *_: None)
     proofs = iter([False, True, True])
     monkeypatch.setattr(maintenance, "_paper_start_quiescent",
                         lambda *_: next(proofs))
