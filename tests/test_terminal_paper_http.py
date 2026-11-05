@@ -3322,18 +3322,24 @@ def test_runtime_shutdown_rejects_missing_or_malformed_coverage_evidence():
             return self.snapshot
 
     complete = {
-        "healthy": True, "covered_symbols": [],
-        "armed_symbols": [], "unhealthy_symbols": {},
+        "healthy": True, "covered_symbols": (),
+        "armed_symbols": (), "coverage_roles": {}, "unhealthy_symbols": {},
     }
     snapshots = [
         {k: v for k, v in complete.items() if k != missing}
-        for missing in ("covered_symbols", "armed_symbols", "unhealthy_symbols")
+        for missing in ("covered_symbols", "armed_symbols", "coverage_roles",
+                        "unhealthy_symbols")
     ] + [
         {**complete, "covered_symbols": None},
         {**complete, "armed_symbols": None},
+        {**complete, "coverage_roles": None},
         {**complete, "unhealthy_symbols": None},
         {**complete, "covered_symbols": {}},
         {**complete, "armed_symbols": {}},
+        {**complete, "coverage_roles": []},
+        {**complete, "coverage_roles": {"BTCUSDT": "ENTRY_PENDING"}},
+        {**complete, "covered_symbols": ("BTCUSDT",)},
+        {**complete, "armed_symbols": ("BTCUSDT",)},
         {**complete, "unhealthy_symbols": []},
     ]
     for snapshot in snapshots:
@@ -3456,8 +3462,8 @@ def test_runtime_shutdown_seals_only_on_complete_evidence():
         def shutdown_idle_guard(self):
             return nullcontext()
         def health(self):
-            return {"healthy": True, "covered_symbols": [], "armed_symbols": [],
-                    "unhealthy_symbols": {}}
+            return {"healthy": True, "covered_symbols": (), "armed_symbols": (),
+                    "coverage_roles": {}, "unhealthy_symbols": {}}
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
     server.runtime = Runtime()
