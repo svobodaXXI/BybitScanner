@@ -1527,6 +1527,226 @@ def test_gitless_repeated_full_start_is_read_only(monkeypatch):
     assert calls == []
 
 
+def test_required_protection_ingress_load_gate_rejects_old_queue_pressure():
+    from tools.paper_maintenance import _recent_ingress_quiet
+
+    health = {
+        "ok": True, "healthy": True, "unhealthy_symbols": {},
+        "coverage_roles": {"FOLKSUSDT": "ENTRY_PENDING"},
+        "covered_symbols": ["FOLKSUSDT"],
+        "ingress": {
+            "capacity": 64, "current_pending": 0,
+            "last_overflow_symbol": "MSTUUSDT",
+            "high_watermark": 64, "max_queue_latency_ms": 2356,
+        },
+        "ingress_recent": {
+            "current_pending": 0, "recent_samples": 5,
+            "recent_max_queue_latency_ms": 120, "recent_max_processing_ms": 1436,
+        },
+    }
+    assert _recent_ingress_quiet(health, "MSTUUSDT")
+    health["ingress"]["current_pending"] = 64
+    assert not _recent_ingress_quiet(health, "MSTUUSDT")
+    health["ingress"]["current_pending"] = 0
+    health["ingress_recent"]["recent_max_queue_latency_ms"] = 2356
+    assert not _recent_ingress_quiet(health, "MSTUUSDT")
+    health["ingress_recent"]["recent_max_queue_latency_ms"] = 120
+    health["coverage_roles"]["FOLKSUSDT"] = "EXPOSURE"
+    assert not _recent_ingress_quiet(health, "MSTUUSDT")
+    health["coverage_roles"]["FOLKSUSDT"] = "ENTRY_PENDING"
+    health["ingress"]["last_overflow_symbol"] = "OTHERUSDT"
+    assert not _recent_ingress_quiet(health, "MSTUUSDT")
+
+
+def test_monolithic_reconcile_intent_once_with_no_restart(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as runtime_intent
+    import tools.stop_robot_runtime as shutdown
+    import tools.vps_release_identity as release
+    import tools.vps_paper_auto_start as auto_start
+
+    target, identity = "a" * 40, "d" * 64
+    reason = "ROBOT_PROTECTION_COVERAGE_LOST symbol=MSTUUSDT reason=ingress_overflow"
+    db = tmp_path / "paper.sqlite3"
+    db.touch()
+    env = {
+        "BYBITSCANNER_PAPER_DB": str(db),
+        "BYBITSCANNER_VPS_PAPER_AUTO_ON_START": "1",
+        "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN": "x" * 40,
+    }
+    phase = ["RECONCILIATION_REQUIRED"]
+    scanner = ["SCANNER_RUNNING"]
+    autopilot = ["PAPER_AUTO"]
+    steps = []
+
+    monkeypatch.setattr(maintenance, "_environment", lambda *_: env)
+    monkeypatch.setattr(maintenance, "_active_required_flat_proof",
+                        lambda *_: ("ROBOT_RUNNING", phase[0],
+                                    reason if phase[0] == "RECONCILIATION_REQUIRED" else None))
+    monkeypatch.setattr(maintenance, "_record_required_reconcile_once",
+                        lambda *_a, **_kw: steps.append("intent") or True)
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "READY: full PAPER proven")
+    monkeypatch.setattr(runtime_intent, "expected_database_identity",
+                        lambda *_a: identity)
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    class FakeShutdown:
+        def __init__(self, **_kw):
+            pass
+        def freeze_ingress_for_required_recovery(self):
+            steps.append("freeze")
+            scanner[0] = "SCANNER_STOPPED"
+            autopilot[0] = "OFF"
+            return ("autopilot:off", "scanner:stop")
+    monkeypatch.setattr(shutdown, "RuntimeShutdown", FakeShutdown)
+
+    def get(url, _timeout):
+        if url.endswith("/api/health"):
+            data = dict(ok=True, component="paper_backend", mode="paper",
+                        build_sha=target, database_identity=identity, paper_live_safe=True)
+        elif url.endswith("/api/scanner/status"):
+            data = dict(ok=True, mode=scanner[0])
+        elif url.endswith("/api/robot/autopilot"):
+            data = dict(ok=True, trading_account_id={"value": "paper"}, mode=autopilot[0])
+        else:
+            data = dict(ok=True, healthy=True, unhealthy_symbols={},
+                        coverage_roles={"FOLKSUSDT": "ENTRY_PENDING"},
+                        covered_symbols=["FOLKSUSDT"],
+                        ingress=dict(capacity=64, current_pending=0,
+                                     last_overflow_symbol="MSTUUSDT",
+                                     high_watermark=64, max_queue_latency_ms=2356),
+                        ingress_recent=dict(current_pending=0, recent_samples=10,
+                                            recent_max_queue_latency_ms=130,
+                                            recent_max_processing_ms=1436))
+        return SimpleNamespace(status=200, json=lambda: data)
+
+    def post(url, payload, _timeout):
+        if url.endswith("/api/robot/reconcile"):
+            assert payload == {}
+            assert steps == ["freeze", "intent"]
+            steps.append("reconcile")
+            phase[0] = "PAUSED"
+            data = dict(ok=True, success=True, recovery_status="PAUSED")
+        elif payload == {"intent": "ROBOT"}:
+            steps.append("robot")
+            phase[0] = "READY"
+            data = dict(ok=True, intent="ROBOT",
+                        final={"robot": "READY", "protection": "HEALTHY"})
+        elif payload == {"intent": "SCANNER"}:
+            steps.append("scanner")
+            scanner[0] = "SCANNER_RUNNING"
+            data = dict(ok=True, intent="SCANNER", final={"scanner": "RUNNING"})
+        else:
+            pytest.fail("unexpected POST")
+        return SimpleNamespace(status=200, json=lambda: data)
+
+    monkeypatch.setattr(runtime_intent, "http_get", get)
+    monkeypatch.setattr(runtime_intent, "http_post_json", post)
+    def enable(_env):
+        steps.append("paper_auto")
+        autopilot[0] = "PAPER_AUTO"
+    monkeypatch.setattr(auto_start, "enable_from_authorized_start", enable)
+
+    result = maintenance._recover_active_ingress_overflow(
+        target, root=tmp_path, env_file=None, sleep=lambda _: None,
+    )
+    assert result == "READY: full PAPER proven"
+    assert steps == ["freeze", "intent", "reconcile", "robot", "scanner", "paper_auto"]
+
+
+def test_monolithic_overflow_quiet_timeout_blocks_reconcile_and_keeps_backend(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as runtime_intent
+    import tools.stop_robot_runtime as shutdown
+    import tools.vps_release_identity as release
+
+    db = tmp_path / "paper.sqlite3"
+    db.touch()
+    reason = "ROBOT_PROTECTION_COVERAGE_LOST symbol=MSTUUSDT reason=ingress_overflow"
+    env = {"BYBITSCANNER_PAPER_DB": str(db),
+           "BYBITSCANNER_VPS_PAPER_AUTO_ON_START": "1",
+           "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN": "x" * 40}
+    steps = []
+    monkeypatch.setattr(maintenance, "_environment", lambda *_: env)
+    monkeypatch.setattr(maintenance, "_active_required_flat_proof",
+                        lambda *_: ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED", reason))
+    monkeypatch.setattr(runtime_intent, "expected_database_identity",
+                        lambda *_a: "d" * 64)
+    monkeypatch.setattr(release, "verify_release", lambda *_: "a" * 40)
+    class FakeShutdown:
+        def __init__(self, **_kw):
+            pass
+        def freeze_ingress_for_required_recovery(self):
+            steps.append("freeze")
+    monkeypatch.setattr(shutdown, "RuntimeShutdown", FakeShutdown)
+    def get(url, _timeout):
+        data = (
+            dict(ok=True, component="paper_backend", mode="paper",
+                 build_sha="a" * 40, database_identity="d" * 64,
+                 paper_live_safe=True)
+            if url.endswith("/api/health") else
+            dict(ok=True, mode="SCANNER_STOPPED")
+            if url.endswith("/api/scanner/status") else
+            dict(ok=True, mode="OFF")
+            if url.endswith("/api/robot/autopilot") else
+            dict(ok=True, healthy=True, unhealthy_symbols={},
+                 coverage_roles={}, covered_symbols=[],
+                 ingress={"capacity": 64, "current_pending": 64,
+                          "last_overflow_symbol": "MSTUUSDT"},
+                 ingress_recent={"current_pending": 64,
+                                 "recent_samples": 10,
+                                 "recent_max_queue_latency_ms": 2356,
+                                 "recent_max_processing_ms": 1436})
+        )
+        return SimpleNamespace(status=200, json=lambda: data)
+    monkeypatch.setattr(runtime_intent, "http_get", get)
+    monkeypatch.setattr(runtime_intent, "http_post_json",
+                        lambda *_a: pytest.fail("overloaded queue cannot reconcile"))
+    now = [0.0]
+    def sleep(seconds):
+        now[0] += seconds
+    result = maintenance._recover_active_ingress_overflow(
+        "a" * 40, root=tmp_path, env_file=None,
+        clock=lambda: now[0], sleep=sleep,
+    )
+    assert "ingress_not_quiet" in result
+    assert steps == ["freeze"]
+
+
+def test_required_reconcile_receipt_blocks_same_event_replay(tmp_path):
+    from tools.paper_maintenance import _record_required_reconcile_once
+
+    target, identity = "a" * 40, "d" * 64
+    reason = "ROBOT_PROTECTION_COVERAGE_LOST symbol=MSTUUSDT reason=ingress_overflow"
+    db = tmp_path / "paper.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE robot_runtime_state "
+            "(trading_account_id TEXT, mode TEXT, recovery_status TEXT, "
+            "reason TEXT, version INTEGER, updated_at_ms INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO robot_runtime_state VALUES "
+            "('paper','ROBOT_RUNNING','RECONCILIATION_REQUIRED',?,37,190402711884)",
+            (reason,),
+        )
+    state = ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED", reason)
+    uid = os.getuid()
+    assert _record_required_reconcile_once(
+        target, identity, state, db=db, journal_root=tmp_path, trusted_uid=uid,
+    )
+    assert not _record_required_reconcile_once(
+        target, identity, state, db=db, journal_root=tmp_path, trusted_uid=uid,
+    )
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE robot_runtime_state SET version=38, updated_at_ms=190402711885")
+    assert _record_required_reconcile_once(
+        target, identity, state, db=db, journal_root=tmp_path, trusted_uid=uid,
+    )
+
+
 def test_monolithic_start_active_required_fails_closed_without_stop_or_restart(
     monkeypatch, tmp_path, capsys,
 ):
@@ -1574,10 +1794,7 @@ def test_monolithic_start_active_required_fails_closed_without_stop_or_restart(
     ])
     assert result == 2
     output = capsys.readouterr().out
-    assert "active_PAPER_Robot_RECONCILIATION_REQUIRED" in output
-    assert "ingress_overflow" in output
-    assert "admission_closed" in output
-    assert "protection_preserved" in output
+    assert "active_PAPER_recovery_owner_auto_authority_unproven" in output
 
 
 def test_monolithic_start_active_nonready_exact_release_does_not_deploy(
