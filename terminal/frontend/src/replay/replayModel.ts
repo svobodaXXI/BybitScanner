@@ -469,7 +469,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     // Check claimed crossings against the numeric closed-candle series.
     // They corroborate geometry; they are never entries, fills, or vetoes.
     const verifiedPoints: ReplayDmiPoint[] = points.map((point, index) => {
-      const raw = record(rawDmi.points[index]);
+      const raw = record((rawDmi.points as unknown[])[index]);
       if (raw.crossings === undefined) return point; // Older archive format.
       if (!Array.isArray(raw.crossings) || raw.crossings.length > 6) {
         throw new Error("Недостоверные пересечения ADX/DMI");
