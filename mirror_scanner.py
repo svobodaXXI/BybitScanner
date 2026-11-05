@@ -332,100 +332,22 @@ def _duplicate_breakout(level_id, level, record, records, registry) -> str | Non
     return None
 
 
-def _engulfing(previous: Mapping[str, Any], current: Mapping[str, Any], direction: str) -> bool:
-    """The repository's Engulfing rule; SHORT is the same rule on price-negated candles."""
-
-    import pandas as pd
-    from geometry.reversal_patterns import is_bullish_engulfing
-
-    def view(row):
-        if direction == "LONG":
-            return {"open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]}
-        return {"open": -row["open"], "high": -row["low"], "low": -row["high"], "close": -row["close"]}
-
-    return bool(is_bullish_engulfing(pd.DataFrame([view(previous), view(current)]), 1))
-
-
-def _candle_numbers(row: Mapping[str, Any]):
-    """Positive finite OHLC of an explicitly closed, physically valid candle."""
-    from decimal import Decimal, InvalidOperation
-
-    if row.get("closed") is not True:
-        return None
-    try:
-        o, h, lo, c = (Decimal(str(row[k])) for k in ("open", "high", "low", "close"))
-    except (KeyError, TypeError, ValueError, InvalidOperation):
-        return None
-    if (not all(x.is_finite() and x > 0 for x in (o, h, lo, c))
-            or lo > min(o, c) or h < max(o, c) or h <= lo):
-        return None
-    return o, h, lo, c
+# Compatibility aliases keep existing MIRROR callers and focused regressions
+# stable; all candle recognition is shared, while confirmation/application
+# remains owned by the MIRROR campaign policy below.
+from geometry.reversal_patterns import (
+    directional_engulfing as _engulfing,
+    closed_candle_numbers as _candle_numbers,
+    confirms_next_body_close as _next_close_confirms,
+    is_nison_lower_wick,
+)
 
 
 def _nison_hammer(candle: Mapping[str, Any], direction: str,
                   preceding: Sequence[Mapping[str, Any]]) -> bool:
-    """Hammer LONG or Hanging Man SHORT: identical lower-wick shape, different context.
-
-    Nison: small real body at upper end, lower wick at least 2x the body,
-    very little/no upper wick. For the otherwise qualitative upper-wick phrase
-    we use an explicit <= 1/2-body implementation tolerance. Previous two
-    consecutive closes must fall (LONG) or rise (SHORT), a causal conservative
-    proxy for the prior trend rather than a number ascribed to Nison.
-    Doji remains observational, not an entry trigger.
-    """
-    from decimal import Decimal
-
-    if direction not in ("LONG", "SHORT") or len(preceding) < 2:
-        return False
-    values = _candle_numbers(candle)
-    before = [_candle_numbers(x) for x in preceding[-2:]]
-    if values is None or any(x is None for x in before):
-        return False
-    older, newer = before
-    try:
-        duration = int(candle["close_time_ms"]) - int(candle["open_time_ms"])
-        if (duration <= 0
-                or any(int(row["close_time_ms"]) - int(row["open_time_ms"]) != duration
-                       for row in preceding[-2:])
-                or int(preceding[-2]["close_time_ms"]) != int(preceding[-1]["open_time_ms"])
-                or int(preceding[-1]["close_time_ms"]) != int(candle["open_time_ms"])):
-            return False
-    except (KeyError, TypeError, ValueError):
-        return False
-    if direction == "LONG" and not older[3] > newer[3]:
-        return False
-    if direction == "SHORT" and not older[3] < newer[3]:
-        return False
-    o, h, lo, c = values
-    body = abs(c - o)
-    if body == 0:  # doji requires its own independently reviewed context/rule
-        return False
-    lower_wick = min(o, c) - lo
-    upper_wick = h - max(o, c)
-    return (lower_wick >= 2 * body
-            and upper_wick <= Decimal(HAMMER_MAX_UPPER_TO_BODY) * body)
-
-
-def _next_close_confirms(formation: Sequence[Mapping[str, Any]],
-                         following: Mapping[str, Any], direction: str, step: int) -> bool:
-    """The *next* closed same-TF candle confirms beyond the pattern BODY, not wick."""
-    candles = [*formation, following]
-    values = [_candle_numbers(x) for x in candles]
-    if direction not in ("LONG", "SHORT") or not formation or any(x is None for x in values):
-        return False
-    try:
-        if any(int(right["open_time_ms"]) != int(left["close_time_ms"])
-               or int(left["close_time_ms"]) - int(left["open_time_ms"]) != step
-               for left, right in zip(candles, candles[1:])):
-            return False
-        if int(following["close_time_ms"]) - int(following["open_time_ms"]) != step:
-            return False
-    except (KeyError, ValueError, TypeError):
-        return False
-    real_body_top = max(max(o, c) for o, _, _, c in values[:-1])
-    real_body_bottom = min(min(o, c) for o, _, _, c in values[:-1])
-    return (values[-1][3] > real_body_top if direction == "LONG"
-            else values[-1][3] < real_body_bottom)
+    return is_nison_lower_wick(
+        candle, direction, preceding, upper_to_body=HAMMER_MAX_UPPER_TO_BODY,
+    )
 
 
 def _entry_terms(level: MirrorLevel, record: Mapping[str, Any], candle: Mapping[str, Any],

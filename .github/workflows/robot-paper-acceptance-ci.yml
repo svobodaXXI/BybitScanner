@@ -31,6 +31,9 @@ on:
       - "terminal/application/trading_application.py"
       - "terminal/runtime/paper_runtime.py"
       - "terminal/runtime/paper_http_server.py"
+      - "terminal/runtime/incident_telemetry.py"
+      - "terminal/market_data/hub.py"
+      - "tests/test_incident_telemetry.py"
       - "terminal/persistence/**"
       - "terminal/api/**"
       - "tests/test_robot_paper_acceptance.py"
@@ -39,6 +42,7 @@ on:
       - "tests/test_robot_nonrobot_close_proof.py"
       - "tests/test_paper_two_orphan_proof.py"
       - "tools/paper_two_orphan_proof.py"
+      - "tools/paper_incident_approvals.py"
       - "tools/flat_paper_recovery_transition.py"
       - "tests/test_flat_paper_recovery_transition.py"
       - "tests/test_stop_reentry_paper_e2e.py"
@@ -65,6 +69,8 @@ on:
       - "tests/test_signal_admission.py"
       - "tests/test_telegram_delivery.py"
       - "tests/test_signal_archive_hooks.py"
+      - "geometry_feedback_store.py"
+      - "tests/test_geometry_feedback_store.py"
       - "tests/test_scanner_control_runtime.py"
       - "tests/test_dual_timeframe_scanner.py"
       - "stop_robot_runtime.bat"
@@ -174,6 +180,9 @@ jobs:
           terminal/api/rest.py
           terminal/runtime/paper_runtime.py
           terminal/runtime/paper_http_server.py
+          terminal/runtime/incident_telemetry.py
+          terminal/market_data/hub.py
+          tests/test_incident_telemetry.py
       - name: Validate immutable Editor source geometry
         run: >-
           python -m pytest -q
@@ -195,6 +204,12 @@ jobs:
           tests/test_box_first_fill_frozen_stop.py
           tests/test_robot_protection_close_no_rest.py
           tests/test_robot_protection.py
+      - name: Verify bounded owner, ingress and WS incident evidence
+        run: >-
+          python -m unittest -v
+          tests.test_incident_telemetry
+          tests.test_nonblocking_console_logging
+          tests.test_market_data_hub_disconnect_log
       - name: Run Robot chart viewport acceptance
         run: python -m pytest -q tests/test_robot_chart_viewport.py
       - name: Run MIRROR PAPER attachment and candle-source acceptance

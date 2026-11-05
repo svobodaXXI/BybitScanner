@@ -1254,7 +1254,7 @@ export function App() {
     (limitDraftState.draft ? [limitDraftState.draft] : []);
 
   return (
-    <main className="workspace-shell">
+    <main className={`workspace-shell${mode === "EDITOR" ? " workspace-editor" : ""}`}>
       {workspaceSwitchError && (
         <output
           aria-live="polite"

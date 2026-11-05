@@ -2383,7 +2383,7 @@ class RobotBreakoutMonitor:
         meets the threshold. Existing filled positions continue through their
         independent post-fill protection and emergency-close lifecycle.
         """
-        threshold = robot_protection.min_entry_rr()
+        threshold = robot_protection.wedge_min_entry_rr()
         details: dict[str, object] = {
             "entry_price": str(plan.request.limit_price), "min_rr": str(threshold),
         }

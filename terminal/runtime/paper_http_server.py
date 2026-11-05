@@ -16,6 +16,7 @@ import threading
 import math
 import time
 from terminal.protection_timing import capture_callback, protection_span
+from terminal.runtime.incident_telemetry import report_incident, start_incident_telemetry
 from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1492,6 +1493,12 @@ class SerializedPaperRuntime:
                 if self._protection_ingress_pending >= self._protection_ingress_capacity:
                     self._protection_ingress_last_overflow_symbol = normalized_symbol or None
                     self._protection_ingress_last_overflow_role = normalized_role
+                    report_incident(
+                        "INGRESS_OVERFLOW", event_id=event_id,
+                        capacity=self._protection_ingress_capacity,
+                        pending=self._protection_ingress_pending,
+                        symbol=normalized_symbol, role=normalized_role,
+                    )
                     raise ProtectionIngressOverflow(
                         "Robot protection ingress is saturated "
                         f"(capacity={self._protection_ingress_capacity}, "
@@ -1504,6 +1511,16 @@ class SerializedPaperRuntime:
                 )
                 self._protection_ingress_last_symbol = normalized_symbol or None
                 self._protection_ingress_last_role = normalized_role
+                if self._protection_ingress_pending in (
+                    max(1, self._protection_ingress_capacity // 2),
+                    self._protection_ingress_capacity,
+                ):
+                    report_incident(
+                        "INGRESS_WATERMARK", event_id=event_id,
+                        pending=self._protection_ingress_pending,
+                        capacity=self._protection_ingress_capacity,
+                        symbol=normalized_symbol, role=normalized_role,
+                    )
                 self._protection_tasks.append(_OwnerTask(
                     operation,
                     time.perf_counter(),
@@ -1659,6 +1676,8 @@ class SerializedPaperRuntime:
 
     def _observe_owner_task(
         self, kind: str, label_source: object, processing_ms: float, detail: str = "",
+        *, event_id: str = "", ingress_queue_latency_ms: float = 0.0,
+        ingress_pending: int = 0, symbol: str = "", role: str = "",
     ) -> None:
         """Owner thread only. Cheap unless the task is slow or the slowest so far.
 
@@ -1675,6 +1694,13 @@ class SerializedPaperRuntime:
                     "Slow PAPER owner task: kind=%s task=%s processing_ms=%.1f queue_depth=%d%s",
                     kind, _owner_task_label(label_source), processing_ms,
                     self._requests.qsize(), detail,
+                )
+                report_incident(
+                    "OWNER_SLOW", event_id=event_id,
+                    task_kind=kind, task_label=_owner_task_label(label_source),
+                    processing_ms=processing_ms, queue_depth=self._requests.qsize(),
+                    ingress_queue_latency_ms=ingress_queue_latency_ms,
+                    ingress_pending=ingress_pending, symbol=symbol, role=role,
                 )
         except Exception:
             self._owner_diagnostics_disabled = True
@@ -1736,6 +1762,8 @@ class SerializedPaperRuntime:
                 f" queue_latency_ms={queue_latency_ms:.1f} protection_pending={pending}"
                 f" symbol={task.symbol or 'UNKNOWN'} role={task.coverage_role}" + timing_detail
                 if processing_ms > SLOW_OWNER_TASK_WARNING_MS else "",
+                event_id=task.event_id, ingress_queue_latency_ms=queue_latency_ms,
+                ingress_pending=pending, symbol=task.symbol, role=task.coverage_role,
             )
 
     def _run(self, factory) -> None:
@@ -2322,6 +2350,13 @@ class RobotProtectionCoverageManager:
             }
         if hasattr(self._runtime, "protection_ingress_metrics"):
             health["ingress"] = self._runtime.protection_ingress_metrics()
+        if hasattr(self._runtime, "protection_ingress_recent"):
+            # Reuse the Autopilot admission window for a read-only proof of
+            # drained ingress after an overload. Lifetime high-water marks
+            # never decay and must not be mistaken for current queue pressure.
+            health["ingress_recent"] = self._runtime.protection_ingress_recent(
+                AUTOPILOT_INGRESS_WINDOW_S
+            )
         if hasattr(self._runtime, "autopilot_shadow_deferred_metrics"):
             health["autopilot_shadow_deferred"] = self._runtime.autopilot_shadow_deferred_metrics()
         return health
@@ -2934,6 +2969,27 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 self._json_response(503, {"ok": False, "error": "scanner_control_unavailable"})
                 return
             self._json_response(200, {"ok": True, **to_primitive(result)})
+            return
+
+        if parsed.path == "/api/scanner/progress":
+            # #449: last-written child progress is read-only filesystem
+            # evidence, NEVER a request through the serialized PAPER owner.
+            # Neither a completed old file nor a RUNNING snapshot proves
+            # current process liveness or safe STOP/deploy.
+            try:
+                from horn_scanner import read_progress
+
+                snapshot = read_progress()
+            except (OSError, ValueError):
+                self._json_response(503, {
+                    "ok": False, "error": "scanner_progress_unavailable",
+                })
+                return
+            self._json_response(200, {
+                "ok": True, "available": snapshot is not None,
+                "scope": "last_written_snapshot_only",
+                "progress": snapshot,
+            })
             return
 
         if parsed.path == "/api/scanner/mirror-levels":
@@ -4439,6 +4495,9 @@ def main() -> None:
     # before any network, persistence, runtime, or recovery side effect.
     server = ThreadingHTTPServer((HOST, port), PaperHttpHandler)
     try:
+        # Logging evidence begins only AFTER the port-ownership barrier.
+        # File rotation/pruning happens on a dedicated daemon, never the owner.
+        start_incident_telemetry()
         validate_bybit_proxy(configure_bybit_proxy_environment())
         rest_session = create_bybit_rest_session()
         instruments = InstrumentRegistry(rest_session)

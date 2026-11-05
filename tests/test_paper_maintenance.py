@@ -431,6 +431,151 @@ def test_staged_gitless_unknown_stop_never_replayed_without_install_journal(monk
     assert not (transactions / target).exists()
 
 
+
+def test_staged_gitless_confirmed_stop_crash_window_resumes_without_stop(
+    monkeypatch, tmp_path,
+):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    root = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    transactions = tmp_path / "transactions"
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    events = []
+    fail = [True]
+
+    def stop(scope):
+        events.append(("stop", scope))
+        return SimpleNamespace(ok=True, runtime_stopped=True)
+
+    def install(_sha, **kwargs):
+        events.append(("install", kwargs["stopped_proof"].runtime_stopped))
+        if fail[0]:
+            raise OSError("crash before journal creation")
+        return "INSTALLED_STOPPED: verified"
+
+    def preflight(*_args, **_kw):
+        events.append(("preflight", True))
+
+    args = dict(
+        stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(), preflight=preflight,
+        stop=stop, installer=install,
+        resume=lambda *_args, **_kw: "READY: EDITOR_ONLY",
+    )
+    assert deploy_staged_editor_only(target, **args).startswith(
+        "BLOCKED: Gitless_switch_unproven:OSError"
+    )
+    assert (transactions / (".stop-confirmed-" + target)).is_file()
+    assert not (transactions / target).exists()
+    fail[0] = False
+    assert deploy_staged_editor_only(target, **args) == "READY: EDITOR_ONLY"
+    assert events == [
+        ("preflight", True), ("stop", "all"), ("install", True),
+        ("preflight", True), ("install", True),
+    ]
+
+
+def test_staged_gitless_old_sha_change_blocks_stop_receipt_reuse(monkeypatch, tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    root = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    transactions = tmp_path / "transactions"
+    root.mkdir()
+    stage.mkdir()
+    old = ["b" * 40]
+    monkeypatch.setattr(release, "verify_release", lambda *_: old[0])
+    events = []
+
+    def stop(_scope):
+        events.append("stop")
+        return SimpleNamespace(ok=True, runtime_stopped=True)
+
+    def install(*_args, **_kw):
+        events.append("install")
+        raise OSError("crash before journal")
+
+    args = dict(
+        stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(), preflight=lambda *_args, **_kw: None,
+        stop=stop, installer=install,
+    )
+    assert deploy_staged_editor_only("a" * 40, **args).startswith("BLOCKED:")
+    old[0] = "c" * 40
+    assert "stop_completed_receipt_mismatch" in deploy_staged_editor_only(
+        "a" * 40, **args
+    )
+    assert events == ["stop", "install"]
+
+
+def test_staged_gitless_corrupted_stop_confirmation_blocks_without_mutation(
+    monkeypatch, tmp_path,
+):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as release
+
+    root = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    transactions = tmp_path / "transactions"
+    root.mkdir()
+    stage.mkdir()
+    transactions.mkdir(mode=0o700)
+    target = "a" * 40
+    (transactions / (".stop-invoked-" + target)).write_bytes(
+        b"STOP_INVOKED; not install authorization\\n"
+    )
+    (transactions / (".stop-confirmed-" + target)).write_text("tampered")
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    result = deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: pytest.fail("no preflight for corrupt receipt"),
+        stop=lambda *_a: pytest.fail("no STOP replay"),
+        installer=lambda *_a, **_kw: pytest.fail("no install"),
+    )
+    assert "stop_completed_receipt_mismatch" in result
+
+
+def test_staged_gitless_unwritten_stop_confirmation_never_authorizes_install(
+    monkeypatch, tmp_path,
+):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    root = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    transactions = tmp_path / "transactions"
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    actual = maintenance._confirmed_stop_receipt
+    def failed_record(*args, **kwargs):
+        if kwargs.get("record"):
+            raise OSError("write failed")
+        return actual(*args, **kwargs)
+    monkeypatch.setattr(maintenance, "_confirmed_stop_receipt", failed_record)
+    calls = []
+    kwargs = dict(
+        stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(), preflight=lambda *_a, **_kw: None,
+        stop=lambda *_: (calls.append("stop"),
+                         SimpleNamespace(ok=True, runtime_stopped=True))[1],
+        installer=lambda *_a, **_kw: pytest.fail("no install"),
+    )
+    assert deploy_staged_editor_only("a" * 40, **kwargs).startswith("BLOCKED:")
+    assert deploy_staged_editor_only("a" * 40, **kwargs).startswith(
+        "BLOCKED: prior_STOP_outcome_unproven_without_install_journal"
+    )
+    assert calls == ["stop"]
+
+
 def test_staged_gitless_rejects_symlink_release_lock_before_stop(monkeypatch, tmp_path):
     from tools.paper_maintenance import deploy_staged_editor_only
     import tools.vps_release_identity as release
@@ -846,6 +991,7 @@ def test_editor_only_never_starts_paper_with_frozen_orphan_or_approvals(
     monkeypatch.setattr(release, "verify_release", lambda *_: target)
     monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *_: "d" * 64)
     monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals", lambda *_: None)
     monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: False)
     monkeypatch.setattr(
         maintenance, "_editor_reconcile_once",
@@ -871,7 +1017,8 @@ def test_editor_only_reconciles_once_then_starts_only_after_full_postproof(
     monkeypatch.setattr(maintenance, "_durable_editor_freeze",
                         lambda *_: "d" * 64)
     monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
-    proofs = iter([False, True])
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals", lambda *_: None)
+    proofs = iter([False, True, True])
     monkeypatch.setattr(maintenance, "_paper_start_quiescent",
                         lambda *_: next(proofs))
     monkeypatch.setattr(maintenance, "_editor_reconcile_once",
@@ -903,6 +1050,7 @@ def test_editor_only_does_not_start_on_failed_reconcile_postproof(
                         lambda *_: "d" * 64)
     monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
     monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: False)
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals", lambda *_: None)
     monkeypatch.setattr(maintenance, "_editor_reconcile_once",
                         lambda *_a, **_kw: events.append("reconcile"))
     assert maintenance.start_installed_paper_from_editor(
@@ -910,6 +1058,126 @@ def test_editor_only_does_not_start_on_failed_reconcile_postproof(
         runner=lambda *_a, **_kw: events.append("start"),
     ) == "BLOCKED: PAPER_stale_owners_after_reconcile; START_not_attempted"
     assert events == ["reconcile"]
+
+
+def _frozen_approval_test_db(tmp_path, monkeypatch):
+    db = tmp_path / "incident.sqlite3"
+    monkeypatch.setenv("BYBITSCANNER_PAPER_DB", str(db))
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
+            CREATE TABLE robot_runtime_state (
+                trading_account_id TEXT, mode TEXT, recovery_status TEXT);
+            CREATE TABLE scanner_runtime_state (trading_account_id TEXT, mode TEXT);
+            CREATE TABLE robot_autopilot_state (trading_account_id TEXT, mode TEXT);
+            CREATE TABLE position_projections (
+                trading_account_id TEXT, symbol TEXT, side TEXT, quantity TEXT,
+                sync_state TEXT);
+            CREATE TABLE robot_candidates (
+                trading_account_id TEXT, candidate_id TEXT, symbol TEXT,
+                status TEXT, approved_at_ms INTEGER);
+            CREATE TABLE executions (
+                trading_account_id TEXT, symbol TEXT, exchange_timestamp_ms INTEGER);
+            CREATE TABLE robot_trades (
+                trading_account_id TEXT, candidate_id TEXT, exit_time_ms INTEGER);
+            CREATE TABLE paper_limit_orders (
+                trading_account_id TEXT, symbol TEXT, created_at_ms INTEGER, status TEXT);
+            CREATE TABLE trading_commands (
+                trading_account_id TEXT, symbol TEXT, created_at_ms INTEGER,
+                current_state TEXT);
+            CREATE TABLE paper_protection_obligations (
+                trading_account_id TEXT, status TEXT);
+            CREATE TABLE reconciliation_checkpoints (
+                trading_account_id TEXT, completed_at_ms INTEGER);
+        """)
+        conn.execute("INSERT INTO robot_runtime_state VALUES ('paper','ROBOT_RUNNING','PAUSED')")
+        conn.execute("INSERT INTO scanner_runtime_state VALUES ('paper','SCANNER_STOPPED')")
+        conn.execute("INSERT INTO robot_autopilot_state VALUES ('paper','OFF')")
+        conn.execute("INSERT INTO position_projections VALUES ('paper','NEWUSDT','Flat','0','synced')")
+        conn.execute("INSERT INTO robot_candidates VALUES "
+                     "('paper','candidate-new','NEWUSDT','APPROVED',1000)")
+    return db
+
+
+def test_editor_retirement_uses_canonical_stop_for_new_inert_owner(monkeypatch, tmp_path):
+    from tools import paper_maintenance as maintenance
+    from terminal.application import robot_control
+
+    db = _frozen_approval_test_db(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(robot_control, "stop_robot",
+                        lambda **kw: calls.append(kw["database_path"]))
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: True)
+    assert maintenance._editor_retire_inert_approvals(tmp_path, None) is True
+    assert calls == [db]
+
+
+def test_editor_retirement_refuses_new_execution_and_non_paused_phase(
+    monkeypatch, tmp_path,
+):
+    from tools import paper_maintenance as maintenance
+    from terminal.application import robot_control
+
+    db = _frozen_approval_test_db(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(robot_control, "stop_robot", lambda **_: calls.append("stop"))
+    with sqlite3.connect(db) as conn:
+        conn.execute("INSERT INTO executions VALUES ('paper','NEWUSDT',1001)")
+    assert maintenance._editor_retire_inert_approvals(tmp_path, None) is False
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE robot_runtime_state SET recovery_status='RECONCILIATION_REQUIRED'")
+    assert maintenance._editor_retire_inert_approvals(tmp_path, None) is None
+    assert calls == []
+
+
+def test_editor_resumes_paused_frozen_candidates_without_replaying_reconcile(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    events = []
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *_: "d" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent",
+                        lambda *_: len(events) > 0 and events[0] == "stop")
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals",
+                        lambda *_: events.append("stop") or True)
+    monkeypatch.setattr(maintenance, "_editor_reconcile_once",
+                        lambda *_a, **_kw: events.append("reconcile"))
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "READY: full PAPER proven")
+    result = maintenance.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="READY: EDITOR_ONLY",
+        runner=lambda *_a, **_kw: events.append("start") or SimpleNamespace(returncode=0),
+    )
+    assert result == "READY: full PAPER proven"
+    assert events == ["stop", "start"]
+
+
+def test_editor_unknown_robot_stop_does_not_reconcile_or_start(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    events = []
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *_: "d" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: False)
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals",
+                        lambda *_: events.append("stop") or False)
+    monkeypatch.setattr(maintenance, "_editor_reconcile_once",
+                        lambda *_a, **_kw: events.append("reconcile"))
+    result = maintenance.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="READY: EDITOR_ONLY",
+        runner=lambda *_a, **_kw: events.append("start"),
+    )
+    assert result == "BLOCKED: PAPER_Robot_STOP_outcome_unknown_or_unproven; no_replay"
+    assert events == ["stop"]
 
 
 def test_editor_reconcile_never_retries_unknown_owner_outcome(monkeypatch, tmp_path):
@@ -1259,6 +1527,319 @@ def test_gitless_repeated_full_start_is_read_only(monkeypatch):
     assert calls == []
 
 
+def test_required_protection_ingress_load_gate_rejects_old_queue_pressure():
+    from tools.paper_maintenance import _recent_ingress_quiet
+
+    health = {
+        "ok": True, "healthy": True, "unhealthy_symbols": {},
+        "coverage_roles": {"FOLKSUSDT": "ENTRY_PENDING"},
+        "covered_symbols": ["FOLKSUSDT"],
+        "ingress": {
+            "capacity": 64, "current_pending": 0,
+            "last_overflow_symbol": "MSTUUSDT",
+            "high_watermark": 64, "max_queue_latency_ms": 2356,
+        },
+        "ingress_recent": {
+            "current_pending": 0, "recent_samples": 5,
+            "recent_max_queue_latency_ms": 120, "recent_max_processing_ms": 1436,
+        },
+    }
+    assert _recent_ingress_quiet(health, "MSTUUSDT")
+    health["ingress"]["current_pending"] = 64
+    assert not _recent_ingress_quiet(health, "MSTUUSDT")
+    health["ingress"]["current_pending"] = 0
+    health["ingress_recent"]["recent_max_queue_latency_ms"] = 2356
+    assert not _recent_ingress_quiet(health, "MSTUUSDT")
+    health["ingress_recent"]["recent_max_queue_latency_ms"] = 120
+    health["coverage_roles"]["FOLKSUSDT"] = "EXPOSURE"
+    assert not _recent_ingress_quiet(health, "MSTUUSDT")
+    health["coverage_roles"]["FOLKSUSDT"] = "ENTRY_PENDING"
+    health["ingress"]["last_overflow_symbol"] = "OTHERUSDT"
+    assert not _recent_ingress_quiet(health, "MSTUUSDT")
+
+
+def test_monolithic_reconcile_intent_once_with_no_restart(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as runtime_intent
+    import tools.stop_robot_runtime as shutdown
+    import tools.vps_release_identity as release
+    import tools.vps_paper_auto_start as auto_start
+
+    target, identity = "a" * 40, "d" * 64
+    reason = "ROBOT_PROTECTION_COVERAGE_LOST symbol=MSTUUSDT reason=ingress_overflow"
+    db = tmp_path / "paper.sqlite3"
+    db.touch()
+    env = {
+        "BYBITSCANNER_PAPER_DB": str(db),
+        "BYBITSCANNER_VPS_PAPER_AUTO_ON_START": "1",
+        "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN": "x" * 40,
+    }
+    phase = ["RECONCILIATION_REQUIRED"]
+    scanner = ["SCANNER_RUNNING"]
+    autopilot = ["PAPER_AUTO"]
+    steps = []
+
+    monkeypatch.setattr(maintenance, "_environment", lambda *_: env)
+    monkeypatch.setattr(maintenance, "_active_required_flat_proof",
+                        lambda *_: ("ROBOT_RUNNING", phase[0],
+                                    reason if phase[0] == "RECONCILIATION_REQUIRED" else None))
+    monkeypatch.setattr(maintenance, "_record_required_reconcile_once",
+                        lambda *_a, **_kw: steps.append("intent") or True)
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "READY: full PAPER proven")
+    monkeypatch.setattr(runtime_intent, "expected_database_identity",
+                        lambda *_a: identity)
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    class FakeShutdown:
+        def __init__(self, **_kw):
+            pass
+        def freeze_ingress_for_required_recovery(self):
+            steps.append("freeze")
+            scanner[0] = "SCANNER_STOPPED"
+            autopilot[0] = "OFF"
+            return ("autopilot:off", "scanner:stop")
+    monkeypatch.setattr(shutdown, "RuntimeShutdown", FakeShutdown)
+
+    def get(url, _timeout):
+        if url.endswith("/api/health"):
+            data = dict(ok=True, component="paper_backend", mode="paper",
+                        build_sha=target, database_identity=identity, paper_live_safe=True,
+                        process_instance_id="backend-proven-1")
+        elif url.endswith("/api/scanner/status"):
+            data = dict(ok=True, mode=scanner[0])
+        elif url.endswith("/api/robot/autopilot"):
+            data = dict(ok=True, trading_account_id={"value": "paper"}, mode=autopilot[0])
+        else:
+            data = dict(ok=True, healthy=True, unhealthy_symbols={},
+                        coverage_roles={"FOLKSUSDT": "ENTRY_PENDING"},
+                        covered_symbols=["FOLKSUSDT"],
+                        ingress=dict(capacity=64, current_pending=0,
+                                     last_overflow_symbol="MSTUUSDT",
+                                     high_watermark=64, max_queue_latency_ms=2356),
+                        ingress_recent=dict(current_pending=0, recent_samples=10,
+                                            recent_max_queue_latency_ms=130,
+                                            recent_max_processing_ms=1436))
+        return SimpleNamespace(status=200, json=lambda: data)
+
+    def post(url, payload, _timeout):
+        if url.endswith("/api/robot/reconcile"):
+            assert payload == {}
+            assert steps == ["freeze", "intent"]
+            steps.append("reconcile")
+            phase[0] = "PAUSED"
+            data = dict(ok=True, success=True, recovery_status="PAUSED")
+        elif payload == {"intent": "ROBOT"}:
+            steps.append("robot")
+            phase[0] = "READY"
+            data = dict(ok=True, intent="ROBOT",
+                        final={"robot": "READY", "protection": "HEALTHY"})
+        elif payload == {"intent": "SCANNER"}:
+            steps.append("scanner")
+            scanner[0] = "SCANNER_RUNNING"
+            data = dict(ok=True, intent="SCANNER", final={"scanner": "RUNNING"})
+        else:
+            pytest.fail("unexpected POST")
+        return SimpleNamespace(status=200, json=lambda: data)
+
+    monkeypatch.setattr(runtime_intent, "http_get", get)
+    monkeypatch.setattr(runtime_intent, "http_post_json", post)
+    def enable(_env):
+        steps.append("paper_auto")
+        autopilot[0] = "PAPER_AUTO"
+    monkeypatch.setattr(auto_start, "enable_from_authorized_start", enable)
+
+    result = maintenance._recover_active_ingress_overflow(
+        target, root=tmp_path, env_file=None, sleep=lambda _: None,
+    )
+    assert result == "READY: full PAPER proven"
+    assert steps == ["freeze", "intent", "reconcile", "robot", "scanner", "paper_auto"]
+
+
+def test_monolithic_overflow_quiet_timeout_blocks_reconcile_and_keeps_backend(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as runtime_intent
+    import tools.stop_robot_runtime as shutdown
+    import tools.vps_release_identity as release
+
+    db = tmp_path / "paper.sqlite3"
+    db.touch()
+    reason = "ROBOT_PROTECTION_COVERAGE_LOST symbol=MSTUUSDT reason=ingress_overflow"
+    env = {"BYBITSCANNER_PAPER_DB": str(db),
+           "BYBITSCANNER_VPS_PAPER_AUTO_ON_START": "1",
+           "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN": "x" * 40}
+    steps = []
+    monkeypatch.setattr(maintenance, "_environment", lambda *_: env)
+    monkeypatch.setattr(maintenance, "_active_required_flat_proof",
+                        lambda *_: ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED", reason))
+    monkeypatch.setattr(runtime_intent, "expected_database_identity",
+                        lambda *_a: "d" * 64)
+    monkeypatch.setattr(release, "verify_release", lambda *_: "a" * 40)
+    class FakeShutdown:
+        def __init__(self, **_kw):
+            pass
+        def freeze_ingress_for_required_recovery(self):
+            steps.append("freeze")
+    monkeypatch.setattr(shutdown, "RuntimeShutdown", FakeShutdown)
+    def get(url, _timeout):
+        data = (
+            dict(ok=True, component="paper_backend", mode="paper",
+                 build_sha="a" * 40, database_identity="d" * 64,
+                 paper_live_safe=True,
+                 process_instance_id="backend-proven-1")
+            if url.endswith("/api/health") else
+            dict(ok=True, mode="SCANNER_STOPPED")
+            if url.endswith("/api/scanner/status") else
+            dict(ok=True, mode="OFF")
+            if url.endswith("/api/robot/autopilot") else
+            dict(ok=True, healthy=True, unhealthy_symbols={},
+                 coverage_roles={}, covered_symbols=[],
+                 ingress={"capacity": 64, "current_pending": 64,
+                          "last_overflow_symbol": "MSTUUSDT"},
+                 ingress_recent={"current_pending": 64,
+                                 "recent_samples": 10,
+                                 "recent_max_queue_latency_ms": 2356,
+                                 "recent_max_processing_ms": 1436})
+        )
+        return SimpleNamespace(status=200, json=lambda: data)
+    monkeypatch.setattr(runtime_intent, "http_get", get)
+    monkeypatch.setattr(runtime_intent, "http_post_json",
+                        lambda *_a: pytest.fail("overloaded queue cannot reconcile"))
+    now = [0.0]
+    def sleep(seconds):
+        now[0] += seconds
+    result = maintenance._recover_active_ingress_overflow(
+        "a" * 40, root=tmp_path, env_file=None,
+        clock=lambda: now[0], sleep=sleep,
+    )
+    assert "ingress_not_quiet" in result
+    assert steps == ["freeze"]
+
+
+def test_required_reconcile_receipt_blocks_same_event_replay(tmp_path):
+    from tools.paper_maintenance import _record_required_reconcile_once
+
+    target, identity = "a" * 40, "d" * 64
+    reason = "ROBOT_PROTECTION_COVERAGE_LOST symbol=MSTUUSDT reason=ingress_overflow"
+    db = tmp_path / "paper.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE robot_runtime_state "
+            "(trading_account_id TEXT, mode TEXT, recovery_status TEXT, "
+            "reason TEXT, version INTEGER, updated_at_ms INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO robot_runtime_state VALUES "
+            "('paper','ROBOT_RUNNING','RECONCILIATION_REQUIRED',?,37,190402711884)",
+            (reason,),
+        )
+    state = ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED", reason)
+    uid = os.getuid()
+    assert _record_required_reconcile_once(
+        target, identity, state, db=db, journal_root=tmp_path, trusted_uid=uid,
+    )
+    assert not _record_required_reconcile_once(
+        target, identity, state, db=db, journal_root=tmp_path, trusted_uid=uid,
+    )
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE robot_runtime_state SET version=38, updated_at_ms=190402711885")
+    assert _record_required_reconcile_once(
+        target, identity, state, db=db, journal_root=tmp_path, trusted_uid=uid,
+    )
+
+
+def test_monolithic_start_active_required_fails_closed_without_stop_or_restart(
+    monkeypatch, tmp_path, capsys,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as runtime_intent
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    identity = "d" * 64
+    db = tmp_path / "paper.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE robot_runtime_state "
+            "(trading_account_id TEXT, mode TEXT, recovery_status TEXT, reason TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO robot_runtime_state VALUES "
+            "('paper','ROBOT_RUNNING','RECONCILIATION_REQUIRED',"
+            "'ROBOT_PROTECTION_COVERAGE_LOST ingress_overflow RDWUSDT')"
+        )
+    monkeypatch.setattr(maintenance, "REPO", tmp_path)
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_environment",
+                        lambda *_: {"BYBITSCANNER_PAPER_DB": str(db)})
+    monkeypatch.setattr(runtime_intent, "expected_database_identity",
+                        lambda *_: identity)
+    monkeypatch.setattr(runtime_intent, "http_get", lambda *_a: SimpleNamespace(
+        status=200, json=lambda: {
+            "ok": True, "component": "paper_backend", "mode": "paper",
+            "build_sha": target, "database_identity": identity,
+            "paper_live_safe": True, "robot_admission_ready": False,
+        },
+    ))
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "BLOCKED: admission not ready")
+    for name in ("resume_installed_release", "deploy_staged_editor_only",
+                 "start_installed_paper_from_editor"):
+        monkeypatch.setattr(
+            maintenance, name,
+            lambda *_a, **_kw: pytest.fail("active PAPER must never be restarted"),
+        )
+
+    result = maintenance.main([
+        target, "--resume-installed-editor-only", "--start-paper-after-editor",
+    ])
+    assert result == 2
+    output = capsys.readouterr().out
+    assert "active_PAPER_recovery_owner_auto_authority_unproven" in output
+
+
+def test_monolithic_start_active_nonready_exact_release_does_not_deploy(
+    monkeypatch, tmp_path, capsys,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.runtime_intent as runtime_intent
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    db = tmp_path / "paper.sqlite3"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE robot_runtime_state "
+            "(trading_account_id TEXT, mode TEXT, recovery_status TEXT, reason TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO robot_runtime_state VALUES "
+            "('paper','ROBOT_RUNNING','READY',NULL)"
+        )
+    monkeypatch.setattr(maintenance, "REPO", tmp_path)
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_environment",
+                        lambda *_: {"BYBITSCANNER_PAPER_DB": str(db)})
+    monkeypatch.setattr(runtime_intent, "expected_database_identity",
+                        lambda *_: "d" * 64)
+    monkeypatch.setattr(runtime_intent, "http_get", lambda *_a: SimpleNamespace(
+        status=200, json=lambda: {
+            "ok": True, "component": "paper_backend", "mode": "paper",
+            "build_sha": target, "database_identity": "d" * 64,
+            "paper_live_safe": True, "robot_admission_ready": True,
+        },
+    ))
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "BLOCKED: protection uncertain")
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_a, **_kw: pytest.fail("must not change running PAPER"))
+    assert maintenance.main([
+        target, "--resume-installed-editor-only", "--start-paper-after-editor",
+    ]) == 2
+    assert "active_PAPER_recovery_owner_auto_authority_unproven" in capsys.readouterr().out
+
+
 def test_gitless_full_start_unproven_runtime_does_not_skip_recovery(monkeypatch):
     import tools.paper_maintenance as maintenance
     import tools.vps_release_identity as release
@@ -1568,3 +2149,65 @@ def test_full_gitless_readiness_rejects_wrong_backend_db_even_with_telegram(monk
         readiness=lambda: True, require_gitless_telegram=True,
     )
     assert result.startswith("BLOCKED: Gitless_PAPER_Telegram_or_database_identity_unproven")
+
+
+def test_exceptional_gitless_receipt_reuses_original_protected_handoff(
+    monkeypatch, tmp_path,
+):
+    import json
+    import tools.paper_maintenance as maintenance
+    import tools.paper_interrupted_stop_recovery as recovery
+    import tools.vps_release_identity as release
+    from tools.vps_gitless_release_activate import ActivationBlocked
+
+    target, old = "a" * 40, "b" * 40
+    journal_root = tmp_path / "transactions"
+    journal = journal_root / target
+    journal.mkdir(parents=True, mode=0o700)
+    journal_root.chmod(0o700)
+    journal.chmod(0o700)
+    blobs = {
+        "terminal/runtime/paper_http_server.py": "c" * 40,
+        "tools/vps_release_identity.py": "d" * 40,
+    }
+    for filename, sha in (("old.json", old), ("target.json", target)):
+        path = journal / filename
+        path.write_text(json.dumps({"build_sha": sha, "blobs": blobs}))
+        path.chmod(0o600)
+    units = journal / "units.json"
+    units.write_text("{}")
+    units.chmod(0o600)
+    stop = journal_root / (".stop-invoked-" + recovery.PRIOR_TARGET)
+    stop.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    stop.chmod(0o600)
+    for phase in ("handoff-proven", "backend-exited"):
+        receipt = journal_root / (
+            recovery.MARKER_PREFIX + phase + "-" + recovery.PRIOR_TARGET
+        )
+        receipt.write_text(target + "\n")
+        receipt.chmod(0o600)
+    monkeypatch.setattr(release, "verify_release", lambda *_args: target)
+
+    maintenance._complete_stop_intent(journal_root, target, uid=os.getuid())
+    ready = journal / "editor-ready"
+    assert ready.read_bytes() == target.encode()
+    assert ready.stat().st_mode & 0o777 == 0o600
+    maintenance._complete_stop_intent(journal_root, target, uid=os.getuid())
+    assert ready.read_bytes() == target.encode()
+
+    ready.unlink()
+    monkeypatch.setattr(release, "verify_release", lambda *_args: old)
+    with pytest.raises(ActivationBlocked, match="exceptional_editor_receipt_proof_unproven"):
+        maintenance._complete_stop_intent(journal_root, target, uid=os.getuid())
+    assert not ready.exists()
+
+    monkeypatch.setattr(release, "verify_release", lambda *_args: target)
+    handoff = journal_root / (
+        recovery.MARKER_PREFIX + "handoff-proven-" + recovery.PRIOR_TARGET
+    )
+    handoff.unlink()
+    with pytest.raises(ActivationBlocked, match="exceptional_editor_receipt_proof_unproven"):
+        maintenance._complete_stop_intent(journal_root, target, uid=os.getuid())
+    assert not ready.exists()
+
+
