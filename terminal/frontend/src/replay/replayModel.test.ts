@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews } from "./replayModel";
+import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("shows only completed candles and fills revealed at the current cursor", () => {
@@ -335,6 +335,75 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(() => parseReplayDocument(altered(1, { risk_status: "RISK_PASS",
       stop_price: String(rejectedPrice * 0.993), quantity: String(10/rejectedPrice) })))
       .toThrow(/1:1/);
+  });
+
+  it("compares frozen target/stop first touches against DMI known BEFORE candidate opening", () => {
+    const start = Date.UTC(2026, 9, 2);
+    const M5 = 300_000;
+    const ohlc = [
+      [100, 101, 99.5, 100],   // Preceding closed bar (DMI cross at close).
+      [100, 101, 99.5, 100],   // Candidate 1: neither first touch.
+      [100, 106, 99.5, 101],   // Candidate 1: frozen target first.
+      [100, 106, 98, 101],     // Candidate 2: both touched in one bar.
+      [100, 101, 98, 99],      // Candidate 3: stop first.
+      [100, 101, 99.5, 100],   // Candidate 4: unresolved at end.
+    ];
+    const events = ohlc.map(([open, high, low, close], i) => ({
+      source: "SIMULATION" as const, simulation_run_id: "study", sequence: i + 1,
+      kind: "CANDLE_CLOSED" as const, time_ms: start + (i + 1) * M5,
+      candle: { start_ms: start + i * M5, end_ms: start + (i + 1) * M5,
+        open, high, low, close, volume: 10 },
+    }));
+    const candidate = (index: number, side: "LONG" | "SHORT" = "LONG") => ({
+      source: "SIMULATION" as const, kind: "BLUE_5M_OPEN" as const,
+      classification: "UNVALIDATED_GEOMETRY_ONLY" as const,
+      time_ms: events[index].time_ms, open_ms: events[index].candle.start_ms,
+      blue_available_at_ms: start, trend_version: start, side,
+      entry_price: 100, blue_price: 99, target_price: side === "LONG" ? 105 : 95,
+      risk_status: "RISK_PASS" as const, stop_price: side === "LONG" ? 99.3 : 100.7,
+      quantity: 0.1,
+    });
+    const signal = { time_ms: events[0].time_ms, side: "PLUS" as const,
+      direction: "UP" as const, comparator: "LEVEL_20" as const };
+    const base: ReplayDocument = {
+      source: "SIMULATION", simulation_run_id: "study", mode: "MARKET_ONLY",
+      events, h017_blue_risk_previews: [1, 3, 4, 5].map(i => candidate(i)),
+      dmi_5m: { source: "SIMULATION", timeframe: "5m", di_length: 14,
+        adx_smoothing: 14, points: events.map((bar, i) => ({
+          time_ms: bar.time_ms, plus_di: 24, minus_di: 12, adx: 21,
+          crossings: i === 0 ? [signal] : [],
+        })) },
+    };
+    const rows = studyH017BlueCandidates(base);
+    expect(rows.map(x => x.first_touch)).toEqual([
+      "TARGET_FIRST", "BOTH_SAME_M5", "STOP_FIRST", "UNRESOLVED",
+    ]);
+    expect(rows[0].crossings_at_open).toEqual([signal]);
+    expect(rows[1].crossings_at_open).toEqual([]); // Not from candidate's own close.
+    expect(visibleH017CandidateStudy(rows, null)).toEqual([]);
+    expect(visibleH017CandidateStudy(rows, events[0].time_ms)).toEqual([]);
+    expect(visibleH017CandidateStudy(rows, events[1].time_ms)).toMatchObject([
+      { first_touch: "UNRESOLVED" },
+    ]);
+    expect(visibleH017CandidateStudy(rows, events[2].time_ms)).toMatchObject([
+      { first_touch: "TARGET_FIRST", resolved_at_ms: events[2].time_ms },
+    ]);
+    expect(visibleH017CandidateStudy(rows, events[4].time_ms).map(x => x.first_touch))
+      .toEqual(["TARGET_FIRST", "BOTH_SAME_M5", "STOP_FIRST"]);
+    expect(visibleH017CandidateStudy(rows, events[5].time_ms).map(x => x.first_touch))
+      .toEqual(["TARGET_FIRST", "BOTH_SAME_M5", "STOP_FIRST", "UNRESOLVED"]);
+    expect(studyH017BlueCandidates({ ...base, mode: "STRATEGY" })).toEqual([]);
+    expect(studyH017BlueCandidates({ ...base, dmi_5m: undefined })[0].crossings_at_open).toBeNull();
+    expect(studyH017BlueCandidates({ ...base, h017_blue_risk_previews: [
+      { ...candidate(1), risk_status: "RISK_BELOW_1R" },
+    ] })).toEqual([]);
+    // Mirror the FIRST-TOUCH policy for shorts without pretending intrabar order.
+    const shortBars = events.map((e, i) => ({ ...e, candle: {
+      ...e.candle, low: i === 2 ? 94 : 98, high: i === 3 ? 101 : 100.5,
+    } }));
+    const short = studyH017BlueCandidates({ ...base, events: shortBars,
+      h017_blue_risk_previews: [candidate(1, "SHORT")] });
+    expect(short[0].first_touch).toBe("TARGET_FIRST");
   });
 
   it("accepts strictly causal Wilder 5m DMI and hides future samples during playback", () => {

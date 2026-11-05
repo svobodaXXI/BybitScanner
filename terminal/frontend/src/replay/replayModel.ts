@@ -95,6 +95,17 @@ export type ReplayDocument = {
   geometry_warmup_hours?: number;
   dmi_5m?: ReplayDmi;
 };
+/** Counterfactual first-touch observations; NEVER simulated fills or trade results. */
+export type H017FirstTouch = "TARGET_FIRST" | "STOP_FIRST" | "BOTH_SAME_M5" | "UNRESOLVED";
+export type H017CandidateStudyRow = {
+  candidate_time_ms: number;
+  open_ms: number;
+  side: "LONG" | "SHORT";
+  /** Crossings known on the last CLOSED M5 immediately before the opening. */
+  crossings_at_open: ReplayDmiCrossing[] | null;
+  first_touch: H017FirstTouch;
+  resolved_at_ms?: number;
+};
 export type VisibleReplay = {
   candles: ReplayCandle[];
   signals: ReplayEvent[];
@@ -639,6 +650,85 @@ export function visibleH017BlueRiskPreviews(
 ): H017BlueRiskPreview[] {
   if (document.mode !== "MARKET_ONLY" || lastClosedMs === null) return [];
   return (document.h017_blue_risk_previews ?? []).filter(c => c.time_ms <= lastClosedMs);
+}
+
+/**
+ * Study the first observed touch of FROZEN research target/stop prices.
+ * This is not a trading exit rule: overlapping independent candidates count
+ * independently, the within-candle order is UNKNOWN when both levels touch,
+ * and fees/slippage/fills/PnL are deliberately excluded.
+ *
+ * Use the exact preceding closed M5 for DMI corroboration at candidate OPEN.
+ * No near-neighbour window or directional veto is invented.
+ */
+export function studyH017BlueCandidates(document: ReplayDocument): H017CandidateStudyRow[] {
+  if (document.mode !== "MARKET_ONLY" || !document.h017_blue_risk_previews) return [];
+  const bars = document.events.filter(e => e.kind === "CANDLE_CLOSED").map(e => e.candle!);
+  if (!bars.length) return [];
+  const openIndex = new Map(bars.map((bar, index) => [bar.start_ms, index]));
+  const dmiAtClose = new Map((document.dmi_5m?.points ?? []).map(p => [p.time_ms, p]));
+  // Segment tree makes first-touch searches O(log N) per candidate, not O(N²).
+  let capacity = 1;
+  while (capacity < bars.length) capacity *= 2;
+  const highs = new Float64Array(capacity * 2).fill(-Infinity);
+  const lows = new Float64Array(capacity * 2).fill(Infinity);
+  bars.forEach((bar, i) => { highs[capacity + i] = bar.high; lows[capacity + i] = bar.low; });
+  for (let i = capacity - 1; i > 0; i--) {
+    highs[i] = Math.max(highs[2 * i], highs[2 * i + 1]);
+    lows[i] = Math.min(lows[2 * i], lows[2 * i + 1]);
+  }
+  const firstTouch = (
+    node: number, left: number, right: number, since: number,
+    side: "LONG" | "SHORT", stop: number, target: number,
+  ): number => {
+    if (right <= since || left >= bars.length) return -1;
+    const mayHit = side === "LONG"
+      ? highs[node] >= target || lows[node] <= stop
+      : lows[node] <= target || highs[node] >= stop;
+    if (!mayHit) return -1;
+    if (right - left === 1) return left;
+    const mid = (left + right) / 2;
+    const earlier = firstTouch(node * 2, left, mid, since, side, stop, target);
+    return earlier >= 0 ? earlier : firstTouch(node * 2 + 1, mid, right, since, side, stop, target);
+  };
+  return document.h017_blue_risk_previews
+    .filter(p => p.risk_status === "RISK_PASS")
+    .map(p => {
+      const barIndex = openIndex.get(p.open_ms);
+      if (barIndex === undefined || p.stop_price === undefined) {
+        throw new Error("H-017 study requires a validated, frozen candidate");
+      }
+      const lastKnown = dmiAtClose.get(p.open_ms);
+      const crossingEvidence = lastKnown?.adx != null && lastKnown.crossings !== undefined
+        ? lastKnown.crossings : null;
+      const found = firstTouch(1, 0, capacity, barIndex, p.side, p.stop_price, p.target_price);
+      if (found < 0) return {
+        candidate_time_ms: p.time_ms, open_ms: p.open_ms, side: p.side,
+        crossings_at_open: crossingEvidence, first_touch: "UNRESOLVED" as const,
+      };
+      const bar = bars[found];
+      const hitTarget = p.side === "LONG" ? bar.high >= p.target_price : bar.low <= p.target_price;
+      const hitStop = p.side === "LONG" ? bar.low <= p.stop_price : bar.high >= p.stop_price;
+      return {
+        candidate_time_ms: p.time_ms, open_ms: p.open_ms, side: p.side,
+        crossings_at_open: crossingEvidence,
+        first_touch: hitTarget && hitStop ? "BOTH_SAME_M5" as const
+          : hitTarget ? "TARGET_FIRST" as const : "STOP_FIRST" as const,
+        resolved_at_ms: bar.end_ms,
+      };
+    });
+}
+
+/** Future OHLC outcomes are never revealed before their own candle closes. */
+export function visibleH017CandidateStudy(
+  study: readonly H017CandidateStudyRow[], lastClosedMs: number | null,
+): H017CandidateStudyRow[] {
+  if (lastClosedMs === null) return [];
+  return study.filter(row => row.candidate_time_ms <= lastClosedMs).map(row =>
+    row.resolved_at_ms !== undefined && row.resolved_at_ms > lastClosedMs
+      ? { ...row, first_touch: "UNRESOLVED", resolved_at_ms: undefined }
+      : row,
+  );
 }
 
 /** For MARKET_ONLY, DMI has exactly one observation per completed 5m candle. */
