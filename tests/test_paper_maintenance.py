@@ -1016,7 +1016,7 @@ def test_editor_only_reconciles_once_then_starts_only_after_full_postproof(
     monkeypatch.setattr(maintenance, "_durable_editor_freeze",
                         lambda *_: "d" * 64)
     monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
-    proofs = iter([False, True])
+    proofs = iter([False, True, True])
     monkeypatch.setattr(maintenance, "_paper_start_quiescent",
                         lambda *_: next(proofs))
     monkeypatch.setattr(maintenance, "_editor_reconcile_once",
