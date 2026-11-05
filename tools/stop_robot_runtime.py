@@ -473,8 +473,8 @@ class RuntimeShutdown:
                 if self._freeze_autopilot():
                     steps.append("autopilot:off")
             self._mark("requesting Scanner STOPPED")
-            self._stop_scanner()
-            steps.append("scanner:stop")
+            if self._stop_scanner():
+                steps.append("scanner:stop")
             self._mark("Scanner STOPPED confirmed")
             if scope == SCOPE_ALL:
                 # Revalidate after Scanner STOP: another controller may have
@@ -795,17 +795,45 @@ class RuntimeShutdown:
         ):
             raise SafeStopError("Autopilot OFF post-Scanner state unproven; runtime kept alive")
 
-    def _stop_scanner(self) -> None:
+    def _stop_scanner(self) -> bool:
+        """One phase-aware STOP; no duplicate mutation when already stopped.
+
+        Return whether STOP was issued. A proved STOPPED scanner is a
+        successful no-op after a partial shutdown; any unknown state blocks.
+        """
         try:
-            status, body = self._post(self._backend + "/api/scanner/stop", {}, MUTATION_TIMEOUT_S)
+            status, body = self._get(
+                self._backend + "/api/scanner/status", PROBE_TIMEOUT_S,
+            )
+        except Exception as exc:
+            raise SafeStopError(
+                "Scanner state unavailable before STOP; runtime kept alive"
+            ) from exc
+        if (status != 200 or not isinstance(body, dict)
+                or body.get("ok") is not True):
+            raise SafeStopError(
+                "Scanner state unproven before STOP; runtime kept alive"
+            )
+        mode = body.get("mode")
+        if mode == "SCANNER_STOPPED":
+            return False
+        if mode != "SCANNER_RUNNING":
+            raise SafeStopError(
+                "Scanner is not in a legal stoppable state; runtime kept alive"
+            )
+
+        try:
+            status, body = self._post(
+                self._backend + "/api/scanner/stop", {}, MUTATION_TIMEOUT_S,
+            )
         except Exception as exc:
             raise SafeStopError("Scanner stop outcome is unknown; not retried") from exc
         if status != 200 or not isinstance(body, dict) or body.get("ok") is not True:
             raise SafeStopError("Scanner stop was rejected")
-        # A successful command acknowledgement is not proof that the Scanner
-        # has stopped. Never proceed to Robot/protection shutdown on stale state.
-        # The read-only postcondition is safe to repeat; do not retry POST.
+        # A successful command acknowledgement is not proof that Scanner
+        # stopped. Never proceed to Robot/protection on stale state.
         self._require_scanner_stopped()
+        return True
 
     def _reconcile_robot(self) -> None:
         # The backend owns evidence and recovery. Never retry an ambiguous mutation.
