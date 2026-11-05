@@ -219,8 +219,8 @@ describe("standalone SIMULATION viewer contract", () => {
     const blueAt = events[6].time_ms;
     const start = events[10].candle!.start_ms;
     const startPrice = events[10].candle!.open;
-    const rejectedAt = events[34].candle!.start_ms;
-    const rejectedPrice = events[34].candle!.open;
+    const rejectedAt = events[36].candle!.start_ms;
+    const rejectedPrice = events[36].candle!.open;
     const geometry = [
       { kind: "MAIN_1H", side: "BULL", available_at_ms: known, trend_version: known,
         from_ms: ts, to_ms: ts + 300_000, from_price: "95", to_price: "95",
@@ -246,7 +246,7 @@ describe("standalone SIMULATION viewer contract", () => {
           stop_price: String(startPrice * 0.993), quantity: String(10/startPrice) },
         { source: "SIMULATION", kind: "BLUE_5M_OPEN",
           classification: "UNVALIDATED_GEOMETRY_ONLY",
-          time_ms: events[34].time_ms, open_ms: rejectedAt,
+          time_ms: events[36].time_ms, open_ms: rejectedAt,
           blue_available_at_ms: blueAt, trend_version: known, side: "LONG",
           entry_price: String(rejectedPrice), blue_price: "100", target_price: "110",
           risk_status: "RISK_BELOW_1R" },
@@ -256,7 +256,7 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(visibleH017BlueRiskPreviews(doc, null)).toHaveLength(0);
     expect(visibleH017BlueRiskPreviews(doc, events[10].time_ms - 1)).toHaveLength(0);
     expect(visibleH017BlueRiskPreviews(doc, events[10].time_ms)).toHaveLength(1);
-    expect(visibleH017BlueRiskPreviews(doc, events[34].time_ms)
+    expect(visibleH017BlueRiskPreviews(doc, events[36].time_ms)
       .map(x => x.risk_status)).toEqual(["RISK_PASS", "RISK_BELOW_1R"]);
     expect(visibleReplay(doc.events, doc.events.length).fills).toHaveLength(0);
     const altered = (i: number, x: Record<string, unknown>) => ({
