@@ -2361,6 +2361,54 @@ class RobotProtectionCoverageManager:
             health["autopilot_shadow_deferred"] = self._runtime.autopilot_shadow_deferred_metrics()
         return health
 
+    def _retire_orphan_entry_arms(self) -> None:
+        """Reap pre-LIMIT subscriptions after a failed entry without losing coverage.
+
+        An arm is provisional until a resting LIMIT becomes durable. If the
+        submission failed or its caller exited before release_entry_coverage(),
+        the websocket continues filling the protection owner queue forever.
+        Only the Robot monitor is allowed to create arms, so its idle guard
+        excludes the arm->LIMIT race while the owner proves that no durable
+        work needs the subscription. Unknown proofs leave every arm intact.
+        """
+        with self._lock:
+            arms = frozenset(self._armed)
+        if not arms:
+            return
+        try:
+            guard = self._runtime.call(lambda owner: owner.robot_shutdown_idle_guard())
+            with guard:
+                def _prove(owner):
+                    account = TradingAccountId("paper")
+                    durable = set(owner.robot_protection_coverage_symbols())
+                    busy = set(durable)
+                    for position in owner.store.load_open_position_projections(account):
+                        busy.add(position.position_key.symbol.value)
+                    for obligation in owner.store.load_unresolved_paper_protection_obligations(account):
+                        busy.add(obligation.symbol.value)
+                    for command in owner.store.load_unfinished_commands():
+                        symbol = getattr(getattr(command, "symbol", None), "value", None)
+                        if not isinstance(symbol, str) or not symbol:
+                            return None
+                        busy.add(symbol)
+                    for symbol in arms - busy:
+                        if owner.store.load_active_paper_limits(account, Symbol(symbol)):
+                            busy.add(symbol)
+                    return arms - busy
+
+                orphans = self._runtime.call(_prove)
+                if orphans is None:
+                    return
+                # Do not unsubscribe here: resync() performs the normal
+                # listener teardown after it re-reads all durable coverage.
+                with self._subscription_lock:
+                    with self._lock:
+                        self._armed.difference_update(orphans)
+        except Exception:
+            # Monitor busy or incomplete evidence: retain protection arms.
+            # A later watchdog pass retries without touching the Robot fence.
+            return
+
     def resync(self, *, shutdown_strict: bool = False) -> None:
         """Reconcile subscriptions with the owner's current coverage targets.
 
@@ -2368,6 +2416,11 @@ class RobotProtectionCoverageManager:
         coverage for newly-admitted symbols and releases it only once the
         owner no longer reports the symbol as needing coverage.
         """
+        # Undo only entry arms that lost their pre-LIMIT caller. The
+        # authoritative protection subscriptions for trades/orders remain.
+        if not shutdown_strict:
+            self._retire_orphan_entry_arms()
+
         def _coverage_state(runtime):
             symbols = runtime.robot_protection_coverage_symbols()
             roles = (
