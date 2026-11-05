@@ -2321,6 +2321,10 @@ class RobotProtectionCoverageManager:
         # (arm_entry_coverage). resync() keeps them covered and ends each one in
         # the pass that first sees the symbol's durable coverage role.
         self._armed: set[str] = set()
+        # Pre-LIMIT handover may legitimately take several watchdog cycles.
+        # Only an aged, idle and owner-unclaimed arm is eligible for reaping.
+        self._armed_since: dict[str, float] = {}
+        self._entry_arm_min_age_s = max(60.0, 2.0 * resync_interval_s)
         # Serializes subscription changes between resync() and arm_entry_coverage().
         self._subscription_lock = threading.RLock()
         self._stop = threading.Event()
@@ -2372,7 +2376,12 @@ class RobotProtectionCoverageManager:
         work needs the subscription. Unknown proofs leave every arm intact.
         """
         with self._lock:
-            arms = frozenset(self._armed)
+            now = time.monotonic()
+            arms = frozenset(
+                symbol for symbol in self._armed
+                if (symbol in self._armed_since
+                    and now - self._armed_since[symbol] >= self._entry_arm_min_age_s)
+            )
         if not arms:
             return
         try:
@@ -2404,6 +2413,8 @@ class RobotProtectionCoverageManager:
                 with self._subscription_lock:
                     with self._lock:
                         self._armed.difference_update(orphans)
+                        for symbol in orphans:
+                            self._armed_since.pop(symbol, None)
         except Exception:
             # Monitor busy or incomplete evidence: retain protection arms.
             # A later watchdog pass retries without touching the Robot fence.
@@ -2466,6 +2477,8 @@ class RobotProtectionCoverageManager:
                 # Gap-free hand-over: an arm ends in the same pass that sees its
                 # durable role, so the symbol never leaves ``wanted`` in between.
                 self._armed -= durable
+                for symbol in durable:
+                    self._armed_since.pop(symbol, None)
                 wanted = durable | self._armed
                 current = set(self._covered)
                 to_add = wanted - current
@@ -2535,13 +2548,16 @@ class RobotProtectionCoverageManager:
                     return False
             with self._lock:
                 self._armed.add(normalized)
+                self._armed_since.setdefault(normalized, time.monotonic())
                 self._roles.setdefault(normalized, "ENTRY_PENDING")
         return True
 
     def release_entry_coverage(self, symbol: str) -> None:
         """End an arm whose entry LIMIT was not created; resync() drops the feed."""
         with self._lock:
-            self._armed.discard(symbol.strip().upper())
+            normalized = symbol.strip().upper()
+            self._armed.discard(normalized)
+            self._armed_since.pop(normalized, None)
 
     @contextmanager
     def shutdown_idle_guard(self):
@@ -2597,6 +2613,8 @@ class RobotProtectionCoverageManager:
                 arms = self._runtime.call(retire)
                 with self._lock:
                     self._armed.difference_update(arms)
+                    for symbol in arms:
+                        self._armed_since.pop(symbol, None)
                 self.resync(shutdown_strict=True)
                 return self.health()
 
