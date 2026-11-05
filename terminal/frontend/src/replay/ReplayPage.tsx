@@ -5,7 +5,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi, visibleObservations,
-  visibleH017BlueRiskPreviews,
+  visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
@@ -313,6 +313,15 @@ export function ReplayPage() {
     () => visibleDmi(document, shown.candles.length).flatMap(point => point.crossings ?? []),
     [document, shown.candles.length],
   );
+  const retrospectiveStudy = useMemo(() => studyH017BlueCandidates(document), [document]);
+  const visibleStudy = useMemo(
+    () => visibleH017CandidateStudy(retrospectiveStudy, shown.lastTimeMs),
+    [retrospectiveStudy, shown.lastTimeMs],
+  );
+  const cohorts = (withCross: boolean) => visibleStudy.filter(row =>
+    row.crossings_at_open !== null && (row.crossings_at_open.length > 0) === withCross);
+  const countTouch = (rows: typeof visibleStudy, kind: typeof visibleStudy[number]["first_touch"]) =>
+    rows.filter(row => row.first_touch === kind).length;
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -457,6 +466,19 @@ export function ReplayPage() {
       {document.mode === "MARKET_ONLY" && document.h017_blue_risk_previews && cursor > 0 &&
         <p className="replay-geometry-note" role="status" aria-label="H-017 риск синей M5">
           Синяя M5: открытий за линией {blueRiskPreviews.length}, из них риск ≥1:1 — {blueRiskPreviews.filter(x => x.risk_status === "RISK_PASS").length}. Квадраты — исследовательские оценки по депозиту 200 USDT, не сделки.
+        </p>}
+      {document.mode === "MARKET_ONLY" && document.h017_blue_risk_previews && cursor > 0 &&
+        <p className="replay-geometry-note" role="status" aria-label="H-017 сравнение DMI и исходов">
+          H-017 · независимые сценарии касания фиксированных уровней для {visibleStudy.length} кандидатов ≥1R:
+          {" "}цель раньше стопа {countTouch(visibleStudy, "TARGET_FIRST")},
+          {" "}стоп раньше цели {countTouch(visibleStudy, "STOP_FIRST")},
+          {" "}оба в одной M5 {countTouch(visibleStudy, "BOTH_SAME_M5")},
+          {" "}ещё не определено {countTouch(visibleStudy, "UNRESOLVED")}.
+          {" "}Пересечения DMI на последней ЗАКРЫТОЙ M5 до открытия:
+          {" "}≥1 ({cohorts(true).length}): цель {countTouch(cohorts(true), "TARGET_FIRST")}, стоп {countTouch(cohorts(true), "STOP_FIRST")};
+          {" "}0 ({cohorts(false).length}): цель {countTouch(cohorts(false), "TARGET_FIRST")}, стоп {countTouch(cohorts(false), "STOP_FIRST")};
+          {" "}нет полного ADX/данных {visibleStudy.filter(row => row.crossings_at_open === null).length}.
+          {" "}Без исполнения, без PnL; совпадение цели и стопа в одной свече не разрешается догадкой.
         </p>}
       {document.mode === "MARKET_ONLY" &&
         document.dmi_5m?.points.some(point => point.crossings !== undefined) && cursor > 0 &&

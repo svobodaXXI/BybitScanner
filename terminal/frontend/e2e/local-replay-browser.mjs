@@ -170,6 +170,8 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-blue-risk"), "1");
   assert.match(await page.getByRole("status", { name: "H-017 риск синей M5" }).innerText(),
     /открытий за линией 1, из них риск ≥1:1 — 1/);
+  assert.match(await page.getByRole("status", { name: "H-017 сравнение DMI и исходов" }).innerText(),
+    /цель раньше стопа 0, стоп раньше цели 1, оба в одной M5 0, ещё не определено 0/);
   assert.match(await page.getByRole("status", { name: "Пересечения ADX/DMI" }).innerText(),
     /пересечений на закрытых M5: 1/);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-observations"), "2");
