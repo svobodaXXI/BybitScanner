@@ -55,8 +55,20 @@ try {
   assert.match(await page.locator("body").innerText(), /Синтетический пример/);
   await page.waitForFunction(() => document.querySelectorAll(".replay-chart canvas").length > 0);
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
-  await page.getByRole("button", { name: "Шаг" }).click();
-  assert.ok(Number(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow")) > 0);
+  const progress = page.locator('[role="progressbar"]');
+  const forward = page.getByRole("button", { name: "Шаг вперёд ▶", exact: true });
+  const backward = page.getByRole("button", { name: "◀ Шаг назад", exact: true });
+  assert.equal(await backward.isDisabled(), true);
+  await forward.click();
+  const firstStep = Number(await progress.getAttribute("aria-valuenow"));
+  assert.ok(firstStep > 0);
+  await forward.click();
+  const secondStep = Number(await progress.getAttribute("aria-valuenow"));
+  assert.ok(secondStep > firstStep, "second closed candle advances the recording");
+  await backward.click();
+  assert.equal(Number(await progress.getAttribute("aria-valuenow")), firstStep);
+  await forward.click();
+  assert.equal(Number(await progress.getAttribute("aria-valuenow")), secondStep);
   await page.getByRole("button", { name: "В начало" }).click();
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
 
