@@ -188,6 +188,21 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "3");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-priors"), "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-priors"), "1");
+  // Manual annotations use the same UTC anchor across real M5/H1 candles;
+  // they survive replay rewind and can be deleted without altering geometry.
+  await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
+  await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 160 } });
+  assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
+  await page.getByRole("button", { name: "H1", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
+  assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
+  await page.getByRole("button", { name: "M5", exact: true }).click();
+  await backward.click();
+  assert.match(await page.locator(".replay-drawing-count").innerText(), /1/);
+  await forward.click();
+  assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
+  await page.getByRole("button", { name: "Удалить выбранное" }).click();
+  assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "0");
   // Diagnostics and geometry observation decorations stay hidden until requested.
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-observations"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-blue-risk"), "0");
