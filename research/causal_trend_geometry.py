@@ -367,6 +367,11 @@ class CausalGeometryFeed:
         """Latest causally confirmed purple H1 level, independent of a re-fit."""
         return self._prior_price
 
+    @property
+    def confirmed_hourly_prior_touch_ms(self) -> int | None:
+        """H1 second-contact wick timestamp that licensed the current prior."""
+        return self._prior_touch_ms
+
     def _advance_hourly_prior(self, closed_at_ms: int) -> None:
         trend = self._hourly_trend
         if trend is None:
