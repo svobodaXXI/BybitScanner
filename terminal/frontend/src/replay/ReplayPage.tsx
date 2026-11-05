@@ -5,6 +5,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi, visibleObservations,
+  visibleH017BlueRiskPreviews,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
@@ -29,6 +30,10 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const observedDmi = useMemo(() => visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
   const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
+  const blueRiskPreviews = useMemo(
+    () => visibleH017BlueRiskPreviews(document, shown.lastTimeMs),
+    [document, shown.lastTimeMs],
+  );
   const latestDmi = observedDmi.at(-1);
   const dmiValue = (value: number | null | undefined) => value == null ? "—" : value.toFixed(1);
 
@@ -200,6 +205,19 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
         context.stroke();
         paintedObservations += 1;
       }
+      // Hollow squares are H-017 blue-line risk previews, never fills.
+      let paintedBlueRisk = 0;
+      for (const item of blueRiskPreviews) {
+        const x = api.timeScale().timeToCoordinate((item.open_ms / 1000) as UTCTimestamp);
+        const y = candleSeries.priceToCoordinate(item.entry_price);
+        if (x === null || y === null || x < 0 || x > priceWidth || y < 0 || y > paneHeight) continue;
+        context.beginPath();
+        context.strokeStyle = item.risk_status === "RISK_PASS" ? "#25c776" : "#f1a46a";
+        context.lineWidth = 1.5;
+        context.rect(x - 4, y - 4, 8, 8);
+        context.stroke();
+        paintedBlueRisk++;
+      }
       const fills = visibleExecutionMarkers(document.events.slice(0, cursor), shown.candles);
       let rendered = 0;
       for (const fill of fills) {
@@ -232,13 +250,14 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       canvas.dataset.visibleGeometry = String(knownLines.length);
       canvas.dataset.paintedGeometry = String(paintedGeometry);
       canvas.dataset.visibleObservations = String(paintedObservations);
+      canvas.dataset.visibleBlueRisk = String(paintedBlueRisk);
     };
     chart.current?.timeScale().scrollToPosition(14, false);
     renderExecutions.current();
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, observedDmi, observedTouches]);
+  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews]);
 
   return (
     <div className="replay-chart-shell">
@@ -246,7 +265,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
         <div className="replay-chart" ref={container}
           aria-label="Свечной график и нижняя панель ADX DMI" />
         <canvas ref={executionCanvas} className="replay-execution-overlay"
-          aria-hidden="true" data-visible-fills="0" data-visible-observations="0" />
+          aria-hidden="true" data-visible-fills="0" data-visible-observations="0" data-visible-blue-risk="0" />
       </div>
       <div className="replay-dmi-legend" role="group" aria-label="Индикатор ADX DMI">
         <strong>ADX/DMI {document.dmi_5m
@@ -286,6 +305,10 @@ export function ReplayPage() {
   const progress = Math.round(100 * cursor / total);
   const lastEvents = document.events.slice(Math.max(0, cursor - 8), cursor).reverse();
   const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
+  const blueRiskPreviews = useMemo(
+    () => visibleH017BlueRiskPreviews(document, shown.lastTimeMs),
+    [document, shown.lastTimeMs],
+  );
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -427,6 +450,10 @@ export function ReplayPage() {
           : ""}
         {` Касаний 1–3: ${observedTouches.filter(item => item.kind === "MAIN_1H_TOUCH").length}; движений от линии: ${observedTouches.filter(item => item.kind === "MAIN_1H_REACTION").length}. Метки — наблюдения, не входы.`}
       </p>}
+      {document.mode === "MARKET_ONLY" && document.h017_blue_risk_previews && cursor > 0 &&
+        <p className="replay-geometry-note" role="status" aria-label="H-017 риск синей M5">
+          Синяя M5: открытий за линией {blueRiskPreviews.length}, из них риск ≥1:1 — {blueRiskPreviews.filter(x => x.risk_status === "RISK_PASS").length}. Квадраты — исследовательские оценки по депозиту 200 USDT, не сделки.
+        </p>}
       {document.demo && <p className="replay-note">
         ДЕМО: синтетические свечи и условные события, не реальные сигналы стратегии и не результат Bybit.
       </p>}
