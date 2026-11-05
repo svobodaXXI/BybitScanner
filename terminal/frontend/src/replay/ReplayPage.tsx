@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -159,18 +159,19 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       // DrawingOverlay's rayEndPoint extends the line to the price pane edge.
       // Never refit the line to the replayed price candles.
       const knownLines = visibleGeometry(document, shown.lastTimeMs);
+      const historicalLines = visibleGeometryHistory(document, shown.lastTimeMs);
       const knownPriors = visiblePriorLevels(document, shown.lastTimeMs);
       const brokenByVersion = new Map(priorBreaks.map(item => [item.trend_version, item]));
       let paintedGeometry = 0;
-      for (const line of knownLines) {
+      for (const line of historicalLines) {
         // Line anchors can predate the requested playback window. Lightweight
         // Charts returns null for timestamps not present in loaded candles.
         // Project the original, frozen two-point slope (CausalLine.value_at)
         // onto two actual VISIBLE candle times, without any new fitting.
         const startingBar = shown.candles.find(bar => bar.start_ms >= line.from_ms);
-        const breakEvent = brokenByVersion.get(line.trend_version);
-        const endingBar = breakEvent && breakEvent.previous_side === line.side
-          ? shown.candles.slice().reverse().find(bar => bar.start_ms < breakEvent.confirmed_at_ms)
+        const isHistorical = line.superseded_at_ms !== undefined;
+        const endingBar = isHistorical
+          ? shown.candles.slice().reverse().find(bar => bar.start_ms < line.superseded_at_ms!)
           : shown.candles.at(-1);
         if (!startingBar || !endingBar || startingBar.start_ms >= endingBar.start_ms) continue;
         const priceAt = (at_ms: number) => line.from_price +
@@ -180,17 +181,20 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
         const y1 = candleSeries.priceToCoordinate(priceAt(startingBar.start_ms));
         const y2 = candleSeries.priceToCoordinate(priceAt(endingBar.start_ms));
         if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
-        // Never extend a retired trend into candles after its prior broke.
-        const end = breakEvent && breakEvent.previous_side === line.side
+        // Past trendline versions remain on the chart at their original
+        // wick anchors and stop at the next revision or confirmed prior break.
+        const end = isHistorical
           ? { x: x2, y: y2 }
           : rayEndPoint(
               { x: x1, y: y1 }, { x: x2, y: y2 },
               { width: priceWidth, height: paneHeight },
             );
         context.beginPath();
-        context.strokeStyle = line.kind === "REFERENCE_5M" ? "#57aaff" : "#f6dc59";
+        context.strokeStyle = line.kind === "REFERENCE_5M"
+          ? isHistorical ? "rgba(87, 170, 255, 0.50)" : "#57aaff"
+          : isHistorical ? "rgba(246, 220, 89, 0.50)" : "#f6dc59";
         context.lineWidth = 1;
-        context.setLineDash(line.kind === "TARGET_1H" ? [6, 4] : []);
+        context.setLineDash(isHistorical ? [3, 4] : line.kind === "TARGET_1H" ? [6, 4] : []);
         context.moveTo(x1, y1);
         context.lineTo(end.x, end.y);
         context.stroke();
