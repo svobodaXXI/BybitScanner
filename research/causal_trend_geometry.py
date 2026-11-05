@@ -344,6 +344,11 @@ class CausalGeometryFeed:
         self._pending_break: tuple[int, Decimal, TrendSide] | None = None
         self._waiting_for_side: TrendSide | None = None
         self._reversal_known_at_ms: int | None = None
+        # The M5 correction is its own stateful movement: new pivots must
+        # never silently replace its first anchor or create parallel blues.
+        self._active_blue: CausalLine | None = None
+        self._active_blue_hourly_first_ms: int | None = None
+        self._blue_broken_at_ms: int | None = None
 
     def _install_opposite_if_confirmed(self, at_ms: int) -> None:
         if self._waiting_for_side is None:
@@ -418,16 +423,49 @@ class CausalGeometryFeed:
                         if fitted is not None:
                             self._hourly_trend = fitted
         self._install_opposite_if_confirmed(five_minute.end_ms)
-        recent = self._five.recent_pivots
-        # Do not copy/scan all historical 5m bars on every replay tick.
-        between = self._five.bars_between(recent[-3], recent[-1]) if len(recent) >= 3 else ()
-        line = last_correction_reference(
-            hourly=self._hourly_trend,
-            five_minute_pivots=recent,
-            five_minute_bars=between,
-        )
+        trend = self._hourly_trend
+        # A structurally retired/reversed H1 trend also ends its associated M5
+        # correction; a mere H1 re-fit inside the SAME movement does not.
+        origin = trend.main.first.at_ms if trend is not None else None
+        if (trend is None or (self._active_blue is not None and
+                self._active_blue_hourly_first_ms != origin)):
+            self._active_blue = None
+            self._active_blue_hourly_first_ms = None
+        if self._active_blue is not None and trend is not None:
+            line = self._active_blue
+            # H-017 continuation is the NEXT M5 OPEN beyond the already
+            # published blue, not a wick and not a new pivot. The record is
+            # exposed at this bar's CLOSE by the causal replay cursor.
+            if line.available_at_ms <= five_minute.start_ms and (
+                (trend.side == "BULL" and
+                 five_minute.open > line.value_at(five_minute.start_ms)) or
+                (trend.side == "BEAR" and
+                 five_minute.open < line.value_at(five_minute.start_ms))
+            ):
+                self._active_blue = None
+                self._active_blue_hourly_first_ms = None
+                self._blue_broken_at_ms = five_minute.end_ms
+        if self._active_blue is None and trend is not None:
+            recent = self._five.recent_pivots
+            # Only a NEW correction starting AFTER a completed blue break
+            # may create another blue. Past three-pivot windows are not
+            # recycled on every replay candle.
+            if len(recent) >= 3 and (
+                self._blue_broken_at_ms is None or
+                recent[-3].at_ms > self._blue_broken_at_ms
+            ):
+                between = self._five.bars_between(recent[-3], recent[-1])
+                candidate = last_correction_reference(
+                    hourly=trend,
+                    five_minute_pivots=recent,
+                    five_minute_bars=between,
+                )
+                if candidate is not None:
+                    self._active_blue = candidate
+                    self._active_blue_hourly_first_ms = origin
+        line = self._active_blue
         if line is not None and line.available_at_ms > five_minute.end_ms:
             raise AssertionError("future correction slope exposed")
-        if self._hourly_trend is not None and self._hourly_trend.available_at_ms > five_minute.end_ms:
+        if trend is not None and trend.available_at_ms > five_minute.end_ms:
             raise AssertionError("future hourly trend exposed")
-        return self._hourly_trend, line
+        return trend, line
