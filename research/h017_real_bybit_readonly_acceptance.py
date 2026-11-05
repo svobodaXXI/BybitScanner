@@ -1,29 +1,130 @@
 """One-off H-017 real Bybit read-only market-history acceptance.
 
-Runs in isolated GitHub Actions. Uses the existing public GET adapter, no
-credentials, no orders, no PAPER state, no synthetic fallback, no disk writes.
+Runs in isolated GitHub Actions. Aggregates official public Bybit archived
+trade prints into closed 5m OHLCV; no credentials, PAPER, fake data or disk writes.
 The 7 visible UTC days have 72h of earlier closed-candle geometry warmup.
 """
 from __future__ import annotations
 
+import csv
+import gzip
 import hashlib
+import io
 import json
+from bisect import bisect_right
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from urllib.request import Request, urlopen
 
-from research.local_replay_viewer.server import load_public_history, BYBIT_PUBLIC_KLINE
+from research.local_replay_viewer.server import load_public_history
 
 SYMBOL = "GRASSUSDT"
 START = "2026-07-29"
 END = "2026-08-05"
 EXPECTED_VISIBLE_BARS = 7 * 24 * 12
 M5 = 300_000
+ARCHIVE_ROOT = "https://public.bybit.com/trading/"
+MAX_COMPRESSED_DAY = 24_000_000
+MAX_TRADES_PER_DAY = 750_000
+
+
+def archived_trade_klines():
+    """Fetch official Bybit linear trades and rebuild only time-complete M5 bars.
+
+    Historical trade prices are NOT the v5 kline endpoint. The test report
+    preserves this distinction, never passing the archive as authenticated
+    Bybit candle API data. Missing minutes or invalid archives fail closed.
+    """
+    day = datetime.strptime(START, "%Y-%m-%d").replace(
+        tzinfo=timezone.utc,
+    ) - timedelta(hours=72)
+    stop = datetime.strptime(END, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    archive_hashes = {}
+    by_bucket = {}
+    global_sequence = 0
+    while day < stop:
+        stamp = day.strftime("%Y-%m-%d")
+        url = ARCHIVE_ROOT + SYMBOL + "/" + SYMBOL + stamp + ".csv.gz"
+        request = Request(url, headers={"User-Agent": "H017-ReadOnly-ArchiveResearch/1.0"},
+                          method="GET")
+        with urlopen(request, timeout=25) as response:
+            payload = response.read(MAX_COMPRESSED_DAY + 1)
+        if not payload or len(payload) > MAX_COMPRESSED_DAY:
+            raise ValueError("missing or oversized official Bybit trade archive " + stamp)
+        archive_hashes[stamp] = hashlib.sha256(payload).hexdigest()
+        first_ms = int(day.timestamp() * 1000)
+        last_ms = first_ms + 86_400_000
+        rows = 0
+        with gzip.GzipFile(fileobj=io.BytesIO(payload)) as compressed:
+            with io.TextIOWrapper(compressed, encoding="utf-8", newline="") as stream:
+                reader = csv.DictReader(stream)
+                if not {"timestamp", "symbol", "size", "price"}.issubset(reader.fieldnames or []):
+                    raise ValueError("unknown Bybit trade archive schema " + stamp)
+                for item in reader:
+                    rows += 1
+                    if rows > MAX_TRADES_PER_DAY or item["symbol"] != SYMBOL:
+                        raise ValueError("oversized or foreign trade archive " + stamp)
+                    timestamp = Decimal(item["timestamp"])
+                    price, size = Decimal(item["price"]), Decimal(item["size"])
+                    time_ms = int(timestamp * 1000)
+                    if (not timestamp.is_finite() or not price.is_finite() or
+                        not size.is_finite() or price <= 0 or size <= 0 or
+                        not first_ms <= time_ms < last_ms):
+                        raise ValueError("invalid/out-of-day Bybit trade " + stamp)
+                    bucket = time_ms // M5 * M5
+                    key = (time_ms, global_sequence)
+                    global_sequence += 1
+                    agg = by_bucket.get(bucket)
+                    if agg is None:
+                        by_bucket[bucket] = {
+                            "first": key, "last": key, "open": price,
+                            "close": price, "high": price, "low": price, "volume": size,
+                        }
+                    else:
+                        if key < agg["first"]:
+                            agg["first"], agg["open"] = key, price
+                        if key > agg["last"]:
+                            agg["last"], agg["close"] = key, price
+                        agg["high"] = max(agg["high"], price)
+                        agg["low"] = min(agg["low"], price)
+                        agg["volume"] += size
+        if rows == 0:
+            raise ValueError("official Bybit archive has no trades " + stamp)
+        day += timedelta(days=1)
+
+    first_ms = int((datetime.strptime(START, "%Y-%m-%d").replace(
+        tzinfo=timezone.utc) - timedelta(hours=72)).timestamp() * 1000)
+    end_ms = int(stop.timestamp() * 1000)
+    times = list(range(first_ms, end_ms, M5))
+    if len(by_bucket) != len(times) or set(by_bucket) != set(times):
+        raise ValueError("official trade archive has missing 5m bars; no synthetic filling")
+    normalized = [
+        {"time": str(t), "open": str(by_bucket[t]["open"]),
+         "high": str(by_bucket[t]["high"]), "low": str(by_bucket[t]["low"]),
+         "close": str(by_bucket[t]["close"]), "volume": str(by_bucket[t]["volume"])}
+        for t in times
+    ]
+
+    def fetch_public_derived(symbol: str, interval: str, limit: int, *, end_ms: int):
+        if symbol != SYMBOL or interval != "5" or not 1 <= limit <= 1000:
+            raise ValueError("unexpected derived archive fetch request")
+        idx = bisect_right(times, end_ms)
+        return list(reversed(normalized[max(0, idx - limit):idx]))
+
+    return fetch_public_derived, archive_hashes
 
 
 def check() -> dict[str, object]:
-    doc = load_public_history(symbol=SYMBOL, start=START, end=END)
+    fetch, archive_hashes = archived_trade_klines()
+    doc = load_public_history(symbol=SYMBOL, start=START, end=END,
+                              fetch_candles=fetch)
+    # Explicitly correct the in-memory archival provenance: this is NOT a
+    # direct response from the public /v5/market/kline API and is not a
+    # browser-import acceptance of its strictly versioned JSON format.
+    doc["market_data_source"] = "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M"
     events = doc["events"]
     if (doc["source"], doc["mode"], doc["market_data_source"], doc["symbol"]) != (
-        "SIMULATION", "MARKET_ONLY", "BYBIT_PUBLIC_KLINE", SYMBOL
+        "SIMULATION", "MARKET_ONLY", "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M", SYMBOL
     ):
         raise AssertionError("wrong public-market research identity")
     if len(events) != EXPECTED_VISIBLE_BARS or doc["geometry_warmup_hours"] != 72:
@@ -71,9 +172,11 @@ def check() -> dict[str, object]:
     # Hash the actual returned closed OHLCV bars, not mock fixtures or rendered pixels.
     canonical = json.dumps(bars, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     summary = {
-        "result": "REAL_BYBIT_PUBLIC_HISTORY_CHECKED",
+        "result": "REAL_BYBIT_OFFICIAL_TRADE_ARCHIVE_CHECKED",
         "no_trading": True,
-        "origin": BYBIT_PUBLIC_KLINE,
+        "origin": ARCHIVE_ROOT + SYMBOL + "/",
+        "archive_compressed_sha256_by_day": archive_hashes,
+        "market_data_source": doc["market_data_source"],
         "symbol": SYMBOL,
         "start_utc_inclusive": START,
         "end_utc_exclusive": END,
