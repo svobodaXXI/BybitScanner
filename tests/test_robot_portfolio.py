@@ -301,6 +301,31 @@ class PortfolioTests(unittest.TestCase):
         }
         self.assertEqual(before, after)
 
+    def test_shadow_handoff_lookup_does_not_rescan_candidates_per_audit_row(self):
+        """Critical PAPER owner path: historical SHADOW rows cannot multiply candidate scans."""
+        for n in range(12):
+            self.assertEqual(self.observe(f"history-{n}", f"H{n}USDT").result.outcome, "ALLOW")
+        self.candidate("owned", "OWNUSDT")
+        row = self.store.get_robot_candidate("owned")
+        lookups = []
+
+        class TrackedSnapshot(dict):
+            def get(self, key, default=None):
+                if key == "source_box_candidate_id":
+                    lookups.append(key)
+                return super().get(key, default)
+
+        with patch.object(
+            self.store, "load_robot_candidates",
+            return_value=(replace(row, signal_snapshot=TrackedSnapshot(row.signal_snapshot)),),
+        ):
+            facts = self.facts()
+
+        self.assertTrue(facts["available"], facts.get("data_error"))
+        self.assertEqual(facts["occupied_ro"], 13)
+        self.assertLessEqual(len(lookups), 4,
+                             "SHADOW decisions must share an indexed handoff view")
+
     def test_real_handoff_replaces_virtual_and_terminal_flat_releases(self):
         self.observe("selected", "SELUSDT")
         self.candidate("selected", "SELUSDT")

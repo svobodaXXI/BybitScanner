@@ -319,13 +319,25 @@ def collect_portfolio_facts(
         physical_symbols = set(symbols)
         terminal_identities, facts["source_terminal_events"] = _source_terminal_identities(store, account)
         released = []
+        # A long-lived PAPER DB may contain thousands of SHADOW ALLOW rows.
+        # Do not rescan every Robot candidate for each historical decision on
+        # every PAPER_AUTO arrival. Build the exact same candidate/Box handoff
+        # matches once, preserving ambiguous multi-owner detection below.
+        shadow_handoffs: dict[str, list] = {}
+        for c in candidates.values():
+            if c.status == "BOX_PLAN_ONLY":
+                continue
+            keys = {c.candidate_id}
+            source_ref = c.signal_snapshot.get("source_box_candidate_id")
+            if isinstance(source_ref, str):
+                keys.add(source_ref)
+            for ref in keys:
+                shadow_handoffs.setdefault(ref, []).append(c)
         for decision in (store.load_robot_auto_decisions(account)
                          if auto_decisions is None else auto_decisions):
             if decision.mode != "SHADOW" or decision.outcome != "ALLOW":
                 continue
-            linked = [c for c in candidates.values() if c.candidate_id == decision.candidate_ref
-                      or c.signal_snapshot.get("source_box_candidate_id") == decision.candidate_ref]
-            linked = [c for c in linked if c.status != "BOX_PLAN_ONLY"]
+            linked = shadow_handoffs.get(decision.candidate_ref, ())
             if len(linked) > 1:
                 raise Unavailable("SHADOW selection has ambiguous real handoff")
             if linked:

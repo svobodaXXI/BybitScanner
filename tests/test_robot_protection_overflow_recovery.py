@@ -168,6 +168,35 @@ class RobotProtectionOverflowRecoveryTests(unittest.TestCase):
             release.set()
             runtime.close()
 
+    def test_continuity_reconcile_defers_while_protection_events_are_queued(self):
+        """Reconcile must not stall STOP/TAKE behind existing protection backlog."""
+        owner = _Owner()
+        owner.robot_continuity_release_deferred = lambda: False
+        runtime = _Runtime(owner)
+        ingress = {"capacity": 64, "current_pending": 24}
+        runtime.protection_ingress_metrics = lambda: dict(ingress)
+        manager = RobotProtectionCoverageManager(object(), runtime, recovery_session=_Session())
+
+        manager._release_continuity_fence(owner, SYMBOL)
+        self.assertEqual(owner.releases, [])
+        self.assertEqual(manager._release_retry, {SYMBOL})
+
+        # A subsequent calm watchdog pass invokes canonical Robot release.
+        ingress["current_pending"] = 0
+        manager._retry_deferred_fence_releases()
+        self.assertEqual(owner.releases, [(SYMBOL, True)])
+        self.assertEqual(manager._release_retry, set())
+
+    def test_continuity_reconcile_without_metrics_uses_canonical_proof(self):
+        """Missing optional metrics do not invent a Robot READY transition."""
+        owner = _Owner()
+        owner.robot_continuity_release_deferred = lambda: False
+        manager = RobotProtectionCoverageManager(
+            object(), _Runtime(owner), recovery_session=_Session(),
+        )
+        manager._release_continuity_fence(owner, SYMBOL)
+        self.assertEqual(owner.releases, [(SYMBOL, True)])
+
     def test_restart_rehydrates_durable_continuity_loss_and_recovers(self):
         owner = _Owner((SYMBOL, "ingress_overflow"))
         runtime = _Runtime(owner)
