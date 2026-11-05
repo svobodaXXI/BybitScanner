@@ -152,3 +152,74 @@ Backend и STOP/TAKE сохранены. Не подменять причину 
 **Единая очередь P0:** реализовать внутренний coordinator freeze → drain → proof → protected handoff → release/reconcile, включая гонку PAPER_AUTO против stop, partial entry/exit LIMIT, STOP obligations, orphan JASMY, idempotent retries и доказанные причины BLOCKED. Не порождать самостоятельный «квест освобождения контура» и не требовать от владельца нескольких технических ручных шагов. Торговое разрешение и разрешение на VPS runtime mutation по-прежнему отдельные полномочия, которые не выводятся из этой записи.
 
 **Актуальная исходная граница (owner-supplied read-only VPS, 02.11.2026 00:08 MSK):** running f100ef369a1105443332b5729b558464c27be48f; пять защищённых позиций CFX/DJT/GRASS/ICP/SENT; девять active LIMIT; Scanner RUNNING; PAPER_AUTO; Robot READY; JASMY Flat + OPEN. Stable после #762: c4e4ce01b2f011ce2eb8814795a45bb24e2eeca6, не deployed. **Ни drain, ни safe-stop, ни upgrade, ни recovery JASMY не подтверждены.** XP не начислять.
+
+## 10. Системная ревизия паралича PAPER — 05.11.2026 (реальный результат прежде PR)
+
+**Отправная точка:** owner READ-ONLY VPS 05.11 16:23 MSK: running
+`4090641514b8f558a0054fd577b2750b944fd8d6`, Admission false,
+PAPER_AUTO ON, Scanner API RUNNING, Protection HEALTHY, последняя перегрузка
+MONUSDT/EXPOSURE, ingress 64/64, max owner callback ~4885 ms. Полная
+quiescence/Robot durable reason неизвестны из-за отсутствующего owner root SSH
+и слишком узкого forced-command. GitHub stable содержит более новые fixes;
+ни их deployment, ни восстановление PAPER не доказаны.
+
+**Подтверждённые дефекты кода и границы исправлений:**
+1. `SerializedPaperRuntime` сериализует критическую защиту и обычные owner
+   callbacks. Если дорогая операция держит owner, отдельная строгая FIFO
+   очередь защиты заполняется, и `RobotProtectionCoverageManager` ставит
+   durable `RECONCILIATION_REQUIRED`. Удалять STOP/TAKE события, увеличивать
+   capacity бесконечно или подменять `REQUIRED` на `READY` нельзя.
+2. `collect_portfolio_facts` на каждом PAPER_AUTO решении строил вложенный
+   обход **каждый historical SHADOW ALLOW × каждый Robot candidate** для
+   handoff проверки. По мере роста истории это O(A×C) внутри owner write
+   transaction, включая время, когда ingress продолжает получать книги.
+   Исправление в #879 — один индекс handoff ссылок O(A+C) с сохранением
+   `>1` ambiguous-owner rejection и прежних фактов. Реальный вклад в
+   4885 ms без host profiling ещё не измерен.
+3. Временные `ENTRY_PENDING` subscriptions могут переживать провал
+   создания resting LIMIT. Они продолжают заполнять очередь без нужного
+   entry ownership. #879 убирает только доказанно осиротевшие arms после
+   grace period и monitor idle guard; все position/command/obligation/LIMIT
+   owners сохраняют listener. Первый replay поймал premature retire;
+   исправление допускается только после повторного зелёного replay.
+4. #878 устранил ненужную preflight-подготовку PAPER_AUTO уже во время
+   подтверждённого ingress overload. **Это не защита от длинной owner
+   транзакции, начатой до перегрузки**; количественный предел работы
+   Autopilot и его чтений остаётся отдельным доказуемым runtime acceptance.
+5. `RuntimeIntentReconciler`, `RuntimeShutdown`, `paper_maintenance` и
+   systemd oneshot имеют разные точки входа/phase transitions; это не
+   основание заводить новых контроллеров. Для VPS нужен один существующий
+   owner-ledger-driven workflow: converge/freeze/prove/handoff/start/verify.
+   `deploy/systemd/bybitscanner-paper-backend.service` сознательно имеет
+   `Restart=no`, так как простая перезагрузка теряет software protection.
+   Менять на безусловный Restart=always нельзя.
+6. Root-owned forced-command `preflight|execute|diagnose` и установленная
+   Gitless версия не дают внедрить новый collector/код restricted key.
+   **Одно восстановление доверенного owner root доступа для установки
+   фиксированного handler — реальная внешняя граница**, не исчезающая
+   от очередного PR. Не расширять общий shell/sudo и не вводить второй
+   независимый PAPER writer.
+
+**Что заимствовать, а не переписывать:**
+- Kubernetes controller-runtime: reconcile desired vs observed, per-key
+  rate-limited retry, idempotent state convergence; coalesce повторные
+  *requests* к сверке, но НЕ последовательные market crossings.
+  https://github.com/kubernetes-sigs/controller-runtime/blob/main/FAQ.md
+- Temporal/AWS Durable Execution: durable event/intent + idempotency key,
+  at-most-once для неопределённого внешнего торгового side effect, bounded
+  retry только после read-back и однозначного доказательства результата.
+  https://docs.temporal.io/encyclopedia/retry-policies
+  https://docs.aws.amazon.com/durable-execution/patterns/best-practices/idempotency/
+- systemd `sd_notify`/watchdog: отдельно мониторить готовность работы,
+  не путать `active` с `Admission READY`. Supervisory restart возможен
+  лишь для компонентов, чей restart не нарушает сохранение защиты.
+  https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html
+
+**Единый эксплуатационный критерий:** после одного owner-authorized
+доступа/immutable upgrade — доказанная PAPER DB identity, Robot
+READY/Admission READY, Scanner RUNNING, PAPER_AUTO, real protection event
+under replayed overload, не потеряны STOP/TAKE, нет двойных исполнений;
+проходит обычный PAPER order→fill→close; Telegram получает те же сведения.
+Никаких XP/«готово» по CI или PR. Отсутствие данных либо реальная открытая
+экспозиция означает узкое `BLOCKED`, но не останавливает независимые
+read-only/Scanner работы. Никакого LIVE.
