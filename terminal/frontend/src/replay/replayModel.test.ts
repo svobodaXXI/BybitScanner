@@ -359,6 +359,48 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(visiblePriorLevels(demo, confirmedH1)).toEqual([]);
   });
 
+  it("uses immutable Python purple-prior events and refuses invented H1 levels", () => {
+    const sample = syntheticReplay();
+    const events = sample.events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map((e, i) => ({ ...e, sequence: i + 1, simulation_run_id: "prior_kernel" }));
+    const from = events[0].candle!.start_ms;
+    const firstKnown = events[8].time_ms, nextKnown = events[28].time_ms;
+    const geometry = [{
+      kind: "MAIN_1H", side: "BEAR", available_at_ms: firstKnown,
+      from_ms: from, to_ms: events[3].candle!.start_ms,
+      from_price: "120", to_price: "115", trend_version: firstKnown,
+      classification: "UNVALIDATED_GEOMETRY_ONLY",
+    }, {
+      kind: "MAIN_1H", side: "BEAR", available_at_ms: nextKnown,
+      from_ms: from, to_ms: events[22].candle!.start_ms,
+      from_price: "120", to_price: "110", trend_version: nextKnown,
+      classification: "UNVALIDATED_GEOMETRY_ONLY",
+    }];
+    const first = { kind: "H1_PRIOR_CONFIRMED", side: "BEAR",
+      at_ms: geometry[0].to_ms, price: "115", available_at_ms: firstKnown,
+      trend_version: firstKnown, classification: "UNVALIDATED_GEOMETRY_ONLY" };
+    const second = { ...first, at_ms: geometry[1].to_ms, price: "110",
+      available_at_ms: nextKnown, trend_version: nextKnown };
+    const input = {
+      source: "SIMULATION", simulation_run_id: "prior_kernel",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events, geometry,
+      hourly_prior_updates: [first, second],
+    };
+    const doc = parseReplayDocument(input);
+    expect(visiblePriorLevels(doc, firstKnown - 1)).toEqual([]);
+    expect(visiblePriorLevels(doc, nextKnown - 1).map(x => x.price)).toEqual([115]);
+    expect(visiblePriorLevels(doc, nextKnown).map(x => x.price)).toEqual([115, 110]);
+    expect(visiblePriorLevels(doc, nextKnown)[0].superseded_at_ms).toBe(nextKnown);
+    expect(visiblePriorLevels(doc, nextKnown - 1).map(x => x.price)).toEqual([115]);
+    expect(() => parseReplayDocument({ ...input, hourly_prior_updates: [
+      first, { ...second, available_at_ms: nextKnown + 1 },
+    ] })).toThrow();
+    expect(() => parseReplayDocument({ ...input, hourly_prior_updates: [
+      first, { ...second, price: "109" },
+    ] })).toThrow();
+  });
+
   it("handles bullish H1 prior moves symmetrically and ignores unfinished H1 highs", () => {
     const start = Date.UTC(2026, 10, 2);
     const step = 300_000;

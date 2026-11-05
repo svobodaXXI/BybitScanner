@@ -182,6 +182,10 @@ class HistoricalCandleFeedTests(unittest.TestCase):
                 end_ms=t0 + len(bars) * FIVE_MINUTES_MS,
                 run_id="h1_revision_test", fetch_candles=lambda *a, **k: None)
 
+        self.assertEqual(len(doc["hourly_prior_updates"]), 1)
+        self.assertEqual(doc["hourly_prior_updates"][0]["price"], "91")
+        self.assertEqual(doc["hourly_prior_updates"][0]["at_ms"],
+                         main.second.at_ms)
         published = [item for item in doc["geometry"]
                      if item["kind"] == "REFERENCE_5M"]
         self.assertEqual(len(published), 2)
