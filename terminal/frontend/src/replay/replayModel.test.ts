@@ -532,6 +532,51 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(visiblePriorBreaks(make("BEAR", 101, 99.5), start + 3 * hourMs)).toEqual([]);
   });
 
+  it("breaks the purple level frozen BEFORE the H1 candle, not its newly shifted version", () => {
+    const start = Date.UTC(2026, 10, 3), hour = 3_600_000, step = 300_000;
+    const events = Array.from({ length: 37 }, (_, index) => {
+      const at = start + index * step;
+      const open = index === 36 ? 98 : 105;
+      const close = index === 35 ? 99 : open;
+      return {
+        source: "SIMULATION", simulation_run_id: "prior_frozen",
+        sequence: index + 1, kind: "CANDLE_CLOSED", time_ms: at + step,
+        candle: { start_ms: at, end_ms: at + step, open, close,
+          high: index >= 24 && index <= 35 ? 150 : 112,
+          low: Math.min(open, close) - 4, volume: 1 },
+      };
+    });
+    const early = start + hour;
+    const late = start + 3 * hour;
+    const doc = parseReplayDocument({
+      source: "SIMULATION", simulation_run_id: "prior_frozen",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events,
+      geometry: [{
+        kind: "MAIN_1H", side: "BULL", available_at_ms: early,
+        from_ms: start, to_ms: start + step, from_price: "90",
+        to_price: "100", trend_version: early,
+        classification: "UNVALIDATED_GEOMETRY_ONLY",
+      }, {
+        kind: "MAIN_1H", side: "BULL", available_at_ms: late,
+        from_ms: start, to_ms: start + hour, from_price: "90",
+        to_price: "110", trend_version: late,
+        classification: "UNVALIDATED_GEOMETRY_ONLY",
+      }],
+    });
+    expect(visiblePriorLevels(doc, late).map(level => level.price)).toEqual([100, 110]);
+    const confirmed = late + step;
+    expect(visiblePriorBreaks(doc, confirmed - step)).toEqual([]);
+    expect(visiblePriorBreaks(doc, confirmed)).toMatchObject([{
+      kind: "PRIOR_CLOSE_NEXT_OPEN",
+      previous_side: "BULL", new_side: "BEAR",
+      confirmed_at_ms: confirmed, prior_price: 100,
+      hourly_close_ms: late,
+    }]);
+    expect(visibleGeometry(doc, confirmed)).toEqual([]);
+    expect(visiblePriorBreaks(doc, confirmed - step)).toEqual([]); // rewind
+  });
+
   it("retires the blue M5 only at a known next OPEN crossing and restores it on rewind", () => {
     const demo = syntheticReplay();
     const events = demo.events.filter(e => e.kind === "CANDLE_CLOSED")
