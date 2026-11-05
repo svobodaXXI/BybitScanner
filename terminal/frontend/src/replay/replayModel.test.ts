@@ -332,6 +332,19 @@ describe("standalone SIMULATION viewer contract", () => {
         { kind: "MAIN_1H", side, superseded_at_ms: knownAt },
       ]);
       expect(visibleGeometry(doc, knownAt - step)).toHaveLength(1); // restore old state
+      // Full immutable archive and a genuinely truncated replay prefix must
+      // produce identical break evidence at EVERY closed M5 playhead.
+      for (let count = 12; count <= doc.events.length; count++) {
+        const prefixEvents = doc.events.slice(0, count);
+        const at = prefixEvents.at(-1)!.time_ms;
+        const prefix = parseReplayDocument({
+          source: "SIMULATION", simulation_run_id: doc.simulation_run_id,
+          mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+          symbol: doc.symbol, timeframe: "5m", events: prefixEvents,
+          geometry: doc.geometry!.filter(line => line.available_at_ms <= at),
+        });
+        expect(visiblePriorBreaks(doc, at)).toEqual(visiblePriorBreaks(prefix, at));
+      }
     }
     expect(visiblePriorBreaks(make("BULL", 100.5, 99), start + 3 * hourMs)).toEqual([]);
     expect(visiblePriorBreaks(make("BULL", 99, 100.5), start + 3 * hourMs)).toEqual([]);
