@@ -161,7 +161,16 @@ def build_market_only_document(
             level = previous_blue.value_at(bar.start_ms)
             beyond = ((previous_trend.side == "BULL" and bar.open > level) or
                       (previous_trend.side == "BEAR" and bar.open < level))
-            if beyond:
+            # A correction may have existed only during the pre-history
+            # warmup, then broken on the FIRST displayed M5. The current
+            # archive has no such prior line, so it must not invent a
+            # retirement referencing a non-exported geometry version.
+            published = versions.get("REFERENCE_5M") == (
+                previous_blue.first.at_ms,
+                previous_blue.second.at_ms,
+                previous_trend.available_at_ms,
+            )
+            if beyond and published:
                 blue_retirements.append({
                     "kind": "REFERENCE_5M_OPEN_BREAK",
                     "time_ms": bar.end_ms, "open_ms": bar.start_ms,
