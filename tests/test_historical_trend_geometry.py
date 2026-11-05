@@ -48,6 +48,31 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual([p.index for p in second.pivot_sequence], [4,5,6,7])
         self.assertGreater(second.available_at_ms, first.available_at_ms)
 
+    def test_same_direction_h1_revision_preserves_original_first_wick_anchors(self):
+        feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
+        versions = []
+        for hour, (high, low) in enumerate(BULL):
+            for minute in range(12):
+                index = hour * 12 + minute
+                five = make_bar(index, high, low, FIVE_MINUTES_MS)
+                closed_hour = make_bar(hour, high, low) if minute == 11 else None
+                trend, _ = feed.observe_closed(five, closed_hour)
+            versions.append(trend)
+        first, next_version = versions[6], versions[8]
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(next_version)
+        self.assertEqual(first.side, "BULL")
+        self.assertEqual(next_version.side, "BULL")
+        self.assertEqual(first.main.first, next_version.main.first)
+        self.assertEqual(first.target.first, next_version.target.first)
+        self.assertEqual(next_version.main.first.index, 2)
+        self.assertEqual(next_version.target.first.index, 3)
+        self.assertGreater(next_version.main.second.index, first.main.second.index)
+        self.assertGreater(next_version.target.second.index, first.target.second.index)
+        self.assertEqual(first.main.first.price, Decimal(98))
+        self.assertEqual(next_version.main.first.price, Decimal(98))
+        self.assertGreater(next_version.available_at_ms, first.available_at_ms)
+
     def test_bear_main_is_through_highs_and_target_through_lows(self):
         stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
         for i, (high, low) in enumerate(BEAR):
