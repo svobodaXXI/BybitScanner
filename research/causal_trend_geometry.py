@@ -348,6 +348,10 @@ class CausalGeometryFeed:
         # never silently replace its first anchor or create parallel blues.
         self._active_blue: CausalLine | None = None
         self._active_blue_hourly_first_ms: int | None = None
+        # Extremum of the M5 countertrend movement at the previous valid
+        # three-pivot confirmation; first blue wick anchor stays immutable.
+        self._active_blue_correction_extreme: Decimal | None = None
+        self._active_blue_checked_q_ms: int | None = None
         self._blue_broken_at_ms: int | None = None
 
     def _install_opposite_if_confirmed(self, at_ms: int) -> None:
@@ -431,6 +435,8 @@ class CausalGeometryFeed:
                 self._active_blue_hourly_first_ms != origin)):
             self._active_blue = None
             self._active_blue_hourly_first_ms = None
+            self._active_blue_correction_extreme = None
+            self._active_blue_checked_q_ms = None
         if self._active_blue is not None and trend is not None:
             line = self._active_blue
             # H-017 continuation is the NEXT M5 OPEN beyond the already
@@ -444,6 +450,8 @@ class CausalGeometryFeed:
             ):
                 self._active_blue = None
                 self._active_blue_hourly_first_ms = None
+                self._active_blue_correction_extreme = None
+                self._active_blue_checked_q_ms = None
                 self._blue_broken_at_ms = five_minute.end_ms
         if self._active_blue is None and trend is not None:
             recent = self._five.recent_pivots
@@ -463,6 +471,41 @@ class CausalGeometryFeed:
                 if candidate is not None:
                     self._active_blue = candidate
                     self._active_blue_hourly_first_ms = origin
+                    self._active_blue_correction_extreme = recent[-2].price
+                    self._active_blue_checked_q_ms = recent[-1].confirmed_at_ms
+        elif self._active_blue is not None and trend is not None:
+            recent = self._five.recent_pivots
+            first = self._active_blue.first
+            if len(recent) >= 2:
+                middle, q = recent[-2:]
+                old_extreme = self._active_blue_correction_extreme
+                # A longer correction keeps point 1. Refitting point 2 is
+                # licensed only by a NEW deepest LOW (BULL H1) / highest HIGH
+                # (BEAR H1), followed by a new CONFIRMED return pivot.
+                new_extreme = (old_extreme is not None and
+                               (middle.price < old_extreme if trend.side == "BULL"
+                                else middle.price > old_extreme))
+                eligible = (
+                    q.kind == first.kind and middle.kind != first.kind and
+                    middle.at_ms > first.at_ms and q.at_ms > middle.at_ms and
+                    (self._active_blue_checked_q_ms is None or
+                     q.confirmed_at_ms > self._active_blue_checked_q_ms)
+                )
+                if eligible and new_extreme:
+                    self._active_blue_checked_q_ms = q.confirmed_at_ms
+                    # Refitting is bounded by q: no later wick can leak into
+                    # this version, and previously published versions stay
+                    # immutable in the exported geometry timeline.
+                    bars = self._five.bars_between(first, q)
+                    revised = last_correction_reference(
+                        hourly=trend, five_minute_pivots=(first, middle, q),
+                        five_minute_bars=bars,
+                    )
+                    if revised is not None:
+                        self._active_blue_correction_extreme = middle.price
+                        if (revised.first != self._active_blue.first or
+                            revised.second != self._active_blue.second):
+                            self._active_blue = revised
         line = self._active_blue
         if line is not None and line.available_at_ms > five_minute.end_ms:
             raise AssertionError("future correction slope exposed")
