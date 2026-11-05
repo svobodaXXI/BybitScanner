@@ -424,6 +424,33 @@ class ConfirmedGeometryTests(unittest.TestCase):
             for hour in range(10, 15) for minute in range(12)
         ))
 
+    def test_reversal_uses_last_confirmed_purple_prior_not_old_yellow_second(self):
+        # The first BULL line has LOW=102; after another confirmed touch
+        # and a higher CLOSED H1 high the purple prior advances to LOW=106.
+        # A close/open at 104 then breaks 106, but would incorrectly survive
+        # the old 102 yellow anchor.
+        feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
+        observed = {}
+        for hour, (high, low) in enumerate(BULL + [(113, 95), (112, 96)]):
+            for minute in range(12 if hour < 10 else 1):
+                bar = make_bar(hour * 12 + minute, high, low, FIVE_MINUTES_MS)
+                newly_closed = make_bar(hour, high, low) if minute == 11 else None
+                trend, _ = feed.observe_closed(bar, newly_closed)
+                if minute == 11 or hour == 10:
+                    observed[hour, minute] = (
+                        trend.side if trend is not None else None,
+                        feed.confirmed_hourly_prior,
+                    )
+        self.assertEqual(observed[6, 11], ("BULL", Decimal(102)))
+        self.assertEqual(observed[8, 11], ("BULL", Decimal(106)))
+        # Last known purple prior is 106, whereas the original yellow
+        # line's earlier second wick was 102; break needs CLOSE then OPEN.
+        self.assertEqual(observed[9, 11], ("BULL", Decimal(106)))
+        self.assertEqual(observed[10, 0][0], None)
+        self.assertEqual(feed._waiting_for_side, "BEAR")
+        self.assertEqual(feed._reversal_known_at_ms,
+                         10 * ONE_HOUR_MS + FIVE_MINUTES_MS)
+
     def test_yellow_prior_break_needs_close_and_next_open_not_a_wick_or_recovery(self):
         for breaking, continued in (
             # Wick through the prior but close remains above 106.
