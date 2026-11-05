@@ -149,6 +149,8 @@ export type ReplayDocument = {
   symbol?: string;
   timeframe?: "5m";
   geometry?: ReplayGeometry[];
+  /** Immutable confirmed purple H1 levels from the causal Python kernel. */
+  hourly_prior_updates?: ReplayPriorLevel[];
   reference_5m_retirements?: ReplayReferenceRetirement[];
   observations?: ReplayObservation[];
   h017_blue_risk_previews?: H017BlueRiskPreview[];
@@ -372,6 +374,41 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
         kind, side, available_at_ms, from_ms, to_ms, from_price, to_price,
         trend_version, classification: "UNVALIDATED_GEOMETRY_ONLY" as const,
       };
+    });
+  }
+  // A confirmed purple prior is a separate immutable causal event. It must
+  // match a real previously published H1 main-line wick and a closed M5 time.
+  // Old saved archives without it still use the legacy reconstruction below.
+  let hourly_prior_updates: ReplayPriorLevel[] | undefined;
+  if (object.hourly_prior_updates !== undefined) {
+    if (mode !== "MARKET_ONLY" || !Array.isArray(object.hourly_prior_updates) ||
+        object.hourly_prior_updates.length > 10_000 || !geometry) {
+      throw new Error("Недостоверная история фиолетового приора");
+    }
+    const completedTimes = new Set(events.filter(event =>
+      event.kind === "CANDLE_CLOSED").map(event => event.time_ms));
+    let lastAvailable = -1;
+    const knownAnchors = geometry.filter(line => line.kind === "MAIN_1H");
+    hourly_prior_updates = object.hourly_prior_updates.map(raw => {
+      const item = record(raw);
+      const side = item.side;
+      const at_ms = positiveInteger(item.at_ms, "prior at_ms");
+      const available_at_ms = positiveInteger(item.available_at_ms, "prior available_at_ms");
+      const trend_version = positiveInteger(item.trend_version, "prior trend_version");
+      const price = safeNumber(item.price, "prior price");
+      if (item.kind !== "H1_PRIOR_CONFIRMED" ||
+          item.classification !== "UNVALIDATED_GEOMETRY_ONLY" ||
+          (side !== "BULL" && side !== "BEAR") || price <= 0 ||
+          at_ms >= available_at_ms || !completedTimes.has(available_at_ms) ||
+          available_at_ms <= lastAvailable ||
+          trend_version > available_at_ms ||
+          !knownAnchors.some(line => line.side === side &&
+            line.to_ms === at_ms && line.to_price === price &&
+            line.available_at_ms <= available_at_ms)) {
+        throw new Error("Приор не подтверждён закрытой свечой и H1-опорой");
+      }
+      lastAvailable = available_at_ms;
+      return { side, at_ms, available_at_ms, price, trend_version };
     });
   }
   // M5 retirement is a separate causal event, never a ghost line or signal.
@@ -677,6 +714,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     ...(mode ? { mode } : {}),
     ...(mode === "MARKET_ONLY" ? { symbol: object.symbol as string, timeframe: "5m" as const } : {}),
     ...(geometry ? { geometry } : {}),
+    ...(hourly_prior_updates ? { hourly_prior_updates } : {}),
     ...(reference_5m_retirements ? { reference_5m_retirements } : {}),
     ...(observations ? { observations } : {}),
     ...(h017_blue_risk_previews ? { h017_blue_risk_previews } : {}),
@@ -803,6 +841,15 @@ export function visiblePriorLevels(
   document: ReplayDocument, closedTimeMs: number | null,
 ): ReplayPriorLevel[] {
   if (document.mode !== "MARKET_ONLY" || closedTimeMs === null) return [];
+  if (document.hourly_prior_updates !== undefined) {
+    const result = document.hourly_prior_updates
+      .filter(item => item.available_at_ms <= closedTimeMs)
+      .map(item => ({ ...item }));
+    for (let i = 0; i + 1 < result.length; i++) {
+      result[i].superseded_at_ms = result[i + 1].available_at_ms;
+    }
+    return result;
+  }
   // An M5 wick in a still-forming H1 cannot move an hourly prior. Build
   // full H1 candles only; a gap/partial hour supplies no evidence.
   const knownM5 = document.events.filter(event =>
