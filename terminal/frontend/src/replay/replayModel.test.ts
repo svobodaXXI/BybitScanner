@@ -230,6 +230,65 @@ describe("standalone SIMULATION viewer contract", () => {
     })).toThrow(/торговый сигнал/);
   });
 
+  it("retires stale H1 target and M5 reference across successive main revisions", () => {
+    const demo = syntheticReplay();
+    const bars = demo.events.filter(event => event.kind === "CANDLE_CLOSED")
+      .map((event, index) => ({
+        ...event, sequence: index + 1, simulation_run_id: "multi_revision",
+      }));
+    const t = (index: number) => bars[index].candle!.start_ms;
+    const known = (index: number) => bars[index].time_ms;
+    const base = {
+      side: "BULL", classification: "UNVALIDATED_GEOMETRY_ONLY",
+      from_price: "10", to_price: "11",
+    };
+    const geometry = [
+      { ...base, kind: "MAIN_1H", from_ms: t(0), to_ms: t(3),
+        available_at_ms: known(8), trend_version: known(8) },
+      { ...base, kind: "TARGET_1H", from_ms: t(1), to_ms: t(4),
+        available_at_ms: known(8), trend_version: known(8) },
+      { ...base, kind: "REFERENCE_5M", from_ms: t(5), to_ms: t(7),
+        available_at_ms: known(11), trend_version: known(8) },
+      { ...base, kind: "MAIN_1H", from_ms: t(0), to_ms: t(20),
+        available_at_ms: known(27), trend_version: known(27) },
+      { ...base, kind: "TARGET_1H", from_ms: t(1), to_ms: t(21),
+        available_at_ms: known(29), trend_version: known(27) },
+      { ...base, kind: "REFERENCE_5M", from_ms: t(25), to_ms: t(30),
+        available_at_ms: known(35), trend_version: known(27) },
+      { ...base, kind: "MAIN_1H", from_ms: t(0), to_ms: t(37),
+        available_at_ms: known(44), trend_version: known(44) },
+    ];
+    const doc = parseReplayDocument({
+      source: "SIMULATION", simulation_run_id: "multi_revision",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events: bars, geometry,
+    });
+    const before = visibleGeometry(doc, known(27) - 1);
+    expect(before.map(item => item.kind)).toEqual([
+      "MAIN_1H", "TARGET_1H", "REFERENCE_5M",
+    ]);
+    expect(visibleGeometry(doc, known(27)).map(item => item.kind)).toEqual(["MAIN_1H"]);
+    expect(visibleGeometry(doc, known(29)).map(item => item.kind)).toEqual([
+      "MAIN_1H", "TARGET_1H",
+    ]);
+    expect(visibleGeometry(doc, known(35)).map(item => item.kind)).toEqual([
+      "MAIN_1H", "TARGET_1H", "REFERENCE_5M",
+    ]);
+    expect(visibleGeometry(doc, known(44)).map(item => item.kind)).toEqual(["MAIN_1H"]);
+    const fullHistory = visibleGeometryHistory(doc, known(44));
+    expect(fullHistory.map(item => item.superseded_at_ms)).toEqual([
+      known(27), known(27), known(27), known(44), known(44), known(44),
+      undefined,
+    ]);
+    expect(visibleGeometryHistory(doc, known(27) - 1)).toHaveLength(3);
+    expect(visibleGeometryHistory(doc, known(27) - 1)
+      .every(item => item.superseded_at_ms === undefined)).toBe(true);
+    expect(visibleGeometryHistory(doc, known(35))[2].superseded_at_ms).toBe(known(27));
+    expect(visibleGeometryHistory(doc, known(44)).map(item => item.from_ms)).toEqual(
+      geometry.map(item => item.from_ms),
+    );
+  });
+
   it("replays purple priors at the second confirmed H1 touch and retains previous versions", () => {
     const demo = syntheticReplay();
     const events = demo.events.filter(e => e.kind === "CANDLE_CLOSED")
