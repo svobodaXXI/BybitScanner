@@ -427,6 +427,55 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(visiblePriorBreaks(make("BEAR", 101, 99.5), start + 3 * hourMs)).toEqual([]);
   });
 
+  it("retires the blue M5 only at a known next OPEN crossing and restores it on rewind", () => {
+    const demo = syntheticReplay();
+    const events = demo.events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map((e, i) => ({ ...e, simulation_run_id: "blue_break", sequence: i + 1 }));
+    const t = (i: number) => events[i].candle!.start_ms;
+    const known = events[8].time_ms;
+    const atBreak = events[11].time_ms;
+    const geometry = [
+      { kind: "MAIN_1H", side: "BULL", from_ms: t(0), to_ms: t(3),
+        from_price: "90", to_price: "90", available_at_ms: known,
+        trend_version: known, classification: "UNVALIDATED_GEOMETRY_ONLY" },
+      { kind: "TARGET_1H", side: "BULL", from_ms: t(1), to_ms: t(4),
+        from_price: "120", to_price: "120", available_at_ms: known,
+        trend_version: known, classification: "UNVALIDATED_GEOMETRY_ONLY" },
+      { kind: "REFERENCE_5M", side: "BULL", from_ms: t(0), to_ms: t(3),
+        from_price: "105", to_price: "104", available_at_ms: known,
+        trend_version: known, classification: "UNVALIDATED_GEOMETRY_ONLY" },
+    ];
+    const retirement = {
+      kind: "REFERENCE_5M_OPEN_BREAK", time_ms: atBreak,
+      open_ms: t(11), blue_available_at_ms: known, trend_version: known,
+    };
+    const archive = {
+      source: "SIMULATION", simulation_run_id: "blue_break",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events, geometry,
+      reference_5m_retirements: [retirement],
+    };
+    const doc = parseReplayDocument(archive);
+    expect(visibleGeometry(doc, atBreak - 1).map(l => l.kind))
+      .toEqual(["MAIN_1H", "TARGET_1H", "REFERENCE_5M"]);
+    expect(visibleGeometry(doc, atBreak).map(l => l.kind))
+      .toEqual(["MAIN_1H", "TARGET_1H"]);
+    expect(visibleGeometryHistory(doc, atBreak).at(-1)?.superseded_at_ms)
+      .toBe(atBreak);
+    expect(visibleGeometryHistory(doc, atBreak - 1).at(-1)?.superseded_at_ms)
+      .toBeUndefined();
+    expect(visibleGeometry(doc, atBreak - 1)).toHaveLength(3);
+    expect(() => parseReplayDocument({
+      ...archive, reference_5m_retirements: [{ ...retirement, open_ms: t(0) }],
+    })).toThrow();
+    expect(() => parseReplayDocument({
+      ...archive, reference_5m_retirements: [{ ...retirement, time_ms: atBreak + 300_000 }],
+    })).toThrow();
+    expect(() => parseReplayDocument({
+      ...archive, reference_5m_retirements: [{ ...retirement, kind: "UNVERIFIED_BREAK" }],
+    })).toThrow();
+  });
+
   it("reveals only completed H1 touch/reaction observations, never simulated fills", () => {
     const demo = syntheticReplay();
     const events = demo.events.filter(e => e.kind === "CANDLE_CLOSED")
