@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("shows only completed candles and fills revealed at the current cursor", () => {
@@ -288,6 +288,13 @@ describe("standalone SIMULATION viewer contract", () => {
       });
       expect(visiblePriorBreaks(doc, knownAt + hourMs)).toEqual(breaks); // no duplicates
       expect(visiblePriorBreaks(doc, knownAt - step)).toEqual([]); // rewind
+      expect(visibleGeometry(doc, knownAt - step)).toHaveLength(1);
+      expect(visibleGeometry(doc, knownAt)).toEqual([]); // retired, no fake opposite
+      expect(visibleGeometryHistory(doc, knownAt - step)).toHaveLength(1);
+      expect(visibleGeometryHistory(doc, knownAt)).toMatchObject([
+        { kind: "MAIN_1H", side, superseded_at_ms: knownAt },
+      ]);
+      expect(visibleGeometry(doc, knownAt - step)).toHaveLength(1); // restore old state
     }
     expect(visiblePriorBreaks(make("BULL", 100.5, 99), start + 3 * hourMs)).toEqual([]);
     expect(visiblePriorBreaks(make("BULL", 99, 100.5), start + 3 * hourMs)).toEqual([]);
