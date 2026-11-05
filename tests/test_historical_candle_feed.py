@@ -161,7 +161,9 @@ class HistoricalCandleFeedTests(unittest.TestCase):
                     five_minute=SimpleNamespace(
                         bar=candle, signal_time_ms=candle.end_ms),
                     dmi_5m=snapshot, hourly_trend=trend,
-                    reference_5m=blue if i < 2 else None)
+                    reference_5m=blue if i < 2 else None,
+                    hourly_prior_price=main.second.price,
+                    hourly_prior_touch_ms=main.second.at_ms)
                 kwargs["on_closed_context"](view)
                 kwargs["on_visual_event"](
                     SimpleNamespace(to_payload=lambda: {"kind": "CANDLE_CLOSED"}))
