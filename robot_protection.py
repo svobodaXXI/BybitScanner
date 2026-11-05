@@ -30,7 +30,8 @@ MAX_STOP_DISTANCE = Decimal("0.015")
 TAKE_REALIZATION = Decimal("0.90")
 PROTECTION_DEADLINE_MS = 5_000
 # Minimum planned take/stop ratio for a new entry (retest LIMIT and late Market entry).
-MIN_ENTRY_RR = Decimal("1.5")
+MIN_ENTRY_RR = Decimal("1.5")  # Legacy non-Wedge default.
+WEDGE_MIN_ENTRY_RR = Decimal("2")  # Owner #419 hard Wedge entry floor
 MIN_ENTRY_RR_ENV = "ROBOT_MIN_ENTRY_RR"
 MIN_ENTRY_RR_BOUNDS = (Decimal("0"), Decimal("10"))
 
@@ -62,6 +63,14 @@ def min_entry_rr() -> Decimal:
         return MIN_ENTRY_RR
     low, high = MIN_ENTRY_RR_BOUNDS
     return value if value.is_finite() and low <= value <= high else MIN_ENTRY_RR
+
+
+def wedge_min_entry_rr() -> Decimal:
+    """Keep the 2R Wedge owner floor even if the optional env value is lower.
+
+    A stricter valid operator setting still applies. L-shape/Box unchanged.
+    """
+    return max(WEDGE_MIN_ENTRY_RR, min_entry_rr())
 
 
 class ProtectionSubmitter(Protocol):

@@ -36,6 +36,21 @@ _INCIDENT_ADVANCED_APPROVALS = {
     "RUNEUSDT": (3, "BOX_ENTRY_READY"),
 }
 
+# Exact six-candidate metadata vector observed in the SINGLE read-only VPS
+# preflight 41815962339 (2026-11-04) after the interrupted one-shot STOP.
+# This is an incident-specific alternative to the original snapshot, not a
+# +1 policy, a generic revision range, or evidence of an entry/exit.
+# Both generations still require exact candidate identity, status/phase,
+# order/fill/command/Robot/Box provenance and account-wide quiescence below.
+_INCIDENT_POST_STOP_REVISIONS = {
+    "1000FLOKIUSDT": 7,
+    "BNCUSDT": 7,
+    "HEMIUSDT": 7,
+    "INUSDT": 7,
+    "PLAYSOUTUSDT": 5,
+    "RUNEUSDT": 4,
+}
+
 
 def _zero_filled(value: object) -> bool:
     try:
@@ -226,14 +241,15 @@ def _historical_approval_progress(conn, *, candidate_id: str, symbol: str,
         return False
 
     expected_revision, expected_phase = _INCIDENT_ADVANCED_APPROVALS[symbol]
-    # The 2026-11-04 protected STOP attempt left a durable BNCUSDT
-    # APPROVED/RETEST_DETECTED state at revision 7 (confirmed by owner-only
-    # READ-ONLY VPS snapshot). An additional revision is *not* proof of entry:
-    # accept only this incident-specific value, and only after the unchanged
-    # per-order, execution, command, trade and owner checks below.
+    # The fixed READ-ONLY proof exposed all six observed post-STOP
+    # revisions together, with unchanged APPROVED phases and no activity in
+    # five independent diagnostic categories. Treat those observations as
+    # exact incident identities only; the diagnostics alone cannot authorize
+    # acceptance. All of the original independent safety predicates below
+    # and in prove_six_inert_approvals must still pass on the same snapshot.
     allowed_revision = (
         revision == expected_revision
-        or (symbol == "BNCUSDT" and expected_revision == 6 and revision == 7)
+        or revision == _INCIDENT_POST_STOP_REVISIONS[symbol]
     )
     if not allowed_revision or not isinstance(raw_state, str):
         return blocked("revision_or_state_type_mismatch")
@@ -305,6 +321,59 @@ def _historical_approval_progress(conn, *, candidate_id: str, symbol: str,
         return blocked("symbol_limit_not_cancelled_zero_fill:" + detail)
     return True
 
+def _approval_activity_shape(conn, candidate_id: str, symbol: str,
+                             approved_at_ms: int) -> str:
+    """Five bounded read-only warning flags: E/L/C/T/B (1=seen, 0=absent).
+
+    E: symbol execution since approval; L: non-inert LIMIT since approval;
+    C: nonterminal trading command since approval; T: Robot trade attached to
+    candidate; B: Box attempt ownership attached to candidate. An unknown
+    query yields ????? and never turns into an assertion of safety. This is a
+    *diagnostic* only: counts and exact provenance must still pass the normal
+    proof, including other account-wide and order-owner checks.
+    """
+    if (type(approved_at_ms) is not int or approved_at_ms <= 0
+            or not isinstance(candidate_id, str) or not candidate_id):
+        return "?????"
+    try:
+        executions = conn.execute(
+            "SELECT 1 FROM executions WHERE trading_account_id='paper' "
+            "AND symbol=? AND exchange_timestamp_ms>=? LIMIT 1",
+            (symbol, approved_at_ms),
+        ).fetchone() is not None
+        orders = conn.execute(
+            "SELECT status,filled_quantity FROM paper_limit_orders "
+            "WHERE trading_account_id='paper' AND symbol=? "
+            "AND created_at_ms>=?",
+            (symbol, approved_at_ms),
+        ).fetchall()
+        risky_limit = any(
+            status != "cancelled" or not _zero_filled(filled)
+            for status, filled in orders
+        )
+        commands = conn.execute(
+            "SELECT 1 FROM trading_commands WHERE trading_account_id='paper' "
+            "AND symbol=? AND created_at_ms>=? "
+            "AND (current_state IS NULL OR current_state NOT IN "
+            "('cancelled','amended','rejected','failed')) LIMIT 1",
+            (symbol, approved_at_ms),
+        ).fetchone() is not None
+        trades = conn.execute(
+            "SELECT 1 FROM robot_trades WHERE trading_account_id='paper' "
+            "AND candidate_id=? LIMIT 1", (candidate_id,),
+        ).fetchone() is not None
+        box = conn.execute(
+            "SELECT 1 FROM box_attempt_ownership WHERE trading_account_id='paper' "
+            "AND candidate_id=? LIMIT 1", (candidate_id,),
+        ).fetchone() is not None
+        return "".join("1" if found else "0" for found in (
+            executions, risky_limit, commands, trades, box,
+        ))
+    except Exception:
+        # Never let diagnostics weaken or replace the original proof failure.
+        return "?????"
+
+
 def _six_approval_progress_snapshot(conn) -> str:
     """Six fixed labels only; no IDs, quantities, free-text JSON or SQL writes.
 
@@ -313,11 +382,13 @@ def _six_approval_progress_snapshot(conn) -> str:
     """
     try:
         rows = conn.execute(
-            "SELECT symbol,state_revision,robot_state_json FROM robot_candidates "
+            "SELECT candidate_id,symbol,state_revision,robot_state_json,"
+            "approved_at_ms FROM robot_candidates "
             "WHERE trading_account_id='paper' AND status='APPROVED'"
         ).fetchall()
         by_symbol = {}
-        for symbol, revision, raw_state in rows:
+        activity = {}
+        for candidate_id, symbol, revision, raw_state, approved_at_ms in rows:
             if symbol not in IDLE_APPROVALS:
                 continue
             rev = str(revision) if type(revision) is int and 0 <= revision < 1000 else "?"
@@ -337,17 +408,31 @@ def _six_approval_progress_snapshot(conn) -> str:
                     pass
             if symbol in by_symbol:
                 by_symbol[symbol] = "multiple"
+                activity[symbol] = "?????"
             else:
                 by_symbol[symbol] = rev + phase + kind
+                activity[symbol] = _approval_activity_shape(
+                    conn, candidate_id, symbol, approved_at_ms,
+                )
         labels = {
             "1000FLOKIUSDT": "FLOKI", "BNCUSDT": "BNC",
             "HEMIUSDT": "HEMI", "INUSDT": "IN",
             "PLAYSOUTUSDT": "PLAYS", "RUNEUSDT": "RUNE",
         }
-        return ",".join(
+        revisions = ",".join(
             labels[symbol] + "=" + by_symbol.get(symbol, "missing")
             for symbol in IDLE_APPROVALS
         )
+        # The forced-VPS bridge truncates proof exceptions to 240 chars.
+        # Short fixed labels keep all six candidates' warning flags visible
+        # in the *same* read-only failure without leaking IDs or quantities.
+        short = {"1000FLOKIUSDT": "F", "BNCUSDT": "B", "HEMIUSDT": "H",
+                 "INUSDT": "I", "PLAYSOUTUSDT": "P", "RUNEUSDT": "R"}
+        flags = ",".join(
+            short[symbol] + ":" + activity.get(symbol, "?????")
+            for symbol in IDLE_APPROVALS
+        )
+        return revisions + ";act=" + flags
     except (TypeError, ValueError):
         return "unavailable"
 
