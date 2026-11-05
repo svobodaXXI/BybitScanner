@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi, visibleObservations,
+  parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visiblePriorLevels, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -155,6 +155,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       // DrawingOverlay's rayEndPoint extends the line to the price pane edge.
       // Never refit the line to the replayed price candles.
       const knownLines = visibleGeometry(document, shown.lastTimeMs);
+      const knownPriors = visiblePriorLevels(document, shown.lastTimeMs);
       let paintedGeometry = 0;
       for (const line of knownLines) {
         // Line anchors can predate the requested playback window. Lightweight
@@ -183,6 +184,30 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
         context.lineTo(end.x, end.y);
         context.stroke();
         paintedGeometry += 1;
+      }
+      context.setLineDash([]);
+      // Purple prior: second confirmed touch of the H1 main line, at its wick.
+      // Old levels stop at the time of replacement; only the latest level
+      // extends into the right-hand whitespace. No future version is shown.
+      let paintedPriors = 0;
+      for (const prior of knownPriors) {
+        const startingBar = shown.candles.find(bar => bar.start_ms >= prior.at_ms);
+        if (!startingBar) continue;
+        const x1 = api.timeScale().timeToCoordinate((startingBar.start_ms / 1000) as UTCTimestamp);
+        const y = candleSeries.priceToCoordinate(prior.price);
+        const historical = prior.superseded_at_ms !== undefined;
+        const x2 = historical
+          ? api.timeScale().timeToCoordinate(((prior.superseded_at_ms! - 300_000) / 1000) as UTCTimestamp)
+          : priceWidth;
+        if (x1 === null || y === null || x2 === null || x2 <= x1) continue;
+        context.beginPath();
+        context.lineWidth = 1;
+        context.strokeStyle = historical ? "rgba(177, 123, 239, 0.65)" : "#b17bef";
+        context.setLineDash(historical ? [3, 4] : []);
+        context.moveTo(x1, y);
+        context.lineTo(x2, y);
+        context.stroke();
+        paintedPriors += 1;
       }
       context.setLineDash([]);
       // Hollow marks are geometry observations, never entry/fill triangles.
@@ -249,6 +274,8 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       context.restore();
       canvas.dataset.visibleFills = String(rendered);
       canvas.dataset.visibleGeometry = String(knownLines.length);
+      canvas.dataset.visiblePriors = String(knownPriors.length);
+      canvas.dataset.paintedPriors = String(paintedPriors);
       canvas.dataset.paintedGeometry = String(paintedGeometry);
       canvas.dataset.visibleObservations = String(paintedObservations);
       canvas.dataset.visibleBlueRisk = String(paintedBlueRisk);
@@ -486,6 +513,12 @@ export function ReplayPage() {
           ? ` Предыстория для экстремумов: ${document.geometry_warmup_hours} ч.`
           : ""}
         {` Касаний 1–3: ${observedTouches.filter(item => item.kind === "MAIN_1H_TOUCH").length}; движений от линии: ${observedTouches.filter(item => item.kind === "MAIN_1H_REACTION").length}. Метки — наблюдения, не входы.`}
+      </p>}
+      {visiblePriorLevels(document, shown.lastTimeMs).at(-1) && <p className="replay-geometry-note"
+        role="status" aria-label="Приор H1">
+        Фиолетовый приор H1: {visiblePriorLevels(document, shown.lastTimeMs).at(-1)!.price}
+        {" · "}{visiblePriorLevels(document, shown.lastTimeMs).at(-1)!.side === "BULL" ? "LOW" : "HIGH"}
+        {" · "}уровень второго подтверждённого касания трендовой. Не торговый сигнал.
       </p>}
       {document.mode === "MARKET_ONLY" && document.h017_blue_risk_previews && cursor > 0 &&
         <p className="replay-geometry-note" role="status" aria-label="H-017 риск синей M5">
