@@ -28,6 +28,25 @@ blocker, explaining the single needed decision. Never suppress safety gates,
 assume authorization, or claim success without observed evidence. After the
 blocker is resolved, return directly to the original end result.
 
+## VPS access priority — owner confirmed 2026-11-05
+
+**Minimize owner manual work.** For VPS needs, use the existing GitHub connector
+first for repository evidence, CI, PRs and *only the remote diagnostics it actually
+supports*; GitHub repository access alone is not SSH or proof of VPS runtime.
+If an approved VPS operation needs host access, delegate its full bounded outcome
+to the existing Codex/VPS mechanism. Only after a **specific verified blocker**
+to both assistant tools and Codex, use the owner's proven Windows PowerShell
+SSH path with `bybitscanner_laptop`; VNC is the last resort if SSH is unusable.
+Do not ask the owner to run routine read-only commands one by one, repeat
+investigations, reconfigure working keys, or manually carry intermediate outputs
+when a usable authorized agent route exists. The owner supplies only
+indispensable credentials, approvals or actions that tooling cannot perform.
+
+For exact proven PowerShell login, optional Windows ssh-agent and safety caveats,
+see `DOCUMENTS/VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md` §6.
+This priority is **routing, not permission**: GitHub merge, deployment,
+PAPER DB/position, STOP/START, reconcile and trading authority remain unchanged.
+
 ## Outcome-owned delegation — proven lesson (2026-10-28)
 
 **One goal → one end-to-end assignment → observable acceptance.** Do not turn a
