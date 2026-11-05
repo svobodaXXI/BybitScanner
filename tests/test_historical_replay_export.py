@@ -119,6 +119,15 @@ class MarketOnlyExportTests(unittest.TestCase):
         self.assertEqual(len(seeded["events"]), 24)
         self.assertEqual(seeded["events"][0]["candle"]["start_ms"], start_ms)
         self.assertEqual(seeded["geometry_warmup_hours"], 13)
+        self.assertEqual(no_seed["context_1h"], [])
+        self.assertEqual(len(seeded["context_1h"]), 13)
+        self.assertEqual(seeded["context_1h"][0]["start_ms"], 0)
+        self.assertEqual(seeded["context_1h"][-1]["end_ms"], start_ms)
+        self.assertEqual(seeded["context_1h"][4]["low"], "95")
+        self.assertTrue(all(
+            bar["end_ms"] <= seeded["events"][0]["candle"]["start_ms"]
+            for bar in seeded["context_1h"]
+        ))
         kinds = {line["kind"] for line in seeded["geometry"]}
         self.assertTrue({"MAIN_1H", "TARGET_1H"}.issubset(kinds))
         self.assertTrue(all(line["from_ms"] < start_ms
