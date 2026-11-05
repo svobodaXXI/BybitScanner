@@ -63,6 +63,9 @@ def build_market_only_document(
     dmi_points: list[dict[str, object]] = []
     pending_contact: tuple[int, int, str, object] | None = None
     versions: dict[str, tuple[int, int, int]] = {}
+    # The exported publication time can differ from CausalLine.available_at_ms
+    # when an unchanged M5 correction is republished under a revised H1 trend.
+    published_at: dict[str, int] = {}
 
     def collect_lines(view) -> None:
         def collect(kind: str, line, side: str, trend_version: int) -> None:
@@ -72,6 +75,7 @@ def build_market_only_document(
             if line.available_at_ms > view.five_minute.signal_time_ms:
                 raise ValueError("future geometry in simulated market archive")
             versions[kind] = identity
+            published_at[kind] = view.five_minute.signal_time_ms
             geometry.append({
                 "kind": kind, "side": side,
                 "available_at_ms": view.five_minute.signal_time_ms,
@@ -174,7 +178,10 @@ def build_market_only_document(
                 blue_retirements.append({
                     "kind": "REFERENCE_5M_OPEN_BREAK",
                     "time_ms": bar.end_ms, "open_ms": bar.start_ms,
-                    "blue_available_at_ms": previous_blue.available_at_ms,
+                    # Point to the exact EXPORTED blue version, not its
+                    # original first-confirmation time (which may predate a
+                    # same-movement H1 revision).
+                    "blue_available_at_ms": published_at["REFERENCE_5M"],
                     "trend_version": previous_trend.available_at_ms,
                 })
         previous_trend = view.hourly_trend
