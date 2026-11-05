@@ -1,6 +1,6 @@
 import {
   CandlestickSeries, ColorType, CrosshairMode, LineSeries, LineStyle, createChart,
-  type IChartApi, type ISeriesApi, type UTCTimestamp,
+  type IChartApi, type ISeriesApi, type Logical, type UTCTimestamp,
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -10,6 +10,9 @@ import {
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
 import { rayEndPoint } from "../chart/drawingGeometry";
+import { DrawingOverlay } from "../chart/DrawingOverlay";
+import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
+import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import "./replay.css";
 
 function label(event: ReplayEvent): string {
@@ -20,11 +23,32 @@ function label(event: ReplayEvent): string {
     case "EXIT_FILLED": return "Выход " + (event.reason ?? "");
   }
 }
-function ReplayChart({ document, cursor, showDebug, timeframe }: { document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h" }) {
+const REPLAY_DRAWING_TOOLS: Array<{ tool: DrawingTool; label: string }> = [
+  { tool: "crosshair", label: "Курсор / сдвиг" },
+  { tool: "select", label: "Редактировать" },
+  { tool: "trend", label: "Трендовая" },
+  { tool: "horizontal", label: "Горизонталь" },
+  { tool: "ray", label: "Луч" },
+  { tool: "horizontal-ray", label: "Горизонтальный луч" },
+  { tool: "vertical", label: "Вертикаль" },
+  { tool: "fibonacci", label: "Fibonacci" },
+  { tool: "ruler", label: "Линейка" },
+  { tool: "rectangle", label: "Прямоугольник" },
+];
+function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selectedId,
+  drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
+  document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h";
+  drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
+  onDrawingsChange: (next: DrawingObject[]) => void;
+  onSelectDrawing: (id: string | null) => void;
+  onDrawingGesture: () => void;
+}) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const executionCanvas = useRef<HTMLCanvasElement>(null);
+  const [drawingViewport, setDrawingViewport] = useState(0);
+  const [pricePaneHeight, setPricePaneHeight] = useState(0);
   const renderExecutions = useRef<() => void>(() => {});
    const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
@@ -86,14 +110,21 @@ function ReplayChart({ document, cursor, showDebug, timeframe }: { document: Rep
     series.current = candles;
     // Repaint true-price execution triangles when chart scroll/zoom/resize moves.
     const refresh = () => renderExecutions.current();
-    api.timeScale().subscribeVisibleLogicalRangeChange(refresh);
+    const refreshViewport = () => {
+      refresh();
+      const nextHeight = api.panes()[0]?.getHeight() ?? 0;
+      setPricePaneHeight(current => current === nextHeight ? current : nextHeight);
+      setDrawingViewport(current => current + 1);
+    };
+    api.timeScale().subscribeVisibleLogicalRangeChange(refreshViewport);
     api.subscribeCrosshairMove(refresh);
-    const resize = new ResizeObserver(refresh);
+    const resize = new ResizeObserver(refreshViewport);
     resize.observe(container.current);
+    refreshViewport();
     return () => {
       resize.disconnect();
       api.unsubscribeCrosshairMove(refresh);
-      api.timeScale().unsubscribeVisibleLogicalRangeChange(refresh);
+      api.timeScale().unsubscribeVisibleLogicalRangeChange(refreshViewport);
       chart.current = null;
       series.current = null;
        indicators.current = null;
@@ -321,13 +352,40 @@ function ReplayChart({ document, cursor, showDebug, timeframe }: { document: Rep
     return () => cancelAnimationFrame(redrawId);
   }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles]);
 
+  // The editable layer reuses the terminal's drawing tools, but stores its X
+  // anchors in absolute UTC M5 slots rather than indices of the selected TF.
+  // Both charts merely project that immutable timestamp; neither edits H-017.
+  const drawingCoordinates = {
+    logicalToX: (value: number) => {
+      const logical = chartLogicalAtTime(drawingLogicalToTime(value), displayCandles);
+      return logical === null ? null :
+        chart.current?.timeScale().logicalToCoordinate(logical as Logical) ?? null;
+    },
+    xToLogical: (x: number) => {
+      const logical = chart.current?.timeScale().coordinateToLogical(x);
+      if (logical == null) return null;
+      const time = timeAtChartLogical(logical, displayCandles);
+      return time === null ? null : timeToDrawingLogical(time);
+    },
+    priceToY: (price: number) => series.current?.priceToCoordinate(price) ?? null,
+    yToPrice: (y: number) => series.current?.coordinateToPrice(y) ?? null,
+  };
   return (
-    <div className="replay-chart-shell" data-chart-timeframe={timeframe} data-displayed-candles={displayCandles.length}>
+    <div className="replay-chart-shell" data-chart-timeframe={timeframe}
+      data-displayed-candles={displayCandles.length} data-drawing-viewport={drawingViewport}>
       <div className="replay-chart-frame">
         <div className="replay-chart" ref={container}
           aria-label="Свечной график и нижняя панель ADX DMI" />
         <canvas ref={executionCanvas} className="replay-execution-overlay"
           aria-hidden="true" data-visible-fills="0" data-visible-observations="0" data-visible-blue-risk="0" />
+        {pricePaneHeight > 0 && displayCandles.length > 0 &&
+          <div className={`replay-drawing-layer tool-${drawingTool}`} style={{ height: pricePaneHeight }}
+            data-drawing-count={drawings.length}>
+            <DrawingOverlay drawings={drawings} selectedId={selectedId} tool={drawingTool}
+              magnet={false} candles={[]} coordinates={drawingCoordinates}
+              onCommit={onDrawingsChange} onSelect={onSelectDrawing}
+              onDrawingGesture={onDrawingGesture} onDrawingComplete={() => {}} />
+          </div>}
       </div>
       <div className="replay-dmi-legend" role="group" aria-label="Индикатор ADX DMI">
         <strong>ADX/DMI {document.dmi_5m
@@ -362,6 +420,9 @@ export function ReplayPage() {
   const [rate, setRate] = useState(8);
   const [showDebug, setShowDebug] = useState(false);
   const [timeframe, setTimeframe] = useState<"5m" | "1h">("5m");
+  const [drawingTool, setDrawingTool] = useState<DrawingTool>("crosshair");
+  const [drawings, setDrawings] = useState<DrawingObject[]>([]);
+  const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fileLabel, setFileLabel] = useState("Синтетический пример");
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
@@ -425,6 +486,7 @@ export function ReplayPage() {
       const data: unknown = JSON.parse(await file.text());
       const parsed = parseReplayDocument(data);
       setDocument(parsed);
+      setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel(file.name);
       setError(null);
@@ -459,6 +521,7 @@ export function ReplayPage() {
       if (imported.mode !== "MARKET_ONLY") throw new Error("История не соответствует режиму MARKET_ONLY");
       if (historyRequest.current !== controller) return;
       setDocument(imported);
+      setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel("Bybit · публичные свечи · без сделок");
     } catch (e) {
@@ -502,6 +565,7 @@ export function ReplayPage() {
           historyRequest.current?.abort(); historyRequest.current = null;
           setHistoryLoading(false); setPlaying(false); setCursor(0); setError(null);
           setDocument(syntheticReplay()); setFileLabel("Синтетический пример");
+          setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
         }}>Пример</button>
         <button type="button" aria-label="Скачать журнал SIMULATION JSON" onClick={() => {
           const report = simulationActionJournal(document);
@@ -629,7 +693,24 @@ export function ReplayPage() {
             <button type="button" aria-pressed={timeframe === "1h"}
               onClick={() => setTimeframe("1h")}>H1</button>
           </div>
-          <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe} />
+          <div className="replay-drawing-tools" role="group" aria-label="Инструменты рисования">
+            {REPLAY_DRAWING_TOOLS.map(({ tool, label }) => (
+              <button type="button" key={tool} aria-pressed={drawingTool === tool}
+                onClick={() => { setDrawingTool(tool); setSelectedDrawing(null); }}>
+                {label}
+              </button>
+            ))}
+            <button type="button" disabled={!selectedDrawing}
+              onClick={() => {
+                setDrawings(current => current.filter(d => d.id !== selectedDrawing));
+                setSelectedDrawing(null);
+              }}>Удалить выбранное</button>
+            <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
+          </div>
+          <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
+            drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
+            onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
+            onDrawingGesture={() => setPlaying(false)} />
         </section>
         <aside className="replay-events" aria-label="Журнал событий">
           <h2>События</h2>
