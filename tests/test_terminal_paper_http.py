@@ -2244,6 +2244,76 @@ class _FakeCoverageRuntime:
         return self.recover_result
 
 
+def test_protection_resync_reaps_only_proven_abandoned_pre_limit_arms():
+    """An error after coverage arm cannot keep a flat symbol streaming forever."""
+    from contextlib import contextmanager
+    from terminal.domain.models import Symbol
+
+    class ArmedRuntime(_FakeCoverageRuntime):
+        def __init__(self):
+            super().__init__()
+            self.store = self
+            self.active_limits = {"LITEUSDT"}
+            self.pending_commands = set()
+            self.busy = False
+
+        def robot_shutdown_idle_guard(self):
+            @contextmanager
+            def guard():
+                if self.busy:
+                    raise RuntimeError("robot_entry_tick_busy")
+                yield
+            return guard()
+
+        def load_open_position_projections(self, _account):
+            return ()
+
+        def load_unresolved_paper_protection_obligations(self, _account):
+            return ()
+
+        def load_unfinished_commands(self):
+            from types import SimpleNamespace
+            return tuple(
+                SimpleNamespace(symbol=Symbol(symbol))
+                for symbol in sorted(self.pending_commands)
+            )
+
+        def load_active_paper_limits(self, _account, symbol):
+            return (object(),) if symbol.value in self.active_limits else ()
+
+    runtime = ArmedRuntime()
+    hub = MarketDataHub(
+        _CoverageRegistry(["FOLKSUSDT", "LITEUSDT"]),
+        _coverage_context, connection_factory=lambda *args, **kwargs: None,
+    )
+    manager = RobotProtectionCoverageManager(hub, runtime, resync_interval_s=60)
+    assert manager.arm_entry_coverage("FOLKSUSDT")
+    assert manager.arm_entry_coverage("LITEUSDT")
+    assert set(manager.health()["armed_symbols"]) == {"FOLKSUSDT", "LITEUSDT"}
+
+    # An in-flight Robot tick must keep even an apparently empty arm.
+    runtime.busy = True
+    manager.resync()
+    assert set(manager.health()["armed_symbols"]) == {"FOLKSUSDT", "LITEUSDT"}
+
+    runtime.busy = False
+    manager.resync()
+    assert not hub.has_context("FOLKSUSDT")
+    assert hub.has_context("LITEUSDT")
+    assert manager.health()["armed_symbols"] == ("LITEUSDT",)
+
+    # An unfinished dispatch also preserves a temporarily armed subscription.
+    runtime.active_limits.clear()
+    runtime.pending_commands.add("LITEUSDT")
+    manager.resync()
+    assert hub.has_context("LITEUSDT")
+    runtime.pending_commands.clear()
+    manager.resync()
+    assert not hub.has_context("LITEUSDT")
+    assert manager.health()["armed_symbols"] == ()
+    manager.close()
+
+
 def test_robot_protection_coverage_manager_subscribes_and_forwards_updates():
     hub = MarketDataHub(
         _CoverageRegistry(["BTCUSDT"]), _coverage_context,
