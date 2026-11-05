@@ -6,6 +6,7 @@ on:
       - "research/historical_market_replay.py"
       - "research/h017_local_risk.py"
       - "research/h017_blue_open_preview.py"
+      - "research/h017_blue_execution_scenario.py"
       - "research/historical_candle_feed.py"
       - "research/wilder_dmi.py"
       - "research/causal_trend_geometry.py"
@@ -16,6 +17,7 @@ on:
       - "tests/test_historical_market_replay.py"
       - "tests/test_historical_h017_local_risk.py"
       - "tests/test_historical_h017_blue_preview.py"
+      - "tests/test_historical_h017_blue_execution_scenario.py"
       - "tests/test_historical_candle_feed.py"
       - "tests/test_historical_dmi.py"
       - "tests/test_historical_trend_geometry.py"
@@ -127,7 +129,7 @@ jobs:
   real-bybit-h017-readonly-acceptance:
     # A single research PR trial, or a manual rerun when separately requested.
     # No scheduled network cost and no synthetic fallbacks.
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.head_ref == 'test/h017-real-bybit-grass-readonly-20261105' || github.head_ref == 'feature/h017-crossings-first-touch-study-20261105'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.head_ref == 'test/h017-real-bybit-grass-readonly-20261105' || github.head_ref == 'feature/h017-crossings-first-touch-study-20261105' || github.head_ref == 'feature/h017-blue-open-costed-counterfactual-20261105'))
     runs-on: ubuntu-latest
     timeout-minutes: 4
     steps:
