@@ -176,6 +176,13 @@ try {
   assert.match(await indicator.innerText(), /\+DI 23\.9/);
   assert.match(await indicator.innerText(), /ADX 22\.8/);
   assert.ok((await page.locator(".replay-chart canvas").count()) >= 4);
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "40");
+  await page.getByRole("button", { name: "H1", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"), "1h");
+  assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
+  await page.getByRole("button", { name: "M5", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "40");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "3");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "3");
