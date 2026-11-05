@@ -1603,7 +1603,8 @@ def test_monolithic_reconcile_intent_once_with_no_restart(monkeypatch, tmp_path)
     def get(url, _timeout):
         if url.endswith("/api/health"):
             data = dict(ok=True, component="paper_backend", mode="paper",
-                        build_sha=target, database_identity=identity, paper_live_safe=True)
+                        build_sha=target, database_identity=identity, paper_live_safe=True,
+                        process_instance_id="backend-proven-1")
         elif url.endswith("/api/scanner/status"):
             data = dict(ok=True, mode=scanner[0])
         elif url.endswith("/api/robot/autopilot"):
@@ -1685,7 +1686,8 @@ def test_monolithic_overflow_quiet_timeout_blocks_reconcile_and_keeps_backend(
         data = (
             dict(ok=True, component="paper_backend", mode="paper",
                  build_sha="a" * 40, database_identity="d" * 64,
-                 paper_live_safe=True)
+                 paper_live_safe=True,
+                 process_instance_id="backend-proven-1")
             if url.endswith("/api/health") else
             dict(ok=True, mode="SCANNER_STOPPED")
             if url.endswith("/api/scanner/status") else
@@ -1835,7 +1837,7 @@ def test_monolithic_start_active_nonready_exact_release_does_not_deploy(
     assert maintenance.main([
         target, "--resume-installed-editor-only", "--start-paper-after-editor",
     ]) == 2
-    assert "active_exact_PAPER_not_ready" in capsys.readouterr().out
+    assert "active_PAPER_recovery_owner_auto_authority_unproven" in capsys.readouterr().out
 
 
 def test_gitless_full_start_unproven_runtime_does_not_skip_recovery(monkeypatch):
