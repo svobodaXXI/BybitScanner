@@ -546,6 +546,45 @@ describe("standalone SIMULATION viewer contract", () => {
         hourly_close_ms: start + 2 * hourMs,
       });
       expect(visiblePriorBreaks(doc, knownAt + hourMs)).toEqual(breaks); // no duplicates
+      // The kernel owns the authoritative break; without its event the
+      // market-only archive may NOT infer a reversal from prices alone.
+      const priorLine = doc.geometry![0];
+      const kernelPrior = {
+        kind: "H1_PRIOR_CONFIRMED", side,
+        at_ms: priorLine.to_ms, price: String(priorLine.to_price),
+        available_at_ms: priorLine.available_at_ms,
+        trend_version: priorLine.trend_version,
+        classification: "UNVALIDATED_GEOMETRY_ONLY",
+      };
+      const canonicalInput = {
+        ...doc, market_data_source: "BYBIT_PUBLIC_KLINE",
+        hourly_prior_updates: [kernelPrior],
+        hourly_prior_breaks: [breaks[0]],
+      };
+      const canonical = parseReplayDocument(canonicalInput);
+      expect(visiblePriorBreaks(canonical, knownAt - step)).toEqual([]);
+      expect(visiblePriorBreaks(canonical, knownAt)).toEqual(breaks);
+      expect(visibleGeometry(canonical, knownAt)).toEqual([]);
+      const noKernelBreak = parseReplayDocument({
+        ...canonicalInput, hourly_prior_breaks: [],
+      });
+      expect(visiblePriorBreaks(noKernelBreak, knownAt)).toEqual([]);
+      expect(visibleGeometry(noKernelBreak, knownAt)).toHaveLength(1);
+      expect(() => parseReplayDocument({
+        ...canonicalInput, hourly_prior_breaks: [{
+          ...breaks[0], prior_price: 101,
+        }],
+      })).toThrow();
+      expect(() => parseReplayDocument({
+        ...canonicalInput, hourly_prior_breaks: [{
+          ...breaks[0], confirmed_at_ms: knownAt - step,
+        }],
+      })).toThrow();
+      expect(() => parseReplayDocument({
+        ...canonicalInput, hourly_prior_breaks: [{
+          ...breaks[0], next_hour_open_ms: knownAt,
+        }],
+      })).toThrow();
       expect(visiblePriorBreaks(doc, knownAt - step)).toEqual([]); // rewind
       expect(visibleGeometry(doc, knownAt - step)).toHaveLength(1);
       expect(visibleGeometry(doc, knownAt)).toEqual([]); // retired, no fake opposite

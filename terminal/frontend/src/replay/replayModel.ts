@@ -151,6 +151,8 @@ export type ReplayDocument = {
   geometry?: ReplayGeometry[];
   /** Immutable confirmed purple H1 levels from the causal Python kernel. */
   hourly_prior_updates?: ReplayPriorLevel[];
+  /** Python-confirmed close-beyond / next-hour OPEN breaks, never inferred from a wick. */
+  hourly_prior_breaks?: ReplayPriorBreak[];
   reference_5m_retirements?: ReplayReferenceRetirement[];
   observations?: ReplayObservation[];
   h017_blue_risk_previews?: H017BlueRiskPreview[];
@@ -409,6 +411,71 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       }
       lastAvailable = available_at_ms;
       return { side, at_ms, available_at_ms, price, trend_version };
+    });
+  }
+  // The Python kernel is the authority for H1 reversal. The importer
+  // independently validates each claimed break against the frozen purple
+  // prior, a COMPLETE closed H1, and the first observed next-hour M5 OPEN.
+  // An explicit empty array means no breaks, not a license to guess them.
+  let hourly_prior_breaks: ReplayPriorBreak[] | undefined;
+  if (object.hourly_prior_breaks !== undefined) {
+    if (mode !== "MARKET_ONLY" || !Array.isArray(object.hourly_prior_breaks) ||
+        object.hourly_prior_breaks.length > 10_000 ||
+        hourly_prior_updates === undefined || !geometry) {
+      throw new Error("Недостоверная история слома H1-приора");
+    }
+    const byOpen = new Map(events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map(e => [e.candle!.start_ms, e.candle!] as const));
+    const hours = [...(context_1h ?? []), ...completeHourlyCandles(
+      events.filter(e => e.kind === "CANDLE_CLOSED").map(e => e.candle!),
+    )];
+    const byHourStart = new Map(hours.map(hour => [hour.start_ms, hour]));
+    let lastBreakAt = -1;
+    const brokenMovements = new Set<string>();
+    hourly_prior_breaks = object.hourly_prior_breaks.map(raw => {
+      const item = record(raw);
+      const confirmed_at_ms = positiveInteger(item.confirmed_at_ms, "H1 break confirmed");
+      const hourly_close_ms = positiveInteger(item.hourly_close_ms, "H1 close");
+      const next_hour_open_ms = positiveInteger(item.next_hour_open_ms, "next H1 open");
+      const prior_at_ms = positiveInteger(item.prior_at_ms, "prior wick");
+      const trend_version = positiveInteger(item.trend_version, "prior version");
+      const prior_price = safeNumber(item.prior_price, "prior break price");
+      const previous_side = item.previous_side;
+      const new_side = item.new_side;
+      const bar = byOpen.get(next_hour_open_ms);
+      const previous = byHourStart.get(hourly_close_ms - 3_600_000);
+      const frozen = hourly_prior_updates!.filter(level =>
+        level.available_at_ms <= hourly_close_ms - 3_600_000).at(-1);
+      const parent = geometry!.find(line =>
+        line.kind === "MAIN_1H" &&
+        line.trend_version === trend_version &&
+        line.to_ms === prior_at_ms && line.to_price === prior_price &&
+        line.side === previous_side && line.available_at_ms <= hourly_close_ms);
+      const movement = parent
+        ? `${parent.side}:${parent.from_ms}:${parent.from_price}` : "";
+      if (item.kind !== "PRIOR_CLOSE_NEXT_OPEN" ||
+          (previous_side !== "BULL" && previous_side !== "BEAR") ||
+          new_side !== (previous_side === "BULL" ? "BEAR" : "BULL") ||
+          prior_price <= 0 || hourly_close_ms % 3_600_000 !== 0 ||
+          next_hour_open_ms !== hourly_close_ms ||
+          confirmed_at_ms !== next_hour_open_ms + 300_000 ||
+          confirmed_at_ms <= lastBreakAt || !bar ||
+          bar.end_ms !== confirmed_at_ms || !previous ||
+          previous.end_ms !== hourly_close_ms || !frozen || !parent ||
+          frozen.at_ms !== prior_at_ms || frozen.price !== prior_price ||
+          frozen.trend_version !== trend_version ||
+          frozen.side !== previous_side ||
+          !(previous_side === "BULL"
+            ? previous.close < prior_price && bar.open < prior_price
+            : previous.close > prior_price && bar.open > prior_price) ||
+          brokenMovements.has(movement)) {
+        throw new Error("Слом H1 не подтверждён закрытием и следующим OPEN");
+      }
+      lastBreakAt = confirmed_at_ms;
+      brokenMovements.add(movement);
+      return { kind: "PRIOR_CLOSE_NEXT_OPEN" as const, confirmed_at_ms,
+        previous_side, new_side, prior_price, prior_at_ms,
+        trend_version, hourly_close_ms, next_hour_open_ms };
     });
   }
   // M5 retirement is a separate causal event, never a ghost line or signal.
@@ -715,6 +782,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     ...(mode === "MARKET_ONLY" ? { symbol: object.symbol as string, timeframe: "5m" as const } : {}),
     ...(geometry ? { geometry } : {}),
     ...(hourly_prior_updates ? { hourly_prior_updates } : {}),
+    ...(hourly_prior_breaks ? { hourly_prior_breaks } : {}),
     ...(reference_5m_retirements ? { reference_5m_retirements } : {}),
     ...(observations ? { observations } : {}),
     ...(h017_blue_risk_previews ? { h017_blue_risk_previews } : {}),
@@ -935,6 +1003,10 @@ export function visiblePriorBreaks(
   document: ReplayDocument, closedTimeMs: number | null,
 ): ReplayPriorBreak[] {
   if (document.mode !== "MARKET_ONLY" || closedTimeMs === null) return [];
+  if (document.hourly_prior_breaks !== undefined) {
+    return document.hourly_prior_breaks.filter(event =>
+      event.confirmed_at_ms <= closedTimeMs);
+  }
   const candles = document.events.filter(e => e.kind === "CANDLE_CLOSED").map(e => e.candle!);
   const result: ReplayPriorBreak[] = [];
   const emitted = new Set<string>();
