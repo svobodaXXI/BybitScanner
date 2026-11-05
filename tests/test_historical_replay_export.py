@@ -8,6 +8,7 @@ from research.export_historical_replay import (
 )
 from research.h017_real_bybit_readonly_acceptance import (
     retrospective_first_touch_study, verify_archived_hourly_wick_geometry,
+    verify_archived_prior_timeline,
 )
 from research.historical_candle_feed import FIVE_MINUTES_MS
 
@@ -118,6 +119,8 @@ class MarketOnlyExportTests(unittest.TestCase):
             geometry_warmup_bars=13*12,
         )
         self.assertEqual(no_seed["geometry"], [])
+        self.assertEqual(verify_archived_prior_timeline(no_seed)["events"], 0)
+        self.assertEqual(verify_archived_prior_timeline(seeded)["events"], 1)
         self.assertEqual(len(seeded["events"]), 24)
         self.assertEqual(seeded["events"][0]["candle"]["start_ms"], start_ms)
         self.assertEqual(seeded["geometry_warmup_hours"], 13)

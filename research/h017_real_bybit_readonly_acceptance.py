@@ -181,6 +181,80 @@ def verify_archived_hourly_wick_geometry(document):
     return counts
 
 
+def verify_archived_prior_timeline(doc):
+    """Closed-H1 audit of emitted purple levels, never trade evidence."""
+    from research.historical_candle_feed import ClosedHigherTimeframeFeed
+    from research.historical_market_replay import Candle
+
+    hour_ms = 3_600_000
+    hours = {bar["start_ms"]: bar for bar in doc.get("context_1h", [])}
+    stream = ClosedHigherTimeframeFeed()
+    closes = set()
+    for event in doc["events"]:
+        c = event["candle"]
+        closes.add(event["time_ms"])
+        _, _, h1, _ = stream.observe_closed_five_minute(
+            Candle(c["start_ms"], M5, c["open"], c["high"], c["low"], c["close"], c["volume"])
+        )
+        if h1 is not None:
+            if h1.start_ms in hours:
+                raise AssertionError("overlapping H1 prior evidence")
+            hours[h1.start_ms] = {
+                "start_ms": h1.start_ms, "end_ms": h1.end_ms,
+                "high": str(h1.high), "low": str(h1.low),
+            }
+    lines = [x for x in doc["geometry"] if x["kind"] == "MAIN_1H"]
+    updates = doc.get("hourly_prior_updates", [])
+    if lines and not updates:
+        raise AssertionError("confirmed yellow lines lack purple-prior events")
+    last = None
+    transfers = 0
+    for item in updates:
+        at, known, side, price = (
+            item["at_ms"], item["available_at_ms"], item["side"], Decimal(item["price"])
+        )
+        candidates = [x for x in lines if
+                      x["side"] == side and x["to_ms"] == at and
+                      Decimal(x["to_price"]) == price and x["available_at_ms"] <= known]
+        wick = "low" if side == "BULL" else "high"
+        candle = hours.get(at)
+        if (item["kind"] != "H1_PRIOR_CONFIRMED" or not candidates or
+                known not in closes or at >= known or
+                (last is not None and known <= last[0]) or
+                candle is None or candle["end_ms"] > known or
+                Decimal(candle[wick]) != price):
+            raise AssertionError("prior has no closed H1 wick or valid publication time")
+        line = candidates[-1]
+        movement = (side, line["from_ms"], line["from_price"])
+        if last is not None and last[1] == movement:
+            old_touch, old_price = last[2], last[3]
+            before = [x for x in hours.values()
+                      if line["from_ms"] <= x["start_ms"] < at]
+            extreme = (max(Decimal(x["high"]) for x in before) if side == "BULL"
+                       else min(Decimal(x["low"]) for x in before)) if before else None
+            newer = extreme is not None and any(
+                x["start_ms"] > at and x["end_ms"] <= known and
+                (Decimal(x["high"]) > extreme if side == "BULL"
+                 else Decimal(x["low"]) < extreme) for x in hours.values()
+            )
+            if (at <= old_touch or known % hour_ms != 0 or not newer or
+                    (side == "BULL" and price <= old_price) or
+                    (side == "BEAR" and price >= old_price)):
+                raise AssertionError("prior moved without a later CLOSED H1 extreme")
+            transfers += 1
+        last = (known, movement, at, price)
+    return {
+        "events": len(updates), "transfers_verified": transfers,
+        "initial_publications": len(updates) - transfers,
+        "timeline": [
+            {"side": x["side"], "at_ms": x["at_ms"],
+             "available_at_ms": x["available_at_ms"], "price": x["price"]}
+            for x in updates[:12]
+        ],
+        "timeline_truncated": len(updates) > 12,
+    }
+
+
 def retrospective_first_touch_study(bars, previews, dmi_points):
     """Independent, non-executable first-touch count on a bounded market sample.
 
@@ -289,6 +363,7 @@ def check() -> dict[str, object]:
         elif "stop_price" in preview or "quantity" in preview:
             raise AssertionError("rejected H-017 candidate contains execution fields")
     verified_h1 = verify_archived_hourly_wick_geometry(doc)
+    verified_priors = verify_archived_prior_timeline(doc)
     # Hash the actual returned closed OHLCV bars, not mock fixtures or rendered pixels.
     canonical = json.dumps(bars, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     summary = {
@@ -306,6 +381,7 @@ def check() -> dict[str, object]:
         "hourly_main_lines": sum(x["kind"] == "MAIN_1H" for x in doc["geometry"]),
         "hourly_target_lines": sum(x["kind"] == "TARGET_1H" for x in doc["geometry"]),
         "closed_h1_wick_verified_lines": verified_h1,
+        "closed_h1_prior_timeline": verified_priors,
         "hourly_main_contacts": sum(x["kind"] == "MAIN_1H_TOUCH" for x in doc["observations"]),
         "hourly_main_reactions": sum(x["kind"] == "MAIN_1H_REACTION" for x in doc["observations"]),
         "blue_open_candidates": len(doc["h017_blue_risk_previews"]),
