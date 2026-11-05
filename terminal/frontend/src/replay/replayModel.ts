@@ -350,9 +350,17 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
         object.observations.length > 100_000) {
       throw new Error("Наблюдения трендовой разрешены только в рыночной SIMULATION");
     }
-    const closedTimes = new Set(events.filter(e => e.kind === "CANDLE_CLOSED").map(e => e.time_ms));
+    const closedBars = new Map(events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map(e => [e.time_ms, e.candle!] as const));
     let lastTime = -1;
+    let geometryIndex = 0;
+    let activeMain: ReplayGeometry | undefined;
     const touches = new Set<string>();
+    // Each observation must refer to the currently visible, frozen 1H line.
+    // Streaming merge is O(candles + lines + observations), not quadratic.
+    const projected = (line: ReplayGeometry, at_ms: number) =>
+      line.from_price + (line.to_price - line.from_price) *
+        (at_ms - line.from_ms) / (line.to_ms - line.from_ms);
     observations = object.observations.map(item => {
       const observation = record(item);
       const kind = observation.kind;
@@ -364,21 +372,48 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       if ((kind !== "MAIN_1H_TOUCH" && kind !== "MAIN_1H_REACTION") ||
           (side !== "BULL" && side !== "BEAR") ||
           observation.classification !== "UNVALIDATED_GEOMETRY_ONLY" ||
-          !closedTimes.has(time_ms) || time_ms < lastTime ||
+          !closedBars.has(time_ms) || time_ms < lastTime ||
           trend_version > time_ms - 300_000 || price <= 0 || line_price <= 0) {
         throw new Error("Недостоверное или будущее наблюдение линии");
+      }
+      while (geometry && geometryIndex < geometry.length &&
+          geometry[geometryIndex].available_at_ms <= time_ms) {
+        const line = geometry[geometryIndex++];
+        if (line.kind === "MAIN_1H") activeMain = line;
+      }
+      const bar = closedBars.get(time_ms)!;
+      if (!activeMain || activeMain.trend_version !== trend_version ||
+          activeMain.side !== side || activeMain.trend_version > bar.start_ms ||
+          bar.end_ms - bar.start_ms !== 300_000) {
+        throw new Error("Наблюдение не связано с известной часовой линией 1–3");
+      }
+      const atOpen = projected(activeMain, bar.start_ms);
+      const atClose = projected(activeMain, bar.end_ms);
+      // Decimal-to-JS serialization tolerance, NOT a market/entry threshold.
+      if (price !== bar.close ||
+          Math.abs(line_price - atClose) > (1 + Math.abs(atClose)) * 1e-9) {
+        throw new Error("Наблюдение не совпадает с закрытой свечой или трендовой");
       }
       lastTime = time_ms;
       const key = (stamp: number) => `${stamp}:${trend_version}:${side}`;
       if (kind === "MAIN_1H_TOUCH") {
         if (observation.touch_time_ms !== undefined) throw new Error("Касание содержит чужое время");
+        if (bar.low > Math.min(atOpen, atClose) || bar.high < Math.max(atOpen, atClose) ||
+            (side === "BULL" ? bar.close < atClose : bar.close > atClose)) {
+          throw new Error("Касание не подтверждается OHLC и часовой трендовой");
+        }
         touches.add(key(time_ms));
         return { kind, side, time_ms, price, line_price, trend_version,
           classification: "UNVALIDATED_GEOMETRY_ONLY" as const };
       }
       const touch_time_ms = positiveInteger(observation.touch_time_ms, "touch_time_ms");
-      if (touch_time_ms !== time_ms - 300_000 || !touches.has(key(touch_time_ms))) {
+      if (touch_time_ms !== bar.start_ms || !touches.has(key(touch_time_ms))) {
         throw new Error("Реакция без предыдущего подтверждённого касания");
+      }
+      const prior = closedBars.get(touch_time_ms);
+      if (!prior || !(side === "BULL" ? bar.close > prior.close && bar.close > atClose :
+          bar.close < prior.close && bar.close < atClose)) {
+        throw new Error("Движение от трендовой не подтверждается закрытыми свечами");
       }
       return { kind, side, time_ms, touch_time_ms, price, line_price, trend_version,
         classification: "UNVALIDATED_GEOMETRY_ONLY" as const };
