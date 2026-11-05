@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi, visibleObservations } from "./replayModel";
+import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("shows only completed candles and fills revealed at the current cursor", () => {
@@ -208,6 +208,77 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(() => parseReplayDocument({
       ...archive, observations: [{ ...archive.observations[0], trend_version: second + 1 }],
     })).toThrow(/будущее/);
+  });
+
+  it("time-gates H-017 blue OPEN risk previews with actual candle and frozen line identity", () => {
+    const demo = syntheticReplay();
+    const events = demo.events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map((e, i) => ({ ...e, sequence: i + 1, simulation_run_id: "blue_risk_test" }));
+    const ts = events[0].candle!.start_ms;
+    const known = events[5].time_ms;
+    const blueAt = events[6].time_ms;
+    const start = events[10].candle!.start_ms;
+    const startPrice = events[10].candle!.open;
+    const rejectedAt = events[34].candle!.start_ms;
+    const rejectedPrice = events[34].candle!.open;
+    const geometry = [
+      { kind: "MAIN_1H", side: "BULL", available_at_ms: known, trend_version: known,
+        from_ms: ts, to_ms: ts + 300_000, from_price: "95", to_price: "95",
+        classification: "UNVALIDATED_GEOMETRY_ONLY" },
+      { kind: "TARGET_1H", side: "BULL", available_at_ms: known, trend_version: known,
+        from_ms: ts, to_ms: ts + 300_000, from_price: "110", to_price: "110",
+        classification: "UNVALIDATED_GEOMETRY_ONLY" },
+      { kind: "REFERENCE_5M", side: "BULL", available_at_ms: blueAt, trend_version: known,
+        from_ms: ts, to_ms: ts + 300_000, from_price: "100", to_price: "100",
+        classification: "UNVALIDATED_GEOMETRY_ONLY" },
+    ];
+    const initial = {
+      source: "SIMULATION", simulation_run_id: "blue_risk_test",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events, geometry,
+      h017_blue_risk_previews: [
+        { source: "SIMULATION", kind: "BLUE_5M_OPEN",
+          classification: "UNVALIDATED_GEOMETRY_ONLY",
+          time_ms: events[10].time_ms, open_ms: start,
+          blue_available_at_ms: blueAt, trend_version: known, side: "LONG",
+          entry_price: String(startPrice), blue_price: "100", target_price: "110",
+          risk_status: "RISK_PASS",
+          stop_price: String(startPrice * 0.993), quantity: String(10/startPrice) },
+        { source: "SIMULATION", kind: "BLUE_5M_OPEN",
+          classification: "UNVALIDATED_GEOMETRY_ONLY",
+          time_ms: events[34].time_ms, open_ms: rejectedAt,
+          blue_available_at_ms: blueAt, trend_version: known, side: "LONG",
+          entry_price: String(rejectedPrice), blue_price: "100", target_price: "110",
+          risk_status: "RISK_BELOW_1R" },
+      ],
+    };
+    const doc = parseReplayDocument(initial);
+    expect(visibleH017BlueRiskPreviews(doc, null)).toHaveLength(0);
+    expect(visibleH017BlueRiskPreviews(doc, events[10].time_ms - 1)).toHaveLength(0);
+    expect(visibleH017BlueRiskPreviews(doc, events[10].time_ms)).toHaveLength(1);
+    expect(visibleH017BlueRiskPreviews(doc, events[34].time_ms)
+      .map(x => x.risk_status)).toEqual(["RISK_PASS", "RISK_BELOW_1R"]);
+    expect(visibleReplay(doc.events, doc.events.length).fills).toHaveLength(0);
+    const altered = (i: number, x: Record<string, unknown>) => ({
+      ...initial, h017_blue_risk_previews: initial.h017_blue_risk_previews.map(
+        (r, n) => n === i ? { ...r, ...x } : r,
+      ),
+    });
+    expect(() => parseReplayDocument({ ...initial, geometry: [] }))
+      .toThrow(/геометрии/);
+    expect(() => parseReplayDocument(altered(0, { entry_price: "1000" })))
+      .toThrow(/свеча/);
+    expect(() => parseReplayDocument(altered(0, { risk_status: "TRADE_APPROVED" })))
+      .toThrow(/Недостоверный/);
+    expect(() => parseReplayDocument(altered(0, { time_ms: events[15].time_ms })))
+      .toThrow(/свеча/);
+    expect(() => parseReplayDocument(altered(0, { stop_price: "1" })))
+      .toThrow(/0,7%/);
+    expect(() => parseReplayDocument(altered(0, { target_price: "100" })))
+      .toThrow(/геометрии/);
+    expect(() => parseReplayDocument(altered(1, { risk_status: "RISK_PASS",
+      stop_price: String(rejectedPrice * 0.993), quantity: String(10/rejectedPrice) })))
+      .toThrow(/1:1/);
   });
 
   it("accepts strictly causal Wilder 5m DMI and hides future samples during playback", () => {
