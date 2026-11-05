@@ -4086,10 +4086,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     return "database_identity_mismatch"
                 robot = runtime.robot_runtime_state()
                 scanner = runtime.scanner_status().mode
+                # Durable STOPPED is published before Scanner child teardown.
+                # The canonical backend has a non-blocking worker proof; legacy
+                # test/pre-upgrade runtimes lacking it keep their prior behavior.
+                worker_probe = getattr(runtime, "scanner_worker_quiescent", None)
+                worker_settled = (
+                    worker_probe() if callable(worker_probe)
+                    else worker_probe if worker_probe is not None else True
+                )
                 durable_blocker = runtime.paper_shutdown_blocker()
                 protection = coverage.health()
                 if (
                     durable_blocker is not None
+                    or worker_settled is not True
                     or robot is None
                     or (robot.mode, robot.recovery_status) != ("ROBOT_STOPPED", "ROBOT_STOPPED")
                     or scanner != "SCANNER_STOPPED"
