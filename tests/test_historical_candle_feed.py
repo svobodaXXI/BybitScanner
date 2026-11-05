@@ -117,5 +117,88 @@ class HistoricalCandleFeedTests(unittest.TestCase):
         self.assertEqual(result.trades[0].source, "SIMULATION")
 
 
+    def test_blue_retirement_uses_exported_version_after_h1_revision(self):
+        """Same M5 correction + revised H1 must survive JSON identity validation."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from research.causal_trend_geometry import CausalLine, ConfirmedPivot
+        from research.export_historical_replay import build_market_only_document
+
+        t0 = 3_600_000
+        bars = [
+            Candle(t0, FIVE_MINUTES_MS, 100, 101, 99, 100, 3),
+            Candle(t0 + FIVE_MINUTES_MS, FIVE_MINUTES_MS, 100, 101, 99, 100, 3),
+            Candle(t0 + 2 * FIVE_MINUTES_MS, FIVE_MINUTES_MS, 110, 111, 109, 110, 3),
+        ]
+        pivot = lambda kind, index, when, price: ConfirmedPivot(
+            kind, index, when, t0, Decimal(price))
+        main = CausalLine(
+            pivot("LOW", 0, 0, 90), pivot("LOW", 1, t0 - FIVE_MINUTES_MS, 91),
+            t0 + FIVE_MINUTES_MS)
+        target = CausalLine(
+            pivot("HIGH", 0, 0, 120), pivot("HIGH", 1, t0 - FIVE_MINUTES_MS, 119),
+            t0 + FIVE_MINUTES_MS)
+        blue = CausalLine(
+            pivot("HIGH", 2, t0 - 2 * FIVE_MINUTES_MS, 105),
+            pivot("HIGH", 3, t0 - FIVE_MINUTES_MS, 104),
+            t0 + FIVE_MINUTES_MS)
+        h1_first = t0 + FIVE_MINUTES_MS
+        h1_revised = t0 + 2 * FIVE_MINUTES_MS
+        trends = [
+            SimpleNamespace(side="BULL", main=main, target=target,
+                            available_at_ms=h1_first),
+            SimpleNamespace(side="BULL", main=main, target=target,
+                            available_at_ms=h1_revised),
+        ]
+
+        def replay_fixture(**kwargs):
+            for i, candle in enumerate(bars):
+                trend = trends[0] if i == 0 else trends[1]
+                snapshot = SimpleNamespace(
+                    time_ms=candle.end_ms, plus_di=None, minus_di=None,
+                    adx=None, crossings=())
+                view = SimpleNamespace(
+                    five_minute=SimpleNamespace(
+                        bar=candle, signal_time_ms=candle.end_ms),
+                    dmi_5m=snapshot, hourly_trend=trend,
+                    reference_5m=blue if i < 2 else None)
+                kwargs["on_closed_context"](view)
+                kwargs["on_visual_event"](
+                    SimpleNamespace(to_payload=lambda: {"kind": "CANDLE_CLOSED"}))
+            return SimpleNamespace(trades=(), open_position=None)
+
+        with (
+            patch("research.export_historical_replay.load_closed_five_minute_history",
+                  return_value=tuple(bars)),
+            patch("research.export_historical_replay.replay_with_closed_context",
+                  side_effect=replay_fixture),
+            patch("research.export_historical_replay.blue_open_risk_preview",
+                  return_value=None),
+        ):
+            doc = build_market_only_document(
+                symbol="BTCUSDT", start_ms=t0,
+                end_ms=t0 + len(bars) * FIVE_MINUTES_MS,
+                run_id="h1_revision_test", fetch_candles=lambda *a, **k: None)
+
+        published = [item for item in doc["geometry"]
+                     if item["kind"] == "REFERENCE_5M"]
+        self.assertEqual(len(published), 2)
+        self.assertEqual([item["trend_version"] for item in published],
+                         [h1_first, h1_revised])
+        retired = doc["reference_5m_retirements"]
+        self.assertEqual(len(retired), 1)
+        self.assertEqual(retired[0]["blue_available_at_ms"], h1_revised)
+        self.assertEqual(retired[0]["trend_version"], h1_revised)
+        self.assertEqual(
+            [(item["available_at_ms"], item["trend_version"])
+             for item in published
+             if item["available_at_ms"] == retired[0]["blue_available_at_ms"]
+             and item["trend_version"] == retired[0]["trend_version"]],
+            [(h1_revised, h1_revised)],
+        )
+        self.assertEqual(doc["mode"], "MARKET_ONLY")
+        self.assertEqual(len(doc["events"]), 3)
+
+
 if __name__ == "__main__":
     unittest.main()
