@@ -76,3 +76,26 @@ export function initialSourceGeometryRange(
   const margin = Math.max(12, Math.ceil((latest - earliest) * 0.2));
   return { from: earliest - margin, to: latest + margin };
 }
+
+
+/** Reopen the owner's exact frozen correction regardless of stored boundary order.
+ * The store may reorder canonical boundaries; array-index matching incorrectly
+ * rejects good reviews. Projection still fails closed on invalid UTC anchors,
+ * duplicate IDs, malformed prices, or geometry not present in frozen candles.
+ */
+export function restoreSavedSignalCorrection(
+  sourceReferences: readonly DrawingObject[],
+  correctedBoundaries: readonly TimestampDrawing[],
+  frozenCandles: readonly Candle[],
+): DrawingObject[] {
+  const saved = projectSignalGeometry(correctedBoundaries, frozenCandles).editableDrawings;
+  if (saved.length !== sourceReferences.length || !sourceReferences.length)
+    throw new Error("Saved correction topology does not match source lines");
+  const byId = new Map(saved.map((drawing) => [drawing.id, drawing]));
+  return sourceReferences.map((original) => {
+    const editable = byId.get("editable:" + original.id);
+    if (!editable || editable.type !== original.type)
+      throw new Error("Saved correction topology does not match source lines");
+    return editable;
+  });
+}
