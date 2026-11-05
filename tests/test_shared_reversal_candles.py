@@ -63,7 +63,7 @@ def test_nison_parity(direction, prior, formation, expected):
 
 def test_body_confirmation_parity_and_no_lookahead():
     long = candle(0, 9, 10.2, 8.5, 10)
-    first = candle(1, 10, 10.4, 9.9, 10.1)  # Wick past body, close does NOT confirm.
+    first = candle(1, 10, 10.4, 9.8, 9.9)  # Wick past body, close does NOT confirm.
     confirmed = candle(1, 10, 10.5, 9.9, 10.3)
     assert not confirms_next_body_close([long], first, "LONG", STEP)
     assert confirms_next_body_close([long], confirmed, "LONG", STEP)
