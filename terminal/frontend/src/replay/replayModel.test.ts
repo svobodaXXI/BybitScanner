@@ -362,7 +362,7 @@ describe("standalone SIMULATION viewer contract", () => {
       entry_price: 100, blue_price: 99, target_price: side === "LONG" ? 105 : 95,
       risk_status: "RISK_PASS" as const, stop_price: side === "LONG" ? 99.3 : 100.7,
       quantity: 0.1,
-    }));
+    });
     const signal = { time_ms: events[0].time_ms, side: "PLUS" as const,
       direction: "UP" as const, comparator: "LEVEL_20" as const };
     const base: ReplayDocument = {
