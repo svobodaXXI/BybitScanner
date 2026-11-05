@@ -762,43 +762,75 @@ export function visiblePriorLevels(
   document: ReplayDocument, closedTimeMs: number | null,
 ): ReplayPriorLevel[] {
   if (document.mode !== "MARKET_ONLY" || closedTimeMs === null) return [];
-  const candles = document.events.filter(event => event.kind === "CANDLE_CLOSED")
-    .map(event => event.candle!);
-  const result: ReplayPriorLevel[] = [];
-  let extreme: number | undefined;
-  let lineOrigin = 0;
-  const directionalExtreme = (
-    side: "BULL" | "BEAR", fromMs: number, toMs: number,
-  ): number | undefined => {
-    const known = candles.filter(bar =>
-      bar.start_ms >= fromMs && bar.end_ms <= toMs);
-    if (!known.length) return undefined;
-    return side === "BULL" ? Math.max(...known.map(bar => bar.high)) :
-      Math.min(...known.map(bar => bar.low));
-  };
-  for (const line of document.geometry ?? []) {
-    if (line.available_at_ms > closedTimeMs) break;
-    if (line.kind !== "MAIN_1H") continue;
-    const last = result.at(-1);
-    if (last && last.at_ms === line.to_ms &&
-        last.price === line.to_price && last.side === line.side) continue;
-    if (!last || last.side !== line.side) {
-      // A new direction starts a separate history. Never reuse a prior
-      // trend's extreme to license a new line.
-      lineOrigin = line.from_ms;
-      extreme = directionalExtreme(line.side, lineOrigin, line.available_at_ms);
-    } else {
-      const observed = directionalExtreme(line.side, line.to_ms, line.available_at_ms);
-      const newExtreme = observed !== undefined && extreme !== undefined &&
-        (line.side === "BEAR" ? observed < extreme : observed > extreme);
-      if (!newExtreme) continue;
-      extreme = observed;
+  // An M5 wick in a still-forming H1 cannot move an hourly prior. Build
+  // full H1 candles only; a gap/partial hour supplies no evidence.
+  const knownM5 = document.events.filter(event =>
+    event.kind === "CANDLE_CLOSED" && event.time_ms <= closedTimeMs,
+  ).map(event => event.candle!);
+  const hours = completeHourlyCandles(knownM5);
+  const mainLines = (document.geometry ?? []).filter(line =>
+    line.kind === "MAIN_1H" && line.available_at_ms <= closedTimeMs);
+  const proposals: ReplayPriorLevel[] = [];
+  let movement = "";
+  let latestTouch = -1;
+  const seenTouches = new Set<string>();
+  for (const line of mainLines) {
+    // The first wick is immutable throughout one movement. A different
+    // first anchor or direction is a new movement, not an H1 revision.
+    const identity = `${line.side}:${line.from_ms}:${line.from_price}`;
+    if (identity !== movement) {
+      movement = identity;
+      latestTouch = line.to_ms;
+      seenTouches.clear();
+      proposals.push({
+        side: line.side, at_ms: line.to_ms, price: line.to_price,
+        available_at_ms: line.available_at_ms, trend_version: line.trend_version,
+      });
+      seenTouches.add(`${line.to_ms}:${line.to_price}`);
+      continue;
     }
-    if (last) last.superseded_at_ms = line.available_at_ms;
-    result.push({
+    // A revised slope at the SAME H1 touch cannot mint a fresh prior.
+    const touchKey = `${line.to_ms}:${line.to_price}`;
+    if (line.to_ms <= latestTouch || seenTouches.has(touchKey)) continue;
+    latestTouch = line.to_ms;
+    seenTouches.add(touchKey);
+    // Compare the post-touch H1 extreme to the trend's prior H1 extreme.
+    // Without complete archived history back to the movement's first
+    // anchor, that comparison is not provable: retain the existing prior.
+    if (!hours.length || hours[0].start_ms > line.from_ms) continue;
+    const before = hours.filter(bar =>
+      bar.start_ms >= line.from_ms && bar.start_ms <= line.to_ms);
+    if (!before.length) continue;
+    const oldExtreme = line.side === "BULL"
+      ? Math.max(...before.map(bar => bar.high))
+      : Math.min(...before.map(bar => bar.low));
+    const confirmed = hours.find(bar =>
+      bar.start_ms > line.to_ms &&
+      (line.side === "BULL" ? bar.high > oldExtreme : bar.low < oldExtreme));
+    if (!confirmed) continue;
+    // A qualifying H1 can close AFTER the revised line was first known.
+    // Record its own close as the publication time, never backdate it to
+    // the touch, an M5 wick, or the geometry revision.
+    const knownAt = Math.max(line.available_at_ms, confirmed.end_ms);
+    if (knownAt > closedTimeMs) continue;
+    proposals.push({
       side: line.side, at_ms: line.to_ms, price: line.to_price,
-      available_at_ms: line.available_at_ms, trend_version: line.trend_version,
+      available_at_ms: knownAt, trend_version: line.trend_version,
     });
+  }
+  // Deferred H1 confirmations may occur after newer geometry revisions.
+  // Process by evidence time, retaining only directionally advanced touches.
+  proposals.sort((a, b) =>
+    a.available_at_ms - b.available_at_ms || a.at_ms - b.at_ms);
+  const result: ReplayPriorLevel[] = [];
+  for (const candidate of proposals) {
+    const last = result.at(-1);
+    if (last && last.side === candidate.side &&
+        (candidate.at_ms <= last.at_ms ||
+          (candidate.side === "BULL"
+            ? candidate.price <= last.price : candidate.price >= last.price))) continue;
+    if (last) last.superseded_at_ms = candidate.available_at_ms;
+    result.push({ ...candidate });
   }
   return result;
 }
