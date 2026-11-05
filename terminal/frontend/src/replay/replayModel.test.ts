@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi } from "./replayModel";
+import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi, visibleObservations } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("shows only completed candles and fills revealed at the current cursor", () => {
@@ -165,6 +165,49 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(() => parseReplayDocument({
       ...archive, geometry: [{ ...archive.geometry[0], classification: "TRADE_APPROVED" }],
     })).toThrow(/торговый сигнал/);
+  });
+
+  it("reveals only completed H1 touch/reaction observations, never simulated fills", () => {
+    const demo = syntheticReplay();
+    const events = demo.events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map((event, i) => ({ ...event, sequence: i + 1 }));
+    const first = events[10].time_ms;
+    const second = events[11].time_ms;
+    const version = events[5].time_ms;
+    const archive = {
+      source: "SIMULATION", simulation_run_id: "observation_fixture",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events: events.map(e => ({
+        ...e, simulation_run_id: "observation_fixture",
+      })),
+      observations: [
+        { kind: "MAIN_1H_TOUCH", side: "BULL", time_ms: first,
+          price: "101", line_price: "100", trend_version: version,
+          classification: "UNVALIDATED_GEOMETRY_ONLY" },
+        { kind: "MAIN_1H_REACTION", side: "BULL", time_ms: second,
+          touch_time_ms: first, price: "102", line_price: "100.1",
+          trend_version: version, classification: "UNVALIDATED_GEOMETRY_ONLY" },
+      ],
+    };
+    const doc = parseReplayDocument(archive);
+    expect(visibleObservations(doc, first - 1)).toHaveLength(0);
+    expect(visibleObservations(doc, first).map(e => e.kind)).toEqual(["MAIN_1H_TOUCH"]);
+    expect(visibleObservations(doc, second).map(e => e.kind)).toEqual([
+      "MAIN_1H_TOUCH", "MAIN_1H_REACTION",
+    ]);
+    expect(visibleReplay(doc.events, doc.events.length).fills).toHaveLength(0);
+    expect(() => parseReplayDocument({
+      ...archive, observations: [archive.observations[1]],
+    })).toThrow(/без предыдущего/);
+    expect(() => parseReplayDocument({
+      ...archive, observations: [{ ...archive.observations[0], time_ms: second + 300_000 * 100 }],
+    })).toThrow(/будущее/);
+    expect(() => parseReplayDocument({
+      ...archive, observations: [{ ...archive.observations[0], classification: "TRADE_APPROVED" }],
+    })).toThrow(/Недостоверное/);
+    expect(() => parseReplayDocument({
+      ...archive, observations: [{ ...archive.observations[0], trend_version: second + 1 }],
+    })).toThrow(/будущее/);
   });
 
   it("accepts strictly causal Wilder 5m DMI and hides future samples during playback", () => {

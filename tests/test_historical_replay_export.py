@@ -129,6 +129,50 @@ class MarketOnlyExportTests(unittest.TestCase):
                             for e in seeded["events"]))
         self.assertEqual(seeded["dmi_5m"]["points"][0]["plus_di"], None)
 
+    def test_replay_records_contact_then_next_close_reaction_without_trades(self):
+        # Confirm H1 1--3 / 2--4 by hour 13 using ONLY the warmup.
+        hourly = [
+            (105,100), (110,102), (115,104), (107,99), (104,95),
+            (110,103), (118,107), (113,104), (108,99), (112,106),
+            (120,110), (116,108), (112,103),
+        ]
+        data = []
+        for hour, (high, low) in enumerate(hourly):
+            middle = (high + low) / 2
+            for within in range(12):
+                data.append({
+                    "time": str((hour * 12 + within) * FIVE_MINUTES_MS),
+                    "open": str(middle), "close": str(middle),
+                    "high": str(high if within == 5 else middle + 1),
+                    "low": str(low if within == 6 else middle - 1),
+                    "volume": "10",
+                })
+        first = 13 * 12 * FIVE_MINUTES_MS
+        # Hourly BULL main line through L4=95 and L8=99 -> at H13=104.
+        data.extend([
+            {"time": str(first), "open": "104", "high": "106",
+             "low": "103.5", "close": "104.5", "volume": "10"},
+            {"time": str(first + FIVE_MINUTES_MS), "open": "104.5",
+             "high": "106", "low": "104.3", "close": "105.5", "volume": "10"},
+        ])
+        def fetch(_symbol, _interval, limit, *, end_ms):
+            return [x for x in data if int(x["time"]) <= end_ms][-limit:][::-1]
+
+        doc = build_market_only_document(
+            symbol="BTCUSDT", start_ms=first, end_ms=first + 2 * FIVE_MINUTES_MS,
+            run_id="touch-not-fill", fetch_candles=fetch, geometry_warmup_bars=156,
+        )
+        marks = doc["observations"]
+        self.assertEqual([x["kind"] for x in marks],
+                         ["MAIN_1H_TOUCH", "MAIN_1H_REACTION"])
+        self.assertEqual([x["time_ms"] for x in marks],
+                         [first + FIVE_MINUTES_MS, first + 2 * FIVE_MINUTES_MS])
+        self.assertEqual(marks[1]["touch_time_ms"], marks[0]["time_ms"])
+        self.assertTrue(all(x["classification"] == "UNVALIDATED_GEOMETRY_ONLY"
+                            for x in marks))
+        self.assertTrue(all(e["kind"] == "CANDLE_CLOSED" for e in doc["events"]))
+        self.assertFalse(any("trade_id" in e for e in doc["events"]))
+
     def test_exported_adx_matches_only_closed_5m_bars_and_wilder_warmup(self):
         document = build_market_only_document(
             symbol="BTCUSDT", start_ms=0, end_ms=40 * FIVE_MINUTES_MS,

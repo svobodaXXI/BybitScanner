@@ -15,6 +15,7 @@ import secrets
 from research.historical_candle_feed import (
     FIVE_MINUTES_MS, load_closed_five_minute_history, replay_with_closed_context,
 )
+from research.causal_trend_geometry import main_line_contact
 
 SIMULATION_OUTPUT = Path(__file__).resolve().parent / "simulation_runs"
 MAX_BARS = 50_000
@@ -51,7 +52,9 @@ def build_market_only_document(
     candles = all_candles[preload_count:]
     events = []
     geometry: list[dict[str, object]] = []
+    observations: list[dict[str, object]] = []
     dmi_points: list[dict[str, object]] = []
+    pending_contact: tuple[int, int, str, object] | None = None
     versions: dict[str, tuple[int, int, int]] = {}
 
     def collect_lines(view) -> None:
@@ -78,6 +81,42 @@ def build_market_only_document(
             if view.reference_5m is not None:
                 collect("REFERENCE_5M", view.reference_5m, trend.side, trend.available_at_ms)
 
+    def collect_main_line_observations(view) -> None:
+        nonlocal pending_contact
+        bar = view.five_minute.bar
+        trend = view.hourly_trend
+        # An H1 line discovered at THIS candle's close was not known at open.
+        if trend is None or trend.available_at_ms > bar.start_ms:
+            pending_contact = None
+            return
+        at_close = trend.main.value_at(bar.end_ms)
+        # A follow-through is only the immediately following closed 5m bar.
+        # Its existence does not turn a touch into an approved trade trigger.
+        if pending_contact is not None:
+            time_ms, version, side, prior_close = pending_contact
+            if time_ms == bar.start_ms and version == trend.available_at_ms and side == trend.side:
+                moving_away = (bar.close > prior_close and bar.close > at_close) if side == "BULL" else (
+                    bar.close < prior_close and bar.close < at_close
+                )
+                if moving_away:
+                    observations.append({
+                        "kind": "MAIN_1H_REACTION", "side": side, "time_ms": bar.end_ms,
+                        "touch_time_ms": time_ms, "price": str(bar.close),
+                        "line_price": str(at_close), "trend_version": version,
+                        "classification": "UNVALIDATED_GEOMETRY_ONLY",
+                    })
+        contact_at = main_line_contact(trend, bar)
+        if contact_at is None:
+            pending_contact = None
+            return
+        observations.append({
+            "kind": "MAIN_1H_TOUCH", "side": trend.side, "time_ms": bar.end_ms,
+            "price": str(bar.close), "line_price": str(contact_at),
+            "trend_version": trend.available_at_ms,
+            "classification": "UNVALIDATED_GEOMETRY_ONLY",
+        })
+        pending_contact = (bar.end_ms, trend.available_at_ms, trend.side, bar.close)
+
     def collect_context(view) -> None:
         snapshot = view.dmi_5m
         # The 5m candle and its DMI snapshot become visible at the same close.
@@ -90,6 +129,7 @@ def build_market_only_document(
             "adx": str(snapshot.adx) if snapshot.adx is not None else None,
         })
         collect_lines(view)
+        collect_main_line_observations(view)
 
     result = replay_with_closed_context(
         simulation_run_id=run_id,
@@ -109,6 +149,7 @@ def build_market_only_document(
         "from_ms": start_ms, "until_ms": end_ms,
         "events": events,
         "geometry": geometry,
+        "observations": observations,
         "geometry_warmup_hours": len(warmup_candles) // 12,
         "dmi_5m": {
             "source": "SIMULATION", "timeframe": "5m",

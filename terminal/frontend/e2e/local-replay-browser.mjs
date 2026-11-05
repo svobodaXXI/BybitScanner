@@ -91,7 +91,7 @@ try {
       time_ms: t + (i + 1) * 300000,
       candle: {
         start_ms: t + i * 300000, end_ms: t + (i + 1) * 300000,
-        open: "100", high: "102", low: "98", close: "101", volume: "100",
+        open: "100", high: "102", low: "98", close: i === 33 ? "101.5" : "101", volume: "100",
       },
     })),
     dmi_5m: {
@@ -108,9 +108,18 @@ try {
       kind: "MAIN_1H", side: "BULL",
       available_at_ms: t + 900000, from_ms: t - 12*300000,
       to_ms: t - 6*300000,
-      from_price: "98", to_price: "99",
+      from_price: "99", to_price: "99.1",
       trend_version: t + 900000, classification: "UNVALIDATED_GEOMETRY_ONLY",
     }],
+    observations: [
+      { kind: "MAIN_1H_TOUCH", side: "BULL",
+        time_ms: t + 33 * 300000, price: "101", line_price: "99.75",
+        trend_version: t + 900000, classification: "UNVALIDATED_GEOMETRY_ONLY" },
+      { kind: "MAIN_1H_REACTION", side: "BULL",
+        time_ms: t + 34 * 300000, touch_time_ms: t + 33 * 300000,
+        price: "101.5", line_price: "99.7666666667",
+        trend_version: t + 900000, classification: "UNVALIDATED_GEOMETRY_ONLY" },
+    ],
   };
   await page.route("**/local-replay/history?*", async (route) => {
     await route.fulfill({
@@ -135,6 +144,9 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "1");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-observations"), "2");
+  assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(),
+    /Касаний 1–3: 1; движений от линии: 1/);
   assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(), /Предыстория.*72 ч/);
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });

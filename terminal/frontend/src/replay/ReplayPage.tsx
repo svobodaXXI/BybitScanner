@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi,
+  parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi, visibleObservations,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
@@ -28,6 +28,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
    const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const observedDmi = useMemo(() => visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
+  const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
   const latestDmi = observedDmi.at(-1);
   const dmiValue = (value: number | null | undefined) => value == null ? "—" : value.toFixed(1);
 
@@ -178,6 +179,27 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
         paintedGeometry += 1;
       }
       context.setLineDash([]);
+      // Hollow marks are geometry observations, never entry/fill triangles.
+      let paintedObservations = 0;
+      for (const item of observedTouches) {
+        const x = api.timeScale().timeToCoordinate(((item.time_ms - 300_000) / 1000) as UTCTimestamp);
+        const y = candleSeries.priceToCoordinate(
+          item.kind === "MAIN_1H_TOUCH" ? item.line_price : item.price,
+        );
+        if (x === null || y === null || x < 0 || x > priceWidth || y < 0 || y > paneHeight) continue;
+        context.beginPath();
+        context.strokeStyle = item.kind === "MAIN_1H_TOUCH" ? "#f6dc59" : "#80caff";
+        context.lineWidth = 1.5;
+        if (item.kind === "MAIN_1H_TOUCH") {
+          context.arc(x, y, 4, 0, Math.PI * 2);
+        } else {
+          context.moveTo(x, y - 5); context.lineTo(x + 5, y);
+          context.lineTo(x, y + 5); context.lineTo(x - 5, y);
+          context.closePath();
+        }
+        context.stroke();
+        paintedObservations += 1;
+      }
       const fills = visibleExecutionMarkers(document.events.slice(0, cursor), shown.candles);
       let rendered = 0;
       for (const fill of fills) {
@@ -209,13 +231,14 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       canvas.dataset.visibleFills = String(rendered);
       canvas.dataset.visibleGeometry = String(knownLines.length);
       canvas.dataset.paintedGeometry = String(paintedGeometry);
+      canvas.dataset.visibleObservations = String(paintedObservations);
     };
     chart.current?.timeScale().scrollToPosition(14, false);
     renderExecutions.current();
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, observedDmi]);
+  }, [shown, document, cursor, observedDmi, observedTouches]);
 
   return (
     <div className="replay-chart-shell">
@@ -223,7 +246,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
         <div className="replay-chart" ref={container}
           aria-label="Свечной график и нижняя панель ADX DMI" />
         <canvas ref={executionCanvas} className="replay-execution-overlay"
-          aria-hidden="true" data-visible-fills="0" />
+          aria-hidden="true" data-visible-fills="0" data-visible-observations="0" />
       </div>
       <div className="replay-dmi-legend" role="group" aria-label="Индикатор ADX DMI">
         <strong>ADX/DMI {document.dmi_5m
@@ -262,6 +285,7 @@ export function ReplayPage() {
   const total = document.events.length;
   const progress = Math.round(100 * cursor / total);
   const lastEvents = document.events.slice(Math.max(0, cursor - 8), cursor).reverse();
+  const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -401,6 +425,7 @@ export function ReplayPage() {
         {document.geometry_warmup_hours
           ? ` Предыстория для экстремумов: ${document.geometry_warmup_hours} ч.`
           : ""}
+        {` Касаний 1–3: ${observedTouches.filter(item => item.kind === "MAIN_1H_TOUCH").length}; движений от линии: ${observedTouches.filter(item => item.kind === "MAIN_1H_REACTION").length}. Метки — наблюдения, не входы.`}
       </p>}
       {document.demo && <p className="replay-note">
         ДЕМО: синтетические свечи и условные события, не реальные сигналы стратегии и не результат Bybit.

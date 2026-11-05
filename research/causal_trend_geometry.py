@@ -193,6 +193,29 @@ def last_correction_reference(
     return line
 
 
+
+def main_line_contact(trend: TrendCandidate | None, bar: Candle) -> Decimal | None:
+    """Closed-bar OHLC test of an ALREADY KNOWN hourly 1--3 line.
+
+    This is research-only contact evidence, NOT an entry or a confirmed
+    bounce. The entire moving line's 5m price interval must lie within the
+    candle's high/low, and the close must remain on the trend side. Requiring
+    the line to be known at the bar OPEN avoids backdating new H1 pivots.
+    """
+    if trend is None or trend.available_at_ms > bar.start_ms:
+        return None
+    at_open = trend.main.value_at(bar.start_ms)
+    at_close = trend.main.value_at(bar.end_ms)
+    if bar.low > min(at_open, at_close) or bar.high < max(at_open, at_close):
+        return None
+    if trend.side == "BULL" and bar.close < at_close:
+        return None
+    if trend.side == "BEAR" and bar.close > at_close:
+        return None
+    return at_close
+
+
+
 class CausalGeometryFeed:
     """Continuous research-only states at a 5m candle-close boundary."""
 
