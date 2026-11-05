@@ -460,7 +460,6 @@ export function ReplayPage() {
       <header className="replay-header">
         <div>
           <h1>Машина времени</h1>
-          <p>Локальный визуализатор исторической симуляции · без подключения к торговым счетам</p>
         </div>
         <span className="replay-badge">SIMULATION ONLY</span>
       </header>
