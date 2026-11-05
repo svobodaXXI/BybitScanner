@@ -184,10 +184,6 @@ def wick_tight_hourly_line(
             chosen = ConfirmedPivot(
                 first.kind, index, bar.start_ms, bar.end_ms, price,
             )
-    if first.kind == "LOW" and slope <= 0:
-        return None
-    if first.kind == "HIGH" and slope >= 0:
-        return None
     line = CausalLine(first, chosen, available_at_ms)
     for index in range(first.index + 1, second.index + 1):
         bar = bars[index]
@@ -217,6 +213,13 @@ def wick_tight_hourly_trend(
         available_at_ms=proposal.available_at_ms,
     )
     if main is None or target is None:
+        return None
+    # Direction belongs to the trend, not to HIGH/LOW: both yellow
+    # boundaries must rise in BULL and fall in BEAR.
+    if side == "BULL":
+        if main.second.price <= a.price or target.second.price <= b.price:
+            return None
+    elif main.second.price >= a.price or target.second.price >= b.price:
         return None
     t2, t4 = b.at_ms, d.at_ms
     if side == "BULL":
