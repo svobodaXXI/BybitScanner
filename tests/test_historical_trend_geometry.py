@@ -276,6 +276,85 @@ class ConfirmedGeometryTests(unittest.TestCase):
                 self.assertIsNone(blue, "a broken correction stays retired until new pivots")
         self.assertEqual(feed._blue_broken_at_ms, (84 + 9) * FIVE_MINUTES_MS)
 
+    def test_m5_deeper_correction_revisions_keep_first_wick_and_replay_history(self):
+        feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
+        for hour, (high, low) in enumerate(BULL[:7]):
+            for minute in range(12):
+                five = make_bar(hour * 12 + minute, high, low, FIVE_MINUTES_MS)
+                h1 = make_bar(hour, high, low) if minute == 11 else None
+                feed.observe_closed(five, h1)
+
+        # A countertrend M5 swing lengthens after its first HIGH-LOW-HIGH.
+        # The NEW deepest low (80 vs 120) and subsequent confirmed HIGH 139
+        # justify changing only the second HIGH, not starting a new blue line.
+        path = [
+            (140, 132), (144, 135), (141, 131), (130, 120),
+            (137, 127), (132, 126),
+            (126, 80), (139, 90), (128, 85), (130, 79),
+            (150, 140),
+        ]
+        versions = []
+        for minute, (high, low) in enumerate(path):
+            five = make_bar(84 + minute, high, low, FIVE_MINUTES_MS)
+            _, blue = feed.observe_closed(five, None)
+            versions.append(blue)
+        original = versions[5]
+        revised = versions[8]
+        self.assertIsNotNone(original)
+        self.assertIsNotNone(revised)
+        self.assertEqual(original.first.price, Decimal(144))
+        self.assertEqual(original.second.price, Decimal(137))
+        self.assertEqual(versions[6], original)
+        self.assertEqual(versions[7], original)  # Low isn't enough without HIGH.
+        self.assertEqual(revised.first, original.first)
+        self.assertEqual(revised.second.price, Decimal(139))
+        self.assertEqual(revised.second.index, 91)
+        self.assertGreater(revised.available_at_ms, original.available_at_ms)
+        self.assertEqual(versions[9], revised)
+        self.assertIsNone(versions[10])  # Next M5 OPEN 145 is above the line.
+        # Earlier emitted objects never change retroactively.
+        self.assertEqual(versions[5].second.price, Decimal(137))
+        for bar in feed._five.bars[original.first.index + 1:92]:
+            self.assertGreaterEqual(revised.value_at(bar.start_ms), bar.high)
+
+    def test_m5_revision_lower_boundary_mirrors_deeper_low_rule(self):
+        # Bearish H1 uses rising LOW--HIGH--LOW correction boundaries;
+        # a new highest HIGH triggers the symmetrical second-anchor refit.
+        hourly_stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
+        for i, (high, low) in enumerate(BEAR):
+            hourly_stream.observe_closed(make_bar(i, high, low))
+        trend = recent_hourly_trend(hourly_stream.pivots)
+        self.assertIsNotNone(trend)
+        first = ConfirmedPivot("LOW", 0, 100 * FIVE_MINUTES_MS,
+                               101 * FIVE_MINUTES_MS, Decimal(90))
+        middle = ConfirmedPivot("HIGH", 2, 102 * FIVE_MINUTES_MS,
+                                103 * FIVE_MINUTES_MS, Decimal(104))
+        q = ConfirmedPivot("LOW", 5, 105 * FIVE_MINUTES_MS,
+                           106 * FIVE_MINUTES_MS, Decimal(96))
+        # Later HIGH 112 is higher than 104, with a newer LOW 98.
+        new_middle = ConfirmedPivot("HIGH", 8, 108 * FIVE_MINUTES_MS,
+                                    109 * FIVE_MINUTES_MS, Decimal(112))
+        new_q = ConfirmedPivot("LOW", 10, 110 * FIVE_MINUTES_MS,
+                               111 * FIVE_MINUTES_MS, Decimal(98))
+        bars = tuple(make_bar(100 + i, 115 if i == 8 else 110,
+                              90 if i == 0 else (96 if i == 5 else
+                              98 if i == 10 else 100),
+                              FIVE_MINUTES_MS) for i in range(11))
+        old = last_correction_reference(
+            hourly=trend, five_minute_pivots=(first, middle, q),
+            five_minute_bars=bars[:6],
+        )
+        updated = last_correction_reference(
+            hourly=trend, five_minute_pivots=(first, new_middle, new_q),
+            five_minute_bars=bars,
+        )
+        self.assertIsNotNone(old)
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated.first, old.first)
+        self.assertGreater(updated.second.at_ms, old.second.at_ms)
+        for bar in bars[1:11]:
+            self.assertLessEqual(updated.value_at(bar.start_ms), bar.low)
+
     def test_main_hourly_contact_requires_frozen_line_and_trend_side_close(self):
         for side, source in (("BULL", BULL[:7]), ("BEAR", BEAR)):
             stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
