@@ -309,6 +309,10 @@ export function ReplayPage() {
     () => visibleH017BlueRiskPreviews(document, shown.lastTimeMs),
     [document, shown.lastTimeMs],
   );
+  const dmiCrossings = useMemo(
+    () => visibleDmi(document, shown.candles.length).flatMap(point => point.crossings ?? []),
+    [document, shown.candles.length],
+  );
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -453,6 +457,13 @@ export function ReplayPage() {
       {document.mode === "MARKET_ONLY" && document.h017_blue_risk_previews && cursor > 0 &&
         <p className="replay-geometry-note" role="status" aria-label="H-017 риск синей M5">
           Синяя M5: открытий за линией {blueRiskPreviews.length}, из них риск ≥1:1 — {blueRiskPreviews.filter(x => x.risk_status === "RISK_PASS").length}. Квадраты — исследовательские оценки по депозиту 200 USDT, не сделки.
+        </p>}
+      {document.mode === "MARKET_ONLY" &&
+        document.dmi_5m?.points.some(point => point.crossings !== undefined) && cursor > 0 &&
+        <p className="replay-geometry-note" role="status" aria-label="Пересечения ADX/DMI">
+          ADX/DMI · пересечений на закрытых M5: {dmiCrossings.length}.
+          {dmiCrossings.length > 0 && ` Последнее: ${dmiCrossings.slice(-1)[0].side === "PLUS" ? "+DI" : "−DI"} ${dmiCrossings.slice(-1)[0].direction === "UP" ? "↑" : "↓"} ${dmiCrossings.slice(-1)[0].comparator === "OPPOSITE_DI" ? "противоположная DI" : dmiCrossings.slice(-1)[0].comparator === "ADX" ? "ADX" : "уровень 20"}.`}
+          {" "}Пересечения — дополнительные аргументы, не входы и не обязательный фильтр.
         </p>}
       {document.demo && <p className="replay-note">
         ДЕМО: синтетические свечи и условные события, не реальные сигналы стратегии и не результат Bybit.

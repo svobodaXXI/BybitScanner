@@ -35,6 +35,40 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(visibleDmi(doc, 64).at(-1)?.plus_di).toBeGreaterThan(0);
   });
 
+  it("verifies same-close DI/ADX/20 crossings and never reveals the next candle", () => {
+    const demo = syntheticReplay();
+    const raw = JSON.parse(JSON.stringify(demo));
+    const points = raw.dmi_5m.points;
+    const at = points[29].time_ms;
+    points[28] = { ...points[28], plus_di: "19", minus_di: "21", adx: "18" };
+    points[29] = {
+      ...points[29], plus_di: "23", minus_di: "17", adx: "20",
+      crossings: [
+        { time_ms: at, side: "PLUS", direction: "UP", comparator: "OPPOSITE_DI" },
+        { time_ms: at, side: "PLUS", direction: "UP", comparator: "LEVEL_20" },
+        { time_ms: at, side: "MINUS", direction: "DOWN", comparator: "OPPOSITE_DI" },
+        { time_ms: at, side: "MINUS", direction: "DOWN", comparator: "LEVEL_20" },
+        { time_ms: at, side: "MINUS", direction: "DOWN", comparator: "ADX" },
+      ],
+    };
+    const parsed = parseReplayDocument(raw);
+    expect(visibleDmi(parsed, 29).flatMap(p => p.crossings ?? [])).toHaveLength(0);
+    expect(visibleDmi(parsed, 30).flatMap(p => p.crossings ?? [])).toHaveLength(5);
+    expect(visibleReplay(parsed.events, parsed.events.length).fills).toHaveLength(1); // Demo only.
+    expect(() => parseReplayDocument({
+      ...raw, dmi_5m: { ...raw.dmi_5m, points: points.map((p: { crossings?: Array<Record<string, unknown>> }, i: number) =>
+        i === 29 ? { ...p, crossings: [{ ...p.crossings![0], time_ms: at + 300_000 }] } : p) },
+    })).toThrow(/Пересечение ADX\/DMI/);
+    expect(() => parseReplayDocument({
+      ...raw, dmi_5m: { ...raw.dmi_5m, points: points.map((p: { crossings?: Array<Record<string, unknown>> }, i: number) =>
+        i === 29 ? { ...p, crossings: [...p.crossings!].reverse() } : p) },
+    })).toThrow(/Пересечение ADX\/DMI/);
+    expect(() => parseReplayDocument({
+      ...raw, dmi_5m: { ...raw.dmi_5m, points: points.map((p: { crossings?: Array<Record<string, unknown>> }, i: number) =>
+        i === 29 ? { ...p, crossings: [{ ...p.crossings![0], direction: "DOWN" }] } : p) },
+    })).toThrow(/Пересечение ADX\/DMI/);
+  });
+
   it("round trips emitted JSON string-number prices from the Python replay kernel", () => {
     const doc = syntheticReplay();
     const original = doc.events[0];

@@ -202,6 +202,47 @@ class MarketOnlyExportTests(unittest.TestCase):
         self.assertEqual(shorter["dmi_5m"]["points"], points[:30])
         self.assertTrue(all(e["kind"] == "CANDLE_CLOSED" for e in document["events"]))
 
+    def test_exported_dmi_crossings_are_closed_bar_evidence_not_trade_signals(self):
+        # Reversing an actual OHLC leg produces directional DI/ADX/20
+        # crossings. The exporter must preserve their exact closed time.
+        heights = ([100 + 2 * i for i in range(22)] +
+                   [144 - 3 * i for i in range(21)] +
+                   [81 + 3 * i for i in range(21)])
+        data = [
+            {"time": str(i * FIVE_MINUTES_MS), "open": str(high - 1),
+             "high": str(high), "low": str(high - 2),
+             "close": str(high - 1), "volume": "10"}
+            for i, high in enumerate(heights)
+        ]
+
+        def fetch(_symbol, _interval, limit, *, end_ms):
+            return [row for row in data if int(row["time"]) <= end_ms][-limit:][::-1]
+
+        full = build_market_only_document(
+            symbol="BTCUSDT", start_ms=0, end_ms=len(data) * FIVE_MINUTES_MS,
+            run_id="dmi-crosses", fetch_candles=fetch,
+        )
+        points = full["dmi_5m"]["points"]
+        crosses = [cross for point in points for cross in point["crossings"]]
+        self.assertTrue(crosses, "reversal fixture must generate real Wilder crossings")
+        self.assertTrue(all(
+            cross["time_ms"] == point["time_ms"]
+            for point in points for cross in point["crossings"]
+        ))
+        self.assertTrue(all(
+            cross["side"] in {"PLUS", "MINUS"} and
+            cross["comparator"] in {"OPPOSITE_DI", "ADX", "LEVEL_20"} and
+            cross["direction"] in {"UP", "DOWN"}
+            for cross in crosses
+        ))
+        self.assertEqual(full["mode"], "MARKET_ONLY")
+        self.assertTrue(all(e["kind"] == "CANDLE_CLOSED" for e in full["events"]))
+        prefix = build_market_only_document(
+            symbol="BTCUSDT", start_ms=0, end_ms=40 * FIVE_MINUTES_MS,
+            run_id="dmi-crosses-prefix", fetch_candles=fetch,
+        )
+        self.assertEqual(prefix["dmi_5m"]["points"], points[:40])
+
     def test_missing_history_fails_without_a_report(self):
         with self.assertRaisesRegex(ValueError, "missing historical"):
             build_market_only_document(

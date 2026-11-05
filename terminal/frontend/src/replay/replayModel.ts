@@ -61,11 +61,18 @@ export type H017BlueRiskPreview = {
   stop_price?: number;
   quantity?: number;
 };
+export type ReplayDmiCrossing = {
+  time_ms: number;
+  side: "PLUS" | "MINUS";
+  direction: "UP" | "DOWN";
+  comparator: "OPPOSITE_DI" | "ADX" | "LEVEL_20";
+};
 export type ReplayDmiPoint = {
   time_ms: number; // Close time, never the opening time of an unfinished candle.
   plus_di: number | null;
   minus_di: number | null;
   adx: number | null;
+  crossings?: ReplayDmiCrossing[]; // Legacy snapshots without crossings are allowed.
 };
 export type ReplayDmi = {
   source: "SIMULATION";
@@ -459,7 +466,58 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       }
       return { time_ms, plus_di, minus_di, adx };
     });
-    dmi_5m = { source: "SIMULATION", timeframe: "5m", di_length, adx_smoothing, points };
+    // Check claimed crossings against the numeric closed-candle series.
+    // They corroborate geometry; they are never entries, fills, or vetoes.
+    const verifiedPoints: ReplayDmiPoint[] = points.map((point, index) => {
+      const raw = record((rawDmi.points as unknown[])[index]);
+      if (raw.crossings === undefined) return point; // Older archive format.
+      if (!Array.isArray(raw.crossings) || raw.crossings.length > 6) {
+        throw new Error("Недостоверные пересечения ADX/DMI");
+      }
+      const expected: ReplayDmiCrossing[] = [];
+      const prev = points[index - 1];
+      if (prev) {
+        for (const side of ["PLUS", "MINUS"] as const) {
+          const before = side === "PLUS" ? prev.plus_di : prev.minus_di;
+          const after = side === "PLUS" ? point.plus_di : point.minus_di;
+          if (before === null || after === null) continue;
+          const comparators: Array<[ReplayDmiCrossing["comparator"], number | null, number | null]> = [
+            ["OPPOSITE_DI", side === "PLUS" ? prev.minus_di : prev.plus_di,
+              side === "PLUS" ? point.minus_di : point.plus_di],
+            ["LEVEL_20", 20, 20],
+            ["ADX", prev.adx, point.adx],
+          ];
+          for (const [comparator, beforeRef, afterRef] of comparators) {
+            if (beforeRef === null || afterRef === null) continue;
+            const direction = before <= beforeRef && after > afterRef ? "UP" :
+              before >= beforeRef && after < afterRef ? "DOWN" : null;
+            if (direction) expected.push({ time_ms: point.time_ms, side, direction, comparator });
+          }
+        }
+      }
+      const crossings: ReplayDmiCrossing[] = raw.crossings.map(value => {
+        const item = record(value);
+        if ((item.side !== "PLUS" && item.side !== "MINUS") ||
+            (item.direction !== "UP" && item.direction !== "DOWN") ||
+            (item.comparator !== "OPPOSITE_DI" && item.comparator !== "ADX" &&
+              item.comparator !== "LEVEL_20")) {
+          throw new Error("Недостоверные пересечения ADX/DMI");
+        }
+        return {
+          time_ms: positiveInteger(item.time_ms, "crossing.time_ms"),
+          side: item.side, direction: item.direction, comparator: item.comparator,
+        };
+      });
+      if (crossings.length !== expected.length ||
+          crossings.some((cross, i) => cross.time_ms !== expected[i].time_ms ||
+            cross.side !== expected[i].side ||
+            cross.direction !== expected[i].direction ||
+            cross.comparator !== expected[i].comparator)) {
+        throw new Error("Пересечение ADX/DMI не совпадает с закрытыми значениями");
+      }
+      return { ...point, crossings };
+    });
+    dmi_5m = { source: "SIMULATION", timeframe: "5m", di_length, adx_smoothing, points: verifiedPoints };
   }
   return {
     source: "SIMULATION", simulation_run_id: id, events, demo: object.demo === true,
