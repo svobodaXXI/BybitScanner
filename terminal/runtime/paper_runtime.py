@@ -5328,6 +5328,25 @@ class PaperRuntime:
             # would be too late. Never dispatch any close until every active
             # symbol proves at most one Robot owner.
             candidates = self.store.load_active_robot_candidate_states(self._paper_account_id)
+            # A protection obligation can dispatch an irreversible PAPER close.
+            # Before dispatch, prove that every durable OPEN Robot trade still
+            # has a corresponding active owner with the same symbol. Include
+            # APPROVED for the attested legacy-entry recovery path: its
+            # triggered obligation must remain recoverable before the candidate
+            # is terminalized. Terminal/missing/mismatched owners never qualify.
+            active_by_id = {
+                item.candidate_id: item.symbol
+                for item in candidates if item.status in {"APPROVED", "OPEN"}
+            }
+            for trade in self.store.load_open_robot_trades(self._paper_account_id):
+                if active_by_id.get(trade.candidate_id) != trade.symbol:
+                    unresolved_trade_ids.add(trade.trade_id)
+            if unresolved_trade_ids:
+                return fail(
+                    "reconcile_robot found OPEN trade without matching active candidate "
+                    "before protection dispatch: "
+                    + ",".join(sorted(unresolved_trade_ids))
+                )
             symbols = sorted({
                 item.symbol for item in candidates if item.status in {"APPROVED", "OPEN"}
             }, key=lambda item: item.value)
