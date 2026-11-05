@@ -5,6 +5,7 @@ Does not touch trading accounts or local PAPER files.
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from queue import Queue, Empty
 import re
@@ -24,7 +25,7 @@ policy = H017LocalRiskPolicy()
 assert policy.initial_cash == 200 and policy.slot_budget == 10
 assert policy.max_open_positions == 20
 proposal = policy.proposal(side="LONG", expected_entry="100", target="101")
-assert proposal is not None and proposal.stop == 99.3
+assert proposal is not None and proposal.stop == Decimal("99.3")
 
 
 proc = subprocess.Popen(
