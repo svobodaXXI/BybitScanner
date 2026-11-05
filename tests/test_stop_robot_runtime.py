@@ -319,6 +319,26 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.robot, READY)
         self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
+    def test_scanner_reactivated_after_stop_blocks_before_robot_mutation(self):
+        runtime = FakeRuntime(robot=READY)
+        original_get = runtime.get
+
+        def scanner_restarted_during_autopilot_reproof(url, timeout):
+            if (url == BACKEND + "/api/robot/autopilot"
+                    and runtime.scanner_mode == "SCANNER_STOPPED"):
+                # Scanner STOP has already been acknowledged; an independent
+                # owner starts it again before the Robot boundary.
+                runtime.scanner_mode = "SCANNER_RUNNING"
+            return original_get(url, timeout)
+
+        runtime.get = scanner_restarted_during_autopilot_reproof
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Scanner is not proven STOPPED", result.message)
+        self.assertEqual(runtime.robot, READY)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_ingress_reactivation_after_robot_stop_blocks_backend_shutdown(self):
         for changed in ("scanner", "autopilot"):
             with self.subTest(changed=changed):
