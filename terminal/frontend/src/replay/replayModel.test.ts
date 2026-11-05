@@ -308,13 +308,14 @@ describe("standalone SIMULATION viewer contract", () => {
     );
   });
 
-  it("replays purple priors at the second confirmed H1 touch and retains previous versions", () => {
+  it("replays purple priors only after a fully CLOSED H1 confirms the new extreme", () => {
     const demo = syntheticReplay();
     const events = demo.events.filter(e => e.kind === "CANDLE_CLOSED")
       .map((e, index) => ({ ...e, sequence: index + 1 }));
     const t0 = events[0].candle!.start_ms;
     const firstKnown = events[8].time_ms;
     const nextKnown = events[28].time_ms;
+    const confirmedH1 = events[35].time_ms;
     const first = {
       kind: "MAIN_1H", side: "BEAR", available_at_ms: firstKnown,
       from_ms: t0, to_ms: events[3].candle!.start_ms,
@@ -334,25 +335,66 @@ describe("standalone SIMULATION viewer contract", () => {
       events: events.map(e => ({ ...e, simulation_run_id: "purple_fixture" })),
       geometry: [first, next],
     };
-    // A later confirmed touch alone cannot shift the purple level.
+    // An H1 trendline revision/touch cannot move the prior on its own.
     const untouched = parseReplayDocument(archive);
     expect(visiblePriorLevels(untouched, nextKnown).map(p => p.price)).toEqual([115]);
-    // The new lower LOW is closed AFTER the candidate touch and BEFORE
-    // its confirmed availability. Only then may the prior move.
     const withNewLow = archive.events.map((event, index) => index === 26
       ? { ...event, candle: { ...event.candle!, low: 50 } } : event);
     const doc = parseReplayDocument({ ...archive, events: withNewLow });
     expect(visiblePriorLevels(doc, null)).toEqual([]);
     expect(visiblePriorLevels(doc, firstKnown - 1)).toEqual([]);
     expect(visiblePriorLevels(doc, firstKnown).map(p => p.price)).toEqual([115]);
-    expect(visiblePriorLevels(doc, nextKnown - 1).map(p => p.price)).toEqual([115]);
-    const after = visiblePriorLevels(doc, nextKnown);
+    // Low=50 appears on an already closed M5, but its H1 is still forming.
+    expect(visiblePriorLevels(doc, nextKnown).map(p => p.price)).toEqual([115]);
+    expect(visiblePriorLevels(doc, confirmedH1 - 300_000).map(p => p.price))
+      .toEqual([115]);
+    // No new geometry revision: the H1 CLOSE itself licenses the transfer.
+    const after = visiblePriorLevels(doc, confirmedH1);
     expect(after.map(p => p.price)).toEqual([115, 110]);
-    expect(after[0].superseded_at_ms).toBe(nextKnown);
+    expect(after[0].superseded_at_ms).toBe(confirmedH1);
+    expect(after[1].available_at_ms).toBe(confirmedH1);
     expect(after[1].superseded_at_ms).toBeUndefined();
     expect(after[1].at_ms).toBe(events[22].candle!.start_ms);
-    expect(visiblePriorLevels(doc, firstKnown)).toHaveLength(1); // rewind
-    expect(visiblePriorLevels(demo, nextKnown)).toEqual([]); // no real-market prior in demo
+    expect(visiblePriorLevels(doc, confirmedH1 - 300_000)).toHaveLength(1);
+    expect(visiblePriorLevels(demo, confirmedH1)).toEqual([]);
+  });
+
+  it("handles bullish H1 prior moves symmetrically and ignores unfinished H1 highs", () => {
+    const start = Date.UTC(2026, 10, 2);
+    const step = 300_000;
+    const bars = Array.from({ length: 48 }, (_, index) => ({
+      source: "SIMULATION", simulation_run_id: "bull_prior",
+      sequence: index + 1, kind: "CANDLE_CLOSED", time_ms: start + (index + 1) * step,
+      candle: {
+        start_ms: start + index * step, end_ms: start + (index + 1) * step,
+        open: 100, close: 100, high: index === 27 ? 125 : 110,
+        low: 90, volume: 1,
+      },
+    }));
+    const firstKnown = bars[11].time_ms, secondKnown = bars[25].time_ms;
+    const geometry = [{
+      kind: "MAIN_1H", side: "BULL", available_at_ms: firstKnown,
+      from_ms: start, to_ms: start + 3 * step,
+      from_price: "80", to_price: "85", trend_version: firstKnown,
+      classification: "UNVALIDATED_GEOMETRY_ONLY",
+    }, {
+      kind: "MAIN_1H", side: "BULL", available_at_ms: secondKnown,
+      from_ms: start, to_ms: start + 24 * step,
+      from_price: "80", to_price: "95", trend_version: secondKnown,
+      classification: "UNVALIDATED_GEOMETRY_ONLY",
+    }];
+    const doc = parseReplayDocument({
+      source: "SIMULATION", simulation_run_id: "bull_prior",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events: bars, geometry,
+    });
+    expect(visiblePriorLevels(doc, bars[27].time_ms).map(p => p.price)).toEqual([85]);
+    expect(visiblePriorLevels(doc, bars[35].time_ms).map(p => p.price))
+      .toEqual([85, 95]);
+    expect(visiblePriorLevels(doc, bars[35].time_ms).at(-1)?.available_at_ms)
+      .toBe(bars[35].time_ms);
+    expect(visiblePriorLevels(doc, bars[34].time_ms).map(p => p.price))
+      .toEqual([85]);
   });
 
   it("confirms a prior break only after a full H1 close and next H1 open beyond the level", () => {
