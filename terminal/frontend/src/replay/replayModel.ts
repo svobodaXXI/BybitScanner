@@ -795,6 +795,18 @@ export function visibleGeometryHistory(
   const latest = new Map<ReplayGeometry["kind"], number>();
   for (const line of document.geometry ?? []) {
     if (line.available_at_ms > closedTimeMs) break;
+    if (line.kind === "MAIN_1H") {
+      // H1 revisions invalidate children from the previous trend version,
+      // even if the archive has no replacement TARGET/REFERENCE yet.
+      for (const childKind of ["TARGET_1H", "REFERENCE_5M"] as const) {
+        const childIndex = latest.get(childKind);
+        if (childIndex !== undefined &&
+            versions[childIndex].trend_version !== line.trend_version) {
+          versions[childIndex].superseded_at_ms = line.available_at_ms;
+          latest.delete(childKind);
+        }
+      }
+    }
     const prev = latest.get(line.kind);
     if (prev !== undefined) versions[prev].superseded_at_ms = line.available_at_ms;
     latest.set(line.kind, versions.length);
@@ -828,9 +840,11 @@ export function visibleGeometry(
   // waits for confirmed opposite 1--3/2--4 anchors.
   if (main && visiblePriorBreaks(document, closedTimeMs)
     .some(event => event.trend_version === main.trend_version)) return [];
-  const reference = current.get("REFERENCE_5M");
-  if (reference && (!main || reference.trend_version !== main.trend_version)) {
-    current.delete("REFERENCE_5M");
+  for (const childKind of ["TARGET_1H", "REFERENCE_5M"] as const) {
+    const child = current.get(childKind);
+    if (child && (!main || child.trend_version !== main.trend_version)) {
+      current.delete(childKind);
+    }
   }
   return [...current.values()];
 }
