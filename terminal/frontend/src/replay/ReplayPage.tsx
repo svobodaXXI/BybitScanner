@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  completeHourlyCandles, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -20,7 +20,7 @@ function label(event: ReplayEvent): string {
     case "EXIT_FILLED": return "Выход " + (event.reason ?? "");
   }
 }
-function ReplayChart({ document, cursor, showDebug }: { document: ReplayDocument; cursor: number; showDebug: boolean }) {
+function ReplayChart({ document, cursor, showDebug, timeframe }: { document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h" }) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const series = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -28,7 +28,16 @@ function ReplayChart({ document, cursor, showDebug }: { document: ReplayDocument
   const renderExecutions = useRef<() => void>(() => {});
    const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
+  const displayCandles = useMemo(() => timeframe === "1h"
+    ? completeHourlyCandles(shown.candles) : shown.candles, [shown.candles, timeframe]);
   const observedDmi = useMemo(() => visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
+  // Only the final 5m DMI reading of each completed H1 is plotted on the H1 axis.
+  const indicatorSamples = timeframe === "1h"
+    ? displayCandles.map(hour => {
+      const index = shown.candles.findIndex(bar => bar.end_ms === hour.end_ms);
+      return index >= 0 ? observedDmi[index] : undefined;
+    })
+    : observedDmi;
   const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
   const blueRiskPreviews = useMemo(
     () => visibleH017BlueRiskPreviews(document, shown.lastTimeMs),
@@ -95,7 +104,7 @@ function ReplayChart({ document, cursor, showDebug }: { document: ReplayDocument
   useEffect(() => {
     const candleSeries = series.current;
     if (!candleSeries) return;
-    candleSeries.setData(shown.candles.map((c) => ({
+    candleSeries.setData(displayCandles.map((c) => ({
       time: (c.start_ms / 1000) as UTCTimestamp,
       open: c.open, high: c.high, low: c.low, close: c.close,
     })));
@@ -103,13 +112,13 @@ function ReplayChart({ document, cursor, showDebug }: { document: ReplayDocument
     if (dmiSeries) {
       const linePoints = (key: "plus_di" | "minus_di" | "adx") => {
         const values: { time: UTCTimestamp; value: number }[] = [];
-        observedDmi.forEach((sample, index) => {
-          const value = sample[key];
+        indicatorSamples.forEach((sample, index) => {
+          const value = sample?.[key];
           if (value !== null) {
             values.push({
               // Chart bar's X is its START, while the sample becomes known
               // only at the CLOSE. We reveal it only after that close event.
-              time: (shown.candles[index].start_ms / 1000) as UTCTimestamp,
+              time: (displayCandles[index].start_ms / 1000) as UTCTimestamp,
               value,
             });
           }
@@ -119,8 +128,8 @@ function ReplayChart({ document, cursor, showDebug }: { document: ReplayDocument
       dmiSeries.PLUS.setData(linePoints("plus_di"));
       dmiSeries.MINUS.setData(linePoints("minus_di"));
       dmiSeries.ADX.setData(linePoints("adx"));
-      const first = shown.candles[0];
-      const last = shown.candles.at(-1);
+      const first = displayCandles[0];
+      const last = displayCandles.at(-1);
       dmiSeries.LEVEL.setData(first && last ? [
         { time: (first.start_ms / 1000) as UTCTimestamp, value: 20 },
         ...(last.start_ms !== first.start_ms
@@ -168,11 +177,11 @@ function ReplayChart({ document, cursor, showDebug }: { document: ReplayDocument
         // Charts returns null for timestamps not present in loaded candles.
         // Project the original, frozen two-point slope (CausalLine.value_at)
         // onto two actual VISIBLE candle times, without any new fitting.
-        const startingBar = shown.candles.find(bar => bar.start_ms >= line.from_ms);
+        const startingBar = displayCandles.find(bar => bar.start_ms >= line.from_ms);
         const isHistorical = line.superseded_at_ms !== undefined;
         const endingBar = isHistorical
-          ? shown.candles.slice().reverse().find(bar => bar.start_ms < line.superseded_at_ms!)
-          : shown.candles.at(-1);
+          ? displayCandles.slice().reverse().find(bar => bar.start_ms < line.superseded_at_ms!)
+          : displayCandles.at(-1);
         if (!startingBar || !endingBar || startingBar.start_ms >= endingBar.start_ms) continue;
         const priceAt = (at_ms: number) => line.from_price +
           (line.to_price - line.from_price) * (at_ms - line.from_ms) / (line.to_ms - line.from_ms);
@@ -206,7 +215,7 @@ function ReplayChart({ document, cursor, showDebug }: { document: ReplayDocument
       // extends into the right-hand whitespace. No future version is shown.
       let paintedPriors = 0;
       for (const prior of knownPriors) {
-        const startingBar = shown.candles.find(bar => bar.start_ms >= prior.at_ms);
+        const startingBar = displayCandles.find(bar => bar.start_ms >= prior.at_ms);
         if (!startingBar) continue;
         const x1 = api.timeScale().timeToCoordinate((startingBar.start_ms / 1000) as UTCTimestamp);
         const y = candleSeries.priceToCoordinate(prior.price);
@@ -217,7 +226,9 @@ function ReplayChart({ document, cursor, showDebug }: { document: ReplayDocument
         );
         const historical = Number.isFinite(stoppedAt);
         const x2 = historical
-          ? api.timeScale().timeToCoordinate(((stoppedAt - 300_000) / 1000) as UTCTimestamp)
+          ? api.timeScale().timeToCoordinate((
+              (displayCandles.slice().reverse().find(bar => bar.start_ms < stoppedAt)?.start_ms ?? -1) / 1000
+            ) as UTCTimestamp)
           : priceWidth;
         if (x1 === null || y === null || x2 === null || x2 <= x1) continue;
         context.beginPath();
@@ -267,7 +278,11 @@ function ReplayChart({ document, cursor, showDebug }: { document: ReplayDocument
       const fills = visibleExecutionMarkers(document.events.slice(0, cursor), shown.candles);
       let rendered = 0;
       for (const fill of fills) {
-        const x = api.timeScale().timeToCoordinate((fill.candle_start_ms / 1000) as UTCTimestamp);
+        const stamp = timeframe === "1h"
+          ? Math.floor(fill.candle_start_ms / 3_600_000) * 3_600_000
+          : fill.candle_start_ms;
+        if (!displayCandles.some(bar => bar.start_ms === stamp)) continue;
+        const x = api.timeScale().timeToCoordinate((stamp / 1000) as UTCTimestamp);
         const y = candleSeries.priceToCoordinate(fill.price);
         if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y)
             || x < -7 || x > width + 7 || y < -7 || y > paneHeight + 7) {
@@ -304,10 +319,10 @@ function ReplayChart({ document, cursor, showDebug }: { document: ReplayDocument
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug]);
+  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles]);
 
   return (
-    <div className="replay-chart-shell">
+    <div className="replay-chart-shell" data-chart-timeframe={timeframe} data-displayed-candles={displayCandles.length}>
       <div className="replay-chart-frame">
         <div className="replay-chart" ref={container}
           aria-label="Свечной график и нижняя панель ADX DMI" />
@@ -346,6 +361,7 @@ export function ReplayPage() {
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(8);
   const [showDebug, setShowDebug] = useState(false);
+  const [timeframe, setTimeframe] = useState<"5m" | "1h">("5m");
   const [error, setError] = useState<string | null>(null);
   const [fileLabel, setFileLabel] = useState("Синтетический пример");
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
@@ -607,7 +623,13 @@ export function ReplayPage() {
       </p>}
       <div className="replay-grid">
         <section className="replay-chart-panel">
-          <ReplayChart document={document} cursor={cursor} showDebug={showDebug} />
+          <div className="replay-timeframe-switch" role="group" aria-label="Таймфрейм графика">
+            <button type="button" aria-pressed={timeframe === "5m"}
+              onClick={() => setTimeframe("5m")}>M5</button>
+            <button type="button" aria-pressed={timeframe === "1h"}
+              onClick={() => setTimeframe("1h")}>H1</button>
+          </div>
+          <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe} />
         </section>
         <aside className="replay-events" aria-label="Журнал событий">
           <h2>События</h2>
