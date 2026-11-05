@@ -89,7 +89,7 @@ describe("persisted Editor correction restores by frozen boundary identity", () 
       [changedUpper],
       [changedUpper, changedUpper],
       [changedUpper, { ...changedLower, id: "other" }],
-      [changedUpper, { ...changedLower, type: "segment" as const }],
+      [changedUpper, { ...changedLower, type: "trend" as const }],
       [changedUpper, { ...changedLower, anchors: [at(0, 8), at(2, -1)] }],
       [changedUpper, { ...changedLower, anchors: [at(2, 9), at(0, 8)] }],
       [changedUpper, { ...changedLower, anchors: [at(0, 8), {
