@@ -47,6 +47,7 @@ class FakeRuntime:
         self.telegram_health = {"component": "telegram_monitoring", "status": "ready",
                                 "database_identity": IDENTITY}
         self.scanner_mode = "SCANNER_RUNNING"
+        self.scanner_worker_quiescent = True
         self.robot_ownership_open = True
         self.autopilot_mode = "OFF"
         self.autopilot_off_reply = (200, {
@@ -74,7 +75,10 @@ class FakeRuntime:
         if url == BACKEND + "/api/robot/protection-health":
             return 200, dict(self.protection)
         if url == BACKEND + "/api/scanner/status":
-            return 200, {"ok": True, "mode": self.scanner_mode}
+            return 200, {
+                "ok": True, "mode": self.scanner_mode,
+                "worker_quiescent": self.scanner_worker_quiescent,
+            }
         if url == BACKEND + "/api/robot/autopilot":
             return 200, {
                 "ok": True, "mode": self.autopilot_mode,
@@ -277,6 +281,53 @@ class FullShutdownTests(unittest.TestCase):
                 self.assertTrue(runtime.backend_alive)
                 self.assertEqual(runtime.scanner_mode, "SCANNER_RUNNING")
                 self.assertEqual(runtime.robot, READY)
+
+    def test_full_stop_waits_for_scanner_child_before_robot_or_backend(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_worker_quiescent = False
+        original_sleep = runtime.sleep
+        observed_robot = []
+
+        def finish_child_after_two_polls(seconds):
+            observed_robot.append(runtime.robot)
+            original_sleep(seconds)
+            if runtime.now >= 1.0:
+                runtime.scanner_worker_quiescent = True
+
+        runtime.sleep = finish_child_after_two_polls
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertGreaterEqual(len(observed_robot), 2)
+        self.assertTrue(all(state == READY for state in observed_robot))
+        self.assertEqual(runtime.calls, [
+            "scanner:stop", "robot:stop", "backend:shutdown",
+            "telegram:shutdown",
+        ])
+
+    def test_unsettled_scanner_child_blocks_robot_and_backend_shutdown(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_worker_quiescent = False
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertFalse(result.ok)
+        self.assertIn("child is still active", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.robot, READY)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_malformed_scanner_worker_evidence_blocks_shutdown(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_worker_quiescent = None
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertFalse(result.ok)
+        self.assertIn("worker quiescence evidence is malformed", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.robot, READY)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
     def test_scanner_ack_without_stopped_postcondition_keeps_robot_and_backend(self):
         runtime = FakeRuntime(robot=READY)
