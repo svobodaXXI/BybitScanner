@@ -601,3 +601,25 @@ are not used (the owner has drained its backlog whenever an admission runs).
 Thresholds are owner-tunable constants in `paper_http_server.py`. Read-only:
 manual admission and protection of open positions are untouched. Not covered:
 per-candidate book freshness and PAPER_AUTO (still unavailable).
+
+## PAPER opening-baseline exception (owner decision, 2026-10-20)
+
+During MIRROR PAPER trials, PAPER_AUTO does not wait solely because the daily
+baseline is unavailable with the exact reason POSITION_OPEN_AT_DAY_START.
+The exception requires data_available=false and no current or previous daily
+loss latch. It is audited as daily_loss_gate.opening_baseline_exception=true;
+missing baseline/current equity and latched=null remain honestly unavailable.
+This does not prove that today's loss is below the limit: without a baseline,
+a new daily percentage loss cannot be measured. A known same-day loss latch
+still blocks, including while equity is unavailable.
+
+The existing DISABLED_FOR_PAPER_DEBUG switch is not used: it also disables
+DAILY_LOSS_LIMIT enforcement. The -10% threshold, resume strictly above -7%,
+other equity failures (including marks, replay and account integrity), LIVE
+rejection, freshness, reconciliation, protection, portfolio cap and STOP/TAKE
+remain unchanged. SHADOW behavior is unchanged. No schema or DB rewrite.
+
+Deployment requires owner-approved merge and normal owner-controlled update
+and restart. After runtime safety preflight, the owner alone confirms PAPER_AUTO
+through POST /api/robot/autopilot with the dedicated owner token and
+confirm_paper_auto=true. This change does not switch any runtime mode.
