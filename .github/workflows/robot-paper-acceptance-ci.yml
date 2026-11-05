@@ -62,6 +62,7 @@ on:
       - "tests/test_robot_admission.py"
       - "tests/test_robot_autopilot.py"
       - "tests/test_robot_autopilot_shadow.py"
+      - "tests/test_robot_autopilot_a6_deferred_commit.py"
       - "tests/test_robot_portfolio.py"
       - "tests/test_pattern_robot_integration.py"
       - "tests/test_robot_l_shape.py"
@@ -267,6 +268,7 @@ jobs:
           python -m unittest -v
           tests.test_robot_autopilot
           tests.test_robot_autopilot_shadow
+          tests.test_robot_autopilot_a6_deferred_commit.HandoverOwnerTests
           tests.test_robot_portfolio
       - name: Run Scanner control and Telegram menu acceptance
         run: >-
