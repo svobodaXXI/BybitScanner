@@ -3058,11 +3058,22 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/scanner/status":
             try:
-                result = self.server.runtime.call(lambda runtime: runtime.scanner_status())
+                def scanner_snapshot(runtime):
+                    state = runtime.scanner_status()
+                    observer = getattr(runtime, "scanner_worker_quiescent", None)
+                    settled = observer() if callable(observer) else None
+                    return state, settled
+
+                result, settled = self.server.runtime.call(scanner_snapshot)
             except Exception:
                 self._json_response(503, {"ok": False, "error": "scanner_control_unavailable"})
                 return
-            self._json_response(200, {"ok": True, **to_primitive(result)})
+            snapshot = {"ok": True, **to_primitive(result)}
+            # Legacy/test runtimes without this observation retain their
+            # existing response shape. Modern runtimes expose a real bool.
+            if type(settled) is bool:
+                snapshot["worker_quiescent"] = settled
+            self._json_response(200, snapshot)
             return
 
         if parsed.path == "/api/scanner/progress":
@@ -4075,10 +4086,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     return "database_identity_mismatch"
                 robot = runtime.robot_runtime_state()
                 scanner = runtime.scanner_status().mode
+                # Durable STOPPED is published before Scanner child teardown.
+                # The canonical backend has a non-blocking worker proof; legacy
+                # test/pre-upgrade runtimes lacking it keep their prior behavior.
+                worker_probe = getattr(runtime, "scanner_worker_quiescent", None)
+                worker_settled = (
+                    worker_probe() if callable(worker_probe)
+                    else worker_probe if worker_probe is not None else True
+                )
                 durable_blocker = runtime.paper_shutdown_blocker()
                 protection = coverage.health()
                 if (
                     durable_blocker is not None
+                    or worker_settled is not True
                     or robot is None
                     or (robot.mode, robot.recovery_status) != ("ROBOT_STOPPED", "ROBOT_STOPPED")
                     or scanner != "SCANNER_STOPPED"

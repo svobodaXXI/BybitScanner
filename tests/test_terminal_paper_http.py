@@ -3435,6 +3435,81 @@ def test_shutdown_seals_owner_queue_after_final_quiescence_proof():
         runtime.close()
 
 
+def test_runtime_shutdown_refuses_backend_exit_while_scanner_child_is_active():
+    """Direct shutdown cannot bypass the Scanner drain proof in the CLI."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    class Owner:
+        def __init__(self, worker_state):
+            self.worker_state = worker_state
+        def live_limit_acceptance_diagnostics(self):
+            return {"database_identity": "synthetic-paper-db"}
+        def robot_runtime_state(self):
+            return SimpleNamespace(mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
+        def scanner_status(self):
+            return SimpleNamespace(mode="SCANNER_STOPPED")
+        def scanner_worker_quiescent(self):
+            return self.worker_state
+        def paper_shutdown_blocker(self):
+            return None
+
+    class Runtime:
+        def __init__(self, state):
+            self.owner = Owner(state)
+            self.seals = 0
+        def call(self, callback):
+            return callback(self.owner)
+        def seal_shutdown(self):
+            self.seals += 1
+
+    class Coverage:
+        def shutdown_idle_guard(self):
+            return nullcontext()
+        def health(self):
+            return {
+                "healthy": True, "covered_symbols": (),
+                "armed_symbols": (), "coverage_roles": {},
+                "unhealthy_symbols": {},
+            }
+
+    for worker_state in (False, None, "yes"):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = Runtime(worker_state)
+        server.robot_protection_coverage = Coverage()
+        # Refused shutdown must not schedule the server exit.
+        server.shutdown = lambda: None
+        reply = {}
+
+        def post():
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/runtime/shutdown",
+                data=b'{"database_identity":"synthetic-paper-db"}',
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request) as answer:
+                    reply["status"] = answer.status
+                    reply["body"] = json.load(answer)
+            except urllib.error.HTTPError as error:
+                reply["status"] = error.code
+                reply["body"] = json.load(error)
+
+        client = threading.Thread(target=post)
+        client.start()
+        try:
+            server.handle_request()
+            client.join(timeout=5)
+            assert not client.is_alive()
+            assert reply == {
+                "status": 409,
+                "body": {"ok": False, "error": "runtime_still_required"},
+            }, worker_state
+            assert server.runtime.seals == 0
+        finally:
+            server.server_close()
+
+
 def test_runtime_shutdown_seals_only_on_complete_evidence():
     """No special shutdown API: existing route seals after durable+coverage proof."""
     from contextlib import nullcontext

@@ -491,8 +491,10 @@ class ScannerControlRuntime:
                     break
                 if not self._start_requested.is_set():
                     continue
-                self._start_requested.clear()
+                # Publish in-flight ownership before consuming START:
+                # no observer may see both flags clear in the handoff gap.
                 self._start_inflight.set()
+                self._start_requested.clear()
                 failure_reason = None
                 try:
                     # One owner START retains RUNNING across successful passes.
@@ -643,6 +645,18 @@ class ScannerControlRuntime:
                 return True
             self._stop.wait(0.2)
         return False
+
+    def worker_quiescent(self) -> bool:
+        """True only once the Scanner worker has reaped its current pass.
+
+        A durable SCANNER_STOPPED row can precede child-supervisor teardown.
+        The proof is a non-blocking Event read: never wait for the worker on
+        the serialized PAPER owner thread (the child may need that owner).
+        """
+        return (
+            not self._start_inflight.is_set()
+            and not self._start_requested.is_set()
+        )
 
     def status(self) -> ScannerRuntimeStateRecord:
         store = self._store()
@@ -1594,6 +1608,9 @@ class PaperRuntime:
 
     def scanner_status(self) -> ScannerRuntimeStateRecord:
         return self._scanner_control.status()
+
+    def scanner_worker_quiescent(self) -> bool:
+        return self._scanner_control.worker_quiescent()
 
     def robot_admission_ready(self) -> bool:
         """Return durable Robot startup admission; never infer readiness locally."""
