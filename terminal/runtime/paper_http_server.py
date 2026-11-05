@@ -4085,10 +4085,12 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     or not isinstance(protection, Mapping)
                     or protection.get("healthy") is not True
                     # Absence or malformed evidence is not empty coverage.
-                    # Shutdown must see all three authoritative collections,
-                    # not merely a truthy healthy flag.
-                    or protection.get("covered_symbols") != []
-                    or protection.get("armed_symbols") != []
+                    # The owner coverage manager returns tuples, while the
+                    # JSON projection uses lists. Both exact empty shapes are
+                    # valid; unknown or malformed evidence remains blocked.
+                    or protection.get("covered_symbols") not in ((), [])
+                    or protection.get("armed_symbols") not in ((), [])
+                    or protection.get("coverage_roles") != {}
                     or protection.get("unhealthy_symbols") != {}
                 ):
                     return "runtime_still_required"
