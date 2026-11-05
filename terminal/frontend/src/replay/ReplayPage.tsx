@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -487,6 +487,19 @@ export function ReplayPage() {
           setHistoryLoading(false); setPlaying(false); setCursor(0); setError(null);
           setDocument(syntheticReplay()); setFileLabel("Синтетический пример");
         }}>Пример</button>
+        <button type="button" aria-label="Скачать журнал SIMULATION JSON" onClick={() => {
+          const report = simulationActionJournal(document);
+          const blob = new Blob([JSON.stringify(report, null, 2) + "\n"], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const anchor = window.document.createElement("a");
+          anchor.href = url;
+          anchor.download = "simulation-actions.json";
+          window.document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+          // Browser owns this temporary object URL; no trade/network request.
+          window.setTimeout(() => URL.revokeObjectURL(url), 0);
+        }}>Журнал JSON ({simulationActionJournal(document).actions.length})</button>
         <button type="button" onClick={() => { if (cursor === total) setCursor(0); setPlaying((s) => !s); }}>
           {playing ? "Пауза" : "▶ Пуск"}
         </button>
