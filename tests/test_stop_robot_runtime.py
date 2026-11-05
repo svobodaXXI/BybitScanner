@@ -661,7 +661,7 @@ class FullShutdownTests(unittest.TestCase):
         self.assertTrue(second.ok, second.message)
         self.assertTrue(second.runtime_stopped)
         self.assertEqual(runtime.calls, [
-            "scanner:stop", "robot:pause", "scanner:stop", "robot:stop",
+            "scanner:stop", "robot:pause", "robot:stop",
             "backend:shutdown", "telegram:shutdown",
         ])
 
