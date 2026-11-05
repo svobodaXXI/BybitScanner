@@ -736,6 +736,10 @@ export function visiblePriorBreaks(
   const candles = document.events.filter(e => e.kind === "CANDLE_CLOSED").map(e => e.candle!);
   const result: ReplayPriorBreak[] = [];
   const emitted = new Set<string>();
+  // Historical priors are immutable once published. Build them once rather
+  // than recomputing the full candle/geometry history for every H1 boundary.
+  const priors = visiblePriorLevels(document, closedTimeMs);
+  let priorIndex = -1;
   const hourMs = 3_600_000, fiveMs = 300_000;
   for (let i = 12; i < candles.length; i++) {
     const next = candles[i];
@@ -754,9 +758,13 @@ export function visiblePriorBreaks(
     }
     if (!completeHour) continue;
     const previousHourClose = candles[i - 1];
-    const prior = visiblePriorLevels(document, previousHourClose.end_ms).at(-1);
-    // The prior must already have existed BEFORE the candle being tested
-    // closed, or the event would be a hindsight-confirmed violation.
+    while (priorIndex + 1 < priors.length &&
+           priors[priorIndex + 1].available_at_ms <= previousHourClose.end_ms) {
+      priorIndex++;
+    }
+    const prior = priorIndex >= 0 ? priors[priorIndex] : undefined;
+    // A level first published on the closing H1 candle cannot authorize
+    // that same candle's break; only its earlier published predecessor can.
     if (!prior || prior.available_at_ms >= previousHourClose.end_ms) continue;
     const broken = prior.side === "BULL"
       ? previousHourClose.close < prior.price && next.open < prior.price
