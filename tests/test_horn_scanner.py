@@ -195,7 +195,15 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(calls[3][3]["reply_markup"],
                          notification.build_tradingview_keyboard("TESTUSDT", "5", include_review_actions=False))
         owner = {b["callback_data"] for b in self.buttons(calls[1]) if "callback_data" in b}
-        self.assertLessEqual({f"review:{a}:TESTUSDT:5" for a in ("queue", "good", "geometry", "anchor")}, owner)
+        # Current shared keyboard no longer emits legacy review:* callbacks.
+        # Navigation uses the owner workspace + MetaScalp route plus the
+        # immutable source card; HORN never exposes Robot admission.
+        self.assertEqual(owner, {
+            "ms:open:TESTUSDT",
+            "workspace:EDITOR:TESTUSDT:5m",
+            "workspace:TERMINAL:TESTUSDT:5m",
+            "signal:source:horn-frozen-100",
+        })
         self.assertEqual(self.buttons(calls[1])[0]["callback_data"],
                          "signal:source:horn-frozen-100")
         self.assertTrue(any("url" in button for button in self.buttons(calls[1])))
@@ -212,15 +220,17 @@ class DeliveryTest(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(calls, [])
 
-    def test_review_callbacks_are_accepted_by_the_existing_handler(self):
-        import telegram_review
-        _, calls = self.send(self.observation(), [self.OK] * 2, [self.OK] * 2)
-        reviews = [b["callback_data"] for b in self.buttons(calls[1])
-                   if str(b.get("callback_data", "")).startswith("review:")]
-        self.assertEqual(len(reviews), 4)
-        for data in reviews:
-            parsed = telegram_review._parse_callback(data)
-            self.assertEqual((parsed["kind"], parsed["symbol"], parsed["timeframe"]), ("review", "TESTUSDT", "5"))
+    def test_owner_workspace_and_frozen_source_actions_not_shared_with_friends(self):
+        _, cards = self.send(self.observation(), [self.OK] * 2, [self.OK] * 2)
+        owner = {b["callback_data"] for b in self.buttons(cards[1])
+                 if "callback_data" in b}
+        self.assertEqual(owner, {
+            "ms:open:TESTUSDT",
+            "workspace:EDITOR:TESTUSDT:5m",
+            "workspace:TERMINAL:TESTUSDT:5m",
+            "signal:source:horn-frozen-100",
+        })
+        self.assertEqual([b for b in self.buttons(cards[3]) if "callback_data" in b], [])
 
     def test_no_robot_button_or_handoff_for_any_stage(self):
         preliminary = self.observation()
