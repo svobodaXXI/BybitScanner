@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import os
 import re
 import sqlite3
@@ -1214,6 +1215,51 @@ def _recent_ingress_quiet(health: object, overflow_symbol: str) -> bool:
     return True
 
 
+def _record_required_reconcile_once(
+    target: str, identity: str, state: tuple[str, str, str | None], *,
+    db: Path, journal_root: Path | None = None, trusted_uid: int = 0,
+) -> bool:
+    """Fsync an existing owner-journal intent BEFORE one canonical reconcile.
+
+    The exact durable Robot version identifies a distinct continuity event.
+    A lost response cannot cause a second reconcile on the same event, even
+    from a new invocation. This receipt authorizes no trade or release switch.
+    """
+    from tools.vps_gitless_release_activate import TRANSACTIONS, _sync_directory
+
+    root = journal_root or TRANSACTIONS
+    if (not root.is_dir() or root.is_symlink()
+            or root.stat().st_uid != trusted_uid
+            or root.stat().st_mode & 0o077):
+        return False
+    if not db.is_file() or db.is_symlink():
+        return False
+    try:
+        with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            rows = conn.execute(
+                "SELECT mode, recovery_status, reason, version, updated_at_ms "
+                "FROM robot_runtime_state WHERE trading_account_id='paper'"
+            ).fetchall()
+        if (len(rows) != 1 or tuple(rows[0][:3]) != state
+                or type(rows[0][3]) is not int or rows[0][3] < 0
+                or type(rows[0][4]) is not int or rows[0][4] < 0):
+            return False
+        source = (target, identity, str(rows[0][3]), str(rows[0][4]), str(state[2]))
+        key = hashlib.sha256("\n".join(source).encode("utf-8")).hexdigest()
+        marker = root / (".robot-required-reconcile-" + key)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        fd = os.open(marker, flags, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(b"ONE_SHOT_CANONICAL_RECONCILE_INVOKED\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        _sync_directory(root)
+        return True
+    except (FileExistsError, OSError, ValueError, TypeError, sqlite3.Error):
+        return False
+
+
 def _recover_active_ingress_overflow(
     target: str, *, root: Path, env_file: Path | None,
     clock=time.monotonic, sleep=time.sleep,
@@ -1299,10 +1345,6 @@ def _recover_active_ingress_overflow(
             return "BLOCKED: active_PAPER_recovery_not_proven_ingress_overflow; no_mutation"
         symbol = incident.group(1) if incident else None
         if recovery == "RECONCILIATION_REQUIRED":
-            if not _recent_ingress_quiet(get("/api/robot/protection-health"), symbol):
-                # Preflight before any OFF/STOP mutation accepts a busy queue;
-                # the actual two quiet proofs happen after the freeze.
-                pass
             RuntimeShutdown(root=root, env=env).freeze_ingress_for_required_recovery()
         else:
             if (get("/api/scanner/status").get("mode") != "SCANNER_STOPPED"
@@ -1340,6 +1382,10 @@ def _recover_active_ingress_overflow(
             return "BLOCKED: active_PAPER_post_freeze_identity_changed; no_replay"
 
         if recovery == "RECONCILIATION_REQUIRED":
+            if not _record_required_reconcile_once(
+                target, expected, state, db=db,
+            ):
+                return "BLOCKED: active_PAPER_prior_reconcile_attempt; no_replay"
             reply = post("/api/robot/reconcile", {})
             if (reply is None or reply.get("success") is not True
                     or reply.get("recovery_status") != "PAUSED"
@@ -1421,9 +1467,15 @@ def main(argv=None) -> int:
                     args.sha, root=REPO, env_file=args.env_file,
                 )
                 if blocked is not None:
-                    if (blocked.startswith(
+                    if ((blocked.startswith(
                             "BLOCKED: active_PAPER_Robot_RECONCILIATION_REQUIRED")
-                            and "reason=ROBOT_PROTECTION_COVERAGE_LOST" in blocked):
+                            and "reason=ROBOT_PROTECTION_COVERAGE_LOST" in blocked)
+                            or blocked.startswith(
+                                "BLOCKED: active_exact_PAPER_not_ready; "
+                                "Robot=ROBOT_RUNNING/PAUSED")
+                            or blocked.startswith(
+                                "BLOCKED: active_exact_PAPER_not_ready; "
+                                "Robot=ROBOT_RUNNING/READY")):
                         blocked = _recover_active_ingress_overflow(
                             args.sha, root=REPO, env_file=args.env_file,
                         )
