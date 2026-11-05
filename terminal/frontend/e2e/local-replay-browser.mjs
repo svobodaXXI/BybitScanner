@@ -110,6 +110,25 @@ try {
       to_ms: t - 6*300000,
       from_price: "99", to_price: "99.1",
       trend_version: t + 900000, classification: "UNVALIDATED_GEOMETRY_ONLY",
+    }, {
+      kind: "TARGET_1H", side: "BULL",
+      available_at_ms: t + 900000, from_ms: t - 12*300000,
+      to_ms: t - 6*300000, from_price: "105", to_price: "105",
+      trend_version: t + 900000, classification: "UNVALIDATED_GEOMETRY_ONLY",
+    }, {
+      kind: "REFERENCE_5M", side: "BULL",
+      available_at_ms: t + 1200000, from_ms: t - 12*300000,
+      to_ms: t - 6*300000, from_price: "99", to_price: "99",
+      trend_version: t + 900000, classification: "UNVALIDATED_GEOMETRY_ONLY",
+    }],
+    h017_blue_risk_previews: [{
+      source: "SIMULATION", kind: "BLUE_5M_OPEN",
+      classification: "UNVALIDATED_GEOMETRY_ONLY",
+      time_ms: t + 11*300000, open_ms: t + 10*300000,
+      blue_available_at_ms: t + 1200000, trend_version: t + 900000,
+      side: "LONG", entry_price: "100", blue_price: "99",
+      target_price: "105", risk_status: "RISK_PASS",
+      stop_price: "99.3", quantity: "0.1",
     }],
     observations: [
       { kind: "MAIN_1H_TOUCH", side: "BULL",
@@ -142,8 +161,11 @@ try {
   assert.match(await indicator.innerText(), /ADX 22\.8/);
   assert.ok((await page.locator(".replay-chart canvas").count()) >= 4);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
-  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "1");
-  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "1");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "3");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "3");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-blue-risk"), "1");
+  assert.match(await page.getByRole("status", { name: "H-017 риск синей M5" }).innerText(),
+    /открытий за линией 1, из них риск ≥1:1 — 1/);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-observations"), "2");
   assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(),
     /Касаний 1–3: 1; движений от линии: 1/);
