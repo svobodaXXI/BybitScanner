@@ -75,6 +75,8 @@ def build_market_only_document(
     observations: list[dict[str, object]] = []
     blue_risk_previews: list[dict[str, object]] = []
     blue_retirements: list[dict[str, object]] = []
+    hourly_prior_updates: list[dict[str, object]] = []
+    last_prior_identity: tuple[str, int, object] | None = None
     risk_policy = H017LocalRiskPolicy()
     previous_trend = None
     previous_blue = None
@@ -147,7 +149,7 @@ def build_market_only_document(
         pending_contact = (bar.end_ms, trend.available_at_ms, trend.side, bar.close)
 
     def collect_context(view) -> None:
-        nonlocal previous_trend, previous_blue
+        nonlocal previous_trend, previous_blue, last_prior_identity
         # Only geometry known at the PRIOR close may qualify this bar OPEN.
         preview = blue_open_risk_preview(
             bar=view.five_minute.bar, known_trend=previous_trend,
@@ -171,6 +173,28 @@ def build_market_only_document(
             ],
         })
         collect_lines(view)
+        # The strategy's frozen confirmed prior is authoritative. Export its
+        # changes once, rather than independently refitting purple levels from
+        # yellow geometry in the browser. A warmup prior first becomes visible
+        # on the FIRST displayed M5 close, not during hidden history.
+        prior = view.hourly_prior_price
+        touch = view.hourly_prior_touch_ms
+        trend = view.hourly_trend
+        if prior is not None and touch is not None and trend is not None:
+            identity = (trend.side, touch, prior)
+            if identity != last_prior_identity:
+                if touch >= view.five_minute.signal_time_ms:
+                    raise ValueError("future hourly prior touch")
+                hourly_prior_updates.append({
+                    "kind": "H1_PRIOR_CONFIRMED", "side": trend.side,
+                    "at_ms": touch, "price": str(prior),
+                    "available_at_ms": view.five_minute.signal_time_ms,
+                    "trend_version": trend.available_at_ms,
+                    "classification": "UNVALIDATED_GEOMETRY_ONLY",
+                })
+                last_prior_identity = identity
+        else:
+            last_prior_identity = None
         collect_main_line_observations(view)
         # The old frozen correction remains active through later M5 pivots.
         # The first known M5 OPEN on the H1 trend side of that line retires
@@ -223,6 +247,7 @@ def build_market_only_document(
         "from_ms": start_ms, "until_ms": end_ms,
         "events": events,
         "geometry": geometry,
+        "hourly_prior_updates": hourly_prior_updates,
         "reference_5m_retirements": blue_retirements,
         "observations": observations,
         "h017_blue_risk_previews": blue_risk_previews,
