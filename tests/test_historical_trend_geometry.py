@@ -243,6 +243,39 @@ class ConfirmedGeometryTests(unittest.TestCase):
         for bar in bars[1:]:
             self.assertLessEqual(line.value_at(bar.start_ms), bar.low)
 
+    def test_only_one_blue_correction_until_its_actual_next_m5_open_break(self):
+        feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
+        for hour, (high, low) in enumerate(BULL[:7]):
+            for minute in range(12):
+                five = make_bar(hour * 12 + minute, high, low, FIVE_MINUTES_MS)
+                h1 = make_bar(hour, high, low) if minute == 11 else None
+                trend, _ = feed.observe_closed(five, h1)
+        self.assertIsNotNone(trend)
+        self.assertEqual(trend.side, "BULL")
+        # Form one confirmed HIGH-LOW-HIGH downward correction. The
+        # next lows/highs must not silently start parallel M5 lines.
+        path = [
+            (140, 132), (144, 135), (141, 131), (130, 120),
+            (137, 127), (132, 126), (130, 121), (128, 117),
+            (155, 143),  # M5 OPEN=149, strictly above the frozen blue
+            (130, 120),
+        ]
+        blue = None
+        created = None
+        for minute, (high, low) in enumerate(path):
+            five = make_bar(84 + minute, high, low, FIVE_MINUTES_MS)
+            _, blue = feed.observe_closed(five, None)
+            if minute == 5:
+                self.assertIsNotNone(blue)
+                created = blue
+                self.assertEqual(created.first.price, Decimal(144))
+                self.assertEqual(created.second.price, Decimal(137))
+            if minute in (6, 7):
+                self.assertEqual(blue, created, "new pivots cannot replace an active correction")
+            if minute in (8, 9):
+                self.assertIsNone(blue, "a broken correction stays retired until new pivots")
+        self.assertEqual(feed._blue_broken_at_ms, (84 + 9) * FIVE_MINUTES_MS)
+
     def test_main_hourly_contact_requires_frozen_line_and_trend_side_close(self):
         for side, source in (("BULL", BULL[:7]), ("BEAR", BEAR)):
             stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
