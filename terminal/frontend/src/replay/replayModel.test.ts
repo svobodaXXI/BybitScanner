@@ -1,7 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
+  it("derives only completed hourly OHLCV from contiguous 5m Bybit candles", () => {
+    const t = Date.UTC(2026, 10, 2);
+    const bars = Array.from({ length: 13 }, (_, i) => ({
+      start_ms: t + 300_000 * i, end_ms: t + 300_000 * (i + 1),
+      open: 100 + i, close: 100.5 + i,
+      high: 102 + i, low: 99 + i, volume: i + 1,
+    }));
+    expect(completeHourlyCandles(bars.slice(0, 11))).toEqual([]);
+    expect(completeHourlyCandles(bars.slice(0, 12))).toEqual([{
+      start_ms: t, end_ms: t + 3_600_000,
+      open: 100, high: 113, low: 99, close: 111.5, volume: 78,
+    }]);
+    expect(completeHourlyCandles(bars)).toHaveLength(1); // Last H1 is incomplete.
+    expect(completeHourlyCandles([bars[0], ...bars.slice(2, 12)])).toEqual([]); // A gap is not invented.
+  });
+
   it("shows only completed candles and fills revealed at the current cursor", () => {
     const doc = syntheticReplay();
     expect(doc.source).toBe("SIMULATION");
