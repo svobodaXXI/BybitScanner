@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visiblePriorLevels, visibleDmi, visibleObservations,
+  parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -32,6 +32,10 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
   const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
   const blueRiskPreviews = useMemo(
     () => visibleH017BlueRiskPreviews(document, shown.lastTimeMs),
+    [document, shown.lastTimeMs],
+  );
+  const priorBreaks = useMemo(
+    () => visiblePriorBreaks(document, shown.lastTimeMs),
     [document, shown.lastTimeMs],
   );
   const latestDmi = observedDmi.at(-1);
@@ -156,6 +160,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       // Never refit the line to the replayed price candles.
       const knownLines = visibleGeometry(document, shown.lastTimeMs);
       const knownPriors = visiblePriorLevels(document, shown.lastTimeMs);
+      const brokenByVersion = new Map(priorBreaks.map(item => [item.trend_version, item]));
       let paintedGeometry = 0;
       for (const line of knownLines) {
         // Line anchors can predate the requested playback window. Lightweight
@@ -163,7 +168,10 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
         // Project the original, frozen two-point slope (CausalLine.value_at)
         // onto two actual VISIBLE candle times, without any new fitting.
         const startingBar = shown.candles.find(bar => bar.start_ms >= line.from_ms);
-        const endingBar = shown.candles.at(-1);
+        const breakEvent = brokenByVersion.get(line.trend_version);
+        const endingBar = breakEvent && breakEvent.previous_side === line.side
+          ? shown.candles.findLast(bar => bar.start_ms < breakEvent.confirmed_at_ms)
+          : shown.candles.at(-1);
         if (!startingBar || !endingBar || startingBar.start_ms >= endingBar.start_ms) continue;
         const priceAt = (at_ms: number) => line.from_price +
           (line.to_price - line.from_price) * (at_ms - line.from_ms) / (line.to_ms - line.from_ms);
@@ -172,10 +180,13 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
         const y1 = candleSeries.priceToCoordinate(priceAt(startingBar.start_ms));
         const y2 = candleSeries.priceToCoordinate(priceAt(endingBar.start_ms));
         if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
-        const end = rayEndPoint(
-          { x: x1, y: y1 }, { x: x2, y: y2 },
-          { width: priceWidth, height: paneHeight },
-        );
+        // Never extend a retired trend into candles after its prior broke.
+        const end = breakEvent && breakEvent.previous_side === line.side
+          ? { x: x2, y: y2 }
+          : rayEndPoint(
+              { x: x1, y: y1 }, { x: x2, y: y2 },
+              { width: priceWidth, height: paneHeight },
+            );
         context.beginPath();
         context.strokeStyle = line.kind === "REFERENCE_5M" ? "#57aaff" : "#f6dc59";
         context.lineWidth = 1;
@@ -195,9 +206,14 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
         if (!startingBar) continue;
         const x1 = api.timeScale().timeToCoordinate((startingBar.start_ms / 1000) as UTCTimestamp);
         const y = candleSeries.priceToCoordinate(prior.price);
-        const historical = prior.superseded_at_ms !== undefined;
+        const matchingBreak = brokenByVersion.get(prior.trend_version);
+        const stoppedAt = Math.min(
+          prior.superseded_at_ms ?? Infinity,
+          matchingBreak?.confirmed_at_ms ?? Infinity,
+        );
+        const historical = Number.isFinite(stoppedAt);
         const x2 = historical
-          ? api.timeScale().timeToCoordinate(((prior.superseded_at_ms! - 300_000) / 1000) as UTCTimestamp)
+          ? api.timeScale().timeToCoordinate(((stoppedAt - 300_000) / 1000) as UTCTimestamp)
           : priceWidth;
         if (x1 === null || y === null || x2 === null || x2 <= x1) continue;
         context.beginPath();
@@ -284,7 +300,7 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews]);
+  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks]);
 
   return (
     <div className="replay-chart-shell">
@@ -330,7 +346,21 @@ export function ReplayPage() {
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const total = document.events.length;
   const progress = Math.round(100 * cursor / total);
-  const lastEvents = document.events.slice(Math.max(0, cursor - 8), cursor).reverse();
+  const priorBreaks = useMemo(
+    () => visiblePriorBreaks(document, shown.lastTimeMs),
+    [document, shown.lastTimeMs],
+  );
+  const recentEvents = document.events.slice(Math.max(0, cursor - 8), cursor);
+  const recentFromMs = recentEvents[0]?.time_ms ?? Infinity;
+  const lastTimeline = [
+    ...recentEvents.map(event => ({
+      kind: "REPLAY" as const, time_ms: event.time_ms, key: String(event.sequence), event,
+    })),
+    ...priorBreaks.filter(item => item.confirmed_at_ms >= recentFromMs).map(item => ({
+      kind: "PRIOR_BREAK" as const, time_ms: item.confirmed_at_ms,
+      key: "prior-" + item.trend_version, breakEvent: item,
+    })),
+  ].sort((a, b) => b.time_ms - a.time_ms).slice(0, 8);
   const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
   const blueRiskPreviews = useMemo(
     () => visibleH017BlueRiskPreviews(document, shown.lastTimeMs),
@@ -514,6 +544,13 @@ export function ReplayPage() {
           : ""}
         {` Касаний 1–3: ${observedTouches.filter(item => item.kind === "MAIN_1H_TOUCH").length}; движений от линии: ${observedTouches.filter(item => item.kind === "MAIN_1H_REACTION").length}. Метки — наблюдения, не входы.`}
       </p>}
+      {priorBreaks.length > 0 && <p className="replay-geometry-note"
+        role="status" aria-label="Подтверждение слома приора H1">
+        Слом приора H1: последняя часовая свеча закрылась за фиолетовым уровнем
+        {" "}{priorBreaks.at(-1)!.prior_price}, следующая открылась за ним.
+        {" "}Новое направление: {priorBreaks.at(-1)!.new_side === "BULL" ? "восходящее" : "нисходящее"}.
+        {" "}Новая жёлтая линия появится после подтверждения её геометрических якорей.
+      </p>}
       {visiblePriorLevels(document, shown.lastTimeMs).at(-1) && <p className="replay-geometry-note"
         role="status" aria-label="Приор H1">
         Фиолетовый приор H1: {visiblePriorLevels(document, shown.lastTimeMs).at(-1)!.price}
@@ -553,13 +590,18 @@ export function ReplayPage() {
         </section>
         <aside className="replay-events" aria-label="Журнал событий">
           <h2>События</h2>
-          {lastEvents.length === 0 && <p>Нажмите «Пуск» или «Шаг».</p>}
-          {lastEvents.map((event) => (
-            <div className="replay-event" key={event.sequence}>
-              <time>{new Date(event.time_ms).toLocaleTimeString("ru-RU", { timeZone: "UTC" })} UTC</time>
-              <strong>{label(event)}</strong>
-              {event.price !== undefined && <span>{event.price}</span>}
-              {event.trade_id && <small>{event.trade_id}</small>}
+          {lastTimeline.length === 0 && <p>Нажмите «Пуск» или «Шаг».</p>}
+          {lastTimeline.map((item) => (
+            <div className="replay-event" key={item.key}>
+              <time>{new Date(item.time_ms).toLocaleTimeString("ru-RU", { timeZone: "UTC" })} UTC</time>
+              {item.kind === "REPLAY" ? <>
+                <strong>{label(item.event)}</strong>
+                {item.event.price !== undefined && <span>{item.event.price}</span>}
+                {item.event.trade_id && <small>{item.event.trade_id}</small>}
+              </> : <>
+                <strong>Слом приора H1 · {item.breakEvent.new_side === "BULL" ? "восходящий" : "нисходящий"} тренд</strong>
+                <span>{item.breakEvent.prior_price}</span>
+              </>}
             </div>
           ))}
         </aside>
