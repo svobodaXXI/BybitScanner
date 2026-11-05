@@ -78,13 +78,13 @@ systemctl start bybitscanner-paper-start.service
 **Операционная политика владельца:** если Codex не может выполнить разрешённую VPS-задачу, использовать **прямой OpenSSH из Windows PowerShell** с уже доверенным ключом, прежде чем предлагать веб-VNC, замену ключей, новые forced-command мосты или многократные ручные действия. Это резервный *канал транспорта*, а не дополнительное разрешение на runtime/trading операции. VNC — только запасной вариант при реальном SSH-отказе. Не использовать Codex для разработки; GitHub остаётся авторитетом кода.
 
 **Доказанный сеанс 05.11.2026 (владелец, реальная PowerShell/Ubuntu-консоль):**
-- Исторический issue [#631](https://github.com/svobodaXXI/BybitScanner/issues/631) содержит тот же рабочий сценарий 27.10; ключ \`bybitscanner_laptop\` существует в \`$env:USERPROFILE\.ssh\`.
-- Обычный \`ssh root@83.217.213.181\` и явный \`bybitscanner_vdsina_2026\` при \`BatchMode=yes\` возвращали \`Permission denied (publickey,password)\`. **Не делать вывод, что ключ не установлен или требуется VNC**: \`BatchMode=yes\` не разрешает интерактивный запрос passphrase незагруженного ключа.
-- Следующая **точная** команда запросила *локальную passphrase* для \`bybitscanner_laptop\` и открыла Ubuntu 24.04.4 root shell (\`root@v3286418:~#\`):
+- Исторический issue [#631](https://github.com/svobodaXXI/BybitScanner/issues/631) содержит тот же рабочий сценарий 27.10; ключ `bybitscanner_laptop` существует в `$env:USERPROFILE\.ssh`.
+- Обычный `ssh root@83.217.213.181` и явный `bybitscanner_vdsina_2026` при `BatchMode=yes` возвращали `Permission denied (publickey,password)`. **Не делать вывод, что ключ не установлен или требуется VNC**: `BatchMode=yes` не разрешает интерактивный запрос passphrase незагруженного ключа.
+- Следующая **точная** команда запросила *локальную passphrase* для `bybitscanner_laptop` и открыла Ubuntu 24.04.4 root shell (`root@v3286418:~#`):
 
-\`\`\`powershell
+```powershell
 ssh -i "$env:USERPROFILE\.ssh\bybitscanner_laptop" -o IdentitiesOnly=yes -o PasswordAuthentication=no root@83.217.213.181
-\`\`\`
+```
 
 - Это проверенный интерактивный SSH-транспорт, **не** доказательство нового деплоя, Robot READY или безопасной остановки. Последующих root/runtime команд только по факту SSH-доступа не выполнять; для защищённых операций по-прежнему нужны отдельное разрешение, preflight, STOP/TAKE и PAPER DB invariants.
 - SSH-сессия остаётся открытой, пока активен клиент; для нового подключения после закрытия используйте ту же команду. Не отключать парольную фразу ключа, не сохранять её в скриптах, репозитории, terminal history или CI.
@@ -94,23 +94,23 @@ ssh -i "$env:USERPROFILE\.ssh\bybitscanner_laptop" -o IdentitiesOnly=yes -o Pass
 Для удобства использовать стандартный **Windows OpenSSH Authentication Agent**, не незащищённый ключ. Настройка на **локальном ПК** (не VPS) по [Microsoft OpenSSH docs](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh_keymanagement):
 
 1. Один раз в **PowerShell от имени администратора** (локально):
-   \`\`\`powershell
+   ```powershell
    Get-Service ssh-agent | Set-Service -StartupType Automatic
    Start-Service ssh-agent
-   \`\`\`
+   ```
 2. В **обычном PowerShell** пользователя:
-   \`\`\`powershell
+   ```powershell
    ssh-add "$env:USERPROFILE\.ssh\bybitscanner_laptop"
    ssh-add -l
-   \`\`\`
+   ```
    При добавлении вводится *локальная* passphrase. После этого агент предоставляет ключ последующим сеансам без повторного ввода, пока агент и ключ доступны.
 3. Подключение и ограниченная read-only проверка:
-   \`\`\`powershell
+   ```powershell
    ssh -i "$env:USERPROFILE\.ssh\bybitscanner_laptop" -o IdentitiesOnly=yes -o PasswordAuthentication=no -o BatchMode=yes root@83.217.213.181 "id -u"
-   \`\`\`
-   Ожидаемый результат \`0\`. **Не считать это проверенным, пока владелец действительно не выполнит**.
-4. Извлечь ключ из агента (при необходимости): \`ssh-add -d "$env:USERPROFILE\.ssh\bybitscanner_laptop"\`. Оставлять защищённый приватный файл у владельца; никаких копий в GitHub/сервере.
+   ```
+   Ожидаемый результат `0`. **Не считать это проверенным, пока владелец действительно не выполнит**.
+4. Извлечь ключ из агента (при необходимости): `ssh-add -d "$env:USERPROFILE\.ssh\bybitscanner_laptop"`. Оставлять защищённый приватный файл у владельца; никаких копий в GitHub/сервере.
 
-**Компромисс:** \`ssh-agent\` упрощает подключение, но делает загруженный административный ключ доступным приложениям в контексте текущей учётной записи Windows. Автозапуск и возможное сохранение записи ключа после перезагрузки расширяют время доступности: включать только на доверенном защищённом ПК. Для максимально строгой безопасности оставить ручной ввод passphrase. Никакие пароли/секреты не публиковать.
+**Компромисс:** `ssh-agent` упрощает подключение, но делает загруженный административный ключ доступным приложениям в контексте текущей учётной записи Windows. Автозапуск и возможное сохранение записи ключа после перезагрузки расширяют время доступности: включать только на доверенном защищённом ПК. Для максимально строгой безопасности оставить ручной ввод passphrase. Никакие пароли/секреты не публиковать.
 
-**Единый маршрут обслуживания:** сначала GitHub/штатный узкий канал Codex при работоспособности → при подтверждённой невозможности использовать **доверенный PowerShell SSH ключ \`bybitscanner_laptop\`** для *разрешённых* команд → VNC только если SSH действительно недоступен. Логин под root не отменяет project/owner authorization и fail-closed PAPER/LIVE ограничения.
+**Единый маршрут обслуживания:** сначала GitHub/штатный узкий канал Codex при работоспособности → при подтверждённой невозможности использовать **доверенный PowerShell SSH ключ `bybitscanner_laptop`** для *разрешённых* команд → VNC только если SSH действительно недоступен. Логин под root не отменяет project/owner authorization и fail-closed PAPER/LIVE ограничения.
