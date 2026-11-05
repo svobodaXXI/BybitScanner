@@ -480,6 +480,10 @@ class RuntimeShutdown:
                 # Revalidate after Scanner STOP: another controller may have
                 # re-enabled PAPER_AUTO while the stop was in flight.
                 self._require_autopilot_off()
+                # A concurrent owner may restart Scanner after STOP's own
+                # acknowledgement. Fence Robot mutations at this boundary,
+                # not only at the final Backend shutdown preflight.
+                self._require_scanner_stopped()
                 state = self._robot_state()
                 if state == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
                     self._mark("requesting Robot reconciliation")
