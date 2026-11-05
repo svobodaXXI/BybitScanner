@@ -149,8 +149,11 @@ class H017RiskPolicyTests(unittest.TestCase):
         self.assertLess(result.realized_cash, Decimal("200"))
         self.assertFalse(result.open_position)
         self.assertEqual(len({t.trade_id for t in result.trades}), 2)
-        self.assertEqual(result.realized_cash,
-                         Decimal("200") + sum((t.net_pnl for t in result.trades), Decimal(0)))
+        # Decimal intermediate rounding may differ by one far-sub-cent ULP
+        # when independently accumulating fills versus reported net PnL.
+        expected = Decimal("200") + sum((t.net_pnl for t in result.trades), Decimal(0))
+        self.assertEqual(result.realized_cash.quantize(Decimal("1e-18")),
+                         expected.quantize(Decimal("1e-18")))
 
 
 if __name__ == "__main__":
