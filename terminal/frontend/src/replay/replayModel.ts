@@ -474,8 +474,8 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       lastBreakAt = confirmed_at_ms;
       brokenMovements.add(movement);
       return { kind: "PRIOR_CLOSE_NEXT_OPEN" as const, confirmed_at_ms,
-        previous_side, new_side, prior_price, prior_at_ms,
-        trend_version, hourly_close_ms, next_hour_open_ms };
+        previous_side, new_side: new_side as ReplayPriorBreak["new_side"],
+        prior_price, prior_at_ms, trend_version, hourly_close_ms, next_hour_open_ms };
     });
   }
   // M5 retirement is a separate causal event, never a ghost line or signal.
