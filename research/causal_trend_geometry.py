@@ -340,7 +340,15 @@ class CausalGeometryFeed:
         self._hourly = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=wing_1h)
         self._five = ConfirmedSwingStream(timeframe_ms=FIVE_MINUTES_MS, wing=wing_5m)
         self._hourly_trend: TrendCandidate | None = None
-        # (H1 close timestamp, prior price, prior trend side).
+        # Purple prior is confirmed from CLOSED H1 wicks; it is separate
+        # from the latest yellow line's refitted second anchor.
+        self._prior_movement: tuple[TrendSide, int, Decimal] | None = None
+        self._prior_price: Decimal | None = None
+        self._prior_touch_ms: int | None = None
+        self._last_prior_candidate_touch_ms: int | None = None
+        # (second-touch time, wick price, prior trend extreme, side, known-at).
+        self._prior_candidates: list[tuple[int, Decimal, Decimal, TrendSide, int]] = []
+        # (H1 close timestamp, frozen prior price, prior trend side).
         self._pending_break: tuple[int, Decimal, TrendSide] | None = None
         self._waiting_for_side: TrendSide | None = None
         self._reversal_known_at_ms: int | None = None
@@ -353,6 +361,65 @@ class CausalGeometryFeed:
         self._active_blue_correction_extreme: Decimal | None = None
         self._active_blue_checked_q_ms: int | None = None
         self._blue_broken_at_ms: int | None = None
+
+    @property
+    def confirmed_hourly_prior(self) -> Decimal | None:
+        """Latest causally confirmed purple H1 level, independent of a re-fit."""
+        return self._prior_price
+
+    def _advance_hourly_prior(self, closed_at_ms: int) -> None:
+        trend = self._hourly_trend
+        if trend is None:
+            return
+        line = trend.main
+        movement = (trend.side, line.first.at_ms, line.first.price)
+        if self._prior_movement != movement:
+            self._prior_movement = movement
+            self._prior_price = line.second.price
+            self._prior_touch_ms = line.second.at_ms
+            self._last_prior_candidate_touch_ms = line.second.at_ms
+            self._prior_candidates = []
+            return
+        touch = line.second.at_ms
+        if self._last_prior_candidate_touch_ms is None or touch > self._last_prior_candidate_touch_ms:
+            self._last_prior_candidate_touch_ms = touch
+            if self._prior_price is not None and (
+                (trend.side == "BULL" and line.second.price > self._prior_price) or
+                (trend.side == "BEAR" and line.second.price < self._prior_price)
+            ):
+                # The original first wick remains fixed; the old trend
+                # extreme is known from H1 bars strictly BEFORE this touch.
+                earlier = [
+                    bar for bar in self._hourly.bars
+                    if line.first.at_ms <= bar.start_ms < touch
+                    and bar.end_ms <= closed_at_ms
+                ]
+                if earlier:
+                    extreme = (
+                        max(bar.high for bar in earlier) if trend.side == "BULL"
+                        else min(bar.low for bar in earlier)
+                    )
+                    self._prior_candidates.append((
+                        touch, line.second.price, extreme, trend.side, line.available_at_ms,
+                    ))
+        # A touch is never enough. Only a later, FULLY CLOSED H1 extreme
+        # advances the prior. Pending touches remain eligible after a re-fit.
+        for touch, price, extreme, side, known_at in self._prior_candidates:
+            if known_at > closed_at_ms or self._prior_price is None or (
+                self._prior_touch_ms is not None and touch <= self._prior_touch_ms
+            ):
+                continue
+            qualified = any(
+                bar.start_ms > touch and bar.end_ms <= closed_at_ms and
+                (bar.high > extreme if side == "BULL" else bar.low < extreme)
+                for bar in self._hourly.bars
+            )
+            if qualified and (
+                (side == "BULL" and price > self._prior_price) or
+                (side == "BEAR" and price < self._prior_price)
+            ):
+                self._prior_price = price
+                self._prior_touch_ms = touch
 
     def _install_opposite_if_confirmed(self, at_ms: int) -> None:
         if self._waiting_for_side is None:
@@ -399,9 +466,13 @@ class CausalGeometryFeed:
             # extrema can confirm a different pivot or revise the prior.
             old = self._hourly_trend
             if old is not None and old.available_at_ms <= newly_closed_1h.start_ms:
-                prior = old.main.second.price
-                outside = (newly_closed_1h.close < prior if old.side == "BULL" else
-                           newly_closed_1h.close > prior)
+                # Freeze the level known BEFORE this H1 candle. Do not use
+                # a newly revised yellow anchor or this hour's own wick.
+                prior = self._prior_price
+                outside = prior is not None and (
+                    newly_closed_1h.close < prior if old.side == "BULL" else
+                    newly_closed_1h.close > prior
+                )
                 if outside:
                     self._pending_break = (newly_closed_1h.end_ms, prior, old.side)
             self._hourly.observe_closed(newly_closed_1h)
@@ -427,6 +498,8 @@ class CausalGeometryFeed:
                         if fitted is not None:
                             self._hourly_trend = fitted
         self._install_opposite_if_confirmed(five_minute.end_ms)
+        if newly_closed_1h is not None:
+            self._advance_hourly_prior(newly_closed_1h.end_ms)
         trend = self._hourly_trend
         # A structurally retired/reversed H1 trend also ends its associated M5
         # correction; a mere H1 re-fit inside the SAME movement does not.
