@@ -324,9 +324,9 @@ describe("standalone SIMULATION viewer contract", () => {
     };
     const next = {
       ...first, available_at_ms: nextKnown,
-      from_ms: events[3].candle!.start_ms,
-      to_ms: events[22].candle!.start_ms,
-      from_price: "115", to_price: "110", trend_version: nextKnown,
+      // The first H1 wick belongs to this movement and never shifts.
+      from_ms: t0, to_ms: events[22].candle!.start_ms,
+      from_price: "120", to_price: "110", trend_version: nextKnown,
     };
     const archive = {
       source: "SIMULATION", simulation_run_id: "purple_fixture",
