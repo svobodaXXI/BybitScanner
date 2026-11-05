@@ -1031,8 +1031,15 @@ export function visibleGeometry(
   const main = current.get("MAIN_1H");
   // A broken trend is historical, never active while the research stream
   // waits for confirmed opposite 1--3/2--4 anchors.
-  if (main && visiblePriorBreaks(document, closedTimeMs)
-    .some(event => event.trend_version === main.trend_version)) return [];
+  // An H1 break retires the WHOLE movement (shared original wick),
+  // including versions published after the purple prior was first known.
+  // A version-SHA-only comparison leaves a superseding yellow line active.
+  if (main && visibleGeometryHistory(document, closedTimeMs).some(version =>
+    version.kind === "MAIN_1H" &&
+    version.trend_version === main.trend_version &&
+    version.retired_at_ms !== undefined &&
+    version.retired_at_ms <= closedTimeMs
+  )) return [];
   for (const childKind of ["TARGET_1H", "REFERENCE_5M"] as const) {
     const child = current.get(childKind);
     if (child && (!main || child.trend_version !== main.trend_version)) {
