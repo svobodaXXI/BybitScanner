@@ -157,6 +157,82 @@ def recent_hourly_trend(pivots: tuple[ConfirmedPivot, ...]) -> TrendCandidate | 
     return TrendCandidate(side, primary, opposing, (a, b, c, d), confirmed)
 
 
+def wick_tight_hourly_line(
+    first: ConfirmedPivot, second: ConfirmedPivot,
+    bars: tuple[Candle, ...], *, boundary: Literal["UPPER", "LOWER"],
+    available_at_ms: int,
+) -> CausalLine | None:
+    """Keep the first wick fixed; fit the worst known protrusion by slope.
+
+    Only CLOSED bars between the two anchors count. This is a candidate
+    geometry revision, never a retroactive edit to an emitted version.
+    """
+    if first.index >= second.index or first.kind != second.kind:
+        return None
+    chosen = second
+    slope = (second.price - first.price) / Decimal(second.at_ms - first.at_ms)
+    for index in range(first.index + 1, second.index + 1):
+        if index >= len(bars):
+            return None
+        bar = bars[index]
+        if bar.end_ms > available_at_ms:
+            return None
+        price = bar.high if boundary == "UPPER" else bar.low
+        trial = (price - first.price) / Decimal(bar.start_ms - first.at_ms)
+        if (trial > slope if boundary == "UPPER" else trial < slope):
+            slope = trial
+            chosen = ConfirmedPivot(
+                first.kind, index, bar.start_ms, bar.end_ms, price,
+            )
+    if first.kind == "LOW" and slope <= 0:
+        return None
+    if first.kind == "HIGH" and slope >= 0:
+        return None
+    line = CausalLine(first, chosen, available_at_ms)
+    for index in range(first.index + 1, second.index + 1):
+        bar = bars[index]
+        level = line.value_at(bar.start_ms)
+        if ((boundary == "UPPER" and bar.high > level) or
+                (boundary == "LOWER" and bar.low < level)):
+            return None
+    return line
+
+
+def wick_tight_hourly_trend(
+    proposal: TrendCandidate, bars: tuple[Candle, ...],
+    *, first_main: ConfirmedPivot | None = None,
+    first_target: ConfirmedPivot | None = None,
+) -> TrendCandidate | None:
+    """Fit candidate H1 boundaries while retaining the movement's first pair."""
+    a = first_main or proposal.main.first
+    b = first_target or proposal.target.first
+    c, d = proposal.main.second, proposal.target.second
+    side = proposal.side
+    main = wick_tight_hourly_line(
+        a, c, bars, boundary="LOWER" if side == "BULL" else "UPPER",
+        available_at_ms=proposal.available_at_ms,
+    )
+    target = wick_tight_hourly_line(
+        b, d, bars, boundary="UPPER" if side == "BULL" else "LOWER",
+        available_at_ms=proposal.available_at_ms,
+    )
+    if main is None or target is None:
+        return None
+    t2, t4 = b.at_ms, d.at_ms
+    if side == "BULL":
+        width2 = target.value_at(t2) - main.value_at(t2)
+        width4 = target.value_at(t4) - main.value_at(t4)
+    else:
+        width2 = main.value_at(t2) - target.value_at(t2)
+        width4 = main.value_at(t4) - target.value_at(t4)
+    if not (width2 > width4 > 0):
+        return None
+    return TrendCandidate(
+        side, main, target, (a, b, main.second, target.second),
+        proposal.available_at_ms,
+    )
+
+
 def last_correction_reference(
     *,
     hourly: TrendCandidate | None,
@@ -278,11 +354,14 @@ class CausalGeometryFeed:
         # before the prior broke. Preserve its frozen wick anchors, but
         # make the new version known no earlier than confirmation.
         available = max(proposal.available_at_ms, self._reversal_known_at_ms or at_ms)
+        fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
+        if fitted is None:
+            return  # Unproven candidate cannot terminate the waiting state.
         self._hourly_trend = TrendCandidate(
-            proposal.side,
-            CausalLine(proposal.main.first, proposal.main.second, available),
-            CausalLine(proposal.target.first, proposal.target.second, available),
-            proposal.pivot_sequence,
+            fitted.side,
+            CausalLine(fitted.main.first, fitted.main.second, available),
+            CausalLine(fitted.target.first, fitted.target.second, available),
+            fitted.pivot_sequence,
             available,
         )
         self._waiting_for_side = None
@@ -318,7 +397,9 @@ class CausalGeometryFeed:
                 proposal = recent_hourly_trend(self._hourly.recent_pivots)
                 if proposal is not None:
                     if self._hourly_trend is None:
-                        self._hourly_trend = proposal
+                        fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
+                        if fitted is not None:
+                            self._hourly_trend = fitted
                     elif (proposal.side == self._hourly_trend.side and
                           proposal.pivot_sequence[3].at_ms >
                           self._hourly_trend.pivot_sequence[3].at_ms):
@@ -326,25 +407,13 @@ class CausalGeometryFeed:
                         # New extrema may revise points 3/4, never shift the
                         # first pair forward by taking the last four pivots.
                         previous = self._hourly_trend
-                        a, b = previous.pivot_sequence[:2]
-                        c, d = proposal.pivot_sequence[2:]
-                        if c.index > a.index and d.index > b.index:
-                            main = CausalLine(a, c, proposal.available_at_ms)
-                            target = CausalLine(b, d, proposal.available_at_ms)
-                            # Retain only a narrowing positive corridor;
-                            # otherwise keep the last proven geometry.
-                            t2, t4 = b.at_ms, d.at_ms
-                            if proposal.side == "BULL":
-                                width2 = target.value_at(t2) - main.value_at(t2)
-                                width4 = target.value_at(t4) - main.value_at(t4)
-                            else:
-                                width2 = main.value_at(t2) - target.value_at(t2)
-                                width4 = main.value_at(t4) - target.value_at(t4)
-                            if width2 > width4 > 0:
-                                self._hourly_trend = TrendCandidate(
-                                    proposal.side, main, target,
-                                    (a, b, c, d), proposal.available_at_ms,
-                                )
+                        fitted = wick_tight_hourly_trend(
+                            proposal, self._hourly.bars,
+                            first_main=previous.main.first,
+                            first_target=previous.target.first,
+                        )
+                        if fitted is not None:
+                            self._hourly_trend = fitted
         self._install_opposite_if_confirmed(five_minute.end_ms)
         recent = self._five.recent_pivots
         # Do not copy/scan all historical 5m bars on every replay tick.
