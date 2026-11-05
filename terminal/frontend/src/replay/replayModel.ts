@@ -64,6 +64,14 @@ export type ReplayGeometry = {
   trend_version: number;
   classification: "UNVALIDATED_GEOMETRY_ONLY";
 };
+/** A completed M5 whose OPEN crossed the previously known active blue reference. */
+export type ReplayReferenceRetirement = {
+  kind: "REFERENCE_5M_OPEN_BREAK";
+  time_ms: number;
+  open_ms: number;
+  blue_available_at_ms: number;
+  trend_version: number;
+};
 /** Confirmed second MAIN_1H touch: purple structural invalidation level, NOT a signal. */
 export type ReplayPriorLevel = {
   side: "BULL" | "BEAR";
@@ -141,6 +149,7 @@ export type ReplayDocument = {
   symbol?: string;
   timeframe?: "5m";
   geometry?: ReplayGeometry[];
+  reference_5m_retirements?: ReplayReferenceRetirement[];
   observations?: ReplayObservation[];
   h017_blue_risk_previews?: H017BlueRiskPreview[];
   geometry_warmup_hours?: number;
@@ -323,6 +332,48 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
         kind, side, available_at_ms, from_ms, to_ms, from_price, to_price,
         trend_version, classification: "UNVALIDATED_GEOMETRY_ONLY" as const,
       };
+    });
+  }
+  // M5 retirement is a separate causal event, never a ghost line or signal.
+  // Validate it against the ACTUAL previously known line and candle OPEN.
+  let reference_5m_retirements: ReplayReferenceRetirement[] | undefined;
+  if (object.reference_5m_retirements !== undefined) {
+    if (mode !== "MARKET_ONLY" || !Array.isArray(object.reference_5m_retirements) ||
+        object.reference_5m_retirements.length > 100_000 || !geometry) {
+      throw new Error("Недостоверный архив отмен синих M5");
+    }
+    const byStart = new Map(events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map(e => [e.candle!.start_ms, e.candle!] as const));
+    let previousTime = -1;
+    const seen = new Set<string>();
+    reference_5m_retirements = object.reference_5m_retirements.map(raw => {
+      const item = record(raw);
+      const time_ms = positiveInteger(item.time_ms, "blue retirement time");
+      const open_ms = positiveInteger(item.open_ms, "blue retirement open");
+      const blue_available_at_ms = positiveInteger(item.blue_available_at_ms, "blue available");
+      const trend_version = positiveInteger(item.trend_version, "blue trend version");
+      const bar = byStart.get(open_ms);
+      const matches = geometry!.filter(line =>
+        line.kind === "REFERENCE_5M" &&
+        line.available_at_ms === blue_available_at_ms &&
+        line.trend_version === trend_version &&
+        line.available_at_ms <= open_ms);
+      const line = matches.at(-1);
+      const key = `${blue_available_at_ms}:${trend_version}`;
+      if (item.kind !== "REFERENCE_5M_OPEN_BREAK" ||
+          !bar || bar.end_ms !== time_ms || bar.end_ms - open_ms !== 300_000 ||
+          time_ms <= previousTime || time_ms > events.at(-1)!.time_ms ||
+          !line || seen.has(key)) {
+        throw new Error("Несогласованная M5 отмена или будущая свеча");
+      }
+      const level = line.from_price + (line.to_price - line.from_price) *
+        (open_ms - line.from_ms) / (line.to_ms - line.from_ms);
+      const crossed = line.side === "BULL" ? bar.open > level : bar.open < level;
+      if (!crossed) throw new Error("Синяя M5 отменена без открытия за линией");
+      previousTime = time_ms;
+      seen.add(key);
+      return { kind: "REFERENCE_5M_OPEN_BREAK" as const,
+        time_ms, open_ms, blue_available_at_ms, trend_version };
     });
   }
   // H-017: evaluate known blue-line OPENs, but never turn previews into fills.
@@ -586,6 +637,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     ...(mode ? { mode } : {}),
     ...(mode === "MARKET_ONLY" ? { symbol: object.symbol as string, timeframe: "5m" as const } : {}),
     ...(geometry ? { geometry } : {}),
+    ...(reference_5m_retirements ? { reference_5m_retirements } : {}),
     ...(observations ? { observations } : {}),
     ...(h017_blue_risk_previews ? { h017_blue_risk_previews } : {}),
     ...(geometry_warmup_hours !== undefined ? { geometry_warmup_hours } : {}),
@@ -845,7 +897,18 @@ export function visibleGeometryHistory(
     visiblePriorBreaks(document, closedTimeMs).map(event =>
       [event.trend_version, event.confirmed_at_ms] as const),
   );
+  const blueRetirements = (document.reference_5m_retirements ?? [])
+    .filter(event => event.time_ms <= closedTimeMs);
   for (const version of versions) {
+    if (version.kind === "REFERENCE_5M") {
+      const retired = blueRetirements.find(event =>
+        event.blue_available_at_ms === version.available_at_ms &&
+        event.trend_version === version.trend_version);
+      if (retired) {
+        version.superseded_at_ms = Math.min(
+          version.superseded_at_ms ?? Infinity, retired.time_ms);
+      }
+    }
     const brokenAt = breaks.get(version.trend_version);
     if (brokenAt !== undefined) {
       version.superseded_at_ms = Math.min(version.superseded_at_ms ?? Infinity, brokenAt);
@@ -874,6 +937,13 @@ export function visibleGeometry(
     if (child && (!main || child.trend_version !== main.trend_version)) {
       current.delete(childKind);
     }
+  }
+  const blue = current.get("REFERENCE_5M");
+  if (blue && (document.reference_5m_retirements ?? []).some(event =>
+      event.time_ms <= closedTimeMs &&
+      event.blue_available_at_ms === blue.available_at_ms &&
+      event.trend_version === blue.trend_version)) {
+    current.delete("REFERENCE_5M");
   }
   return [...current.values()];
 }
