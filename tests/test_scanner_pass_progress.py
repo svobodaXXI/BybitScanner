@@ -138,5 +138,68 @@ class ScannerProgressCompletionTests(unittest.TestCase):
         self.assertEqual((snapshot["symbols_done"], snapshot["timeframes_done"]), (0, 0))
 
 
+class ScannerProgressReadOnlyProjectionTests(ScannerProgressCompletionTests):
+    """No DB, owner call or network: exercise HTTP routing on a fake handler."""
+
+    def _get_projection(self):
+        from terminal.runtime.paper_http_server import PaperHttpHandler
+        handler = PaperHttpHandler.__new__(PaperHttpHandler)
+        handler.path = "/api/scanner/progress"
+        responses = []
+        handler._json_response = lambda status, payload: responses.append((status, payload))
+        handler.do_GET()
+        self.assertEqual(len(responses), 1)
+        return responses[0]
+
+    def test_readonly_projection_carries_only_allowlisted_snapshot_not_runtime_proof(self):
+        from horn_scanner import read_progress
+        done = self._run()
+        done["untrusted_private_token"] = "DO-NOT-DISCLOSE"
+        self.progress_file.write_text(json.dumps(done), encoding="utf-8")
+        projected = read_progress()
+        self.assertNotIn("untrusted_private_token", projected)
+        code, response = self._get_projection()
+        self.assertEqual(code, 200)
+        self.assertTrue(response["available"])
+        self.assertEqual(response["scope"], "last_written_snapshot_only")
+        self.assertEqual(response["progress"], projected)
+        self.assertEqual(response["progress"]["status"], "COMPLETE")
+
+    def test_no_progress_file_is_explicitly_unavailable(self):
+        code, response = self._get_projection()
+        self.assertEqual(code, 200)
+        self.assertEqual(response["scope"], "last_written_snapshot_only")
+        self.assertFalse(response["available"])
+        self.assertIsNone(response["progress"])
+
+    def test_legacy_or_corrupt_file_never_claims_completion(self):
+        for value in ({"symbols_done": 1, "symbols_total": 1}, [],
+                      {"status": "COMPLETE", "token": "SECRET"}):
+            with self.subTest(value=value):
+                self.progress_file.write_text(json.dumps(value), encoding="utf-8")
+                code, response = self._get_projection()
+                self.assertEqual(code, 503)
+                self.assertEqual(response, {
+                    "ok": False, "error": "scanner_progress_unavailable",
+                })
+        self.progress_file.write_bytes(b"z" * 100000)
+        code, response = self._get_projection()
+        self.assertEqual(code, 503)
+        self.assertNotIn("z", str(response))
+
+    def test_inconsistent_completion_and_boolean_counts_fail_closed(self):
+        original = self._run()
+        for change in ({"symbols_done": 0},
+                       {"timeframes_done": True},
+                       {"scan_pass_id": "unsafe/or/credential"},
+                       {"symbol": "COIN?token=123"}):
+            with self.subTest(change=change):
+                self.progress_file.write_text(
+                    json.dumps({**original, **change}), encoding="utf-8")
+                code, response = self._get_projection()
+                self.assertEqual(code, 503)
+                self.assertEqual(response["error"], "scanner_progress_unavailable")
+
+
 if __name__ == "__main__":
     unittest.main()

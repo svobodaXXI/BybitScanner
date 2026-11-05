@@ -2943,6 +2943,27 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **to_primitive(result)})
             return
 
+        if parsed.path == "/api/scanner/progress":
+            # #449: last-written child progress is read-only filesystem
+            # evidence, NEVER a request through the serialized PAPER owner.
+            # Neither a completed old file nor a RUNNING snapshot proves
+            # current process liveness or safe STOP/deploy.
+            try:
+                from horn_scanner import read_progress
+
+                snapshot = read_progress()
+            except (OSError, ValueError):
+                self._json_response(503, {
+                    "ok": False, "error": "scanner_progress_unavailable",
+                })
+                return
+            self._json_response(200, {
+                "ok": True, "available": snapshot is not None,
+                "scope": "last_written_snapshot_only",
+                "progress": snapshot,
+            })
+            return
+
         if parsed.path == "/api/scanner/mirror-levels":
             # Read-only projection of the Scanner's durable MIRROR state files; it never
             # touches the PAPER owner thread or the PAPER DB.
