@@ -66,6 +66,63 @@ def write_progress(progress, root=None):
     os.replace(temporary, path)
 
 
+def read_progress(root=None):
+    """Bounded, allow-listed LAST-WRITTEN Scanner snapshot, without PAPER owner/DB.
+
+    Old or malformed progress files are not interpreted as completion.
+    Nothing in this file proves the Scanner process is currently running:
+    its timestamp and pass ID are part of the returned evidence.
+    """
+    path = os.path.join(root or evidence_root(), PROGRESS_FILE)
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read(8193)
+    except FileNotFoundError:
+        return None
+    if len(raw) > 8192:
+        raise ValueError("scanner progress exceeds bounded read")
+    try:
+        value = json.loads(raw)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise ValueError("scanner progress malformed") from error
+    if not isinstance(value, dict):
+        raise ValueError("scanner progress not a record")
+    fields = (
+        "updated_at_ms", "symbols_done", "symbols_total",
+        "timeframes_done", "timeframes_total",
+        "horn_found", "horn_sent", "mirror_candidates",
+        "sent_to_telegram", "errors",
+    )
+    if any(type(value.get(k)) is not int or value[k] < 0 for k in fields):
+        raise ValueError("scanner progress counters invalid")
+    if not (value["symbols_done"] <= value["symbols_total"] <= 100000
+            and value["timeframes_total"] == 2 * value["symbols_total"]
+            and value["timeframes_done"] <= value["timeframes_total"]
+            and value["symbols_done"] * 2 <= value["timeframes_done"]):
+        raise ValueError("scanner progress counts inconsistent")
+    status = value.get("status")
+    if status not in ("RUNNING", "COMPLETE", "INTERRUPTED"):
+        raise ValueError("scanner progress state unknown")
+    if status == "COMPLETE" and (
+        value["symbols_done"] != value["symbols_total"]
+        or value["timeframes_done"] != value["timeframes_total"]
+    ):
+        raise ValueError("scanner COMPLETE proof inconsistent")
+    pass_id = value.get("scan_pass_id")
+    if not isinstance(pass_id, str) or not re.fullmatch(r"[0-9]{1,12}:[0-9]{1,24}", pass_id):
+        raise ValueError("scanner pass identity invalid")
+    symbol = value.get("symbol")
+    if not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9]{0,35}", symbol):
+        raise ValueError("scanner progress symbol invalid")
+    timeframe = value.get("timeframe")
+    if timeframe not in ("", "1", "5"):
+        raise ValueError("scanner progress timeframe invalid")
+    # Never return unrecognized fields from a file: it might contain secrets,
+    # error text, or local filesystem details. API output is a fixed schema.
+    return {**{k: value[k] for k in fields}, "status": status,
+            "scan_pass_id": pass_id, "symbol": symbol, "timeframe": timeframe}
+
+
 def _line(line, closed):
     """Boundary in window-index form plus the absolute time of its two anchors."""
     return {

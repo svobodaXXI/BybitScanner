@@ -171,10 +171,22 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
     mirror_enabled = mirror_observation_enabled()
     mirror_candidate_count = 0
 
-    def report_progress(position, symbol, timeframe):
+    # #449: a symbol is complete only after BOTH timeframes and the shared
+    # MIRROR processing finish. Previously 5m and 1m each reported
+    # symbols_done=position, which could claim 100% while MIRROR was running.
+    completed_symbols = 0
+    completed_timeframes = 0
+    scan_pass_id = f"{os.getpid()}:{time.time_ns()}"
+
+    def report_progress(position, symbol, timeframe, *, status="RUNNING",
+                        log=True, notify=True):
         progress = {
-            "symbols_done": position,
+            "scan_pass_id": scan_pass_id,
+            "status": status,
+            "symbols_done": completed_symbols,
             "symbols_total": len(symbols),
+            "timeframes_done": completed_timeframes,
+            "timeframes_total": len(symbols) * 2,
             "symbol": symbol,
             "timeframe": timeframe,
             "horn_found": horn_found_count,
@@ -183,18 +195,24 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
             "sent_to_telegram": sent_to_telegram_count,
             "errors": error_count,
         }
-        print(
-            f"[SCAN PROGRESS] {position}/{len(symbols)} {symbol} {timeframe}m "
-            f"horn_found={horn_found_count} horn_sent={horn_sent_count} "
-            f"telegram_sent={sent_to_telegram_count} errors={error_count}",
-            flush=True,
-        )
+        if log:
+            print(
+                f"[SCAN PROGRESS] {position}/{len(symbols)} {symbol} {timeframe}m "
+                f"horn_found={horn_found_count} horn_sent={horn_sent_count} "
+                f"telegram_sent={sent_to_telegram_count} errors={error_count}",
+                flush=True,
+            )
         try:
             write_progress(progress)
         except Exception as progress_error:
             print(f"[SCAN PROGRESS WRITE ERROR] {progress_error}", flush=True)
-        if progress_observer is not None:
+        if notify and progress_observer is not None:
             progress_observer(progress)
+
+    # Reset a prior COMPLETE file before the new pass. Do not send this
+    # administrative snapshot to the parent: its first-progress heartbeat
+    # must still mean an actual symbol/timeframe has been attempted.
+    report_progress(0, "", "", log=False, notify=False)
 
     print("=" * 60)
     print("BybitScanner")
@@ -231,6 +249,8 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
         mirror_inputs = {}
         for timeframe in ("5", "1"):
             if control_checkpoint is not None and not control_checkpoint():
+                report_progress(position, symbol, timeframe, status="INTERRUPTED",
+                                log=False, notify=False)
                 print("[SCANNER] current pass stopped by owner")
                 return
             horn = l_shape = None
@@ -531,13 +551,24 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
                 )
 
             finally:
-                report_progress(position, symbol, timeframe)
+                completed_timeframes += 1
+                if timeframe == "5":
+                    report_progress(position, symbol, timeframe)
 
         if mirror_inputs:
             found, sent, failed = observe_mirror_symbol(symbol, mirror_inputs)
             mirror_candidate_count += found
             sent_to_telegram_count += sent
             error_count += failed
+
+        # The 1m progress event is DELAYED until MIRROR completes, but not
+        # duplicated: exactly two progress IPC callbacks per symbol as before.
+        completed_symbols = position
+        report_progress(position, symbol, "1",
+                        status="COMPLETE" if position == len(symbols) else "RUNNING")
+
+    if not symbols:
+        report_progress(0, "", "", status="COMPLETE", log=False, notify=False)
 
     print(f"Найдено паттернов: {approved_pattern_count}")
     if box_observation_count:
