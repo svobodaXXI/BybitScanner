@@ -181,6 +181,12 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "3");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-priors"), "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-priors"), "1");
+  // Diagnostics and geometry observation decorations stay hidden until requested.
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-observations"), "0");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-blue-risk"), "0");
+  await page.getByText("Диагностика", { exact: true }).click();
+  await page.getByLabel("Показать опорные маркеры").check();
+  await page.waitForFunction(() => document.querySelector(".replay-execution-overlay")?.dataset.visibleObservations === "2");
   assert.match(await page.getByRole("status", { name: "Приор H1" }).innerText(), /99\.1/);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-blue-risk"), "1");
   assert.match(await page.getByRole("status", { name: "H-017 риск синей M5" }).innerText(),
@@ -193,6 +199,8 @@ try {
   assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(),
     /Касаний 1–3: 1; движений от линии: 1/);
   assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(), /Предыстория.*72 ч/);
+  await page.getByLabel("Показать опорные маркеры").uncheck();
+  await page.getByText("Диагностика", { exact: true }).click();
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
 
