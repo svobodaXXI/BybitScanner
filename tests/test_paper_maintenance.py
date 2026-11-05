@@ -1048,6 +1048,7 @@ def test_editor_only_does_not_start_on_failed_reconcile_postproof(
                         lambda *_: "d" * 64)
     monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
     monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: False)
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals", lambda *_: None)
     monkeypatch.setattr(maintenance, "_editor_reconcile_once",
                         lambda *_a, **_kw: events.append("reconcile"))
     assert maintenance.start_installed_paper_from_editor(
@@ -1055,6 +1056,57 @@ def test_editor_only_does_not_start_on_failed_reconcile_postproof(
         runner=lambda *_a, **_kw: events.append("start"),
     ) == "BLOCKED: PAPER_stale_owners_after_reconcile; START_not_attempted"
     assert events == ["reconcile"]
+
+
+def test_editor_resumes_paused_frozen_candidates_without_replaying_reconcile(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    events = []
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *_: "d" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent",
+                        lambda *_: len(events) > 0 and events[0] == "stop")
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals",
+                        lambda *_: events.append("stop") or True)
+    monkeypatch.setattr(maintenance, "_editor_reconcile_once",
+                        lambda *_a, **_kw: events.append("reconcile"))
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "READY: full PAPER proven")
+    result = maintenance.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="READY: EDITOR_ONLY",
+        runner=lambda *_a, **_kw: events.append("start") or SimpleNamespace(returncode=0),
+    )
+    assert result == "READY: full PAPER proven"
+    assert events == ["stop", "start"]
+
+
+def test_editor_unknown_robot_stop_does_not_reconcile_or_start(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    target = "a" * 40
+    events = []
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *_: "d" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_paper_start_quiescent", lambda *_: False)
+    monkeypatch.setattr(maintenance, "_editor_retire_inert_approvals",
+                        lambda *_: events.append("stop") or False)
+    monkeypatch.setattr(maintenance, "_editor_reconcile_once",
+                        lambda *_a, **_kw: events.append("reconcile"))
+    result = maintenance.start_installed_paper_from_editor(
+        target, root=tmp_path, editor_status="READY: EDITOR_ONLY",
+        runner=lambda *_a, **_kw: events.append("start"),
+    )
+    assert result == "BLOCKED: PAPER_Robot_STOP_outcome_unknown_or_unproven; no_replay"
+    assert events == ["stop"]
 
 
 def test_editor_reconcile_never_retries_unknown_owner_outcome(monkeypatch, tmp_path):
