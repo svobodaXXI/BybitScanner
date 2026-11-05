@@ -141,6 +141,11 @@ def build_market_only_document(
             "plus_di": str(snapshot.plus_di) if snapshot.plus_di is not None else None,
             "minus_di": str(snapshot.minus_di) if snapshot.minus_di is not None else None,
             "adx": str(snapshot.adx) if snapshot.adx is not None else None,
+            "crossings": [
+                {"time_ms": cross.time_ms, "side": cross.side,
+                 "direction": cross.direction, "comparator": cross.comparator}
+                for cross in snapshot.crossings
+            ],
         })
         collect_lines(view)
         collect_main_line_observations(view)

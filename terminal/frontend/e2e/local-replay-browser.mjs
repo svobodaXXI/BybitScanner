@@ -99,8 +99,12 @@ try {
       points: Array.from({ length: 40 }, (_, i) => ({
         time_ms: t + (i + 1) * 300000,
         plus_di: i < 14 ? null : String(20 + i / 10),
-        minus_di: i < 14 ? null : String(10 + i / 20),
+        minus_di: i < 14 ? null : i === 30 ? "20.5" : String(10 + i / 20),
         adx: i < 27 ? null : String(15 + i / 5),
+        crossings: i === 30 ? [
+          { time_ms: t + (i + 1) * 300000, side: "MINUS",
+            direction: "UP", comparator: "LEVEL_20" },
+        ] : [],
       })),
     },
     geometry_warmup_hours: 72,
@@ -166,6 +170,8 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-blue-risk"), "1");
   assert.match(await page.getByRole("status", { name: "H-017 риск синей M5" }).innerText(),
     /открытий за линией 1, из них риск ≥1:1 — 1/);
+  assert.match(await page.getByRole("status", { name: "Пересечения ADX/DMI" }).innerText(),
+    /пересечений на закрытых M5: 1/);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-observations"), "2");
   assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(),
     /Касаний 1–3: 1; движений от линии: 1/);
