@@ -209,9 +209,11 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         // Project the original, frozen two-point slope (CausalLine.value_at)
         // onto two actual VISIBLE candle times, without any new fitting.
         const startingBar = displayCandles.find(bar => bar.start_ms >= line.from_ms);
-        const isHistorical = line.superseded_at_ms !== undefined;
-        const endingBar = isHistorical
-          ? displayCandles.slice().reverse().find(bar => bar.start_ms < line.superseded_at_ms!)
+        // An improved pivot/slope is NOT a break. Keep the former solid
+        // version visible until the same movement's verified cancellation.
+        const retiredAt = line.retired_at_ms;
+        const endingBar = retiredAt !== undefined
+          ? displayCandles.slice().reverse().find(bar => bar.start_ms < retiredAt)
           : displayCandles.at(-1);
         if (!startingBar || !endingBar || startingBar.start_ms >= endingBar.start_ms) continue;
         const priceAt = (at_ms: number) => line.from_price +
@@ -221,10 +223,11 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         const y1 = candleSeries.priceToCoordinate(priceAt(startingBar.start_ms));
         const y2 = candleSeries.priceToCoordinate(priceAt(endingBar.start_ms));
         if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
-        // Past trendline versions remain on the chart at their original
-        // wick anchors and stop at the next revision or confirmed prior break.
-        const end = isHistorical
-          ? { x: x2, y: y2 }
+        // Only a confirmed retirement ends the line. Add a short VISUAL
+        // tail beyond that point; no arbitrary candle-based strategy rule.
+        const tailPx = retiredAt === undefined ? 0 : Math.max(0, Math.min(8, priceWidth - x2));
+        const end = retiredAt !== undefined
+          ? { x: x2 + tailPx, y: y2 + (x2 > x1 ? (y2 - y1) * tailPx / (x2 - x1) : 0) }
           : rayEndPoint(
               { x: x1, y: y1 }, { x: x2, y: y2 },
               { width: priceWidth, height: paneHeight },
