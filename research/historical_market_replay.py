@@ -7,7 +7,7 @@ This kernel is not an approved trading strategy or a live execution adapter.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from typing import Callable, Literal, Sequence
 
 Side = Literal["LONG", "SHORT"]
@@ -243,7 +243,13 @@ def replay_candles(
                 quantity = pending.quantity
                 if budget is not None:
                     # All 20 slots must fit inside 200 USDT, INCLUDING entry fees.
-                    quantity = min(quantity, budget / (executable * (1 + fee_rate)))
+                    # Round DOWN internal simulated quantity to avoid Decimal
+                    # repeating-division dust blocking the twentieth funded
+                    # slot. This is not a Bybit instrument lot-step rule.
+                    budget_quantity = (budget / (executable * (1 + fee_rate))).quantize(
+                        Decimal("1e-18"), rounding=ROUND_DOWN,
+                    )
+                    quantity = min(quantity, budget_quantity)
                 notional = executable * quantity
                 entry_fee = notional * fee_rate
                 if quantity > 0 and reserved_notional + notional + entry_fee <= cash:
