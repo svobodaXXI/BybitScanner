@@ -8,7 +8,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
-from research.historical_market_replay import EntryIntent, Side
+from typing import Callable, Sequence
+
+from research.historical_market_replay import (
+    Candle, ClosedBarView, EntryIntent, ReplayResult, ReplayVisualEvent, Side,
+    replay_candles,
+)
 
 
 def _positive(value: object, label: str) -> Decimal:
@@ -82,4 +87,28 @@ class H017LocalRiskPolicy:
         return EntryIntent(
             side=side, quantity=self.slot_budget / entry,
             stop=stop, take=take,
+        )
+
+    def replay(
+        self, *, simulation_run_id: str, candles: Sequence[Candle],
+        on_closed_bar: Callable[[ClosedBarView], EntryIntent | None],
+        taker_fee_rate: Decimal = Decimal("0.0006"),
+        adverse_slippage_rate: Decimal = Decimal("0"),
+        on_visual_event: Callable[[ReplayVisualEvent], None] | None = None,
+    ) -> ReplayResult:
+        """Activate the H-017 risk policy only for a local SIMULATION run.
+
+        The external strategy must provide its approved geometry/entry timing;
+        this wrapper adds NO signal rules and never touches real accounts.
+        """
+        return replay_candles(
+            simulation_run_id=simulation_run_id, candles=candles,
+            on_closed_bar=on_closed_bar, initial_cash=self.initial_cash,
+            taker_fee_rate=taker_fee_rate,
+            adverse_slippage_rate=adverse_slippage_rate,
+            on_visual_event=on_visual_event,
+            max_open_positions=self.max_open_positions,
+            position_slot_budget=self.slot_budget,
+            minimum_reward_risk=self.minimum_reward_risk,
+            maximum_stop_fraction=self.max_stop_fraction,
         )
