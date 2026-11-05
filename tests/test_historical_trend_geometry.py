@@ -345,7 +345,12 @@ class ConfirmedGeometryTests(unittest.TestCase):
                 self.assertTrue(last is None or last.available_at_ms <= next_5m.end_ms)
                 self.assertTrue(blue is None or blue.available_at_ms <= next_5m.end_ms)
         self.assertEqual(first_times, [7*ONE_HOUR_MS])
-        self.assertEqual(last.pivot_sequence[3].index, 7)
+        # Latest pivot is at 7, but hour 5 provides the slope-tight
+        # upper wick anchor against all closed H1 candles through hour 7.
+        self.assertEqual(last.pivot_sequence[3].index, 5)
+        self.assertEqual(last.target.second.price, Decimal(119))
+        for bar in geometry._hourly.bars[last.target.first.index + 1:8]:
+            self.assertGreaterEqual(last.target.value_at(bar.start_ms), bar.high)
 
 
 if __name__ == "__main__":
