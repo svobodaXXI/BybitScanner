@@ -56,16 +56,16 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(visibleDmi(parsed, 30).flatMap(p => p.crossings ?? [])).toHaveLength(5);
     expect(visibleReplay(parsed.events, parsed.events.length).fills).toHaveLength(1); // Demo only.
     expect(() => parseReplayDocument({
-      ...raw, dmi_5m: { ...raw.dmi_5m, points: points.map((p: Record<string, unknown>, i: number) =>
-        i === 29 ? { ...p, crossings: [{ ...p.crossings[0], time_ms: at + 300_000 }] } : p) },
+      ...raw, dmi_5m: { ...raw.dmi_5m, points: points.map((p: { crossings?: Array<Record<string, unknown>> }, i: number) =>
+        i === 29 ? { ...p, crossings: [{ ...p.crossings![0], time_ms: at + 300_000 }] } : p) },
     })).toThrow(/Пересечение ADX\/DMI/);
     expect(() => parseReplayDocument({
-      ...raw, dmi_5m: { ...raw.dmi_5m, points: points.map((p: Record<string, unknown>, i: number) =>
-        i === 29 ? { ...p, crossings: [...p.crossings].reverse() } : p) },
+      ...raw, dmi_5m: { ...raw.dmi_5m, points: points.map((p: { crossings?: Array<Record<string, unknown>> }, i: number) =>
+        i === 29 ? { ...p, crossings: [...p.crossings!].reverse() } : p) },
     })).toThrow(/Пересечение ADX\/DMI/);
     expect(() => parseReplayDocument({
-      ...raw, dmi_5m: { ...raw.dmi_5m, points: points.map((p: Record<string, unknown>, i: number) =>
-        i === 29 ? { ...p, crossings: [{ ...p.crossings[0], direction: "DOWN" }] } : p) },
+      ...raw, dmi_5m: { ...raw.dmi_5m, points: points.map((p: { crossings?: Array<Record<string, unknown>> }, i: number) =>
+        i === 29 ? { ...p, crossings: [{ ...p.crossings![0], direction: "DOWN" }] } : p) },
     })).toThrow(/Пересечение ADX\/DMI/);
   });
 

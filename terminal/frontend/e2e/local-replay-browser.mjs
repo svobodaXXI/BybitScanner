@@ -104,7 +104,7 @@ try {
         crossings: i === 30 ? [
           { time_ms: t + (i + 1) * 300000, side: "MINUS",
             direction: "UP", comparator: "LEVEL_20" },
-        ] : [],
+        ] : undefined,
       })),
     },
     geometry_warmup_hours: 72,
