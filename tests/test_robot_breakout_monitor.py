@@ -1165,15 +1165,14 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(len(self.executor.limit_calls), 1)
 
     def test_poor_rr_reprice_does_not_amend_or_cancel_original_entry(self):
-        # Initial RR is >=2 with a 24-point frozen width, but a stricter
-        # threshold rejects the proposed reprice. Keep the original accepted
-        # order under observation rather than making a worse amend.
-        # A wider STOP limit is patched in so the RR gate, not the 1.5% STOP
-        # limit, is what rejects the reprice here.
+        # At entry 97.2, frozen TAKE 110.8 and structural STOP 95.0
+        # give 6.18R (>2). After reprice to 91.2 the same extreme is on the
+        # wrong side; the 10% STOP fallback gives only 2.15R (< strict 10R).
+        # Keep the original admissible order, never amend to rejected terms.
         limit = patch.object(robot_protection, "MAX_STOP_DISTANCE", Decimal("0.10"))
         limit.start()
         self.addCleanup(limit.stop)
-        self._create_candidate(start_width=24.0, lower_touch_prices=(89.1,))
+        self._create_candidate(start_width=12.0, lower_touch_prices=(95.1,))
         self._drive_to_retest_detected()
         self.monitor.tick()
         record = self.store.get_robot_candidate("candidate-1")
