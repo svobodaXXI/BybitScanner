@@ -115,6 +115,72 @@ def archived_trade_klines():
     return fetch_public_derived, archive_hashes
 
 
+def verify_archived_hourly_wick_geometry(document):
+    """Independently verify H1 line anchors and every known wick between them.
+
+    Uses only CLOSED public-trade-derived H1 OHLC, including the hidden 72h
+    context. Checks the geometry as *originally published*; a later break
+    beyond the second anchor is not retroactively erased or retouched.
+    """
+    from research.historical_candle_feed import ClosedHigherTimeframeFeed
+    from research.historical_market_replay import Candle
+
+    original = document["context_1h"]
+    first_visible = document["events"][0]["candle"]["start_ms"]
+    if (not original or original[0]["start_ms"] != first_visible - 72 * 3_600_000
+            or original[-1]["end_ms"] != first_visible
+            or len(original) != 72):
+        raise AssertionError("real Bybit run lacks exactly 72 closed H1 warmup bars")
+    by_hour = {}
+    for hour in original:
+        if (hour["start_ms"] in by_hour or
+                hour["end_ms"] != hour["start_ms"] + 3_600_000):
+            raise AssertionError("invalid original H1 warmup history")
+        by_hour[hour["start_ms"]] = hour
+    feed = ClosedHigherTimeframeFeed()
+    for event in document["events"]:
+        c = event["candle"]
+        _, _, new_hour, _ = feed.observe_closed_five_minute(
+            Candle(c["start_ms"], M5, c["open"], c["high"],
+                   c["low"], c["close"], c["volume"])
+        )
+        if new_hour is not None:
+            if new_hour.start_ms in by_hour:
+                raise AssertionError("visible H1 overlaps hidden H1 context")
+            by_hour[new_hour.start_ms] = {
+                "start_ms": new_hour.start_ms, "end_ms": new_hour.end_ms,
+                "high": str(new_hour.high), "low": str(new_hour.low),
+            }
+    counts = {"MAIN_1H": 0, "TARGET_1H": 0}
+    for line in document["geometry"]:
+        kind = line["kind"]
+        if kind not in counts:
+            continue
+        a = by_hour.get(line["from_ms"])
+        b = by_hour.get(line["to_ms"])
+        if a is None or b is None or line["from_ms"] >= line["to_ms"]:
+            raise AssertionError("hourly anchor not a closed archived H1 candle")
+        lower = (kind == "MAIN_1H") == (line["side"] == "BULL")
+        wick = "low" if lower else "high"
+        first_price, second_price = Decimal(line["from_price"]), Decimal(line["to_price"])
+        if first_price != Decimal(a[wick]) or second_price != Decimal(b[wick]):
+            raise AssertionError("H1 line anchor is not an actual archived wick")
+        start, stop = line["from_ms"], line["to_ms"]
+        for at in range(start + 3_600_000, stop + 1, 3_600_000):
+            bar = by_hour.get(at)
+            if bar is None:
+                raise AssertionError("missing closed H1 within trendline anchor span")
+            level = first_price + (second_price - first_price) * (
+                Decimal(at - start) / Decimal(stop - start))
+            price = Decimal(bar[wick])
+            if lower and price < level or not lower and price > level:
+                raise AssertionError("H1 wick protrudes beyond frozen yellow geometry")
+        if line["available_at_ms"] < b["end_ms"]:
+            raise AssertionError("hourly line published before its second wick closed")
+        counts[kind] += 1
+    return counts
+
+
 def retrospective_first_touch_study(bars, previews, dmi_points):
     """Independent, non-executable first-touch count on a bounded market sample.
 
@@ -222,6 +288,7 @@ def check() -> dict[str, object]:
                 raise AssertionError("unexpected H-017 0.7% stop or 10 USDT slot sizing")
         elif "stop_price" in preview or "quantity" in preview:
             raise AssertionError("rejected H-017 candidate contains execution fields")
+    verified_h1 = verify_archived_hourly_wick_geometry(doc)
     # Hash the actual returned closed OHLCV bars, not mock fixtures or rendered pixels.
     canonical = json.dumps(bars, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     summary = {
@@ -238,6 +305,7 @@ def check() -> dict[str, object]:
         "bar_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
         "hourly_main_lines": sum(x["kind"] == "MAIN_1H" for x in doc["geometry"]),
         "hourly_target_lines": sum(x["kind"] == "TARGET_1H" for x in doc["geometry"]),
+        "closed_h1_wick_verified_lines": verified_h1,
         "hourly_main_contacts": sum(x["kind"] == "MAIN_1H_TOUCH" for x in doc["observations"]),
         "hourly_main_reactions": sum(x["kind"] == "MAIN_1H_REACTION" for x in doc["observations"]),
         "blue_open_candidates": len(doc["h017_blue_risk_previews"]),
