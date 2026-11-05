@@ -44,8 +44,8 @@ describe("standalone SIMULATION viewer contract", () => {
     const marketOnly = parseReplayDocument({
       source: "SIMULATION", simulation_run_id: "history", mode: "MARKET_ONLY",
       market_data_source: "BYBIT_PUBLIC_KLINE", symbol: "BTCUSDT", timeframe: "5m",
-      events: demo.events.filter(item => item.kind === "CANDLE_CLOSED").map(item => ({
-        ...item, simulation_run_id: "history",
+      events: demo.events.filter(item => item.kind === "CANDLE_CLOSED").map((item, index) => ({
+        ...item, simulation_run_id: "history", sequence: index + 1,
       })),
     });
     expect(simulationActionJournal(marketOnly).actions).toEqual([]);
