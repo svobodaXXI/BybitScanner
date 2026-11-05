@@ -205,13 +205,13 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(visibleReplay(doc.events, doc.events.length).fills).toHaveLength(0);
     expect(() => parseReplayDocument({
       ...archive, geometry: undefined,
-    })).toThrow(/часовой линии/);
+    })).toThrow(/Наблюдение не связано/);
     expect(() => parseReplayDocument({
       ...archive, observations: [{ ...archive.observations[0], trend_version: version + 300_000 }],
-    })).toThrow(/часовой линии/);
+    })).toThrow(/Наблюдение не связано/);
     expect(() => parseReplayDocument({
       ...archive, observations: [{ ...archive.observations[0], side: "BEAR" }],
-    })).toThrow(/часовой линии/);
+    })).toThrow(/Наблюдение не связано/);
     expect(() => parseReplayDocument({
       ...archive, observations: [{ ...archive.observations[0], price: "999" }],
     })).toThrow(/закрытой свечой/);
