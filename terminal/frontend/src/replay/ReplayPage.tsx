@@ -1,5 +1,5 @@
 import {
-  CandlestickSeries, ColorType, LineSeries, LineStyle, createChart,
+  CandlestickSeries, ColorType, CrosshairMode, LineSeries, LineStyle, createChart,
   type IChartApi, type ISeriesApi, type UTCTimestamp,
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -44,7 +44,8 @@ function ReplayChart({ document, cursor }: { document: ReplayDocument; cursor: n
       layout: { background: { type: ColorType.Solid, color: "#121923" }, textColor: "#bcc8d8" },
       grid: { vertLines: { color: "#202d3d" }, horzLines: { color: "#202d3d" } },
       timeScale: { timeVisible: true, secondsVisible: false, rightOffset: 42 },
-      crosshair: { mode: 1 },
+      // Free crosshair movement: no magnet snapping to candle body or wick extrema.
+      crosshair: { mode: CrosshairMode.Normal },
     });
     const candles = api.addSeries(CandlestickSeries, {
       upColor: "#2fc596", downColor: "#ed6978", wickUpColor: "#2fc596",
