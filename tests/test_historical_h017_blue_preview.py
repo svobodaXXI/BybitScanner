@@ -107,11 +107,12 @@ class BlueRiskPreviewTests(unittest.TestCase):
         self.assertIsNone(blue_open_risk_preview(
             bar=OpenOnly(8*HOUR, "90"),
             known_trend=trend, known_blue=blue, policy=self.policy))
-        older = replace(blue, available_at_ms=trend.available_at_ms-M5)
+        new_trend = replace(trend, available_at_ms=9*HOUR)
         self.assertIsNone(blue_open_risk_preview(
-            bar=known, known_trend=trend, known_blue=older, policy=self.policy))
-        bad_side = replace(blue, first=pivot("LOW", 84, 100, M5),
-                           second=pivot("LOW", 88, 101, M5))
+            bar=OpenOnly(10*HOUR, "109"), known_trend=new_trend,
+            known_blue=blue, policy=self.policy))
+        bad_side = replace(blue, first=replace(blue.first, kind="LOW"),
+                           second=replace(blue.second, kind="LOW"))
         self.assertIsNone(blue_open_risk_preview(
             bar=known, known_trend=trend, known_blue=bad_side, policy=self.policy))
 
