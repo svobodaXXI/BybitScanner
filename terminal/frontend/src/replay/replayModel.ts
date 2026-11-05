@@ -707,7 +707,7 @@ export function visiblePriorLevels(
       lineOrigin = line.from_ms;
       extreme = directionalExtreme(line.side, lineOrigin, line.available_at_ms);
     } else {
-      const observed = directionalExtreme(line.side, last.at_ms, line.available_at_ms);
+      const observed = directionalExtreme(line.side, line.to_ms, line.available_at_ms);
       const newExtreme = observed !== undefined && extreme !== undefined &&
         (line.side === "BEAR" ? observed < extreme : observed > extreme);
       if (!newExtreme) continue;
