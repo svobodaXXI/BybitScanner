@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialSourceGeometryRange, projectSignalGeometry } from "./signalChartBridge";
+import { initialSourceGeometryRange, projectSignalGeometry, restoreSavedSignalCorrection } from "./signalChartBridge";
 import { serializeReviewDrawings } from "./geometryReviewDraft";
 
 const candles = [
@@ -61,5 +61,44 @@ describe("GFL frozen signal-to-chart bridge", () => {
     expect(() => projectSignalGeometry([source[0], source[0]], candles)).toThrow();
     expect(() => projectSignalGeometry([{ ...source[0], anchors: [source[0].anchors[0]] }], candles)).toThrow();
     expect(() => projectSignalGeometry([{ ...source[0], anchors: [at(0, -1), at(2, 14)] }], candles)).toThrow();
+  });
+});
+
+
+describe("persisted Editor correction restores by frozen boundary identity", () => {
+  const references = projectSignalGeometry(source, candles).referenceDrawings;
+  const changedUpper = { ...source[0], anchors: [at(0, 11.25), at(2, 13.5)] };
+  const changedLower = { ...source[1], anchors: [at(0, 8.25), at(2, 9.5)] };
+
+  it("accepts reversed canonical store order without swapping owner lines", () => {
+    const owner = restoreSavedSignalCorrection(references, [changedLower, changedUpper], candles);
+    expect(owner.map((line) => line.id)).toEqual(["editable:upper", "editable:lower"]);
+    expect(owner.map((line) => line.anchors[0].price)).toEqual([11.25, 8.25]);
+    expect(owner.every((line) => line.locked === false)).toBe(true);
+    expect(references.map((line) => line.anchors[0].price)).toEqual([12, 8]);
+    const savedAgain = serializeReviewDrawings(
+      owner.map((line) => ({ ...line, id: line.id.slice("editable:".length) })), candles,
+    );
+    expect(savedAgain.map((line) => line.id)).toEqual(["upper", "lower"]);
+    expect(savedAgain[0].anchors).toEqual(changedUpper.anchors);
+    expect(savedAgain[1].anchors).toEqual(changedLower.anchors);
+  });
+
+  it("rejects missing, duplicate, foreign, wrong-kind and corrupted saved rays", () => {
+    const invalid = [
+      [changedUpper],
+      [changedUpper, changedUpper],
+      [changedUpper, { ...changedLower, id: "other" }],
+      [changedUpper, { ...changedLower, type: "segment" as const }],
+      [changedUpper, { ...changedLower, anchors: [at(0, 8), at(2, -1)] }],
+      [changedUpper, { ...changedLower, anchors: [at(2, 9), at(0, 8)] }],
+      [changedUpper, { ...changedLower, anchors: [at(0, 8), {
+        bar_open_time_ms: at(1, 9).bar_open_time_ms + 1, price: 9,
+      }] }],
+    ];
+    for (const review of invalid)
+      expect(() => restoreSavedSignalCorrection(references, review, candles)).toThrow();
+    expect(() => restoreSavedSignalCorrection(references, [changedUpper, changedLower],
+      candles.slice(1))).toThrow(/absent/);
   });
 });
