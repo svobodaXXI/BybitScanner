@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visiblePriorLevels, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("shows only completed candles and fills revealed at the current cursor", () => {
@@ -238,6 +238,61 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(after[1].at_ms).toBe(events[22].candle!.start_ms);
     expect(visiblePriorLevels(doc, firstKnown)).toHaveLength(1); // rewind
     expect(visiblePriorLevels(demo, nextKnown)).toEqual([]); // no real-market prior in demo
+  });
+
+  it("confirms a prior break only after a full H1 close and next H1 open beyond the level", () => {
+    const hourMs = 3_600_000, step = 300_000;
+    const start = Date.UTC(2026, 9, 1);
+    const make = (side: "BULL" | "BEAR", finalClose: number, nextOpen: number) => {
+      const bars = Array.from({ length: 36 }, (_, i) => {
+        const open = i === 24 ? nextOpen : side === "BULL" ? 105 : 95;
+        const close = i === 23 ? finalClose : i === 24 ? nextOpen : open;
+        return {
+          source: "SIMULATION", simulation_run_id: "prior_reversal",
+          sequence: i + 1, kind: "CANDLE_CLOSED",
+          time_ms: start + (i + 1) * step,
+          candle: {
+            start_ms: start + i * step, end_ms: start + (i + 1) * step,
+            open, close, high: Math.max(open, close) + 1,
+            low: Math.min(open, close) - 1, volume: 100,
+          },
+        };
+      });
+      const prior = side === "BULL" ? 100 : 100;
+      return parseReplayDocument({
+        source: "SIMULATION", simulation_run_id: "prior_reversal",
+        mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+        symbol: "BTCUSDT", timeframe: "5m", events: bars,
+        geometry: [{
+          kind: "MAIN_1H", side, available_at_ms: start + hourMs,
+          from_ms: start, to_ms: start + 5 * step,
+          from_price: side === "BULL" ? "98" : "102", to_price: String(prior),
+          trend_version: start + hourMs, classification: "UNVALIDATED_GEOMETRY_ONLY",
+        }],
+      });
+    };
+    for (const [side, finalClose, nextOpen, expected] of [
+      ["BULL", 99, 98, "BEAR"],
+      ["BEAR", 101, 102, "BULL"],
+    ] as const) {
+      const doc = make(side, finalClose, nextOpen);
+      const knownAt = start + 2 * hourMs + step;
+      expect(visiblePriorBreaks(doc, knownAt - 1)).toEqual([]);
+      expect(visiblePriorBreaks(doc, knownAt - step)).toEqual([]);
+      const breaks = visiblePriorBreaks(doc, knownAt);
+      expect(breaks).toHaveLength(1);
+      expect(breaks[0]).toMatchObject({
+        kind: "PRIOR_CLOSE_NEXT_OPEN", previous_side: side, new_side: expected,
+        confirmed_at_ms: knownAt, prior_price: 100,
+        hourly_close_ms: start + 2 * hourMs,
+      });
+      expect(visiblePriorBreaks(doc, knownAt + hourMs)).toEqual(breaks); // no duplicates
+      expect(visiblePriorBreaks(doc, knownAt - step)).toEqual([]); // rewind
+    }
+    expect(visiblePriorBreaks(make("BULL", 100.5, 99), start + 3 * hourMs)).toEqual([]);
+    expect(visiblePriorBreaks(make("BULL", 99, 100.5), start + 3 * hourMs)).toEqual([]);
+    expect(visiblePriorBreaks(make("BEAR", 99.5, 102), start + 3 * hourMs)).toEqual([]);
+    expect(visiblePriorBreaks(make("BEAR", 101, 99.5), start + 3 * hourMs)).toEqual([]);
   });
 
   it("reveals only completed H1 touch/reaction observations, never simulated fills", () => {
