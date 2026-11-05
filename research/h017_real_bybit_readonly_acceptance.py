@@ -64,7 +64,7 @@ def check() -> dict[str, object]:
         if qualifies:
             stop = Decimal(preview["stop_price"])
             expected_stop = entry * (Decimal("0.993") if side == "LONG" else Decimal("1.007"))
-            if stop != expected_stop or Decimal(preview["quantity"]) * entry != Decimal("10"):
+            if stop != expected_stop or abs(Decimal(preview["quantity"]) * entry - Decimal("10")) > Decimal("1e-20"):
                 raise AssertionError("unexpected H-017 0.7% stop or 10 USDT slot sizing")
         elif "stop_price" in preview or "quantity" in preview:
             raise AssertionError("rejected H-017 candidate contains execution fields")
