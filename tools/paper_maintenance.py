@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import os
+import re
 import sqlite3
 import stat
 import subprocess
@@ -1044,6 +1046,398 @@ def start_installed_paper_from_editor(
     )
 
 
+def _active_exact_paper_blocker(
+    target: str, *, root: Path, env_file: Path | None,
+) -> str | None:
+    """Report active, exact-release PAPER without mutating it on failed START.
+
+    A running backend with closed admission (notably Robot REQUIRED) is
+    not EDITOR_ONLY. Never route it through a second STOP/deploy/start merely
+    because the normal READY proof failed. The canonical owner must resolve
+    the underlying durable reason under a separately authorized operation.
+    """
+    from tools.runtime_intent import expected_database_identity, http_get
+    from tools.stop_robot_runtime import _database_path
+
+    try:
+        env = _environment(env_file)
+        identity = expected_database_identity(root, env)
+        reply = http_get("http://127.0.0.1:8765/api/health", 3)
+        health = reply.json()
+        if (reply.status != 200 or not isinstance(health, dict)
+                or health.get("ok") is not True
+                or health.get("component") != "paper_backend"
+                or health.get("mode") != "paper"
+                or health.get("build_sha") != target
+                or health.get("database_identity") != identity):
+            return None
+        if health.get("paper_live_safe") is not True:
+            return "BLOCKED: active_exact_PAPER_live_isolation_unproven; no_stop_or_restart"
+
+        db = _database_path(root, env)
+        if not db.is_file() or db.is_symlink():
+            return "BLOCKED: active_exact_PAPER_database_unproven; no_stop_or_restart"
+        with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            rows = conn.execute(
+                "SELECT mode, recovery_status, reason FROM robot_runtime_state "
+                "WHERE trading_account_id='paper'"
+            ).fetchall()
+        if len(rows) != 1:
+            return "BLOCKED: active_exact_PAPER_Robot_state_unproven; no_stop_or_restart"
+        mode, recovery, reason = rows[0]
+        if (mode, recovery) == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
+            # Diagnostic only. Do not auto-reconcile unknown exposure or
+            # invent an exit to manufacture admission readiness.
+            detail = " ".join(str(reason or "unavailable").split())[:180]
+            return (
+                "BLOCKED: active_PAPER_Robot_RECONCILIATION_REQUIRED; "
+                "admission_closed; protection_preserved; reason=" + detail
+            )
+        return (
+            "BLOCKED: active_exact_PAPER_not_ready; "
+            "Robot=" + str(mode)[:40] + "/" + str(recovery)[:40]
+            + "; no_stop_or_restart"
+        )
+    except (OSError, TypeError, ValueError, sqlite3.Error):
+        return None
+
+
+_INGRESS_OVERFLOW_FENCE = re.compile(
+    r"^ROBOT_PROTECTION_COVERAGE_LOST symbol=([A-Z0-9]+) reason=ingress_overflow$"
+)
+
+
+def _active_required_flat_proof(db: Path) -> tuple[str, str, str | None] | None:
+    """One read-only PAPER ledger snapshot; APPROVED alone is not exposure.
+
+    No admission can be revived while a trade, fill after approval, working
+    LIMIT, command, obligation, checkpoint or position remains unresolved.
+    """
+    if not db.is_file() or db.is_symlink():
+        return None
+    try:
+        with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            if conn.execute("PRAGMA quick_check").fetchone() != ("ok",):
+                return None
+            states = conn.execute(
+                "SELECT mode, recovery_status, reason FROM robot_runtime_state "
+                "WHERE trading_account_id='paper'"
+            ).fetchall()
+            if len(states) != 1:
+                return None
+            for symbol, side, raw, sync in conn.execute(
+                "SELECT symbol, side, quantity, sync_state FROM position_projections "
+                "WHERE trading_account_id='paper'"
+            ):
+                quantity = Decimal(str(raw))
+                if (not symbol or side != "Flat" or not quantity.is_finite()
+                        or quantity != 0 or sync not in ("synced", "synchronized")):
+                    return None
+            for table, condition in (
+                ("robot_trades", "exit_time_ms IS NULL"),
+                ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
+                ("trading_commands", "current_state IS NULL OR current_state NOT IN "
+                 "('filled','cancelled','amended','rejected','failed','owner_attested_closed')"),
+                ("paper_protection_obligations", "status IS NULL OR status != 'RESOLVED'"),
+                ("reconciliation_checkpoints", "completed_at_ms IS NULL"),
+            ):
+                if conn.execute(
+                    f"SELECT 1 FROM {table} WHERE trading_account_id='paper' "
+                    f"AND ({condition}) LIMIT 1"
+                ).fetchone() is not None:
+                    return None
+            candidates = conn.execute(
+                "SELECT candidate_id, symbol, status, approved_at_ms "
+                "FROM robot_candidates WHERE trading_account_id='paper' "
+                "AND (status IS NULL OR status NOT IN "
+                "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))"
+            ).fetchall()
+            for cid, symbol, status, approved in candidates:
+                if (not isinstance(cid, str) or not cid
+                        or not isinstance(symbol, str) or not symbol
+                        or status != "APPROVED"
+                        or type(approved) is not int or approved <= 0):
+                    return None
+                if conn.execute(
+                    "SELECT 1 FROM robot_trades WHERE trading_account_id='paper' "
+                    "AND candidate_id=? LIMIT 1", (cid,),
+                ).fetchone() is not None:
+                    return None
+                if conn.execute(
+                    "SELECT 1 FROM executions WHERE trading_account_id='paper' "
+                    "AND symbol=? AND exchange_timestamp_ms>=? LIMIT 1",
+                    (symbol, approved),
+                ).fetchone() is not None:
+                    return None
+            return tuple(states[0])
+    except (sqlite3.Error, ValueError, TypeError, ArithmeticError):
+        return None
+
+
+def _recent_ingress_quiet(health: object, overflow_symbol: str) -> bool:
+    """Read existing Autopilot 60s load window; ignore lifetime high-watermark."""
+    if not isinstance(health, dict):
+        return False
+    if (health.get("ok") is not True or health.get("healthy") is not True
+            or health.get("unhealthy_symbols") != {}):
+        return False
+    roles = health.get("coverage_roles")
+    if not isinstance(roles, dict) or any(
+        role != "ENTRY_PENDING" for role in roles.values()
+    ):
+        # EXPOSURE cannot be taken through this narrow FLAT recovery.
+        return False
+    covered = health.get("covered_symbols")
+    if not isinstance(covered, (list, tuple)) or set(covered) != set(roles):
+        return False
+    metrics, recent = health.get("ingress"), health.get("ingress_recent")
+    if not isinstance(metrics, dict) or not isinstance(recent, dict):
+        return False
+    if (metrics.get("last_overflow_symbol") != overflow_symbol
+            or type(metrics.get("capacity")) is not int
+            or metrics["capacity"] <= 0
+            or type(metrics.get("current_pending")) is not int
+            or metrics["current_pending"] != 0
+            or type(recent.get("current_pending")) is not int
+            or recent["current_pending"] != 0
+            or type(recent.get("recent_samples")) is not int
+            or (covered and recent["recent_samples"] < 1)):
+        return False
+    for key in ("recent_max_queue_latency_ms", "recent_max_processing_ms"):
+        value = recent.get(key)
+        if (type(value) not in (int, float) or
+                not 0 <= value < 2000):
+            return False
+    return True
+
+
+def _record_required_reconcile_once(
+    target: str, identity: str, state: tuple[str, str, str | None], *,
+    db: Path, journal_root: Path | None = None, trusted_uid: int = 0,
+) -> bool:
+    """Fsync an existing owner-journal intent BEFORE one canonical reconcile.
+
+    The exact durable Robot version identifies a distinct continuity event.
+    A lost response cannot cause a second reconcile on the same event, even
+    from a new invocation. This receipt authorizes no trade or release switch.
+    """
+    from tools.vps_gitless_release_activate import TRANSACTIONS, _sync_directory
+
+    root = journal_root or TRANSACTIONS
+    if (not root.is_dir() or root.is_symlink()
+            or root.stat().st_uid != trusted_uid
+            or root.stat().st_mode & 0o077):
+        return False
+    if not db.is_file() or db.is_symlink():
+        return False
+    try:
+        with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            rows = conn.execute(
+                "SELECT mode, recovery_status, reason, version, updated_at_ms "
+                "FROM robot_runtime_state WHERE trading_account_id='paper'"
+            ).fetchall()
+        if (len(rows) != 1 or tuple(rows[0][:3]) != state
+                or type(rows[0][3]) is not int or rows[0][3] < 0
+                or type(rows[0][4]) is not int or rows[0][4] < 0):
+            return False
+        source = (target, identity, str(rows[0][3]), str(rows[0][4]), str(state[2]))
+        key = hashlib.sha256("\n".join(source).encode("utf-8")).hexdigest()
+        marker = root / (".robot-required-reconcile-" + key)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        fd = os.open(marker, flags, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(b"ONE_SHOT_CANONICAL_RECONCILE_INVOKED\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        _sync_directory(root)
+        return True
+    except (FileExistsError, OSError, ValueError, TypeError, sqlite3.Error):
+        return False
+
+
+def _recover_active_ingress_overflow(
+    target: str, *, root: Path, env_file: Path | None,
+    clock=time.monotonic, sleep=time.sleep,
+) -> str:
+    """One authorized live-PAPER recovery inside the existing monolithic START.
+
+    Freeze new ingress through the canonical stop coordinator, retain Backend
+    and all protection, prove FLAT and a calm queue, reconcile exactly once,
+    resume via canonical Robot/Scanner intents, then use the existing
+    token-protected PAPER_AUTO startup helper. Never replay uncertain POSTs.
+    """
+    from tools.runtime_intent import (
+        expected_database_identity, http_get, http_post_json,
+    )
+    from tools.stop_robot_runtime import (
+        RuntimeShutdown, SafeStopError, _database_path,
+    )
+    from tools.vps_paper_auto_start import (
+        StartupBlocked, enable_from_authorized_start,
+    )
+    from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+
+    env = _environment(env_file)
+    # The owner oneshot uses the protected optional owner.env. Read it only
+    # when it is not already inherited by this explicitly authorized command.
+    if not env.get("BYBITSCANNER_AUTOPILOT_OWNER_TOKEN"):
+        from tools.vps_check import OWNER_ENV_FILE, parse_env_file
+        try:
+            if OWNER_ENV_FILE.is_file() and not OWNER_ENV_FILE.is_symlink():
+                env.update(parse_env_file(OWNER_ENV_FILE))
+        except OSError:
+            pass
+    if (env.get("BYBITSCANNER_VPS_PAPER_AUTO_ON_START") != "1"
+            or len(env.get("BYBITSCANNER_AUTOPILOT_OWNER_TOKEN", "").strip()) < 32):
+        return "BLOCKED: active_PAPER_recovery_owner_auto_authority_unproven; no_mutation"
+
+    db = _database_path(root, env)
+    origin = (env.get("BYBITSCANNER_PAPER_BACKEND_URL")
+              or "http://127.0.0.1:8765").rstrip("/")
+    if origin != "http://127.0.0.1:8765":
+        return "BLOCKED: active_PAPER_recovery_noncanonical_backend; no_mutation"
+
+    def get(path: str) -> dict:
+        reply = http_get(origin + path, 5)
+        body = reply.json()
+        if reply.status != 200 or not isinstance(body, dict) or body.get("ok") is not True:
+            raise ValueError("PAPER read-only endpoint unproven: " + path)
+        return body
+
+    def post(path: str, payload: dict) -> dict | None:
+        # Each call is made once. Timeout/unknown response is never replayed.
+        try:
+            reply = http_post_json(
+                origin + path, payload,
+                180 if path == "/api/robot/reconcile" else 30,
+            )
+            body = reply.json()
+            if (reply.status != 200 or not isinstance(body, dict)
+                    or body.get("ok") is not True):
+                return None
+            return body
+        except Exception:
+            return None
+
+    try:
+        if verify_release(root) != target:
+            return "BLOCKED: active_PAPER_release_changed; no_mutation"
+        expected = expected_database_identity(root, env)
+        health = get("/api/health")
+        if (health.get("build_sha") != target
+                or health.get("component") != "paper_backend"
+                or health.get("mode") != "paper"
+                or health.get("database_identity") != expected
+                or health.get("paper_live_safe") is not True):
+            return "BLOCKED: active_PAPER_identity_or_LIVE_fence_unproven; no_mutation"
+        def backend_same() -> bool:
+            current = get("/api/health")
+            return (
+                current.get("component") == "paper_backend"
+                and current.get("mode") == "paper"
+                and current.get("build_sha") == target
+                and current.get("database_identity") == expected
+                and current.get("paper_live_safe") is True
+                and current.get("process_instance_id") == process_instance
+            )
+
+        process_instance = health.get("process_instance_id")
+        if not isinstance(process_instance, str) or not process_instance.strip():
+            return "BLOCKED: active_PAPER_process_identity_unproven; no_mutation"
+        state = _active_required_flat_proof(db)
+        if state is None:
+            return "BLOCKED: active_PAPER_flat_ownership_unproven; no_mutation"
+        mode, recovery, reason = state
+        incident = _INGRESS_OVERFLOW_FENCE.fullmatch(str(reason or ""))
+        # PAUSED/READY are resumable post-reconcile phases only when ingress
+        # is frozen. Other REQUIRED reasons never authorize this route.
+        if not (mode == "ROBOT_RUNNING" and
+                (recovery in ("PAUSED", "READY") or
+                 (recovery == "RECONCILIATION_REQUIRED" and incident))):
+            return "BLOCKED: active_PAPER_recovery_not_proven_ingress_overflow; no_mutation"
+        symbol = incident.group(1) if incident else None
+        if recovery == "RECONCILIATION_REQUIRED":
+            RuntimeShutdown(root=root, env=env).freeze_ingress_for_required_recovery()
+        else:
+            if (get("/api/scanner/status").get("mode") != "SCANNER_STOPPED"
+                    or get("/api/robot/autopilot").get("mode") != "OFF"):
+                return "BLOCKED: active_PAPER_recovery_phase_not_frozen; no_mutation"
+
+        deadline = clock() + 75.0
+        streak = 0
+        while True:
+            state = _active_required_flat_proof(db)
+            if state is None or state[:2] != (mode, recovery):
+                return "BLOCKED: active_PAPER_durable_state_changed; no_replay"
+            if (get("/api/scanner/status").get("mode") != "SCANNER_STOPPED"
+                    or get("/api/robot/autopilot").get("mode") != "OFF"):
+                return "BLOCKED: active_PAPER_ingress_reopened; no_replay"
+            coverage = get("/api/robot/protection-health")
+            ingress = coverage.get("ingress")
+            last = ingress.get("last_overflow_symbol") if isinstance(ingress, dict) else None
+            if symbol is None:
+                symbol = last
+            if not isinstance(symbol, str) or not symbol:
+                return "BLOCKED: active_PAPER_overflow_identity_unknown; no_replay"
+            if _recent_ingress_quiet(coverage, symbol):
+                streak += 1
+                if streak >= 2:
+                    break
+            else:
+                streak = 0
+            remaining = deadline - clock()
+            if remaining <= 0:
+                return "BLOCKED: active_PAPER_ingress_not_quiet; protection_preserved"
+            sleep(min(2.0, remaining))
+        if (not backend_same() or _active_required_flat_proof(db) != state):
+            return "BLOCKED: active_PAPER_post_freeze_identity_changed; no_replay"
+
+        if recovery == "RECONCILIATION_REQUIRED":
+            if not _record_required_reconcile_once(
+                target, expected, state, db=db,
+            ):
+                return "BLOCKED: active_PAPER_prior_reconcile_attempt; no_replay"
+            reply = post("/api/robot/reconcile", {})
+            if (reply is None or reply.get("success") is not True
+                    or reply.get("recovery_status") != "PAUSED"
+                    or (_active_required_flat_proof(db) or ())[:2]
+                    != ("ROBOT_RUNNING", "PAUSED")):
+                return "BLOCKED: active_PAPER_canonical_reconcile_unproven; no_replay"
+        if recovery != "READY":
+            if not backend_same():
+                return "BLOCKED: active_PAPER_backend_changed_before_Robot; no_replay"
+            robot = post("/api/runtime/intent", {"intent": "ROBOT"})
+            if (robot is None or robot.get("intent") != "ROBOT"
+                    or robot.get("final", {}).get("robot") != "READY"
+                    or robot.get("final", {}).get("protection") != "HEALTHY"):
+                return "BLOCKED: active_PAPER_Robot_READY_unproven; no_replay"
+        # Never revive Scanner before Robot and protection have converged.
+        if not backend_same():
+            return "BLOCKED: active_PAPER_backend_changed_before_Scanner; no_replay"
+        scanner = post("/api/runtime/intent", {"intent": "SCANNER"})
+        if (scanner is None or scanner.get("intent") != "SCANNER"
+                or scanner.get("final", {}).get("scanner") != "RUNNING"):
+            return "BLOCKED: active_PAPER_Scanner_RUNNING_unproven; no_replay"
+        if not backend_same():
+            return "BLOCKED: active_PAPER_backend_changed_before_AUTO; no_replay"
+        try:
+            enable_from_authorized_start(env)
+        except StartupBlocked:
+            return "BLOCKED: active_PAPER_AUTO_enable_unproven; no_replay"
+        return _paper_full_readiness(
+            root=root, env_file=env_file, target=target,
+            require_gitless_telegram=True,
+        )
+    except (ReleaseIdentityBlocked, SafeStopError, OSError, ValueError,
+            TypeError, sqlite3.Error):
+        return "BLOCKED: active_PAPER_recovery_preflight_or_transition_unproven; no_replay"
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
@@ -1088,6 +1482,27 @@ def main(argv=None) -> int:
                 if observed.startswith("READY:"):
                     print("READY: exact installed Gitless PAPER already running; no mutation")
                     return 0
+                # A degraded but live PAPER owner must not be mistaken for a
+                # stopped EDITOR_ONLY state. In particular REQUIRED with
+                # PAPER_AUTO still configured is closed admission, not READY.
+                blocked = _active_exact_paper_blocker(
+                    args.sha, root=REPO, env_file=args.env_file,
+                )
+                if blocked is not None:
+                    if ((blocked.startswith(
+                            "BLOCKED: active_PAPER_Robot_RECONCILIATION_REQUIRED")
+                            and "reason=ROBOT_PROTECTION_COVERAGE_LOST" in blocked)
+                            or blocked.startswith(
+                                "BLOCKED: active_exact_PAPER_not_ready; "
+                                "Robot=ROBOT_RUNNING/PAUSED")
+                            or blocked.startswith(
+                                "BLOCKED: active_exact_PAPER_not_ready; "
+                                "Robot=ROBOT_RUNNING/READY")):
+                        blocked = _recover_active_ingress_overflow(
+                            args.sha, root=REPO, env_file=args.env_file,
+                        )
+                    print(blocked)
+                    return 0 if blocked.startswith("READY:") else 2
     if args.staged_gitless_editor_only:
         status = deploy_staged_editor_only(
             args.sha, stage=args.staged_gitless_editor_only,
