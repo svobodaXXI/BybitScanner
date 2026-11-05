@@ -1312,7 +1312,10 @@ def _recover_active_ingress_overflow(
     def post(path: str, payload: dict) -> dict | None:
         # Each call is made once. Timeout/unknown response is never replayed.
         try:
-            reply = http_post_json(origin + path, payload, 15)
+            reply = http_post_json(
+                origin + path, payload,
+                180 if path == "/api/robot/reconcile" else 30,
+            )
             body = reply.json()
             if (reply.status != 200 or not isinstance(body, dict)
                     or body.get("ok") is not True):
@@ -1332,6 +1335,20 @@ def _recover_active_ingress_overflow(
                 or health.get("database_identity") != expected
                 or health.get("paper_live_safe") is not True):
             return "BLOCKED: active_PAPER_identity_or_LIVE_fence_unproven; no_mutation"
+        def backend_same() -> bool:
+            current = get("/api/health")
+            return (
+                current.get("component") == "paper_backend"
+                and current.get("mode") == "paper"
+                and current.get("build_sha") == target
+                and current.get("database_identity") == expected
+                and current.get("paper_live_safe") is True
+                and current.get("process_instance_id") == process_instance
+            )
+
+        process_instance = health.get("process_instance_id")
+        if not isinstance(process_instance, str) or not process_instance.strip():
+            return "BLOCKED: active_PAPER_process_identity_unproven; no_mutation"
         state = _active_required_flat_proof(db)
         if state is None:
             return "BLOCKED: active_PAPER_flat_ownership_unproven; no_mutation"
@@ -1377,8 +1394,7 @@ def _recover_active_ingress_overflow(
             if remaining <= 0:
                 return "BLOCKED: active_PAPER_ingress_not_quiet; protection_preserved"
             sleep(min(2.0, remaining))
-        if (get("/api/health").get("build_sha") != target
-                or _active_required_flat_proof(db) != state):
+        if (not backend_same() or _active_required_flat_proof(db) != state):
             return "BLOCKED: active_PAPER_post_freeze_identity_changed; no_replay"
 
         if recovery == "RECONCILIATION_REQUIRED":
@@ -1393,16 +1409,22 @@ def _recover_active_ingress_overflow(
                     != ("ROBOT_RUNNING", "PAUSED")):
                 return "BLOCKED: active_PAPER_canonical_reconcile_unproven; no_replay"
         if recovery != "READY":
+            if not backend_same():
+                return "BLOCKED: active_PAPER_backend_changed_before_Robot; no_replay"
             robot = post("/api/runtime/intent", {"intent": "ROBOT"})
             if (robot is None or robot.get("intent") != "ROBOT"
                     or robot.get("final", {}).get("robot") != "READY"
                     or robot.get("final", {}).get("protection") != "HEALTHY"):
                 return "BLOCKED: active_PAPER_Robot_READY_unproven; no_replay"
         # Never revive Scanner before Robot and protection have converged.
+        if not backend_same():
+            return "BLOCKED: active_PAPER_backend_changed_before_Scanner; no_replay"
         scanner = post("/api/runtime/intent", {"intent": "SCANNER"})
         if (scanner is None or scanner.get("intent") != "SCANNER"
                 or scanner.get("final", {}).get("scanner") != "RUNNING"):
             return "BLOCKED: active_PAPER_Scanner_RUNNING_unproven; no_replay"
+        if not backend_same():
+            return "BLOCKED: active_PAPER_backend_changed_before_AUTO; no_replay"
         try:
             enable_from_authorized_start(env)
         except StartupBlocked:
