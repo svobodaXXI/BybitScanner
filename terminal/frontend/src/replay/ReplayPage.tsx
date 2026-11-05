@@ -114,7 +114,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe }: { document: Rep
         const values: { time: UTCTimestamp; value: number }[] = [];
         indicatorSamples.forEach((sample, index) => {
           const value = sample?.[key];
-          if (value !== null) {
+          if (value != null) {
             values.push({
               // Chart bar's X is its START, while the sample becomes known
               // only at the CLOSE. We reveal it only after that close event.
