@@ -564,6 +564,36 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
   };
 }
 
+/** Full immutable SIMULATION action report; playback cursor never deletes history.
+ * Export only actions present in the source events. No fabricated orders, fees,
+ * quantities, fills, positions, or PnL are inferred from price candles.
+ */
+export function simulationActionJournal(document: ReplayDocument) {
+  const actions = document.events.filter(event => event.kind !== "CANDLE_CLOSED").map(event => ({
+    event_id: `${event.simulation_run_id}:${event.sequence}`,
+    simulation_run_id: event.simulation_run_id,
+    sequence: event.sequence,
+    time_ms: event.time_ms,
+    kind: event.kind,
+    ...(document.symbol ? { symbol: document.symbol } : {}),
+    ...(event.trade_id ? { trade_id: event.trade_id } : {}),
+    ...(event.side ? { side: event.side } : {}),
+    ...(event.price !== undefined ? { price: event.price } : {}),
+    ...(event.stop !== undefined ? { stop: event.stop } : {}),
+    ...(event.take !== undefined ? { take: event.take } : {}),
+    ...(event.reason ? { reason: event.reason } : {}),
+    comment: event.kind === "ENTRY_SIGNAL" ? `Сигнал ${event.side ?? ""}` :
+      event.kind === "ENTRY_FILLED" ? `Вход ${event.side ?? ""}` :
+      `Выход ${event.reason ?? ""}`,
+  }));
+  return {
+    source: "SIMULATION" as const,
+    simulation_run_id: document.simulation_run_id,
+    report_kind: "RECORDED_ACTIONS_ONLY" as const,
+    actions,
+  };
+}
+
 /** The UI receives ONLY the prefix requested by the virtual-time playhead. */
 export function visibleReplay(events: readonly ReplayEvent[], cursor: number): VisibleReplay {
   const shown = events.slice(0, Math.max(0, Math.min(Math.floor(cursor), events.length)));
