@@ -35,6 +35,16 @@ export type ReplayGeometry = {
   trend_version: number;
   classification: "UNVALIDATED_GEOMETRY_ONLY";
 };
+/** Confirmed second MAIN_1H touch: purple structural invalidation level, NOT a signal. */
+export type ReplayPriorLevel = {
+  side: "BULL" | "BEAR";
+  at_ms: number;
+  price: number;
+  available_at_ms: number;
+  trend_version: number;
+  /** End of this version's reign, known only after another qualifying trend appears. */
+  superseded_at_ms?: number;
+};
 export type ReplayObservation = {
   kind: "MAIN_1H_TOUCH" | "MAIN_1H_REACTION";
   side: "BULL" | "BEAR";
@@ -614,6 +624,36 @@ export function syntheticReplay(): ReplayDocument {
     source: "SIMULATION", simulation_run_id: id, mode: "STRATEGY",
     events, demo: true, dmi_5m,
   });
+}
+
+/**
+ * Historic purple priors are derived from the already-confirmed 1--3 H1 line's
+ * SECOND wick extremum (point 3), not from an extra fitted candle or a
+ * speculative 5m contact. The market feed updates this MAIN line only when
+ * another four-pivot structure is confirmed, including a new extreme in the
+ * direction of the trend. A touch alone cannot move the prior.
+ *
+ * Each prefix has its own immutable visible versions, with no look-ahead.
+ * Structural reversal is NOT inferred from a wick piercing this price.
+ */
+export function visiblePriorLevels(
+  document: ReplayDocument, closedTimeMs: number | null,
+): ReplayPriorLevel[] {
+  if (document.mode !== "MARKET_ONLY" || closedTimeMs === null) return [];
+  const result: ReplayPriorLevel[] = [];
+  for (const line of document.geometry ?? []) {
+    if (line.available_at_ms > closedTimeMs) break;
+    if (line.kind !== "MAIN_1H") continue;
+    const last = result.at(-1);
+    if (last && last.at_ms === line.to_ms &&
+        last.price === line.to_price && last.side === line.side) continue;
+    if (last) last.superseded_at_ms = line.available_at_ms;
+    result.push({
+      side: line.side, at_ms: line.to_ms, price: line.to_price,
+      available_at_ms: line.available_at_ms, trend_version: line.trend_version,
+    });
+  }
+  return result;
 }
 
 /** Reveal ONLY candidate lines already confirmed at the virtual-time playhead. */
