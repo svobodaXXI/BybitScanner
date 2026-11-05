@@ -4,7 +4,7 @@ import unittest
 
 from research.causal_trend_geometry import (
     CausalGeometryFeed, ConfirmedPivot, ConfirmedSwingStream,
-    last_correction_reference, recent_hourly_trend,
+    last_correction_reference, main_line_contact, recent_hourly_trend,
 )
 from research.historical_candle_feed import FIVE_MINUTES_MS, ONE_HOUR_MS
 from research.historical_market_replay import Candle
@@ -114,6 +114,35 @@ class ConfirmedGeometryTests(unittest.TestCase):
             hourly=trend, five_minute_pivots=feed.pivots,
             five_minute_bars=tuple(pierced),
         ))
+
+    def test_main_hourly_contact_requires_frozen_line_and_trend_side_close(self):
+        for side, source in (("BULL", BULL[:7]), ("BEAR", BEAR)):
+            stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
+            for i, (high, low) in enumerate(source):
+                stream.observe_closed(make_bar(i, high, low))
+            trend = recent_hourly_trend(stream.pivots)
+            self.assertIsNotNone(trend)
+            self.assertEqual(trend.side, side)
+            t = trend.available_at_ms
+            line_at = trend.main.value_at(t)
+            sign = 1 if side == "BULL" else -1
+            touch = Candle(
+                t, FIVE_MINUTES_MS, line_at + sign,
+                line_at + 3, line_at - 3, line_at + sign, 10,
+            )
+            self.assertEqual(main_line_contact(trend, touch),
+                             trend.main.value_at(t + FIVE_MINUTES_MS))
+            early = Candle(
+                t - FIVE_MINUTES_MS, FIVE_MINUTES_MS, line_at + sign,
+                line_at + 3, line_at - 3, line_at + sign, 10,
+            )
+            self.assertIsNone(main_line_contact(trend, early))
+            failed = Candle(
+                t, FIVE_MINUTES_MS, line_at,
+                line_at + 3, line_at - 3, line_at - sign, 10,
+            )
+            self.assertIsNone(main_line_contact(trend, failed))
+            self.assertIsNone(main_line_contact(None, touch))
 
     def test_geometry_feed_does_not_emit_lines_before_confirmed_hourly(self):
         geometry = CausalGeometryFeed(wing_1h=1, wing_5m=1)
