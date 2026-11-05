@@ -202,6 +202,8 @@ class ScanLoopTest(unittest.TestCase):
             stack.enter_context(patch.dict(os.environ, {
                 "BYBITSCANNER_IKIGAI_BOX_SIGNALS": "0",
                 "BYBITSCANNER_HORN_OBSERVATION": "1",
+                # HORN-only accounting fixture: MIRROR has independent inputs/errors.
+                "BYBITSCANNER_MIRROR_OBSERVATION": "0",
                 "BYBITSCANNER_HORN_EVIDENCE_DIR": os.path.join(tmp, "evidence"),
             }))
             stack.enter_context(patch.object(main, "MAX_SYMBOLS", None))
