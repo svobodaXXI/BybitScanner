@@ -5,6 +5,7 @@ on:
     paths:
       - "research/historical_market_replay.py"
       - "research/h017_local_risk.py"
+      - "research/h017_blue_open_preview.py"
       - "research/historical_candle_feed.py"
       - "research/wilder_dmi.py"
       - "research/causal_trend_geometry.py"
@@ -14,6 +15,7 @@ on:
       - "tests/test_historical_replay_export.py"
       - "tests/test_historical_market_replay.py"
       - "tests/test_historical_h017_local_risk.py"
+      - "tests/test_historical_h017_blue_preview.py"
       - "tests/test_historical_candle_feed.py"
       - "tests/test_historical_dmi.py"
       - "tests/test_historical_trend_geometry.py"
@@ -74,7 +76,7 @@ jobs:
           cp ../../research/local_replay_viewer/README.txt "$RUNNER_TEMP/machine-time/README.txt"
           cp ../../research/local_replay_viewer/smoke_package.py "$RUNNER_TEMP/machine-time/smoke_package.py"
           cp -r ../../research/local_replay_viewer/dist "$RUNNER_TEMP/machine-time/dist"
-          cp ../../research/export_historical_replay.py ../../research/historical_candle_feed.py ../../research/historical_market_replay.py ../../research/h017_local_risk.py ../../research/wilder_dmi.py ../../research/causal_trend_geometry.py "$RUNNER_TEMP/machine-time/research/"
+          cp ../../research/export_historical_replay.py ../../research/historical_candle_feed.py ../../research/historical_market_replay.py ../../research/h017_local_risk.py ../../research/h017_blue_open_preview.py ../../research/wilder_dmi.py ../../research/causal_trend_geometry.py "$RUNNER_TEMP/machine-time/research/"
           python "$RUNNER_TEMP/machine-time/server.py" --check
       - name: Select preinstalled Chrome or install Chromium
         run: |
