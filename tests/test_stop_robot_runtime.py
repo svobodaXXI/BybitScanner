@@ -374,6 +374,37 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
         self.assertEqual(runtime.calls, ["scanner:stop"])
 
+    def test_full_stop_accepts_canonically_paused_scanner(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_mode = "SCANNER_PAUSED"
+        runtime.autopilot_mode = "PAPER_AUTO"
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertEqual(runtime.scanner_mode, "SCANNER_STOPPED")
+        self.assertEqual(runtime.autopilot_mode, "OFF")
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_scanner_scope_accepts_canonically_paused_scanner(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_mode = "SCANNER_PAUSED"
+        runtime.autopilot_mode = "PAPER_AUTO"
+
+        result = runtime.orchestrator().run("scanner")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.scanner_mode, "SCANNER_STOPPED")
+        self.assertEqual(runtime.robot, READY)
+        self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_partial_stop_skips_already_stopped_scanner(self):
         runtime = FakeRuntime(robot=READY)
         runtime.scanner_mode = "SCANNER_STOPPED"

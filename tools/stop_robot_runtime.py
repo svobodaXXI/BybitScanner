@@ -845,7 +845,9 @@ class RuntimeShutdown:
         mode = body.get("mode")
         if mode == "SCANNER_STOPPED":
             return False
-        if mode != "SCANNER_RUNNING":
+        # The Scanner owner accepts STOP from both RUNNING and PAUSED.
+        # A prior owner pause must not paralyze the canonical full shutdown.
+        if mode not in ("SCANNER_RUNNING", "SCANNER_PAUSED"):
             raise SafeStopError(
                 "Scanner is not in a legal stoppable state; runtime kept alive"
             )
