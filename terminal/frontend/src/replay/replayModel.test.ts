@@ -367,14 +367,14 @@ describe("standalone SIMULATION viewer contract", () => {
       sequence: index + 1, kind: "CANDLE_CLOSED", time_ms: start + (index + 1) * step,
       candle: {
         start_ms: start + index * step, end_ms: start + (index + 1) * step,
-        open: 100, close: 100, high: index === 27 ? 125 : 110,
+        open: 100, close: 100, high: index === 39 ? 125 : 110,
         low: 90, volume: 1,
       },
     }));
-    const firstKnown = bars[11].time_ms, secondKnown = bars[25].time_ms;
+    const firstKnown = bars[23].time_ms, secondKnown = bars[36].time_ms;
     const geometry = [{
       kind: "MAIN_1H", side: "BULL", available_at_ms: firstKnown,
-      from_ms: start, to_ms: start + 3 * step,
+      from_ms: start, to_ms: start + 12 * step,
       from_price: "80", to_price: "85", trend_version: firstKnown,
       classification: "UNVALIDATED_GEOMETRY_ONLY",
     }, {
@@ -388,12 +388,12 @@ describe("standalone SIMULATION viewer contract", () => {
       mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
       symbol: "BTCUSDT", timeframe: "5m", events: bars, geometry,
     });
-    expect(visiblePriorLevels(doc, bars[27].time_ms).map(p => p.price)).toEqual([85]);
-    expect(visiblePriorLevels(doc, bars[35].time_ms).map(p => p.price))
+    expect(visiblePriorLevels(doc, bars[39].time_ms).map(p => p.price)).toEqual([85]);
+    expect(visiblePriorLevels(doc, bars[47].time_ms).map(p => p.price))
       .toEqual([85, 95]);
-    expect(visiblePriorLevels(doc, bars[35].time_ms).at(-1)?.available_at_ms)
-      .toBe(bars[35].time_ms);
-    expect(visiblePriorLevels(doc, bars[34].time_ms).map(p => p.price))
+    expect(visiblePriorLevels(doc, bars[47].time_ms).at(-1)?.available_at_ms)
+      .toBe(bars[47].time_ms);
+    expect(visiblePriorLevels(doc, bars[46].time_ms).map(p => p.price))
       .toEqual([85]);
   });
 
