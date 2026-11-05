@@ -14,6 +14,10 @@ from unittest.mock import patch
 
 import pandas as pd
 
+# Local config.py is gitignored and may contain secrets; use the canonical
+# tracked-only import stubs rather than reading developer-specific credentials.
+import tests.test_telegram_delivery  # noqa: F401
+
 import main
 from horn_scanner import PROGRESS_FILE
 

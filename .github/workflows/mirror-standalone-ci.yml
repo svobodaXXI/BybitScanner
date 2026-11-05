@@ -43,6 +43,7 @@ jobs:
           matplotlib==3.11.1
           mplfinance==0.12.10b0
           pytest==9.1.1
+          six==1.17.0
       - name: Compile MIRROR source and acceptance
         run: >-
           python -m py_compile
