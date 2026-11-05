@@ -722,6 +722,86 @@ def _paper_start_quiescent(root: Path, env_file: Path | None) -> bool:
     return True
 
 
+def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool:
+    """Use canonical Robot STOP for frozen APPROVED ideas left after reconcile.
+
+    STOP owns cancellation and candidate lifecycle. Do not synthesize
+    INVALIDATED rows or retry reconciliation from a completed PAUSED state.
+    """
+    from tools.paper_incident_approvals import IDLE_APPROVALS, prove_six_inert_approvals
+    from tools.flat_paper_recovery_gate import FlatRecoveryBlocked
+    from tools.stop_robot_runtime import _database_path, _environment, _post_robot_json
+    from terminal.application.robot_control import stop_robot
+
+    db = _database_path(root, _environment(env_file))
+    if not db.is_file() or db.is_symlink():
+        return False
+    try:
+        with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            if conn.execute("PRAGMA quick_check").fetchone() != ("ok",):
+                return False
+            state = conn.execute(
+                "SELECT mode, recovery_status FROM robot_runtime_state "
+                "WHERE trading_account_id='paper'"
+            ).fetchall()
+            scanner = conn.execute(
+                "SELECT mode FROM scanner_runtime_state WHERE trading_account_id='paper'"
+            ).fetchall()
+            autopilot = conn.execute(
+                "SELECT mode FROM robot_autopilot_state WHERE trading_account_id='paper'"
+            ).fetchall()
+            if (state != [("ROBOT_RUNNING", "PAUSED")]
+                    or scanner != [("SCANNER_STOPPED",)] or autopilot != [("OFF",)]):
+                return False
+            positions = conn.execute(
+                "SELECT symbol, side, quantity, sync_state FROM position_projections "
+                "WHERE trading_account_id='paper'"
+            ).fetchall()
+            if not positions:
+                return False
+            for symbol, side, raw, sync in positions:
+                quantity = Decimal(str(raw))
+                if (not symbol or side != "Flat" or not quantity.is_finite()
+                        or quantity != 0 or sync not in ("synced", "synchronized")):
+                    return False
+            candidates = conn.execute(
+                "SELECT candidate_id, symbol, status, approved_at_ms "
+                "FROM robot_candidates WHERE trading_account_id='paper' "
+                "AND (status IS NULL OR status NOT IN "
+                "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))"
+            ).fetchall()
+            if (not candidates or len(candidates) > len(IDLE_APPROVALS)
+                    or any(row[2] != "APPROVED" or row[1] not in IDLE_APPROVALS
+                           for row in candidates)):
+                return False
+            for table, condition in (
+                ("robot_trades", "exit_time_ms IS NULL"),
+                ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
+                ("trading_commands", "current_state IS NULL OR current_state NOT IN "
+                 "('filled','cancelled','amended','rejected','failed','owner_attested_closed')"),
+                ("paper_protection_obligations", "status IS NULL OR status != 'RESOLVED'"),
+                ("reconciliation_checkpoints", "completed_at_ms IS NULL"),
+            ):
+                if conn.execute(
+                    f"SELECT 1 FROM {table} WHERE trading_account_id='paper' "
+                    f"AND ({condition}) LIMIT 1"
+                ).fetchone() is not None:
+                    return False
+            prove_six_inert_approvals(conn, candidates, positions)
+    except (FlatRecoveryBlocked, sqlite3.Error, ValueError, TypeError, ArithmeticError):
+        return False
+
+    # One canonical operation. Its existing synchronous bridge terminalizes
+    # proven never-traded Box owners in ROBOT_STOPPED; ambiguity fails closed.
+    try:
+        stop_robot(http_post=_post_robot_json, database_path=db)
+    except Exception:
+        return False  # STOP may have committed: never replay it here.
+    return _paper_start_quiescent(root, env_file)
+
+
 def _editor_flat_reconcile_preflight(root: Path, env_file: Path | None) -> bool:
     """Read-only, incident-scoped proof before invoking owner Robot reconciliation.
 
@@ -903,9 +983,15 @@ def start_installed_paper_from_editor(
             # Re-prove the exact backend, frozen ingress and the entire PAPER
             # ledger after the owner mutation, before starting any ingress.
             if (_durable_editor_freeze(root, env_file) != identity
-                    or not _editor_runtime_ready(target, identity)
-                    or not _paper_start_quiescent(root, env_file)):
-                return "BLOCKED: PAPER_stale_owners_after_reconcile; START_not_attempted"
+                    or not _editor_runtime_ready(target, identity)):
+                return "BLOCKED: PAPER_editor_identity_changed_after_reconcile"
+            if not _paper_start_quiescent(root, env_file):
+                if not _editor_retire_inert_approvals(root, env_file):
+                    return "BLOCKED: PAPER_stale_owners_after_reconcile; START_not_attempted"
+                if (_durable_editor_freeze(root, env_file) != identity
+                        or not _editor_runtime_ready(target, identity)
+                        or not _paper_start_quiescent(root, env_file)):
+                    return "BLOCKED: PAPER_post_stop_reproof_failed; START_not_attempted"
     except (ReleaseIdentityBlocked, OSError, ValueError, sqlite3.Error):
         return "BLOCKED: editor_only_release_or_freeze_unproven"
     try:
