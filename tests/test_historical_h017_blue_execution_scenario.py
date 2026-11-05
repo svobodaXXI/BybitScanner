@@ -107,6 +107,18 @@ class H017BlueExecutionScenarioTests(unittest.TestCase):
         )
         self.assertTrue(all(x["trade_id"].startswith("SIMULATION:") for x in full["open_simulated_positions"]))
 
+    def test_fractional_short_roundtrip_never_leaves_negative_reservation(self):
+        # Repeated entry/exit near a real low-priced instrument forces
+        # nonterminating 10-USDT position sizes, then exact FLAT reserves.
+        bars = [("0.3166", "0.319", "0.315", "0.318")] * 4
+        doc = market(bars, [(i, "SHORT", "0.313") for i in range(4)])
+        result = simulate_blue_open_scenario(doc)
+        self.assertEqual(result["counts"]["hypothetical_exits"], 4)
+        self.assertEqual(result["counts"]["stops"], 4)
+        self.assertEqual(result["open_slots_end"], 0)
+        self.assertEqual(result["peak_simultaneous_slots"], 1)
+        self.assertLess(Decimal(result["realized_cash_usdt"]), Decimal("200"))
+
     def test_short_and_rejected_preview_never_hardcode_a_win(self):
         doc = market([
             ("100", "100.3", "98.5", "99"),

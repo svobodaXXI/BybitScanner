@@ -203,7 +203,6 @@ def simulate_blue_open_scenario(
             exit_fee = exit_fill * pos.quantity * fee
             net = pnl - pos.fee_open - exit_fee
             cash += pnl - exit_fee
-            reserved -= pos.notional
             closed_net += net
             counts["hypothetical_exits"] += 1
             counts["stops" if hit_stop else "takes"] += 1
@@ -220,6 +219,9 @@ def simulate_blue_open_scenario(
                 "net_pnl_usdt": str(net),
             })
         positions = remaining
+        # Rebuild reserved nominal from the open ledger, not by cumulative
+        # Decimal subtraction (which may leave tiny NEGATIVE dust at flat).
+        reserved = sum((pos.notional for pos in positions), Decimal(0))
         last_mark = cash + sum(
             (bar["close"] - pos.entry) * pos.quantity
             * (1 if pos.side == "LONG" else -1)
