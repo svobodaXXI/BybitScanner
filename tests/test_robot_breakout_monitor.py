@@ -915,7 +915,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.load_robot_candidates_by_status(ACCOUNT_ID, ("DONE",))
 
-    # --- retest LIMIT take/stop filter (MIN_ENTRY_RR) -------------------------------------
+    # --- Wedge retest LIMIT hard >=2R take/stop filter -----------------------------------
 
     def _rr_check(self, direction, *, reference, extreme, entry="1000", env=None):
         """Call the pre-placement filter directly with a planned entry of ``entry``.
@@ -950,7 +950,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(
             {key: Decimal(value) for key, value in long_skip[1].items()},
             {
-                "entry_price": Decimal("1000"), "min_rr": Decimal("1.5"),
+                "entry_price": Decimal("1000"), "min_rr": Decimal("2"),
                 "stop_price": Decimal("990"), "take_price": Decimal("1014"), "rr": Decimal("1.4"),
             },
         )
@@ -962,30 +962,39 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             (Decimal("1010"), Decimal("986"), Decimal("1.4")),
         )
 
-    def test_entry_rr_at_or_above_threshold_is_not_skipped(self):
-        for direction, extreme, references in (
-            ("LONG", 990.1, (1006.0, 1011.0)),   # take 1015 -> rr 1.5, take 1020 -> rr 2.0
-            ("SHORT", 1009.9, (994.0, 989.0)),   # take 985 -> rr 1.5, take 980 -> rr 2.0
+    def test_wedge_2r_owner_floor_both_sides_and_exact_boundary(self):
+        for direction, extreme, weak_reference, valid_reference in (
+            ("LONG", 990.1, 1006.0, 1011.0),  # 1.5R and exactly 2R
+            ("SHORT", 1009.9, 994.0, 989.0),
         ):
-            for reference in references:
-                with self.subTest(direction=direction, reference=reference):
-                    self.assertIsNone(
-                        self._rr_check(direction, reference=reference, extreme=extreme)
-                    )
+            with self.subTest(direction=direction):
+                skipped = self._rr_check(direction, reference=weak_reference, extreme=extreme)
+                self.assertEqual(skipped[0], "SKIPPED_POOR_RR")
+                self.assertEqual(Decimal(skipped[1]["rr"]), Decimal("1.5"))
+                self.assertEqual(Decimal(skipped[1]["min_rr"]), Decimal("2"))
+                self.assertIsNone(self._rr_check(
+                    direction, reference=valid_reference, extreme=extreme,
+                ))
 
-    def test_entry_rr_threshold_follows_environment_variable(self):
-        # rr is 1.5 here: passes by default, skipped when the threshold is raised.
-        self.assertIsNone(self._rr_check("LONG", reference=1006.0, extreme=990.1))
-        raised = self._rr_check("LONG", reference=1006.0, extreme=990.1, env="1.6")
-        self.assertEqual(raised[0], "SKIPPED_POOR_RR")
-        self.assertEqual((Decimal(raised[1]["min_rr"]), Decimal(raised[1]["rr"])), (Decimal("1.6"), Decimal("1.5")))
-        # rr 1.4 passes when the threshold is lowered.
-        self.assertIsNone(self._rr_check("LONG", reference=1005.0, extreme=990.1, env="1.4"))
-        # Invalid values fall back to the default 1.5.
-        for bad in ("abc", "-1", "11", "NaN", ""):
-            with self.subTest(env=bad):
-                skipped = self._rr_check("LONG", reference=1005.0, extreme=990.1, env=bad)
-                self.assertEqual(Decimal(skipped[1]["min_rr"]), Decimal("1.5"))
+    def test_environment_cannot_lower_wedge_2r_floor_but_can_raise_it(self):
+        for raw in (None, "0", "1.4", "1.6", "abc", "-1", "11", "NaN", ""):
+            with self.subTest(env=raw):
+                skipped = self._rr_check("LONG", reference=1006.0, extreme=990.1, env=raw)
+                self.assertEqual(skipped[0], "SKIPPED_POOR_RR")
+                self.assertEqual(Decimal(skipped[1]["min_rr"]), Decimal("2"))
+        self.assertIsNone(self._rr_check("LONG", reference=1011.0, extreme=990.1, env="2"))
+        stricter = self._rr_check("LONG", reference=1011.0, extreme=990.1, env="2.5")
+        self.assertEqual(stricter[0], "SKIPPED_POOR_RR")
+        self.assertEqual(Decimal(stricter[1]["min_rr"]), Decimal("2.5"))
+
+    def test_owner_bbusdt_example_is_not_wedge_eligible(self):
+        from robot_market_confirmation import risk_reward_ratio
+        rr = risk_reward_ratio(
+            "LONG", entry_price=Decimal("0.00891976"),
+            stop_price=Decimal("0.008756"), take_price=Decimal("0.009172"),
+        )
+        self.assertGreater(rr, Decimal("1.5"))
+        self.assertLess(rr, robot_protection.wedge_min_entry_rr())
 
     def test_entry_rr_unavailable_blocks_initial_entry(self):
         # A zero-width frozen target cannot yield a valid TAKE.
@@ -1000,7 +1009,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             skipped = self.monitor._entry_rr_skip(record, plan)
         self.assertEqual(skipped[0], "SKIPPED_RR_UNAVAILABLE")
         self.assertEqual(skipped[1]["entry_price"], "100")
-        self.assertEqual(skipped[1]["min_rr"], "1.5")
+        self.assertEqual(skipped[1]["min_rr"], "2")
         self.assertIn("error", skipped[1])
         self.assertIn("[ROBOT ENTRY RR UNAVAILABLE]", output.getvalue())
 
@@ -1028,7 +1037,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         skipped = self._rr_check("LONG", reference=991.0, extreme=990.1, env="0")
         self.assertEqual(skipped[0], "SKIPPED_POOR_RR")
         self.assertEqual(Decimal(skipped[1]["rr"]), Decimal("0"))
-        self.assertEqual(skipped[1]["min_rr"], "0")
+        self.assertEqual(skipped[1]["min_rr"], "2")
 
     def test_poor_rr_candidate_places_no_limit_and_is_terminated_with_reason(self):
         # start_width=1 keeps the frozen take close: rr is about 1.9 (default fixture is above 10).
@@ -1052,7 +1061,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertLess(Decimal(details["rr"]), Decimal("10"))
 
     def test_rr_equal_to_threshold_still_places_the_limit(self):
-        self._create_candidate(start_width=1.0)
+        self._create_candidate(start_width=2.0)
         record = self._drive_to_retest_detected()
         plan = self.monitor._build_initial_retest_limit_plan(record, record.robot_state)
         with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "10"}), redirect_stdout(io.StringIO()):
