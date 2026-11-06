@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, nextClosedCandleCursor, stepReplayCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("derives only completed hourly OHLCV from contiguous 5m Bybit candles", () => {
@@ -18,78 +18,71 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(completeHourlyCandles([bars[0], ...bars.slice(2, 12)])).toEqual([]); // A gap is not invented.
   });
 
-  it("reveals 3-pivot H1 support at the first legally confirmed H1 close, not after the fourth", () => {
+  it("never paints H1 geometry from only three closed hourly pivots", () => {
     const hour = 3_600_000, m5 = 300_000;
     const start = Date.UTC(2026, 7, 20, 0);
     const highs = [115, 114, 113, 118, 122, 130, 125, 120, 116, 115, 114];
-    const lows =  [109, 106,  90, 101, 108, 112, 110, 105, 100, 107, 108];
+    const lows = [109, 106, 90, 101, 108, 112, 110, 105, 100, 107, 108];
     const context_1h = highs.map((high, index) => ({
       start_ms: start + index * hour, end_ms: start + (index + 1) * hour,
       open: (high + lows[index]) / 2, close: (high + lows[index]) / 2,
       high, low: lows[index], volume: 12,
     }));
-    // After H1 11:00 closed, one new M5 close is enough to reveal
-    // the already confirmed LOW-HIGH-LOW. No fourth HIGH has occurred.
     const start_ms = start + 11 * hour;
     const candle = {
       start_ms, end_ms: start_ms + m5, open: 112, high: 113,
       low: 111, close: 112, volume: 1,
     };
     const document: ReplayDocument = {
-      source: "SIMULATION", simulation_run_id: "early_h1", mode: "MARKET_ONLY",
+      source: "SIMULATION", simulation_run_id: "three_pivots_blocked", mode: "MARKET_ONLY",
       symbol: "GRASSUSDT", timeframe: "5m", context_1h,
-      events: [{ source: "SIMULATION", simulation_run_id: "early_h1",
+      events: [{ source: "SIMULATION", simulation_run_id: "three_pivots_blocked",
         kind: "CANDLE_CLOSED", sequence: 1, time_ms: candle.end_ms, candle }],
       geometry: [], hourly_prior_breaks: [], hourly_prior_updates: [],
     };
     expect(visibleEarlyGeometry(document, null)).toEqual([]);
-    expect(visibleEarlyGeometry(document, start_ms - 1)).toEqual([]);
-    const early = visibleEarlyGeometry(document, candle.end_ms);
-    expect(early).toHaveLength(1);
-    expect(early[0]).toMatchObject({
-      kind: "MAIN_1H", side: "BULL", from_ms: start + 2 * hour,
-      from_price: 90, available_at_ms: start_ms,
-    });
-    expect(early[0].to_ms).toBeGreaterThan(early[0].from_ms);
-    expect(early[0].to_price).toBeGreaterThan(early[0].from_price);
-    // Rewind before first visible M5 close removes the preview; it is not
-    // a stored/backdated trade or a future-side-effects journal action.
-    expect(visibleEarlyGeometry(document, null)).toEqual([]);
+    expect(visibleEarlyGeometry(document, candle.end_ms)).toEqual([]);
+    expect(earlyGeometryTimeline(document)).toEqual([]);
     expect(visibleGeometry(document, candle.end_ms)).toEqual([]);
-
-    // A subsequent confirmed four-pivot revision must NOT erase the early
-    // slope from the chart. Rewind before publication must hide it again.
-    const later = {
-      start_ms: candle.end_ms, end_ms: candle.end_ms + m5,
-      open: 112, high: 115, low: 110, close: 114, volume: 1,
-    };
-    const revised: ReplayDocument = {
+    const laterMs = candle.end_ms + m5;
+    const published: ReplayDocument = {
       ...document,
-      events: [...document.events, {
-        source: "SIMULATION", simulation_run_id: "early_h1",
-        kind: "CANDLE_CLOSED", sequence: 2, time_ms: later.end_ms,
-        candle: later,
-      }],
       geometry: [{
         kind: "MAIN_1H", side: "BULL", from_ms: start + 2 * hour,
         to_ms: start + 8 * hour, from_price: 90, to_price: 100,
-        trend_version: later.end_ms, available_at_ms: later.end_ms,
+        trend_version: laterMs, available_at_ms: laterMs,
         classification: "UNVALIDATED_GEOMETRY_ONLY",
       }],
     };
-    const history = earlyGeometryTimeline(revised);
-    expect(history).toHaveLength(1);
-    expect(visibleEarlyGeometryTimeline(history, null)).toEqual([]);
-    expect(visibleEarlyGeometryTimeline(history, candle.end_ms)).toHaveLength(1);
-    expect(visibleEarlyGeometryTimeline(history, later.end_ms)).toHaveLength(1);
-    expect(visibleEarlyGeometryTimeline(history, later.end_ms)[0]).toMatchObject({
-      from_ms: early[0].from_ms, from_price: early[0].from_price,
-      to_ms: early[0].to_ms, to_price: early[0].to_price,
+    // Frozen archive publication is a separate source of truth; the
+    // visual-only three-pivot calculation cannot move it into the past.
+    expect(visibleGeometry(published, candle.end_ms)).toEqual([]);
+    expect(visibleGeometry(published, laterMs)).toHaveLength(1);
+    expect(visibleEarlyGeometryTimeline([], laterMs)).toEqual([]);
+  });
+
+  it("steps H1 by a completed hour and M5 by one candle including synchronous rows", () => {
+    const start = Date.UTC(2026, 7, 20);
+    const m5 = 300_000;
+    const events = Array.from({ length: 25 }, (_, index) => {
+      const time_ms = start + (index + 1) * m5;
+      return {
+        source: "SIMULATION" as const, simulation_run_id: "tf_step",
+        sequence: index + 1, kind: "CANDLE_CLOSED" as const, time_ms,
+        candle: {
+          start_ms: time_ms - m5, end_ms: time_ms,
+          open: 100, high: 101, low: 99, close: 100, volume: 1,
+        },
+      };
     });
-    expect(visibleEarlyGeometryTimeline(history, candle.end_ms - 1)).toEqual([]);
-    expect(visibleEarlyGeometryTimeline(history, later.end_ms)).toEqual(
-      visibleEarlyGeometryTimeline(history, later.end_ms),
-    );
+    expect(stepReplayCursor(events, 0, "1h", 1)).toBe(12);
+    expect(stepReplayCursor(events, 12, "1h", 1)).toBe(24);
+    expect(stepReplayCursor(events, 24, "1h", -1)).toBe(12);
+    expect(stepReplayCursor(events, 12, "1h", -1)).toBe(0);
+    expect(stepReplayCursor(events, 0, "1h", -1)).toBe(0);
+    expect(stepReplayCursor(events, 24, "5m", -1)).toBe(23);
+    expect(stepReplayCursor(events, 12, "5m", 1)).toBe(13);
+    expect(stepReplayCursor(events, 25, "1h", 1)).toBe(25); // 25th M5 is an incomplete H1.
   });
 
   it("retains distinct official trade-derived provenance for real archive replay", () => {
