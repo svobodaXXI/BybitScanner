@@ -848,6 +848,47 @@ export function nextClosedCandleCursor(events: readonly ReplayEvent[], cursor: n
   return index;
 }
 
+/** Navigate by the *displayed* timeframe without changing any source event.
+ * H1 destinations come only from twelve complete, contiguous M5 candles;
+ * a still-forming H1 is never exposed as a completed hourly step.
+ */
+export function timeframeStepCursor(
+  events: readonly ReplayEvent[],
+  cursor: number,
+  timeframe: "5m" | "1h",
+  direction: "back" | "forward",
+): number {
+  const current = Math.max(0, Math.min(events.length, Math.floor(cursor)));
+  if (timeframe === "5m") {
+    if (direction === "forward") return nextClosedCandleCursor(events, current);
+    const closed = events.slice(0, current).filter(e => e.kind === "CANDLE_CLOSED");
+    if (closed.length <= 1) return 0;
+    const previousClose = closed[closed.length - 2].time_ms;
+    let index = 0;
+    while (index < events.length && events[index].time_ms <= previousClose) index++;
+    return index;
+  }
+  const bars = events.filter(e => e.kind === "CANDLE_CLOSED" && e.candle)
+    .map(e => e.candle!);
+  const hourly = completeHourlyCandles(bars);
+  const lastKnown = current > 0 ? events[current - 1].time_ms : -Infinity;
+  let target: number;
+  if (direction === "forward") {
+    target = hourly.find(bar => bar.end_ms > lastKnown)?.end_ms ?? Infinity;
+    if (!Number.isFinite(target)) return current;
+  } else {
+    const closed = hourly.filter(bar => bar.end_ms <= lastKnown);
+    if (!closed.length) return 0;
+    const atBoundary = closed[closed.length - 1].end_ms === lastKnown;
+    const destination = atBoundary ? closed[closed.length - 2] : closed[closed.length - 1];
+    if (!destination) return 0;
+    target = destination.end_ms;
+  }
+  let index = 0;
+  while (index < events.length && events[index].time_ms <= target) index++;
+  return index;
+}
+
 /** The UI receives ONLY the prefix requested by the virtual-time playhead. */
 export function visibleReplay(events: readonly ReplayEvent[], cursor: number): VisibleReplay {
   const shown = events.slice(0, Math.max(0, Math.min(Math.floor(cursor), events.length)));
