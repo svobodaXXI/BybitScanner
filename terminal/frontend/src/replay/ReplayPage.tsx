@@ -277,9 +277,13 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         context.beginPath();
         // Main H1 and reference M5 stay solid and fully opaque in the archive.
         // Dashed yellow exclusively identifies a TARGET_1H line.
-        context.strokeStyle = line.kind === "REFERENCE_5M" ? "#57aaff" : "#f6dc59";
+        context.strokeStyle = line.kind === "REFERENCE_5M" ||
+          line.kind === "ACCELERATION_5M" ? "#57aaff" : "#f6dc59";
         context.lineWidth = 1;
-        context.setLineDash(line.kind === "TARGET_1H" ? [6, 4] : []);
+        // Solid blue is the H1-trend continuation reference, dashed blue
+        // is only the last 5m impulse candidate at the H1 target.
+        context.setLineDash(line.kind === "TARGET_1H" ? [6, 4] :
+          line.kind === "ACCELERATION_5M" ? [3, 5] : []);
         context.moveTo(x1, y1);
         context.lineTo(end.x, end.y);
         context.stroke();
@@ -801,7 +805,7 @@ export function ReplayPage() {
         <label><input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} /> Показать опорные маркеры</label>
       {document.mode === "MARKET_ONLY" && cursor > 0 && <p className="replay-geometry-note"
         role="status" aria-label="Статус трендовой геометрии">
-        {publishedGeometry.length
+        {activeMain
           ? "Геометрия: полная подтверждённая часовая пара 1–3 / 2–4; синие M5-линии сохраняются в истории."
           : earlyMain
             ? `Геометрия: показана исследовательская H1-линия только после четырёх подтверждённых пивотов; целевая пара не установлена. Синих M5 после четырёх пивотов: ${earlyBlueCount}.`
@@ -811,6 +815,23 @@ export function ReplayPage() {
           : ""}
         {` Касаний 1–3: ${observedTouches.filter(item => item.kind === "MAIN_1H_TOUCH").length}; движений от линии: ${observedTouches.filter(item => item.kind === "MAIN_1H_REACTION").length}. Метки — наблюдения, не входы.`}
       </p>}
+      {document.mode === "MARKET_ONLY" && shown.lastTimeMs !== null &&
+        <div className="replay-geometry-note" role="group" aria-label="Четыре исходных пивота линий">
+          <strong>Исходные точки (1–4) — без подмены фитинговыми тенями</strong>
+          {visibleGeometryHistory(document, shown.lastTimeMs)
+            .filter(line => line.source_pivots?.length === 4)
+            .slice(-8).map((line, index) =>
+              <p key={[line.kind, line.available_at_ms, index].join(":")}>
+                {line.kind === "MAIN_1H" ? "H1 основная" :
+                  line.kind === "TARGET_1H" ? "H1 целевая" :
+                  line.kind === "REFERENCE_5M" ? "M5 реперная" : "M5 последнее ускорение (пунктир)"}
+                {" · "}публикация {new Date(line.available_at_ms).toISOString().slice(0, 16)} UTC
+                {line.source_pivots!.map((p, i) =>
+                  <span key={p.at_ms}>{" · "}{i + 1}: {p.kind} {p.price}{" "}
+                    ({new Date(p.at_ms).toISOString().slice(11, 16)} UTC,
+                    подтверждён {new Date(p.confirmed_at_ms).toISOString().slice(11, 16)} UTC)</span>)}
+              </p>)}
+        </div>}
       {latestPriorBreak && <p className="replay-geometry-note"
         role="status" aria-label="Подтверждение слома приора H1">
         Слом приора H1: последняя часовая свеча закрылась за фиолетовым уровнем
