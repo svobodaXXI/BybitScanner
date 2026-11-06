@@ -57,7 +57,8 @@ def _one(conn: sqlite3.Connection, sql: str, params=()) -> tuple:
 
 
 def prove_stopped_inert_approvals(
-    conn: sqlite3.Connection, *, expected_identity: str, snapshots: dict,
+    conn: sqlite3.Connection, *, expected_identity: str,
+    snapshots: dict | None, stopped_services_proven: bool = False,
 ) -> str:
     """Pure durable/API proof; caller holds an unchanged SQLite snapshot.
 
@@ -65,32 +66,37 @@ def prove_stopped_inert_approvals(
     every active APPROVED must be independently inert, with no subsequent
     execution, trade, working order, command, obligation, or checkpoint.
     """
-    backend = snapshots["backend"]
-    scanner = snapshots["scanner"]
-    autopilot = snapshots["autopilot"]
-    protection = snapshots["protection"]
-    _demand(
-        backend.get("ok") is True
-        and backend.get("component") == "paper_backend"
-        and backend.get("mode") == "paper"
-        and backend.get("paper_live_safe") is True
-        and backend.get("build_sha") == OLD_BACKEND
-        and backend.get("database_identity") == expected_identity
-        and bool(backend.get("process_instance_id")),
-        "backend_identity_or_live_fence_unproven",
-    )
-    _demand(scanner.get("ok") is True and scanner.get("mode") == "SCANNER_STOPPED",
-            "scanner_not_stopped")
-    _demand(autopilot.get("ok") is True and autopilot.get("mode") == "OFF",
-            "autopilot_not_off")
-    _demand(
-        protection.get("ok") is True and protection.get("healthy") is True
-        and protection.get("covered_symbols") == []
-        and protection.get("armed_symbols") == []
-        and protection.get("coverage_roles") == {}
-        and protection.get("unhealthy_symbols") == {},
-        "protection_not_quiescent",
-    )
+    if snapshots is None:
+        # Only the caller's separately attested absent Backend/Telegram
+        # may use the post-handoff DB-only form. Never infer absence from DB.
+        _demand(stopped_services_proven is True, "services_not_proven_stopped")
+    else:
+        backend = snapshots["backend"]
+        scanner = snapshots["scanner"]
+        autopilot = snapshots["autopilot"]
+        protection = snapshots["protection"]
+        _demand(
+            backend.get("ok") is True
+            and backend.get("component") == "paper_backend"
+            and backend.get("mode") == "paper"
+            and backend.get("paper_live_safe") is True
+            and backend.get("build_sha") == OLD_BACKEND
+            and backend.get("database_identity") == expected_identity
+            and bool(backend.get("process_instance_id")),
+            "backend_identity_or_live_fence_unproven",
+        )
+        _demand(scanner.get("ok") is True and scanner.get("mode") == "SCANNER_STOPPED",
+                "scanner_not_stopped")
+        _demand(autopilot.get("ok") is True and autopilot.get("mode") == "OFF",
+                "autopilot_not_off")
+        _demand(
+            protection.get("ok") is True and protection.get("healthy") is True
+            and protection.get("covered_symbols") == []
+            and protection.get("armed_symbols") == []
+            and protection.get("coverage_roles") == {}
+            and protection.get("unhealthy_symbols") == {},
+            "protection_not_quiescent",
+        )
     _demand(conn.execute("PRAGMA quick_check").fetchone() == ("ok",),
             "paper_database_integrity_unproven")
     _demand(
@@ -211,6 +217,34 @@ def _snapshots_and_read_only_proof(db: Path, identity: str) -> dict:
             "inert_approval_preflight_unproven",
         )
     return snapshots
+
+
+def _post_shutdown_durable_proof(
+    db: Path, identity: str, *, root: Path,
+) -> None:
+    """Recheck PAPER after exit, so late fills cannot pass the installer.
+
+    This intentionally uses no HTTP (the Backend is already absent).
+    It never writes or retires any PAPER state.
+    """
+    env = _environment(ENV_FILE)
+    _demand(expected_database_identity(root, env) == identity,
+            "post_handoff_database_identity_changed")
+    _demand(db.is_file() and not db.is_symlink(), "post_handoff_database_unproven")
+    with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5) as conn:
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("BEGIN")
+        main = [p for _, name, p in conn.execute("PRAGMA database_list")
+                if name == "main"]
+        _demand(len(main) == 1 and Path(main[0]).resolve() == db.resolve(),
+                "post_handoff_opened_database_changed")
+        _demand(
+            prove_stopped_inert_approvals(
+                conn, expected_identity=identity, snapshots=None,
+                stopped_services_proven=True,
+            ) == "STOPPED_INERT_APPROVALS_PROVEN_ONLY",
+            "post_handoff_flat_proof_unproven",
+        )
 
 
 def _single_backend_handoff(db: Path, identity: str, snapshots: dict) -> str:
@@ -366,6 +400,14 @@ def recover_editor_only(
         _demand(owner._probe_telegram() == ABSENT,
                 "telegram_not_proven_absent")
         _record(transactions, "handoff-proven", uid, target=target)
+
+    # Independently reattest durable FLAT after the signal and after Telegram
+    # has exited. Pre-signal proof alone cannot exclude a late committed fill.
+    _demand((backend_stopped or _backend_stopped)(),
+            "backend_restarted_before_install")
+    _demand(RuntimeShutdown(root=root, env=env)._probe_telegram() == ABSENT,
+            "telegram_restarted_before_install")
+    _post_shutdown_durable_proof(_database_path(root, env), expected_db, root=root)
 
     receipt = (installer or activate_staged_release)(
         target, stage=stage, root=root, manifest=manifest, transactions=transactions,
