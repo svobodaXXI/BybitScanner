@@ -189,8 +189,11 @@ try {
     firstYellowIndex, { timeout: 15000 });
     assert.equal(await overlay.getAttribute("data-visible-geometry"), "0",
       "rewinding one M5 must undo first confirmed opposite yellow");
-    assert.match(await page.getByRole("status", { name: "Подтверждение слома приора H1" }).innerText(),
-      /жёлтая H1-линия ещё не подтверждена/);
+    const rewoundStatus = await page.getByRole("status", { name: "Подтверждение слома приора H1" }).innerText();
+    assert.match(rewoundStatus, /жёлтая H1-линия ещё не подтверждена|полной пары ещё нет/,
+      "rewind must remove the fully confirmed pair, but may retain an earlier three-pivot preview");
+    assert.doesNotMatch(rewoundStatus, /жёлтая H1-линия подтверждена и отображается/,
+      "no future four-pivot state after rewinding");
     await forward.click();
     await page.waitForFunction(expected =>
       document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
