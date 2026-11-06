@@ -862,10 +862,9 @@ export function stepReplayCursor(
     ? closes.map(event => event.time_ms)
     : completeHourlyCandles(closes.map(event => event.candle!))
         .map(bar => bar.end_ms);
-  const displayed = closes.filter(event => {
-    const index = events.indexOf(event);
-    return index < bounded;
-  }).at(-1)?.time_ms ?? null;
+  const displayed = events.slice(0, bounded).filter(event =>
+    event.kind === "CANDLE_CLOSED" && event.candle,
+  ).at(-1)?.time_ms ?? null;
   const displayedFrame = displayed === null ? null :
     frames.filter(time => time <= displayed).at(-1) ?? null;
   if (direction === -1 && displayedFrame === null) return 0;
