@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, nextClosedCandleCursor, timeframeStepCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("derives only completed hourly OHLCV from contiguous 5m Bybit candles", () => {
@@ -18,7 +18,7 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(completeHourlyCandles([bars[0], ...bars.slice(2, 12)])).toEqual([]); // A gap is not invented.
   });
 
-  it("reveals 3-pivot H1 support at the first legally confirmed H1 close, not after the fourth", () => {
+  it("does not reveal H1 preliminary line before the fourth pivot", () => {
     const hour = 3_600_000, m5 = 300_000;
     const start = Date.UTC(2026, 7, 20, 0);
     const highs = [115, 114, 113, 118, 122, 130, 125, 120, 116, 115, 114];
@@ -28,8 +28,6 @@ describe("standalone SIMULATION viewer contract", () => {
       open: (high + lows[index]) / 2, close: (high + lows[index]) / 2,
       high, low: lows[index], volume: 12,
     }));
-    // After H1 11:00 closed, one new M5 close is enough to reveal
-    // the already confirmed LOW-HIGH-LOW. No fourth HIGH has occurred.
     const start_ms = start + 11 * hour;
     const candle = {
       start_ms, end_ms: start_ms + m5, open: 112, high: 113,
@@ -43,53 +41,28 @@ describe("standalone SIMULATION viewer contract", () => {
       geometry: [], hourly_prior_breaks: [], hourly_prior_updates: [],
     };
     expect(visibleEarlyGeometry(document, null)).toEqual([]);
-    expect(visibleEarlyGeometry(document, start_ms - 1)).toEqual([]);
-    const early = visibleEarlyGeometry(document, candle.end_ms);
-    expect(early).toHaveLength(1);
-    expect(early[0]).toMatchObject({
-      kind: "MAIN_1H", side: "BULL", from_ms: start + 2 * hour,
-      from_price: 90, available_at_ms: start_ms,
-    });
-    expect(early[0].to_ms).toBeGreaterThan(early[0].from_ms);
-    expect(early[0].to_price).toBeGreaterThan(early[0].from_price);
-    // Rewind before first visible M5 close removes the preview; it is not
-    // a stored/backdated trade or a future-side-effects journal action.
-    expect(visibleEarlyGeometry(document, null)).toEqual([]);
+    expect(visibleEarlyGeometry(document, candle.end_ms)).toEqual([]);
+    expect(earlyGeometryTimeline(document)).toEqual([]);
     expect(visibleGeometry(document, candle.end_ms)).toEqual([]);
+  });
 
-    // A subsequent confirmed four-pivot revision must NOT erase the early
-    // slope from the chart. Rewind before publication must hide it again.
-    const later = {
-      start_ms: candle.end_ms, end_ms: candle.end_ms + m5,
-      open: 112, high: 115, low: 110, close: 114, volume: 1,
-    };
-    const revised: ReplayDocument = {
-      ...document,
-      events: [...document.events, {
-        source: "SIMULATION", simulation_run_id: "early_h1",
-        kind: "CANDLE_CLOSED", sequence: 2, time_ms: later.end_ms,
-        candle: later,
-      }],
-      geometry: [{
-        kind: "MAIN_1H", side: "BULL", from_ms: start + 2 * hour,
-        to_ms: start + 8 * hour, from_price: 90, to_price: 100,
-        trend_version: later.end_ms, available_at_ms: later.end_ms,
-        classification: "UNVALIDATED_GEOMETRY_ONLY",
-      }],
-    };
-    const history = earlyGeometryTimeline(revised);
-    expect(history).toHaveLength(1);
-    expect(visibleEarlyGeometryTimeline(history, null)).toEqual([]);
-    expect(visibleEarlyGeometryTimeline(history, candle.end_ms)).toHaveLength(1);
-    expect(visibleEarlyGeometryTimeline(history, later.end_ms)).toHaveLength(1);
-    expect(visibleEarlyGeometryTimeline(history, later.end_ms)[0]).toMatchObject({
-      from_ms: early[0].from_ms, from_price: early[0].from_price,
-      to_ms: early[0].to_ms, to_price: early[0].to_price,
+  it("steps exactly one selected H1 or M5 candle without revealing partial hours", () => {
+    const t = Date.UTC(2026, 7, 20);
+    const events = Array.from({ length: 25 }, (_, i) => {
+      const start_ms = t + i * 300_000, end_ms = start_ms + 300_000;
+      return {
+        source: "SIMULATION" as const, simulation_run_id: "step",
+        kind: "CANDLE_CLOSED" as const, sequence: i + 1, time_ms: end_ms,
+        candle: { start_ms, end_ms, open: 1, high: 2, low: 0.5, close: 1, volume: 1 },
+      };
     });
-    expect(visibleEarlyGeometryTimeline(history, candle.end_ms - 1)).toEqual([]);
-    expect(visibleEarlyGeometryTimeline(history, later.end_ms)).toEqual(
-      visibleEarlyGeometryTimeline(history, later.end_ms),
-    );
+    expect(timeframeStepCursor(events, 0, "1h", "forward")).toBe(12);
+    expect(timeframeStepCursor(events, 12, "1h", "forward")).toBe(24);
+    expect(timeframeStepCursor(events, 24, "1h", "back")).toBe(12);
+    expect(timeframeStepCursor(events, 12, "1h", "back")).toBe(0);
+    expect(timeframeStepCursor(events, 24, "5m", "back")).toBe(23);
+    expect(timeframeStepCursor(events, 12, "5m", "forward")).toBe(13);
+    expect(timeframeStepCursor(events, 25, "1h", "forward")).toBe(25);
   });
 
   it("retains distinct official trade-derived provenance for real archive replay", () => {
