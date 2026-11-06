@@ -71,6 +71,24 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
     () => visiblePriorBreaks(document, shown.lastTimeMs),
     [document, shown.lastTimeMs],
   );
+  const latestPriorBreak = priorBreaks.at(-1);
+  const activeMain = useMemo(
+    () => visibleGeometry(document, shown.lastTimeMs).find(line => line.kind === "MAIN_1H"),
+    [document, shown.lastTimeMs],
+  );
+  const latestPrior = useMemo(
+    () => visiblePriorLevels(document, shown.lastTimeMs).at(-1),
+    [document, shown.lastTimeMs],
+  );
+  const oppositeMainConfirmed = latestPriorBreak !== undefined &&
+    activeMain?.side === latestPriorBreak.new_side &&
+    activeMain.available_at_ms >= latestPriorBreak.confirmed_at_ms;
+  const priorAlreadyBroken = latestPrior !== undefined && priorBreaks.some(event =>
+    event.previous_side === latestPrior.side &&
+    event.prior_at_ms === latestPrior.at_ms &&
+    event.prior_price === latestPrior.price &&
+    event.trend_version === latestPrior.trend_version
+  );
   const latestDmi = observedDmi.at(-1);
   const dmiValue = (value: number | null | undefined) => value == null ? "—" : value.toFixed(1);
 
@@ -662,18 +680,23 @@ export function ReplayPage() {
           : ""}
         {` Касаний 1–3: ${observedTouches.filter(item => item.kind === "MAIN_1H_TOUCH").length}; движений от линии: ${observedTouches.filter(item => item.kind === "MAIN_1H_REACTION").length}. Метки — наблюдения, не входы.`}
       </p>}
-      {priorBreaks.length > 0 && <p className="replay-geometry-note"
+      {latestPriorBreak && <p className="replay-geometry-note"
         role="status" aria-label="Подтверждение слома приора H1">
         Слом приора H1: последняя часовая свеча закрылась за фиолетовым уровнем
-        {" "}{priorBreaks.at(-1)!.prior_price}, следующая открылась за ним.
-        {" "}Новое направление: {priorBreaks.at(-1)!.new_side === "BULL" ? "восходящее" : "нисходящее"}.
-        {" "}Новая жёлтая линия появится после подтверждения её геометрических якорей.
+        {" "}{latestPriorBreak.prior_price}, следующая открылась за ним.
+        {" "}Новое направление: {latestPriorBreak.new_side === "BULL" ? "восходящее" : "нисходящее"}.
+        {" "}{oppositeMainConfirmed
+          ? "Противоположная жёлтая H1-линия подтверждена и отображается."
+          : "Противоположная жёлтая H1-линия ещё не подтверждена: ожидаются геометрические якоря."}
       </p>}
-      {visiblePriorLevels(document, shown.lastTimeMs).at(-1) && <p className="replay-geometry-note"
+      {latestPrior && <p className="replay-geometry-note"
         role="status" aria-label="Приор H1">
-        Фиолетовый приор H1: {visiblePriorLevels(document, shown.lastTimeMs).at(-1)!.price}
-        {" · "}{visiblePriorLevels(document, shown.lastTimeMs).at(-1)!.side === "BULL" ? "LOW" : "HIGH"}
-        {" · "}уровень второго подтверждённого касания трендовой. Не торговый сигнал.
+        {priorAlreadyBroken ? "Исторический (сломанный) фиолетовый приор H1: " : "Фиолетовый приор H1: "}
+        {latestPrior.price}
+        {" · "}{latestPrior.side === "BULL" ? "LOW" : "HIGH"}
+        {" · "}{priorAlreadyBroken
+          ? "уровень уже сломан, остаётся только в истории."
+          : "уровень второго подтверждённого касания трендовой."}{" "}Не торговый сигнал.
       </p>}
       {document.mode === "MARKET_ONLY" && document.h017_blue_risk_previews && cursor > 0 &&
         <p className="replay-geometry-note" role="status" aria-label="H-017 риск синей M5">
