@@ -134,11 +134,19 @@ try {
       const earlyH1Index = byEventTime.get(earlyH1Time);
       assert.ok(earlyH1Index < firstYellowIndex);
       await advanceTo(earlyH1Index);
-      assert.equal(await overlay.getAttribute("data-visible-early-geometry"), "0",
-        "no provisional main before the third H1 pivot confirms");
+      // Earlier slopes must remain visible rather than vanish when the
+      // current preview changes. Only this new version is still future.
+      const beforeEarlyH1 = Number(await overlay.getAttribute("data-visible-early-geometry"));
       await advanceTo(earlyH1Index + 1);
-      assert.ok(Number(await overlay.getAttribute("data-visible-early-geometry")) >= 1,
-        "early H1 main must appear at its first causal three-pivot confirmation");
+      const afterEarlyH1 = Number(await overlay.getAttribute("data-visible-early-geometry"));
+      assert.ok(afterEarlyH1 > beforeEarlyH1,
+        "new H1 preview must be appended to previously drawn early history");
+      await backward.click();
+      assert.equal(Number(await overlay.getAttribute("data-visible-early-geometry")), beforeEarlyH1,
+        "rewind one candle hides the just-published H1 line but preserves older lines");
+      await forward.click();
+      assert.equal(Number(await overlay.getAttribute("data-visible-early-geometry")), afterEarlyH1,
+        "forward redraws the same frozen history without duplicating lines");
       assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 1,
         "early H1 main must be painted, not merely calculated");
       assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(),
