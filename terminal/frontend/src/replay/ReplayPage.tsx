@@ -58,9 +58,10 @@ function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" | "undo" }) {
   </svg>;
 }
 function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selectedId,
-  drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
+  drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture, onDrawingComplete }: {
   document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h";
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
+  onDrawingComplete: () => void;
   onDrawingsChange: (next: DrawingObject[]) => void;
   onSelectDrawing: (id: string | null) => void;
   onDrawingGesture: () => void;
@@ -414,6 +415,9 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
     <div className="replay-chart-shell" data-chart-timeframe={timeframe}
       data-displayed-candles={displayCandles.length} data-drawing-viewport={drawingViewport}>
       <div className="replay-chart-frame">
+        <div className="replay-chart-watermark" aria-label={`Инструмент ${document.symbol}, ${timeframe}`}>
+          {document.symbol} · {timeframe === "1h" ? "1H" : "5M"}
+        </div>
         <div className="replay-chart" ref={container}
           aria-label="Свечной график и нижняя панель ADX DMI" />
         <canvas ref={executionCanvas} className="replay-execution-overlay"
@@ -424,7 +428,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
             <DrawingOverlay drawings={drawings} selectedId={selectedId} tool={drawingTool}
               magnet={false} candles={[]} coordinates={drawingCoordinates}
               onCommit={onDrawingsChange} onSelect={onSelectDrawing}
-              onDrawingGesture={onDrawingGesture} onDrawingComplete={() => {}} />
+              onDrawingGesture={onDrawingGesture} onDrawingComplete={onDrawingComplete} />
           </div>}
       </div>
       <div className="replay-dmi-legend" role="group" aria-label="Индикатор ADX DMI">
@@ -840,7 +844,8 @@ export function ReplayPage() {
           <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
             drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
             onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
-            onDrawingGesture={() => setPlaying(false)} />
+            onDrawingGesture={() => setPlaying(false)}
+            onDrawingComplete={() => setDrawingTool("crosshair")} />
         </section>
         <aside className="replay-events" aria-label="Журнал событий">
           <h2>События</h2>
