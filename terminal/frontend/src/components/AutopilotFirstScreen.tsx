@@ -96,6 +96,9 @@ function PositionCard({
   entryBasis,
   episodeId,
   onTradeDetails,
+  onStatistics,
+  onTerminal,
+  accountControl,
 }: {
   position: PaperOpenPosition;
   protection: PositionProtection;
@@ -212,6 +215,9 @@ export function AutopilotFirstScreen({
   onOpenPositions?: () => void;
   accountKey?: string;
   onTradeDetails?: (episodeId: string) => void;
+  onStatistics?: () => void;
+  onTerminal?: () => void;
+  accountControl?: ReactNode;
 }) {
   const [autopilot, setAutopilot] = useState<Loadable<AutopilotModeState>>({
     status: "loading",
@@ -298,13 +304,6 @@ export function AutopilotFirstScreen({
       className="autopilot-first-screen"
       aria-label="Автопилот: первый экран"
     >
-      <header className="autopilot-first-screen-header">
-        <h3>Что робот сейчас делает</h3>
-        <button type="button" onClick={() => void refresh()}>
-          Обновить
-        </button>
-      </header>
-
       {backendOffline ? (
         <p className="autopilot-error" role="alert">
           PAPER backend недоступен. Запустите runtime ярлыком «Запуск робота».
@@ -334,97 +333,33 @@ export function AutopilotFirstScreen({
             render={(value) => summarizeDay(value, now()).closedTrades}
           />
         </SummaryItem>
-        <SummaryItem label="Блок серии STOP">
-          <Missing source="Серия STOP не реализована в runtime" />
-        </SummaryItem>
-        <SummaryItem label="Блок дневной просадки">
-          <Missing source="Daily-loss gate есть только в решениях Autopilot, API нет" />
-        </SummaryItem>
-        <SummaryItem label="Уровень STOP-защиты">
-          <Missing source="Уровень STOP-защиты не реализован в runtime" />
-        </SummaryItem>
-        <SummaryItem label="Autopilot">
-          <LoadState value={autopilot} render={(value) => value.mode} />
-        </SummaryItem>
-        <SummaryItem label="Версия политики Autopilot">
-          <LoadState value={autopilot} render={(value) => value.version > 0 ? String(value.version) : <Missing source="Версия политики недоступна" />} />
-        </SummaryItem>
-        <SummaryItem label="Причина режима">
-          <LoadState value={autopilot} render={(value) => value.reason?.trim() || <Missing source="Причина режима не предоставлена" />} />
-        </SummaryItem>
-        <SummaryItem label="PAPER live-safe">
-          <LoadState value={health} render={(value) =>
-            value.paperLiveSafe === null ? <Missing source="Health: paper_live_safe" /> :
-              value.paperLiveSafe ? "Да" : "Нет"
-          } />
-        </SummaryItem>
-        <SummaryItem label="Допуск Robot">
-          <LoadState
-            value={health}
-            render={(value) =>
-              value.robotAdmissionReady === null
-                ? "—"
-                : value.robotAdmissionReady
-                  ? "Открыт"
-                  : "Закрыт"
-            }
-          />
-        </SummaryItem>
-        <SummaryItem label="Состояние Robot">
-          <Missing source="GET-статус Robot (mode / recovery_status) не публикуется API" />
-        </SummaryItem>
-        <SummaryItem label="Защита">
-          <LoadState
-            value={protection}
-            render={(value) =>
-              value.healthy === null
-                ? "—"
-                : value.healthy
-                  ? "HEALTHY"
-                  : `UNHEALTHY ${value.unhealthySymbols.join(", ")}`.trim()
-            }
-          />
-        </SummaryItem>
       </dl>
 
-      <div className="autopilot-first-screen-header">
-        <strong>Открытые позиции</strong>
-        {onOpenPositions ? (
-          <button type="button" onClick={onOpenPositions}>
-            Все открытые позиции
-          </button>
-        ) : null}
-      </div>
-      <section className="autopilot-positions" aria-label="Открытые позиции">
-        <LoadState
-          value={positions}
-          render={(value) =>
-            value.length === 0 ? (
-              <p className="autopilot-empty">Нет открытых позиций</p>
-            ) : (
-              value.map((position) => (
-                <PositionCard
-                  key={position.symbol}
-                  position={position}
-                  protection={
-                    positionProtection[position.symbol] ?? { status: "loading" }
-                  }
-                  entryBasis={entryBasis(position.symbol)}
-                  episodeId={trades.status === "ready" ? uniqueOpenEpisodeId(position.symbol, trades.value) : null}
-                  onTradeDetails={onTradeDetails}
-                />
-              ))
-            )
-          }
-        />
-      </section>
+      <nav className="autopilot-utility-stack" aria-label="Панель управления Автопилотом">
+        <button className="workspace-nav-button" type="button"
+          disabled={trades.status !== "ready" || positions.status !== "ready" ||
+            positions.value.length !== 1 ||
+            uniqueOpenEpisodeId(positions.value[0].symbol, trades.value) === null || !onTradeDetails}
+          onClick={() => {
+            if (trades.status !== "ready" || positions.status !== "ready" || positions.value.length !== 1) return;
+            const id = uniqueOpenEpisodeId(positions.value[0].symbol, trades.value);
+            if (id) onTradeDetails?.(id);
+          }}>
+          <span className="workspace-nav-icon" aria-hidden="true">◎</span>Подробности сделки
+        </button>
+        <button className="workspace-nav-button" type="button" disabled={!onOpenPositions} onClick={onOpenPositions}>
+          <span className="workspace-nav-icon" aria-hidden="true">☷</span>Все открытые позиции
+        </button>
+        <button className="workspace-nav-button" type="button" disabled={!onStatistics} onClick={onStatistics}>
+          <span className="workspace-nav-icon" aria-hidden="true">▂▅▇</span>Статистика
+        </button>
+        <button className="workspace-nav-button" type="button" disabled={!onTerminal} onClick={onTerminal}>
+          <span className="workspace-nav-icon" aria-hidden="true">$</span>Терминал
+        </button>
+        {accountControl ? <div className="workspace-nav-account">{accountControl}</div> : null}
+      </nav>
 
-      <section
-        className="autopilot-control-slot"
-        aria-label="Управление и мониторинг"
-      >
-        <p>Управление и мониторинг будут добавлены на этапе UI-2.</p>
-      </section>
+
     </section>
   );
 }
