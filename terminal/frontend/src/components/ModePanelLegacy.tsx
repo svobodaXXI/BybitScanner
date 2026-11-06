@@ -727,7 +727,7 @@ export function ModePanel({
   };
 
   return (
-    <section className="mode-panel" aria-label={`${mode} controls`}>
+    <section className={`mode-panel${mode === "AUTOPILOT" ? " autopilot-legacy-navigation" : ""}`} aria-label={`${mode} controls`}>
       <div>
         <p className="eyebrow">Active mode</p>
         <h2>{mode}</h2>
