@@ -200,7 +200,7 @@ try {
   await page.getByRole("button", { name: "H1", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"), "1h");
-  assert.match(await page.locator(".replay-chart-watermark").innerText(), /GRASSUSDT · 1H/);
+  assert.match(await page.locator(".replay-chart-watermark").innerText(), /BTCUSDT · 1H/);
   assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
   await backward.click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "2");
@@ -213,7 +213,7 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "3");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-priors"), "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-priors"), "1");
-  assert.match(await page.locator(".replay-chart-watermark").innerText(), /GRASSUSDT · 5M/);
+  assert.match(await page.locator(".replay-chart-watermark").innerText(), /BTCUSDT · 5M/);
   await page.locator(".replay-chart-frame").dblclick({ position: { x: 280, y: 180 } });
   assert.equal(await page.getByRole("dialog", { name: "Начать отсюда?" }).count(), 1);
   await page.getByRole("button", { name: "Нет", exact: true }).click();
