@@ -4,14 +4,14 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  completeHourlyCandles, nextClosedCandleCursor, stepReplayCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
-import { rayEndPoint } from "../chart/drawingGeometry";
+import { nearestOhlcAnchor, rayEndPoint } from "../chart/drawingGeometry";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
-import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
+import { DrawingHistory, type DrawingObject, type DrawingTool, type DrawingAnchor } from "../chart/drawingModel";
 import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import "./replay.css";
 
@@ -37,7 +37,7 @@ const REPLAY_DRAWING_TOOLS: Array<{ tool: DrawingTool; label: string }> = [
   { tool: "ruler", label: "Линейка" },
   { tool: "rectangle", label: "Прямоугольник" },
 ];
-const REPLAY_TOOL_PATHS: Record<DrawingTool | "delete" | "undo", string> = {
+const REPLAY_TOOL_PATHS: Record<DrawingTool | "delete" | "undo" | "magnet", string> = {
   crosshair: "M12 2v20M2 12h20M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6",
   select: "M4 3l5 17 3.4-6.6L19 10z",
   trend: "M4 20L20 4M4 17v3h3M17 4h3v3",
@@ -50,20 +50,26 @@ const REPLAY_TOOL_PATHS: Record<DrawingTool | "delete" | "undo", string> = {
   rectangle: "M4 5h16v14H4zM4 9v2M20 13v2",
   delete: "M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 10v7M14 10v7",
   undo: "M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-2",
+  magnet: "M5 3v9a7 7 0 0 0 14 0V3h-4v9a3 3 0 0 1-6 0V3zM5 7h4M15 7h4",
 };
-function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" | "undo" }) {
+function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" | "undo" | "magnet" }) {
   return <svg className="replay-tool-icon" viewBox="0 0 24 24"
     data-tool-icon={tool} aria-hidden="true" focusable="false">
     <path d={REPLAY_TOOL_PATHS[tool]} />
   </svg>;
 }
 function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selectedId,
-  drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
+  drawingTool, magnet, onDrawingsChange, onSelectDrawing, onDrawingGesture,
+  onDrawingComplete, onDrawingInteractionEnd, onChooseStart }: {
   document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h";
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
+  magnet: boolean;
   onDrawingsChange: (next: DrawingObject[]) => void;
   onSelectDrawing: (id: string | null) => void;
   onDrawingGesture: () => void;
+  onDrawingComplete: () => void;
+  onDrawingInteractionEnd: () => void;
+  onChooseStart: (startMs: number) => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -410,10 +416,45 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
     priceToY: (price: number) => series.current?.priceToCoordinate(price) ?? null,
     yToPrice: (y: number) => series.current?.coordinateToPrice(y) ?? null,
   };
+  // DrawingOverlay's terminal magnet expects array indices. Replay drawing
+  // anchors are absolute UTC M5 slots, so adapt index-space without changing
+  // what is persisted or moving existing drawings across H1/M5.
+  const snapReplayAnchor = (raw: DrawingAnchor, radius: number): DrawingAnchor => {
+    const index = chartLogicalAtTime(drawingLogicalToTime(raw.logical), displayCandles);
+    if (index === null) return raw;
+    const snapped = nearestOhlcAnchor(
+      { logical: index, price: raw.price }, displayCandles,
+      (candleIndex) => {
+        const time = timeAtChartLogical(candleIndex, displayCandles);
+        return time === null ? null :
+          drawingCoordinates.logicalToX(timeToDrawingLogical(time));
+      },
+      drawingCoordinates.priceToY, radius,
+    );
+    if (snapped.logical === index && snapped.price === raw.price) return raw;
+    const time = timeAtChartLogical(snapped.logical, displayCandles);
+    return time === null ? raw : {
+      logical: timeToDrawingLogical(time), price: snapped.price,
+    };
+  };
+  const selectStartAtX = (clientX: number) => {
+    if (drawingTool !== "crosshair" || !container.current || !chart.current) return;
+    const rect = container.current.getBoundingClientRect();
+    const x = clientX - rect.left;
+    if (x < 0 || x >= chart.current.timeScale().width()) return;
+    const logical = chart.current.timeScale().coordinateToLogical(x);
+    if (logical === null) return;
+    const candle = displayCandles[Math.round(logical)];
+    if (candle) onChooseStart(candle.start_ms);
+  };
   return (
     <div className="replay-chart-shell" data-chart-timeframe={timeframe}
       data-displayed-candles={displayCandles.length} data-drawing-viewport={drawingViewport}>
-      <div className="replay-chart-frame">
+      <div className="replay-chart-frame"
+        onDoubleClickCapture={(event) => selectStartAtX(event.clientX)}>
+        <div className="replay-chart-watermark" aria-label="Тикер и таймфрейм">
+          {document.symbol} · {timeframe === "1h" ? "1H" : "5M"}
+        </div>
         <div className="replay-chart" ref={container}
           aria-label="Свечной график и нижняя панель ADX DMI" />
         <canvas ref={executionCanvas} className="replay-execution-overlay"
@@ -422,9 +463,12 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
           <div className={`replay-drawing-layer tool-${drawingTool}`} style={{ height: pricePaneHeight }}
             data-drawing-count={drawings.length}>
             <DrawingOverlay drawings={drawings} selectedId={selectedId} tool={drawingTool}
-              magnet={false} candles={[]} coordinates={drawingCoordinates}
+              magnet={magnet} candles={displayCandles} coordinates={drawingCoordinates}
+              snapAnchor={snapReplayAnchor}
               onCommit={onDrawingsChange} onSelect={onSelectDrawing}
-              onDrawingGesture={onDrawingGesture} onDrawingComplete={() => {}} />
+              onDrawingGesture={onDrawingGesture}
+              onDrawingComplete={onDrawingComplete}
+              onInteractionEnd={onDrawingInteractionEnd} />
           </div>}
       </div>
       <div className="replay-dmi-legend" role="group" aria-label="Индикатор ADX DMI">
