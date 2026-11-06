@@ -4,7 +4,7 @@ import { nearestOhlcAnchor, rayEndPoint } from "./drawingGeometry";
 describe("OHLC magnet for Editor anchors", () => {
   const candles = [
     { open: 100, high: 110, low: 90, close: 102 },
-    { open: 103, high: 120, low: 97, close: 115 },
+    { open: 103, high: 120, low: 97, close: 102 },
     { open: 111, high: 112, low: 105, close: 107 },
   ];
   const x = (logical: number) => logical * 30;
