@@ -1,7 +1,41 @@
 import { describe, expect, it } from "vitest";
-import { parseReplayDocument, syntheticReplay, visibleReplay, visibleGeometry, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
+  it("derives only completed hourly OHLCV from contiguous 5m Bybit candles", () => {
+    const t = Date.UTC(2026, 10, 2);
+    const bars = Array.from({ length: 13 }, (_, i) => ({
+      start_ms: t + 300_000 * i, end_ms: t + 300_000 * (i + 1),
+      open: 100 + i, close: 100.5 + i,
+      high: 102 + i, low: 99 + i, volume: i + 1,
+    }));
+    expect(completeHourlyCandles(bars.slice(0, 11))).toEqual([]);
+    expect(completeHourlyCandles(bars.slice(0, 12))).toEqual([{
+      start_ms: t, end_ms: t + 3_600_000,
+      open: 100, high: 113, low: 99, close: 111.5, volume: 78,
+    }]);
+    expect(completeHourlyCandles(bars)).toHaveLength(1); // Last H1 is incomplete.
+    expect(completeHourlyCandles([bars[0], ...bars.slice(2, 12)])).toEqual([]); // A gap is not invented.
+  });
+
+  it("retains distinct official trade-derived provenance for real archive replay", () => {
+    const events = syntheticReplay().events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map((e, i) => ({ ...e, sequence: i + 1, simulation_run_id: "public_archive" }));
+    const input = {
+      source: "SIMULATION", simulation_run_id: "public_archive",
+      mode: "MARKET_ONLY", symbol: "GRASSUSDT", timeframe: "5m", events,
+      market_data_source: "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M",
+      geometry: [], hourly_prior_updates: [], hourly_prior_breaks: [],
+    };
+    const accepted = parseReplayDocument(input);
+    expect(accepted.market_data_source).toBe("BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M");
+    expect(accepted.events).toHaveLength(events.length);
+    expect(visiblePriorBreaks(accepted, events.at(-1)!.time_ms)).toEqual([]);
+    expect(() => parseReplayDocument({
+      ...input, market_data_source: "BYBIT_PRIVATE_HISTORY",
+    })).toThrow();
+  });
+
   it("shows only completed candles and fills revealed at the current cursor", () => {
     const doc = syntheticReplay();
     expect(doc.source).toBe("SIMULATION");
@@ -20,6 +54,35 @@ describe("standalone SIMULATION viewer contract", () => {
     const ending = visibleReplay(doc.events, doc.events.length);
     expect(ending.candles).toHaveLength(64);
     expect(ending.exits).toHaveLength(1);
+  });
+
+  it("exports only recorded virtual actions and never erases them on rewind", () => {
+    const demo = syntheticReplay();
+    const report = simulationActionJournal(demo);
+    expect(report.source).toBe("SIMULATION");
+    expect(report.report_kind).toBe("RECORDED_ACTIONS_ONLY");
+    expect(report.actions.map(item => item.kind)).toEqual([
+      "ENTRY_SIGNAL", "ENTRY_FILLED", "EXIT_FILLED",
+    ]);
+    expect(report.actions.map(item => item.event_id)).toEqual(
+      report.actions.map(item => `${item.simulation_run_id}:${item.sequence}`),
+    );
+    expect(report.actions[0]).toMatchObject({ side: "LONG", comment: "Сигнал LONG" });
+    expect(report.actions[1]).toMatchObject({ side: "LONG", comment: "Вход LONG" });
+    expect(report.actions[2]).toMatchObject({ reason: "DEMO_EXIT", comment: "Выход DEMO_EXIT" });
+    const original = JSON.stringify(report);
+    const firstFill = demo.events.findIndex(item => item.kind === "ENTRY_FILLED");
+    expect(visibleReplay(demo.events, firstFill).fills).toHaveLength(0);
+    expect(visibleReplay(demo.events, demo.events.length).exits).toHaveLength(1);
+    expect(JSON.stringify(simulationActionJournal(demo))).toBe(original);
+    const marketOnly = parseReplayDocument({
+      source: "SIMULATION", simulation_run_id: "history", mode: "MARKET_ONLY",
+      market_data_source: "BYBIT_PUBLIC_KLINE", symbol: "BTCUSDT", timeframe: "5m",
+      events: demo.events.filter(item => item.kind === "CANDLE_CLOSED").map((item, index) => ({
+        ...item, simulation_run_id: "history", sequence: index + 1,
+      })),
+    });
+    expect(simulationActionJournal(marketOnly).actions).toEqual([]);
   });
 
   it("warmed synthetic ADX is displayed only on completed 5m candles", () => {
@@ -199,6 +262,489 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(() => parseReplayDocument({
       ...archive, geometry: [{ ...archive.geometry[0], classification: "TRADE_APPROVED" }],
     })).toThrow(/торговый сигнал/);
+  });
+
+  it("retires stale H1 target and M5 reference across successive main revisions", () => {
+    const demo = syntheticReplay();
+    const bars = demo.events.filter(event => event.kind === "CANDLE_CLOSED")
+      .map((event, index) => ({
+        ...event, sequence: index + 1, simulation_run_id: "multi_revision",
+      }));
+    const t = (index: number) => bars[index].candle!.start_ms;
+    const known = (index: number) => bars[index].time_ms;
+    const base = {
+      side: "BULL", classification: "UNVALIDATED_GEOMETRY_ONLY",
+      from_price: "10", to_price: "11",
+    };
+    const geometry = [
+      { ...base, kind: "MAIN_1H", from_ms: t(0), to_ms: t(3),
+        available_at_ms: known(8), trend_version: known(8) },
+      { ...base, kind: "TARGET_1H", from_ms: t(1), to_ms: t(4),
+        available_at_ms: known(8), trend_version: known(8) },
+      { ...base, kind: "REFERENCE_5M", from_ms: t(5), to_ms: t(7),
+        available_at_ms: known(11), trend_version: known(8) },
+      { ...base, kind: "MAIN_1H", from_ms: t(0), to_ms: t(20),
+        available_at_ms: known(27), trend_version: known(27) },
+      { ...base, kind: "TARGET_1H", from_ms: t(1), to_ms: t(21),
+        available_at_ms: known(29), trend_version: known(27) },
+      { ...base, kind: "REFERENCE_5M", from_ms: t(25), to_ms: t(30),
+        available_at_ms: known(35), trend_version: known(27) },
+      { ...base, kind: "MAIN_1H", from_ms: t(0), to_ms: t(37),
+        available_at_ms: known(44), trend_version: known(44) },
+    ];
+    const doc = parseReplayDocument({
+      source: "SIMULATION", simulation_run_id: "multi_revision",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events: bars, geometry,
+    });
+    const before = visibleGeometry(doc, known(27) - 1);
+    expect(before.map(item => item.kind)).toEqual([
+      "MAIN_1H", "TARGET_1H", "REFERENCE_5M",
+    ]);
+    expect(visibleGeometry(doc, known(27)).map(item => item.kind)).toEqual(["MAIN_1H"]);
+    expect(visibleGeometry(doc, known(29)).map(item => item.kind)).toEqual([
+      "MAIN_1H", "TARGET_1H",
+    ]);
+    expect(visibleGeometry(doc, known(35)).map(item => item.kind)).toEqual([
+      "MAIN_1H", "TARGET_1H", "REFERENCE_5M",
+    ]);
+    expect(visibleGeometry(doc, known(44)).map(item => item.kind)).toEqual(["MAIN_1H"]);
+    const fullHistory = visibleGeometryHistory(doc, known(44));
+    expect(fullHistory.map(item => item.superseded_at_ms)).toEqual([
+      known(27), known(27), known(27), known(44), known(44), known(44),
+      undefined,
+    ]);
+    // These are new versions of the same unbroken movement, not a reason to
+    // truncate the prior solid slopes on the chart.
+    expect(fullHistory.every(item => item.retired_at_ms === undefined)).toBe(true);
+    expect(visibleGeometryHistory(doc, known(27) - 1)).toHaveLength(3);
+    expect(visibleGeometryHistory(doc, known(27) - 1)
+      .every(item => item.superseded_at_ms === undefined)).toBe(true);
+    expect(visibleGeometryHistory(doc, known(35))[2].superseded_at_ms).toBe(known(27));
+    expect(visibleGeometryHistory(doc, known(44)).map(item => item.from_ms)).toEqual(
+      geometry.map(item => item.from_ms),
+    );
+  });
+
+  it("replays purple priors only after a fully CLOSED H1 confirms the new extreme", () => {
+    const demo = syntheticReplay();
+    const events = demo.events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map((e, index) => ({ ...e, sequence: index + 1 }));
+    const t0 = events[0].candle!.start_ms;
+    const firstKnown = events[8].time_ms;
+    const nextKnown = events[28].time_ms;
+    const confirmedH1 = events[35].time_ms;
+    const first = {
+      kind: "MAIN_1H", side: "BEAR", available_at_ms: firstKnown,
+      from_ms: t0, to_ms: events[3].candle!.start_ms,
+      from_price: "120", to_price: "115", trend_version: firstKnown,
+      classification: "UNVALIDATED_GEOMETRY_ONLY",
+    };
+    const next = {
+      ...first, available_at_ms: nextKnown,
+      // The first H1 wick belongs to this movement and never shifts.
+      from_ms: t0, to_ms: events[22].candle!.start_ms,
+      from_price: "120", to_price: "110", trend_version: nextKnown,
+    };
+    const archive = {
+      source: "SIMULATION", simulation_run_id: "purple_fixture",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m",
+      events: events.map(e => ({ ...e, simulation_run_id: "purple_fixture" })),
+      geometry: [first, next],
+    };
+    // An H1 trendline revision/touch cannot move the prior on its own.
+    const untouched = parseReplayDocument(archive);
+    expect(visiblePriorLevels(untouched, nextKnown).map(p => p.price)).toEqual([115]);
+    const withNewLow = archive.events.map((event, index) => index === 26
+      ? { ...event, candle: { ...event.candle!, low: 50 } } : event);
+    const doc = parseReplayDocument({ ...archive, events: withNewLow });
+    expect(visiblePriorLevels(doc, null)).toEqual([]);
+    expect(visiblePriorLevels(doc, firstKnown - 1)).toEqual([]);
+    expect(visiblePriorLevels(doc, firstKnown).map(p => p.price)).toEqual([115]);
+    // Low=50 appears on an already closed M5, but its H1 is still forming.
+    expect(visiblePriorLevels(doc, nextKnown).map(p => p.price)).toEqual([115]);
+    expect(visiblePriorLevels(doc, confirmedH1 - 300_000).map(p => p.price))
+      .toEqual([115]);
+    // No new geometry revision: the H1 CLOSE itself licenses the transfer.
+    const after = visiblePriorLevels(doc, confirmedH1);
+    expect(after.map(p => p.price)).toEqual([115, 110]);
+    expect(after[0].superseded_at_ms).toBe(confirmedH1);
+    expect(after[1].available_at_ms).toBe(confirmedH1);
+    expect(after[1].superseded_at_ms).toBeUndefined();
+    expect(after[1].at_ms).toBe(events[22].candle!.start_ms);
+    expect(visiblePriorLevels(doc, confirmedH1 - 300_000)).toHaveLength(1);
+    expect(visiblePriorLevels(demo, confirmedH1)).toEqual([]);
+  });
+
+  it("uses immutable Python purple-prior events and refuses invented H1 levels", () => {
+    const sample = syntheticReplay();
+    const events = sample.events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map((e, i) => ({ ...e, sequence: i + 1, simulation_run_id: "prior_kernel" }));
+    const from = events[0].candle!.start_ms;
+    const firstKnown = events[8].time_ms, nextKnown = events[28].time_ms;
+    const geometry = [{
+      kind: "MAIN_1H", side: "BEAR", available_at_ms: firstKnown,
+      from_ms: from, to_ms: events[3].candle!.start_ms,
+      from_price: "120", to_price: "115", trend_version: firstKnown,
+      classification: "UNVALIDATED_GEOMETRY_ONLY",
+    }, {
+      kind: "MAIN_1H", side: "BEAR", available_at_ms: nextKnown,
+      from_ms: from, to_ms: events[22].candle!.start_ms,
+      from_price: "120", to_price: "110", trend_version: nextKnown,
+      classification: "UNVALIDATED_GEOMETRY_ONLY",
+    }];
+    const first = { kind: "H1_PRIOR_CONFIRMED", side: "BEAR",
+      at_ms: geometry[0].to_ms, price: "115", available_at_ms: firstKnown,
+      trend_version: firstKnown, classification: "UNVALIDATED_GEOMETRY_ONLY" };
+    const second = { ...first, at_ms: geometry[1].to_ms, price: "110",
+      available_at_ms: nextKnown, trend_version: nextKnown };
+    const input = {
+      source: "SIMULATION", simulation_run_id: "prior_kernel",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events, geometry,
+      hourly_prior_updates: [first, second],
+    };
+    const doc = parseReplayDocument(input);
+    expect(visiblePriorLevels(doc, firstKnown - 1)).toEqual([]);
+    expect(visiblePriorLevels(doc, nextKnown - 1).map(x => x.price)).toEqual([115]);
+    expect(visiblePriorLevels(doc, nextKnown).map(x => x.price)).toEqual([115, 110]);
+    expect(visiblePriorLevels(doc, nextKnown)[0].superseded_at_ms).toBe(nextKnown);
+    expect(visiblePriorLevels(doc, nextKnown - 1).map(x => x.price)).toEqual([115]);
+    expect(() => parseReplayDocument({ ...input, hourly_prior_updates: [
+      first, { ...second, available_at_ms: nextKnown + 1 },
+    ] })).toThrow();
+    expect(() => parseReplayDocument({ ...input, hourly_prior_updates: [
+      first, { ...second, price: "109" },
+    ] })).toThrow();
+  });
+
+  it("handles bullish H1 prior moves symmetrically and ignores unfinished H1 highs", () => {
+    const start = Date.UTC(2026, 10, 2);
+    const step = 300_000;
+    const bars = Array.from({ length: 48 }, (_, index) => ({
+      source: "SIMULATION", simulation_run_id: "bull_prior",
+      sequence: index + 1, kind: "CANDLE_CLOSED", time_ms: start + (index + 1) * step,
+      candle: {
+        start_ms: start + index * step, end_ms: start + (index + 1) * step,
+        open: 100, close: 100, high: index === 39 ? 125 : 110,
+        low: 90, volume: 1,
+      },
+    }));
+    const firstKnown = bars[23].time_ms, secondKnown = bars[36].time_ms;
+    const geometry = [{
+      kind: "MAIN_1H", side: "BULL", available_at_ms: firstKnown,
+      from_ms: start, to_ms: start + 12 * step,
+      from_price: "80", to_price: "85", trend_version: firstKnown,
+      classification: "UNVALIDATED_GEOMETRY_ONLY",
+    }, {
+      kind: "MAIN_1H", side: "BULL", available_at_ms: secondKnown,
+      from_ms: start, to_ms: start + 24 * step,
+      from_price: "80", to_price: "95", trend_version: secondKnown,
+      classification: "UNVALIDATED_GEOMETRY_ONLY",
+    }];
+    const doc = parseReplayDocument({
+      source: "SIMULATION", simulation_run_id: "bull_prior",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events: bars, geometry,
+    });
+    expect(visiblePriorLevels(doc, bars[39].time_ms).map(p => p.price)).toEqual([85]);
+    expect(visiblePriorLevels(doc, bars[47].time_ms).map(p => p.price))
+      .toEqual([85, 95]);
+    expect(visiblePriorLevels(doc, bars[47].time_ms).at(-1)?.available_at_ms)
+      .toBe(bars[47].time_ms);
+    expect(visiblePriorLevels(doc, bars[46].time_ms).map(p => p.price))
+      .toEqual([85]);
+  });
+
+  it("uses CLOSED warmup H1 wicks to move a purple prior when the first anchor predates the replay", () => {
+    const hour = 3_600_000, step = 300_000;
+    const base = Date.UTC(2026, 10, 2);
+    const t = (h: number) => base + h * hour;
+    const context_1h = [
+      { start_ms: t(0), end_ms: t(1), open: 100, high: 125,
+        low: 92, close: 100, volume: 12 },
+      { start_ms: t(1), end_ms: t(2), open: 100, high: 120,
+        low: 90, close: 100, volume: 12 },
+    ];
+    const events = Array.from({ length: 24 }, (_, i) => {
+      const start_ms = t(2) + i * step;
+      return {
+        source: "SIMULATION", simulation_run_id: "h1_warmup",
+        sequence: i + 1, kind: "CANDLE_CLOSED", time_ms: start_ms + step,
+        candle: { start_ms, end_ms: start_ms + step,
+          open: 100, high: 105, low: i === 15 ? 80 : 95,
+          close: 100, volume: 1 },
+      };
+    });
+    const firstKnown = events[0].time_ms;
+    const secondKnown = events[11].time_ms;
+    const geometry = [
+      { kind: "MAIN_1H", side: "BEAR", available_at_ms: firstKnown,
+        from_ms: t(0), to_ms: t(1), from_price: "120",
+        to_price: "115", trend_version: firstKnown,
+        classification: "UNVALIDATED_GEOMETRY_ONLY" },
+      { kind: "MAIN_1H", side: "BEAR", available_at_ms: secondKnown,
+        from_ms: t(0), to_ms: t(2), from_price: "120",
+        to_price: "110", trend_version: secondKnown,
+        classification: "UNVALIDATED_GEOMETRY_ONLY" },
+    ];
+    const input = {
+      source: "SIMULATION", simulation_run_id: "h1_warmup",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events, geometry,
+      geometry_warmup_hours: 2, context_1h,
+    };
+    const doc = parseReplayDocument(input);
+    expect(doc.context_1h).toHaveLength(2);
+    expect(visibleReplay(doc.events, doc.events.length).candles).toHaveLength(24);
+    expect(visiblePriorLevels(doc, secondKnown).map(prior => prior.price)).toEqual([115]);
+    expect(visiblePriorLevels(doc, events[22].time_ms).map(prior => prior.price))
+      .toEqual([115]); // The new lower LOW belongs to an unfinished hour.
+    const moved = visiblePriorLevels(doc, events[23].time_ms);
+    expect(moved.map(prior => prior.price)).toEqual([115, 110]);
+    expect(moved[1].available_at_ms).toBe(t(4));
+    expect(visiblePriorLevels(doc, events[22].time_ms).map(prior => prior.price))
+      .toEqual([115]); // Deterministic rewind.
+    const legacy = parseReplayDocument({ ...input, context_1h: undefined });
+    expect(visiblePriorLevels(legacy, events[23].time_ms).map(prior => prior.price))
+      .toEqual([115]); // Missing archival proof must not fake the shift.
+    expect(() => parseReplayDocument({
+      ...input, context_1h: [{ ...context_1h[0], end_ms: t(3) }, context_1h[1]],
+    })).toThrow(); // Impossible H1 duration.
+    expect(() => parseReplayDocument({
+      ...input, context_1h: [context_1h[0], { ...context_1h[1], end_ms: t(3) }],
+    })).toThrow(); // Prehistory overlaps the first visible M5.
+  });
+
+  it("confirms a prior break only after a full H1 close and next H1 open beyond the level", () => {
+    const hourMs = 3_600_000, step = 300_000;
+    const start = Date.UTC(2026, 9, 1);
+    const make = (side: "BULL" | "BEAR", finalClose: number, nextOpen: number) => {
+      const bars = Array.from({ length: 36 }, (_, i) => {
+        const open = i === 24 ? nextOpen : side === "BULL" ? 105 : 95;
+        const close = i === 23 ? finalClose : i === 24 ? nextOpen : open;
+        return {
+          source: "SIMULATION", simulation_run_id: "prior_reversal",
+          sequence: i + 1, kind: "CANDLE_CLOSED",
+          time_ms: start + (i + 1) * step,
+          candle: {
+            start_ms: start + i * step, end_ms: start + (i + 1) * step,
+            open, close, high: Math.max(open, close) + 1,
+            low: Math.min(open, close) - 1, volume: 100,
+          },
+        };
+      });
+      const prior = side === "BULL" ? 100 : 100;
+      return parseReplayDocument({
+        source: "SIMULATION", simulation_run_id: "prior_reversal",
+        mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+        symbol: "BTCUSDT", timeframe: "5m", events: bars,
+        geometry: [{
+          kind: "MAIN_1H", side, available_at_ms: start + hourMs,
+          from_ms: start, to_ms: start + 5 * step,
+          from_price: side === "BULL" ? "98" : "102", to_price: String(prior),
+          trend_version: start + hourMs, classification: "UNVALIDATED_GEOMETRY_ONLY",
+        }],
+      });
+    };
+    for (const [side, finalClose, nextOpen, expected] of [
+      ["BULL", 99, 98, "BEAR"],
+      ["BEAR", 101, 102, "BULL"],
+    ] as const) {
+      const doc = make(side, finalClose, nextOpen);
+      const knownAt = start + 2 * hourMs + step;
+      expect(visiblePriorBreaks(doc, knownAt - 1)).toEqual([]);
+      expect(visiblePriorBreaks(doc, knownAt - step)).toEqual([]);
+      const breaks = visiblePriorBreaks(doc, knownAt);
+      expect(breaks).toHaveLength(1);
+      expect(breaks[0]).toMatchObject({
+        kind: "PRIOR_CLOSE_NEXT_OPEN", previous_side: side, new_side: expected,
+        confirmed_at_ms: knownAt, prior_price: 100,
+        hourly_close_ms: start + 2 * hourMs,
+      });
+      expect(visiblePriorBreaks(doc, knownAt + hourMs)).toEqual(breaks); // no duplicates
+      // The kernel owns the authoritative break; without its event the
+      // market-only archive may NOT infer a reversal from prices alone.
+      const priorLine = doc.geometry![0];
+      const kernelPrior = {
+        kind: "H1_PRIOR_CONFIRMED", side,
+        at_ms: priorLine.to_ms, price: String(priorLine.to_price),
+        available_at_ms: priorLine.available_at_ms,
+        trend_version: priorLine.trend_version,
+        classification: "UNVALIDATED_GEOMETRY_ONLY",
+      };
+      const canonicalInput = {
+        ...doc, market_data_source: "BYBIT_PUBLIC_KLINE",
+        hourly_prior_updates: [kernelPrior],
+        hourly_prior_breaks: [breaks[0]],
+      };
+      const canonical = parseReplayDocument(canonicalInput);
+      expect(visiblePriorBreaks(canonical, knownAt - step)).toEqual([]);
+      expect(visiblePriorBreaks(canonical, knownAt)).toEqual(breaks);
+      expect(visibleGeometry(canonical, knownAt)).toEqual([]);
+      const noKernelBreak = parseReplayDocument({
+        ...canonicalInput, hourly_prior_breaks: [],
+      });
+      expect(visiblePriorBreaks(noKernelBreak, knownAt)).toEqual([]);
+      expect(visibleGeometry(noKernelBreak, knownAt)).toHaveLength(1);
+      expect(() => parseReplayDocument({
+        ...canonicalInput, hourly_prior_breaks: [{
+          ...breaks[0], prior_price: 101,
+        }],
+      })).toThrow();
+      expect(() => parseReplayDocument({
+        ...canonicalInput, hourly_prior_breaks: [{
+          ...breaks[0], confirmed_at_ms: knownAt - step,
+        }],
+      })).toThrow();
+      expect(() => parseReplayDocument({
+        ...canonicalInput, hourly_prior_breaks: [{
+          ...breaks[0], next_hour_open_ms: knownAt,
+        }],
+      })).toThrow();
+      expect(visiblePriorBreaks(doc, knownAt - step)).toEqual([]); // rewind
+      expect(visibleGeometry(doc, knownAt - step)).toHaveLength(1);
+      expect(visibleGeometry(doc, knownAt)).toEqual([]); // retired, no fake opposite
+      expect(visibleGeometryHistory(doc, knownAt - step)).toHaveLength(1);
+      expect(visibleGeometryHistory(doc, knownAt)).toMatchObject([
+        { kind: "MAIN_1H", side, superseded_at_ms: knownAt },
+      ]);
+      expect(visibleGeometry(doc, knownAt - step)).toHaveLength(1); // restore old state
+      // Full immutable archive and a genuinely truncated replay prefix must
+      // produce identical break evidence at EVERY closed M5 playhead.
+      for (let count = 12; count <= doc.events.length; count++) {
+        const prefixEvents = doc.events.slice(0, count);
+        const at = prefixEvents.at(-1)!.time_ms;
+        const prefix = parseReplayDocument({
+          source: "SIMULATION", simulation_run_id: doc.simulation_run_id,
+          mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+          symbol: doc.symbol, timeframe: "5m", events: prefixEvents,
+          geometry: doc.geometry!.filter(line => line.available_at_ms <= at),
+        });
+        expect(visiblePriorBreaks(doc, at)).toEqual(visiblePriorBreaks(prefix, at));
+      }
+    }
+    expect(visiblePriorBreaks(make("BULL", 100.5, 99), start + 3 * hourMs)).toEqual([]);
+    expect(visiblePriorBreaks(make("BULL", 99, 100.5), start + 3 * hourMs)).toEqual([]);
+    expect(visiblePriorBreaks(make("BEAR", 99.5, 102), start + 3 * hourMs)).toEqual([]);
+    expect(visiblePriorBreaks(make("BEAR", 101, 99.5), start + 3 * hourMs)).toEqual([]);
+  });
+
+  it("breaks the purple level frozen BEFORE the H1 candle, not its newly shifted version", () => {
+    const start = Date.UTC(2026, 10, 3), hour = 3_600_000, step = 300_000;
+    const events = Array.from({ length: 37 }, (_, index) => {
+      const at = start + index * step;
+      const open = index === 36 ? 98 : 105;
+      const close = index === 35 ? 99 : open;
+      return {
+        source: "SIMULATION", simulation_run_id: "prior_frozen",
+        sequence: index + 1, kind: "CANDLE_CLOSED", time_ms: at + step,
+        candle: { start_ms: at, end_ms: at + step, open, close,
+          high: index >= 24 && index <= 35 ? 150 : 112,
+          low: Math.min(open, close) - 4, volume: 1 },
+      };
+    });
+    const early = start + hour;
+    const late = start + 3 * hour;
+    const doc = parseReplayDocument({
+      source: "SIMULATION", simulation_run_id: "prior_frozen",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events,
+      geometry: [{
+        kind: "MAIN_1H", side: "BULL", available_at_ms: early,
+        from_ms: start, to_ms: start + step, from_price: "90",
+        to_price: "100", trend_version: early,
+        classification: "UNVALIDATED_GEOMETRY_ONLY",
+      }, {
+        kind: "MAIN_1H", side: "BULL", available_at_ms: late,
+        from_ms: start, to_ms: start + hour, from_price: "90",
+        to_price: "110", trend_version: late,
+        classification: "UNVALIDATED_GEOMETRY_ONLY",
+      }],
+    });
+    expect(visiblePriorLevels(doc, late).map(level => level.price)).toEqual([100, 110]);
+    const confirmed = late + step;
+    expect(visiblePriorBreaks(doc, confirmed - step)).toEqual([]);
+    expect(visiblePriorBreaks(doc, confirmed)).toMatchObject([{
+      kind: "PRIOR_CLOSE_NEXT_OPEN",
+      previous_side: "BULL", new_side: "BEAR",
+      confirmed_at_ms: confirmed, prior_price: 100,
+      hourly_close_ms: late,
+    }]);
+    expect(visibleGeometry(doc, confirmed)).toEqual([]);
+    expect(visiblePriorBreaks(doc, confirmed - step)).toEqual([]); // rewind
+  });
+
+  it("retires the blue M5 only at a known next OPEN crossing and restores it on rewind", () => {
+    const demo = syntheticReplay();
+    const events = demo.events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map((e, i) => ({ ...e, simulation_run_id: "blue_break", sequence: i + 1 }));
+    const t = (i: number) => events[i].candle!.start_ms;
+    const known = events[8].time_ms;
+    const atBreak = events[11].time_ms;
+    const geometry = [
+      { kind: "MAIN_1H", side: "BULL", from_ms: t(0), to_ms: t(3),
+        from_price: "90", to_price: "90", available_at_ms: known,
+        trend_version: known, classification: "UNVALIDATED_GEOMETRY_ONLY" },
+      { kind: "TARGET_1H", side: "BULL", from_ms: t(1), to_ms: t(4),
+        from_price: "120", to_price: "120", available_at_ms: known,
+        trend_version: known, classification: "UNVALIDATED_GEOMETRY_ONLY" },
+      { kind: "REFERENCE_5M", side: "BULL", from_ms: t(0), to_ms: t(3),
+        from_price: "105", to_price: "104", available_at_ms: known,
+        trend_version: known, classification: "UNVALIDATED_GEOMETRY_ONLY" },
+    ];
+    const retirement = {
+      kind: "REFERENCE_5M_OPEN_BREAK", time_ms: atBreak,
+      open_ms: t(11), blue_available_at_ms: known, trend_version: known,
+    };
+    const archive = {
+      source: "SIMULATION", simulation_run_id: "blue_break",
+      mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+      symbol: "BTCUSDT", timeframe: "5m", events, geometry,
+      reference_5m_retirements: [retirement],
+    };
+    const doc = parseReplayDocument(archive);
+    expect(visibleGeometry(doc, atBreak - 1).map(l => l.kind))
+      .toEqual(["MAIN_1H", "TARGET_1H", "REFERENCE_5M"]);
+    expect(visibleGeometry(doc, atBreak).map(l => l.kind))
+      .toEqual(["MAIN_1H", "TARGET_1H"]);
+    expect(visibleGeometryHistory(doc, atBreak).at(-1)?.superseded_at_ms)
+      .toBe(atBreak);
+    expect(visibleGeometryHistory(doc, atBreak - 1).at(-1)?.superseded_at_ms)
+      .toBeUndefined();
+    expect(visibleGeometry(doc, atBreak - 1)).toHaveLength(3);
+    // Refining a correction must not retire its earlier solid slope. Both
+    // immutable versions end only when the CURRENT correction truly breaks.
+    const revisedBlue = {
+      ...geometry[2], available_at_ms: events[9].time_ms,
+      to_ms: t(4), to_price: "103",
+    };
+    const revised = parseReplayDocument({
+      ...archive, geometry: [...geometry, revisedBlue],
+      reference_5m_retirements: [{
+        ...retirement, blue_available_at_ms: revisedBlue.available_at_ms,
+      }],
+    });
+    const stillOpen = visibleGeometryHistory(revised, events[10].time_ms)
+      .filter(item => item.kind === "REFERENCE_5M");
+    expect(stillOpen).toHaveLength(2);
+    expect(stillOpen.map(item => item.retired_at_ms)).toEqual([undefined, undefined]);
+    expect(stillOpen[0].superseded_at_ms).toBe(revisedBlue.available_at_ms);
+    const closed = visibleGeometryHistory(revised, atBreak)
+      .filter(item => item.kind === "REFERENCE_5M");
+    expect(closed.map(item => item.retired_at_ms)).toEqual([atBreak, atBreak]);
+    expect(visibleGeometry(revised, atBreak).map(item => item.kind))
+      .toEqual(["MAIN_1H", "TARGET_1H"]);
+    expect(() => parseReplayDocument({
+      ...archive, reference_5m_retirements: [{ ...retirement, open_ms: t(0) }],
+    })).toThrow();
+    expect(() => parseReplayDocument({
+      ...archive, reference_5m_retirements: [{ ...retirement, time_ms: atBreak + 300_000 }],
+    })).toThrow();
+    expect(() => parseReplayDocument({
+      ...archive, reference_5m_retirements: [{ ...retirement, kind: "UNVERIFIED_BREAK" }],
+    })).toThrow();
   });
 
   it("reveals only completed H1 touch/reaction observations, never simulated fills", () => {

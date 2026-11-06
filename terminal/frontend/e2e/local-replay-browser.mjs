@@ -55,8 +55,20 @@ try {
   assert.match(await page.locator("body").innerText(), /Синтетический пример/);
   await page.waitForFunction(() => document.querySelectorAll(".replay-chart canvas").length > 0);
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
-  await page.getByRole("button", { name: "Шаг" }).click();
-  assert.ok(Number(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow")) > 0);
+  const progress = page.locator('[role="progressbar"]');
+  const forward = page.getByRole("button", { name: "Шаг вперёд ▶", exact: true });
+  const backward = page.getByRole("button", { name: "◀ Шаг назад", exact: true });
+  assert.equal(await backward.isDisabled(), true);
+  await forward.click();
+  const firstStep = Number(await progress.getAttribute("aria-valuenow"));
+  assert.ok(firstStep > 0);
+  await forward.click();
+  const secondStep = Number(await progress.getAttribute("aria-valuenow"));
+  assert.ok(secondStep > firstStep, "second closed candle advances the recording");
+  await backward.click();
+  assert.equal(Number(await progress.getAttribute("aria-valuenow")), firstStep);
+  await forward.click();
+  assert.equal(Number(await progress.getAttribute("aria-valuenow")), secondStep);
   await page.getByRole("button", { name: "В начало" }).click();
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
 
@@ -164,9 +176,40 @@ try {
   assert.match(await indicator.innerText(), /\+DI 23\.9/);
   assert.match(await indicator.innerText(), /ADX 22\.8/);
   assert.ok((await page.locator(".replay-chart canvas").count()) >= 4);
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "40");
+  await page.getByRole("button", { name: "H1", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"), "1h");
+  assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
+  await page.getByRole("button", { name: "M5", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "40");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "3");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "3");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-priors"), "1");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-priors"), "1");
+  // Manual annotations use the same UTC anchor across real M5/H1 candles;
+  // they survive replay rewind and can be deleted without altering geometry.
+  await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
+  await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 160 } });
+  assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
+  await page.getByRole("button", { name: "H1", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
+  assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
+  await page.getByRole("button", { name: "M5", exact: true }).click();
+  await backward.click();
+  assert.match(await page.locator(".replay-drawing-count").innerText(), /1/);
+  await forward.click();
+  assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
+  await page.getByRole("button", { name: "Удалить выбранное" }).click();
+  assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "0");
+  // Diagnostics and geometry observation decorations stay hidden until requested.
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-observations"), "0");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-blue-risk"), "0");
+  await page.getByText("Диагностика", { exact: true }).click();
+  await page.getByLabel("Показать опорные маркеры").check();
+  await page.waitForFunction(() => document.querySelector(".replay-execution-overlay")?.dataset.visibleObservations === "2");
+  assert.match(await page.getByRole("status", { name: "Приор H1" }).innerText(), /99\.1/);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-blue-risk"), "1");
   assert.match(await page.getByRole("status", { name: "H-017 риск синей M5" }).innerText(),
     /открытий за линией 1, из них риск ≥1:1 — 1/);
@@ -178,6 +221,8 @@ try {
   assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(),
     /Касаний 1–3: 1; движений от линии: 1/);
   assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(), /Предыстория.*72 ч/);
+  await page.getByLabel("Показать опорные маркеры").uncheck();
+  await page.getByText("Диагностика", { exact: true }).click();
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
 
