@@ -8,17 +8,12 @@ import {
 import {
   type AutopilotModeState,
   type DiaryTradeSummaryRow,
-  entryBasisFor,
   type Loadable,
   loadAutopilotMode,
   loadDiaryTrades,
   loadOpenPositions,
-  loadPositionProtection,
-  loadProtectionHealth,
   loadRuntimeHealth,
   type PositionProtection,
-  type ProtectionHealth,
-  type RuntimeHealth,
   summarizeDay,
   uniqueOpenEpisodeId,
 } from "../autopilot/autopilotFirstScreenData";
@@ -90,7 +85,7 @@ function LoadState<T>({
   return <>{render(value.value)}</>;
 }
 
-function PositionCard({
+export function PositionCard({
   position,
   protection,
   entryBasis,
@@ -225,18 +220,12 @@ export function AutopilotFirstScreen({
   const [health, setHealth] = useState<Loadable<RuntimeHealth>>({
     status: "loading",
   });
-  const [protection, setProtection] = useState<Loadable<ProtectionHealth>>({
-    status: "loading",
-  });
   const [positions, setPositions] = useState<Loadable<PaperOpenPosition[]>>({
     status: "loading",
   });
   const [trades, setTrades] = useState<Loadable<DiaryTradeSummaryRow[]>>({
     status: "loading",
   });
-  const [positionProtection, setPositionProtection] = useState<
-    Record<string, PositionProtection>
-  >({});
   const generation = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -248,38 +237,14 @@ export function AutopilotFirstScreen({
       };
     setAutopilot({ status: "loading" });
     setHealth({ status: "loading" });
-    setProtection({ status: "loading" });
     setPositions({ status: "loading" });
     setTrades({ status: "loading" });
-    setPositionProtection({});
 
-    const positionsResult = settle(loadOpenPositions).then((result) => {
-      apply(setPositions)(result);
-      if (result.status !== "ready") return;
-      for (const position of result.value) {
-        apply(setPositionProtection)(
-          (prior: Record<string, PositionProtection>) => ({
-            ...prior,
-            [position.symbol]: { status: "loading" },
-          }),
-        );
-        void settle(() => loadPositionProtection(position.symbol)).then(
-          (value) =>
-            apply(setPositionProtection)(
-              (prior: Record<string, PositionProtection>) => ({
-                ...prior,
-                [position.symbol]: value,
-              }),
-            ),
-        );
-      }
-    });
     await Promise.all([
       settle(loadAutopilotMode).then(apply(setAutopilot)),
       settle(loadRuntimeHealth).then(apply(setHealth)),
-      settle(loadProtectionHealth).then(apply(setProtection)),
       settle(() => loadDiaryTrades(accountKey)).then(apply(setTrades)),
-      positionsResult,
+      settle(loadOpenPositions).then(apply(setPositions)),
     ]);
   }, [accountKey]);
 
@@ -294,10 +259,6 @@ export function AutopilotFirstScreen({
     health.status === "error" &&
     autopilot.status === "error" &&
     positions.status === "error";
-  const entryBasis = (symbol: string): Loadable<string | null> =>
-    trades.status === "ready"
-      ? { status: "ready", value: entryBasisFor(symbol, trades.value) }
-      : trades;
 
   return (
     <section
@@ -336,7 +297,7 @@ export function AutopilotFirstScreen({
       </dl>
 
       <nav className="autopilot-utility-stack" aria-label="Панель управления Автопилотом">
-        <button className="workspace-nav-button" type="button"
+        <button className="workspace-nav-button" type="button" aria-label="Подробности сделки" title="Подробности сделки"
           disabled={trades.status !== "ready" || positions.status !== "ready" ||
             positions.value.length !== 1 ||
             uniqueOpenEpisodeId(positions.value[0].symbol, trades.value) === null || !onTradeDetails}
@@ -345,16 +306,16 @@ export function AutopilotFirstScreen({
             const id = uniqueOpenEpisodeId(positions.value[0].symbol, trades.value);
             if (id) onTradeDetails?.(id);
           }}>
-          <span className="workspace-nav-icon" aria-hidden="true">◎</span>Подробности сделки
+          <span className="workspace-nav-icon" aria-hidden="true">◎</span>
         </button>
-        <button className="workspace-nav-button" type="button" disabled={!onOpenPositions} onClick={onOpenPositions}>
-          <span className="workspace-nav-icon" aria-hidden="true">☷</span>Все открытые позиции
+        <button className="workspace-nav-button" type="button" aria-label="Все открытые позиции" title="Все открытые позиции" disabled={!onOpenPositions} onClick={onOpenPositions}>
+          <span className="workspace-nav-icon" aria-hidden="true">☷</span>
         </button>
-        <button className="workspace-nav-button" type="button" disabled={!onStatistics} onClick={onStatistics}>
-          <span className="workspace-nav-icon" aria-hidden="true">▂▅▇</span>Статистика
+        <button className="workspace-nav-button" type="button" aria-label="Статистика" title="Статистика" disabled={!onStatistics} onClick={onStatistics}>
+          <span className="workspace-nav-icon" aria-hidden="true">▂▅▇</span>
         </button>
-        <button className="workspace-nav-button" type="button" disabled={!onTerminal} onClick={onTerminal}>
-          <span className="workspace-nav-icon" aria-hidden="true">$</span>Терминал
+        <button className="workspace-nav-button" type="button" aria-label="Терминал" title="Терминал" disabled={!onTerminal} onClick={onTerminal}>
+          <span className="workspace-nav-icon" aria-hidden="true">$</span>
         </button>
         {accountControl ? <div className="workspace-nav-account">{accountControl}</div> : null}
       </nav>
