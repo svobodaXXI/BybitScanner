@@ -562,24 +562,44 @@ class CausalGeometryFeed:
                 self._blue_broken_at_ms = five_minute.end_ms
         if self._active_blue is None and trend is not None:
             recent = self._five.recent_pivots
-            # Only a NEW correction starting AFTER a completed blue break
-            # may create another blue. Past three-pivot windows are not
-            # recycled on every replay candle.
-            if len(recent) >= 3 and (
+            # Publication requires four SIGNIFICANT, confirmed M5 swings,
+            # just like the independent H1 trend. Three pivots establish
+            # only a provisional slope: never export it as a blue reference.
+            # BULL H1: descending HIGH-LOW-lower HIGH-lower LOW.
+            # BEAR H1: rising LOW-HIGH-higher LOW-higher HIGH.
+            four = len(recent) == 4 and (
+                (trend.side == "BULL" and
+                 tuple(p.kind for p in recent) == ("HIGH", "LOW", "HIGH", "LOW") and
+                 recent[2].price < recent[0].price and
+                 recent[3].price < recent[1].price)
+                or
+                (trend.side == "BEAR" and
+                 tuple(p.kind for p in recent) == ("LOW", "HIGH", "LOW", "HIGH") and
+                 recent[2].price > recent[0].price and
+                 recent[3].price > recent[1].price)
+            )
+            if four and (
                 self._blue_broken_at_ms is None or
-                recent[-3].at_ms > self._blue_broken_at_ms
+                recent[0].at_ms > self._blue_broken_at_ms
             ):
-                between = self._five.bars_between(recent[-3], recent[-1])
+                between = self._five.bars_between(recent[0], recent[2])
                 candidate = last_correction_reference(
                     hourly=trend,
-                    five_minute_pivots=recent,
+                    five_minute_pivots=recent[:3],
                     five_minute_bars=between,
                 )
                 if candidate is not None:
-                    self._active_blue = candidate
+                    # A fourth swing's RIGHT-side confirmation is essential.
+                    # The 1-3 line remains anchored in the past but cannot
+                    # appear at the third pivot or be backdated on rewind.
+                    published = CausalLine(
+                        candidate.first, candidate.second,
+                        max(candidate.available_at_ms, recent[3].confirmed_at_ms),
+                    )
+                    self._active_blue = published
                     self._active_blue_hourly_first_ms = origin
-                    self._active_blue_correction_extreme = recent[-2].price
-                    self._active_blue_checked_q_ms = recent[-1].confirmed_at_ms
+                    self._active_blue_correction_extreme = recent[3].price
+                    self._active_blue_checked_q_ms = recent[2].confirmed_at_ms
         elif self._active_blue is not None and trend is not None:
             recent = self._five.recent_pivots
             first = self._active_blue.first
