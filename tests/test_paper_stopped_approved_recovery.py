@@ -103,6 +103,29 @@ class EvidenceTest(unittest.TestCase):
             "STOPPED_INERT_APPROVALS_PROVEN_ONLY",
         )
 
+    def test_post_shutdown_proof_requires_separately_stopped_services(self):
+        db, data = fixture()
+        self.addCleanup(db.close)
+        with self.assertRaisesRegex(
+            recovery.PartialStopBlocked, "services_not_proven_stopped"
+        ):
+            recovery.prove_stopped_inert_approvals(
+                db, expected_identity="x"*64, snapshots=None,
+            )
+        self.assertEqual(
+            recovery.prove_stopped_inert_approvals(
+                db, expected_identity="x"*64, snapshots=None,
+                stopped_services_proven=True,
+            ),
+            "STOPPED_INERT_APPROVALS_PROVEN_ONLY",
+        )
+        db.execute("UPDATE position_projections SET side='Long',quantity='1'")
+        with self.assertRaises(recovery.PartialStopBlocked):
+            recovery.prove_stopped_inert_approvals(
+                db, expected_identity="x"*64, snapshots=None,
+                stopped_services_proven=True,
+            )
+
     def test_denies_actual_or_ambiguous_paper_work(self):
         changes = {
             "live_position":
@@ -245,6 +268,51 @@ class JournalTest(unittest.TestCase):
             ):
                 attempt()
             self.assertEqual(calls["signal"], 1)
+
+    def test_late_post_shutdown_ledger_change_prevents_install(self):
+        root, stage, transactions, db = self.prepare()
+        target = "a" * 40
+        owner = mock.Mock()
+        owner._probe_backend.return_value = recovery.PRESENT
+        owner._probe_telegram.side_effect = [
+            recovery.PRESENT, recovery.PRESENT,
+            recovery.ABSENT, recovery.ABSENT,
+        ]
+        installs = []
+        with (
+            mock.patch.object(recovery.os, "geteuid", return_value=os.geteuid()),
+            mock.patch("tools.paper_maintenance._proven_prior_exceptional_completion",
+                       return_value=True),
+            mock.patch("tools.paper_maintenance._complete_stop_intent"),
+            mock.patch.object(recovery, "verify_release",
+                              return_value=recovery.OLD_BACKEND),
+            mock.patch.object(recovery, "_environment", return_value={}),
+            mock.patch.object(recovery, "expected_database_identity",
+                              return_value="x"*64),
+            mock.patch.object(recovery, "_database_path", return_value=db),
+            mock.patch.object(recovery, "RuntimeShutdown", return_value=owner),
+            mock.patch.object(recovery, "_post_shutdown_durable_proof",
+                              side_effect=recovery.PartialStopBlocked(
+                                  "late_exposure_detected",
+                              )),
+        ):
+            with self.assertRaisesRegex(
+                recovery.PartialStopBlocked, "late_exposure_detected",
+            ):
+                recovery.recover_editor_only(
+                    target=target, stage=stage, root=root,
+                    transactions=transactions, uid=os.geteuid(),
+                    inspect=lambda *a, **k: None,
+                    proof=lambda *a: {},
+                    handoff=lambda *a: "INTERRUPT_EXIT_OBSERVED",
+                    telegram=lambda: None,
+                    backend_stopped=lambda: True,
+                    installer=lambda *a, **kw: installs.append("install"),
+                )
+        self.assertEqual(installs, [])
+        self.assertTrue(recovery._receipt(
+            transactions, "handoff-proven", os.geteuid(), target=target,
+        ))
 
     def test_foreign_receipt_is_not_authority(self):
         root, stage, transactions, db = self.prepare()
