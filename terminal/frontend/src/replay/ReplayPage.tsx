@@ -447,6 +447,7 @@ export function ReplayPage() {
   const [endDate, setEndDate] = useState(() => utcDayOffset(1));
   const [historyLoading, setHistoryLoading] = useState(false);
   const historyRequest = useRef<AbortController | null>(null);
+  const bundledRequest = useRef<AbortController | null>(null);
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(8);
@@ -520,6 +521,57 @@ export function ReplayPage() {
     rows.filter(row => row.first_touch === kind).length;
   const fileInput = useRef<HTMLInputElement>(null);
 
+  function syncImportedMarketSelection(parsed: ReplayDocument) {
+    if (parsed.symbol) setSymbol(parsed.symbol);
+    const first = parsed.events.find(item => item.kind === "CANDLE_CLOSED")?.candle;
+    const last = parsed.events.filter(item => item.kind === "CANDLE_CLOSED").at(-1)?.candle;
+    if (first && last) {
+      setStartDate(new Date(first.start_ms).toISOString().slice(0, 10));
+      setEndDate(new Date(last.end_ms).toISOString().slice(0, 10));
+    }
+  }
+
+  // The audited GRASSUSDT archive is optional and read ONLY from loopback.
+  // Source check is strict: no private/PAPER runs and no silent fallback on
+  // invalid bundled data. Missing bundle (204) retains the standalone demo.
+  useEffect(() => {
+    const controller = new AbortController();
+    bundledRequest.current = controller;
+    void (async () => {
+      try {
+        const response = await fetch("/local-replay/bundled", {
+          method: "GET", cache: "no-store", signal: controller.signal,
+        });
+        if (response.status === 204) return;
+        if (!response.ok) throw new Error("Локальная история недоступна");
+        const raw = await response.text();
+        if (raw.length > 24 * 1024 * 1024) throw new Error("Архив больше 24 МБ");
+        const parsed = parseReplayDocument(JSON.parse(raw) as unknown);
+        if (parsed.mode !== "MARKET_ONLY" ||
+            parsed.market_data_source !== "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M") {
+          throw new Error("Неверный тип публичного архива");
+        }
+        if (controller.signal.aborted) return;
+        setDocument(parsed);
+        syncImportedMarketSelection(parsed);
+        setPlaying(false); setCursor(0);
+        setFileLabel("Проверенный публичный архив · GRASSUSDT");
+        setError(null);
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          setError("Не удалось загрузить встроенный архив: " +
+            (e instanceof Error ? e.message : "ошибка JSON"));
+        }
+      } finally {
+        if (bundledRequest.current === controller) bundledRequest.current = null;
+      }
+    })();
+    return () => {
+      controller.abort();
+      if (bundledRequest.current === controller) bundledRequest.current = null;
+    };
+  }, []);
+
   useEffect(() => {
     if (!playing) return;
     const timer = window.setInterval(() => {
@@ -534,6 +586,7 @@ export function ReplayPage() {
 
   async function loadFile(file?: File) {
     if (!file) return;
+    bundledRequest.current?.abort(); bundledRequest.current = null;
     historyRequest.current?.abort();
     historyRequest.current = null;
     setHistoryLoading(false);
@@ -543,17 +596,9 @@ export function ReplayPage() {
       const data: unknown = JSON.parse(await file.text());
       const parsed = parseReplayDocument(data);
       setDocument(parsed);
-      if (parsed.mode === "MARKET_ONLY") {
-        // File import is an independent market selection. Do not leave stale
-        // BTC/date controls above a GRASSUSDT archived chart.
-        if (parsed.symbol) setSymbol(parsed.symbol);
-        const first = parsed.events.find(item => item.kind === "CANDLE_CLOSED")?.candle;
-        const last = parsed.events.filter(item => item.kind === "CANDLE_CLOSED").at(-1)?.candle;
-        if (first && last) {
-          setStartDate(new Date(first.start_ms).toISOString().slice(0, 10));
-          setEndDate(new Date(last.end_ms).toISOString().slice(0, 10));
-        }
-      }
+      // Manual import also replaces the market selection, never leave stale
+      // BTC/date controls beside an imported GRASSUSDT archive.
+      if (parsed.mode === "MARKET_ONLY") syncImportedMarketSelection(parsed);
       setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel(file.name);
@@ -566,6 +611,7 @@ export function ReplayPage() {
   }
 
   async function loadLocalHistory() {
+    bundledRequest.current?.abort(); bundledRequest.current = null;
     historyRequest.current?.abort();
     const controller = new AbortController();
     historyRequest.current = controller;
@@ -630,6 +676,7 @@ export function ReplayPage() {
             onChange={(e) => void loadFile(e.target.files?.[0])} />
         </label>
         <button type="button" onClick={() => {
+          bundledRequest.current?.abort(); bundledRequest.current = null;
           historyRequest.current?.abort(); historyRequest.current = null;
           setHistoryLoading(false); setPlaying(false); setCursor(0); setError(null);
           setDocument(syntheticReplay()); setFileLabel("Синтетический пример");
