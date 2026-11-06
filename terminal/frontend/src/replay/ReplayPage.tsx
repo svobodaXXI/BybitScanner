@@ -463,7 +463,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
           <div className={`replay-drawing-layer tool-${drawingTool}`} style={{ height: pricePaneHeight }}
             data-drawing-count={drawings.length}>
             <DrawingOverlay drawings={drawings} selectedId={selectedId} tool={drawingTool}
-              magnet={magnet} candles={displayCandles} coordinates={drawingCoordinates}
+              magnet={magnet} candles={[]} coordinates={drawingCoordinates}
               snapAnchor={snapReplayAnchor}
               onCommit={onDrawingsChange} onSelect={onSelectDrawing}
               onDrawingGesture={onDrawingGesture}
