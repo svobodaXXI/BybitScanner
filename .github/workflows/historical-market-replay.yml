@@ -131,13 +131,14 @@ jobs:
     # No scheduled network cost and no synthetic fallbacks.
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.head_ref == 'test/h017-real-bybit-grass-readonly-20261105' || github.head_ref == 'feature/h017-crossings-first-touch-study-20261105' || github.head_ref == 'feature/h017-blue-open-costed-counterfactual-20261105' || github.head_ref == 'docs/h017-purple-prior-replay-20261105'))
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 7
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Check archived GRASSUSDT baseline and an independent later H1 reversal window
+      - name: Check bounded official GRASSUSDT H1 prior and reversal windows
         run: |
           python -m research.h017_real_bybit_readonly_acceptance
           python -m research.h017_real_bybit_readonly_acceptance --start 2026-09-01 --end 2026-09-08
+          python -m research.h017_real_bybit_readonly_acceptance --start 2026-08-20 --end 2026-08-27
