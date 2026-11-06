@@ -508,6 +508,30 @@ export function ReplayPage() {
   const [drawingTool, setDrawingTool] = useState<DrawingTool>("crosshair");
   const [drawings, setDrawings] = useState<DrawingObject[]>([]);
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
+  const [magnet, setMagnet] = useState(false);
+  const [seekStartMs, setSeekStartMs] = useState<number | null>(null);
+  // One undo entry per completed drawing gesture, not per mouse-move pixel.
+  const drawingHistory = useRef(new DrawingHistory([]));
+  const drawingOperation = useRef(false);
+  const commitDrawing = (next: DrawingObject[]) => {
+    if (!drawingOperation.current) {
+      drawingHistory.current.commit(next);
+      drawingOperation.current = true;
+    } else drawingHistory.current.current = next;
+    setDrawings(next);
+  };
+  const endDrawingOperation = () => { drawingOperation.current = false; };
+  const undoDrawing = () => {
+    endDrawingOperation();
+    setDrawings(drawingHistory.current.undo());
+    setSelectedDrawing(null);
+  };
+  const resetDrawingHistory = () => {
+    drawingHistory.current = new DrawingHistory([]);
+    endDrawingOperation();
+    setDrawings([]);
+    setSelectedDrawing(null);
+  };
   const [error, setError] = useState<string | null>(null);
   const [fileLabel, setFileLabel] = useState("Синтетический пример");
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
@@ -651,7 +675,7 @@ export function ReplayPage() {
       // Manual import also replaces the market selection, never leave stale
       // BTC/date controls beside an imported GRASSUSDT archive.
       if (parsed.mode === "MARKET_ONLY") syncImportedMarketSelection(parsed);
-      setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+      resetDrawingHistory(); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel(file.name);
       setError(null);
@@ -846,20 +870,11 @@ export function ReplayPage() {
         </button>
         <button type="button" onClick={() => {
           setPlaying(false);
-          setCursor((current) => {
-            const events = document.events;
-            // Rewind one complete candle step, not just one trade/event row.
-            const closed = events.slice(0, current).filter(event => event.kind === "CANDLE_CLOSED");
-            if (closed.length <= 1) return 0;
-            const previousClose = closed[closed.length - 2].time_ms;
-            let next = 0;
-            while (next < events.length && events[next].time_ms <= previousClose) next++;
-            return next;
-          });
+          setCursor((current) => stepReplayCursor(document.events, current, timeframe, -1));
         }} disabled={shown.candles.length === 0}>◀ Шаг назад</button>
         <button type="button" onClick={() => {
           setPlaying(false);
-          setCursor((current) => nextClosedCandleCursor(document.events, current));
+          setCursor((current) => stepReplayCursor(document.events, current, timeframe, 1));
         }} disabled={cursor >= total}>Шаг вперёд ▶</button>
         <button type="button" onClick={() => { setPlaying(false); setCursor(0); }}>В начало</button>
         <label className="replay-rate">Скорость {rate} свечей/с
@@ -875,26 +890,56 @@ export function ReplayPage() {
                 <ReplayToolIcon tool={tool} />
               </button>
             ))}
+            <button type="button" aria-pressed={magnet} title="Магнит (привязка к OHLC)"
+              aria-label="Магнит" onClick={() => setMagnet(value => !value)}>
+              <ReplayToolIcon tool="magnet" />
+            </button>
             <button type="button" disabled={drawings.length === 0}
-              onClick={() => {
-                setPlaying(false);
-                setDrawings(current => current.slice(0, -1));
-                setSelectedDrawing(null);
-              }} title="Отменить последнюю фигуру" aria-label="Отменить последнюю фигуру">
+              onClick={() => { setPlaying(false); undoDrawing(); }}
+              title="Отменить последнее действие" aria-label="Отменить последнее действие">
               <ReplayToolIcon tool="undo" />
             </button>
             <button type="button" disabled={!selectedDrawing}
               onClick={() => {
-                setDrawings(current => current.filter(d => d.id !== selectedDrawing));
+                commitDrawing(drawings.filter(d => d.id !== selectedDrawing));
+                endDrawingOperation();
                 setSelectedDrawing(null);
               }} title="Удалить выбранное" aria-label="Удалить выбранное"><ReplayToolIcon tool="delete" /></button>
             <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
           </div>
           <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
             drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
-            onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
-            onDrawingGesture={() => setPlaying(false)} />
+            magnet={magnet}
+            onDrawingsChange={commitDrawing} onSelectDrawing={setSelectedDrawing}
+            onDrawingGesture={() => setPlaying(false)}
+            onDrawingComplete={() => {
+              endDrawingOperation();
+              setDrawingTool("crosshair");
+              setSelectedDrawing(null);
+            }}
+            onDrawingInteractionEnd={endDrawingOperation}
+            onChooseStart={(startMs) => setSeekStartMs(startMs)} />
         </section>
+        {seekStartMs !== null && <div className="replay-seek-backdrop">
+          <div className="replay-seek-dialog" role="dialog" aria-modal="true"
+            aria-label="Начать отсюда?">
+            <strong>Начать отсюда?</strong>
+            <p>Прогон продолжится с выбранной свечи. Будущие события будут скрыты.</p>
+            <div className="replay-seek-actions">
+              <button type="button" className="replay-seek-yes"
+                onClick={() => {
+                  setPlaying(false);
+                  let next = 0;
+                  while (next < document.events.length &&
+                    document.events[next].time_ms <= seekStartMs) next++;
+                  setCursor(next);
+                  setSeekStartMs(null);
+                }}>Да</button>
+              <button type="button" className="replay-seek-no"
+                onClick={() => setSeekStartMs(null)}>Нет</button>
+            </div>
+          </div>
+        </div>}
         <aside className="replay-events" aria-label="Журнал событий">
           <h2>События</h2>
           {lastTimeline.length === 0 && <p>Нажмите «Пуск» или «Шаг».</p>}
