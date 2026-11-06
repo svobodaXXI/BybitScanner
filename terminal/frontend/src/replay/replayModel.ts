@@ -1254,13 +1254,23 @@ function wickTightEarlySlope(
 export function visibleEarlyGeometry(
   document: ReplayDocument, closedTimeMs: number | null,
 ): ReplayGeometryVersion[] {
-  if (document.mode !== "MARKET_ONLY" || closedTimeMs === null ||
-      visibleGeometry(document, closedTimeMs).some(line => line.kind === "MAIN_1H")) return [];
+  if (document.mode !== "MARKET_ONLY" || closedTimeMs === null) return [];
+  const latestBreak = visiblePriorBreaks(document, closedTimeMs).at(-1);
+  const confirmedMain = visibleGeometry(document, closedTimeMs).find(line => line.kind === "MAIN_1H");
+  // After the fourth pivot confirms the yellow trend, preserve the earlier
+  // M5 blue history from that movement. Do not duplicate the yellow preview.
+  const firstConfirmed = confirmedMain && (document.geometry ?? []).find(line =>
+    line.kind === "MAIN_1H" && line.side === confirmedMain.side &&
+    line.available_at_ms <= closedTimeMs &&
+    (!latestBreak || line.available_at_ms >= latestBreak.confirmed_at_ms));
+  if (confirmedMain && !firstConfirmed) return [];
+  const ceiling = firstConfirmed?.available_at_ms ?? closedTimeMs;
   const candles = document.events.filter(event =>
-    event.kind === "CANDLE_CLOSED" && event.candle && event.time_ms <= closedTimeMs,
+    event.kind === "CANDLE_CLOSED" && event.candle && event.time_ms <= ceiling &&
+    (!firstConfirmed || event.time_ms < ceiling),
   ).map(event => event.candle!);
   const hours = [...(document.context_1h ?? []), ...completeHourlyCandles(candles)]
-    .filter(bar => bar.end_ms <= closedTimeMs);
+    .filter(bar => bar.end_ms <= ceiling && (!firstConfirmed || bar.end_ms < ceiling));
   const h1Pivots: EarlyPivot[] = [];
   const seenHours: ReplayCandle[] = [];
   for (const hour of hours) {
@@ -1276,7 +1286,7 @@ export function visibleEarlyGeometry(
   const side = a.kind === "LOW" && c.price > a.price ? "BULL"
     : a.kind === "HIGH" && c.price < a.price ? "BEAR" : null;
   if (!side) return [];
-  const latestBreak = visiblePriorBreaks(document, closedTimeMs).at(-1);
+  if (confirmedMain && confirmedMain.side !== side) return [];
   if (latestBreak && (latestBreak.new_side !== side ||
       c.confirmed_at_ms <= latestBreak.confirmed_at_ms)) return [];
   const main = wickTightEarlySlope(seenHours, a, c, side,
@@ -1320,7 +1330,7 @@ export function visibleEarlyGeometry(
       if (blue) output.push(blue);
     }
   }
-  return output;
+  return confirmedMain ? output.filter(line => line.kind === "REFERENCE_5M") : output;
 }
 
 /** Reveal only geometry observations whose M5 candle has actually closed. */
