@@ -267,7 +267,9 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
     _sync_directory(journal)
 
 
-def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -> bool:
+def _record_one_shot_stop_intent(
+    journal_root: Path, target: str, *, uid: int, root: Path = REPO,
+) -> bool:
     """Durably fence STOP replay before the first irreversible owner call.
 
     This is only a stop-attempt marker, never an install entitlement. A crash
@@ -315,6 +317,10 @@ def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -
                     raise ActivationBlocked("untrusted_completed_release_transaction")
                 if _trusted_file(completed, uid) != previous.encode("ascii"):
                     raise ActivationBlocked("completed_release_receipt_mismatch")
+                continue
+            if _proven_prior_exceptional_completion(
+                journal_root, previous, root=root, uid=uid,
+            ):
                 continue
             return False
         marker = journal_root / (".stop-invoked-" + target)
@@ -381,6 +387,66 @@ def _confirmed_stop_receipt(
         raise ActivationBlocked("stop_completed_receipt_mismatch")
     return True
 
+
+
+def _proven_prior_exceptional_completion(
+    journal_root: Path, prior: str, *, root: Path, uid: int,
+) -> bool:
+    """Recognize an old STOP superseded by its *proven* exceptional handoff.
+
+    The original STOP never succeeded. A separately authorized, one-shot
+    handoff may have replaced it and installed an attested EDITOR_ONLY release.
+    In that case its old intent is history, not an outstanding STOP to replay.
+    Do not modify the original marker, synthesize receipts, or accept a live
+    backend/FLAT snapshot by itself as evidence of the handoff.
+    """
+    from tools.paper_interrupted_stop_recovery import (
+        OLD_BACKEND, PRIOR_TARGET, RecoveryBlocked, _receipt, _trusted_journal,
+    )
+    from tools.vps_gitless_release_activate import (
+        ActivationBlocked, _manifest, _trusted_file,
+    )
+    from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+
+    if prior != PRIOR_TARGET:
+        return False
+    try:
+        _trusted_journal(journal_root, uid)
+        if ((journal_root / PRIOR_TARGET).exists()
+                or (journal_root / (".stop-confirmed-" + PRIOR_TARGET)).exists()):
+            return False
+        if (_trusted_file(journal_root / (".chatops-invoked-" + PRIOR_TARGET), uid)
+                != (PRIOR_TARGET + "\n").encode("ascii")
+                or _trusted_file(journal_root / (".stop-invoked-" + PRIOR_TARGET), uid)
+                != b"STOP_INVOKED; not install authorization\\n"):
+            return False
+        installed = verify_release(root)
+        if installed in (OLD_BACKEND, PRIOR_TARGET):
+            return False
+        journal = journal_root / installed
+        if (not journal.is_dir() or journal.is_symlink()
+                or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077):
+            return False
+        old = _manifest(_trusted_file(journal / "old.json", uid))
+        successor = _manifest(_trusted_file(journal / "target.json", uid))
+        _trusted_file(journal / "units.json", uid)
+        if (old["build_sha"] != OLD_BACKEND
+                or successor["build_sha"] != installed
+                or not _receipt(journal_root, "handoff-attempt", uid, target=installed)
+                or not _receipt(journal_root, "backend-exited", uid, target=installed)
+                or not _receipt(journal_root, "handoff-proven", uid, target=installed)):
+            return False
+        # PR #855 repaired a missing editor-ready receipt on this handoff.
+        # Its absence alone must not erase the immutable handoff evidence;
+        # a present but invalid receipt is never silently accepted.
+        ready = journal / "editor-ready"
+        if (ready.exists() or ready.is_symlink()) and (
+                _trusted_file(ready, uid) != installed.encode("ascii")):
+            return False
+        return True
+    except (ActivationBlocked, RecoveryBlocked, ReleaseIdentityBlocked,
+            OSError, ValueError, TypeError, KeyError):
+        return False
 
 
 def deploy_staged_editor_only(
@@ -456,6 +522,10 @@ def deploy_staged_editor_only(
             pending = [
                 marker for marker in journal_root.glob(".stop-invoked-*")
                 if not (journal_root / marker.name.removeprefix(".stop-invoked-")).is_dir()
+                and not _proven_prior_exceptional_completion(
+                    journal_root, marker.name.removeprefix(".stop-invoked-"),
+                    root=root, uid=trusted_uid,
+                )
             ] if journal_root.is_dir() else []
             if pending:
                 if (len(pending) != 1
@@ -491,7 +561,7 @@ def deploy_staged_editor_only(
                 else:
                     action = stop
                 if not _record_one_shot_stop_intent(
-                    journal_root, target, uid=trusted_uid,
+                    journal_root, target, uid=trusted_uid, root=root,
                 ):
                     return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
                 try:
