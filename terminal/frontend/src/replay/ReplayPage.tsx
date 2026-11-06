@@ -352,6 +352,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       context.restore();
       canvas.dataset.visibleFills = String(rendered);
       canvas.dataset.visibleGeometry = String(knownLines.length);
+      canvas.dataset.visibleEarlyGeometry = String(earlyGeometry.length);
       canvas.dataset.visiblePriors = String(knownPriors.length);
       canvas.dataset.paintedPriors = String(paintedPriors);
       canvas.dataset.paintedGeometry = String(paintedGeometry);
