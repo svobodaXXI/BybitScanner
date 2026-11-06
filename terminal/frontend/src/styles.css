@@ -287,6 +287,25 @@ button {
   min-height: 28rem;
   background: var(--chart-bg);
 }
+.chart-candle-countdown {
+  position: absolute;
+  right: 0;
+  z-index: 4;
+  box-sizing: border-box;
+  height: 1.05rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.1rem;
+  background: #24313d;
+  color: #dce8f2;
+  font-size: 0.64rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
 .drawing-overlay {
   position: absolute;
   z-index: 3;
