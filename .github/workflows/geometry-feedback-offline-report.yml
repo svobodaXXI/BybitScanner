@@ -1,0 +1,25 @@
+name: Geometry Feedback offline learning report
+
+on:
+  pull_request:
+    paths:
+      - "geometry_feedback_learning_report.py"
+      - "tools/report_geometry_feedback_learning.py"
+      - "tests/test_geometry_feedback_learning_report.py"
+      - ".github/workflows/geometry-feedback-offline-report.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verified-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install targeted test dependency
+        run: python -m pip install pytest==8.4.2
+      - name: Validate feedback integrity and diagnostic report
+        run: python -m pytest -q tests/test_geometry_feedback_export.py tests/test_geometry_feedback_learning_report.py
