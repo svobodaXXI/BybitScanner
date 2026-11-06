@@ -141,6 +141,12 @@ try {
         "early H1 main must appear at its first causal three-pivot confirmation");
       assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 1,
         "early H1 main must be painted, not merely calculated");
+      assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(),
+        /показана предварительная жёлтая H1 по трём подтверждённым экстремумам/,
+        "diagnostics must describe the actually painted three-pivot provisional H1");
+      assert.match(await page.getByRole("status", { name: "Подтверждение слома приора H1" }).innerText(),
+        /Предварительная противоположная жёлтая H1-линия показана/,
+        "prior-break status must not claim no opposite H1 is painted");
       await page.getByRole("button", { name: "H1", exact: true }).click();
       await page.screenshot({ path: join(screenshotDir, "real-h1-early-main.png"), fullPage: true });
       await page.getByRole("button", { name: "M5", exact: true }).click();
@@ -149,6 +155,9 @@ try {
       await advanceTo(earlyBlueIndex + 1);
       assert.ok(Number(await overlay.getAttribute("data-visible-early-geometry")) >= 2,
         "early M5 reference must be visible before four-pivot H1 confirmation");
+      assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(),
+        /Ранних синих M5: [1-9][0-9]*\./,
+        "diagnostics must acknowledge actual early M5 blue candidates");
       await page.screenshot({ path: join(screenshotDir, "real-m5-early-reference.png"), fullPage: true });
     }
     await advanceTo(firstYellowIndex + 1);
@@ -160,6 +169,9 @@ try {
       "opposite confirmed MAIN_1H and TARGET_1H must actually render");
     assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 2,
       "real H1 yellow lines must be painted on the browser canvas");
+    assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(),
+      /полная подтверждённая часовая пара 1–3 \/ 2–4/,
+      "full four-pivot diagnostics must replace the earlier provisional wording");
     assert.match(await page.getByRole("status", { name: "Подтверждение слома приора H1" }).innerText(),
       /жёлтая H1-линия подтверждена и отображается/);
     assert.doesNotMatch(await page.getByRole("status", { name: "Приор H1" }).innerText(),
