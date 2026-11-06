@@ -848,6 +848,35 @@ export function nextClosedCandleCursor(events: readonly ReplayEvent[], cursor: n
   return index;
 }
 
+/** Manual step follows the SELECTED timeframe, not merely the underlying M5 clock.
+ * Events at a candle close belong to the same frame; incomplete H1 bars,
+ * gaps and other journal rows must never create a phantom hour.
+ */
+export function stepReplayCursor(
+  events: readonly ReplayEvent[], cursor: number, timeframe: "5m" | "1h",
+  direction: -1 | 1,
+): number {
+  const bounded = Math.max(0, Math.min(events.length, Math.floor(cursor)));
+  const closes = events.filter(event => event.kind === "CANDLE_CLOSED" && event.candle);
+  const frames = timeframe === "5m"
+    ? closes.map(event => event.time_ms)
+    : completeHourlyCandles(closes.map(event => event.candle!))
+        .map(bar => bar.end_ms);
+  const displayed = closes.filter(event => {
+    const index = events.indexOf(event);
+    return index < bounded;
+  }).at(-1)?.time_ms ?? null;
+  const displayedFrame = displayed === null ? null :
+    frames.filter(time => time <= displayed).at(-1) ?? null;
+  const destination = direction === 1
+    ? frames.find(time => time > (displayed ?? -Infinity))
+    : [...frames].reverse().find(time => time < (displayedFrame ?? Infinity));
+  if (destination === undefined) return direction === 1 ? bounded : 0;
+  let next = 0;
+  while (next < events.length && events[next].time_ms <= destination) next++;
+  return next;
+}
+
 /** The UI receives ONLY the prefix requested by the virtual-time playhead. */
 export function visibleReplay(events: readonly ReplayEvent[], cursor: number): VisibleReplay {
   const shown = events.slice(0, Math.max(0, Math.min(Math.floor(cursor), events.length)));
