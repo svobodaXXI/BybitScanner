@@ -126,7 +126,34 @@ try {
     await page.screenshot({
       path: join(screenshotDir, `real-h1-break-${i + 1}.png`), fullPage: true,
     });
+    if (i === 2) {
+      // On the real audited GRASSUSDT reversal, the LOW-HIGH-LOW H1
+      // main is confirmed at 05:00 UTC, six hours BEFORE the fourth
+      // pivot licenses the full 1-3/2-4 pair at 11:00 UTC.
+      const earlyH1Time = Date.UTC(2026, 7, 24, 5, 0);
+      const earlyH1Index = byEventTime.get(earlyH1Time);
+      assert.ok(earlyH1Index < firstYellowIndex);
+      await advanceTo(earlyH1Index);
+      assert.equal(await overlay.getAttribute("data-visible-early-geometry"), "0",
+        "no provisional main before the third H1 pivot confirms");
+      await advanceTo(earlyH1Index + 1);
+      assert.ok(Number(await overlay.getAttribute("data-visible-early-geometry")) >= 1,
+        "early H1 main must appear at its first causal three-pivot confirmation");
+      assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 1,
+        "early H1 main must be painted, not merely calculated");
+      await page.getByRole("button", { name: "H1", exact: true }).click();
+      await page.screenshot({ path: join(screenshotDir, "real-h1-early-main.png"), fullPage: true });
+      await page.getByRole("button", { name: "M5", exact: true }).click();
+      const earlyBlueIndex = byEventTime.get(Date.UTC(2026, 7, 24, 7, 5));
+      assert.ok(earlyBlueIndex > earlyH1Index && earlyBlueIndex < firstYellowIndex);
+      await advanceTo(earlyBlueIndex + 1);
+      assert.ok(Number(await overlay.getAttribute("data-visible-early-geometry")) >= 2,
+        "early M5 reference must be visible before four-pivot H1 confirmation");
+      await page.screenshot({ path: join(screenshotDir, "real-m5-early-reference.png"), fullPage: true });
+    }
     await advanceTo(firstYellowIndex + 1);
+    assert.equal(await overlay.getAttribute("data-visible-early-geometry"), "0",
+      "fully confirmed H1 replaces, never duplicates, early research overlays");
     assert.ok(Number(await overlay.getAttribute("data-visible-geometry")) >= 2,
       "opposite confirmed MAIN_1H and TARGET_1H must actually render");
     assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 2,
