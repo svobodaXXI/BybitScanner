@@ -243,7 +243,9 @@ def wick_tight_hourly_trend(
     if not (width2 > width4 > 0):
         return None
     return TrendCandidate(
-        side, main, target, (a, b, main.second, target.second),
+        # Preserve the four CONFIRMED structural pivots. The wick-tight
+        # drawing endpoints are fitting anchors, not newly confirmed swings.
+        side, main, target, (a, b, c, d),
         proposal.available_at_ms,
     )
 
@@ -314,6 +316,45 @@ def last_correction_reference(
     return line
 
 
+def last_acceleration_boundary(
+    *,
+    hourly: TrendCandidate | None,
+    five_minute_pivots: tuple[ConfirmedPivot, ...],
+    five_minute_bars: tuple[Candle, ...],
+) -> CausalLine | None:
+    """Research-only last M5 impulse boundary near the *known* H1 target.
+
+    Shared four-pivot structural gate; unlike the blue correction, this local
+    leg runs WITH the H1 trend. With no approved 'near' tolerance, publish
+    only an exact target TOUCH/cross at confirmed point 4. No entry or STOP.
+    """
+    if hourly is None or len(five_minute_pivots) < 4:
+        return None
+    pivots = five_minute_pivots[-4:]
+    if confirmed_four_pivot_side(pivots) != hourly.side:
+        return None
+    first, _, third, fourth = pivots
+    if hourly.available_at_ms > first.at_ms:
+        return None  # the H1 target was not established at this movement's start
+    target_at_fourth = hourly.target.value_at(fourth.at_ms)
+    if ((hourly.side == "BULL" and fourth.price < target_at_fourth) or
+            (hourly.side == "BEAR" and fourth.price > target_at_fourth)):
+        return None
+    known_at = max(hourly.available_at_ms, fourth.confirmed_at_ms)
+    fitted = wick_tight_hourly_line(
+        first, third, five_minute_bars,
+        boundary="LOWER" if hourly.side == "BULL" else "UPPER",
+        available_at_ms=known_at,
+    )
+    if fitted is None:
+        return None
+    rising = fitted.second.price > fitted.first.price
+    falling = fitted.second.price < fitted.first.price
+    if not (rising if hourly.side == "BULL" else falling):
+        return None
+    return fitted
+
+
 def main_line_contact(trend: TrendCandidate | None, bar: Candle) -> Decimal | None:
     """Closed-bar OHLC test of an ALREADY KNOWN hourly 1--3 line.
 
@@ -375,6 +416,23 @@ class CausalGeometryFeed:
         self._active_blue_correction_extreme: Decimal | None = None
         self._active_blue_checked_q_ms: int | None = None
         self._blue_broken_at_ms: int | None = None
+        self._active_blue_source_pivots: tuple[ConfirmedPivot, ...] | None = None
+        self._last_acceleration: CausalLine | None = None
+        self._last_acceleration_pivots: tuple[ConfirmedPivot, ...] | None = None
+        self._last_acceleration_h1_origin: int | None = None
+        self._last_acceleration_checked_at: int | None = None
+
+    @property
+    def confirmed_blue_source_pivots(self) -> tuple[ConfirmedPivot, ...] | None:
+        return self._active_blue_source_pivots
+
+    @property
+    def confirmed_last_acceleration(self) -> CausalLine | None:
+        return self._last_acceleration
+
+    @property
+    def confirmed_last_acceleration_pivots(self) -> tuple[ConfirmedPivot, ...] | None:
+        return self._last_acceleration_pivots
 
     @property
     def confirmed_hourly_prior(self) -> Decimal | None:
@@ -554,6 +612,7 @@ class CausalGeometryFeed:
                 self._active_blue_hourly_first_ms != origin)):
             self._active_blue = None
             self._active_blue_hourly_first_ms = None
+            self._active_blue_source_pivots = None
             self._active_blue_correction_extreme = None
             self._active_blue_checked_q_ms = None
         if self._active_blue is not None and trend is not None:
@@ -569,6 +628,7 @@ class CausalGeometryFeed:
             ):
                 self._active_blue = None
                 self._active_blue_hourly_first_ms = None
+                self._active_blue_source_pivots = None
                 self._active_blue_correction_extreme = None
                 self._active_blue_checked_q_ms = None
                 self._blue_broken_at_ms = five_minute.end_ms
@@ -597,6 +657,7 @@ class CausalGeometryFeed:
                         candidate.first, candidate.second, available,
                     )
                     self._active_blue_hourly_first_ms = origin
+                    self._active_blue_source_pivots = (first, middle, third, fourth)
                     # Point 4 is already the newest confirmed correction
                     # extreme; a later refit requires a genuinely NEW low/high.
                     self._active_blue_correction_extreme = fourth.price
@@ -634,7 +695,30 @@ class CausalGeometryFeed:
                         if (revised.first != self._active_blue.first or
                             revised.second != self._active_blue.second):
                             self._active_blue = revised
+        # Independent dashed last-acceleration geometry. This describes an
+        # H1-directional M5 leg only when point 4 touches the known H1
+        # target. No trade mode or countertrend trigger is activated here.
+        if trend is None or self._last_acceleration_h1_origin != origin:
+            self._last_acceleration = None
+            self._last_acceleration_pivots = None
+            self._last_acceleration_h1_origin = origin
+            self._last_acceleration_checked_at = None
+        recent_accel = self._five.recent_pivots
+        if trend is not None and len(recent_accel) == 4:
+            last_known = recent_accel[-1].confirmed_at_ms
+            if self._last_acceleration_checked_at != last_known:
+                self._last_acceleration_checked_at = last_known
+                candidate = last_acceleration_boundary(
+                    hourly=trend, five_minute_pivots=recent_accel,
+                    five_minute_bars=self._five.bars,
+                )
+                if candidate is not None:
+                    self._last_acceleration = candidate
+                    self._last_acceleration_pivots = recent_accel
         line = self._active_blue
+        if (self._last_acceleration is not None and
+                self._last_acceleration.available_at_ms > five_minute.end_ms):
+            raise AssertionError("future M5 acceleration exposed")
         if line is not None and line.available_at_ms > five_minute.end_ms:
             raise AssertionError("future correction slope exposed")
         if trend is not None and trend.available_at_ms > five_minute.end_ms:
