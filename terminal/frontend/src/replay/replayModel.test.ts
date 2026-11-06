@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("derives only completed hourly OHLCV from contiguous 5m Bybit candles", () => {
@@ -56,6 +56,40 @@ describe("standalone SIMULATION viewer contract", () => {
     // a stored/backdated trade or a future-side-effects journal action.
     expect(visibleEarlyGeometry(document, null)).toEqual([]);
     expect(visibleGeometry(document, candle.end_ms)).toEqual([]);
+
+    // A subsequent confirmed four-pivot revision must NOT erase the early
+    // slope from the chart. Rewind before publication must hide it again.
+    const later = {
+      start_ms: candle.end_ms, end_ms: candle.end_ms + m5,
+      open: 112, high: 115, low: 110, close: 114, volume: 1,
+    };
+    const revised: ReplayDocument = {
+      ...document,
+      events: [...document.events, {
+        source: "SIMULATION", simulation_run_id: "early_h1",
+        kind: "CANDLE_CLOSED", sequence: 2, time_ms: later.end_ms,
+        candle: later,
+      }],
+      geometry: [{
+        kind: "MAIN_1H", side: "BULL", from_ms: start + 2 * hour,
+        to_ms: start + 8 * hour, from_price: 90, to_price: 100,
+        trend_version: later.end_ms, available_at_ms: later.end_ms,
+        classification: "UNVALIDATED_GEOMETRY_ONLY",
+      }],
+    };
+    const history = earlyGeometryTimeline(revised);
+    expect(history).toHaveLength(1);
+    expect(visibleEarlyGeometryTimeline(history, null)).toEqual([]);
+    expect(visibleEarlyGeometryTimeline(history, candle.end_ms)).toHaveLength(1);
+    expect(visibleEarlyGeometryTimeline(history, later.end_ms)).toHaveLength(1);
+    expect(visibleEarlyGeometryTimeline(history, later.end_ms)[0]).toMatchObject({
+      from_ms: early[0].from_ms, from_price: early[0].from_price,
+      to_ms: early[0].to_ms, to_price: early[0].to_price,
+    });
+    expect(visibleEarlyGeometryTimeline(history, candle.end_ms - 1)).toEqual([]);
+    expect(visibleEarlyGeometryTimeline(history, later.end_ms)).toEqual(
+      visibleEarlyGeometryTimeline(history, later.end_ms),
+    );
   });
 
   it("retains distinct official trade-derived provenance for real archive replay", () => {
