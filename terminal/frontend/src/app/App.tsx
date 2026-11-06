@@ -1288,6 +1288,7 @@ export function App() {
           key={mode === "EDITOR" && frozenSignal ? `frozen:${frozenSignal.signalId}:${frozenSignal.savedReviewId ?? "initial"}` : `${market.book.symbol}:${timeframe}:${mode}`}
           candles={mode === "EDITOR" && frozenSignal ? frozenSignal.candles : market.candles}
           editorMode={mode === "EDITOR"}
+          onEditorNavigate={setMode}
           referenceDrawings={mode === "EDITOR" ? frozenSignal?.referenceDrawings ?? [] : []}
           editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
           signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
