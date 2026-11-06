@@ -14,6 +14,7 @@ import {
   loadOpenPositions,
   loadRuntimeHealth,
   type PositionProtection,
+  type RuntimeHealth,
   summarizeDay,
   uniqueOpenEpisodeId,
 } from "../autopilot/autopilotFirstScreenData";
