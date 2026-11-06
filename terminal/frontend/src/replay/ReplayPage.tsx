@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  completeHourlyCandles, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -575,10 +575,10 @@ export function ReplayPage() {
   useEffect(() => {
     if (!playing) return;
     const timer = window.setInterval(() => {
-      setCursor((current) => Math.min(total, current + 1));
+      setCursor((current) => nextClosedCandleCursor(document.events, current));
     }, Math.max(16, Math.floor(1000 / rate)));
     return () => window.clearInterval(timer);
-  }, [playing, rate, total]);
+  }, [playing, rate, document.events]);
 
   useEffect(() => {
     if (cursor >= total) setPlaying(false);
@@ -807,19 +807,10 @@ export function ReplayPage() {
         }} disabled={shown.candles.length === 0}>◀ Шаг назад</button>
         <button type="button" onClick={() => {
           setPlaying(false);
-          setCursor((current) => {
-            const events = document.events;
-            const nextClose = events.findIndex((event, index) => index >= current && event.kind === "CANDLE_CLOSED");
-            if (nextClose < 0) return total;
-            const closeTime = events[nextClose].time_ms;
-            let next = nextClose + 1;
-            // All same-time trade actions belong to this candle step.
-            while (next < total && events[next].time_ms === closeTime) next++;
-            return next;
-          });
+          setCursor((current) => nextClosedCandleCursor(document.events, current));
         }} disabled={cursor >= total}>Шаг вперёд ▶</button>
         <button type="button" onClick={() => { setPlaying(false); setCursor(0); }}>В начало</button>
-        <label className="replay-rate">Скорость {rate} событий/с
+        <label className="replay-rate">Скорость {rate} свечей/с
           <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
         </label>
             </div>
