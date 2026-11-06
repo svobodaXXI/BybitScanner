@@ -1351,6 +1351,52 @@ export function visibleEarlyGeometry(
   return confirmedMain ? output.filter(line => line.kind === "REFERENCE_5M") : output;
 }
 
+/**
+ * Frozen visual timeline of early (three-pivot) yellow/blue candidates.
+ *
+ * The live preview is intentionally recomputed from the current prefix and
+ * may disappear when a fourth pivot confirms a different slope. Record each
+ * FIRST publicly visible version instead, without changing strategy inputs.
+ * A later revision is another historical object, not a relocation of the old
+ * one. Retirement is stored separately and is masked until its own M5 close.
+ *
+ * Run once per imported local document (not once per animation frame).
+ * This is an optional visual index, not a source of trading signals.
+ */
+export function earlyGeometryTimeline(document: ReplayDocument): ReplayGeometryVersion[] {
+  if (document.mode !== "MARKET_ONLY") return [];
+  const versions = new Map<string, ReplayGeometryVersion>();
+  for (const event of document.events) {
+    if (event.kind !== "CANDLE_CLOSED") continue;
+    for (const line of visibleEarlyGeometry(document, event.time_ms)) {
+      const key = [
+        line.kind, line.side, line.from_ms, line.to_ms,
+        line.from_price, line.to_price, line.available_at_ms,
+      ].join(":");
+      const existing = versions.get(key);
+      if (!existing) {
+        versions.set(key, {
+          ...line,
+          available_at_ms: Math.max(line.available_at_ms, event.time_ms),
+        });
+      } else if (line.retired_at_ms !== undefined) {
+        existing.retired_at_ms = line.retired_at_ms;
+      }
+    }
+  }
+  return [...versions.values()].sort((a, b) =>
+    a.available_at_ms - b.available_at_ms || a.from_ms - b.from_ms);
+}
+
+export function visibleEarlyGeometryTimeline(
+  timeline: readonly ReplayGeometryVersion[], closedTimeMs: number | null,
+): ReplayGeometryVersion[] {
+  if (closedTimeMs === null) return [];
+  return timeline.filter(line => line.available_at_ms <= closedTimeMs).map(line =>
+    line.retired_at_ms !== undefined && line.retired_at_ms > closedTimeMs
+      ? { ...line, retired_at_ms: undefined } : line);
+}
+
 /** Reveal only geometry observations whose M5 candle has actually closed. */
 export function visibleObservations(
   document: ReplayDocument, closedTimeMs: number | null,

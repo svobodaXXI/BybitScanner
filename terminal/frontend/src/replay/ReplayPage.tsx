@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -37,7 +37,7 @@ const REPLAY_DRAWING_TOOLS: Array<{ tool: DrawingTool; label: string }> = [
   { tool: "ruler", label: "Линейка" },
   { tool: "rectangle", label: "Прямоугольник" },
 ];
-const REPLAY_TOOL_PATHS: Record<DrawingTool | "delete", string> = {
+const REPLAY_TOOL_PATHS: Record<DrawingTool | "delete" | "undo", string> = {
   crosshair: "M12 2v20M2 12h20M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6",
   select: "M4 3l5 17 3.4-6.6L19 10z",
   trend: "M4 20L20 4M4 17v3h3M17 4h3v3",
@@ -49,8 +49,9 @@ const REPLAY_TOOL_PATHS: Record<DrawingTool | "delete", string> = {
   ruler: "M4 19L19 4l2 2L6 21zM10 14l-2-2M13 11l-2-2M16 8l-2-2",
   rectangle: "M4 5h16v14H4zM4 9v2M20 13v2",
   delete: "M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 10v7M14 10v7",
+  undo: "M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-2",
 };
-function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" }) {
+function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" | "undo" }) {
   return <svg className="replay-tool-icon" viewBox="0 0 24 24"
     data-tool-icon={tool} aria-hidden="true" focusable="false">
     <path d={REPLAY_TOOL_PATHS[tool]} />
@@ -75,9 +76,12 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const displayCandles = useMemo(() => timeframe === "1h"
     ? completeHourlyCandles(shown.candles) : shown.candles, [shown.candles, timeframe]);
+  // Build a frozen visual-only record once per archive. Each already
+  // revealed provisional line persists as drawn; rewinding masks its future.
+  const earlyTimeline = useMemo(() => earlyGeometryTimeline(document), [document]);
   const earlyGeometry = useMemo(
-    () => visibleEarlyGeometry(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
+    () => visibleEarlyGeometryTimeline(earlyTimeline, shown.lastTimeMs),
+    [earlyTimeline, shown.lastTimeMs],
   );
   const observedDmi = useMemo(() => visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
   // Only the final 5m DMI reading of each completed H1 is plotted on the H1 axis.
@@ -225,9 +229,13 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       // Never refit the line to the replayed price candles.
       const knownLines = visibleGeometry(document, shown.lastTimeMs);
       const historicalLines = visibleGeometryHistory(document, shown.lastTimeMs);
-      // Three-pivot wick guides are visual research previews, not confirmed
-      // four-pivot H1 trends. They never mutate archived trading/geometry.
-      const drawableLines = [...historicalLines, ...earlyGeometry];
+      // Both published and provisional history are immutable visual records:
+      // a replaced slope cannot erase, relocate or backdate its predecessor.
+      // Avoid double-painting an early guide with identical confirmed anchors.
+      const confirmedKeys = new Set(historicalLines.map(line =>
+        [line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":")));
+      const drawableLines = [...historicalLines, ...earlyGeometry.filter(line =>
+        !confirmedKeys.has([line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":")))];
       const knownPriors = visiblePriorLevels(document, shown.lastTimeMs);
       const brokenByVersion = new Map(priorBreaks.map(item => [item.trend_version, item]));
       let paintedGeometry = 0;
@@ -823,6 +831,14 @@ export function ReplayPage() {
                 <ReplayToolIcon tool={tool} />
               </button>
             ))}
+            <button type="button" disabled={drawings.length === 0}
+              onClick={() => {
+                setPlaying(false);
+                setDrawings(current => current.slice(0, -1));
+                setSelectedDrawing(null);
+              }} title="Отменить последнюю фигуру" aria-label="Отменить последнюю фигуру">
+              <ReplayToolIcon tool="undo" />
+            </button>
             <button type="button" disabled={!selectedDrawing}
               onClick={() => {
                 setDrawings(current => current.filter(d => d.id !== selectedDrawing));
