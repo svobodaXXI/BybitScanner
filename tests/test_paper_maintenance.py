@@ -2390,3 +2390,87 @@ def test_exceptional_gitless_receipt_reuses_original_protected_handoff(
     assert not ready.exists()
 
 
+def test_historical_legacy_stop_remains_proven_across_release_upgrade(
+    monkeypatch, tmp_path,
+):
+    from tools import paper_maintenance as m
+    import tools.paper_interrupted_stop_recovery as legacy
+    import tools.vps_release_identity as release
+
+    root, _, transactions, _, installed = _proven_exceptional_prior_stop(
+        monkeypatch, tmp_path,
+    )
+    m._complete_stop_intent(transactions, installed, uid=os.geteuid())
+    assert (transactions / installed / "editor-ready").read_bytes() == installed.encode()
+    monkeypatch.setattr(release, "verify_release", lambda *_: "a" * 40)
+    assert m._proven_prior_exceptional_completion(
+        transactions, legacy.PRIOR_TARGET, root=root, uid=os.geteuid(),
+    )
+
+
+def test_new_handoff_ready_receipt_seals_original_stop_without_replay(
+    monkeypatch, tmp_path,
+):
+    import json
+    from tools import paper_maintenance as m
+    import tools.paper_stopped_approved_recovery as partial
+    import tools.paper_interrupted_stop_recovery as legacy
+    import tools.vps_release_identity as release
+    from tools.vps_gitless_release_activate import ActivationBlocked
+
+    root, _, transactions, _, old = _proven_exceptional_prior_stop(
+        monkeypatch, tmp_path,
+    )
+    uid = os.geteuid()
+    m._complete_stop_intent(transactions, old, uid=uid)
+    target = "a" * 40
+    journal = transactions / target
+    journal.mkdir(mode=0o700)
+    blobs = {
+        "terminal/runtime/paper_http_server.py": "c" * 40,
+        "tools/vps_release_identity.py": "d" * 40,
+    }
+    for name, sha in (("old.json", old), ("target.json", target)):
+        path = journal / name
+        path.write_text(json.dumps({"build_sha": sha, "blobs": blobs}))
+        path.chmod(0o600)
+    units = journal / "units.json"
+    units.write_text("{}")
+    units.chmod(0o600)
+    marker = transactions / (".stop-invoked-" + partial.PRIOR_TARGET)
+    marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    marker.chmod(0o600)
+    for phase in ("handoff-attempt", "backend-exited", "handoff-proven"):
+        receipt = transactions / (
+            partial.MARKER_PREFIX + phase + "-" + partial.PRIOR_TARGET
+        )
+        receipt.write_text(target + "\n")
+        receipt.chmod(0o600)
+
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    assert not m._proven_prior_exceptional_completion(
+        transactions, partial.PRIOR_TARGET, root=root, uid=uid,
+    )
+    m._complete_stop_intent(transactions, target, uid=uid)
+    assert (journal / "editor-ready").read_bytes() == target.encode()
+    for prior in (legacy.PRIOR_TARGET, partial.PRIOR_TARGET):
+        assert m._proven_prior_exceptional_completion(
+            transactions, prior, root=root, uid=uid,
+        )
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    for prior in (legacy.PRIOR_TARGET, partial.PRIOR_TARGET):
+        assert m._proven_prior_exceptional_completion(
+            transactions, prior, root=root, uid=uid,
+        )
+    # A tampered receipt cannot be accepted, even with the correct SHA.
+    (journal / "editor-ready").unlink()
+    exited = transactions / (
+        partial.MARKER_PREFIX + "backend-exited-" + partial.PRIOR_TARGET
+    )
+    exited.unlink()
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    assert not m._proven_prior_exceptional_completion(
+        transactions, partial.PRIOR_TARGET, root=root, uid=uid,
+    )
+    with pytest.raises(ActivationBlocked, match="exceptional_editor_receipt_proof_unproven"):
+        m._complete_stop_intent(transactions, target, uid=uid)
