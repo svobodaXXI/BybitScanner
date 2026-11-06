@@ -12,6 +12,7 @@ import gzip
 import hashlib
 import io
 import json
+from pathlib import Path
 from bisect import bisect_right
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -392,7 +393,8 @@ def retrospective_first_touch_study(bars, previews, dmi_points):
 
 
 def check(*, start: str = START, end: str = END,
-          require_complete_reversal: bool = False) -> dict[str, object]:
+          require_complete_reversal: bool = False,
+          output_json: str | None = None) -> dict[str, object]:
     start_date = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     end_date = datetime.strptime(end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     if end_date - start_date != timedelta(days=7) or end_date > datetime.now(timezone.utc):
@@ -459,6 +461,16 @@ def check(*, start: str = START, end: str = END,
             "no complete REAL H1 sequence: frozen prior -> close/next OPEN -> "
             "opposite confirmed 1--3/2--4 line before the next break"
         )
+    if output_json is not None:
+        if not require_complete_reversal:
+            raise ValueError("only independently verified complete reversals may be exported")
+        # Explicitly separate public trade-derived provenance from direct API
+        # klines. This immutable MARKET_ONLY JSON is only a temporary CI
+        # artifact for a browser proof, never an account/Robot execution.
+        Path(output_json).write_text(
+            json.dumps(doc, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            + "\n", encoding="utf-8",
+        )
     # Hash the actual returned closed OHLCV bars, not mock fixtures or rendered pixels.
     canonical = json.dumps(bars, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     summary = {
@@ -503,8 +515,11 @@ if __name__ == "__main__":
     parser.add_argument("--end", default=END, help="UTC date exclusive, seven days later")
     parser.add_argument("--require-complete-reversal", action="store_true",
                         help="fail if no validated H1 close/OPEN/opposite-line sequence")
+    parser.add_argument("--output-json", default=None,
+                        help="verified MARKET_ONLY research artifact, no trades")
     args = parser.parse_args()
     print(json.dumps(check(
         start=args.start, end=args.end,
         require_complete_reversal=args.require_complete_reversal,
+        output_json=args.output_json,
     ), ensure_ascii=False, sort_keys=True))
