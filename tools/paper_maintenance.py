@@ -867,15 +867,18 @@ def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool | 
             for cid, symbol, _, approved in candidates:
                 if (conn.execute(
                     "SELECT 1 FROM executions WHERE trading_account_id='paper' "
-                    "AND symbol=? AND exchange_timestamp_ms>=? LIMIT 1",
+                    "AND symbol=? AND (exchange_timestamp_ms IS NULL "
+                    "OR exchange_timestamp_ms>=?) LIMIT 1",
                     (symbol, approved),
                 ).fetchone() is not None or conn.execute(
                     "SELECT 1 FROM paper_limit_orders WHERE trading_account_id='paper' "
-                    "AND symbol=? AND created_at_ms>=? LIMIT 1",
+                    "AND symbol=? AND (created_at_ms IS NULL "
+                    "OR created_at_ms>=?) LIMIT 1",
                     (symbol, approved),
                 ).fetchone() is not None or conn.execute(
                     "SELECT 1 FROM trading_commands WHERE trading_account_id='paper' "
-                    "AND symbol=? AND created_at_ms>=? LIMIT 1",
+                    "AND symbol=? AND (created_at_ms IS NULL "
+                    "OR created_at_ms>=?) LIMIT 1",
                     (symbol, approved),
                 ).fetchone() is not None or conn.execute(
                     "SELECT 1 FROM robot_trades WHERE trading_account_id='paper' "
