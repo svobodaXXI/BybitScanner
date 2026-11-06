@@ -71,24 +71,6 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
     () => visiblePriorBreaks(document, shown.lastTimeMs),
     [document, shown.lastTimeMs],
   );
-  const latestPriorBreak = priorBreaks.at(-1);
-  const activeMain = useMemo(
-    () => visibleGeometry(document, shown.lastTimeMs).find(line => line.kind === "MAIN_1H"),
-    [document, shown.lastTimeMs],
-  );
-  const latestPrior = useMemo(
-    () => visiblePriorLevels(document, shown.lastTimeMs).at(-1),
-    [document, shown.lastTimeMs],
-  );
-  const oppositeMainConfirmed = latestPriorBreak !== undefined &&
-    activeMain?.side === latestPriorBreak.new_side &&
-    activeMain.available_at_ms >= latestPriorBreak.confirmed_at_ms;
-  const priorAlreadyBroken = latestPrior !== undefined && priorBreaks.some(event =>
-    event.previous_side === latestPrior.side &&
-    event.prior_at_ms === latestPrior.at_ms &&
-    event.prior_price === latestPrior.price &&
-    event.trend_version === latestPrior.trend_version
-  );
   const latestDmi = observedDmi.at(-1);
   const dmiValue = (value: number | null | undefined) => value == null ? "—" : value.toFixed(1);
 
@@ -452,6 +434,24 @@ export function ReplayPage() {
   const priorBreaks = useMemo(
     () => visiblePriorBreaks(document, shown.lastTimeMs),
     [document, shown.lastTimeMs],
+  );
+  const latestPriorBreak = priorBreaks.at(-1);
+  const activeMain = useMemo(
+    () => visibleGeometry(document, shown.lastTimeMs).find(line => line.kind === "MAIN_1H"),
+    [document, shown.lastTimeMs],
+  );
+  const latestPrior = useMemo(
+    () => visiblePriorLevels(document, shown.lastTimeMs).at(-1),
+    [document, shown.lastTimeMs],
+  );
+  const oppositeMainConfirmed = latestPriorBreak !== undefined &&
+    activeMain?.side === latestPriorBreak.new_side &&
+    activeMain.available_at_ms >= latestPriorBreak.confirmed_at_ms;
+  const priorAlreadyBroken = latestPrior !== undefined && priorBreaks.some(event =>
+    event.previous_side === latestPrior.side &&
+    event.prior_at_ms === latestPrior.at_ms &&
+    event.prior_price === latestPrior.price &&
+    event.trend_version === latestPrior.trend_version
   );
   const recentEvents = document.events.slice(Math.max(0, cursor - 8), cursor);
   const recentFromMs = recentEvents[0]?.time_ms ?? Infinity;
