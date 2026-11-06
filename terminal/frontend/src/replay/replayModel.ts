@@ -1253,7 +1253,7 @@ function wickTightEarlySlope(
 /** A visibly earlier H1 yellow + M5 blue, explicitly NOT a fully confirmed 4-pivot trend. */
 export function visibleEarlyGeometry(
   document: ReplayDocument, closedTimeMs: number | null,
-): ReplayGeometry[] {
+): ReplayGeometryVersion[] {
   if (document.mode !== "MARKET_ONLY" || closedTimeMs === null ||
       visibleGeometry(document, closedTimeMs).some(line => line.kind === "MAIN_1H")) return [];
   const candles = document.events.filter(event =>
@@ -1284,10 +1284,10 @@ export function visibleEarlyGeometry(
   if (!main) return [];
   // The initial yellow is published as soon as two comparable CLOSED H1 wicks
   // are confirmed; the TARGET_1H still waits for the fourth pivot.
-  const output: ReplayGeometry[] = [main];
+  const output: ReplayGeometryVersion[] = [main];
   const m5Pivots: EarlyPivot[] = [];
   const seenM5: ReplayCandle[] = [];
-  let blue: ReplayGeometry | null = null;
+  let blue: ReplayGeometryVersion | null = null;
   let brokenAt = -1;
   for (const bar of candles) {
     if (seenM5.length && seenM5.at(-1)!.end_ms !== bar.start_ms) {
@@ -1303,6 +1303,7 @@ export function visibleEarlyGeometry(
       const slope = (blue.to_price - blue.from_price) / (blue.to_ms - blue.from_ms);
       const value = blue.from_price + slope * (bar.start_ms - blue.from_ms);
       if (side === "BULL" ? bar.open > value : bar.open < value) {
+        blue.retired_at_ms = bar.end_ms;
         blue = null;
         brokenAt = bar.end_ms;
       }
@@ -1316,9 +1317,9 @@ export function visibleEarlyGeometry(
             q.kind === "LOW" && q.price > p.price))) {
       blue = wickTightEarlySlope(seenM5, p, q, side,
         Math.max(main.available_at_ms, q.confirmed_at_ms), "REFERENCE_5M");
+      if (blue) output.push(blue);
     }
   }
-  if (blue) output.push(blue);
   return output;
 }
 
