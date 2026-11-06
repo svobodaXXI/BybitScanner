@@ -868,9 +868,10 @@ export function stepReplayCursor(
   }).at(-1)?.time_ms ?? null;
   const displayedFrame = displayed === null ? null :
     frames.filter(time => time <= displayed).at(-1) ?? null;
+  if (direction === -1 && displayedFrame === null) return 0;
   const destination = direction === 1
     ? frames.find(time => time > (displayed ?? -Infinity))
-    : [...frames].reverse().find(time => time < (displayedFrame ?? Infinity));
+    : [...frames].reverse().find(time => time < displayedFrame!);
   if (destination === undefined) return direction === 1 ? bounded : 0;
   let next = 0;
   while (next < events.length && events[next].time_ms <= destination) next++;
