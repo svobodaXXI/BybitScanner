@@ -1163,32 +1163,6 @@ export function ModePanel({
             </div>
           ) : null}
 
-          {openPositionsVisible && accountWorkspaceProjection?.provider === "PAPER" ? (
-            <OpenPositionsOverlay
-              activeSymbol={symbol}
-              onClose={() => setOpenPositionsVisible(false)}
-              onNavigate={(nextSymbol) => {
-                setOpenPositionsVisible(false);
-                onWorkspaceSymbolSelect?.(nextSymbol);
-              }}
-              runPaperMutation={runPaperMutation}
-              applyPaperState={applyPaperState}
-            />
-          ) : null}
-          {openPositionsVisible && accountWorkspaceProjection?.provider !== "PAPER" ? (
-            <LiveAccountInventory
-              activeAccountName={activeAccountLabel && activeAccountLabel.id === accountWorkspaceProjection?.account_id
-                ? activeAccountLabel.name : ""}
-              activeSymbol={symbol}
-              onClose={() => setOpenPositionsVisible(false)}
-              onNavigate={(nextSymbol) => {
-                setOpenPositionsVisible(false);
-                onWorkspaceSymbolSelect?.(nextSymbol);
-              }}
-              projection={accountWorkspaceProjection}
-            />
-          ) : null}
-
           {diaryVisible ? (
             <DiaryOverlay
               accountKey={`${accountWorkspaceProjection?.account_id ?? "unknown"}:${accountWorkspaceProjection?.session_generation ?? 0}`}
@@ -1351,6 +1325,32 @@ export function ModePanel({
         </div>
         </>
       ) : null}
+          {openPositionsVisible && accountWorkspaceProjection?.provider === "PAPER" ? (
+            <OpenPositionsOverlay
+              activeSymbol={symbol}
+              onClose={() => setOpenPositionsVisible(false)}
+              onNavigate={(nextSymbol) => {
+                setOpenPositionsVisible(false);
+                onWorkspaceSymbolSelect?.(nextSymbol);
+              }}
+              runPaperMutation={runPaperMutation}
+              applyPaperState={applyPaperState}
+            />
+          ) : null}
+          {openPositionsVisible && accountWorkspaceProjection?.provider !== "PAPER" ? (
+            <LiveAccountInventory
+              activeAccountName={activeAccountLabel && activeAccountLabel.id === accountWorkspaceProjection?.account_id
+                ? activeAccountLabel.name : ""}
+              activeSymbol={symbol}
+              onClose={() => setOpenPositionsVisible(false)}
+              onNavigate={(nextSymbol) => {
+                setOpenPositionsVisible(false);
+                onWorkspaceSymbolSelect?.(nextSymbol);
+              }}
+              projection={accountWorkspaceProjection}
+            />
+          ) : null}
+
     </section>
   );
 }
