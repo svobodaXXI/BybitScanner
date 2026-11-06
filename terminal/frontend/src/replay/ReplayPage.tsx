@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  completeHourlyCandles, nextClosedCandleCursor, timeframeStepCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -802,20 +802,11 @@ export function ReplayPage() {
         </button>
         <button type="button" onClick={() => {
           setPlaying(false);
-          setCursor((current) => {
-            const events = document.events;
-            // Rewind one complete candle step, not just one trade/event row.
-            const closed = events.slice(0, current).filter(event => event.kind === "CANDLE_CLOSED");
-            if (closed.length <= 1) return 0;
-            const previousClose = closed[closed.length - 2].time_ms;
-            let next = 0;
-            while (next < events.length && events[next].time_ms <= previousClose) next++;
-            return next;
-          });
+          setCursor((current) => timeframeStepCursor(document.events, current, timeframe, "back"));
         }} disabled={shown.candles.length === 0}>◀ Шаг назад</button>
         <button type="button" onClick={() => {
           setPlaying(false);
-          setCursor((current) => nextClosedCandleCursor(document.events, current));
+          setCursor((current) => timeframeStepCursor(document.events, current, timeframe, "forward"));
         }} disabled={cursor >= total}>Шаг вперёд ▶</button>
         <button type="button" onClick={() => { setPlaying(false); setCursor(0); }}>В начало</button>
         <label className="replay-rate">Скорость {rate} свечей/с
