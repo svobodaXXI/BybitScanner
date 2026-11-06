@@ -270,7 +270,6 @@ export function ChartPanel({
       return null;
     }
   }, [editorMode, signalIdentity, referenceDrawings, drawings, candles]);
-  const [correctionExportStatus, setCorrectionExportStatus] = useState("");
   const [reviewLabel, setReviewLabel] = useState<GeometryReviewDraft["label"]>(
     savedReviewLabel ?? "GEOMETRY_CORRECTED",
   );
@@ -341,27 +340,6 @@ export function ChartPanel({
       setReviewPending(false);
     }
   };
-  const copyCorrectionDraft = async () => {
-    if (!editorMode || !signalIdentity) return;
-    try {
-      if (!snapshotRevision || !barsSha256) throw new Error("Исходный снимок недоступен");
-      // Export the same canonical source IDs and frozen timestamp anchors as
-      // the validated feedback submission, never "editable:*" drawing IDs.
-      const draft = buildEditorGeometryReview({
-        signalId: signalIdentity, snapshotRevision, barsSha256,
-        label: "GEOMETRY_CORRECTED", frozenCandles: candles,
-        referenceDrawings, editableDrawings: drawings,
-      });
-      await navigator.clipboard.writeText(JSON.stringify({
-        ...draft,
-        status: "DRAFT_ONLY",
-      }, null, 2));
-      setCorrectionExportStatus("Черновик коррекции скопирован. Scanner не обучен автоматически.");
-    } catch {
-      setCorrectionExportStatus("Не удалось скопировать черновик. Проверьте линии и доступ к буферу обмена.");
-    }
-  };
-
   const commit = useCallback((next: DrawingObject[]) => {
     historyRef.current.commit(next);
     setDrawings(next);
@@ -914,9 +892,6 @@ export function ChartPanel({
         {editorMode && signalIdentity && (
           <div className="editor-correction-export">
             <div className="editor-review-topline">
-              <button type="button" onClick={() => void copyCorrectionDraft()}>
-                Скопировать исправленную геометрию
-              </button>
               <nav className="editor-workspace-shortcuts" aria-label="Переход между вкладками">
                 <button type="button" aria-label="Терминал" title="Терминал"
                   onClick={() => onEditorNavigate?.("TERMINAL")}>
@@ -979,7 +954,6 @@ export function ChartPanel({
                 ))}
               </output>
             )}
-            {correctionExportStatus && <output role="status" aria-live="polite">{correctionExportStatus}</output>}
             {reviewStatus && <output role="status" aria-live="polite">{reviewStatus}</output>}
           </div>
         )}
