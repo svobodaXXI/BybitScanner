@@ -574,7 +574,16 @@ def deploy_staged_editor_only(
                             + type(exc).__name__ + "; no retry, no deployment")
                 if not (getattr(result, "ok", False) is True
                         and getattr(result, "runtime_stopped", False) is True):
-                    return "BLOCKED: canonical_safe_stop_unproven; no retry, no deployment"
+                    # Preserve the canonical refusal reason for the operator;
+                    # never infer STOP success or authorize a replay from it.
+                    reason = getattr(result, "message", None)
+                    if not isinstance(reason, str) or not reason.strip():
+                        reason = "reason_unavailable"
+                    return (
+                        "BLOCKED: canonical_safe_stop_unproven: "
+                        + reason.replace("\\n", " ").replace("\\r", " ")[:500]
+                        + "; no retry, no deployment"
+                    )
                 # Write the receipt only after a confirmed successful canonical
                 # STOP. If this write fails, do not install or repeat STOP.
                 _confirmed_stop_receipt(
