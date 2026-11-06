@@ -30,6 +30,7 @@ on:
       - "terminal/frontend/vite.replay.config.ts"
       - "terminal/frontend/package.json"
       - "terminal/frontend/e2e/local-replay-browser.mjs"
+      - "terminal/frontend/e2e/real-reversal-browser.mjs"
   workflow_dispatch:
 
 permissions:
@@ -141,4 +142,63 @@ jobs:
         run: |
           python -m research.h017_real_bybit_readonly_acceptance
           python -m research.h017_real_bybit_readonly_acceptance --start 2026-09-01 --end 2026-09-08
-          python -m research.h017_real_bybit_readonly_acceptance --start 2026-08-20 --end 2026-08-27 --require-complete-reversal
+          python -m research.h017_real_bybit_readonly_acceptance --start 2026-08-20 --end 2026-08-27 --require-complete-reversal --output-json "$RUNNER_TEMP/real-h1-august.json"
+      - name: Export audited real MARKET_ONLY JSON for browser proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: machine-time-real-h1-august
+          path: ${{ runner.temp }}/real-h1-august.json
+          if-no-files-found: error
+          retention-days: 7
+
+  real-h1-browser-proof:
+    # Runs only on the isolated H-017 draft PR. Both independently tested
+    # artifacts must exist; never download any private/PAPER account history.
+    if: github.event_name == 'pull_request' && github.head_ref == 'docs/h017-purple-prior-replay-20261105'
+    needs: [standalone-replay-viewer, real-bybit-h017-readonly-acceptance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    defaults:
+      run:
+        working-directory: terminal/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: machine-time-local-windows
+          path: ${{ runner.temp }}/machine-time
+      - uses: actions/download-artifact@v4
+        with:
+          name: machine-time-real-h1-august
+          path: ${{ runner.temp }}/real-h1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: terminal/frontend/package-lock.json
+      - name: Install locked browser test dependencies
+        run: npm ci
+      - name: Select preinstalled Chrome or install Chromium
+        run: |
+          if command -v google-chrome >/dev/null; then
+            echo "LOCAL_REPLAY_CHROME=$(command -v google-chrome)" >> "$GITHUB_ENV"
+          else
+            npx playwright install chromium
+          fi
+      - name: Render three audited real H1 prior breaks and opposite trends in Chromium
+        run: node e2e/real-reversal-browser.mjs
+        env:
+          LOCAL_REPLAY_PACKAGED_SERVER: ${{ runner.temp }}/machine-time/server.py
+          LOCAL_REPLAY_REAL_ARCHIVE: ${{ runner.temp }}/real-h1/real-h1-august.json
+          LOCAL_REPLAY_E2E_SCREENSHOTS: ${{ runner.temp }}/real-h1-screens
+      - name: Attach three real break and opposite-line screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: machine-time-real-h1-browser-proof
+          path: ${{ runner.temp }}/real-h1-screens/
+          if-no-files-found: warn
+          retention-days: 7
