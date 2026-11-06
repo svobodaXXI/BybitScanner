@@ -1340,19 +1340,20 @@ export function visibleEarlyGeometry(
     seenHours.push(hour);
     appendEarlyPivot(seenHours, h1Pivots);
   }
-  const [a, b, c] = h1Pivots.slice(-3);
-  if (!a || !b || !c || a.kind !== c.kind || b.kind === a.kind) return [];
-  const side = a.kind === "LOW" && c.price > a.price ? "BULL"
-    : a.kind === "HIGH" && c.price < a.price ? "BEAR" : null;
+  const [a, b, c, d] = h1Pivots.slice(-4);
+  if (!a || !b || !c || !d || a.kind !== c.kind ||
+      b.kind !== d.kind || b.kind === a.kind) return [];
+  const side = a.kind === "LOW" && c.price > a.price && d.price > b.price ? "BULL"
+    : a.kind === "HIGH" && c.price < a.price && d.price < b.price ? "BEAR" : null;
   if (!side) return [];
   if (confirmedMain && confirmedMain.side !== side) return [];
   if (latestBreak && (latestBreak.new_side !== side ||
       c.confirmed_at_ms <= latestBreak.confirmed_at_ms)) return [];
   const main = wickTightEarlySlope(seenHours, a, c, side,
-    c.confirmed_at_ms, "MAIN_1H");
+    d.confirmed_at_ms, "MAIN_1H");
   if (!main) return [];
-  // The initial yellow is published as soon as two comparable CLOSED H1 wicks
-  // are confirmed; the TARGET_1H still waits for the fourth pivot.
+  // H1 main/target confirmation is based on four H1 pivots only.
+  // No 3-pivot provisional yellow line is published.
   const output: ReplayGeometryVersion[] = [main];
   const m5Pivots: EarlyPivot[] = [];
   const seenM5: ReplayCandle[] = [];
@@ -1377,15 +1378,17 @@ export function visibleEarlyGeometry(
         brokenAt = bar.end_ms;
       }
     }
-    const [p, middle, q] = m5Pivots.slice(-3);
-    if (!blue && p && middle && q &&
+    const [p, middle, q, fourth] = m5Pivots.slice(-4);
+    if (!blue && p && middle && q && fourth &&
         p.at_ms > brokenAt &&
         (side === "BULL" ? (p.kind === "HIGH" && middle.kind === "LOW" &&
-          q.kind === "HIGH" && q.price < p.price)
+          q.kind === "HIGH" && fourth.kind === "LOW" &&
+          q.price < p.price && fourth.price < middle.price)
           : (p.kind === "LOW" && middle.kind === "HIGH" &&
-            q.kind === "LOW" && q.price > p.price))) {
+            q.kind === "LOW" && fourth.kind === "HIGH" &&
+            q.price > p.price && fourth.price > middle.price))) {
       blue = wickTightEarlySlope(seenM5, p, q, side,
-        Math.max(main.available_at_ms, q.confirmed_at_ms), "REFERENCE_5M");
+        Math.max(main.available_at_ms, fourth.confirmed_at_ms), "REFERENCE_5M");
       if (blue) output.push(blue);
     }
   }
@@ -1393,10 +1396,9 @@ export function visibleEarlyGeometry(
 }
 
 /**
- * Frozen visual timeline of early (three-pivot) yellow/blue candidates.
+ * Frozen visual timeline of structurally confirmed four-pivot yellow/blue versions.
  *
- * The live preview is intentionally recomputed from the current prefix and
- * may disappear when a fourth pivot confirms a different slope. Record each
+ * The displayed geometry requires four confirmed pivots. Record each
  * FIRST publicly visible version instead, without changing strategy inputs.
  * A later revision is another historical object, not a relocation of the old
  * one. Retirement is stored separately and is masked until its own M5 close.
