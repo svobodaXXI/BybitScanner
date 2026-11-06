@@ -830,6 +830,24 @@ export function simulationActionJournal(document: ReplayDocument) {
   };
 }
 
+/** One completed M5 is one replay frame, regardless of journal row count.
+ *
+ * Include any events on that candle's close time (including a next-bar
+ * opening action at the same timestamp); never expose a later timestamp
+ * until the following candle frame. Shared by Play and Step forward.
+ */
+export function nextClosedCandleCursor(events: readonly ReplayEvent[], cursor: number): number {
+  const length = events.length;
+  const current = Math.max(0, Math.min(length, Math.floor(cursor)));
+  let index = current;
+  while (index < length && events[index].kind !== "CANDLE_CLOSED") index++;
+  if (index === length) return length;
+  const closedAt = events[index].time_ms;
+  index++;
+  while (index < length && events[index].time_ms === closedAt) index++;
+  return index;
+}
+
 /** The UI receives ONLY the prefix requested by the virtual-time playhead. */
 export function visibleReplay(events: readonly ReplayEvent[], cursor: number): VisibleReplay {
   const shown = events.slice(0, Math.max(0, Math.min(Math.floor(cursor), events.length)));
