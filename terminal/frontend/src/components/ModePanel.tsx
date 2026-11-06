@@ -5,6 +5,7 @@ import {
 } from "./ModePanelLegacy";
 import { AutopilotDiaryControls } from "./AutopilotDiaryControls";
 import { AutopilotFirstScreen } from "./AutopilotFirstScreen";
+import { AccountMenu } from "./AccountMenu";
 
 export type WorkspaceMode = LegacyWorkspaceMode;
 
@@ -18,6 +19,7 @@ export function ModePanel({
 }: ModePanelProps) {
   const [openPositionsRequest, setOpenPositionsRequest] = useState(0);
   const [requestedTradeEpisodeId, setRequestedTradeEpisodeId] = useState<string | null>(null);
+  const [statisticsRequest, setStatisticsRequest] = useState(0);
   const accountKey = `${props.accountWorkspaceProjection?.account_id ?? "unknown"}:${props.accountWorkspaceProjection?.session_generation ?? 0}`;
 
   return (
@@ -25,11 +27,20 @@ export function ModePanel({
       <LegacyModePanel {...props} openPositionsRequest={openPositionsRequest} />
       {props.mode === "AUTOPILOT" ? (
         <>
-          <AutopilotFirstScreen accountKey={accountKey} onOpenPositions={() => setOpenPositionsRequest((value) => value + 1)} onTradeDetails={setRequestedTradeEpisodeId} />
+          <AutopilotFirstScreen
+            accountKey={accountKey}
+            onOpenPositions={() => setOpenPositionsRequest((value) => value + 1)}
+            onTradeDetails={setRequestedTradeEpisodeId}
+            onStatistics={() => setStatisticsRequest((value) => value + 1)}
+            onTerminal={() => props.onModeChange("TERMINAL")}
+            accountControl={<AccountMenu open={props.accountOpen ?? false} onToggle={props.onAccountToggle ?? (() => {})} workspaceProjection={props.accountWorkspaceProjection ?? null} />}
+          />
           <AutopilotDiaryControls
             accountKey={accountKey}
             tradeEpisodeId={autopilotTradeEpisodeId}
             requestedTradeEpisodeId={requestedTradeEpisodeId}
+            requestedStatisticsCount={statisticsRequest}
+            hideActions
             onRequestConsumed={() => setRequestedTradeEpisodeId(null)}
           />
         </>
