@@ -222,7 +222,7 @@ def _proven_stopped_backend_handoff_to(
     from tools.paper_stopped_approved_recovery import (
         OLD_BACKEND, PRIOR_TARGET, PartialStopBlocked, _receipt,
     )
-    from tools.paper_interrupted_stop_recovery import _trusted_journal
+    from tools.paper_interrupted_stop_recovery import RecoveryBlocked, _trusted_journal
     from tools.vps_gitless_release_activate import (
         ActivationBlocked, _manifest, _trusted_file,
     )
@@ -248,7 +248,7 @@ def _proven_stopped_backend_handoff_to(
             and all(_receipt(journal_root, phase, uid, target=target)
                     for phase in ("handoff-attempt", "backend-exited", "handoff-proven"))
         )
-    except (ActivationBlocked, PartialStopBlocked, ReleaseIdentityBlocked,
+    except (ActivationBlocked, PartialStopBlocked, RecoveryBlocked, ReleaseIdentityBlocked,
             OSError, ValueError, TypeError, KeyError):
         return False
 
