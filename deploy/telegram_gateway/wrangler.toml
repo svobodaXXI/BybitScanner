@@ -1,0 +1,8 @@
+name = "bybitscanner-telegram-gateway"
+main = "worker.mjs"
+compatibility_date = "2026-10-30"
+workers_dev = true
+
+# Secrets must be provisioned using 'wrangler secret put', never committed:
+# GATEWAY_SHARED_SECRET, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
+# Keep existing Vercel deployment until one real Telegram delivery is verified.
