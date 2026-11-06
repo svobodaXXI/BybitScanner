@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeHourlyCandles, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("derives only completed hourly OHLCV from contiguous 5m Bybit candles", () => {
@@ -94,6 +94,33 @@ describe("standalone SIMULATION viewer contract", () => {
     const ending = visibleReplay(doc.events, doc.events.length);
     expect(ending.candles).toHaveLength(64);
     expect(ending.exits).toHaveLength(1);
+  });
+
+  it("uses exactly one closed M5 per play/forward frame, even across trade journal rows", () => {
+    const events = syntheticReplay().events;
+    let cursor = 0;
+    for (let candle = 1; candle <= 64; candle++) {
+      const next = nextClosedCandleCursor(events, cursor);
+      expect(next).toBeGreaterThan(cursor);
+      const frame = visibleReplay(events, next);
+      expect(frame.candles).toHaveLength(candle);
+      expect(events.slice(0, next).every(event => event.time_ms <= frame.lastTimeMs!)).toBe(true);
+      // At the fourth M5 close both its signal and the NEXT M5 open fill
+      // are already timestamped exactly at that close: an atomic frame.
+      if (candle === 3) {
+        expect(frame.signals).toHaveLength(0);
+        expect(frame.fills).toHaveLength(0);
+      }
+      if (candle === 4) {
+        expect(frame.signals).toHaveLength(1);
+        expect(frame.fills).toHaveLength(1);
+      }
+      if (candle === 9) expect(frame.exits).toHaveLength(1);
+      cursor = next;
+    }
+    expect(cursor).toBe(events.length);
+    expect(nextClosedCandleCursor(events, cursor)).toBe(cursor);
+    expect(nextClosedCandleCursor(events, 0)).toBe(1);
   });
 
   it("exports only recorded virtual actions and never erases them on rewind", () => {
