@@ -321,6 +321,10 @@ def recover_editor_only(
         db = _database_path(root, env)
         _demand(db.is_file() and not db.is_symlink(), "database_path_unproven")
         snapshots = (proof or _snapshots_and_read_only_proof)(db, expected_db)
+        # Seal the *previously proven* 094d -> 4090 EDITOR_ONLY handoff
+        # before installing its successor. Otherwise its historical intent
+        # would become unresolved again when the installed SHA changes.
+        _complete_stop_intent(transactions, OLD_BACKEND, uid=uid)
         owner = RuntimeShutdown(root=root, env=env)
         _demand(owner._probe_backend() == PRESENT, "backend_not_proven")
         owner._require_scanner_stopped()
