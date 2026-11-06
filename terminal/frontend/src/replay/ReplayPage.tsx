@@ -58,10 +58,11 @@ function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" | "undo" }) {
   </svg>;
 }
 function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selectedId,
-  drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture, onDrawingComplete }: {
+  drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture, onDrawingComplete, onChooseStart }: {
   document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h";
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
   onDrawingComplete: () => void;
+  onChooseStart: (startMs: number) => void;
   onDrawingsChange: (next: DrawingObject[]) => void;
   onSelectDrawing: (id: string | null) => void;
   onDrawingGesture: () => void;
@@ -414,7 +415,18 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
   return (
     <div className="replay-chart-shell" data-chart-timeframe={timeframe}
       data-displayed-candles={displayCandles.length} data-drawing-viewport={drawingViewport}>
-      <div className="replay-chart-frame">
+      <div className="replay-chart-frame" onDoubleClick={event => {
+        if (drawingTool !== "crosshair" || !chart.current || displayCandles.length === 0) return;
+        const rect = event.currentTarget.getBoundingClientRect();
+        const logical = chart.current.timeScale().coordinateToLogical(event.clientX - rect.left);
+        if (logical === null) return;
+        const at = timeAtChartLogical(logical, displayCandles);
+        if (at === null) return;
+        const selected = displayCandles.find(bar => bar.start_ms <= at && at < bar.end_ms)
+          ?? displayCandles.reduce((best, bar) =>
+            Math.abs(bar.start_ms - at) < Math.abs(best.start_ms - at) ? bar : best);
+        onChooseStart(selected.start_ms);
+      }}>
         <div className="replay-chart-watermark" aria-label={`Инструмент ${document.symbol}, ${timeframe}`}>
           {document.symbol} · {timeframe === "1h" ? "1H" : "5M"}
         </div>
@@ -462,6 +474,7 @@ export function ReplayPage() {
   const bundledRequest = useRef<AbortController | null>(null);
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [pendingStartMs, setPendingStartMs] = useState<number | null>(null);
   const [rate, setRate] = useState(8);
   const [showDebug, setShowDebug] = useState(false);
   const [timeframe, setTimeframe] = useState<"5m" | "1h">("5m");
@@ -845,8 +858,24 @@ export function ReplayPage() {
             drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
             onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
             onDrawingGesture={() => setPlaying(false)}
-            onDrawingComplete={() => setDrawingTool("crosshair")} />
+            onDrawingComplete={() => setDrawingTool("crosshair")}
+            onChooseStart={setPendingStartMs} />
         </section>
+        {pendingStartMs !== null &&
+          <div className="replay-start-confirm" role="dialog" aria-modal="true"
+            aria-label="Начать отсюда?">
+            <strong>Начать отсюда?</strong>
+            <div className="replay-start-actions">
+              <button type="button" className="replay-start-yes" onClick={() => {
+                setPlaying(false);
+                const next = document.events.findIndex(e => e.time_ms >= pendingStartMs);
+                setCursor(next < 0 ? document.events.length : next);
+                setPendingStartMs(null);
+              }}>Да</button>
+              <button type="button" className="replay-start-no"
+                onClick={() => setPendingStartMs(null)}>Нет</button>
+            </div>
+          </div>}
         <aside className="replay-events" aria-label="Журнал событий">
           <h2>События</h2>
           {lastTimeline.length === 0 && <p>Нажмите «Пуск» или «Шаг».</p>}
