@@ -1252,6 +1252,31 @@ def test_active_required_flat_proof_allows_no_approvals(monkeypatch, tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    ("table", "insert", "time_value"),
+    [
+        ("executions", "INSERT INTO executions VALUES ('paper','NEWUSDT',?)", None),
+        ("paper_limit_orders",
+         "INSERT INTO paper_limit_orders VALUES ('paper','NEWUSDT',?,'filled')", None),
+        ("trading_commands",
+         "INSERT INTO trading_commands VALUES ('paper','NEWUSDT',?,'filled')", None),
+    ],
+)
+def test_editor_retirement_refuses_unknown_timestamps_before_stop(
+    monkeypatch, tmp_path, table, insert, time_value,
+):
+    from tools import paper_maintenance as maintenance
+    from terminal.application import robot_control
+
+    db = _frozen_approval_test_db(tmp_path, monkeypatch)
+    with sqlite3.connect(db) as conn:
+        conn.execute(insert, (time_value,))
+    calls = []
+    monkeypatch.setattr(robot_control, "stop_robot", lambda **_: calls.append("stop"))
+    assert maintenance._editor_retire_inert_approvals(tmp_path, None) is False
+    assert calls == []
+
+
 def test_editor_retirement_uses_canonical_stop_for_new_inert_owner(monkeypatch, tmp_path):
     from tools import paper_maintenance as maintenance
     from terminal.application import robot_control
