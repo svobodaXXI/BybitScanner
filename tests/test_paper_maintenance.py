@@ -1218,6 +1218,40 @@ def _frozen_approval_test_db(tmp_path, monkeypatch):
     return db
 
 
+@pytest.mark.parametrize(
+    ("fill_time", "expected_safe"),
+    [(None, False), (1000, False), (1001, False), (999, True)],
+)
+def test_active_required_flat_proof_rejects_unknown_or_new_approval_fills(
+    monkeypatch, tmp_path, fill_time, expected_safe,
+):
+    from tools import paper_maintenance as maintenance
+
+    db = _frozen_approval_test_db(tmp_path, monkeypatch)
+    with sqlite3.connect(db) as conn:
+        conn.execute("ALTER TABLE robot_runtime_state ADD COLUMN reason TEXT")
+        conn.execute(
+            "INSERT INTO executions VALUES ('paper','NEWUSDT',?)", (fill_time,),
+        )
+    proof = maintenance._active_required_flat_proof(db)
+    if expected_safe:
+        assert proof == ("ROBOT_RUNNING", "PAUSED", None)
+    else:
+        assert proof is None
+
+
+def test_active_required_flat_proof_allows_no_approvals(monkeypatch, tmp_path):
+    from tools import paper_maintenance as maintenance
+
+    db = _frozen_approval_test_db(tmp_path, monkeypatch)
+    with sqlite3.connect(db) as conn:
+        conn.execute("ALTER TABLE robot_runtime_state ADD COLUMN reason TEXT")
+        conn.execute("DELETE FROM robot_candidates")
+    assert maintenance._active_required_flat_proof(db) == (
+        "ROBOT_RUNNING", "PAUSED", None,
+    )
+
+
 def test_editor_retirement_uses_canonical_stop_for_new_inert_owner(monkeypatch, tmp_path):
     from tools import paper_maintenance as maintenance
     from terminal.application import robot_control
