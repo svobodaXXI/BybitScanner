@@ -285,8 +285,10 @@ def verify_archived_prior_break_timeline(doc):
     breaks = doc.get("hourly_prior_breaks", [])
     last_confirmed = -1
     outcomes = []
-    for event in breaks:
+    for index, event in enumerate(breaks):
         at = event["confirmed_at_ms"]
+        next_break_at = (breaks[index + 1]["confirmed_at_ms"]
+                         if index + 1 < len(breaks) else float("inf"))
         close_at = event["hourly_close_ms"]
         first = bars_by_start.get(close_at)
         hour = hours.get(close_at - 3_600_000)
@@ -319,7 +321,7 @@ def verify_archived_prior_break_timeline(doc):
         # geometry version, never synthesized at the moment of prior break.
         opposite = [g for g in lines if
                     g["side"] == event["new_side"] and
-                    g["available_at_ms"] >= at]
+                    at <= g["available_at_ms"] < next_break_at]
         outcomes.append({
             "confirmed_at_ms": at, "previous_side": previous_side,
             "new_side": event["new_side"], "prior_price": event["prior_price"],
@@ -389,7 +391,8 @@ def retrospective_first_touch_study(bars, previews, dmi_points):
     return groups
 
 
-def check(*, start: str = START, end: str = END) -> dict[str, object]:
+def check(*, start: str = START, end: str = END,
+          require_complete_reversal: bool = False) -> dict[str, object]:
     start_date = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     end_date = datetime.strptime(end, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     if end_date - start_date != timedelta(days=7) or end_date > datetime.now(timezone.utc):
@@ -451,6 +454,11 @@ def check(*, start: str = START, end: str = END) -> dict[str, object]:
     verified_h1 = verify_archived_hourly_wick_geometry(doc)
     verified_priors = verify_archived_prior_timeline(doc)
     verified_breaks = verify_archived_prior_break_timeline(doc)
+    if require_complete_reversal and not verified_breaks["breaks_with_later_published_opposite_h1"]:
+        raise AssertionError(
+            "no complete REAL H1 sequence: frozen prior -> close/next OPEN -> "
+            "opposite confirmed 1--3/2--4 line before the next break"
+        )
     # Hash the actual returned closed OHLCV bars, not mock fixtures or rendered pixels.
     canonical = json.dumps(bars, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     summary = {
@@ -493,6 +501,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Read-only public Bybit H1 historical acceptance")
     parser.add_argument("--start", default=START, help="UTC date inclusive")
     parser.add_argument("--end", default=END, help="UTC date exclusive, seven days later")
+    parser.add_argument("--require-complete-reversal", action="store_true",
+                        help="fail if no validated H1 close/OPEN/opposite-line sequence")
     args = parser.parse_args()
-    print(json.dumps(check(start=args.start, end=args.end),
-                     ensure_ascii=False, sort_keys=True))
+    print(json.dumps(check(
+        start=args.start, end=args.end,
+        require_complete_reversal=args.require_complete_reversal,
+    ), ensure_ascii=False, sort_keys=True))
