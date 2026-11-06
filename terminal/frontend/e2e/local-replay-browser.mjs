@@ -200,7 +200,12 @@ try {
   await page.getByRole("button", { name: "H1", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"), "1h");
+  assert.match(await page.locator(".replay-chart-watermark").innerText(), /GRASSUSDT · 1H/);
   assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
+  await backward.click();
+  await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "2");
+  await forward.click();
+  await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   await page.getByRole("button", { name: "M5", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "40");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
@@ -208,6 +213,11 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "3");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-priors"), "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-priors"), "1");
+  assert.match(await page.locator(".replay-chart-watermark").innerText(), /GRASSUSDT · 5M/);
+  await page.locator(".replay-chart-frame").dblclick({ position: { x: 280, y: 180 } });
+  assert.equal(await page.getByRole("dialog", { name: "Начать отсюда?" }).count(), 1);
+  await page.getByRole("button", { name: "Нет", exact: true }).click();
+  assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
   // Manual annotations use the same UTC anchor across real M5/H1 candles;
   // they survive replay rewind and can be deleted without altering geometry.
   await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
