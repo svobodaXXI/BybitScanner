@@ -23,17 +23,19 @@ function label(event: ReplayEvent): string {
     case "EXIT_FILLED": return "Выход " + (event.reason ?? "");
   }
 }
-const REPLAY_DRAWING_TOOLS: Array<{ tool: DrawingTool; label: string }> = [
-  { tool: "crosshair", label: "Курсор / сдвиг" },
-  { tool: "select", label: "Редактировать" },
-  { tool: "trend", label: "Трендовая" },
-  { tool: "horizontal", label: "Горизонталь" },
-  { tool: "ray", label: "Луч" },
-  { tool: "horizontal-ray", label: "Горизонтальный луч" },
-  { tool: "vertical", label: "Вертикаль" },
-  { tool: "fibonacci", label: "Fibonacci" },
-  { tool: "ruler", label: "Линейка" },
-  { tool: "rectangle", label: "Прямоугольник" },
+// Match the compact pictogram-first terminal drawing toolbar. The title and
+// aria-label keep the full tool names discoverable without text-only buttons.
+const REPLAY_DRAWING_TOOLS: Array<{ tool: DrawingTool; label: string; icon: string }> = [
+  { tool: "crosshair", label: "Курсор / сдвиг", icon: "⌖" },
+  { tool: "select", label: "Редактировать", icon: "↖" },
+  { tool: "trend", label: "Трендовая", icon: "╱" },
+  { tool: "horizontal", label: "Горизонталь", icon: "—" },
+  { tool: "ray", label: "Луч", icon: "↗" },
+  { tool: "horizontal-ray", label: "Горизонтальный луч", icon: "→" },
+  { tool: "vertical", label: "Вертикаль", icon: "│" },
+  { tool: "fibonacci", label: "Fibonacci", icon: "Fib" },
+  { tool: "ruler", label: "Линейка", icon: "Δ" },
+  { tool: "rectangle", label: "Прямоугольник", icon: "▭" },
 ];
 function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
@@ -612,39 +614,7 @@ export function ReplayPage() {
           // Browser owns this temporary object URL; no trade/network request.
           window.setTimeout(() => URL.revokeObjectURL(url), 0);
         }}>Журнал JSON ({simulationActionJournal(document).actions.length})</button>
-        <button type="button" onClick={() => { if (cursor === total) setCursor(0); setPlaying((s) => !s); }}>
-          {playing ? "Пауза" : "▶ Пуск"}
-        </button>
-        <button type="button" onClick={() => {
-          setPlaying(false);
-          setCursor((current) => {
-            const events = document.events;
-            // Rewind one complete candle step, not just one trade/event row.
-            const closed = events.slice(0, current).filter(event => event.kind === "CANDLE_CLOSED");
-            if (closed.length <= 1) return 0;
-            const previousClose = closed[closed.length - 2].time_ms;
-            let next = 0;
-            while (next < events.length && events[next].time_ms <= previousClose) next++;
-            return next;
-          });
-        }} disabled={shown.candles.length === 0}>◀ Шаг назад</button>
-        <button type="button" onClick={() => {
-          setPlaying(false);
-          setCursor((current) => {
-            const events = document.events;
-            const nextClose = events.findIndex((event, index) => index >= current && event.kind === "CANDLE_CLOSED");
-            if (nextClose < 0) return total;
-            const closeTime = events[nextClose].time_ms;
-            let next = nextClose + 1;
-            // All same-time trade actions belong to this candle step.
-            while (next < total && events[next].time_ms === closeTime) next++;
-            return next;
-          });
-        }} disabled={cursor >= total}>Шаг вперёд ▶</button>
-        <button type="button" onClick={() => { setPlaying(false); setCursor(0); }}>В начало</button>
-        <label className="replay-rate">Скорость {rate} событий/с
-          <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
-        </label>
+
       </section>
 
       {error && <p role="alert" className="replay-error">{error}</p>}
@@ -733,19 +703,55 @@ export function ReplayPage() {
               onClick={() => setTimeframe("5m")}>M5</button>
             <button type="button" aria-pressed={timeframe === "1h"}
               onClick={() => setTimeframe("1h")}>H1</button>
+            <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
+        <button type="button" onClick={() => { if (cursor === total) setCursor(0); setPlaying((s) => !s); }}>
+          {playing ? "Пауза" : "▶ Пуск"}
+        </button>
+        <button type="button" onClick={() => {
+          setPlaying(false);
+          setCursor((current) => {
+            const events = document.events;
+            // Rewind one complete candle step, not just one trade/event row.
+            const closed = events.slice(0, current).filter(event => event.kind === "CANDLE_CLOSED");
+            if (closed.length <= 1) return 0;
+            const previousClose = closed[closed.length - 2].time_ms;
+            let next = 0;
+            while (next < events.length && events[next].time_ms <= previousClose) next++;
+            return next;
+          });
+        }} disabled={shown.candles.length === 0}>◀ Шаг назад</button>
+        <button type="button" onClick={() => {
+          setPlaying(false);
+          setCursor((current) => {
+            const events = document.events;
+            const nextClose = events.findIndex((event, index) => index >= current && event.kind === "CANDLE_CLOSED");
+            if (nextClose < 0) return total;
+            const closeTime = events[nextClose].time_ms;
+            let next = nextClose + 1;
+            // All same-time trade actions belong to this candle step.
+            while (next < total && events[next].time_ms === closeTime) next++;
+            return next;
+          });
+        }} disabled={cursor >= total}>Шаг вперёд ▶</button>
+        <button type="button" onClick={() => { setPlaying(false); setCursor(0); }}>В начало</button>
+        <label className="replay-rate">Скорость {rate} событий/с
+          <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
+        </label>
+            </div>
           </div>
           <div className="replay-drawing-tools" role="group" aria-label="Инструменты рисования">
-            {REPLAY_DRAWING_TOOLS.map(({ tool, label }) => (
-              <button type="button" key={tool} aria-pressed={drawingTool === tool}
+            {REPLAY_DRAWING_TOOLS.map(({ tool, label, icon }) => (
+              <button type="button" key={tool} title={label} aria-label={label}
+                aria-pressed={drawingTool === tool}
                 onClick={() => { setDrawingTool(tool); setSelectedDrawing(null); }}>
-                {label}
+                <span aria-hidden="true">{icon}</span>
               </button>
             ))}
             <button type="button" disabled={!selectedDrawing}
               onClick={() => {
                 setDrawings(current => current.filter(d => d.id !== selectedDrawing));
                 setSelectedDrawing(null);
-              }}>Удалить выбранное</button>
+              }} title="Удалить выбранное" aria-label="Удалить выбранное"><span aria-hidden="true">⌫</span></button>
             <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
           </div>
           <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
