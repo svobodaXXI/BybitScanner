@@ -420,6 +420,7 @@ class CausalGeometryFeed:
         self._last_acceleration: CausalLine | None = None
         self._last_acceleration_pivots: tuple[ConfirmedPivot, ...] | None = None
         self._last_acceleration_h1_origin: int | None = None
+        self._last_acceleration_h1_version: int | None = None
         self._last_acceleration_checked_at: int | None = None
 
     @property
@@ -698,10 +699,16 @@ class CausalGeometryFeed:
         # Independent dashed last-acceleration geometry. This describes an
         # H1-directional M5 leg only when point 4 touches the known H1
         # target. No trade mode or countertrend trigger is activated here.
-        if trend is None or self._last_acceleration_h1_origin != origin:
+        if (trend is None or self._last_acceleration_h1_origin != origin or
+                self._last_acceleration_h1_version != trend.available_at_ms):
+            # A revised H1 target cannot silently inherit a candidate
+            # selected against the previous version's projected price.
             self._last_acceleration = None
             self._last_acceleration_pivots = None
             self._last_acceleration_h1_origin = origin
+            self._last_acceleration_h1_version = (
+                trend.available_at_ms if trend is not None else None
+            )
             self._last_acceleration_checked_at = None
         recent_accel = self._five.recent_pivots
         if trend is not None and len(recent_accel) == 4:
