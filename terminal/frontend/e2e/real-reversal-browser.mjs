@@ -127,52 +127,33 @@ try {
       path: join(screenshotDir, `real-h1-break-${i + 1}.png`), fullPage: true,
     });
     if (i === 2) {
-      // On the real audited GRASSUSDT reversal, the LOW-HIGH-LOW H1
-      // main is confirmed at 05:00 UTC, six hours BEFORE the fourth
-      // pivot licenses the full 1-3/2-4 pair at 11:00 UTC.
-      const earlyH1Time = Date.UTC(2026, 7, 24, 5, 0);
-      const earlyH1Index = byEventTime.get(earlyH1Time);
-      assert.ok(earlyH1Index < firstYellowIndex);
-      await advanceTo(earlyH1Index);
-      // Earlier slopes must remain visible rather than vanish when the
-      // current preview changes. Only this new version is still future.
-      const beforeEarlyH1 = Number(await overlay.getAttribute("data-visible-early-geometry"));
-      await advanceTo(earlyH1Index + 1);
-      const afterEarlyH1 = Number(await overlay.getAttribute("data-visible-early-geometry"));
-      assert.ok(afterEarlyH1 > beforeEarlyH1,
-        "new H1 preview must be appended to previously drawn early history");
-      await backward.click();
-      assert.equal(Number(await overlay.getAttribute("data-visible-early-geometry")), beforeEarlyH1,
-        "rewind one candle hides the just-published H1 line but preserves older lines");
-      await forward.click();
-      assert.equal(Number(await overlay.getAttribute("data-visible-early-geometry")), afterEarlyH1,
-        "forward redraws the same frozen history without duplicating lines");
-      assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 1,
-        "early H1 main must be painted, not merely calculated");
-      assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(),
-        /показана предварительная жёлтая H1 по трём подтверждённым экстремумам/,
-        "diagnostics must describe the actually painted three-pivot provisional H1");
-      assert.match(await page.getByRole("status", { name: "Подтверждение слома приора H1" }).innerText(),
-        /Предварительная противоположная жёлтая H1-линия показана/,
-        "prior-break status must not claim no opposite H1 is painted");
+      // Owner 07.11: the old preview at 05:00 had only LOW-HIGH-LOW,
+      // so it must not count as a confirmed H1 trend.
+      const threePivotTime = Date.UTC(2026, 7, 24, 5, 0);
+      const threePivotIndex = byEventTime.get(threePivotTime);
+      assert.ok(threePivotIndex < firstYellowIndex);
+      await advanceTo(threePivotIndex);
+      const before = Number(await overlay.getAttribute("data-visible-early-geometry"));
+      await advanceTo(threePivotIndex + 1);
+      const after = Number(await overlay.getAttribute("data-visible-early-geometry"));
+      assert.equal(after, before,
+        "three H1 pivots must not paint a new yellow trendline");
+      assert.equal(await overlay.getAttribute("data-visible-geometry"), "0",
+        "no confirmed H1 opposite geometry until fourth point");
       await page.getByRole("button", { name: "H1", exact: true }).click();
-      await page.screenshot({ path: join(screenshotDir, "real-h1-early-main.png"), fullPage: true });
+      await page.screenshot({
+        path: join(screenshotDir, "real-h1-before-fourth-pivot.png"), fullPage: true,
+      });
       await page.getByRole("button", { name: "M5", exact: true }).click();
-      const earlyBlueIndex = byEventTime.get(Date.UTC(2026, 7, 24, 7, 5));
-      assert.ok(earlyBlueIndex > earlyH1Index && earlyBlueIndex < firstYellowIndex);
-      await advanceTo(earlyBlueIndex + 1);
-      assert.ok(Number(await overlay.getAttribute("data-visible-early-geometry")) >= 2,
-        "early M5 reference must be visible before four-pivot H1 confirmation");
-      assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(),
-        /Ранних синих M5: [1-9][0-9]*\./,
-        "diagnostics must acknowledge actual early M5 blue candidates");
-      await page.screenshot({ path: join(screenshotDir, "real-m5-early-reference.png"), fullPage: true });
+      const threeM5Time = Date.UTC(2026, 7, 24, 7, 5);
+      const threeM5Index = byEventTime.get(threeM5Time);
+      assert.ok(threeM5Index > threePivotIndex && threeM5Index < firstYellowIndex);
+      await advanceTo(threeM5Index + 1);
+      await page.screenshot({
+        path: join(screenshotDir, "real-m5-before-fourth-pivot.png"), fullPage: true,
+      });
     }
     await advanceTo(firstYellowIndex + 1);
-    if (i === 2) {
-      assert.ok(Number(await overlay.getAttribute("data-visible-early-geometry")) >= 1,
-        "earlier M5 guide history survives full H1 confirmation");
-    }
     assert.ok(Number(await overlay.getAttribute("data-visible-geometry")) >= 2,
       "opposite confirmed MAIN_1H and TARGET_1H must actually render");
     assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 2,
