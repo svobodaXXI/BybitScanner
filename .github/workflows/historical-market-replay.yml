@@ -194,6 +194,23 @@ jobs:
           LOCAL_REPLAY_PACKAGED_SERVER: ${{ runner.temp }}/machine-time/server.py
           LOCAL_REPLAY_REAL_ARCHIVE: ${{ runner.temp }}/real-h1/real-h1-august.json
           LOCAL_REPLAY_E2E_SCREENSHOTS: ${{ runner.temp }}/real-h1-screens
+      # The verified public archive used in browser proof must ship together
+      # with the exact tested viewer: one artifact for Windows owner acceptance,
+      # not two independently downloaded ZIPs or any private/PAPER data.
+      - name: Assemble single real-history Windows acceptance package
+        run: |
+          cp "$RUNNER_TEMP/real-h1/real-h1-august.json" "$RUNNER_TEMP/machine-time/real-h1-august.json"
+          cmp "$RUNNER_TEMP/real-h1/real-h1-august.json" "$RUNNER_TEMP/machine-time/real-h1-august.json"
+          test -f "$RUNNER_TEMP/machine-time/dist/replay.html"
+          python "$RUNNER_TEMP/machine-time/server.py" --check
+          python "$RUNNER_TEMP/machine-time/smoke_package.py"
+      - name: Upload one verified Windows package with real H1 archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: machine-time-windows-h017-real-history
+          path: ${{ runner.temp }}/machine-time/
+          if-no-files-found: error
+          retention-days: 7
       - name: Attach three real break and opposite-line screenshots
         if: always()
         uses: actions/upload-artifact@v4
