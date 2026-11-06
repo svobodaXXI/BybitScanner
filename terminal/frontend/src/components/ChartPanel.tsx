@@ -45,6 +45,7 @@ import {
   translatePriceRangeByPixels,
 } from "../chart/gestureMath";
 import { chartPriceFormat } from "../chart/priceFormat";
+import { editorMoscowCrosshairTime, editorMoscowTickMark } from "../chart/editorMoscowTime";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
 import { buildEditorGeometryReview, compareEditorRayChanges, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
@@ -383,6 +384,7 @@ export function ChartPanel({
         css.getPropertyValue(name).trim() || fallback;
     const chart = createChart(host, {
       autoSize: true,
+      ...(editorMode ? { localization: { locale: "ru-RU", timeFormatter: editorMoscowCrosshairTime } } : {}),
       layout: {
         background: {
           type: ColorType.Solid,
@@ -416,6 +418,7 @@ export function ChartPanel({
         minimumWidth: 0,
       },
       timeScale: {
+        ...(editorMode ? { tickMarkFormatter: editorMoscowTickMark } : {}),
         visible: true,
         borderColor: "#303b47",
         timeVisible: true,
