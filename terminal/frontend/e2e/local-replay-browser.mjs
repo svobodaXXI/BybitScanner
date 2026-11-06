@@ -207,6 +207,10 @@ try {
   await forward.click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   await page.getByRole("button", { name: "M5", exact: true }).click();
+  // Switching TF preserves the playhead at the just-reached third H1
+  // close (36 M5), rather than restoring the previous 40-bar endpoint.
+  await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "36");
+  for (let i = 0; i < 4; i++) await forward.click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "40");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "3");
