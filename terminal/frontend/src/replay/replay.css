@@ -74,7 +74,7 @@
 /* Manual markup is an isolated overlay, never part of causal H-017 geometry. */
 .replay-drawing-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; background: #172232; border-bottom: 1px solid #2b3e55; }
 .replay-drawing-tools button { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: #bfcede; background: #233349; border: 1px solid #405672; border-radius: 5px; padding: 4px; width: 32px; height: 30px; font-size: 18px; line-height: 1; font-family: system-ui, sans-serif; }
-.replay-drawing-tools button span { pointer-events: none; }
+.replay-tool-icon { display: block; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 .replay-drawing-tools button:hover { background: #34445d; }
 .replay-drawing-tools button[aria-pressed="true"] { background: #30638b; border-color: #75b2df; color: white; }
 .replay-drawing-tools button:disabled { cursor: default; opacity: .4; }
