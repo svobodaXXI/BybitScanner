@@ -302,6 +302,8 @@ jobs:
           python -m pytest -q
           tests/test_terminal_paper_http.py
           -k "runtime_shutdown_rejects_missing_or_malformed_coverage_evidence or runtime_shutdown_seals_only_on_complete_evidence or runtime_shutdown_refuses_backend_exit_while_scanner_child_is_active or retire_entry_coverage_requires_durable_autopilot_off"
+      - name: Run canonical PAPER shutdown candidate safety proof
+        run: python -m pytest -q tests/test_terminal_persistence.py -k PaperShutdownDurableQuiescenceTests
       - name: Run Wedge terminal producer acceptance
         run: >-
           python -m unittest -v
