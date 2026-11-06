@@ -130,7 +130,7 @@ class EvidenceTest(unittest.TestCase):
             "active_LIMIT":
                 "INSERT INTO paper_limit_orders(trading_account_id,status) VALUES ('paper','open')",
             "unknown_LIMIT":
-                "INSERT INTO paper_limit_orders VALUES ('paper',NULL)",
+                "INSERT INTO paper_limit_orders(trading_account_id,status) VALUES ('paper',NULL)",
             "working_command":
                 "INSERT INTO trading_commands(trading_account_id,current_state) VALUES ('paper','submitting')",
             "obligation":
