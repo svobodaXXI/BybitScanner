@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeHourlyCandles, nextClosedCandleCursor, stepReplayCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, nextClosedCandleCursor, stepReplayCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("derives only completed hourly OHLCV from contiguous 5m Bybit candles", () => {
@@ -40,9 +40,8 @@ describe("standalone SIMULATION viewer contract", () => {
         kind: "CANDLE_CLOSED", sequence: 1, time_ms: candle.end_ms, candle }],
       geometry: [], hourly_prior_breaks: [], hourly_prior_updates: [],
     };
-    expect(visibleEarlyGeometry(document, null)).toEqual([]);
-    expect(visibleEarlyGeometry(document, candle.end_ms)).toEqual([]);
-    expect(earlyGeometryTimeline(document)).toEqual([]);
+    // Exactly one producer is authoritative: the archived publication log.
+    expect(visibleGeometryHistory(document, candle.end_ms)).toEqual([]);
     expect(visibleGeometry(document, candle.end_ms)).toEqual([]);
     const laterMs = candle.end_ms + m5;
     const published: ReplayDocument = {
@@ -58,7 +57,6 @@ describe("standalone SIMULATION viewer contract", () => {
     // visual-only three-pivot calculation cannot move it into the past.
     expect(visibleGeometry(published, candle.end_ms)).toEqual([]);
     expect(visibleGeometry(published, laterMs)).toHaveLength(1);
-    expect(visibleEarlyGeometryTimeline([], laterMs)).toEqual([]);
   });
 
   it("steps H1 by a completed hour and M5 by one candle including synchronous rows", () => {
