@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  completeHourlyCandles, nextClosedCandleCursor, stepReplayCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  completeHourlyCandles, nextClosedCandleCursor, stepReplayCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -82,13 +82,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const displayCandles = useMemo(() => timeframe === "1h"
     ? completeHourlyCandles(shown.candles) : shown.candles, [shown.candles, timeframe]);
-  // Build a frozen visual-only record once per archive. Each already
-  // revealed provisional line persists as drawn; rewinding masks its future.
-  const earlyTimeline = useMemo(() => earlyGeometryTimeline(document), [document]);
-  const earlyGeometry = useMemo(
-    () => visibleEarlyGeometryTimeline(earlyTimeline, shown.lastTimeMs),
-    [earlyTimeline, shown.lastTimeMs],
-  );
+  // Single source of truth: causal archived H1/M5 publications.
   const observedDmi = useMemo(() => visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
   // Only the final 5m DMI reading of each completed H1 is plotted on the H1 axis.
   const indicatorSamples = timeframe === "1h"
@@ -235,13 +229,8 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       // Never refit the line to the replayed price candles.
       const knownLines = visibleGeometry(document, shown.lastTimeMs);
       const historicalLines = visibleGeometryHistory(document, shown.lastTimeMs);
-      // Both published and provisional history are immutable visual records:
-      // a replaced slope cannot erase, relocate or backdate its predecessor.
-      // Avoid double-painting an early guide with identical confirmed anchors.
-      const confirmedKeys = new Set(historicalLines.map(line =>
-        [line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":")));
-      const drawableLines = [...historicalLines, ...earlyGeometry.filter(line =>
-        !confirmedKeys.has([line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":")))];
+      // No second in-browser fitting; historical revisions remain visible.
+      const drawableLines = historicalLines;
       const knownPriors = visiblePriorLevels(document, shown.lastTimeMs);
       const brokenByVersion = new Map(priorBreaks.map(item => [item.trend_version, item]));
       let paintedGeometry = 0;
@@ -389,7 +378,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       context.restore();
       canvas.dataset.visibleFills = String(rendered);
       canvas.dataset.visibleGeometry = String(knownLines.length);
-      canvas.dataset.visibleEarlyGeometry = String(earlyGeometry.length);
+      canvas.dataset.visibleEarlyGeometry = "0";
       canvas.dataset.visiblePriors = String(knownPriors.length);
       canvas.dataset.paintedPriors = String(paintedPriors);
       canvas.dataset.paintedGeometry = String(paintedGeometry);
@@ -400,7 +389,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles, earlyGeometry]);
+  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles]);
 
   // The editable layer reuses the terminal's drawing tools, but stores its X
   // anchors in absolute UTC M5 slots rather than indices of the selected TF.
@@ -550,12 +539,6 @@ export function ReplayPage() {
     () => visibleGeometry(document, shown.lastTimeMs),
     [document, shown.lastTimeMs],
   );
-  const earlyGeometry = useMemo(
-    () => visibleEarlyGeometry(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
-  );
-  const earlyMain = earlyGeometry.find(line => line.kind === "MAIN_1H");
-  const earlyBlueCount = earlyGeometry.filter(line => line.kind === "REFERENCE_5M").length;
   const activeMain = publishedGeometry.find(line => line.kind === "MAIN_1H");
   const latestPrior = useMemo(
     () => visiblePriorLevels(document, shown.lastTimeMs).at(-1),
@@ -807,9 +790,7 @@ export function ReplayPage() {
         role="status" aria-label="Статус трендовой геометрии">
         {activeMain
           ? "Геометрия: полная подтверждённая часовая пара 1–3 / 2–4; синие M5-линии сохраняются в истории."
-          : earlyMain
-            ? `Геометрия: показана исследовательская H1-линия только после четырёх подтверждённых пивотов; целевая пара не установлена. Синих M5 после четырёх пивотов: ${earlyBlueCount}.`
-            : "Геометрия: пока нет подтверждённой H1-структуры из четырёх пивотов."}
+          : "Геометрия: пока нет подтверждённой H1-структуры из четырёх пивотов."}
         {document.geometry_warmup_hours
           ? ` Предыстория для экстремумов: ${document.geometry_warmup_hours} ч.`
           : ""}
@@ -839,9 +820,7 @@ export function ReplayPage() {
         {" "}Новое направление: {latestPriorBreak.new_side === "BULL" ? "восходящее" : "нисходящее"}.
         {" "}{oppositeMainConfirmed
           ? "Противоположная жёлтая H1-линия подтверждена и отображается."
-          : earlyMain?.side === latestPriorBreak.new_side
-            ? "Исследовательская противоположная H1-линия появилась после четырёх подтверждённых пивотов; полная пара ещё не установлена."
-            : "Противоположная жёлтая H1-линия ещё не подтверждена: ожидаются геометрические якоря."}
+          : "Противоположная жёлтая H1-линия ещё не подтверждена: ожидаются геометрические якоря."}
       </p>}
       {latestPrior && <p className="replay-geometry-note"
         role="status" aria-label="Приор H1">
