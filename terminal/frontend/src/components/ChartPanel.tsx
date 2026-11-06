@@ -148,6 +148,7 @@ export function ChartPanel({
   savedReviewLabel = null,
   savedReviewNote = null,
   onSaveGeometryReview,
+  onEditorNavigate,
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
@@ -195,6 +196,7 @@ export function ChartPanel({
   savedReviewNote?: string | null;
   onSaveGeometryReview?: (review: GeometryReviewDraft & { note: string; idempotency_key: string }) =>
     Promise<{ reviewId: string; label: GeometryReviewDraft["label"] }>;
+  onEditorNavigate?: (mode: "TERMINAL" | "AUTOPILOT") => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -911,9 +913,31 @@ export function ChartPanel({
       <div className="chart-content-row">
         {editorMode && signalIdentity && (
           <div className="editor-correction-export">
-            <button type="button" onClick={() => void copyCorrectionDraft()}>
-              Скопировать исправленную геометрию
-            </button>
+            <div className="editor-review-topline">
+              <button type="button" onClick={() => void copyCorrectionDraft()}>
+                Скопировать исправленную геометрию
+              </button>
+              <nav className="editor-workspace-shortcuts" aria-label="Переход между вкладками">
+                <button type="button" aria-label="Терминал" title="Терминал"
+                  onClick={() => onEditorNavigate?.("TERMINAL")}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="13" rx="2" />
+                    <path d="M8 21h8M12 17v4" />
+                  </svg>
+                </button>
+                <button type="button" aria-label="Автопилот" title="Автопилот"
+                  onClick={() => onEditorNavigate?.("AUTOPILOT")}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <circle cx="12" cy="12" r="2.2" />
+                    <line x1="4.5" y1="9.5" x2="10.2" y2="11.3" />
+                    <line x1="19.5" y1="9.5" x2="13.8" y2="11.3" />
+                    <line x1="12" y1="14.2" x2="12" y2="20.5" />
+                    <path d="M4.8 9.8 Q12 6.5 19.2 9.8" />
+                  </svg>
+                </button>
+              </nav>
+            </div>
             <select
               aria-label="Оценка сигнала"
               value={reviewLabel}
