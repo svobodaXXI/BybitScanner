@@ -218,7 +218,12 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-priors"), "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-priors"), "1");
   assert.match(await page.locator(".replay-chart-watermark").innerText(), /BTCUSDT · 5M/);
-  await page.locator(".replay-chart-frame").dblclick({ position: { x: 280, y: 180 } });
+  // Last candle sits left of the future-space margin (rightOffset 42).
+  // A click on blank space at x=280 has no candle and must NOT open a dialog.
+  const chartFrame = page.locator(".replay-chart-frame");
+  const frameBox = await chartFrame.boundingBox();
+  assert.ok(frameBox);
+  await chartFrame.dblclick({ position: { x: frameBox.width * 0.7, y: 180 } });
   assert.equal(await page.getByRole("dialog", { name: "Начать отсюда?" }).count(), 1);
   await page.getByRole("button", { name: "Нет", exact: true }).click();
   assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
