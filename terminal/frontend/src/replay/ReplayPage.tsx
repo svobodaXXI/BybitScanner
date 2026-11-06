@@ -630,6 +630,8 @@ export function ReplayPage() {
         if (controller.signal.aborted) return;
         setDocument(parsed);
         syncImportedMarketSelection(parsed);
+        resetDrawingHistory();
+        setDrawingTool("crosshair");
         setPlaying(false); setCursor(0);
         setFileLabel("Проверенный публичный архив · GRASSUSDT");
         setError(null);
