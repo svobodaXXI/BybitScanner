@@ -105,6 +105,7 @@ describe("standalone SIMULATION viewer contract", () => {
     };
     const doc = {
       source: "SIMULATION", mode: "MARKET_ONLY", simulation_run_id: "audit-4p",
+      market_data_source: "BYBIT_PUBLIC_KLINE",
       symbol: "BTCUSDT", timeframe: "5m",
       events: [{ source: "SIMULATION", simulation_run_id: "audit-4p",
         kind: "CANDLE_CLOSED", sequence: 1, time_ms: candle.end_ms, candle }],
