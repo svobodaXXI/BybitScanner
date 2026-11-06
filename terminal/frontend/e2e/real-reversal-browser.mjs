@@ -67,6 +67,9 @@ try {
   assert.match(await page.locator("body").innerText(), /официального публичного архива/);
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
+  // Semantic status nodes intentionally live inside a CLOSED diagnostics
+  // disclosure. Open it just as the owner would before reading prior events.
+  await page.getByText("Диагностика", { exact: true }).click();
 
   const forward = page.getByRole("button", { name: "Шаг вперёд ▶", exact: true });
   const backward = page.getByRole("button", { name: "◀ Шаг назад", exact: true });
