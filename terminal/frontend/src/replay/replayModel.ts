@@ -399,7 +399,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
                 at_ms % timeframeMs !== 0 || confirmed_at_ms < at_ms + timeframeMs ||
                 confirmed_at_ms > available_at_ms || price <= 0)
               throw new Error("Неподтверждённый исходный пивот");
-            return { kind, at_ms, confirmed_at_ms, price };
+            return { kind: kind as ReplayPivot["kind"], at_ms, confirmed_at_ms, price };
           });
           if (points.some((p, i) => i > 0 &&
             (p.at_ms <= points[i - 1].at_ms ||
