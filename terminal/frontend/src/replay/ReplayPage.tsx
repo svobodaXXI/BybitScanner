@@ -227,6 +227,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       // anchors/time of knowledge come from the frozen causal geometry feed;
       // DrawingOverlay's rayEndPoint extends the line to the price pane edge.
       // Never refit the line to the replayed price candles.
+      const knownLines = visibleGeometry(document, shown.lastTimeMs);
       const historicalLines = visibleGeometryHistory(document, shown.lastTimeMs);
       // Both published and provisional history are immutable visual records:
       // a replaced slope cannot erase, relocate or backdate its predecessor.
