@@ -72,8 +72,8 @@ try {
   const fibTool = drawingBar.getByRole("button", { name: "Fibonacci" });
   assert.equal((await fibTool.innerText()).trim(), "", "Fibonacci uses a pictogram, not a text word");
   assert.equal(await fibTool.locator('svg[data-tool-icon="fibonacci"] path').count(), 1);
-  assert.equal(await drawingBar.locator('button[aria-label] svg.replay-tool-icon').count(), 11,
-    "ten drawing tools plus delete all have true graphical icons");
+  assert.equal(await drawingBar.locator('button[aria-label] svg.replay-tool-icon').count(), 12,
+    "ten drawing tools plus undo and delete all have true graphical icons");
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
   const progress = page.locator('[role="progressbar"]');
   const forward = page.getByRole("button", { name: "Шаг вперёд ▶", exact: true });
