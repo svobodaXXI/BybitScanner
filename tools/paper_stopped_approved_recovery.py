@@ -270,6 +270,12 @@ def recover_editor_only(
         )
         if isinstance(status, str) and status.startswith("READY:"):
             _complete_stop_intent(transactions, target, uid=uid)
+            _demand(
+                _proven_prior_exceptional_completion(
+                    transactions, PRIOR_TARGET, root=root, uid=uid,
+                ),
+                "editor_handoff_success_receipt_unproven",
+            )
         return status
 
     _demand(len(target) == 40 and all(c in "0123456789abcdef" for c in target)
