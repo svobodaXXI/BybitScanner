@@ -213,11 +213,18 @@ try {
   await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
   await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 160 } });
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
-  const undo = page.getByRole("button", { name: "Отменить последнюю фигуру" });
+  assert.equal(await page.getByRole("button", { name: "Курсор / сдвиг" }).getAttribute("aria-pressed"), "true",
+    "a finished drawing must return to crosshair instead of drawing a second");
+  const magnet = page.getByRole("button", { name: "Магнит" });
+  await magnet.click();
+  assert.equal(await magnet.getAttribute("aria-pressed"), "true");
+  const undo = page.getByRole("button", { name: "Отменить последнее действие" });
   assert.equal(await undo.isDisabled(), false);
   assert.equal(await undo.locator('svg[data-tool-icon="undo"] path').count(), 1);
+  await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
   await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 230 } });
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "2");
+  assert.equal(await page.getByRole("button", { name: "Курсор / сдвиг" }).getAttribute("aria-pressed"), "true");
   await undo.click();
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
   await page.getByRole("button", { name: "H1", exact: true }).click();
