@@ -632,7 +632,11 @@ export function ReplayPage() {
         <div style={{ width: progress + "%" }} />
       </div>
       {document.mode === "MARKET_ONLY" && <p className="replay-note">
-        РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ СДЕЛОК: жёлтые 1H и синие 5m линии — предварительные кандидаты из подтверждённых экстремумов, не проверенная стратегия.
+        РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ СДЕЛОК:
+        {" "}{document.market_data_source === "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M"
+          ? "исторические сделки из официального публичного архива, агрегированные в закрытые 5m OHLCV"
+          : "публичные свечи API Bybit"}
+        {" "}· жёлтые 1H и синие 5m линии — предварительные кандидаты из подтверждённых экстремумов, не проверенная стратегия.
       </p>}
       <details className="replay-diagnostics">
         <summary>Диагностика</summary>

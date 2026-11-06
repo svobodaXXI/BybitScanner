@@ -18,6 +18,24 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(completeHourlyCandles([bars[0], ...bars.slice(2, 12)])).toEqual([]); // A gap is not invented.
   });
 
+  it("retains distinct official trade-derived provenance for real archive replay", () => {
+    const events = syntheticReplay().events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map((e, i) => ({ ...e, sequence: i + 1, simulation_run_id: "public_archive" }));
+    const input = {
+      source: "SIMULATION", simulation_run_id: "public_archive",
+      mode: "MARKET_ONLY", symbol: "GRASSUSDT", timeframe: "5m", events,
+      market_data_source: "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M",
+      geometry: [], hourly_prior_updates: [], hourly_prior_breaks: [],
+    };
+    const accepted = parseReplayDocument(input);
+    expect(accepted.market_data_source).toBe("BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M");
+    expect(accepted.events).toHaveLength(events.length);
+    expect(visiblePriorBreaks(accepted, events.at(-1)!.time_ms)).toEqual([]);
+    expect(() => parseReplayDocument({
+      ...input, market_data_source: "BYBIT_PRIVATE_HISTORY",
+    })).toThrow();
+  });
+
   it("shows only completed candles and fills revealed at the current cursor", () => {
     const doc = syntheticReplay();
     expect(doc.source).toBe("SIMULATION");

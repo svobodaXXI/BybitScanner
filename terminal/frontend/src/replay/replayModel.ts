@@ -146,6 +146,8 @@ export type ReplayDocument = {
   events: ReplayEvent[];
   demo?: boolean;
   mode?: "MARKET_ONLY" | "STRATEGY";
+  /** Audit provenance: direct public kline GET vs official trade-derived closed M5. */
+  market_data_source?: "BYBIT_PUBLIC_KLINE" | "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M";
   symbol?: string;
   timeframe?: "5m";
   geometry?: ReplayGeometry[];
@@ -218,7 +220,8 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     throw new Error("Неизвестный режим воспроизведения");
   }
   if (mode === "MARKET_ONLY" && (
-    object.market_data_source !== "BYBIT_PUBLIC_KLINE" ||
+    (object.market_data_source !== "BYBIT_PUBLIC_KLINE" &&
+     object.market_data_source !== "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M") ||
     typeof object.symbol !== "string" ||
     !/^[A-Z0-9]{3,30}$/.test(object.symbol) ||
     object.timeframe !== "5m" || object.demo === true
@@ -779,7 +782,12 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
   return {
     source: "SIMULATION", simulation_run_id: id, events, demo: object.demo === true,
     ...(mode ? { mode } : {}),
-    ...(mode === "MARKET_ONLY" ? { symbol: object.symbol as string, timeframe: "5m" as const } : {}),
+    ...(mode === "MARKET_ONLY" ? {
+      symbol: object.symbol as string,
+      timeframe: "5m" as const,
+      market_data_source: object.market_data_source as
+        "BYBIT_PUBLIC_KLINE" | "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M",
+    } : {}),
     ...(geometry ? { geometry } : {}),
     ...(hourly_prior_updates ? { hourly_prior_updates } : {}),
     ...(hourly_prior_breaks ? { hourly_prior_breaks } : {}),
