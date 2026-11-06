@@ -154,6 +154,8 @@ try {
       });
     }
     await advanceTo(firstYellowIndex + 1);
+    assert.equal(await overlay.getAttribute("data-visible-early-geometry"), "0",
+      "never show second in-browser H1/M5 geometry, even after four local pivots");
     assert.ok(Number(await overlay.getAttribute("data-visible-geometry")) >= 2,
       "opposite confirmed MAIN_1H and TARGET_1H must actually render");
     assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 2,
