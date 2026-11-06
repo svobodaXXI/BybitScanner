@@ -55,7 +55,7 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   assert.equal(await page.getByRole("group", { name: "Управление воспроизведением" }).count(), 1);
   assert.equal(await page.getByRole("group", { name: "Инструменты рисования" })
-    .locator("svg.replay-tool-icon").count(), 11);
+    .locator("svg.replay-tool-icon").count(), 12);
   // Manual owner choice must win over the one-time automatic load.
   await page.getByRole("button", { name: "Пример", exact: true }).click();
   assert.match(await page.locator("body").innerText(), /Синтетический пример/);
