@@ -210,6 +210,49 @@ PREFIX = ("sudo", "-n")
 
 
 
+def _proven_stopped_backend_handoff_to(
+    journal_root: Path, target: str, *, uid: int,
+) -> bool:
+    """Attest the new one-shot handoff before sealing EDITOR_ONLY.
+
+    This is *not* a canonical STOP receipt. The Backend must already have
+    exited under the separately authorized pinned signal and the protected
+    installer must have committed the verified target release.
+    """
+    from tools.paper_stopped_approved_recovery import (
+        OLD_BACKEND, PRIOR_TARGET, PartialStopBlocked, _receipt,
+    )
+    from tools.paper_interrupted_stop_recovery import _trusted_journal
+    from tools.vps_gitless_release_activate import (
+        ActivationBlocked, _manifest, _trusted_file,
+    )
+    from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+    try:
+        _trusted_journal(journal_root, uid)
+        if (verify_release(REPO) != target
+                or (journal_root / PRIOR_TARGET).exists()
+                or (journal_root / (".stop-confirmed-" + PRIOR_TARGET)).exists()
+                or _trusted_file(journal_root / (".stop-invoked-" + PRIOR_TARGET), uid)
+                != b"STOP_INVOKED; not install authorization\\n"):
+            return False
+        journal = journal_root / target
+        if (not journal.is_dir() or journal.is_symlink()
+                or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077):
+            return False
+        old = _manifest(_trusted_file(journal / "old.json", uid))
+        new = _manifest(_trusted_file(journal / "target.json", uid))
+        _trusted_file(journal / "units.json", uid)
+        return (
+            old["build_sha"] == OLD_BACKEND and new["build_sha"] == target
+            and target not in (PRIOR_TARGET, OLD_BACKEND)
+            and all(_receipt(journal_root, phase, uid, target=target)
+                    for phase in ("handoff-attempt", "backend-exited", "handoff-proven"))
+        )
+    except (ActivationBlocked, PartialStopBlocked, ReleaseIdentityBlocked,
+            OSError, ValueError, TypeError, KeyError):
+        return False
+
+
 def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
     """Record post-resume success only; never grant STOP or install authority."""
     from tools.vps_gitless_release_activate import (
@@ -221,6 +264,8 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
         return  # No protected installer transaction to attest.
     if marker.exists() or marker.is_symlink():
         _trusted_file(marker, uid)
+    elif _proven_stopped_backend_handoff_to(journal_root, target, uid=uid):
+        pass  # A distinct, sealed one-shot handoff; no canonical STOP receipt.
     else:
         # An exceptional prior-target handoff can install the pinned release
         # without a same-target ordinary STOP marker. Only its *own* protected
@@ -392,60 +437,77 @@ def _confirmed_stop_receipt(
 def _proven_prior_exceptional_completion(
     journal_root: Path, prior: str, *, root: Path, uid: int,
 ) -> bool:
-    """Recognize an old STOP superseded by its *proven* exceptional handoff.
+    """Historical STOP intent is inert only after a durable verified handoff.
 
-    The original STOP never succeeded. A separately authorized, one-shot
-    handoff may have replaced it and installed an attested EDITOR_ONLY release.
-    In that case its old intent is history, not an outstanding STOP to replay.
-    Do not modify the original marker, synthesize receipts, or accept a live
-    backend/FLAT snapshot by itself as evidence of the handoff.
+    Its original STOP remains unconfirmed. The protected successor release
+    journal and handoff receipts, *not* the current installed SHA alone,
+    prove the old intent was superseded. This remains true after later
+    verified upgrades; unknown or incomplete handoffs remain a global fence.
     """
     from tools.paper_interrupted_stop_recovery import (
-        OLD_BACKEND, PRIOR_TARGET, RecoveryBlocked, _receipt, _trusted_journal,
+        OLD_BACKEND as LEGACY_BACKEND, PRIOR_TARGET as LEGACY_TARGET,
+        MARKER_PREFIX as LEGACY_PREFIX, RecoveryBlocked,
+        _receipt as legacy_receipt, _trusted_journal,
+    )
+    from tools.paper_stopped_approved_recovery import (
+        OLD_BACKEND as NEW_BACKEND, PRIOR_TARGET as NEW_TARGET,
+        MARKER_PREFIX as NEW_PREFIX, PartialStopBlocked,
+        _receipt as new_receipt,
     )
     from tools.vps_gitless_release_activate import (
         ActivationBlocked, _manifest, _trusted_file,
     )
     from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
 
-    if prior != PRIOR_TARGET:
+    if prior == LEGACY_TARGET:
+        old_backend, prefix, receipt = LEGACY_BACKEND, LEGACY_PREFIX, legacy_receipt
+    elif prior == NEW_TARGET:
+        old_backend, prefix, receipt = NEW_BACKEND, NEW_PREFIX, new_receipt
+    else:
         return False
     try:
         _trusted_journal(journal_root, uid)
-        if ((journal_root / PRIOR_TARGET).exists()
-                or (journal_root / (".stop-confirmed-" + PRIOR_TARGET)).exists()):
-            return False
-        if (_trusted_file(journal_root / (".chatops-invoked-" + PRIOR_TARGET), uid)
-                != (PRIOR_TARGET + "\n").encode("ascii")
-                or _trusted_file(journal_root / (".stop-invoked-" + PRIOR_TARGET), uid)
+        if ((journal_root / prior).exists()
+                or (journal_root / (".stop-confirmed-" + prior)).exists()
+                or _trusted_file(journal_root / (".stop-invoked-" + prior), uid)
                 != b"STOP_INVOKED; not install authorization\\n"):
             return False
-        installed = verify_release(root)
-        if installed in (OLD_BACKEND, PRIOR_TARGET):
+        if prior == LEGACY_TARGET and (
+            _trusted_file(journal_root / (".chatops-invoked-" + prior), uid)
+            != (prior + "\n").encode("ascii")
+        ):
             return False
-        journal = journal_root / installed
+        # The handoff-proven receipt binds the original STOP to exactly one
+        # successor SHA, even when that successor is no longer installed.
+        raw = _trusted_file(journal_root / (prefix + "handoff-proven-" + prior), uid)
+        successor = raw.decode("ascii").removesuffix("\n")
+        if (len(successor) != 40
+                or any(ch not in "0123456789abcdef" for ch in successor)
+                or successor in (old_backend, prior)
+                or raw != (successor + "\n").encode("ascii")):
+            return False
+        journal = journal_root / successor
         if (not journal.is_dir() or journal.is_symlink()
                 or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077):
             return False
         old = _manifest(_trusted_file(journal / "old.json", uid))
-        successor = _manifest(_trusted_file(journal / "target.json", uid))
+        new = _manifest(_trusted_file(journal / "target.json", uid))
         _trusted_file(journal / "units.json", uid)
-        if (old["build_sha"] != OLD_BACKEND
-                or successor["build_sha"] != installed
-                or not _receipt(journal_root, "handoff-attempt", uid, target=installed)
-                or not _receipt(journal_root, "backend-exited", uid, target=installed)
-                or not _receipt(journal_root, "handoff-proven", uid, target=installed)):
+        if (old["build_sha"] != old_backend or new["build_sha"] != successor
+                or not all(receipt(journal_root, phase, uid, target=successor)
+                           for phase in ("handoff-attempt", "backend-exited",
+                                         "handoff-proven"))):
             return False
-        # PR #855 repaired a missing editor-ready receipt on this handoff.
-        # Its absence alone must not erase the immutable handoff evidence;
-        # a present but invalid receipt is never silently accepted.
         ready = journal / "editor-ready"
-        if (ready.exists() or ready.is_symlink()) and (
-                _trusted_file(ready, uid) != installed.encode("ascii")):
-            return False
-        return True
-    except (ActivationBlocked, RecoveryBlocked, ReleaseIdentityBlocked,
-            OSError, ValueError, TypeError, KeyError):
+        if ready.exists() or ready.is_symlink():
+            return _trusted_file(ready, uid) == successor.encode("ascii")
+        # Only the earlier #855 legacy handoff may lack editor-ready; it
+        # remains historical solely while its successor is *still* verified
+        # as installed. A later release requires a sealed ready receipt.
+        return prior == LEGACY_TARGET and verify_release(root) == successor
+    except (ActivationBlocked, RecoveryBlocked, PartialStopBlocked,
+            ReleaseIdentityBlocked, OSError, ValueError, TypeError,
+            UnicodeError, KeyError):
         return False
 
 
