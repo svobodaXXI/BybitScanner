@@ -896,7 +896,8 @@ export function ChartPanel({
                 <button type="button" aria-label="Терминал" title="Терминал"
                   onClick={() => onEditorNavigate?.("TERMINAL")}>
                   <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M2 17 L4 13 L6 16 L8 10 L10 13 L12 7 L14 11 L16 5 L18 9 L20 6 L22 3" />
+                    <line x1="12" x2="12" y1="2" y2="22" />
+                    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
                   </svg>
                 </button>
                 <button type="button" aria-label="Автопилот" title="Автопилот"
