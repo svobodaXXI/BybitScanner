@@ -597,7 +597,9 @@ class CausalGeometryFeed:
                         candidate.first, candidate.second, available,
                     )
                     self._active_blue_hourly_first_ms = origin
-                    self._active_blue_correction_extreme = middle.price
+                    # Point 4 is already the newest confirmed correction
+                    # extreme; a later refit requires a genuinely NEW low/high.
+                    self._active_blue_correction_extreme = fourth.price
                     self._active_blue_checked_q_ms = third.confirmed_at_ms
         elif self._active_blue is not None and trend is not None:
             recent = self._five.recent_pivots
