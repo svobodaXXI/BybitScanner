@@ -243,6 +243,26 @@ class ConfirmedGeometryTests(unittest.TestCase):
         for bar in bars[1:]:
             self.assertLessEqual(line.value_at(bar.start_ms), bar.low)
 
+    def test_blue_publication_requires_four_confirmed_m5_pivots(self):
+        feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
+        for hour, (high, low) in enumerate(BULL[:7]):
+            for minute in range(12):
+                bar = make_bar(hour * 12 + minute, high, low, FIVE_MINUTES_MS)
+                h1 = make_bar(hour, high, low) if minute == 11 else None
+                trend, blue = feed.observe_closed(bar, h1)
+        self.assertIsNotNone(trend)
+        self.assertEqual(trend.side, "BULL")
+        # HIGH 144 -> LOW 120 -> lower HIGH 137 is only 1-2-3.
+        # The fourth structurally lower LOW has not been confirmed.
+        path = [
+            (140, 132), (144, 135), (141, 131),
+            (130, 120), (137, 127), (132, 126),
+        ]
+        for minute, (high, low) in enumerate(path):
+            bar = make_bar(84 + minute, high, low, FIVE_MINUTES_MS)
+            _, blue = feed.observe_closed(bar, None)
+            self.assertIsNone(blue, "three pivots must never publish blue")
+
     def test_only_one_blue_correction_until_its_actual_next_m5_open_break(self):
         feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
         for hour, (high, low) in enumerate(BULL[:7]):
