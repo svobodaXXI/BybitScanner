@@ -1226,6 +1226,52 @@ class ShutdownArmFixture:
 
 
 class BackendShutdownRefusalReasonTests(unittest.TestCase):
+    def test_empty_internal_tuple_coverage_allows_shutdown(self):
+        # health() returns tuples; only the public JSON projection uses lists.
+        for covered, armed, expected_status in (
+            ((), (), 200), ([], [], 200), (("BTCUSDT",), (), 409),
+        ):
+            with self.subTest(covered=covered, armed=armed):
+                owner = SimpleNamespace(
+                    live_limit_acceptance_diagnostics=lambda: {"database_identity": IDENTITY},
+                    robot_runtime_state=lambda: SimpleNamespace(
+                        mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED",
+                    ),
+                    scanner_status=lambda: SimpleNamespace(mode="SCANNER_STOPPED"),
+                    scanner_worker_quiescent=lambda: True,
+                    paper_shutdown_blocker=lambda: None,
+                )
+                runtime = SimpleNamespace(
+                    call=lambda operation: operation(owner), seal_shutdown=mock.Mock(),
+                )
+                coverage = SimpleNamespace(
+                    health=lambda: {
+                        "healthy": True, "covered_symbols": covered,
+                        "armed_symbols": armed,
+                        "coverage_roles": {} if not covered else {"BTCUSDT": "EXPOSURE"},
+                        "unhealthy_symbols": {},
+                    },
+                    shutdown_idle_guard=lambda: nullcontext(),
+                )
+                handler = object.__new__(PaperHttpHandler)
+                handler.path = "/api/runtime/shutdown"
+                handler.server = SimpleNamespace(
+                    runtime=runtime, robot_protection_coverage=coverage,
+                    shutdown=lambda: None,
+                )
+                handler._payload = lambda *_args: {"database_identity": IDENTITY}
+                replies = []
+                handler._json_response = lambda status, body: replies.append((status, body))
+                with mock.patch("terminal.runtime.paper_http_server.threading.Thread") as thread:
+                    handler.do_POST()
+                self.assertEqual([status for status, _ in replies], [expected_status])
+                if expected_status == 200:
+                    runtime.seal_shutdown.assert_called_once_with()
+                    thread.return_value.start.assert_called_once_with()
+                else:
+                    runtime.seal_shutdown.assert_not_called()
+                    thread.assert_not_called()
+
     def test_preserves_durable_blocker_without_sealing_backend(self):
         for reason in ("active_robot_candidate", "unfinished_or_unknown_command"):
             with self.subTest(reason=reason):
