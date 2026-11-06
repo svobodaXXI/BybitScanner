@@ -1248,7 +1248,8 @@ def _active_required_flat_proof(db: Path) -> tuple[str, str, str | None] | None:
                     return None
                 if conn.execute(
                     "SELECT 1 FROM executions WHERE trading_account_id='paper' "
-                    "AND symbol=? AND exchange_timestamp_ms>=? LIMIT 1",
+                    "AND symbol=? AND (exchange_timestamp_ms IS NULL "
+                    "OR exchange_timestamp_ms>=?) LIMIT 1",
                     (symbol, approved),
                 ).fetchone() is not None:
                     return None
