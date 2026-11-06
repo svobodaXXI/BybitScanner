@@ -12,7 +12,7 @@ import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from
 import { rayEndPoint } from "../chart/drawingGeometry";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
-import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
+import { chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import "./replay.css";
 
 function label(event: ReplayEvent): string {
@@ -246,20 +246,19 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         // Charts returns null for timestamps not present in loaded candles.
         // Project the original, frozen two-point slope (CausalLine.value_at)
         // onto two actual VISIBLE candle times, without any new fitting.
-        const startingBar = displayCandles.find(bar => bar.start_ms >= line.from_ms);
-        // An improved pivot/slope is NOT a break. Keep the former solid
-        // version visible until the same movement's verified cancellation.
+        // Project exact UTC anchors, not rounded positions on the selected
+        // timeframe. A completed M5 correction may start AND retire inside a
+        // single H1 candle; rounding both ends to H1 would erase its history.
+        const segment = geometryLogicalSegment(line, displayCandles);
+        if (!segment) continue;
         const retiredAt = line.retired_at_ms;
-        const endingBar = retiredAt !== undefined
-          ? displayCandles.slice().reverse().find(bar => bar.start_ms < retiredAt)
-          : displayCandles.at(-1);
-        if (!startingBar || !endingBar || startingBar.start_ms >= endingBar.start_ms) continue;
+        const endingAtMs = Math.min(retiredAt ?? Infinity, displayCandles.at(-1)!.end_ms);
         const priceAt = (at_ms: number) => line.from_price +
           (line.to_price - line.from_price) * (at_ms - line.from_ms) / (line.to_ms - line.from_ms);
-        const x1 = api.timeScale().timeToCoordinate((startingBar.start_ms / 1000) as UTCTimestamp);
-        const x2 = api.timeScale().timeToCoordinate((endingBar.start_ms / 1000) as UTCTimestamp);
-        const y1 = candleSeries.priceToCoordinate(priceAt(startingBar.start_ms));
-        const y2 = candleSeries.priceToCoordinate(priceAt(endingBar.start_ms));
+        const x1 = api.timeScale().logicalToCoordinate(segment.from as Logical);
+        const x2 = api.timeScale().logicalToCoordinate(segment.to as Logical);
+        const y1 = candleSeries.priceToCoordinate(priceAt(line.from_ms));
+        const y2 = candleSeries.priceToCoordinate(priceAt(endingAtMs));
         if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
         // Only a confirmed retirement ends the line. Add a short VISUAL
         // tail beyond that point; no arbitrary candle-based strategy rule.
