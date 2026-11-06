@@ -48,7 +48,7 @@
 
 ## 6. Verification gate
 
-На каждом slice: минимальный scoped diff → регрессии совпадения публичного поведения и ошибок → релевантный CI → review → merge только по явному разрешению → deployment на VPS только по отдельному разрешению и доказанному безопасному runtime. Тесты в isolated temp DB не равны живой PAPER-приёмке. Исторические данные/открытые позиции не менять; XP/достижения за код, тесты или документы не начислять.
+Для одного доказанного изменения: минимальный scoped diff → адресные регрессии → обязательный CI → review → merge только по явному разрешению → deployment на VPS только по отдельному разрешению и доказанному безопасному runtime. Тесты в isolated temp DB не равны живой PAPER-приёмке. Исторические данные/открытые позиции не менять; XP/достижения за код, тесты или документы не начислять.
 
 ---
 
@@ -149,7 +149,7 @@ Backend и STOP/TAKE сохранены. Не подменять причину 
 
 ## 10. Системная ревизия паралича PAPER — 05.11.2026 (реальный результат прежде PR)
 
-**Отправная точка:** owner READ-ONLY VPS 05.11 16:23 MSK: running
+**Исторический снимок (НЕ текущее состояние):** owner READ-ONLY VPS 05.11 16:23 MSK: running
 `4090641514b8f558a0054fd577b2750b944fd8d6`, Admission false,
 PAPER_AUTO ON, Scanner API RUNNING, Protection HEALTHY, последняя перегрузка
 MONUSDT/EXPOSURE, ingress 64/64, max owner callback ~4885 ms. Полная
@@ -187,12 +187,12 @@ quiescence/Robot durable reason неизвестны из-за отсутств�
    `deploy/systemd/bybitscanner-paper-backend.service` сознательно имеет
    `Restart=no`, так как простая перезагрузка теряет software protection.
    Менять на безусловный Restart=always нельзя.
-6. Root-owned forced-command `preflight|execute|diagnose` и установленная
-   Gitless версия не дают внедрить новый collector/код restricted key.
-   **Одно восстановление доверенного owner root доступа для установки
-   фиксированного handler — реальная внешняя граница**, не исчезающая
-   от очередного PR. Не расширять общий shell/sudo и не вводить второй
-   независимый PAPER writer.
+6. Root-owned forced-command `preflight|execute|diagnose` ограничивает
+   защищённый bridge; не расширять общий shell/sudo и не создавать второго
+   PAPER writer. **Обновление 06.11:** владелец уже выполнял read-only
+   проверки и одну разрешённую операцию через существующий root SSH,
+   поэтому новый SSH-контур, collector или отдельный доступ ради монолита
+   не нужны. Это не разрешает повторный STOP, deploy или торговлю.
 
 **Применимые идеи зрелых систем — без новых зависимостей:** фактическая фаза вместо перезапуска всей последовательности (controller reconciliation), fsync-журнал результата (durable execution), строго не повторять неоднозначный необратимый side effect (at-most-once), systemd использовать лишь как supervisor/process evidence. Не внедрять Kubernetes, Temporal, AWS Step Functions, watchdog, `sd_notify`, сервис очередей или новый persistence layer ради текущего P0. Безусловный `Restart=always` опасен для protection и не разрешён.
 
