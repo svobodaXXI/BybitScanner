@@ -216,6 +216,9 @@ try {
   const undo = page.getByRole("button", { name: "Отменить последнюю фигуру" });
   assert.equal(await undo.isDisabled(), false);
   assert.equal(await undo.locator('svg[data-tool-icon="undo"] path').count(), 1);
+  // One-shot drawing: completion must restore crosshair, not start the next line.
+  assert.equal(await page.getByRole("button", { name: "Курсор / сдвиг" }).getAttribute("aria-pressed"), "true");
+  await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
   await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 230 } });
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "2");
   await undo.click();
