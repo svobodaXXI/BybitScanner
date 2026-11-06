@@ -1201,10 +1201,9 @@ export function visibleGeometry(
   return [...current.values()];
 }
 
-/** Early research overlays: a three-pivot H1 main can be displayed before a
- * four-pivot, converging 1-3 / 2-4 trend is confirmed. The blue M5 guide uses
- * the same already-closed three-pivot wick rule. Neither changes the archived
- * MAIN_1H, purple prior, risk, orders or trade records.
+/** Early research overlays must NOT precede the fourth confirmed pivot.
+ * H1 and M5 share one structural four-point gate, each on its own closed bars.
+ * These are visual history only; archived strategy decisions are unchanged.
  *
  * Work only on a prefix of CLOSED bars, including the immutable prehistory
  * context. Never backdate an H1/M5 guide to its anchor time.
@@ -1232,6 +1231,18 @@ function appendEarlyPivot(bars: readonly ReplayCandle[], pivots: EarlyPivot[]): 
     if ((highest && price > prior.price) || (lowest && price < prior.price))
       pivots[pivots.length - 1] = pivot;
   } else pivots.push(pivot);
+}
+
+function earlyFourPivotSide(pivots: readonly EarlyPivot[]): "BULL" | "BEAR" | null {
+  if (pivots.length < 4) return null;
+  const [a, b, c, d] = pivots.slice(-4);
+  if (a.kind === "LOW" && b.kind === "HIGH" &&
+      c.kind === "LOW" && d.kind === "HIGH" &&
+      c.price > a.price && d.price > b.price) return "BULL";
+  if (a.kind === "HIGH" && b.kind === "LOW" &&
+      c.kind === "HIGH" && d.kind === "LOW" &&
+      c.price < a.price && d.price < b.price) return "BEAR";
+  return null;
 }
 
 function wickTightEarlySlope(
@@ -1268,7 +1279,7 @@ function wickTightEarlySlope(
   };
 }
 
-/** A visibly earlier H1 yellow + M5 blue, explicitly NOT a fully confirmed 4-pivot trend. */
+/** Visual-only H1 and M5 geometry after their own four-pivot confirmation. */
 export function visibleEarlyGeometry(
   document: ReplayDocument, closedTimeMs: number | null,
 ): ReplayGeometryVersion[] {
@@ -1299,19 +1310,17 @@ export function visibleEarlyGeometry(
     seenHours.push(hour);
     appendEarlyPivot(seenHours, h1Pivots);
   }
-  const [a, b, c] = h1Pivots.slice(-3);
-  if (!a || !b || !c || a.kind !== c.kind || b.kind === a.kind) return [];
-  const side = a.kind === "LOW" && c.price > a.price ? "BULL"
-    : a.kind === "HIGH" && c.price < a.price ? "BEAR" : null;
+  const [a, b, c, d] = h1Pivots.slice(-4);
+  if (!a || !b || !c || !d) return [];
+  const side = earlyFourPivotSide([a, b, c, d]);
   if (!side) return [];
   if (confirmedMain && confirmedMain.side !== side) return [];
   if (latestBreak && (latestBreak.new_side !== side ||
       c.confirmed_at_ms <= latestBreak.confirmed_at_ms)) return [];
   const main = wickTightEarlySlope(seenHours, a, c, side,
-    c.confirmed_at_ms, "MAIN_1H");
+    d.confirmed_at_ms, "MAIN_1H");
   if (!main) return [];
-  // The initial yellow is published as soon as two comparable CLOSED H1 wicks
-  // are confirmed; the TARGET_1H still waits for the fourth pivot.
+  // Neither yellow nor blue is published with only three swings.
   const output: ReplayGeometryVersion[] = [main];
   const m5Pivots: EarlyPivot[] = [];
   const seenM5: ReplayCandle[] = [];
@@ -1336,15 +1345,13 @@ export function visibleEarlyGeometry(
         brokenAt = bar.end_ms;
       }
     }
-    const [p, middle, q] = m5Pivots.slice(-3);
-    if (!blue && p && middle && q &&
+    const [p, middle, q, fourth] = m5Pivots.slice(-4);
+    const correction = earlyFourPivotSide(m5Pivots);
+    if (!blue && p && middle && q && fourth &&
         p.at_ms > brokenAt &&
-        (side === "BULL" ? (p.kind === "HIGH" && middle.kind === "LOW" &&
-          q.kind === "HIGH" && q.price < p.price)
-          : (p.kind === "LOW" && middle.kind === "HIGH" &&
-            q.kind === "LOW" && q.price > p.price))) {
+        correction === (side === "BULL" ? "BEAR" : "BULL")) {
       blue = wickTightEarlySlope(seenM5, p, q, side,
-        Math.max(main.available_at_ms, q.confirmed_at_ms), "REFERENCE_5M");
+        Math.max(main.available_at_ms, fourth.confirmed_at_ms), "REFERENCE_5M");
       if (blue) output.push(blue);
     }
   }
@@ -1352,10 +1359,10 @@ export function visibleEarlyGeometry(
 }
 
 /**
- * Frozen visual timeline of early (three-pivot) yellow/blue candidates.
+ * Frozen visual timeline of four-pivot yellow/blue candidates.
  *
- * The live preview is intentionally recomputed from the current prefix and
- * may disappear when a fourth pivot confirms a different slope. Record each
+ * The candidate is recomputed from the current closed-candle prefix.
+ * Record each
  * FIRST publicly visible version instead, without changing strategy inputs.
  * A later revision is another historical object, not a relocation of the old
  * one. Retirement is stored separately and is masked until its own M5 close.
