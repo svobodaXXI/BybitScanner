@@ -124,24 +124,36 @@ class ConfirmedSwingStream:
         return result
 
 
-def recent_hourly_trend(pivots: tuple[ConfirmedPivot, ...]) -> TrendCandidate | None:
-    """Last 4 alternating 1h pivots, narrowing 1--3 / 2--4 envelope."""
+def confirmed_four_pivot_side(
+    pivots: tuple[ConfirmedPivot, ...],
+) -> TrendSide | None:
+    """One closed-candle, four-swing structure shared by H1 and M5.
+
+    The fourth pivot is a real confirmed swing, not the most recent
+    still-forming wick. Significance calibration is separate research.
+    """
     if len(pivots) < 4:
         return None
     a, b, c, d = pivots[-4:]
     kinds = tuple(p.kind for p in (a, b, c, d))
-    if kinds == ("LOW", "HIGH", "LOW", "HIGH"):
-        if c.price <= a.price or d.price <= b.price:
-            return None
-        side: TrendSide = "BULL"
-        main, target = (a, c), (b, d)
-    elif kinds == ("HIGH", "LOW", "HIGH", "LOW"):
-        if c.price >= a.price or d.price >= b.price:
-            return None
-        side = "BEAR"
-        main, target = (a, c), (b, d)
-    else:
+    if kinds == ("LOW", "HIGH", "LOW", "HIGH") and (
+        c.price > a.price and d.price > b.price
+    ):
+        return "BULL"
+    if kinds == ("HIGH", "LOW", "HIGH", "LOW") and (
+        c.price < a.price and d.price < b.price
+    ):
+        return "BEAR"
+    return None
+
+
+def recent_hourly_trend(pivots: tuple[ConfirmedPivot, ...]) -> TrendCandidate | None:
+    """Four confirmed H1 pivots, narrowing 1--3 / 2--4 envelope."""
+    side = confirmed_four_pivot_side(pivots)
+    if side is None:
         return None
+    a, b, c, d = pivots[-4:]
+    main, target = (a, c), (b, d)
     confirmed = max(p.confirmed_at_ms for p in (a, b, c, d))
     primary = CausalLine(*main, confirmed)
     opposing = CausalLine(*target, confirmed)
@@ -562,24 +574,31 @@ class CausalGeometryFeed:
                 self._blue_broken_at_ms = five_minute.end_ms
         if self._active_blue is None and trend is not None:
             recent = self._five.recent_pivots
-            # Only a NEW correction starting AFTER a completed blue break
-            # may create another blue. Past three-pivot windows are not
-            # recycled on every replay candle.
-            if len(recent) >= 3 and (
-                self._blue_broken_at_ms is None or
-                recent[-3].at_ms > self._blue_broken_at_ms
-            ):
-                between = self._five.bars_between(recent[-3], recent[-1])
+            # Do NOT publish a blue reference from a partial H-L-H / L-H-L
+            # setup. The opposite M5 correction requires its own confirmed
+            # fourth structural pivot (lower LOW / higher HIGH).
+            opposite_side: TrendSide = "BEAR" if trend.side == "BULL" else "BULL"
+            if (len(recent) >= 4 and
+                confirmed_four_pivot_side(recent) == opposite_side and
+                (self._blue_broken_at_ms is None or
+                 recent[-4].at_ms > self._blue_broken_at_ms)):
+                first, middle, third, fourth = recent[-4:]
+                between = self._five.bars_between(first, third)
                 candidate = last_correction_reference(
                     hourly=trend,
-                    five_minute_pivots=recent,
+                    five_minute_pivots=(first, middle, third),
                     five_minute_bars=between,
                 )
                 if candidate is not None:
-                    self._active_blue = candidate
+                    # A valid line shape does not grant publication until
+                    # point 4 is confirmed on the M5 stream.
+                    available = max(candidate.available_at_ms, fourth.confirmed_at_ms)
+                    self._active_blue = CausalLine(
+                        candidate.first, candidate.second, available,
+                    )
                     self._active_blue_hourly_first_ms = origin
-                    self._active_blue_correction_extreme = recent[-2].price
-                    self._active_blue_checked_q_ms = recent[-1].confirmed_at_ms
+                    self._active_blue_correction_extreme = middle.price
+                    self._active_blue_checked_q_ms = third.confirmed_at_ms
         elif self._active_blue is not None and trend is not None:
             recent = self._five.recent_pivots
             first = self._active_blue.first
