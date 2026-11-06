@@ -4096,6 +4096,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 )
                 durable_blocker = runtime.paper_shutdown_blocker()
                 protection = coverage.health()
+                # Preserve the existing durable refusal code; do not hide it
+                # behind the generic runtime-still-required response.
+                if isinstance(durable_blocker, str) and durable_blocker:
+                    return "runtime_still_required:" + durable_blocker
                 if (
                     durable_blocker is not None
                     or worker_settled is not True
