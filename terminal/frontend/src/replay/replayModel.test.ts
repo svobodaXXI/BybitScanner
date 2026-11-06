@@ -85,6 +85,51 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(stepReplayCursor(events, 25, "1h", 1)).toBe(25); // 25th M5 is an incomplete H1.
   });
 
+  it("validates dashed M5 acceleration provenance against four known swings", () => {
+    const t = Date.UTC(2026, 9, 1), step = 300_000;
+    const source_pivots = [
+      { kind: "LOW", at_ms: t, confirmed_at_ms: t + 3 * step, price: 90 },
+      { kind: "HIGH", at_ms: t + 2 * step, confirmed_at_ms: t + 5 * step, price: 95 },
+      { kind: "LOW", at_ms: t + 4 * step, confirmed_at_ms: t + 7 * step, price: 91 },
+      { kind: "HIGH", at_ms: t + 6 * step, confirmed_at_ms: t + 9 * step, price: 98 },
+    ];
+    const line = {
+      kind: "ACCELERATION_5M", side: "BULL", from_ms: t, to_ms: t + 4 * step,
+      from_price: 90, to_price: 91, available_at_ms: t + 16 * step,
+      trend_version: t + 12 * step, source_pivots,
+      classification: "UNVALIDATED_GEOMETRY_ONLY",
+    };
+    const candle = {
+      start_ms: t + 19 * step, end_ms: t + 20 * step,
+      open: 101, high: 102, low: 99, close: 100, volume: 1,
+    };
+    const doc = {
+      source: "SIMULATION", mode: "MARKET_ONLY", simulation_run_id: "audit-4p",
+      symbol: "BTCUSDT", timeframe: "5m",
+      events: [{ source: "SIMULATION", simulation_run_id: "audit-4p",
+        kind: "CANDLE_CLOSED", sequence: 1, time_ms: candle.end_ms, candle }],
+      geometry: [line],
+    };
+    const parsed = parseReplayDocument(doc);
+    expect(parsed.geometry?.[0].kind).toBe("ACCELERATION_5M");
+    expect(parsed.geometry?.[0].source_pivots).toHaveLength(4);
+    expect(visibleGeometryHistory(parsed, t + 15 * step)).toEqual([]);
+    expect(visibleGeometryHistory(parsed, candle.end_ms)).toHaveLength(1);
+    expect(() => parseReplayDocument({
+      ...doc, geometry: [{ ...line, source_pivots: source_pivots.slice(0, 3) }],
+    })).toThrow(/четыре/);
+    expect(() => parseReplayDocument({
+      ...doc, geometry: [{ ...line,
+        source_pivots: source_pivots.map((p, i) => i === 3
+          ? { ...p, confirmed_at_ms: line.available_at_ms + step } : p) }],
+    })).toThrow(/Неподтверждённый/);
+    expect(() => parseReplayDocument({
+      ...doc, geometry: [{ ...line,
+        source_pivots: source_pivots.map((p, i) => i === 3
+          ? { ...p, price: 92 } : p) }],
+    })).toThrow(/не подтверждают направление/);
+  });
+
   it("retains distinct official trade-derived provenance for real archive replay", () => {
     const events = syntheticReplay().events.filter(e => e.kind === "CANDLE_CLOSED")
       .map((e, i) => ({ ...e, sequence: i + 1, simulation_run_id: "public_archive" }));
