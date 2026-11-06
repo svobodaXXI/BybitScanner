@@ -489,6 +489,17 @@ export function ReplayPage() {
       const data: unknown = JSON.parse(await file.text());
       const parsed = parseReplayDocument(data);
       setDocument(parsed);
+      if (parsed.mode === "MARKET_ONLY") {
+        // File import is an independent market selection. Do not leave stale
+        // BTC/date controls above a GRASSUSDT archived chart.
+        if (parsed.symbol) setSymbol(parsed.symbol);
+        const first = parsed.events.find(item => item.kind === "CANDLE_CLOSED")?.candle;
+        const last = parsed.events.filter(item => item.kind === "CANDLE_CLOSED").at(-1)?.candle;
+        if (first && last) {
+          setStartDate(new Date(first.start_ms).toISOString().slice(0, 10));
+          setEndDate(new Date(last.end_ms).toISOString().slice(0, 10));
+        }
+      }
       setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel(file.name);
