@@ -64,6 +64,9 @@ try {
   await page.getByRole("heading", { name: "Машина времени" }).waitFor();
   await page.locator('input[type="file"]').setInputFiles(archivePath);
   await page.getByText("GRASSUSDT", { exact: false }).first().waitFor();
+  assert.equal(await page.getByRole("textbox", { name: "Инструмент" }).inputValue(), "GRASSUSDT");
+  assert.equal(await page.locator('input[type="date"]').nth(0).inputValue(), "2026-08-20");
+  assert.equal(await page.locator('input[type="date"]').nth(1).inputValue(), "2026-08-27");
   assert.match(await page.locator("body").innerText(), /официального публичного архива/);
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
