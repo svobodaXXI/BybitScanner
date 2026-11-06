@@ -45,6 +45,7 @@ import {
   translatePriceRangeByPixels,
 } from "../chart/gestureMath";
 import { chartPriceFormat } from "../chart/priceFormat";
+import { currentCandleCloseCountdown } from "../chart/candleCloseCountdown";
 import { editorMoscowCrosshairTime, editorMoscowTickMark } from "../chart/editorMoscowTime";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
@@ -212,6 +213,7 @@ export function ChartPanel({
   const followLatestRef = useRef(true);
   const initialSourceFrameApplied = useRef(false);
   const panBatcherRef = useRef<ReturnType<typeof createFrameBatcher> | null>(null);
+  const [clockNowMs, setClockNowMs] = useState(() => Date.now());
   const [renderTick, setRenderTick] = useState(0),
     [tool, setTool] = useState<DrawingTool>("select"),
     [magnet, setMagnet] = useState(editorMode),
@@ -219,6 +221,18 @@ export function ChartPanel({
     [clearConfirmationOpen, setClearConfirmationOpen] = useState(false),
     [confirmAllPendingOpen, setConfirmAllPendingOpen] = useState(false),
     [dismissAllPendingOpen, setDismissAllPendingOpen] = useState(false);
+  // The chart is shared across Terminal, Autopilot, Editor and Statistics.
+  // Frozen source snapshots are historical: no pretend live candle close.
+  const latestCandle = candles.at(-1) ?? null;
+  const closeCountdown = editorMode && signalIdentity !== null
+    ? null
+    : currentCandleCloseCountdown(latestCandle?.time ?? null, timeframe, clockNowMs);
+  useEffect(() => {
+    // Re-evaluate from wall time rather than subtracting ticks; no drift after
+    // phone sleep/tab suspension. This is a visual timer, not a trading clock.
+    const id = window.setInterval(() => setClockNowMs(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
   const storageKey = `bybitscanner:${editorMode ? "editor-drawings" : "drawings"}:v1:${symbol}:${timeframe}${editorMode && signalIdentity ? `:${signalIdentity}${savedReviewId ? `:review-${savedReviewId}` : ""}` : ""}`;
   const historyRef = useRef(
     new DrawingHistory(
@@ -1029,6 +1043,21 @@ export function ChartPanel({
             gesture.current = null;
           }}
         />
+        {closeCountdown && latestCandle && (() => {
+          const y = coordinates.priceToY(latestCandle.close);
+          if (y === null || !Number.isFinite(y)) return null;
+          const scaleWidth = chartRef.current?.priceScale("right").width() || PRICE_SCALE_WIDTH_FALLBACK;
+          return (
+            <output
+              className="chart-candle-countdown"
+              aria-label={`До закрытия текущей свечи: ${closeCountdown}`}
+              title="До закрытия текущей свечи"
+              style={{ top: y + 13, width: scaleWidth }}
+            >
+              {closeCountdown}
+            </output>
+          );
+        })()}
         {(() => {
           const displayedPrice = stopDraft?.price ?? authoritativeStopPrice;
           if (displayedPrice === null) return null;
