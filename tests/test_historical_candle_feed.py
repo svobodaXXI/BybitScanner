@@ -124,31 +124,40 @@ class HistoricalCandleFeedTests(unittest.TestCase):
         from research.causal_trend_geometry import CausalLine, ConfirmedPivot
         from research.export_historical_replay import build_market_only_document
 
-        t0 = 3_600_000
+        t0 = 8 * ONE_HOUR_MS
         bars = [
             Candle(t0, FIVE_MINUTES_MS, 100, 101, 99, 100, 3),
             Candle(t0 + FIVE_MINUTES_MS, FIVE_MINUTES_MS, 100, 101, 99, 100, 3),
             Candle(t0 + 2 * FIVE_MINUTES_MS, FIVE_MINUTES_MS, 110, 111, 109, 110, 3),
         ]
-        pivot = lambda kind, index, when, price: ConfirmedPivot(
-            kind, index, when, t0, Decimal(price))
-        main = CausalLine(
-            pivot("LOW", 0, 0, 90), pivot("LOW", 1, t0 - FIVE_MINUTES_MS, 91),
-            t0 + FIVE_MINUTES_MS)
-        target = CausalLine(
-            pivot("HIGH", 0, 0, 120), pivot("HIGH", 1, t0 - FIVE_MINUTES_MS, 119),
-            t0 + FIVE_MINUTES_MS)
-        blue = CausalLine(
-            pivot("HIGH", 2, t0 - 2 * FIVE_MINUTES_MS, 105),
-            pivot("HIGH", 3, t0 - FIVE_MINUTES_MS, 104),
-            t0 + FIVE_MINUTES_MS)
+        # Fixture carries genuine time-ordered four-pivot identities: fitting
+        # points may differ, but a published line cannot invent source swings.
+        h1_pivots = (
+            ConfirmedPivot("LOW", 1, ONE_HOUR_MS, 4 * ONE_HOUR_MS, Decimal(90)),
+            ConfirmedPivot("HIGH", 2, 2 * ONE_HOUR_MS, 5 * ONE_HOUR_MS, Decimal(120)),
+            ConfirmedPivot("LOW", 3, 3 * ONE_HOUR_MS, 6 * ONE_HOUR_MS, Decimal(91)),
+            ConfirmedPivot("HIGH", 4, 4 * ONE_HOUR_MS, 7 * ONE_HOUR_MS, Decimal(121)),
+        )
+        main = CausalLine(h1_pivots[0], h1_pivots[2], t0 + FIVE_MINUTES_MS)
+        target = CausalLine(h1_pivots[1], h1_pivots[3], t0 + FIVE_MINUTES_MS)
+        blue_pivots = (
+            ConfirmedPivot("HIGH", 1, t0 - 7 * FIVE_MINUTES_MS,
+                           t0 - 6 * FIVE_MINUTES_MS, Decimal(105)),
+            ConfirmedPivot("LOW", 2, t0 - 6 * FIVE_MINUTES_MS,
+                           t0 - 5 * FIVE_MINUTES_MS, Decimal(100)),
+            ConfirmedPivot("HIGH", 3, t0 - 5 * FIVE_MINUTES_MS,
+                           t0 - 4 * FIVE_MINUTES_MS, Decimal(104)),
+            ConfirmedPivot("LOW", 4, t0 - 4 * FIVE_MINUTES_MS,
+                           t0 - 3 * FIVE_MINUTES_MS, Decimal(99)),
+        )
+        blue = CausalLine(blue_pivots[0], blue_pivots[2], t0 + FIVE_MINUTES_MS)
         h1_first = t0 + FIVE_MINUTES_MS
         h1_revised = t0 + 2 * FIVE_MINUTES_MS
         trends = [
             SimpleNamespace(side="BULL", main=main, target=target,
-                            available_at_ms=h1_first),
+                            pivot_sequence=h1_pivots, available_at_ms=h1_first),
             SimpleNamespace(side="BULL", main=main, target=target,
-                            available_at_ms=h1_revised),
+                            pivot_sequence=h1_pivots, available_at_ms=h1_revised),
         ]
 
         def replay_fixture(**kwargs):
@@ -162,6 +171,8 @@ class HistoricalCandleFeedTests(unittest.TestCase):
                         bar=candle, signal_time_ms=candle.end_ms),
                     dmi_5m=snapshot, hourly_trend=trend,
                     reference_5m=blue if i < 2 else None,
+                    reference_5m_pivots=blue_pivots if i < 2 else None,
+                    acceleration_5m=None, acceleration_5m_pivots=None,
                     hourly_prior_price=main.second.price,
                     hourly_prior_touch_ms=main.second.at_ms)
                 kwargs["on_closed_context"](view)
