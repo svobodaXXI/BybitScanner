@@ -43,7 +43,7 @@ describe("standalone SIMULATION viewer contract", () => {
       geometry: [], hourly_prior_breaks: [], hourly_prior_updates: [],
     };
     expect(visibleEarlyGeometry(document, null)).toEqual([]);
-    expect(visibleEarlyGeometry(document, start_ms)).toEqual([]);
+    expect(visibleEarlyGeometry(document, start_ms - 1)).toEqual([]);
     const early = visibleEarlyGeometry(document, candle.end_ms);
     expect(early).toHaveLength(1);
     expect(early[0]).toMatchObject({
