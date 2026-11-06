@@ -213,6 +213,13 @@ try {
   await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
   await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 160 } });
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
+  const undo = page.getByRole("button", { name: "Отменить последнюю фигуру" });
+  assert.equal(await undo.isDisabled(), false);
+  assert.equal(await undo.locator('svg[data-tool-icon="undo"] path').count(), 1);
+  await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 230 } });
+  assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "2");
+  await undo.click();
+  assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
   await page.getByRole("button", { name: "H1", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
@@ -221,8 +228,11 @@ try {
   assert.match(await page.locator(".replay-drawing-count").innerText(), /1/);
   await forward.click();
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
-  await page.getByRole("button", { name: "Удалить выбранное" }).click();
+  await undo.click();
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "0");
+  assert.equal(await undo.isDisabled(), true);
+  // Undo manipulates only manual annotations, not scanner geometry.
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "3");
   // Diagnostics and geometry observation decorations stay hidden until requested.
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-observations"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-blue-risk"), "0");
