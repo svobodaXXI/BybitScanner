@@ -110,12 +110,17 @@ try {
     await advanceTo(index);
     const priorText = await page.getByRole("status", { name: "Приор H1" }).innerText();
     assert.match(priorText, new RegExp(String(Number(event.prior_price)).replace(".", "\\.")));
+    assert.doesNotMatch(priorText, /Исторический \(сломанный\)/);
     if (i === 0) {
       assert.equal(await page.getByRole("status", { name: "Подтверждение слома приора H1" }).count(), 0);
     }
     await advanceTo(index + 1);
-    assert.match(await page.getByRole("status", { name: "Подтверждение слома приора H1" }).innerText(),
+    const waitingText = await page.getByRole("status", { name: "Подтверждение слома приора H1" }).innerText();
+    assert.match(waitingText,
       new RegExp(String(Number(event.prior_price)).replace(".", "\\.")));
+    assert.match(waitingText, /жёлтая H1-линия ещё не подтверждена/);
+    assert.match(await page.getByRole("status", { name: "Приор H1" }).innerText(),
+      /Исторический \(сломанный\)/);
     assert.equal(await overlay.getAttribute("data-visible-geometry"), "0",
       "broken yellow movement must be retired, no fabricated opposite slope");
     await page.screenshot({
@@ -126,6 +131,10 @@ try {
       "opposite confirmed MAIN_1H and TARGET_1H must actually render");
     assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 2,
       "real H1 yellow lines must be painted on the browser canvas");
+    assert.match(await page.getByRole("status", { name: "Подтверждение слома приора H1" }).innerText(),
+      /жёлтая H1-линия подтверждена и отображается/);
+    assert.doesNotMatch(await page.getByRole("status", { name: "Приор H1" }).innerText(),
+      /Исторический \(сломанный\)/);
     await page.getByRole("button", { name: "H1", exact: true }).click();
     assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"), "1h");
     await page.screenshot({
@@ -139,6 +148,8 @@ try {
     firstYellowIndex, { timeout: 15000 });
     assert.equal(await overlay.getAttribute("data-visible-geometry"), "0",
       "rewinding one M5 must undo first confirmed opposite yellow");
+    assert.match(await page.getByRole("status", { name: "Подтверждение слома приора H1" }).innerText(),
+      /жёлтая H1-линия ещё не подтверждена/);
     await forward.click();
     await page.waitForFunction(expected =>
       document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
