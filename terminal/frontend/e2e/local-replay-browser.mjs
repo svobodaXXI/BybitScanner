@@ -54,6 +54,26 @@ try {
   assert.match(await page.locator("body").innerText(), /SIMULATION ONLY/);
   assert.match(await page.locator("body").innerText(), /Синтетический пример/);
   await page.waitForFunction(() => document.querySelectorAll(".replay-chart canvas").length > 0);
+  // The entire replay control surface belongs beside the M5/H1 switch,
+  // never in the file-import row above the chart.
+  const controlBar = page.getByRole("group", { name: "Таймфрейм графика" });
+  const playbackBar = controlBar.getByRole("group", { name: "Управление воспроизведением" });
+  for (const caption of ["Пуск", "◀ Шаг назад", "Шаг вперёд ▶", "В начало"]) {
+    assert.equal(await playbackBar.getByRole("button", { name: caption, exact: caption !== "Пуск" }).count(), 1);
+  }
+  assert.equal(await playbackBar.locator(".replay-rate input[type=range]").count(), 1);
+  assert.equal(await page.locator(".replay-controls .replay-rate").count(), 0);
+  const drawingBar = page.getByRole("group", { name: "Инструменты рисования" });
+  const trendTool = drawingBar.getByRole("button", { name: "Трендовая" });
+  assert.equal(await trendTool.getAttribute("title"), "Трендовая");
+  assert.equal((await trendTool.innerText()).trim(), "", "drawing tool must have no visible text caption");
+  assert.equal(await trendTool.locator('svg[data-tool-icon="trend"] path').count(), 1,
+    "trendline has a graphical SVG pictogram");
+  const fibTool = drawingBar.getByRole("button", { name: "Fibonacci" });
+  assert.equal((await fibTool.innerText()).trim(), "", "Fibonacci uses a pictogram, not a text word");
+  assert.equal(await fibTool.locator('svg[data-tool-icon="fibonacci"] path').count(), 1);
+  assert.equal(await drawingBar.locator('button[aria-label] svg.replay-tool-icon').count(), 11,
+    "ten drawing tools plus delete all have true graphical icons");
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
   const progress = page.locator('[role="progressbar"]');
   const forward = page.getByRole("button", { name: "Шаг вперёд ▶", exact: true });

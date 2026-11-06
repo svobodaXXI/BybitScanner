@@ -67,6 +67,22 @@ try:
     with urlopen(host + script.group(1), timeout=5) as response:
         script_bytes = response.read()
         assert response.status == 200 and len(script_bytes) > 1000
+    # Optional offline public research archive: absent in the lightweight
+    # package, present in the single real-H1 owner acceptance bundle.
+    import json
+    with urlopen(host + "/local-replay/bundled", timeout=5) as response:
+        bundled = ROOT / "real-h1-august.json"
+        if bundled.is_file():
+            assert response.status == 200
+            document = json.loads(response.read())
+            assert document["source"] == "SIMULATION"
+            assert document["mode"] == "MARKET_ONLY"
+            assert document["symbol"] == "GRASSUSDT"
+            assert document["market_data_source"] == "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M"
+            assert len(document["events"]) == 2016
+        else:
+            assert response.status == 204
+            assert response.read() == b""
     try:
         urlopen(host + "/api/robot/status", timeout=5)
         raise AssertionError("Trading API route should not be exposed")
