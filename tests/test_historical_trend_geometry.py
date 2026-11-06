@@ -252,12 +252,14 @@ class ConfirmedGeometryTests(unittest.TestCase):
                 trend, _ = feed.observe_closed(five, h1)
         self.assertIsNotNone(trend)
         self.assertEqual(trend.side, "BULL")
-        # Form one confirmed HIGH-LOW-HIGH downward correction. The
-        # next lows/highs must not silently start parallel M5 lines.
+        # No blue line with only HIGH-LOW-HIGH: the fourth lower LOW
+        # must itself be causally confirmed before publication.
         path = [
             (140, 132), (144, 135), (141, 131), (130, 120),
             (137, 127), (132, 126), (130, 121), (128, 117),
-            (155, 143),  # M5 OPEN=149, strictly above the frozen blue
+            (155, 143),  # Confirms fourth LOW; may only publish at this CLOSE.
+            (130, 120),
+            (160, 150),  # NEXT M5 OPEN=155 crosses already-published blue.
             (130, 120),
         ]
         blue = None
@@ -265,16 +267,19 @@ class ConfirmedGeometryTests(unittest.TestCase):
         for minute, (high, low) in enumerate(path):
             five = make_bar(84 + minute, high, low, FIVE_MINUTES_MS)
             _, blue = feed.observe_closed(five, None)
-            if minute == 5:
+            if minute < 8:
+                self.assertIsNone(blue, "3 pivots cannot publish a confirmed blue line")
+            if minute == 8:
                 self.assertIsNotNone(blue)
                 created = blue
                 self.assertEqual(created.first.price, Decimal(144))
                 self.assertEqual(created.second.price, Decimal(137))
-            if minute in (6, 7):
+                self.assertEqual(created.available_at_ms, five.end_ms)
+            if minute == 9:
                 self.assertEqual(blue, created, "new pivots cannot replace an active correction")
-            if minute in (8, 9):
+            if minute >= 10:
                 self.assertIsNone(blue, "a broken correction stays retired until new pivots")
-        self.assertEqual(feed._blue_broken_at_ms, (84 + 9) * FIVE_MINUTES_MS)
+        self.assertEqual(feed._blue_broken_at_ms, (84 + 11) * FIVE_MINUTES_MS)
 
     def test_m5_deeper_correction_revisions_keep_first_wick_and_replay_history(self):
         feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
@@ -284,13 +289,14 @@ class ConfirmedGeometryTests(unittest.TestCase):
                 h1 = make_bar(hour, high, low) if minute == 11 else None
                 feed.observe_closed(five, h1)
 
-        # A countertrend M5 swing lengthens after its first HIGH-LOW-HIGH.
-        # The NEW deepest low (80 vs 120) and subsequent confirmed HIGH 139
+        # A countertrend M5 swing is published after HIGH-LOW-HIGH-LOW.
+        # The NEW deepest low (79 vs 80) and subsequent confirmed HIGH 139
         # justify changing only the second HIGH, not starting a new blue line.
         path = [
             (140, 132), (144, 135), (141, 131), (130, 120),
             (137, 127), (132, 126),
             (126, 80), (139, 90), (128, 85), (130, 79),
+            (130, 90), (139, 93), (130, 91),
             (150, 140),
         ]
         versions = []
@@ -298,23 +304,23 @@ class ConfirmedGeometryTests(unittest.TestCase):
             five = make_bar(84 + minute, high, low, FIVE_MINUTES_MS)
             _, blue = feed.observe_closed(five, None)
             versions.append(blue)
-        original = versions[5]
-        revised = versions[8]
+        original = versions[7]
+        revised = versions[12]
+        self.assertTrue(all(item is None for item in versions[:7]))
         self.assertIsNotNone(original)
         self.assertIsNotNone(revised)
         self.assertEqual(original.first.price, Decimal(144))
         self.assertEqual(original.second.price, Decimal(137))
-        self.assertEqual(versions[6], original)
-        self.assertEqual(versions[7], original)  # Low isn't enough without HIGH.
+        self.assertEqual(versions[8], original)
+        self.assertEqual(versions[11], original)  # Low alone is insufficient.
         self.assertEqual(revised.first, original.first)
         self.assertEqual(revised.second.price, Decimal(139))
-        self.assertEqual(revised.second.index, 91)
+        self.assertEqual(revised.second.index, 95)
         self.assertGreater(revised.available_at_ms, original.available_at_ms)
-        self.assertEqual(versions[9], revised)
-        self.assertIsNone(versions[10])  # Next M5 OPEN 145 is above the line.
+        self.assertIsNone(versions[13])  # Next M5 OPEN 145 crosses the line.
         # Earlier emitted objects never change retroactively.
-        self.assertEqual(versions[5].second.price, Decimal(137))
-        for bar in feed._five.bars[original.first.index + 1:92]:
+        self.assertEqual(versions[7].second.price, Decimal(137))
+        for bar in feed._five.bars[original.first.index + 1:96]:
             self.assertGreaterEqual(revised.value_at(bar.start_ms), bar.high)
 
     def test_m5_revision_lower_boundary_mirrors_deeper_low_rule(self):
