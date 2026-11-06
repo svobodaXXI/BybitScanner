@@ -130,7 +130,7 @@ jobs:
   real-bybit-h017-readonly-acceptance:
     # A single research PR trial, or a manual rerun when separately requested.
     # No scheduled network cost and no synthetic fallbacks.
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.head_ref == 'test/h017-real-bybit-grass-readonly-20261105' || github.head_ref == 'feature/h017-crossings-first-touch-study-20261105' || github.head_ref == 'feature/h017-blue-open-costed-counterfactual-20261105' || github.head_ref == 'docs/h017-purple-prior-replay-20261105'))
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (github.head_ref == 'test/h017-real-bybit-grass-readonly-20261105' || github.head_ref == 'feature/h017-crossings-first-touch-study-20261105' || github.head_ref == 'feature/h017-blue-open-costed-counterfactual-20261105' || (github.head_ref == 'docs/h017-purple-prior-replay-20261105' || github.head_ref == 'feature/h017-replay-chart-controls-icons-20261106')))
     runs-on: ubuntu-latest
     timeout-minutes: 7
     steps:
@@ -154,7 +154,7 @@ jobs:
   real-h1-browser-proof:
     # Runs only on the isolated H-017 draft PR. Both independently tested
     # artifacts must exist; never download any private/PAPER account history.
-    if: github.event_name == 'pull_request' && github.head_ref == 'docs/h017-purple-prior-replay-20261105'
+    if: github.event_name == 'pull_request' && (github.head_ref == 'docs/h017-purple-prior-replay-20261105' || github.head_ref == 'feature/h017-replay-chart-controls-icons-20261106')
     needs: [standalone-replay-viewer, real-bybit-h017-readonly-acceptance]
     runs-on: ubuntu-latest
     timeout-minutes: 9
