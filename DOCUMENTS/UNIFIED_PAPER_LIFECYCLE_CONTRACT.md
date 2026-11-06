@@ -1,31 +1,35 @@
-# Unified PAPER lifecycle: one owner action, no repeated investigations
+# Единый PAPER-монолит — минимальный контракт
 
-Status: design contract / NOT deployed. Scope: VPS PAPER only; LIVE forbidden.
+Статус: **целевая архитектура, не доказательство готового VPS runtime**.
+Приоритет: **один результат для владельца, минимум действий и кода**.
+Область: только PAPER VPS. LIVE запрещён.
 
-## External mechanisms reused
-- Freqtrade's stop-entry mode: disable entries while independently continuing exits and STOP management.
-- Kubernetes-style level-triggered reconciliation: compare persisted desired state to observed execution/position truth every pass; idempotent steps resume after crashes.
-- systemd restart/watchdog: supervise a recovery-capable service, not blindly restart an unsafe writer.
+## Переиспользовать, не строить заново
 
-## Single controller, one command
-Persistent **desired intent**, not transient Telegram toggle:
-`RUN_PAPER`, `QUIESCE_FOR_UPGRADE(target_sha)`, `STOP_PAPER`.
-All existing controls dispatch an intent to one durable coordinator; no second process may write PAPER DB. Internal stages are:
-1. **QUIESCE**: atomically fence new Admission (including scanner/reentry and outstanding unfilled ENTRY); keep STOP/TAKE, protection monitor, reconciliation and exit executions alive.
-2. **DRAIN**: cancel outstanding new-entry LIMITs through the current owner and verify their durable acknowledgements; protect partial fills; let existing protected positions naturally resolve. No manual closes.
-3. **RECONCILE**: derive ownership from canonical fills/orders/positions, including never-started Box with missing baseline. No synthetic ownership, no fabricated FLAT.
-4. **SAFE_STOP**: only after authoritative FLAT + zero pending entry/exit obligations and canonical stop permission. Existing runtime remains alive if any proof fails.
-5. **UPGRADE**: verify exact signed/approved stable SHA, full clean install, atomic release choice and rollback asset; no git pull over a running code directory.
-6. **START_RECOVER**: single systemd owner, PAPER-only env, reopen same DB, replay unsettled protection obligations, verify READY/protection and only then lift Admission and restore persisted PAPER_AUTO and reentry intent.
-7. **RUN/REPORT**: one concise success/blocked status, durable log with stage, reason, target commit, DB identity and action IDs.
+- **Один владелец торговли и PAPER DB**: существующие PaperRuntime / Robot / Admission / protection. Telegram и Terminal передают разрешённое намерение, но не становятся вторым исполнителем.
+- **Одна существующая операция обслуживания**: `tools.paper_maintenance`, `tools.stop_robot_runtime`, Gitless install/resume и systemd. Не вводить новый сервис, контроллер, режимы, таблицы, шину сообщений или публичный API ради монолита.
+- **Существующий защищённый журнал**: точный SHA и уже зафиксированные одноразовые переходы; результаты подтверждаются текущими durable/API/process доказательствами. Не очищать маркеры и не объявлять попытку успешным STOP.
+- Принципы из Kubernetes/Temporal/systemd полезны **только как правила**: сверять фактическую фазу, не повторять неоднозначные side effects, подтверждать выход процесса. Не переносить чужие платформы, фоновые циклы retry или дополнительную инфраструктуру.
 
-## Safety requirements
-- No concurrent backend writers or second SQLite instance; controller coordinates through the active backend before stop.
-- Never infer safety from working LIMIT count alone. Proof checks all symbol fills, ownership baseline and position projections; fail closed on ambiguity.
-- Keep stop/exit protection active during quiesce. A backend crash while PAPER STOP/TAKE is internally simulated is an availability risk, so do not advertise hard 24/7 continuity until protected startup recovery, supervision and reboot tests pass.
-- Do not enable unrestricted `Restart=always` or boot-time trading: start must reconstruct protection and fail closed before Admission, and explicit STOP must persist across reboot.
-- If update fails after canonical safe-stop, rollback only with schema-compatibility evidence; otherwise stay STOPPED and report.
-- Old-head AXTI deadlock cannot be fixed merely by installing new Python files: an active old process will still use old reconciliation. Bootstrap migration needs a separately approved safe bridge or wait until canonical stop becomes possible. Do not kill backend on open exposure.
+## Одна операция владельца → один доказанный результат
 
-## Definition of done
-Single owner action requests upgrade; no further owner commands under normal conditions. Interrupted execution resumes at same durable stage without duplicate entry/exit. Deterministic tests: AXTI baseline missing/FLAT; baseline missing with fills/order/exposure (blocked); partial fill; protected open position; crash/reboot during each stage; failed deployment rollback; denied LIVE; explicit STOP persists. VPS acceptance proves health, real protection and successful target SHA.
+1. **Preflight:** точная идентичность установленного Backend/процесса, одна PAPER DB, целевой Git SHA, фактические позиции, ордера, Robot, Scanner, Autopilot, protection и обязательства.
+2. **Freeze / drain:** штатно запретить новые входы, остановить Scanner и Autopilot, сохранить Backend и STOP/TAKE до разрешённого завершения защищённых позиций. Close-All/Market не следует из разрешения на обновление.
+3. **Quiescence:** подтвердить FLAT и отсутствие незавершённых ордеров, сделок, команд, obligations и checkpoints. `APPROVED` может быть исторически инертным только при отдельном доказательстве отсутствия связанных executions, fills и иных владельцев. Метка статуса сама по себе не доказывает безопасность.
+4. **Canonical STOP / resume:** выполнить разрешённый необратимый шаг **не более одного раза**. После частичного STOP читать текущую фазу и защищённые квитанции, продолжать только незавершённое. Если исход STOP/сигнала неясен, **BLOCKED без повторов**.
+5. **Immutable upgrade:** лишь после подтверждённого отсутствия защищаемой работы и остановки точных Backend/Telegram-процессов установить проверенный Gitless-релиз с защищённым rollback. Затем запустить Backend/Telegram в `EDITOR_ONLY` и проверить их идентичность.
+6. **PAPER start — отдельно:** возвращать Scanner/Robot/PAPER_AUTO только по явно разрешённому PAPER-запуску и после штатной сверки защиты и Admission. `EDITOR_ONLY` никогда не включает торговлю автоматически.
+
+Ответ операции: один `READY` с доказанными постусловиями **или** `BLOCKED` с точной фазой/причиной без раскрытия секретов. Не требовать от владельца цепочку ручных диагностик.
+
+## Восстановление прерванной остановки (инцидент 06.11.2026)
+
+На последнем предоставленном снимке: installed Backend `4090641514b8f558a0054fd577b2750b944fd8d6` работает; Robot `ROBOT_STOPPED/ROBOT_STOPPED`, Scanner `SCANNER_STOPPED`, Autopilot `OFF`, protection healthy и пустая; для target `1e9129f51e5b620f71503bb1814f14a431498fc5` записан STOP-intent, установочного журнала нет. Это **частичный STOP**, не разрешение на установку.
+
+Причина отказа Backend ещё не установлена. Сначала сопоставить **один** read-only снимок кандидатов и незавершённых обязательств с `paper_shutdown_blocker()`. Старый Backend может блокировать инертные `APPROVED`, но гипотеза требует доказательства. `worker_quiescent` отсутствует в API старого релиза и сам по себе не подтверждает активного child.
+
+Если обычная graceful-остановка уже имеет неоднозначный результат, повторять её нельзя. Исключительный точечно аттестованный process handoff возможен **только при самостоятельном строгом FLAT/identity/coverage proof и отдельном разрешении владельца**. До этого Backend и все журналы сохраняются. Никакого SIGKILL, ручной правки SQLite и горячей замены кода работающего процесса.
+
+## Приёмка
+
+Адресные регрессии доказывают отсутствие повторных STOP/сигналов, двойных торговых действий и ложных FLAT/READY. PR и CI **не** равны runtime-приёмке. Успех текущей задачи — установленный точный релиз, Backend/Telegram в `EDITOR_ONLY` и реальный сценарий **Telegram → Редактор → исправление геометрии → сохранение → повторное открытие**. Merge, VPS и торговые мутации требуют своих отдельных разрешений.

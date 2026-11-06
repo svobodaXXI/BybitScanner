@@ -29,29 +29,21 @@
 | --- | --- | --- |
 | Единое управление | Общие приватные валидаторы/маршруты для start, stop, close, reconcile без параллельного Robot | Один owner path; сохранение разрешённых переходов и отказов |
 | Кнопка закрытия #649 | Сохранить двухшаговый Telegram callback. Внутренняя последовательность: запрет новых admissions, cancel неисполненных ордеров, закрытие Robot-owned и остальных PAPER-обязательств через существующие примитивы, сверка | По каждому символу подтверждённые fills/fees/net PnL или явный отказ; zero open + zero obligations только по проверке |
-| Идемпотентность | Один устойчивый command ID + payload fingerprint + журнал статусов; после timeout читать итог/сверять, не повторять ордера вслепую | crash/duplicate/retry/partial fill не создают двойной close |
+| Идемпотентность | Существующие command ID, fingerprint и защищённый журнал; после timeout читать фактическую фазу, не повторять необратимый вызов | crash/duplicate/retry/partial fill не создают двойной close |
 | Восстановление | Единая сверка позиций/ордеров/владения/STOP/TAKE при старте и переходах; не считать отсутствие записи подтверждением FLAT | Сбой/рестарт с позицией не нарушает protection; unknown блокирует новые entries |
 | Running-build identity | Фиксировать SHA/конфигурацию в запускаемом процессе и сравнивать с ожидаемой установленной ревизией внутри readiness, без доверия только файловой системе | Расхождение процесса и checkout обнаружено до мутации; диагноз доступен существующей службе |
 | Lifecycle автоматика | Один согласованный startup/shutdown route, health/ownership/port/protection checks внутри существующего runtime, без SSH-проверок владельца | Штатные launch/stop определяют итог автоматически, без ложного успеха от systemd active |
-| Диагностика | Структурированные внутренние причины отказов, correlation ID события/команды и метрики (queue lag, processing, recovery) без дублирующих решений | Любая неудача локализована в одном журнале; пользователь видит прежнюю безопасную поверхность |
+| Диагностика | Точная фаза и причина BLOCKED в существующем журнале/ответе; не добавлять новый dashboard, telemetry или pipeline ради диагностики | Любая неудача локализована в одном журнале; пользователь видит прежнюю безопасную поверхность |
 | Развёртывание | Проверка открытой экспозиции, backend identity, DB identity, STOP/TAKE до остановки/обновления; ни один gate не смягчать | Несовместимость или неполное закрытие блокирует unsafe deploy |
 
 Принципы зрелых систем, используемые **как модели, а не заимствование чужого движка**:
 NautilusTrader — сверка исполнения/позиций; Freqtrade — разделение запрета новых входов и закрытия; Kubernetes — desired-vs-actual reconciliation; AWS — идемпотентные команды; SRE — actionable diagnostic, а не ручной перебор checks. Kubernetes/microservices, другая БД, новая шина сообщений и новый Robot **не нужны**.
 
-## 5. Порядок реализации и boundaries
+## 5. Реализация — кратчайший путь к результату (решение 06.11.2026)
 
-**Slice 0 (этот PR):** документирование + один узкий рефакторинг *внутреннего* Telegram→Robot HTTP transport: свести дублирующиеся проверки ответов к одной приватной функции, сохранить точные URL, JSON, коды/исключения, timeout, тексты и callback flow. Добавить regression tests для успешного/ошибочного ответов. Никаких изменений поведения, БД, UI или торговой стратегии.
+Историческое деление на Slice 0/1/2/3 **не является действующей очередью и не требует самостоятельных PR**. Работать от ближайшего доказанного блокера к реальной приёмке одной ограниченной поправкой существующего монолита, переиспользуя уже реализованные команды и журнал. #649/#646 — исторические задачи, не новые предварительные этапы для восстановления EDITOR_ONLY.
 
-**Slice 1 (#649, отдельный PR):** после анализа существующего owner/runtime пути — проверяемая идемпотентность и согласованная безопасная операция закрытия; новая торговая семантика только при явной спецификации и тестах, не как «рефакторинг». Не касаться live VPS без отдельного разрешения.
-
-**Slice 2 (#646):** консолидация повторных admission/reconciliation проверок, устранение подтверждённого дублирования и конфликтов, без изменения решений. Фокус на одной доказанной границе за PR.
-
-**Slice 3:** единая read-only внутренняя диагностика identity, readiness и безопасного развертывания; не расширять публичные интерфейсы без отдельного решения.
-
-**После выпуска и разрешённой проверки:** MIRROR real PAPER E2E на VPS, затем Wedge #592 и Box retry по отдельной очереди.
-
-**Жёсткая совместимость текущего задания:** не менять торговую функциональность, callback_data, сообщения Telegram, кнопки, REST routes / body / status, таблицы или схему PAPER DB, env keys, режимы, risk gates, тайминги/идентификаторы торговых команд, lifecycle Robot или поведение STOP/TAKE. Любая новая safety-функция из плана требует отдельного ограниченного PR и доказательства.
+Нельзя менять торговую функциональность, callback_data, сообщения Telegram, REST, схему PAPER DB, risk/admission/STOP/TAKE или runtime-полномочия ради инфраструктурного рефакторинга. Достаточно адресной проверки + соответствующего CI; защищённое изменение VPS и merge требуют отдельных разрешений.
 
 ## 6. Verification gate
 
@@ -137,21 +129,15 @@ Backend и STOP/TAKE сохранены. Не подменять причину 
 превращать эту процедуру в отдельную ручную операцию. Реальная VPS-приёмка
 не следует из CI/PR и требует отдельного разрешения владельца.
 
-## 9. P0 — освобождение PAPER-контура как внутренняя фаза монолитной остановки/обновления (решение владельца 02.11.2026)
+## 9. P0 — один PAPER START / STOP / UPDATE без параллельной инфраструктуры
 
-**Нормативное решение владельца.** Подготовка безопасного освобождения PAPER-контура от новых входов и ожидание доказанного FLAT — **не отдельный этап/квест, не отдельная команда пользователя и не новая ручная процедура**. Это обязательная внутренняя часть **одного end-to-end workflow**: монолитная остановка → безопасный immutable switch → восстановление Robot/JASMY → эксплуатационная проверка. Система сама выполняет законные внутренние переходы и проверяет доказательства; владелец получает один результат либо конкретный BLOCKED. Данный документ не является разрешением на торговые действия, остановку VPS или deployment.
+**Действующий нормативный контракт:** [UNIFIED_PAPER_LIFECYCLE_CONTRACT.md](UNIFIED_PAPER_LIFECYCLE_CONTRACT.md). Решение владельца 02.11 остаётся в силе: freeze, drain, proof, stop, upgrade и resume — **внутренние фазы одной операции**, не отдельные квесты, запросы согласия или ручные действия.
 
-**Обязательная последовательность внутри единой операции (целевой контракт, НЕ реализованный полностью):**
+Переиспользуем `tools.paper_maintenance`, `tools.stop_robot_runtime`, существующие owner/DB/admission/protection, защищённый журнал, Gitless release и systemd. **Не создаём** новый daemon/coordinator, глобальный desired-intent реестр, enum статусов, DB schema, второй PAPER writer, Telegram API или новый framework.
 
-1. **Identity/authority preflight.** Проверить running SHA/process-instance, PAPER DB identity, актуальные позиции и STOP/TAKE, Scanner, Robot, Autopilot/Admission, все entry/exit LIMIT, кандидаты/trades, незавершённые команды, obligations и checkpoints. Авторитетен существующий PAPER owner; не создавать второй writer/Robot.
-2. **Внутренний ingress freeze.** В рамках одной явно разрешённой операции согласованно отключить новые Scanner/Autopilot/Robot admissions и дождаться/синхронизировать уже in-flight entry dispatch. Использовать только законные transition и проверку pending-entry LIMIT. Autopilot OFF, Scanner STOPPED, Robot PAUSED либо RECONCILIATION_REQUIRED по действующим контрактам — зависимые проверки **внутри** coordinator, а не последовательные ручные задания владельцу. Нельзя переводить Robot в STOPPED при защищаемой позиции или orphan-trade.
-3. **Защищённый drain.** Сохранять Backend и STOP/TAKE, включая связанные EXIT LIMIT, пока открыта экспозиция. Чётко различать естественное завершение STOP/TAKE и принудительный account-wide Close-All: торговые/отменяющие мутации только при отдельно явно разрешённой торговой семантике. Согласие «обновить» или этот план не разрешает активное закрытие. Если законного пути FLAT пока нет, оставить protection-only/BLOCKED без горячей замены Backend.
-4. **Единый quiescence proof.** Перед сменой Backend доказать FLAT/0 для каждой PAPER-позиции, ноль active/unknown entry/exit LIMIT, незавершённых команд, obligations/checkpoints и новых admissions, Scanner STOPPED и Autopilot OFF. Flat + OPEN Robot-trade (JASMY) блокирует обычный safe-stop. Исключительная ветвь допускает только один точный JASMY orphan при подтверждённой immutable command/order/execution attribution и полном отсутствии других открытых владельцев. Reference: tools/jasmy_flat_handoff_proof.py и tools/flat_paper_recovery_transition.py из #762. Это не общий обход Robot lifecycle.
-5. **Однократный защищённый handoff/upgrade/reconcile.** При отдельном owner-runtime authorization: exact running SHA, systemd/PID/starttime/listener/cgroup и DB identity; повторный immutable proof внутри SQLite writer barrier без HTTP внутри; один pidfd SIGINT без retry/SIGKILL. Затем verified immutable Gitless release switch и unit preparation, разрешённый start, canonical Robot/JASMY reconciliation уже новой версией, сверка protection/Admission/Telegram и конечной функции. Не считать успехом только CI, HTTP 200 или systemd active.
+Не запускать цикл retry над необратимыми POST, STOP, SIGINT или торговыми командами: одна попытка → read-only аттестация состояния → продолжение только доказанной фазы либо `BLOCKED`. При живой защищаемой позиции оставить Backend/STOP/TAKE; обновление не разрешает Close-All/Market. Исключительный process handoff — не основной путь, а отдельно санкционированная операция с точной process/FLAT/protection аттестацией.
 
-**Единая очередь P0:** реализовать внутренний coordinator freeze → drain → proof → protected handoff → release/reconcile, включая гонку PAPER_AUTO против stop, partial entry/exit LIMIT, STOP obligations, orphan JASMY, idempotent retries и доказанные причины BLOCKED. Не порождать самостоятельный «квест освобождения контура» и не требовать от владельца нескольких технических ручных шагов. Торговое разрешение и разрешение на VPS runtime mutation по-прежнему отдельные полномочия, которые не выводятся из этой записи.
-
-**Актуальная исходная граница (owner-supplied read-only VPS, 02.11.2026 00:08 MSK):** running f100ef369a1105443332b5729b558464c27be48f; пять защищённых позиций CFX/DJT/GRASS/ICP/SENT; девять active LIMIT; Scanner RUNNING; PAPER_AUTO; Robot READY; JASMY Flat + OPEN. Stable после #762: c4e4ce01b2f011ce2eb8814795a45bb24e2eeca6, не deployed. **Ни drain, ни safe-stop, ни upgrade, ни recovery JASMY не подтверждены.** XP не начислять.
+**Актуальная граница инцидента 06.11.2026 (по последнему выводу владельца):** Robot и Scanner STOPPED, Autopilot OFF, protection healthy и пустая, старый Backend `40906415…` продолжает работать, новый target `1e9129f…` не установлен, STOP-intent присутствует без install journal. Не повторять STOP и не считать частичное завершение полной остановкой. Следующий инженерный шаг — доказать причину backend shutdown blocker и применить узкое возобновление операции через существующий защищённый журнал без обхода торговых гарантий.
 
 ## 10. Системная ревизия паралича PAPER — 05.11.2026 (реальный результат прежде PR)
 
@@ -200,20 +186,7 @@ quiescence/Robot durable reason неизвестны из-за отсутств�
    от очередного PR. Не расширять общий shell/sudo и не вводить второй
    независимый PAPER writer.
 
-**Что заимствовать, а не переписывать:**
-- Kubernetes controller-runtime: reconcile desired vs observed, per-key
-  rate-limited retry, idempotent state convergence; coalesce повторные
-  *requests* к сверке, но НЕ последовательные market crossings.
-  https://github.com/kubernetes-sigs/controller-runtime/blob/main/FAQ.md
-- Temporal/AWS Durable Execution: durable event/intent + idempotency key,
-  at-most-once для неопределённого внешнего торгового side effect, bounded
-  retry только после read-back и однозначного доказательства результата.
-  https://docs.temporal.io/encyclopedia/retry-policies
-  https://docs.aws.amazon.com/durable-execution/patterns/best-practices/idempotency/
-- systemd `sd_notify`/watchdog: отдельно мониторить готовность работы,
-  не путать `active` с `Admission READY`. Supervisory restart возможен
-  лишь для компонентов, чей restart не нарушает сохранение защиты.
-  https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html
+**Решение по внешним образцам (06.11.2026):** заимствовать только три правила — сверка фактического и целевого состояния, at-most-once для неоднозначных внешних действий, подтверждение фактического выхода процесса. Не переносить Kubernetes/Temporal/новые retry-loop, watchdog или telemetry stack. `systemd active` не означает `Admission READY`, `Restart=always` недопустим для защищающего Backend.
 
 **Единый эксплуатационный критерий:** после одного owner-authorized
 доступа/immutable upgrade — доказанная PAPER DB identity, Robot
