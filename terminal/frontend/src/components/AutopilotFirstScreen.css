@@ -122,3 +122,36 @@
 @media (max-width: 640px) {
   .autopilot-trade-details { inset: 5vh 0.5rem auto; max-height: 90vh; }
 }
+
+/* Shared navigation button standard: reused by every non-trading workspace navigation. */
+.workspace-nav-button {
+  width: 100%;
+  min-height: 3rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  text-align: left;
+  border: 1px solid #475461;
+  border-radius: 0.65rem;
+  background: linear-gradient(135deg, #1b2530, #222d38);
+  color: #f0f4f8;
+  font-size: 0.83rem;
+  font-weight: 600;
+}
+.workspace-nav-button:hover, .workspace-nav-button:focus-visible { border-color: #9bbcf1; }
+.workspace-nav-button:focus-visible { outline: 2px solid #92b7ee; outline-offset: 2px; }
+.workspace-nav-button:disabled { opacity: 0.45; cursor: not-allowed; }
+.workspace-nav-icon { width: 1.5rem; flex: 0 0 1.5rem; text-align: center; font-size: 1.25rem; }
+.autopilot-first-screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9.5rem, 38%);
+  align-items: start;
+  gap: 0.7rem;
+}
+.autopilot-summary { display: flex; flex-direction: column; grid-column: 1; gap: 1rem; }
+.autopilot-summary-item dd { font-weight: 700; font-size: 1.25rem; }
+.autopilot-utility-stack { grid-column: 2; grid-row: 1 / span 3; display: flex; flex-direction: column; gap: 0.4rem; }
+.workspace-nav-account .paper-account-control, .workspace-nav-account .account-switch-button { width: 100%; }
+.workspace-nav-account .account-switch-button { min-height: 3rem; border-radius: 0.65rem; }
+@media (min-width: 720px) { .autopilot-first-screen { grid-template-columns: minmax(0, 1fr) 15rem; } }
