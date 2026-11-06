@@ -581,7 +581,7 @@ def deploy_staged_editor_only(
                         reason = "reason_unavailable"
                     return (
                         "BLOCKED: canonical_safe_stop_unproven: "
-                        + reason.replace("\\n", " ").replace("\\r", " ")[:500]
+                        + reason.replace(chr(10), " ").replace(chr(13), " ")[:500]
                         + "; no retry, no deployment"
                     )
                 # Write the receipt only after a confirmed successful canonical
