@@ -53,8 +53,14 @@ export type ReplayEvent = {
   take?: number;
   reason?: string;
 };
+export type ReplayPivot = {
+  kind: "HIGH" | "LOW";
+  at_ms: number;
+  confirmed_at_ms: number;
+  price: number;
+};
 export type ReplayGeometry = {
-  kind: "MAIN_1H" | "TARGET_1H" | "REFERENCE_5M";
+  kind: "MAIN_1H" | "TARGET_1H" | "REFERENCE_5M" | "ACCELERATION_5M";
   side: "BULL" | "BEAR";
   available_at_ms: number;
   from_ms: number;
@@ -62,6 +68,8 @@ export type ReplayGeometry = {
   from_price: number;
   to_price: number;
   trend_version: number;
+  /** Original structural extrema; fitted wick anchors must not replace them. */
+  source_pivots?: ReplayPivot[];
   classification: "UNVALIDATED_GEOMETRY_ONLY";
 };
 /** A completed M5 whose OPEN crossed the previously known active blue reference. */
@@ -351,7 +359,8 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     geometry = object.geometry.map((raw) => {
       const item = record(raw);
       const kind = item.kind;
-      if (kind !== "MAIN_1H" && kind !== "TARGET_1H" && kind !== "REFERENCE_5M") {
+      if (kind !== "MAIN_1H" && kind !== "TARGET_1H" &&
+          kind !== "REFERENCE_5M" && kind !== "ACCELERATION_5M") {
         throw new Error("Неверный вид трендовой линии");
       }
       const side = item.side;
@@ -374,10 +383,48 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       ) {
         throw new Error("Трендовая линия использует неизвестное будущее");
       }
+      const timeframeMs = kind === "MAIN_1H" || kind === "TARGET_1H"
+        ? 3_600_000 : 300_000;
+      const source_pivots: ReplayPivot[] | undefined = item.source_pivots === undefined
+        ? undefined : (() => {
+          if (!Array.isArray(item.source_pivots) || item.source_pivots.length !== 4)
+            throw new Error("Нужно ровно четыре исходных пивота");
+          const points = item.source_pivots.map(rawPoint => {
+            const p = record(rawPoint);
+            const at_ms = positiveInteger(p.at_ms, "pivot at_ms");
+            const confirmed_at_ms = positiveInteger(p.confirmed_at_ms, "pivot confirmed_at_ms");
+            const price = safeNumber(p.price, "pivot price");
+            if ((p.kind !== "HIGH" && p.kind !== "LOW") ||
+                at_ms % timeframeMs !== 0 || confirmed_at_ms < at_ms + timeframeMs ||
+                confirmed_at_ms > available_at_ms || price <= 0)
+              throw new Error("Неподтверждённый исходный пивот");
+            return { kind: p.kind, at_ms, confirmed_at_ms, price };
+          });
+          if (points.some((p, i) => i > 0 &&
+            (p.at_ms <= points[i - 1].at_ms ||
+              p.confirmed_at_ms <= points[i - 1].confirmed_at_ms)))
+            throw new Error("Нарушен порядок подтверждения пивотов");
+          const expected = (kind === "REFERENCE_5M"
+            ? (side === "BULL" ? "BEAR" : "BULL") : side);
+          const [p1, p2, p3, p4] = points;
+          const bull = p1.kind === "LOW" && p2.kind === "HIGH" &&
+            p3.kind === "LOW" && p4.kind === "HIGH" &&
+            p3.price > p1.price && p4.price > p2.price;
+          const bear = p1.kind === "HIGH" && p2.kind === "LOW" &&
+            p3.kind === "HIGH" && p4.kind === "LOW" &&
+            p3.price < p1.price && p4.price < p2.price;
+          if (expected === "BULL" ? !bull : !bear)
+            throw new Error("Четыре пивота не подтверждают направление линии");
+          return points;
+        })();
+      if (kind === "ACCELERATION_5M" && !source_pivots)
+        throw new Error("Ускорение без четырёх подтверждённых M5-пивотов");
       previousAvailable = available_at_ms;
       return {
         kind, side, available_at_ms, from_ms, to_ms, from_price, to_price,
-        trend_version, classification: "UNVALIDATED_GEOMETRY_ONLY" as const,
+        trend_version,
+        ...(source_pivots ? { source_pivots } : {}),
+        classification: "UNVALIDATED_GEOMETRY_ONLY" as const,
       };
     });
   }
@@ -1132,7 +1179,7 @@ export function visibleGeometryHistory(
     if (line.kind === "MAIN_1H") {
       // H1 revisions invalidate children from the previous trend version,
       // even if the archive has no replacement TARGET/REFERENCE yet.
-      for (const childKind of ["TARGET_1H", "REFERENCE_5M"] as const) {
+      for (const childKind of ["TARGET_1H", "REFERENCE_5M", "ACCELERATION_5M"] as const) {
         const childIndex = latest.get(childKind);
         if (childIndex !== undefined &&
             versions[childIndex].trend_version !== line.trend_version) {
@@ -1214,7 +1261,7 @@ export function visibleGeometry(
     version.retired_at_ms !== undefined &&
     version.retired_at_ms <= closedTimeMs
   )) return [];
-  for (const childKind of ["TARGET_1H", "REFERENCE_5M"] as const) {
+  for (const childKind of ["TARGET_1H", "REFERENCE_5M", "ACCELERATION_5M"] as const) {
     const child = current.get(childKind);
     if (child && (!main || child.trend_version !== main.trend_version)) {
       current.delete(childKind);
