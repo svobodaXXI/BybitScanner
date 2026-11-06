@@ -204,6 +204,10 @@ jobs:
           test -f "$RUNNER_TEMP/machine-time/dist/replay.html"
           python "$RUNNER_TEMP/machine-time/server.py" --check
           python "$RUNNER_TEMP/machine-time/smoke_package.py"
+      - name: Verify real GRASSUSDT is the default first screen in final package
+        run: node e2e/bundled-h1-autostart-browser.mjs
+        env:
+          LOCAL_REPLAY_PACKAGED_SERVER: ${{ runner.temp }}/machine-time/server.py
       - name: Upload one verified Windows package with real H1 archive
         uses: actions/upload-artifact@v4
         with:
