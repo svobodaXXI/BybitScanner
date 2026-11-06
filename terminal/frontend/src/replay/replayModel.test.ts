@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeHourlyCandles, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("derives only completed hourly OHLCV from contiguous 5m Bybit candles", () => {
@@ -16,6 +16,46 @@ describe("standalone SIMULATION viewer contract", () => {
     }]);
     expect(completeHourlyCandles(bars)).toHaveLength(1); // Last H1 is incomplete.
     expect(completeHourlyCandles([bars[0], ...bars.slice(2, 12)])).toEqual([]); // A gap is not invented.
+  });
+
+  it("reveals 3-pivot H1 support at the first legally confirmed H1 close, not after the fourth", () => {
+    const hour = 3_600_000, m5 = 300_000;
+    const start = Date.UTC(2026, 7, 20, 0);
+    const highs = [115, 114, 113, 118, 122, 130, 125, 120, 116, 115, 114];
+    const lows =  [109, 106,  90, 101, 108, 112, 110, 105, 100, 107, 108];
+    const context_1h = highs.map((high, index) => ({
+      start_ms: start + index * hour, end_ms: start + (index + 1) * hour,
+      open: (high + lows[index]) / 2, close: (high + lows[index]) / 2,
+      high, low: lows[index], volume: 12,
+    }));
+    // After H1 11:00 closed, one new M5 close is enough to reveal
+    // the already confirmed LOW-HIGH-LOW. No fourth HIGH has occurred.
+    const start_ms = start + 11 * hour;
+    const candle = {
+      start_ms, end_ms: start_ms + m5, open: 112, high: 113,
+      low: 111, close: 112, volume: 1,
+    };
+    const document: ReplayDocument = {
+      source: "SIMULATION", simulation_run_id: "early_h1", mode: "MARKET_ONLY",
+      symbol: "GRASSUSDT", timeframe: "5m", context_1h,
+      events: [{ source: "SIMULATION", simulation_run_id: "early_h1",
+        kind: "CANDLE_CLOSED", sequence: 1, time_ms: candle.end_ms, candle }],
+      geometry: [], hourly_prior_breaks: [], hourly_prior_updates: [],
+    };
+    expect(visibleEarlyGeometry(document, null)).toEqual([]);
+    expect(visibleEarlyGeometry(document, start_ms)).toEqual([]);
+    const early = visibleEarlyGeometry(document, candle.end_ms);
+    expect(early).toHaveLength(1);
+    expect(early[0]).toMatchObject({
+      kind: "MAIN_1H", side: "BULL", from_ms: start + 2 * hour,
+      from_price: 90, available_at_ms: start_ms,
+    });
+    expect(early[0].to_ms).toBeGreaterThan(early[0].from_ms);
+    expect(early[0].to_price).toBeGreaterThan(early[0].from_price);
+    // Rewind before first visible M5 close removes the preview; it is not
+    // a stored/backdated trade or a future-side-effects journal action.
+    expect(visibleEarlyGeometry(document, null)).toEqual([]);
+    expect(visibleGeometry(document, candle.end_ms)).toEqual([]);
   });
 
   it("retains distinct official trade-derived provenance for real archive replay", () => {
