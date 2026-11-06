@@ -33,3 +33,24 @@ export function timeAtChartLogical(logical: number, candles: readonly ReplayCand
   return candles[i].start_ms + (logical - i) *
     (candles[i + 1].start_ms - candles[i].start_ms);
 }
+
+/**
+ * Immutable source geometry is timestamp-based, even when its M5 anchors and
+ * retirement both fall within a single displayed H1 candle. Round-to-H1-bar
+ * rendering silently drops those short historical lines.
+ *
+ * This projection uses only the displayed time axis and the already-known
+ * retirement; the source line, prices and historical publication are unchanged.
+ */
+export function geometryLogicalSegment(
+  line: { from_ms: number; retired_at_ms?: number },
+  displayedCandles: readonly ReplayCandle[],
+): { from: number; to: number } | null {
+  const last = displayedCandles.at(-1);
+  if (!last) return null;
+  const untilMs = Math.min(line.retired_at_ms ?? last.end_ms, last.end_ms);
+  if (untilMs <= line.from_ms) return null;
+  const from = chartLogicalAtTime(line.from_ms, displayedCandles);
+  const to = chartLogicalAtTime(untilMs, displayedCandles);
+  return from === null || to === null || to <= from ? null : { from, to };
+}
