@@ -23,20 +23,39 @@ function label(event: ReplayEvent): string {
     case "EXIT_FILLED": return "Выход " + (event.reason ?? "");
   }
 }
-// Match the compact pictogram-first terminal drawing toolbar. The title and
-// aria-label keep the full tool names discoverable without text-only buttons.
-const REPLAY_DRAWING_TOOLS: Array<{ tool: DrawingTool; label: string; icon: string }> = [
-  { tool: "crosshair", label: "Курсор / сдвиг", icon: "⌖" },
-  { tool: "select", label: "Редактировать", icon: "↖" },
-  { tool: "trend", label: "Трендовая", icon: "╱" },
-  { tool: "horizontal", label: "Горизонталь", icon: "—" },
-  { tool: "ray", label: "Луч", icon: "↗" },
-  { tool: "horizontal-ray", label: "Горизонтальный луч", icon: "→" },
-  { tool: "vertical", label: "Вертикаль", icon: "│" },
-  { tool: "fibonacci", label: "Fibonacci", icon: "Fib" },
-  { tool: "ruler", label: "Линейка", icon: "Δ" },
-  { tool: "rectangle", label: "Прямоугольник", icon: "▭" },
+// The replay tools share the terminal's compact icon-first interaction, with
+// real vector pictograms rather than font-dependent textual approximations.
+const REPLAY_DRAWING_TOOLS: Array<{ tool: DrawingTool; label: string }> = [
+  { tool: "crosshair", label: "Курсор / сдвиг" },
+  { tool: "select", label: "Редактировать" },
+  { tool: "trend", label: "Трендовая" },
+  { tool: "horizontal", label: "Горизонталь" },
+  { tool: "ray", label: "Луч" },
+  { tool: "horizontal-ray", label: "Горизонтальный луч" },
+  { tool: "vertical", label: "Вертикаль" },
+  { tool: "fibonacci", label: "Fibonacci" },
+  { tool: "ruler", label: "Линейка" },
+  { tool: "rectangle", label: "Прямоугольник" },
 ];
+const REPLAY_TOOL_PATHS: Record<DrawingTool | "delete", string> = {
+  crosshair: "M12 2v20M2 12h20M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6",
+  select: "M4 3l5 17 3.4-6.6L19 10z",
+  trend: "M4 20L20 4M4 17v3h3M17 4h3v3",
+  horizontal: "M3 12h18M3 9v6M21 9v6",
+  ray: "M3 20L20 3M14 3h6v6",
+  "horizontal-ray": "M3 12h18M15 6l6 6-6 6",
+  vertical: "M12 3v18M9 3h6M9 21h6",
+  fibonacci: "M4 3v18M3 18h18M5 14h16M7 10h14M10 6h11",
+  ruler: "M4 19L19 4l2 2L6 21zM10 14l-2-2M13 11l-2-2M16 8l-2-2",
+  rectangle: "M4 5h16v14H4zM4 9v2M20 13v2",
+  delete: "M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 10v7M14 10v7",
+};
+function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" }) {
+  return <svg className="replay-tool-icon" viewBox="0 0 24 24"
+    data-tool-icon={tool} aria-hidden="true" focusable="false">
+    <path d={REPLAY_TOOL_PATHS[tool]} />
+  </svg>;
+}
 function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
   document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h";
@@ -759,18 +778,18 @@ export function ReplayPage() {
             </div>
           </div>
           <div className="replay-drawing-tools" role="group" aria-label="Инструменты рисования">
-            {REPLAY_DRAWING_TOOLS.map(({ tool, label, icon }) => (
+            {REPLAY_DRAWING_TOOLS.map(({ tool, label }) => (
               <button type="button" key={tool} title={label} aria-label={label}
                 aria-pressed={drawingTool === tool}
                 onClick={() => { setDrawingTool(tool); setSelectedDrawing(null); }}>
-                <span aria-hidden="true">{icon}</span>
+                <ReplayToolIcon tool={tool} />
               </button>
             ))}
             <button type="button" disabled={!selectedDrawing}
               onClick={() => {
                 setDrawings(current => current.filter(d => d.id !== selectedDrawing));
                 setSelectedDrawing(null);
-              }} title="Удалить выбранное" aria-label="Удалить выбранное"><span aria-hidden="true">⌫</span></button>
+              }} title="Удалить выбранное" aria-label="Удалить выбранное"><ReplayToolIcon tool="delete" /></button>
             <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
           </div>
           <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
