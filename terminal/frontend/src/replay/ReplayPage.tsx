@@ -711,7 +711,7 @@ export function ReplayPage() {
       if (imported.mode !== "MARKET_ONLY") throw new Error("История не соответствует режиму MARKET_ONLY");
       if (historyRequest.current !== controller) return;
       setDocument(imported);
-      setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+      resetDrawingHistory(); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel("Bybit · публичные свечи · без сделок");
     } catch (e) {
@@ -756,7 +756,7 @@ export function ReplayPage() {
           historyRequest.current?.abort(); historyRequest.current = null;
           setHistoryLoading(false); setPlaying(false); setCursor(0); setError(null);
           setDocument(syntheticReplay()); setFileLabel("Синтетический пример");
-          setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+          resetDrawingHistory(); setDrawingTool("crosshair");
         }}>Пример</button>
         <button type="button" aria-label="Скачать журнал SIMULATION JSON" onClick={() => {
           const report = simulationActionJournal(document);
@@ -800,10 +800,10 @@ export function ReplayPage() {
       {document.mode === "MARKET_ONLY" && cursor > 0 && <p className="replay-geometry-note"
         role="status" aria-label="Статус трендовой геометрии">
         {publishedGeometry.length
-          ? "Геометрия: полная подтверждённая часовая пара 1–3 / 2–4; ранние синие M5-линии сохраняются в истории."
+          ? "Геометрия: полная подтверждённая часовая пара 1–3 / 2–4; синие M5-линии сохраняются в истории."
           : earlyMain
-            ? `Геометрия: показана предварительная жёлтая H1 по трём подтверждённым экстремумам; полной пары 1–3 / 2–4 ещё нет. Ранних синих M5: ${earlyBlueCount}.`
-            : "Геометрия: пока нет ни подтверждённой полной H1-пары, ни ранней линии по трём закрытым экстремумам."}
+            ? `Геометрия: показана исследовательская H1-линия только после четырёх подтверждённых пивотов; целевая пара не установлена. Синих M5 после четырёх пивотов: ${earlyBlueCount}.`
+            : "Геометрия: пока нет подтверждённой H1-структуры из четырёх пивотов."}
         {document.geometry_warmup_hours
           ? ` Предыстория для экстремумов: ${document.geometry_warmup_hours} ч.`
           : ""}
@@ -817,7 +817,7 @@ export function ReplayPage() {
         {" "}{oppositeMainConfirmed
           ? "Противоположная жёлтая H1-линия подтверждена и отображается."
           : earlyMain?.side === latestPriorBreak.new_side
-            ? "Предварительная противоположная жёлтая H1-линия показана по трём подтверждённым экстремумам; полной пары ещё нет."
+            ? "Исследовательская противоположная H1-линия появилась после четырёх подтверждённых пивотов; полная пара ещё не установлена."
             : "Противоположная жёлтая H1-линия ещё не подтверждена: ожидаются геометрические якоря."}
       </p>}
       {latestPrior && <p className="replay-geometry-note"
