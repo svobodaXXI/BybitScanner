@@ -387,13 +387,18 @@ def test_staged_gitless_editor_rejected_stop_never_installs(monkeypatch, tmp_pat
         preflight=lambda *_args, **_kw: steps.append("preflight"),
         stop=lambda scope: (
             steps.append("stop"),
-            SimpleNamespace(ok=False, runtime_stopped=False)
+            SimpleNamespace(
+                ok=False, runtime_stopped=False,
+                message="STOP BLOCKED: PAPER backend refused shutdown: active APPROVED",
+            )
         )[1],
         installer=lambda *_args, **_kw: pytest.fail("no install after refused stop"),
         resume=lambda *_args, **_kw: pytest.fail("no resume after refused stop"),
         transactions=tmp_path / "transactions", trusted_uid=os.geteuid(),
     )
     assert result.startswith("BLOCKED: canonical_safe_stop_unproven")
+    assert "PAPER backend refused shutdown: active APPROVED" in result
+    assert result.endswith("; no retry, no deployment")
     assert steps == ["preflight", "stop"]
 
 
