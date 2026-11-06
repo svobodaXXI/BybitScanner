@@ -3,7 +3,7 @@ from decimal import Decimal
 import unittest
 
 from research.historical_candle_feed import (
-    ClosedHigherTimeframeFeed, FIVE_MINUTES_MS,
+    ClosedHigherTimeframeFeed, FIVE_MINUTES_MS, ONE_HOUR_MS,
     load_closed_five_minute_history, replay_with_closed_context,
 )
 from research.historical_market_replay import Candle, EntryIntent
