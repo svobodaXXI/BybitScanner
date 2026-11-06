@@ -4,7 +4,7 @@ import unittest
 
 from research.causal_trend_geometry import (
     CausalGeometryFeed, ConfirmedPivot, ConfirmedSwingStream,
-    last_correction_reference, main_line_contact, recent_hourly_trend,
+    last_acceleration_boundary, last_correction_reference, main_line_contact, recent_hourly_trend,
     wick_tight_hourly_line,
 )
 from research.historical_candle_feed import FIVE_MINUTES_MS, ONE_HOUR_MS
@@ -171,6 +171,73 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual(prefix[-1], recent_hourly_trend(stream.pivots[:4]))
         with self.assertRaisesRegex(ValueError, "missing|duplicate"):
             stream.observe_closed(partial[-1])  # duplicate/overlap
+
+    def test_hourly_fitted_line_retains_original_four_confirmed_structural_pivots(self):
+        stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
+        for i, (high, low) in enumerate(BULL[:7]):
+            stream.observe_closed(make_bar(i, high, low))
+        structural = recent_hourly_trend(stream.pivots)
+        self.assertIsNotNone(structural)
+        from research.causal_trend_geometry import wick_tight_hourly_trend
+        fitted = wick_tight_hourly_trend(structural, stream.bars)
+        self.assertIsNotNone(fitted)
+        self.assertEqual(fitted.pivot_sequence, structural.pivot_sequence)
+        self.assertTrue(all(
+            pivot in stream.pivots for pivot in fitted.pivot_sequence
+        ))
+        self.assertLessEqual(
+            max(p.confirmed_at_ms for p in fitted.pivot_sequence),
+            fitted.available_at_ms,
+        )
+
+    def test_last_m5_acceleration_requires_four_closed_swings_and_known_h1_target_touch(self):
+        stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
+        for i, (high, low) in enumerate(BULL[:7]):
+            stream.observe_closed(make_bar(i, high, low))
+        hourly = recent_hourly_trend(stream.pivots)
+        self.assertIsNotNone(hourly)
+        self.assertEqual(hourly.side, "BULL")
+        start = 100
+        m5 = FIVE_MINUTES_MS
+        bars = tuple(make_bar(start + i, 95 if i == 2 else 93,
+                              80 + i if i <= 4 else 82, m5)
+                     for i in range(10))
+        p1 = ConfirmedPivot("LOW", 0, bars[0].start_ms,
+                            bars[3].end_ms, Decimal(80))
+        p2 = ConfirmedPivot("HIGH", 2, bars[2].start_ms,
+                            bars[5].end_ms, Decimal(95))
+        p3 = ConfirmedPivot("LOW", 4, bars[4].start_ms,
+                            bars[7].end_ms, Decimal(84))
+        fourth_price = max(Decimal(99), hourly.target.value_at(bars[6].start_ms))
+        p4 = ConfirmedPivot("HIGH", 6, bars[6].start_ms,
+                            bars[9].end_ms, fourth_price)
+        pivots = (p1, p2, p3, p4)
+        self.assertIsNone(last_acceleration_boundary(
+            hourly=hourly, five_minute_pivots=pivots[:3],
+            five_minute_bars=bars,
+        ))
+        candidate = last_acceleration_boundary(
+            hourly=hourly, five_minute_pivots=pivots,
+            five_minute_bars=bars,
+        )
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate.first, p1)
+        self.assertEqual(candidate.second, p3)
+        self.assertEqual(candidate.available_at_ms, p4.confirmed_at_ms)
+        self.assertIsNone(last_acceleration_boundary(
+            hourly=hourly, five_minute_pivots=(
+                p1, p2, p3, ConfirmedPivot("HIGH", 6, p4.at_ms,
+                    p4.confirmed_at_ms, Decimal(98)),
+            ),
+            five_minute_bars=bars,
+        ), "without touching the H1 target, no confirmed acceleration is published")
+        self.assertIsNone(last_acceleration_boundary(
+            hourly=hourly, five_minute_pivots=(
+                p1, p2, p3, ConfirmedPivot("LOW", 6, p4.at_ms,
+                    p4.confirmed_at_ms, p4.price),
+            ),
+            five_minute_bars=bars,
+        ), "a mismatched fourth pivot cannot be accepted")
 
     def test_five_minute_blue_reference_rejects_wick_piercing(self):
         hourly_stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
