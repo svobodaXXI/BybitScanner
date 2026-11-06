@@ -152,8 +152,10 @@ try {
       await page.screenshot({ path: join(screenshotDir, "real-m5-early-reference.png"), fullPage: true });
     }
     await advanceTo(firstYellowIndex + 1);
-    assert.equal(await overlay.getAttribute("data-visible-early-geometry"), "0",
-      "fully confirmed H1 replaces, never duplicates, early research overlays");
+    if (i === 2) {
+      assert.ok(Number(await overlay.getAttribute("data-visible-early-geometry")) >= 1,
+        "earlier M5 guide history survives full H1 confirmation");
+    }
     assert.ok(Number(await overlay.getAttribute("data-visible-geometry")) >= 2,
       "opposite confirmed MAIN_1H and TARGET_1H must actually render");
     assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 2,
