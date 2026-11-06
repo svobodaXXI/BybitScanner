@@ -446,10 +446,17 @@ export function ReplayPage() {
     [document, shown.lastTimeMs],
   );
   const latestPriorBreak = priorBreaks.at(-1);
-  const activeMain = useMemo(
-    () => visibleGeometry(document, shown.lastTimeMs).find(line => line.kind === "MAIN_1H"),
+  const publishedGeometry = useMemo(
+    () => visibleGeometry(document, shown.lastTimeMs),
     [document, shown.lastTimeMs],
   );
+  const earlyGeometry = useMemo(
+    () => visibleEarlyGeometry(document, shown.lastTimeMs),
+    [document, shown.lastTimeMs],
+  );
+  const earlyMain = earlyGeometry.find(line => line.kind === "MAIN_1H");
+  const earlyBlueCount = earlyGeometry.filter(line => line.kind === "REFERENCE_5M").length;
+  const activeMain = publishedGeometry.find(line => line.kind === "MAIN_1H");
   const latestPrior = useMemo(
     () => visiblePriorLevels(document, shown.lastTimeMs).at(-1),
     [document, shown.lastTimeMs],
@@ -650,9 +657,11 @@ export function ReplayPage() {
         <label><input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} /> Показать опорные маркеры</label>
       {document.mode === "MARKET_ONLY" && cursor > 0 && <p className="replay-geometry-note"
         role="status" aria-label="Статус трендовой геометрии">
-        {visibleGeometry(document, shown.lastTimeMs).length
-          ? "Геометрия: показаны только подтверждённые часовые линии 1–3 / 2–4 и опорные 5m."
-          : "Геометрия: в выбранном отрезке пока нет подтверждённой конструкции 1–3 / 2–4. Неподтверждённые наклонки не дорисовываются."}
+        {publishedGeometry.length
+          ? "Геометрия: полная подтверждённая часовая пара 1–3 / 2–4; ранние синие M5-линии сохраняются в истории."
+          : earlyMain
+            ? `Геометрия: показана предварительная жёлтая H1 по трём подтверждённым экстремумам; полной пары 1–3 / 2–4 ещё нет. Ранних синих M5: ${earlyBlueCount}.`
+            : "Геометрия: пока нет ни подтверждённой полной H1-пары, ни ранней линии по трём закрытым экстремумам."}
         {document.geometry_warmup_hours
           ? ` Предыстория для экстремумов: ${document.geometry_warmup_hours} ч.`
           : ""}
@@ -665,7 +674,9 @@ export function ReplayPage() {
         {" "}Новое направление: {latestPriorBreak.new_side === "BULL" ? "восходящее" : "нисходящее"}.
         {" "}{oppositeMainConfirmed
           ? "Противоположная жёлтая H1-линия подтверждена и отображается."
-          : "Противоположная жёлтая H1-линия ещё не подтверждена: ожидаются геометрические якоря."}
+          : earlyMain?.side === latestPriorBreak.new_side
+            ? "Предварительная противоположная жёлтая H1-линия показана по трём подтверждённым экстремумам; полной пары ещё нет."
+            : "Противоположная жёлтая H1-линия ещё не подтверждена: ожидаются геометрические якоря."}
       </p>}
       {latestPrior && <p className="replay-geometry-note"
         role="status" aria-label="Приор H1">
