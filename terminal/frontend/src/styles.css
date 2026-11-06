@@ -233,14 +233,16 @@ button {
   grid-row: 1;
   z-index: 7;
   align-self: end;
-  justify-self: end;
+  justify-self: stretch;
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 0.3rem;
-  max-width: calc(100% - 3rem);
+  min-width: 0;
   margin: 0.45rem;
   padding: 0.4rem;
+  padding-right: 2.9rem;
   border: 1px solid #394653;
   border-radius: 0.35rem;
   background: rgba(15, 19, 24, 0.96);
@@ -248,23 +250,14 @@ button {
   font-size: 0.72rem;
 }
 .editor-review-topline {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.35rem;
-  flex: 1 1 100%;
-  min-width: 0;
-}
-.editor-review-topline > button {
-  min-width: 0;
-  flex: 0 1 auto;
-  white-space: normal;
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
 }
 .editor-workspace-shortcuts {
-  margin-left: auto;
   display: flex;
+  flex-direction: column;
   gap: 0.25rem;
-  flex: 0 0 auto;
 }
 .editor-workspace-shortcuts button {
   display: grid;
