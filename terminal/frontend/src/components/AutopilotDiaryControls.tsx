@@ -11,11 +11,15 @@ export function AutopilotDiaryControls({
   tradeEpisodeId = null,
   requestedTradeEpisodeId = null,
   onRequestConsumed,
+  requestedStatisticsCount = 0,
+  hideActions = false,
 }: {
   accountKey: string;
   tradeEpisodeId?: string | null;
   requestedTradeEpisodeId?: string | null;
   onRequestConsumed?: () => void;
+  requestedStatisticsCount?: number;
+  hideActions?: boolean;
 }) {
   const [launch, setLaunch] = useState<DiaryLaunch | null>(null);
   useEffect(() => {
@@ -24,9 +28,13 @@ export function AutopilotDiaryControls({
     onRequestConsumed?.();
   }, [requestedTradeEpisodeId, onRequestConsumed]);
 
+  useEffect(() => {
+    if (requestedStatisticsCount > 0) setLaunch({ section: "STATISTICS", tradeEpisodeId: null });
+  }, [requestedStatisticsCount]);
+
   return (
     <>
-      <div className="autopilot-diary-actions" aria-label="Дневник автопилота">
+      {!hideActions ? <div className="autopilot-diary-actions" aria-label="Дневник автопилота">
         <button
           type="button"
           onClick={() => setLaunch({ section: "STATISTICS", tradeEpisodeId: null })}
@@ -44,7 +52,7 @@ export function AutopilotDiaryControls({
         >
           Подробности сделки
         </button>
-      </div>
+      </div> : null}
 
       {launch ? (
         <DiaryOverlay
