@@ -6472,9 +6472,6 @@ class SQLiteStore:
             # statuses; no terminal-state inference from coverage alone.
             checks = (
                 ("robot_trades", "exit_time_ms IS NULL", "open_robot_trade"),
-                ("robot_candidates",
-                 "status IS NULL OR status NOT IN ('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED')",
-                 "active_robot_candidate"),
                 ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')", "active_or_unknown_paper_limit"),
                 ("trading_commands",
                  "current_state IS NULL OR current_state NOT IN ('filled','cancelled','amended','rejected','failed','owner_attested_closed')",
@@ -6491,6 +6488,39 @@ class SQLiteStore:
                 ).fetchone()
                 if row is not None:
                     return reason
+
+            # A frozen APPROVED candidate without any post-approval fill or
+            # Robot trade is not live exposure. Do not let historical inert
+            # approvals permanently block maintenance, but require the same
+            # strict identity and execution proof as the protected FLAT gate.
+            # The owner HTTP shutdown gate separately re-proves Robot STOPPED,
+            # Scanner STOPPED and empty in-process protection coverage.
+            candidates = self._connection.execute(
+                "SELECT candidate_id, symbol, status, approved_at_ms "
+                "FROM robot_candidates WHERE trading_account_id=? "
+                "AND (status IS NULL OR status NOT IN "
+                "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))",
+                (account.value,),
+            ).fetchall()
+            for candidate_id, symbol, status, approved_at in candidates:
+                if (status != "APPROVED"
+                        or not isinstance(candidate_id, str) or not candidate_id.strip()
+                        or not isinstance(symbol, str) or not symbol.strip()
+                        or type(approved_at) is not int or approved_at <= 0):
+                    return "active_robot_candidate"
+                if self._connection.execute(
+                    "SELECT 1 FROM robot_trades "
+                    "WHERE trading_account_id=? AND candidate_id=? LIMIT 1",
+                    (account.value, candidate_id),
+                ).fetchone() is not None:
+                    return "active_robot_candidate"
+                if self._connection.execute(
+                    "SELECT 1 FROM executions WHERE trading_account_id=? "
+                    "AND symbol=? AND (exchange_timestamp_ms IS NULL "
+                    "OR exchange_timestamp_ms>=?) LIMIT 1",
+                    (account.value, symbol, approved_at),
+                ).fetchone() is not None:
+                    return "active_robot_candidate"
         return None
 
     def create_cleanup_run(self, record: CleanupRunRecord) -> CleanupRunRecord:

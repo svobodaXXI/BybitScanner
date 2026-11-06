@@ -1665,8 +1665,13 @@ class PaperShutdownDurableQuiescenceTests(unittest.TestCase):
             CREATE TABLE robot_autopilot_state (trading_account_id TEXT, mode TEXT);
             CREATE TABLE position_projections (
                 trading_account_id TEXT, side TEXT, quantity TEXT, sync_state TEXT);
-            CREATE TABLE robot_trades (trading_account_id TEXT, exit_time_ms INTEGER);
-            CREATE TABLE robot_candidates (trading_account_id TEXT, status TEXT);
+            CREATE TABLE robot_trades (
+                trading_account_id TEXT, candidate_id TEXT, exit_time_ms INTEGER);
+            CREATE TABLE robot_candidates (
+                trading_account_id TEXT, candidate_id TEXT, symbol TEXT,
+                status TEXT, approved_at_ms INTEGER);
+            CREATE TABLE executions (
+                trading_account_id TEXT, symbol TEXT, exchange_timestamp_ms INTEGER);
             CREATE TABLE paper_limit_orders (trading_account_id TEXT, status TEXT);
             CREATE TABLE trading_commands (trading_account_id TEXT, current_state TEXT);
             CREATE TABLE paper_protection_obligations (trading_account_id TEXT, status TEXT);
@@ -1698,17 +1703,17 @@ class PaperShutdownDurableQuiescenceTests(unittest.TestCase):
              "paper_position_not_flat_and_synced"),
             ("UPDATE position_projections SET quantity='NaN'",
              "paper_position_not_flat_and_synced"),
-            ("INSERT INTO robot_trades VALUES ('paper', NULL)",
+            ("INSERT INTO robot_trades (trading_account_id, exit_time_ms) VALUES ('paper', NULL)",
              "open_robot_trade"),
-            ("INSERT INTO robot_candidates VALUES ('paper', 'OPEN')",
+            ("INSERT INTO robot_candidates (trading_account_id, status) VALUES ('paper', 'OPEN')",
              "active_robot_candidate"),
-            ("INSERT INTO robot_candidates VALUES ('paper', 'APPROVED')",
+            ("INSERT INTO robot_candidates (trading_account_id, status) VALUES ('paper', 'APPROVED')",
              "active_robot_candidate"),
-            ("INSERT INTO robot_candidates VALUES ('paper', NULL)",
+            ("INSERT INTO robot_candidates (trading_account_id, status) VALUES ('paper', NULL)",
              "active_robot_candidate"),
-            ("INSERT INTO robot_candidates VALUES ('paper', 'UNRECOGNIZED')",
+            ("INSERT INTO robot_candidates (trading_account_id, status) VALUES ('paper', 'UNRECOGNIZED')",
              "active_robot_candidate"),
-            ("INSERT INTO robot_candidates VALUES ('paper', '')",
+            ("INSERT INTO robot_candidates (trading_account_id, status) VALUES ('paper', '')",
              "active_robot_candidate"),
             ("INSERT INTO paper_limit_orders VALUES ('paper', 'partially_filled')",
              "active_or_unknown_paper_limit"),
@@ -1740,6 +1745,67 @@ class PaperShutdownDurableQuiescenceTests(unittest.TestCase):
                     self.assertEqual(db.total_changes, before)
                 finally:
                     store.close()
+
+    def test_proven_inert_approved_does_not_block_frozen_paper_shutdown(self):
+        store, db = self.fixture()
+        try:
+            db.execute(
+                "INSERT INTO robot_candidates VALUES ('paper', 'candidate-1', "
+                "'FOOUSDT', 'APPROVED', 1000)"
+            )
+            # Earlier history on the same symbol is not a post-approval fill.
+            db.execute("INSERT INTO executions VALUES ('paper', 'FOOUSDT', 999)")
+            before = db.total_changes
+            self.assertIsNone(store.paper_shutdown_blocker(TradingAccountId("paper")))
+            self.assertEqual(db.total_changes, before)
+        finally:
+            store.close()
+
+    def test_approved_without_complete_immutable_evidence_remains_blocked(self):
+        cases = (
+            ("UPDATE robot_candidates SET candidate_id=NULL",),
+            ("UPDATE robot_candidates SET symbol=''",),
+            ("UPDATE robot_candidates SET approved_at_ms=NULL",),
+            ("UPDATE robot_candidates SET approved_at_ms=0",),
+            ("UPDATE robot_candidates SET approved_at_ms='unknown'",),
+            ("INSERT INTO executions VALUES ('paper', 'FOOUSDT', 1000)",),
+            ("INSERT INTO executions VALUES ('paper', 'FOOUSDT', NULL)",),
+            ("INSERT INTO robot_trades VALUES ('paper', 'candidate-1', 2000)",),
+        )
+        for (mutation,) in cases:
+            with self.subTest(mutation=mutation):
+                store, db = self.fixture()
+                try:
+                    db.execute(
+                        "INSERT INTO robot_candidates VALUES "
+                        "('paper','candidate-1','FOOUSDT','APPROVED',1000)"
+                    )
+                    db.execute(mutation)
+                    before = db.total_changes
+                    self.assertEqual(
+                        store.paper_shutdown_blocker(TradingAccountId("paper")),
+                        "active_robot_candidate",
+                    )
+                    self.assertEqual(db.total_changes, before)
+                finally:
+                    store.close()
+
+    def test_other_account_candidate_executions_are_not_paper_ownership(self):
+        store, db = self.fixture()
+        try:
+            db.execute(
+                "INSERT INTO robot_candidates VALUES "
+                "('paper','candidate-1','FOOUSDT','APPROVED',1000)"
+            )
+            db.execute("INSERT INTO executions VALUES ('other', 'FOOUSDT', 2000)")
+            self.assertIsNone(store.paper_shutdown_blocker(TradingAccountId("paper")))
+            db.execute(
+                "INSERT INTO robot_candidates VALUES "
+                "('other','candidate-2','BARUSDT','OPEN',1000)"
+            )
+            self.assertIsNone(store.paper_shutdown_blocker(TradingAccountId("paper")))
+        finally:
+            store.close()
 
     def test_real_schema_converged_flat_from_authoritative_reconciliation_can_stop(self):
         # The canonical reconciler writes 'synchronized'; ordinary PAPER
