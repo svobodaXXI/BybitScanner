@@ -394,11 +394,12 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
             const at_ms = positiveInteger(p.at_ms, "pivot at_ms");
             const confirmed_at_ms = positiveInteger(p.confirmed_at_ms, "pivot confirmed_at_ms");
             const price = safeNumber(p.price, "pivot price");
-            if ((p.kind !== "HIGH" && p.kind !== "LOW") ||
+            const kind = p.kind;
+            if ((kind !== "HIGH" && kind !== "LOW") ||
                 at_ms % timeframeMs !== 0 || confirmed_at_ms < at_ms + timeframeMs ||
                 confirmed_at_ms > available_at_ms || price <= 0)
               throw new Error("Неподтверждённый исходный пивот");
-            return { kind: p.kind, at_ms, confirmed_at_ms, price };
+            return { kind, at_ms, confirmed_at_ms, price };
           });
           if (points.some((p, i) => i > 0 &&
             (p.at_ms <= points[i - 1].at_ms ||
