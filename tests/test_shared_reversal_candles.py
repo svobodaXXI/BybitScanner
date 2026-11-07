@@ -121,3 +121,116 @@ def test_closed_engulfing_rejects_unfinished_gaps_bad_ohlc_and_wrong_direction()
         assert observe_closed_engulfing(first, {**second, **changed}, "LONG") is None
     assert observe_closed_engulfing({**first, "closed": False}, second, "LONG") is None
     assert observe_closed_engulfing({**first, "open_time_ms": -STEP}, second, "LONG") is None
+
+
+# Classical Nison-style patterns: tests are closed-only, observation-only.
+# Qualitative body-size/trend criteria are explicit engineering heuristics.
+_DOWN = [
+    candle(0, 13, 13.5, 12.5, 13),
+    candle(1, 12, 12.5, 11.5, 12),
+    candle(2, 11, 11.5, 10.5, 11),
+]
+_UP = [
+    candle(0, 10, 10.5, 9.5, 10),
+    candle(1, 11, 11.5, 10.5, 11),
+    candle(2, 12, 12.5, 11.5, 12),
+]
+
+
+@pytest.mark.parametrize("prior,formation,pattern,direction", [
+    (_DOWN, [candle(3, 10.5, 10.61, 9, 10.6)], "HAMMER", "LONG"),
+    (_UP, [candle(3, 13.5, 13.61, 12, 13.6)], "HANGING_MAN", "SHORT"),
+    (_DOWN, [candle(3, 10.1, 11.7, 10.08, 10.2)], "INVERTED_HAMMER", "LONG"),
+    (_UP, [candle(3, 13.1, 14.7, 13.08, 13.2)], "SHOOTING_STAR", "SHORT"),
+    (_DOWN, [candle(3, 11, 11.2, 9.6, 10),
+             candle(4, 9.8, 11.3, 9.7, 11.1)], "ENGULFING", "LONG"),
+    (_UP, [candle(3, 12, 13.3, 11.8, 13),
+           candle(4, 13.1, 13.2, 11.7, 11.9)], "ENGULFING", "SHORT"),
+    (_DOWN, [candle(3, 11, 11.2, 9.7, 9.8),
+             candle(4, 10, 10.7, 9.7, 10.2)], "HARAMI", "LONG"),
+    (_DOWN, [candle(3, 11, 11.2, 9.7, 9.8),
+             candle(4, 10, 10.5, 9.7, 10.01)], "HARAMI_CROSS", "LONG"),
+    (_DOWN, [candle(3, 11, 11.2, 9.7, 9.8),
+             candle(4, 9.5, 10.8, 9.4, 10.6)], "PIERCING", "LONG"),
+    (_UP, [candle(3, 12, 13.4, 11.8, 13.2),
+           candle(4, 13.5, 13.7, 12.3, 12.4)], "DARK_CLOUD_COVER", "SHORT"),
+    (_DOWN, [candle(3, 11, 11.2, 9.7, 9.8),
+             candle(4, 9.3, 9.4, 9.0, 9.25),
+             candle(5, 9.4, 10.9, 9.3, 10.7)], "MORNING_STAR", "LONG"),
+    (_UP, [candle(3, 12, 13.4, 11.8, 13.2),
+           candle(4, 13.6, 13.9, 13.5, 13.7),
+           candle(5, 13.5, 13.6, 12.1, 12.3)], "EVENING_STAR", "SHORT"),
+    (_DOWN, [candle(3, 11, 11.2, 9.7, 9.8),
+             candle(4, 9.25, 9.4, 9.0, 9.25),
+             candle(5, 9.4, 10.9, 9.3, 10.7)], "MORNING_DOJI_STAR", "LONG"),
+    (_UP, [candle(3, 12, 13.4, 11.8, 13.2),
+           candle(4, 13.6, 13.9, 13.5, 13.6),
+           candle(5, 13.5, 13.6, 12.1, 12.3)], "EVENING_DOJI_STAR", "SHORT"),
+    (_DOWN, [candle(3, 10, 10.5, 9.5, 10.01)], "DOJI", "NEUTRAL"),
+])
+def test_nison_classic_formation(prior, formation, pattern, direction):
+    from geometry.reversal_patterns import observe_nison_reversals
+    original = deepcopy(prior + formation)
+    result = observe_nison_reversals(prior + formation)
+    matched = [item for item in result
+               if item["formation_type"] == pattern and item["direction"] == direction]
+    assert len(matched) == 1
+    entry = matched[0]
+    assert entry["formation_candle_ids"] == tuple(x["open_time_ms"] for x in formation)
+    assert entry["evidence"]["formation_close_time_ms"] == formation[-1]["close_time_ms"]
+    assert entry["evidence"]["prior_trend"] == ("DOWN" if direction == "LONG"
+                                                  else "UP" if direction == "SHORT" else "DOWN")
+    assert entry["confirmed"] is False
+    assert entry["confirmation_close_time"] is None
+    assert prior + formation == original  # No mutation of source data.
+
+
+def test_nison_rejects_unfinished_gapped_corrupt_and_unproved_trend():
+    from geometry.reversal_patterns import observe_nison_reversals as observe
+    hammer = candle(3, 10.5, 10.61, 9, 10.6)
+    assert observe(_DOWN + [hammer])
+    for defect in (
+        {"closed": False},
+        {"high": 10.0},
+        {"open": float("nan")},
+        {"open_time_ms": 4 * STEP, "close_time_ms": 5 * STEP},
+        {"close_time_ms": 5 * STEP},
+        {"open_time_ms": "3"},
+    ):
+        assert observe(_DOWN + [{**hammer, **defect}]) == ()
+    assert observe([{**_DOWN[0], "closed": False}, *_DOWN[1:], hammer]) == ()
+    assert observe([_DOWN[0], _DOWN[1], {**_DOWN[2], "close": 12.5}, hammer]) == ()
+    assert observe(_DOWN + [hammer], trend_lookback=2) == ()
+    assert observe(_DOWN + [hammer], trend_lookback=True) == ()
+    assert observe(_DOWN + [hammer], trend_lookback=9) == ()
+
+
+def test_nison_preserves_classical_gaps_and_never_uses_unclosed_future():
+    from geometry.reversal_patterns import observe_nison_reversals as observe
+    first = candle(3, 11, 11.2, 9.7, 9.8)
+    star = candle(4, 9.3, 9.4, 9.0, 9.25)
+    third = candle(5, 9.4, 10.9, 9.3, 10.7)
+    valid = _DOWN + [first, star, third]
+    assert any(x["formation_type"] == "MORNING_STAR" for x in observe(valid))
+    # A gapless crypto-like construction must NOT be mislabelled a classic star.
+    no_gap = _DOWN + [first, {**star, "open": 9.85, "close": 9.83}, third]
+    assert not any("MORNING" in x["formation_type"] for x in observe(no_gap))
+    # The in-progress third candle is not available as decision-time evidence.
+    assert not any("MORNING" in x["formation_type"]
+                   for x in observe(_DOWN + [first, star, {**third, "closed": False}]))
+    # No trigger from an unclosed extra candle, even after a valid formation.
+    future = {**candle(6, 10.5, 10.6, 10.0, 10.1), "closed": False}
+    assert observe(valid + [future]) == ()
+
+
+def test_nison_doji_is_neutral_and_mirror_existing_contracts_remain_unchanged():
+    from geometry.reversal_patterns import observe_nison_reversals as observe
+    doji = candle(3, 10, 10.5, 9.5, 10.01)
+    result = observe(_DOWN + [doji])
+    assert {x["direction"] for x in result} == {"NEUTRAL"}
+    assert all(x["confirmed"] is False for x in result)
+    # New recognizer must not change existing MIRROR evidence or Wedge exception.
+    first = candle(0, 10, 11, 8.8, 9)
+    second = candle(1, 8.9, 10.4, 8.5, 10.1)
+    assert mirror._engulfing(first, second, "LONG")
+    assert directional_engulfing(first, second, "LONG")
