@@ -13,7 +13,7 @@ from research.historical_market_replay import (
     Candle, ClosedBarView, EntryIntent, ReplayResult, replay_candles,
 )
 from research.wilder_dmi import DmiSnapshot, WilderDmi
-from research.causal_trend_geometry import CausalGeometryFeed, CausalLine, TrendCandidate
+from research.causal_trend_geometry import CausalGeometryFeed, CausalLine, ConfirmedPivot, TrendCandidate
 
 FIVE_MINUTES_MS = 300_000
 ONE_HOUR_MS = 3_600_000
@@ -109,6 +109,10 @@ class ClosedMultiTimeframeView:
     hourly_prior_price: Decimal | None = None
     hourly_prior_touch_ms: int | None = None
     hourly_prior_break: dict[str, object] | None = None
+    # Standalone research-only lines; source pivots are unmodified M5 swings.
+    acceleration_5m: CausalLine | None = None
+    acceleration_5m_pivots: tuple[ConfirmedPivot, ...] | None = None
+    reference_5m_pivots: tuple[ConfirmedPivot, ...] | None = None
 
 
 class ClosedHigherTimeframeFeed:
@@ -222,6 +226,9 @@ def replay_with_closed_context(
                 geometry.confirmed_hourly_prior if hourly_trend is not None else None,
                 geometry.confirmed_hourly_prior_touch_ms if hourly_trend is not None else None,
                 geometry.confirmed_hourly_prior_break,
+                geometry.confirmed_last_acceleration,
+                geometry.confirmed_last_acceleration_pivots,
+                geometry.confirmed_blue_source_pivots,
             )
         )
 

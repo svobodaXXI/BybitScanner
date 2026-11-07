@@ -53,8 +53,14 @@ export type ReplayEvent = {
   take?: number;
   reason?: string;
 };
+export type ReplayPivot = {
+  kind: "HIGH" | "LOW";
+  at_ms: number;
+  confirmed_at_ms: number;
+  price: number;
+};
 export type ReplayGeometry = {
-  kind: "MAIN_1H" | "TARGET_1H" | "REFERENCE_5M";
+  kind: "MAIN_1H" | "TARGET_1H" | "REFERENCE_5M" | "ACCELERATION_5M";
   side: "BULL" | "BEAR";
   available_at_ms: number;
   from_ms: number;
@@ -62,6 +68,9 @@ export type ReplayGeometry = {
   from_price: number;
   to_price: number;
   trend_version: number;
+  /** Original structural extrema; fitted wick anchors must not replace them. */
+  source_pivots?: ReplayPivot[];
+  envelope_status?: "STRUCTURAL_ONLY" | "WICK_TIGHT";
   classification: "UNVALIDATED_GEOMETRY_ONLY";
 };
 /** A completed M5 whose OPEN crossed the previously known active blue reference. */
@@ -351,7 +360,8 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     geometry = object.geometry.map((raw) => {
       const item = record(raw);
       const kind = item.kind;
-      if (kind !== "MAIN_1H" && kind !== "TARGET_1H" && kind !== "REFERENCE_5M") {
+      if (kind !== "MAIN_1H" && kind !== "TARGET_1H" &&
+          kind !== "REFERENCE_5M" && kind !== "ACCELERATION_5M") {
         throw new Error("Неверный вид трендовой линии");
       }
       const side = item.side;
@@ -374,10 +384,58 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       ) {
         throw new Error("Трендовая линия использует неизвестное будущее");
       }
+      const timeframeMs = kind === "MAIN_1H" || kind === "TARGET_1H"
+        ? 3_600_000 : 300_000;
+      const source_pivots: ReplayPivot[] | undefined = item.source_pivots === undefined
+        ? undefined : (() => {
+          if (!Array.isArray(item.source_pivots) || item.source_pivots.length !== 4)
+            throw new Error("Нужно ровно четыре исходных пивота");
+          const points = item.source_pivots.map(rawPoint => {
+            const p = record(rawPoint);
+            const at_ms = positiveInteger(p.at_ms, "pivot at_ms");
+            const confirmed_at_ms = positiveInteger(p.confirmed_at_ms, "pivot confirmed_at_ms");
+            const price = safeNumber(p.price, "pivot price");
+            const kind = p.kind;
+            if ((kind !== "HIGH" && kind !== "LOW") ||
+                at_ms % timeframeMs !== 0 || confirmed_at_ms < at_ms + timeframeMs ||
+                confirmed_at_ms > available_at_ms || price <= 0)
+              throw new Error("Неподтверждённый исходный пивот");
+            return { kind: kind as ReplayPivot["kind"], at_ms, confirmed_at_ms, price };
+          });
+          if (points.some((p, i) => i > 0 &&
+            (p.at_ms <= points[i - 1].at_ms ||
+              p.confirmed_at_ms <= points[i - 1].confirmed_at_ms)))
+            throw new Error("Нарушен порядок подтверждения пивотов");
+          const expected = (kind === "REFERENCE_5M"
+            ? (side === "BULL" ? "BEAR" : "BULL") : side);
+          const [p1, p2, p3, p4] = points;
+          const bull = p1.kind === "LOW" && p2.kind === "HIGH" &&
+            p3.kind === "LOW" && p4.kind === "HIGH" &&
+            p3.price > p1.price && p4.price > p2.price;
+          const bear = p1.kind === "HIGH" && p2.kind === "LOW" &&
+            p3.kind === "HIGH" && p4.kind === "LOW" &&
+            p3.price < p1.price && p4.price < p2.price;
+          if (expected === "BULL" ? !bull : !bear)
+            throw new Error("Четыре пивота не подтверждают направление линии");
+          return points;
+        })();
+      if (kind === "ACCELERATION_5M" && !source_pivots)
+        throw new Error("Ускорение без четырёх подтверждённых M5-пивотов");
+      const envelope_status = item.envelope_status;
+      if (envelope_status !== undefined &&
+          (kind !== "MAIN_1H" && kind !== "TARGET_1H" ||
+           envelope_status !== "STRUCTURAL_ONLY" && envelope_status !== "WICK_TIGHT")) {
+        throw new Error("Неверный статус соответствия линии теням H1");
+      }
+      if (envelope_status === "STRUCTURAL_ONLY" && !source_pivots)
+        throw new Error("Структурная H1 линия без четырёх исходных пивотов");
       previousAvailable = available_at_ms;
       return {
         kind, side, available_at_ms, from_ms, to_ms, from_price, to_price,
-        trend_version, classification: "UNVALIDATED_GEOMETRY_ONLY" as const,
+        trend_version,
+        ...(source_pivots ? { source_pivots } : {}),
+        ...(envelope_status ? { envelope_status } : {}),
+        classification: "UNVALIDATED_GEOMETRY_ONLY" as const,
       };
     });
   }
@@ -848,6 +906,35 @@ export function nextClosedCandleCursor(events: readonly ReplayEvent[], cursor: n
   return index;
 }
 
+/** Manual step follows the SELECTED timeframe, not merely the underlying M5 clock.
+ * Events at a candle close belong to the same frame; incomplete H1 bars,
+ * gaps and other journal rows must never create a phantom hour.
+ */
+export function stepReplayCursor(
+  events: readonly ReplayEvent[], cursor: number, timeframe: "5m" | "1h",
+  direction: -1 | 1,
+): number {
+  const bounded = Math.max(0, Math.min(events.length, Math.floor(cursor)));
+  const closes = events.filter(event => event.kind === "CANDLE_CLOSED" && event.candle);
+  const frames = timeframe === "5m"
+    ? closes.map(event => event.time_ms)
+    : completeHourlyCandles(closes.map(event => event.candle!))
+        .map(bar => bar.end_ms);
+  const displayed = events.slice(0, bounded).filter(event =>
+    event.kind === "CANDLE_CLOSED" && event.candle,
+  ).at(-1)?.time_ms ?? null;
+  const displayedFrame = displayed === null ? null :
+    frames.filter(time => time <= displayed).at(-1) ?? null;
+  if (direction === -1 && displayedFrame === null) return 0;
+  const destination = direction === 1
+    ? frames.find(time => time > (displayed ?? -Infinity))
+    : [...frames].reverse().find(time => time < displayedFrame!);
+  if (destination === undefined) return direction === 1 ? bounded : 0;
+  let next = 0;
+  while (next < events.length && events[next].time_ms <= destination) next++;
+  return next;
+}
+
 /** The UI receives ONLY the prefix requested by the virtual-time playhead. */
 export function visibleReplay(events: readonly ReplayEvent[], cursor: number): VisibleReplay {
   const shown = events.slice(0, Math.max(0, Math.min(Math.floor(cursor), events.length)));
@@ -1103,7 +1190,7 @@ export function visibleGeometryHistory(
     if (line.kind === "MAIN_1H") {
       // H1 revisions invalidate children from the previous trend version,
       // even if the archive has no replacement TARGET/REFERENCE yet.
-      for (const childKind of ["TARGET_1H", "REFERENCE_5M"] as const) {
+      for (const childKind of ["TARGET_1H", "REFERENCE_5M", "ACCELERATION_5M"] as const) {
         const childIndex = latest.get(childKind);
         if (childIndex !== undefined &&
             versions[childIndex].trend_version !== line.trend_version) {
@@ -1185,7 +1272,7 @@ export function visibleGeometry(
     version.retired_at_ms !== undefined &&
     version.retired_at_ms <= closedTimeMs
   )) return [];
-  for (const childKind of ["TARGET_1H", "REFERENCE_5M"] as const) {
+  for (const childKind of ["TARGET_1H", "REFERENCE_5M", "ACCELERATION_5M"] as const) {
     const child = current.get(childKind);
     if (child && (!main || child.trend_version !== main.trend_version)) {
       current.delete(childKind);
@@ -1201,201 +1288,12 @@ export function visibleGeometry(
   return [...current.values()];
 }
 
-/** Early research overlays: a three-pivot H1 main can be displayed before a
- * four-pivot, converging 1-3 / 2-4 trend is confirmed. The blue M5 guide uses
- * the same already-closed three-pivot wick rule. Neither changes the archived
- * MAIN_1H, purple prior, risk, orders or trade records.
- *
- * Work only on a prefix of CLOSED bars, including the immutable prehistory
- * context. Never backdate an H1/M5 guide to its anchor time.
+/** The archive's immutable four-pivot publications are the only graphical
+ * source of truth. Recomputing candidate pivots in the browser diverged
+ * from the Python engine (e.g. its full H1 wedge / wick constraints), and
+ * could show a blue/yellow slope without a published four-point structure.
+ * All retired and revised versions remain in visibleGeometryHistory().
  */
-type EarlyPivot = {
-  kind: "HIGH" | "LOW"; index: number; at_ms: number;
-  confirmed_at_ms: number; price: number;
-};
-
-function appendEarlyPivot(bars: readonly ReplayCandle[], pivots: EarlyPivot[]): void {
-  const wing = 2;
-  const index = bars.length - 1 - wing;
-  if (index < wing) return;
-  const center = bars[index];
-  const neighbors = [...bars.slice(index - wing, index), ...bars.slice(index + 1, index + wing + 1)];
-  const highest = neighbors.every(bar => center.high > bar.high);
-  const lowest = neighbors.every(bar => center.low < bar.low);
-  if (highest === lowest) return; // ambiguous outside/tied bar or neither
-  const kind: EarlyPivot["kind"] = highest ? "HIGH" : "LOW";
-  const price = highest ? center.high : center.low;
-  const pivot = { kind, index, at_ms: center.start_ms,
-    confirmed_at_ms: bars.at(-1)!.end_ms, price };
-  const prior = pivots.at(-1);
-  if (prior?.kind === kind) {
-    if ((highest && price > prior.price) || (lowest && price < prior.price))
-      pivots[pivots.length - 1] = pivot;
-  } else pivots.push(pivot);
-}
-
-function wickTightEarlySlope(
-  bars: readonly ReplayCandle[], first: EarlyPivot, second: EarlyPivot,
-  side: "BULL" | "BEAR", available_at_ms: number, kind: ReplayGeometry["kind"],
-): ReplayGeometry | null {
-  if (first.index >= second.index || first.kind !== second.kind ||
-      second.confirmed_at_ms > available_at_ms) return null;
-  let best = second;
-  let slope = (second.price - first.price) / (second.at_ms - first.at_ms);
-  const upper = side === "BEAR" ? kind === "MAIN_1H" : kind === "REFERENCE_5M";
-  for (let i = first.index + 1; i <= second.index; i++) {
-    const bar = bars[i];
-    if (!bar || bar.end_ms > available_at_ms) return null;
-    const price = upper ? bar.high : bar.low;
-    const trial = (price - first.price) / (bar.start_ms - first.at_ms);
-    if (upper ? trial > slope : trial < slope) {
-      slope = trial;
-      best = { kind: first.kind, index: i, at_ms: bar.start_ms,
-        confirmed_at_ms: bar.end_ms, price };
-    }
-  }
-  if (side === "BULL" ? (kind === "MAIN_1H" ? slope <= 0 : slope >= 0)
-      : (kind === "MAIN_1H" ? slope >= 0 : slope <= 0)) return null;
-  for (let i = first.index + 1; i <= second.index; i++) {
-    const bar = bars[i];
-    const linePrice = first.price + slope * (bar.start_ms - first.at_ms);
-    if (upper ? bar.high > linePrice + 1e-10 : bar.low < linePrice - 1e-10) return null;
-  }
-  return {
-    kind, side, from_ms: first.at_ms, to_ms: best.at_ms,
-    from_price: first.price, to_price: best.price, available_at_ms,
-    trend_version: available_at_ms, classification: "UNVALIDATED_GEOMETRY_ONLY",
-  };
-}
-
-/** A visibly earlier H1 yellow + M5 blue, explicitly NOT a fully confirmed 4-pivot trend. */
-export function visibleEarlyGeometry(
-  document: ReplayDocument, closedTimeMs: number | null,
-): ReplayGeometryVersion[] {
-  if (document.mode !== "MARKET_ONLY" || closedTimeMs === null) return [];
-  const latestBreak = visiblePriorBreaks(document, closedTimeMs).at(-1);
-  const confirmedMain = visibleGeometry(document, closedTimeMs).find(line => line.kind === "MAIN_1H");
-  // After the fourth pivot confirms the yellow trend, preserve the earlier
-  // M5 blue history from that movement. Do not duplicate the yellow preview.
-  const firstConfirmed = confirmedMain && (document.geometry ?? []).find(line =>
-    line.kind === "MAIN_1H" && line.side === confirmedMain.side &&
-    line.available_at_ms <= closedTimeMs &&
-    (!latestBreak || line.available_at_ms >= latestBreak.confirmed_at_ms));
-  if (confirmedMain && !firstConfirmed) return [];
-  const ceiling = firstConfirmed?.available_at_ms ?? closedTimeMs;
-  const candles = document.events.filter(event =>
-    event.kind === "CANDLE_CLOSED" && event.candle && event.time_ms <= ceiling &&
-    (!firstConfirmed || event.time_ms < ceiling),
-  ).map(event => event.candle!);
-  const hours = [...(document.context_1h ?? []), ...completeHourlyCandles(candles)]
-    .filter(bar => bar.end_ms <= ceiling && (!firstConfirmed || bar.end_ms < ceiling));
-  const h1Pivots: EarlyPivot[] = [];
-  const seenHours: ReplayCandle[] = [];
-  for (const hour of hours) {
-    if (seenHours.length && seenHours.at(-1)!.end_ms !== hour.start_ms) {
-      seenHours.length = 0;
-      h1Pivots.length = 0;
-    }
-    seenHours.push(hour);
-    appendEarlyPivot(seenHours, h1Pivots);
-  }
-  const [a, b, c] = h1Pivots.slice(-3);
-  if (!a || !b || !c || a.kind !== c.kind || b.kind === a.kind) return [];
-  const side = a.kind === "LOW" && c.price > a.price ? "BULL"
-    : a.kind === "HIGH" && c.price < a.price ? "BEAR" : null;
-  if (!side) return [];
-  if (confirmedMain && confirmedMain.side !== side) return [];
-  if (latestBreak && (latestBreak.new_side !== side ||
-      c.confirmed_at_ms <= latestBreak.confirmed_at_ms)) return [];
-  const main = wickTightEarlySlope(seenHours, a, c, side,
-    c.confirmed_at_ms, "MAIN_1H");
-  if (!main) return [];
-  // The initial yellow is published as soon as two comparable CLOSED H1 wicks
-  // are confirmed; the TARGET_1H still waits for the fourth pivot.
-  const output: ReplayGeometryVersion[] = [main];
-  const m5Pivots: EarlyPivot[] = [];
-  const seenM5: ReplayCandle[] = [];
-  let blue: ReplayGeometryVersion | null = null;
-  let brokenAt = -1;
-  for (const bar of candles) {
-    if (seenM5.length && seenM5.at(-1)!.end_ms !== bar.start_ms) {
-      seenM5.length = 0;
-      m5Pivots.length = 0;
-      blue = null;
-      brokenAt = bar.end_ms;
-    }
-    seenM5.push(bar);
-    appendEarlyPivot(seenM5, m5Pivots);
-    if (bar.end_ms < main.available_at_ms) continue;
-    if (blue && bar.start_ms >= blue.available_at_ms) {
-      const slope = (blue.to_price - blue.from_price) / (blue.to_ms - blue.from_ms);
-      const value = blue.from_price + slope * (bar.start_ms - blue.from_ms);
-      if (side === "BULL" ? bar.open > value : bar.open < value) {
-        blue.retired_at_ms = bar.end_ms;
-        blue = null;
-        brokenAt = bar.end_ms;
-      }
-    }
-    const [p, middle, q] = m5Pivots.slice(-3);
-    if (!blue && p && middle && q &&
-        p.at_ms > brokenAt &&
-        (side === "BULL" ? (p.kind === "HIGH" && middle.kind === "LOW" &&
-          q.kind === "HIGH" && q.price < p.price)
-          : (p.kind === "LOW" && middle.kind === "HIGH" &&
-            q.kind === "LOW" && q.price > p.price))) {
-      blue = wickTightEarlySlope(seenM5, p, q, side,
-        Math.max(main.available_at_ms, q.confirmed_at_ms), "REFERENCE_5M");
-      if (blue) output.push(blue);
-    }
-  }
-  return confirmedMain ? output.filter(line => line.kind === "REFERENCE_5M") : output;
-}
-
-/**
- * Frozen visual timeline of early (three-pivot) yellow/blue candidates.
- *
- * The live preview is intentionally recomputed from the current prefix and
- * may disappear when a fourth pivot confirms a different slope. Record each
- * FIRST publicly visible version instead, without changing strategy inputs.
- * A later revision is another historical object, not a relocation of the old
- * one. Retirement is stored separately and is masked until its own M5 close.
- *
- * Run once per imported local document (not once per animation frame).
- * This is an optional visual index, not a source of trading signals.
- */
-export function earlyGeometryTimeline(document: ReplayDocument): ReplayGeometryVersion[] {
-  if (document.mode !== "MARKET_ONLY") return [];
-  const versions = new Map<string, ReplayGeometryVersion>();
-  for (const event of document.events) {
-    if (event.kind !== "CANDLE_CLOSED") continue;
-    for (const line of visibleEarlyGeometry(document, event.time_ms)) {
-      const key = [
-        line.kind, line.side, line.from_ms, line.to_ms,
-        line.from_price, line.to_price, line.available_at_ms,
-      ].join(":");
-      const existing = versions.get(key);
-      if (!existing) {
-        versions.set(key, {
-          ...line,
-          available_at_ms: Math.max(line.available_at_ms, event.time_ms),
-        });
-      } else if (line.retired_at_ms !== undefined) {
-        existing.retired_at_ms = line.retired_at_ms;
-      }
-    }
-  }
-  return [...versions.values()].sort((a, b) =>
-    a.available_at_ms - b.available_at_ms || a.from_ms - b.from_ms);
-}
-
-export function visibleEarlyGeometryTimeline(
-  timeline: readonly ReplayGeometryVersion[], closedTimeMs: number | null,
-): ReplayGeometryVersion[] {
-  if (closedTimeMs === null) return [];
-  return timeline.filter(line => line.available_at_ms <= closedTimeMs).map(line =>
-    line.retired_at_ms !== undefined && line.retired_at_ms > closedTimeMs
-      ? { ...line, retired_at_ms: undefined } : line);
-}
 
 /** Reveal only geometry observations whose M5 candle has actually closed. */
 export function visibleObservations(

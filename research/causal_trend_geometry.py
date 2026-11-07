@@ -59,10 +59,14 @@ class TrendCandidate:
     pivot_sequence: tuple[ConfirmedPivot, ConfirmedPivot, ConfirmedPivot, ConfirmedPivot]
     available_at_ms: int
     classification: str = "UNVALIDATED_GEOMETRY_ONLY"
+    # Structural four-pivot geometry may be valid before the wick envelope
+    # itself can be fitted into a converging corridor. Never call that a
+    # validated wick envelope (or grant trade authority from this field).
+    envelope_status: Literal["STRUCTURAL_ONLY", "WICK_TIGHT"] = "STRUCTURAL_ONLY"
 
 
 class ConfirmedSwingStream:
-    """Strict, tie-free swing detection from closed candles, never future data."""
+    """Closed-candle swing detection with deterministic plateau tie resolution."""
 
     def __init__(self, *, timeframe_ms: int, wing: int = 2) -> None:
         if timeframe_ms <= 0 or wing < 1:
@@ -97,9 +101,17 @@ class ConfirmedSwingStream:
         if i < self.wing:
             return None
         center = self._bars[i]
-        neighbors = self._bars[i - self.wing:i] + self._bars[i + 1:i + self.wing + 1]
-        is_high = all(center.high > x.high for x in neighbors)
-        is_low = all(center.low < x.low for x in neighbors)
+        left = self._bars[i - self.wing:i]
+        right = self._bars[i + 1:i + self.wing + 1]
+        # Tick-equal extrema can persist over multiple CLOSED candles.
+        # Pick the LAST candle of a confirmed plateau, deterministically:
+        # left comparisons allow equality; right comparisons must be strict.
+        # This is the same timeframe-local rule for both H1 and M5, with
+        # no invented volatility/percentage significance threshold.
+        is_high = (all(center.high >= x.high for x in left) and
+                   all(center.high > x.high for x in right))
+        is_low = (all(center.low <= x.low for x in left) and
+                  all(center.low < x.low for x in right))
         if is_high == is_low:  # Neither, or an outside candle ambiguous on both axes.
             return None
         kind: PivotKind = "HIGH" if is_high else "LOW"
@@ -124,24 +136,36 @@ class ConfirmedSwingStream:
         return result
 
 
-def recent_hourly_trend(pivots: tuple[ConfirmedPivot, ...]) -> TrendCandidate | None:
-    """Last 4 alternating 1h pivots, narrowing 1--3 / 2--4 envelope."""
+def confirmed_four_pivot_side(
+    pivots: tuple[ConfirmedPivot, ...],
+) -> TrendSide | None:
+    """One closed-candle, four-swing structure shared by H1 and M5.
+
+    The fourth pivot is a real confirmed swing, not the most recent
+    still-forming wick. Significance calibration is separate research.
+    """
     if len(pivots) < 4:
         return None
     a, b, c, d = pivots[-4:]
     kinds = tuple(p.kind for p in (a, b, c, d))
-    if kinds == ("LOW", "HIGH", "LOW", "HIGH"):
-        if c.price <= a.price or d.price <= b.price:
-            return None
-        side: TrendSide = "BULL"
-        main, target = (a, c), (b, d)
-    elif kinds == ("HIGH", "LOW", "HIGH", "LOW"):
-        if c.price >= a.price or d.price >= b.price:
-            return None
-        side = "BEAR"
-        main, target = (a, c), (b, d)
-    else:
+    if kinds == ("LOW", "HIGH", "LOW", "HIGH") and (
+        c.price > a.price and d.price > b.price
+    ):
+        return "BULL"
+    if kinds == ("HIGH", "LOW", "HIGH", "LOW") and (
+        c.price < a.price and d.price < b.price
+    ):
+        return "BEAR"
+    return None
+
+
+def recent_hourly_trend(pivots: tuple[ConfirmedPivot, ...]) -> TrendCandidate | None:
+    """Four confirmed H1 pivots, narrowing 1--3 / 2--4 envelope."""
+    side = confirmed_four_pivot_side(pivots)
+    if side is None:
         return None
+    a, b, c, d = pivots[-4:]
+    main, target = (a, c), (b, d)
     confirmed = max(p.confirmed_at_ms for p in (a, b, c, d))
     primary = CausalLine(*main, confirmed)
     opposing = CausalLine(*target, confirmed)
@@ -231,8 +255,11 @@ def wick_tight_hourly_trend(
     if not (width2 > width4 > 0):
         return None
     return TrendCandidate(
-        side, main, target, (a, b, main.second, target.second),
+        # Preserve the four CONFIRMED structural pivots. The wick-tight
+        # drawing endpoints are fitting anchors, not newly confirmed swings.
+        side, main, target, (a, b, c, d),
         proposal.available_at_ms,
+        envelope_status="WICK_TIGHT",
     )
 
 
@@ -302,6 +329,45 @@ def last_correction_reference(
     return line
 
 
+def last_acceleration_boundary(
+    *,
+    hourly: TrendCandidate | None,
+    five_minute_pivots: tuple[ConfirmedPivot, ...],
+    five_minute_bars: tuple[Candle, ...],
+) -> CausalLine | None:
+    """Research-only last M5 impulse boundary near the *known* H1 target.
+
+    Shared four-pivot structural gate; unlike the blue correction, this local
+    leg runs WITH the H1 trend. With no approved 'near' tolerance, publish
+    only an exact target TOUCH/cross at confirmed point 4. No entry or STOP.
+    """
+    if hourly is None or len(five_minute_pivots) < 4:
+        return None
+    pivots = five_minute_pivots[-4:]
+    if confirmed_four_pivot_side(pivots) != hourly.side:
+        return None
+    first, _, third, fourth = pivots
+    if hourly.available_at_ms > first.at_ms:
+        return None  # the H1 target was not established at this movement's start
+    target_at_fourth = hourly.target.value_at(fourth.at_ms)
+    if ((hourly.side == "BULL" and fourth.price < target_at_fourth) or
+            (hourly.side == "BEAR" and fourth.price > target_at_fourth)):
+        return None
+    known_at = max(hourly.available_at_ms, fourth.confirmed_at_ms)
+    fitted = wick_tight_hourly_line(
+        first, third, five_minute_bars,
+        boundary="LOWER" if hourly.side == "BULL" else "UPPER",
+        available_at_ms=known_at,
+    )
+    if fitted is None:
+        return None
+    rising = fitted.second.price > fitted.first.price
+    falling = fitted.second.price < fitted.first.price
+    if not (rising if hourly.side == "BULL" else falling):
+        return None
+    return fitted
+
+
 def main_line_contact(trend: TrendCandidate | None, bar: Candle) -> Decimal | None:
     """Closed-bar OHLC test of an ALREADY KNOWN hourly 1--3 line.
 
@@ -338,6 +404,12 @@ class CausalGeometryFeed:
         from research.historical_candle_feed import FIVE_MINUTES_MS, ONE_HOUR_MS
 
         self._hourly = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=wing_1h)
+        # Owner's real GRASS H1 example needs both a short nested 1-candle
+        # reversal (08-09-11-13) and the broad 2-wing turn (03-08-13-21).
+        # Same ConfirmedSwingStream engine, both exclusively CLOSED H1 bars.
+        self._hourly_nested = (ConfirmedSwingStream(
+            timeframe_ms=ONE_HOUR_MS, wing=1) if wing_1h > 1 else None)
+        self._hourly_source_wing: int | None = None
         self._five = ConfirmedSwingStream(timeframe_ms=FIVE_MINUTES_MS, wing=wing_5m)
         self._hourly_trend: TrendCandidate | None = None
         # Purple prior is confirmed from CLOSED H1 wicks; it is separate
@@ -363,6 +435,24 @@ class CausalGeometryFeed:
         self._active_blue_correction_extreme: Decimal | None = None
         self._active_blue_checked_q_ms: int | None = None
         self._blue_broken_at_ms: int | None = None
+        self._active_blue_source_pivots: tuple[ConfirmedPivot, ...] | None = None
+        self._last_acceleration: CausalLine | None = None
+        self._last_acceleration_pivots: tuple[ConfirmedPivot, ...] | None = None
+        self._last_acceleration_h1_origin: int | None = None
+        self._last_acceleration_h1_version: int | None = None
+        self._last_acceleration_checked_at: int | None = None
+
+    @property
+    def confirmed_blue_source_pivots(self) -> tuple[ConfirmedPivot, ...] | None:
+        return self._active_blue_source_pivots
+
+    @property
+    def confirmed_last_acceleration(self) -> CausalLine | None:
+        return self._last_acceleration
+
+    @property
+    def confirmed_last_acceleration_pivots(self) -> tuple[ConfirmedPivot, ...] | None:
+        return self._last_acceleration_pivots
 
     @property
     def confirmed_hourly_prior(self) -> Decimal | None:
@@ -435,30 +525,51 @@ class CausalGeometryFeed:
                 self._prior_touch_ms = touch
                 self._prior_trend_version = trend.available_at_ms
 
+    def _hourly_proposals(self) -> tuple[tuple[int, TrendCandidate], ...]:
+        """Confirmed local and broad four-pivot structures, same H1 stream only."""
+        candidates: list[tuple[int, TrendCandidate]] = []
+        for feed in (self._hourly_nested, self._hourly):
+            if feed is None:
+                continue
+            proposed = recent_hourly_trend(feed.recent_pivots)
+            if proposed is not None:
+                candidates.append((feed.wing, proposed))
+        # Earliest *confirmed* structure is eligible first. No backward
+        # publication when a different scale confirms later.
+        return tuple(sorted(candidates, key=lambda item: (
+            item[1].available_at_ms, item[0],
+        )))
+
+    def _first_hourly_shape(self, proposal: TrendCandidate) -> TrendCandidate:
+        # Structural 1-3 / 2-4 must not disappear merely because a wick
+        # envelope would widen. Preserve the strict fit status separately.
+        fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
+        return fitted if fitted is not None else proposal
+
     def _install_opposite_if_confirmed(self, at_ms: int) -> None:
         if self._waiting_for_side is None:
             return
-        proposal = recent_hourly_trend(self._hourly.recent_pivots)
-        if proposal is None or proposal.side != self._waiting_for_side:
+        for wing, proposal in self._hourly_proposals():
+            if proposal.side != self._waiting_for_side:
+                continue
+            if proposal.available_at_ms > at_ms:
+                raise AssertionError("future opposite hourly trend exposed")
+            # The opposite structural setup is not published before the
+            # separately established break of the old purple prior.
+            available = max(proposal.available_at_ms, self._reversal_known_at_ms or at_ms)
+            selected = self._first_hourly_shape(proposal)
+            self._hourly_trend = TrendCandidate(
+                selected.side,
+                CausalLine(selected.main.first, selected.main.second, available),
+                CausalLine(selected.target.first, selected.target.second, available),
+                selected.pivot_sequence,
+                available,
+                envelope_status=selected.envelope_status,
+            )
+            self._hourly_source_wing = wing
+            self._waiting_for_side = None
+            self._reversal_known_at_ms = None
             return
-        if proposal.available_at_ms > at_ms:
-            raise AssertionError("future opposite hourly trend exposed")
-        # An older candidate cannot acquire the status of the NEW trend
-        # before the prior broke. Preserve its frozen wick anchors, but
-        # make the new version known no earlier than confirmation.
-        available = max(proposal.available_at_ms, self._reversal_known_at_ms or at_ms)
-        fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
-        if fitted is None:
-            return  # Unproven candidate cannot terminate the waiting state.
-        self._hourly_trend = TrendCandidate(
-            fitted.side,
-            CausalLine(fitted.main.first, fitted.main.second, available),
-            CausalLine(fitted.target.first, fitted.target.second, available),
-            fitted.pivot_sequence,
-            available,
-        )
-        self._waiting_for_side = None
-        self._reversal_known_at_ms = None
 
     def observe_closed(
         self, five_minute: Candle, newly_closed_1h: Candle | None,
@@ -484,6 +595,7 @@ class CausalGeometryFeed:
                         "next_hour_open_ms": five_minute.start_ms,
                     }
                     self._hourly_trend = None
+                    self._hourly_source_wing = None
                     self._waiting_for_side = "BEAR" if old_side == "BULL" else "BULL"
                     self._reversal_known_at_ms = five_minute.end_ms
         if newly_closed_1h is not None:
@@ -504,19 +616,20 @@ class CausalGeometryFeed:
                         self._prior_touch_ms, self._prior_trend_version,
                     )
             self._hourly.observe_closed(newly_closed_1h)
+            if self._hourly_nested is not None:
+                self._hourly_nested.observe_closed(newly_closed_1h)
             if self._waiting_for_side is None:
-                proposal = recent_hourly_trend(self._hourly.recent_pivots)
-                if proposal is not None:
+                for wing, proposal in self._hourly_proposals():
                     if self._hourly_trend is None:
-                        fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
-                        if fitted is not None:
-                            self._hourly_trend = fitted
-                    elif (proposal.side == self._hourly_trend.side and
-                          proposal.pivot_sequence[3].at_ms >
-                          self._hourly_trend.pivot_sequence[3].at_ms):
-                        # The original 1/2 anchors belong to this movement.
-                        # New extrema may revise points 3/4, never shift the
-                        # first pair forward by taking the last four pivots.
+                        self._hourly_trend = self._first_hourly_shape(proposal)
+                        self._hourly_source_wing = wing
+                        break
+                    if (wing == self._hourly_source_wing and
+                        proposal.side == self._hourly_trend.side and
+                        proposal.pivot_sequence[3].at_ms >
+                        self._hourly_trend.pivot_sequence[3].at_ms):
+                        # Same movement & same pivot scale: preserve original
+                        # 1/2 pivots and attempt a new wick-tight 3/4 version.
                         previous = self._hourly_trend
                         fitted = wick_tight_hourly_trend(
                             proposal, self._hourly.bars,
@@ -525,6 +638,7 @@ class CausalGeometryFeed:
                         )
                         if fitted is not None:
                             self._hourly_trend = fitted
+                        break
         self._install_opposite_if_confirmed(five_minute.end_ms)
         trend = self._hourly_trend
         movement = ((trend.side, trend.main.first.at_ms, trend.main.first.price)
@@ -542,6 +656,7 @@ class CausalGeometryFeed:
                 self._active_blue_hourly_first_ms != origin)):
             self._active_blue = None
             self._active_blue_hourly_first_ms = None
+            self._active_blue_source_pivots = None
             self._active_blue_correction_extreme = None
             self._active_blue_checked_q_ms = None
         if self._active_blue is not None and trend is not None:
@@ -557,29 +672,40 @@ class CausalGeometryFeed:
             ):
                 self._active_blue = None
                 self._active_blue_hourly_first_ms = None
+                self._active_blue_source_pivots = None
                 self._active_blue_correction_extreme = None
                 self._active_blue_checked_q_ms = None
                 self._blue_broken_at_ms = five_minute.end_ms
         if self._active_blue is None and trend is not None:
             recent = self._five.recent_pivots
-            # Only a NEW correction starting AFTER a completed blue break
-            # may create another blue. Past three-pivot windows are not
-            # recycled on every replay candle.
-            if len(recent) >= 3 and (
-                self._blue_broken_at_ms is None or
-                recent[-3].at_ms > self._blue_broken_at_ms
-            ):
-                between = self._five.bars_between(recent[-3], recent[-1])
+            # Do NOT publish a blue reference from a partial H-L-H / L-H-L
+            # setup. The opposite M5 correction requires its own confirmed
+            # fourth structural pivot (lower LOW / higher HIGH).
+            opposite_side: TrendSide = "BEAR" if trend.side == "BULL" else "BULL"
+            if (len(recent) >= 4 and
+                confirmed_four_pivot_side(recent) == opposite_side and
+                (self._blue_broken_at_ms is None or
+                 recent[-4].at_ms > self._blue_broken_at_ms)):
+                first, middle, third, fourth = recent[-4:]
+                between = self._five.bars_between(first, third)
                 candidate = last_correction_reference(
                     hourly=trend,
-                    five_minute_pivots=recent,
+                    five_minute_pivots=(first, middle, third),
                     five_minute_bars=between,
                 )
                 if candidate is not None:
-                    self._active_blue = candidate
+                    # A valid line shape does not grant publication until
+                    # point 4 is confirmed on the M5 stream.
+                    available = max(candidate.available_at_ms, fourth.confirmed_at_ms)
+                    self._active_blue = CausalLine(
+                        candidate.first, candidate.second, available,
+                    )
                     self._active_blue_hourly_first_ms = origin
-                    self._active_blue_correction_extreme = recent[-2].price
-                    self._active_blue_checked_q_ms = recent[-1].confirmed_at_ms
+                    self._active_blue_source_pivots = (first, middle, third, fourth)
+                    # Point 4 is already the newest confirmed correction
+                    # extreme; a later refit requires a genuinely NEW low/high.
+                    self._active_blue_correction_extreme = fourth.price
+                    self._active_blue_checked_q_ms = third.confirmed_at_ms
         elif self._active_blue is not None and trend is not None:
             recent = self._five.recent_pivots
             first = self._active_blue.first
@@ -613,7 +739,36 @@ class CausalGeometryFeed:
                         if (revised.first != self._active_blue.first or
                             revised.second != self._active_blue.second):
                             self._active_blue = revised
+        # Independent dashed last-acceleration geometry. This describes an
+        # H1-directional M5 leg only when point 4 touches the known H1
+        # target. No trade mode or countertrend trigger is activated here.
+        if (trend is None or self._last_acceleration_h1_origin != origin or
+                self._last_acceleration_h1_version != trend.available_at_ms):
+            # A revised H1 target cannot silently inherit a candidate
+            # selected against the previous version's projected price.
+            self._last_acceleration = None
+            self._last_acceleration_pivots = None
+            self._last_acceleration_h1_origin = origin
+            self._last_acceleration_h1_version = (
+                trend.available_at_ms if trend is not None else None
+            )
+            self._last_acceleration_checked_at = None
+        recent_accel = self._five.recent_pivots
+        if trend is not None and len(recent_accel) == 4:
+            last_known = recent_accel[-1].confirmed_at_ms
+            if self._last_acceleration_checked_at != last_known:
+                self._last_acceleration_checked_at = last_known
+                candidate = last_acceleration_boundary(
+                    hourly=trend, five_minute_pivots=recent_accel,
+                    five_minute_bars=self._five.bars,
+                )
+                if candidate is not None:
+                    self._last_acceleration = candidate
+                    self._last_acceleration_pivots = recent_accel
         line = self._active_blue
+        if (self._last_acceleration is not None and
+                self._last_acceleration.available_at_ms > five_minute.end_ms):
+            raise AssertionError("future M5 acceleration exposed")
         if line is not None and line.available_at_ms > five_minute.end_ms:
             raise AssertionError("future correction slope exposed")
         if trend is not None and trend.available_at_ms > five_minute.end_ms:

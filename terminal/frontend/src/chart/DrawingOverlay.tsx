@@ -49,6 +49,8 @@ export function DrawingOverlay({
   onSelect,
   onDrawingGesture,
   onDrawingComplete,
+  onInteractionEnd,
+  snapAnchor,
   priceFormatter = (price) => price.toFixed(4),
 }: {
   drawings: DrawingObject[];
@@ -65,6 +67,10 @@ export function DrawingOverlay({
   onSelect: (id: string | null) => void;
   onDrawingGesture: () => void;
   onDrawingComplete: () => void;
+  /** Optional end-of-gesture notification for grouping one Undo operation. */
+  onInteractionEnd?: () => void;
+  /** Adapter for clients with non-index-based drawing coordinates. */
+  snapAnchor?: (anchor: DrawingAnchor, radius: number) => DrawingAnchor;
   priceFormatter?: (price: number) => string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -105,15 +111,15 @@ export function DrawingOverlay({
       const raw = { logical, price };
       const aligned = { logical: candleAligned ? Math.round(logical) : logical, price };
       if (!magnet) return aligned;
-      const snapped = nearestOhlcAnchor(
-        raw, candles, coordinates.logicalToX, coordinates.priceToY,
-        event.pointerType === "touch" ? 26 : 14,
-      );
+      const radius = event.pointerType === "touch" ? 26 : 14;
+      const snapped = snapAnchor
+        ? snapAnchor(raw, radius)
+        : nearestOhlcAnchor(raw, candles, coordinates.logicalToX, coordinates.priceToY, radius);
       return candleAligned
         ? { logical: Math.round(snapped.logical), price: snapped.price }
         : snapped;
     },
-    [candles, coordinates, magnet, candleAligned],
+    [candles, coordinates, magnet, candleAligned, snapAnchor],
   );
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -561,6 +567,7 @@ export function DrawingOverlay({
     rulerAnchorActiveRef.current = false;
     dragRef.current = null;
     guideAnchorRef.current = null;
+    if (!draftRef.current) onInteractionEnd?.();
     redraw();
   };
   const cancel = () => {
@@ -579,6 +586,7 @@ export function DrawingOverlay({
     rulerAnchorActiveRef.current = false;
     dragRef.current = null;
     guideAnchorRef.current = null;
+    if (!draftRef.current) onInteractionEnd?.();
     redraw();
   };
   return (
