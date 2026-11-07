@@ -1402,20 +1402,51 @@ export function App() {
                 || review.snapshot_revision !== frozenSignal.snapshotRevision
                 || review.bars_sha256 !== frozenSignal.barsSha256)
               throw new Error("Несовпадение исходного сигнала");
-            const response = await fetch("/api/workspace/geometry-feedback", {
-              method: "POST", credentials: "same-origin",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(review),
-            });
-            const result = await response.json();
-            const record = result.review;
-            const stored = record?.submission;
-            if (!response.ok || result.ok !== true
-                || typeof record?.review_id !== "string"
-                || !/^[0-9a-f]{64}$/.test(record.review_id)
-                || !matchesStoredGeometryReview(review, stored))
-              throw new Error(result.error || "Сервер не подтвердил точное сохранение отзыва");
-            return { reviewId: record.review_id, label: review.label };
+            const verifiedReceipt = (record: any) =>
+              typeof record?.review_id === "string"
+              && /^[0-9a-f]{64}$/.test(record.review_id)
+              && matchesStoredGeometryReview(review, record.submission)
+                ? { reviewId: record.review_id as string, label: review.label }
+                : null;
+            let failure: string | null = null;
+            try {
+              const response = await fetch("/api/workspace/geometry-feedback", {
+                method: "POST", credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(review),
+              });
+              const result = await response.json();
+              if (response.ok && result.ok === true) {
+                const receipt = verifiedReceipt(result.review);
+                if (receipt) return receipt;
+              }
+              failure = result.error || "Сервер не подтвердил точное сохранение отзыва";
+              // Definitive client errors are not transport ambiguity.
+              if (response.status >= 400 && response.status < 500)
+                throw new Error(failure);
+            } catch (error) {
+              failure = error instanceof Error ? error.message : "Нет ответа сервера";
+              if (failure && failure !== "Failed to fetch" && failure !== "NetworkError when attempting to fetch resource."
+                  && failure !== "Сервер не подтвердил точное сохранение отзыва"
+                  && !/^(geometry_feedback_unavailable|Unexpected token|JSON)/.test(failure))
+                throw error;
+            }
+            // A POST can commit durably before the browser loses its response.
+            // Confirm exact identity and idempotency key; never infer success from HTTP alone.
+            try {
+              const response = await fetch(
+                `/api/workspace/signal-geometry?signal_id=${encodeURIComponent(review.signal_id)}`,
+                { credentials: "same-origin" },
+              );
+              if (response.ok) {
+                const result = await response.json();
+                const receipt = result.ok === true ? verifiedReceipt(result.latest_review) : null;
+                if (receipt) return receipt;
+              }
+            } catch {
+              // Unknown outcome must remain explicitly unconfirmed.
+            }
+            throw new Error(`${failure ?? "Нет подтверждения"}; запись не подтверждена, повторите сохранение`);
           } : undefined}
           tickSize={mode === "EDITOR" && frozenSignal ? null : market.tickSize}
           symbol={mode === "EDITOR" && frozenSignal ? launchLink?.symbol ?? market.book.symbol : market.book.symbol}
