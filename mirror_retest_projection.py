@@ -159,9 +159,15 @@ def project_observations(
                 if not isinstance(record, dict):
                     malformed += 1
                     continue
-                # Reject every permission-bearing object before checking its
-                # observation_id: corrupt identifiers must not hide an ALLOW.
-                if any(key in record for key in ("mode", "executable", "admission_allowed", "decision")):
+                # A recognisable observation MUST have the complete
+                # OBSERVE_ONLY permission envelope. Without this guard an
+                # observation with all four fields missing reached
+                # _project()["decision"] and raised an uncaught KeyError.
+                # Permission claims without a valid identifier also fail
+                # closed (never hide an ALLOW in a malformed row).
+                if (isinstance(record.get("observation_id"), str)
+                        or any(key in record for key in
+                               ("mode", "executable", "admission_allowed", "decision"))):
                     _check_permission(record, total)
                 if not isinstance(record.get("observation_id"), str):
                     malformed += 1                         # not recognisably an observation at all
@@ -170,14 +176,17 @@ def project_observations(
                 if projected is None:
                     malformed += 1
                     continue
-                if projected["observation_id"] in seen:
-                    duplicates += 1
-                    continue
-                seen.add(projected["observation_id"])
                 account = record.get("account_id")
                 if isinstance(account, str) and account and account != account_scope:
                     foreign += 1
                     continue
+                # Dedup is scoped to the visible account. A foreign row may
+                # use the same observation ID, but it must never suppress the
+                # owner account's valid observation.
+                if projected["observation_id"] in seen:
+                    duplicates += 1
+                    continue
+                seen.add(projected["observation_id"])
                 projected["account_id"] = account if isinstance(account, str) and account else None
                 if len(head) < limit:
                     head.append(projected)
