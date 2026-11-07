@@ -254,8 +254,22 @@ class GuiSmokeTests(unittest.TestCase):
                 gui.render()
                 self.assertEqual(gui.free_value.cget("text"), "Нет соединения")
                 self.assertEqual(gui.header_label.cget("text"), "1 РО = — USDT")
+                epoch_before_change = gui._result_epoch
+                gui._results.put((epoch_before_change, result(used=4, free=16), time.monotonic()))
                 gui.save_settings_from_text("12")
                 self.assertEqual(store.load_settings(path)[0], AppSettings(total_swords=12))
+                self.assertGreater(gui._result_epoch, epoch_before_change)
+                self.assertEqual(gui.header_label.cget("text"), "1 РО = — USDT")
+                # A slow count from the previous settings is still in the
+                # queue. The newer settings may even be changed back to the
+                # same number; only result provenance decides correctness.
+                gui._tick()
+                self.assertEqual(gui.header_label.cget("text"), "1 РО = — USDT")
+                gui._results.put((gui._result_epoch,
+                                  result(total=12, used=3, free=9), time.monotonic()))
+                gui._tick()
+                self.assertEqual(gui.header_label.cget("text"), "1 РО = 5 USDT")
+                self.assertEqual(gui.free_value.cget("text"), "9")
                 with self.assertRaises(ValueError):
                     gui.save_settings_from_text("0")
             finally:
@@ -299,9 +313,28 @@ class GuiSmokeTests(unittest.TestCase):
                     time.sleep(0.02)
                 root.update()
                 self.assertEqual(w["save"].cget("state"), "normal")
+                # The old account had a fresh result when the user saved
+                # a different verified Read-Only key. No stale count can be
+                # shown under the new credentials, even if an old slow
+                # Bybit response reaches the queue after save.
+                gui.apply_result(result(total=12, used=4, free=8))
+                gui.render()
+                self.assertEqual(gui.header_label.cget("text"), "1 РО = 5 USDT")
+                previous_epoch = gui._result_epoch
                 with mock.patch.object(gui.refresher, "request_now") as refresh:
                     w["save"].invoke()
                 refresh.assert_called_once()
+                self.assertGreater(gui._result_epoch, previous_epoch)
+                self.assertEqual(gui.header_label.cget("text"), "1 РО = — USDT")
+                gui._results.put((previous_epoch,
+                                  result(total=12, used=4, free=8), time.monotonic()))
+                gui._tick()
+                self.assertEqual(gui.header_label.cget("text"), "1 РО = — USDT")
+                gui._results.put((gui._result_epoch,
+                                  result(total=12, used=6, free=6), time.monotonic()))
+                gui._tick()
+                self.assertEqual(gui.header_label.cget("text"), "1 РО = 5 USDT")
+                self.assertEqual(gui.used_value.cget("text"), "6")
                 self.assertEqual(fake_store.saves, [(FAKE_KEY, FAKE_SECRET)])
                 self.assertNotIn(FAKE_SECRET, w["result"].cget("text"))
                 self.assertEqual(store.load_settings(path)[0], AppSettings(total_swords=12))
