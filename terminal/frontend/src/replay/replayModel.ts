@@ -1261,6 +1261,25 @@ export function visibleGeometryHistory(
   return versions;
 }
 
+/** Render the newest confirmed version per geometric role, not the entire
+ * archival chain on top of the active chart. Older slopes remain available
+ * in visibleGeometryHistory() when the playhead is rewound to their lifetime.
+ * A confirmed new pivot pair REPLACES the visible main/target, it must not
+ * leave an extra yellow ray pointing back into prehistory.
+ */
+export function displayGeometryVersions(
+  versions: readonly ReplayGeometryVersion[], knownAtMs: number,
+): ReplayGeometryVersion[] {
+  const latest = new Map<ReplayGeometry["kind"], ReplayGeometryVersion>();
+  for (const line of versions) {
+    if (line.available_at_ms > knownAtMs) continue;
+    const previous = latest.get(line.kind);
+    if (previous === undefined || line.available_at_ms >= previous.available_at_ms)
+      latest.set(line.kind, line);
+  }
+  return [...latest.values()];
+}
+
 /** Reveal ONLY candidate lines already confirmed at the virtual-time playhead. */
 export function visibleGeometry(
   document: ReplayDocument, closedTimeMs: number | null,
