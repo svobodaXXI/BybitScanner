@@ -102,9 +102,9 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
             )["inline_keyboard"][-1]
         editor_query = parse_qs(urlsplit(editor["web_app"]["url"]).query)
         self.assertEqual(editor_query["signal_id"], ["mirror-origin:abc"])
-        self.assertNotIn("signal_id", urlsplit(terminal["web_app"]["url"]).query)
+        self.assertEqual(parse_qs(urlsplit(terminal["web_app"]["url"]).query)["signal_id"], ["mirror-origin:abc"])
         self.assertIn('const signalId=params.get("signal_id")', LOGIN_HTML)
-        self.assertIn('mode==="EDITOR" && signalId!==null', LOGIN_HTML)
+        self.assertIn('if(signalId!==null)', LOGIN_HTML)
         self.assertIn('target.searchParams.set("signal_id",signalId)', LOGIN_HTML)
         self.assertIn("^[A-Za-z0-9_.:-]{1,128}$", LOGIN_HTML)
         # Reuse the canonical URL builder, never add a credential token.
@@ -209,7 +209,7 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
                     )
                     self.assertEqual(
                         terminal["web_app"]["url"],
-                        f"https://83.217.213.181/login?mode=TERMINAL&symbol=BTCUSDT&timeframe={expected}",
+                        f"https://83.217.213.181/login?mode=TERMINAL&symbol=BTCUSDT&timeframe={expected}&signal_id=signal-123",
                     )
 
     def test_owner_keyboard_fallback_and_non_owner_do_not_leak_editor_link(self):
@@ -243,7 +243,10 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
             )["inline_keyboard"][-1]
         self.assertEqual(editor["callback_data"], f"workspace:EDITOR:S:{token}")
         self.assertLessEqual(len(editor["callback_data"].encode("utf-8")), 64)
-        self.assertEqual(terminal["callback_data"], "workspace:TERMINAL:BTCUSDT:5m")
+        self.assertEqual(terminal["callback_data"], f"workspace:TERMINAL:S:{token}")
+        terminal_parsed = telegram_review._parse_workspace_callback(terminal["callback_data"])
+        self.assertEqual(terminal_parsed["mode"], "TERMINAL")
+        self.assertEqual(terminal_parsed["source_token"], token)
         parsed = telegram_review._parse_workspace_callback(editor["callback_data"])
         self.assertEqual(parsed["source_token"], token)
         self.assertIsNone(telegram_review._parse_workspace_callback(
@@ -261,6 +264,21 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
             signal_id=f"source-original:{token}",
         )
         answer.assert_called_once_with("callback-1", "Ссылка на редактор/терминал отправлена в чат")
+
+    def test_terminal_callback_handoff_preserves_verified_source_without_trading(self):
+        token = "b" * 24
+        source_id = f"source-original:{token}"
+        parsed = telegram_review._parse_workspace_callback(f"workspace:TERMINAL:S:{token}")
+        callback = {"id": "terminal-source", "message": {"chat": {"id": 42}}}
+        frozen = {"signal_id": source_id, "symbol": "BTCUSDT",
+                  "timeframe": "5", "bars": [], "boundaries": []}
+        with patch("signal_archive.load_frozen_signal_geometry", return_value=frozen) as load, \
+             patch.object(handoff, "deliver_workspace_link", return_value={"ok": True}) as deliver, \
+             patch.object(telegram_review, "_answer_callback"):
+            telegram_review._run_workspace_callback(callback, parsed)
+        load.assert_called_once_with(source_id)
+        deliver.assert_called_once_with("42", mode="TERMINAL", symbol="BTCUSDT",
+                                        timeframe="5m", signal_id=source_id)
 
     def test_fallback_mirror_editor_preserves_exact_source_identity(self):
         from notification import build_tradingview_keyboard
