@@ -47,6 +47,37 @@ export type DiaryTradeSummaryRow = {
   controller_origin?: string | null;
 };
 
+export type RobotDaySummary = {
+  dayStartMs: number;
+  closedTrades: number;
+  tradesWithoutPnl: number;
+  netPnl: number | null;
+};
+
+export async function loadRobotDaySummary(): Promise<RobotDaySummary> {
+  const body = await getJson(marketApiRoutes.robotDaySummary);
+  if (
+    body.account_id !== "paper" || body.source !== "robot_trades" ||
+    typeof body.day_start_ms !== "number" || !Number.isFinite(body.day_start_ms) ||
+    typeof body.closed_trades !== "number" || !Number.isSafeInteger(body.closed_trades) ||
+    body.closed_trades < 0 ||
+    typeof body.trades_without_pnl !== "number" ||
+    !Number.isSafeInteger(body.trades_without_pnl) ||
+    body.trades_without_pnl < 0 || body.trades_without_pnl > body.closed_trades ||
+    (body.net_pnl_usdt !== null && (
+      typeof body.net_pnl_usdt !== "string" ||
+      !Number.isFinite(Number(body.net_pnl_usdt))
+    )) ||
+    (body.net_pnl_usdt === null) !== (body.trades_without_pnl > 0)
+  ) throw new Error("Robot day summary is incomplete or untrusted");
+  return {
+    dayStartMs: body.day_start_ms,
+    closedTrades: body.closed_trades,
+    tradesWithoutPnl: body.trades_without_pnl,
+    netPnl: body.net_pnl_usdt === null ? null : Number(body.net_pnl_usdt),
+  };
+}
+
 export type DaySummary = {
   dayStartMs: number;
   closedTrades: number;
@@ -87,22 +118,6 @@ export function summarizeDay(
     netPnl: tradesWithoutPnl > 0 ? null : total,
     tradesWithoutPnl,
   };
-}
-
-/**
- * Only proven Robot-attributed episodes may contribute to Autopilot's day PnL.
- * The current Diary projection emits null provenance, so the UI must show
- * unavailable rather than silently counting manual trades as Robot trades.
- */
-export function summarizeRobotDay(trades: DiaryTradeSummaryRow[], nowMs: number): DaySummary | null {
-  const dayStartMs = mskDayStartMs(nowMs);
-  const today = trades.filter((trade) => trade.closed_at_ms !== null &&
-    Number.isFinite(trade.closed_at_ms) &&
-    trade.closed_at_ms >= dayStartMs && trade.closed_at_ms <= nowMs);
-  if (today.some((trade) => !trade.controller_origin)) return null;
-  // A future backend contract must certify this exact provenance before it
-  // becomes available; unknown non-Robot values are deliberately not counted.
-  return summarizeDay(today.filter((trade) => trade.controller_origin === "ROBOT"), nowMs);
 }
 
 async function getJson(url: string): Promise<Record<string, unknown>> {
