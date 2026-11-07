@@ -379,10 +379,15 @@ def observe_closed_engulfing(
     if before is None or now is None:
         return None
     try:
-        start_before = int(previous["open_time_ms"])
-        end_before = int(previous["close_time_ms"])
-        start_now = int(current["open_time_ms"])
-        end_now = int(current["close_time_ms"])
+        # Exact candle boundaries must be integer milliseconds: int() would
+        # silently truncate fractional floats and accept booleans/strings.
+        timestamps = (
+            previous["open_time_ms"], previous["close_time_ms"],
+            current["open_time_ms"], current["close_time_ms"],
+        )
+        if any(type(value) is not int for value in timestamps):
+            return None
+        start_before, end_before, start_now, end_now = timestamps
     except (KeyError, TypeError, ValueError, OverflowError):
         return None
     step = end_before - start_before
