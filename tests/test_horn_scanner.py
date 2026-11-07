@@ -278,6 +278,33 @@ class DeliveryTest(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(self.order(calls), [("text", "friend"), ("photo", "friend")])
 
+    def test_telegram_ok_without_message_receipt_stays_retryable(self):
+        observation = self.observation()
+        # Text transport's bare success has no verifiable Telegram message.
+        result, calls = self.send(observation, [{"ok": True}, self.OK], [self.OK])
+        self.assertFalse(result)
+        self.assertEqual(self.order(calls),
+                         [("text", "owner"), ("text", "friend"), ("photo", "friend")])
+        failures = [e for e in read_events(self.root)
+                    if e["event"] == "horn_text_delivery" and e["chat_id"] == "owner"]
+        self.assertEqual(len(failures), 1)
+        self.assertFalse(failures[0]["ok"])
+        self.assertIsNone(failures[0]["message_id"])
+        result, calls = self.send(observation, [self.OK], [self.OK])
+        self.assertTrue(result)
+        self.assertEqual(self.order(calls), [("text", "owner"), ("photo", "owner")])
+
+        upgraded = self.mature(observation)
+        result, calls = self.send(upgraded, [self.OK] * 2,
+                                  [{"ok": True, "result": {}}, self.OK])
+        self.assertFalse(result)
+        self.assertEqual(self.order(calls),
+                         [("text", "owner"), ("photo", "owner"),
+                          ("text", "friend"), ("photo", "friend")])
+        result, calls = self.send(upgraded, [], [self.OK])
+        self.assertTrue(result)
+        self.assertEqual(self.order(calls), [("photo", "owner")])
+
     def test_test_mode_does_not_persist_memory(self):
         _, calls = self.send(self.observation(), [self.OK] * 2, [self.OK] * 2, test_mode=True)
         self.assertTrue(calls[0][2][0].endswith("🧪 TEST MODE"))
