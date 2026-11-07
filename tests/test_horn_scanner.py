@@ -305,6 +305,29 @@ class DeliveryTest(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(self.order(calls), [("photo", "owner")])
 
+    def test_malformed_message_receipts_are_retryable_and_jsonl_safe(self):
+        observation = self.observation()
+        for bad_id in (True, "7", 0, -1, {"nested": "invalid"}, ["bad"]):
+            with self.subTest(message_id=bad_id):
+                self.memory.clear()
+                # Other recipient succeeds, but this one must remain retryable.
+                success, calls = self.send(
+                    observation,
+                    [{"ok": True, "result": {"message_id": bad_id}}, self.OK],
+                    [self.OK],
+                )
+                self.assertFalse(success)
+                self.assertEqual(self.order(calls),
+                                 [("text", "owner"), ("text", "friend"), ("photo", "friend")])
+                failed = [event for event in read_events(self.root)
+                          if event["event"] == "horn_text_delivery"
+                          and event["chat_id"] == "owner"][-1]
+                self.assertFalse(failed["ok"])
+                self.assertIsNone(failed["message_id"])
+                success, calls = self.send(observation, [self.OK], [self.OK])
+                self.assertTrue(success)
+                self.assertEqual(self.order(calls), [("text", "owner"), ("photo", "owner")])
+
     def test_telegram_exception_details_are_not_written_to_evidence(self):
         observation = self.observation()
         secret = "sensitive-token-in-http-error"
