@@ -131,6 +131,48 @@ try {
   await page.waitForFunction(() =>
     document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === "0");
   console.log("REAL_OWNER_UTC_TOOLBAR_SEEK_OK");
+  // The owner removed the banner and event sidebar to widen the REAL chart.
+  assert.equal(await page.locator(".replay-note").count(), 0,
+    "the obsolete yellow text banner must not consume vertical chart space");
+  assert.equal(await page.locator(".replay-events").count(), 0,
+    "no event sidebar may consume chart width");
+  const gridAndChart = await page.evaluate(() => {
+    const grid = document.querySelector(".replay-grid").getBoundingClientRect();
+    const pane = document.querySelector(".replay-chart-panel").getBoundingClientRect();
+    return { grid: grid.width, pane: pane.width };
+  });
+  assert.ok(gridAndChart.pane >= gridAndChart.grid - 2,
+    "the chart must occupy the whole available grid width");
+  const scrubber = page.getByRole("slider", { name: "Перемотка графика по закрытым свечам" });
+  assert.equal(await scrubber.count(), 1);
+  assert.equal(await scrubber.getAttribute("max"), String(
+    archive.events.filter(event => event.kind === "CANDLE_CLOSED").length));
+  await scrubber.focus();
+  await scrubber.press("End");
+  await page.waitForFunction(expected =>
+    document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
+  archive.events.filter(event => event.kind === "CANDLE_CLOSED").length);
+  await scrubber.press("Home");
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === "0");
+  await scrubber.press("ArrowRight");
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === "1");
+  await page.getByRole("button", { name: "H1", exact: true }).click();
+  await scrubber.press("ArrowRight");
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === "0");
+  await scrubber.press("End");
+  const hours = Math.floor(archive.events.filter(event => event.kind === "CANDLE_CLOSED").length / 12);
+  await page.waitForFunction(expected =>
+    document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
+  hours * 12);
+  await page.getByRole("button", { name: "M5", exact: true }).click();
+  await scrubber.press("Home");
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === "0");
+  console.log("REAL_OWNER_FULL_WIDTH_SCRUBBER_OK");
+
 
   // Semantic status nodes intentionally live inside a CLOSED diagnostics
   // disclosure. Open it just as the owner would before reading prior events.
