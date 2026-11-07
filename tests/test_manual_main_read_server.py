@@ -107,6 +107,18 @@ class MainReadGatewayTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 checked_main_state_dir("relative-directory")
 
+    def test_manual_main_systemd_unit_is_separate_and_not_autostarted(self):
+        unit = Path("deploy/systemd/bybitscanner-manual-main-read.service").read_text()
+        self.assertIn("StateDirectory=bybitscanner-manual-main", unit)
+        self.assertIn("StateDirectoryMode=0700", unit)
+        self.assertIn("ProtectSystem=strict", unit)
+        self.assertIn("Restart=no", unit)
+        self.assertNotIn("[Install]", unit)
+        self.assertNotIn("BYBITSCANNER_PAPER_DB", unit)
+        self.assertNotIn("stop_robot_runtime", unit)
+        self.assertNotIn("bybitscanner-paper-backend.service", unit)
+        self.assertIn("terminal.runtime.manual_main_read_server", unit)
+
     def test_nginx_routing_requires_telegram_owner_auth(self):
         config = Path("deploy/terminal_ingress/nginx-authenticated.conf").read_text()
         route = config.split("location ^~ /api/manual-main/ {", 1)[1].split("}", 1)[0]
