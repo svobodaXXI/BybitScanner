@@ -846,6 +846,126 @@ def test_staged_gitless_different_target_cannot_replay_unresolved_stop(monkeypat
     assert calls == ["stop"]
 
 
+
+@pytest.mark.parametrize("opted", [False, True])
+def test_monolith_routes_only_opted_single_prior_stop_to_existing_recovery(
+    monkeypatch, tmp_path, opted,
+):
+    import tools.paper_stopped_approved_recovery as recovery
+    import tools.vps_release_identity as release
+    from tools.paper_maintenance import deploy_staged_editor_only
+
+    root, stage, journal = (tmp_path / part for part in
+                            ("installed", "stage", "transactions"))
+    for path in (root, stage, journal):
+        path.mkdir()
+    target, previous, old = "a" * 40, "b" * 40, "c" * 40
+    marker = journal / (".stop-invoked-" + previous)
+    marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    marker.chmod(0o600)
+    monkeypatch.setattr(release, "verify_release", lambda *_: old)
+    calls = []
+
+    def selected(**kwargs):
+        calls.append(("recovery", kwargs["prior_stop"], kwargs["expected_old_sha"]))
+        assert kwargs["target"] == target
+        assert kwargs["transactions"] == journal
+        return "READY: EDITOR_ONLY"
+
+    monkeypatch.setattr(recovery, "recover_one_flat_after_failed_stop", selected)
+    result = deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=journal,
+        trusted_uid=os.geteuid(), proven_one_flat_orphan_handoff=opted,
+        preflight=lambda *_args, **_kw: pytest.fail("old STOP means no new preflight/STOP"),
+        stop=None,
+        installer=lambda *_args, **_kw: pytest.fail("no generic install"),
+        resume=lambda *_args, **_kw: pytest.fail("no generic resume"),
+    )
+    if opted:
+        assert result == "READY: EDITOR_ONLY"
+        assert calls == [("recovery", previous, old)]
+    else:
+        assert result.startswith("BLOCKED: prior_STOP_outcome_unproven")
+        assert calls == []
+
+
+@pytest.mark.parametrize("extra_marker,same_target,override_stop", [
+    (True, False, False),
+    (False, True, False),
+    (False, False, True),
+])
+def test_auto_recovery_never_replays_ambiguous_or_unauthorized_stop(
+    monkeypatch, tmp_path, extra_marker, same_target, override_stop,
+):
+    import tools.paper_stopped_approved_recovery as recovery
+    import tools.vps_release_identity as release
+    from tools.paper_maintenance import deploy_staged_editor_only
+
+    root, stage, journal = (tmp_path / part for part in
+                            ("installed", "stage", "transactions"))
+    for path in (root, stage, journal):
+        path.mkdir()
+    target, old = "a" * 40, "c" * 40
+    prior = target if same_target else "b" * 40
+    for sha in ((prior, "d" * 40) if extra_marker else (prior,)):
+        marker = journal / (".stop-invoked-" + sha)
+        marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+        marker.chmod(0o600)
+    monkeypatch.setattr(release, "verify_release", lambda *_: old)
+    monkeypatch.setattr(
+        recovery, "recover_one_flat_after_failed_stop",
+        lambda **kw: pytest.fail("ambiguous STOP cannot use recovery"),
+    )
+    result = deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=journal,
+        trusted_uid=os.geteuid(), proven_one_flat_orphan_handoff=True,
+        preflight=lambda *_args, **_kw: pytest.fail("no new action"),
+        stop=(lambda scope: pytest.fail("no STOP replay")) if override_stop else None,
+        installer=lambda *_args, **_kw: pytest.fail("no installation"),
+        resume=lambda *_args, **_kw: pytest.fail("no resume"),
+    )
+    assert result.startswith("BLOCKED:")
+    if same_target:
+        # Existing same-target STOP receipt validation retains its precise
+        # missing-receipt diagnosis. No automatic exceptional route.
+        assert "untrusted_stop_receipt_directory" in result
+    else:
+        assert "prior_STOP_outcome_unproven" in result
+
+
+def test_auto_route_preserves_unknown_handoff_result_without_stop_retry(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_stopped_approved_recovery as recovery
+    import tools.vps_release_identity as release
+    from tools.paper_maintenance import deploy_staged_editor_only
+
+    root, stage, journal = (tmp_path / part for part in
+                            ("installed", "stage", "transactions"))
+    for path in (root, stage, journal):
+        path.mkdir()
+    marker = journal / (".stop-invoked-" + "b" * 40)
+    marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    marker.chmod(0o600)
+    monkeypatch.setattr(release, "verify_release", lambda *_: "c" * 40)
+    calls = []
+
+    def blocked(**kwargs):
+        calls.append("existing-recovery-only")
+        raise recovery.PartialStopBlocked("backend_signal_outcome_unknown_no_retry")
+
+    monkeypatch.setattr(recovery, "recover_one_flat_after_failed_stop", blocked)
+    kwargs = dict(
+        stage=stage, root=root, transactions=journal, trusted_uid=os.geteuid(),
+        proven_one_flat_orphan_handoff=True,
+        installer=lambda *_args, **_kw: pytest.fail("no install"),
+    )
+    first = deploy_staged_editor_only("a" * 40, **kwargs)
+    assert "backend_signal_outcome_unknown_no_retry" in first
+    # Routing may observe the same protected marker again, but the existing
+    # recovery rejects the prior signal. No canonical STOP is dispatched.
+    assert calls == ["existing-recovery-only"]
+
 def _proven_exceptional_prior_stop(monkeypatch, tmp_path):
     """Old STOP 094d was superseded by an immutable, separately proven handoff."""
     import json
