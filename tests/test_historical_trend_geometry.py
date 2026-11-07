@@ -27,6 +27,48 @@ BEAR = [
 
 
 class ConfirmedGeometryTests(unittest.TestCase):
+    def test_first_h1_candle_is_candidate_until_right_wing_closes(self):
+        # A genuine boundary extremum may be point 1, but is not published
+        # on its own close. The completed point 4 is the release gate.
+        bars = [
+            (110, 100), (115, 105), (112, 104),
+            (117, 107), (113, 106), (119, 110),
+        ]
+        stream = ConfirmedSwingStream(
+            timeframe_ms=ONE_HOUR_MS, wing=1, seed_first_pivot=True,
+        )
+        states = []
+        for i, (high, low) in enumerate(bars):
+            stream.observe_closed(make_bar(i, high, low))
+            states.append(recent_hourly_trend(stream.pivots))
+        self.assertEqual(stream.pivots[0].index, 0)
+        self.assertEqual(stream.pivots[0].confirmed_at_ms, 2 * ONE_HOUR_MS)
+        self.assertTrue(all(state is None for state in states[:4]))
+        self.assertIsNotNone(states[4])
+        trend = states[4]
+        self.assertEqual([p.index for p in trend.pivot_sequence], [0, 1, 2, 3])
+        self.assertEqual(trend.available_at_ms, 5 * ONE_HOUR_MS)
+        self.assertEqual(trend.side, "BULL")
+        # Default non-boundary detector remains unchanged, e.g. M5.
+        plain = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
+        for i, (high, low) in enumerate(bars[:2]):
+            plain.observe_closed(make_bar(i, high, low))
+        self.assertEqual(plain.pivots, ())
+
+    def test_first_h1_boundary_rejects_unconfirmed_or_ambiguous_extreme(self):
+        for second in ((115, 95), (109, 101)):
+            stream = ConfirmedSwingStream(
+                timeframe_ms=ONE_HOUR_MS, wing=1, seed_first_pivot=True,
+            )
+            stream.observe_closed(make_bar(0, 110, 100))
+            self.assertEqual(stream.pivots, ())
+            stream.observe_closed(make_bar(1, *second))
+            if second == (115, 95):
+                self.assertEqual(stream.pivots, ())
+            else:
+                # The first candle is an upper extremum, not a lower pivot.
+                self.assertEqual([p.kind for p in stream.pivots], ["HIGH"])
+
     def test_bull_yellow_lines_require_last_confirming_hour_and_narrow(self):
         stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
         snapshots = []
