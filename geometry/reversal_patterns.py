@@ -361,3 +361,45 @@ def confirms_next_body_close(
     real_body_bottom = min(min(o, c) for o, _, _, c in values[:-1])
     return (values[-1][3] > real_body_top if direction == "LONG"
             else values[-1][3] < real_body_bottom)
+
+
+def observe_closed_engulfing(
+    previous: Mapping[str, Any], current: Mapping[str, Any], direction: str,
+) -> dict[str, object] | None:
+    """Observation-only engulfing on TWO adjacent, finished candles.
+
+    This stricter public observation API does not replace MIRROR's historical
+    directional_engulfing or any strategy's confirmation/admission policy.
+    It rejects incomplete/invalid OHLC, missing timestamps and time gaps.
+    """
+    if direction not in ("LONG", "SHORT"):
+        return None
+    before = closed_candle_numbers(previous)
+    now = closed_candle_numbers(current)
+    if before is None or now is None:
+        return None
+    try:
+        start_before = int(previous["open_time_ms"])
+        end_before = int(previous["close_time_ms"])
+        start_now = int(current["open_time_ms"])
+        end_now = int(current["close_time_ms"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    step = end_before - start_before
+    if step <= 0 or start_before < 0 or end_before != start_now or end_now - start_now != step:
+        return None
+
+    def numeric(values):
+        o, h, lo, c = values
+        return {"open": float(o), "high": float(h), "low": float(lo), "close": float(c)}
+
+    if not directional_engulfing(numeric(before), numeric(now), direction):
+        return None
+    return {
+        "formation_type": "ENGULFING",
+        "direction": direction,
+        "formation_candle_ids": (start_before, start_now),
+        "confirmation_close_time": None,
+        "confirmed": False,
+        "evidence": {"formation_close_time_ms": end_now},
+    }
