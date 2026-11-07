@@ -6,6 +6,8 @@ on:
     paths:
       - "mirror_scanner.py"
       - "geometry/reversal_patterns.py"
+      - "geometry/diamond.py"
+      - "tests/test_diamond_detector.py"
       - "geometry/channel_preview.py"
       - "tests/test_channel_preview.py"
       - "tests/test_shared_reversal_candles.py"
@@ -53,6 +55,8 @@ jobs:
           python -m py_compile
           mirror_scanner.py
           geometry/reversal_patterns.py
+          geometry/diamond.py
+          tests/test_diamond_detector.py
           geometry/channel_preview.py
           tests/test_channel_preview.py
           tests/test_shared_reversal_candles.py
@@ -64,6 +68,8 @@ jobs:
           tests/test_mirror_standalone_paper_e2e.py
       - name: Verify shared closed-candle reversal recognition without trade mutation
         run: python -m pytest -q tests/test_shared_reversal_candles.py
+      - name: Verify offline Diamond geometry is causal and non-trading
+        run: python -m pytest -q tests/test_diamond_detector.py
       - name: Check early four-pivot channel previews without trading
         run: python -m pytest -q tests/test_channel_preview.py
       - name: Check authoritative Scanner pass progress after MIRROR
