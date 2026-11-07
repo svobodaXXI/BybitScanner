@@ -1313,7 +1313,11 @@ export function wickTightEarlySlope<K extends ReplayGeometry["kind"] | "ACCELERA
 export function visibleEarlyGeometry(
   document: ReplayDocument, closedTimeMs: number | null,
 ): ReplayGeometryVersion[] {
-  if (document.mode !== "MARKET_ONLY" || closedTimeMs === null) return [];
+  // The Python-exported canonical geometry is authoritative even if empty.
+  // Never reconstruct a second, potentially contradictory H1/M5 trend from
+  // browser candles when the archive explicitly contains its geometry field.
+  if (document.mode !== "MARKET_ONLY" || closedTimeMs === null ||
+      document.geometry !== undefined) return [];
   const latestBreak = visiblePriorBreaks(document, closedTimeMs).at(-1);
   const confirmedMain = visibleGeometry(document, closedTimeMs).find(line => line.kind === "MAIN_1H");
   // After the fourth pivot confirms the yellow trend, preserve the earlier
@@ -1407,7 +1411,9 @@ export function visibleEarlyGeometry(
  * This is an optional visual index, not a source of trading signals.
  */
 export function earlyGeometryTimeline(document: ReplayDocument): ReplayGeometryVersion[] {
-  if (document.mode !== "MARKET_ONLY") return [];
+  // A canonical H1/M5 archive must never be supplemented with browser
+  // guesses, including when the authoritative geometry list is empty.
+  if (document.mode !== "MARKET_ONLY" || document.geometry !== undefined) return [];
   const versions = new Map<string, ReplayGeometryVersion>();
   for (const event of document.events) {
     if (event.kind !== "CANDLE_CLOSED") continue;
