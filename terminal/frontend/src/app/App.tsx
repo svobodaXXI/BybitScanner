@@ -106,6 +106,7 @@ export function App() {
     referenceDrawings: DrawingObject[];
     editableDrawings: DrawingObject[];
     signalId: string;
+    sourcePattern: string | null;
     snapshotRevision: string;
     barsSha256: string;
     savedReviewId: string | null;
@@ -132,6 +133,8 @@ export function App() {
           throw new Error("Source identity mismatch");
         if (!Array.isArray(snapshot.bars) || !Array.isArray(snapshot.boundaries))
           throw new Error("Incomplete immutable geometry");
+        const sourcePattern = typeof payload.source_pattern === "string" &&
+          payload.source_pattern.trim() ? payload.source_pattern.trim() : null;
         const candles: Candle[] = snapshot.bars.map((bar: {
           open_time_ms: number; open: number; high: number; low: number; close: number;
         }) => ({
@@ -201,7 +204,7 @@ export function App() {
           setFrozenSignal({
             candles: reviewCandles, sourceCandles: candles, context: savedContext,
             ...projected, editableDrawings, signalId: link.signalId!,
-            snapshotRevision: payload.snapshot_revision, barsSha256: payload.bars_sha256,
+            sourcePattern, snapshotRevision: payload.snapshot_revision, barsSha256: payload.bars_sha256,
             savedReviewId: typeof savedReview?.review_id === "string" ? savedReview.review_id : null,
             savedReviewLabel,
             savedReviewNote: savedReview?.submission?.note ?? null,
@@ -1352,6 +1355,7 @@ export function App() {
           referenceDrawings={mode === "EDITOR" ? frozenSignal?.referenceDrawings ?? [] : []}
           editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
           signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
+          sourcePattern={mode === "EDITOR" ? frozenSignal?.sourcePattern ?? null : null}
           snapshotRevision={mode === "EDITOR" ? frozenSignal?.snapshotRevision ?? null : null}
           barsSha256={mode === "EDITOR" ? frozenSignal?.barsSha256 ?? null : null}
           savedReviewId={mode === "EDITOR" ? frozenSignal?.savedReviewId ?? null : null}
