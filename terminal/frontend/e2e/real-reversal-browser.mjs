@@ -243,14 +243,27 @@ try {
       Number(line.to_price) === supportPrice);
     assert.ok(version,
       "confirmed GRASS lower-low must publish next frozen lower-high: " + publishedAt);
+    const movedPrior = archive.hourly_prior_updates.find(level =>
+      level.side === "BEAR" && level.available_at_ms === publishedAt &&
+      level.trend_version === publishedAt &&
+      level.at_ms === supportAt && Number(level.price) === supportPrice);
+    assert.ok(movedPrior,
+      "purple BEAR prior must move with the new confirmed lower-high: " + publishedAt);
   }
+  const lastBearBreak = breaks.find(event =>
+    event.previous_side === "BEAR" &&
+    event.confirmed_at_ms === Date.UTC(2026, 7, 29, 13, 5));
+  assert.ok(lastBearBreak &&
+    Number(lastBearBreak.prior_price) === 0.3546 &&
+    lastBearBreak.prior_at_ms === Date.UTC(2026, 7, 29, 5),
+    "29 Aug next-hour OPEN must break the last moved purple prior 0.35460");
   for (const { event, i, opposite } of proven) {
     const index = byEventTime.get(event.confirmed_at_ms);
     assert.ok(Number.isInteger(index), "kernel break must be attached to an actual M5 close");
     const firstYellowIndex = byEventTime.get(opposite.available_at_ms);
     assert.ok(firstYellowIndex > index, "new yellow main line must NOT predate the break");
     if (event.previous_side === "BEAR" &&
-        event.confirmed_at_ms === Date.UTC(2026, 7, 29, 14, 5)) {
+        event.confirmed_at_ms === Date.UTC(2026, 7, 29, 13, 5)) {
       for (const [publishedAt, originAt, supportAt, supportPrice] of descendingVersions) {
         const structuralIndex = byEventTime.get(publishedAt);
         assert.ok(Number.isInteger(structuralIndex) && structuralIndex >= position);
@@ -262,6 +275,9 @@ try {
           x.price === supportPrice && x.adjusted === false);
         assert.ok(version,
           "real browser must paint the new BEAR lower-high at its confirmed H1 wick");
+        assert.match(await page.getByRole("status", { name: "Приор H1" }).innerText(),
+          new RegExp(supportPrice.toFixed(4).replace(".", "\\.")),
+          "visible purple prior must equal the newest confirmed lower-high");
         await page.screenshot({
           path: join(screenshotDir, "real-h1-bear-lower-high-" + publishedAt + ".png"),
           fullPage: true,
