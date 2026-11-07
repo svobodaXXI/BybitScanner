@@ -1,0 +1,30 @@
+name: Scoped Trading Diary statistics
+on:
+  pull_request:
+    paths:
+      - 'terminal/diary/scoped_statistics_archive.py'
+      - 'terminal/diary/test_scoped_statistics_archive.py'
+      - 'terminal/diary/scope_evidence.py'
+      - 'terminal/diary/test_scope_evidence.py'
+      - 'terminal/diary/statistics_runtime.py'
+      - '.github/workflows/scoped-diary-statistics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-scopes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated test runner
+        run: python -m pip install pytest==8.4.2
+      - name: Validate code syntax
+        run: python -m py_compile terminal/diary/scoped_statistics_archive.py terminal/diary/test_scoped_statistics_archive.py terminal/diary/scope_evidence.py terminal/diary/test_scope_evidence.py
+      - name: Verify account/owner isolation and durable replay gates
+        run: python -m pytest -q terminal/diary/test_scoped_statistics_archive.py terminal/diary/test_scope_evidence.py terminal/diary/test_statistics_endpoint.py
