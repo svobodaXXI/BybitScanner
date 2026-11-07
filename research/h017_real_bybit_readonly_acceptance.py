@@ -457,6 +457,15 @@ def check(*, start: str = START, end: str = END,
     verified_priors = verify_archived_prior_timeline(doc)
     verified_breaks = verify_archived_prior_break_timeline(doc)
     if require_complete_reversal and not verified_breaks["breaks_with_later_published_opposite_h1"]:
+        # Preserve the failing gate; expose the narrow proof boundary rather
+        # than dropping the requirement or treating an empty archive as PASS.
+        print(json.dumps({
+            "result": "BLOCKED_REAL_H1_REVERSAL",
+            "symbol": SYMBOL, "start": start, "end": end,
+            "main_h1_lines": sum(line["kind"] == "MAIN_1H" for line in doc["geometry"]),
+            "target_h1_lines": sum(line["kind"] == "TARGET_1H" for line in doc["geometry"]),
+            "confirmed_priors": verified_priors, "confirmed_breaks": verified_breaks,
+        }, sort_keys=True), flush=True)
         raise AssertionError(
             "no complete REAL H1 sequence: frozen prior -> close/next OPEN -> "
             "opposite confirmed 1--3/2--4 line before the next break"
