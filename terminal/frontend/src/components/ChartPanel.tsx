@@ -367,6 +367,25 @@ export function ChartPanel({
       setTool("select");
     } else {
       correctionHistoryRef.current = historyRef.current;
+      // Restore the owner's separate new-signal draft only from this exact
+      // source signal, never from the original Scanner correction cache.
+      if (proposalHistoryRef.current.current.length === 0) {
+        try {
+          const key = `bybitscanner:new-signal-drawings:v1:${symbol}:${timeframe}:${signalIdentity}`;
+          const cached = deserializeDrawings(globalThis.localStorage?.getItem(key) ?? null);
+          if (cached.length <= 2 && cached.every((line) =>
+            line.type === "ray" && line.anchors.length === 2 &&
+            !line.hidden && typeof line.id === "string" &&
+            line.anchors.every((anchor) =>
+              Number.isInteger(anchor.logical) && anchor.logical >= 0 &&
+              anchor.logical < candles.length &&
+              Number.isFinite(anchor.price) && anchor.price > 0) &&
+            typeof line.style?.color === "string" && Number.isFinite(line.style?.lineWidth)
+          )) proposalHistoryRef.current = new DrawingHistory(cached);
+        } catch {
+          // Optional browser cache must never prevent opening the Editor.
+        }
+      }
       historyRef.current = proposalHistoryRef.current;
       setDrawings(historyRef.current.current);
       setNewSignalMode(true);
@@ -395,8 +414,19 @@ export function ChartPanel({
       setProposalPending(true);
       setProposalStatus("Проверка нового сигнала…");
       const receipt = await onSubmitOwnerSignal(draft);
+      const reasons: Record<string, string> = {
+        ray_anchor_not_confirmed_pivot: "опорная точка не подтверждена Scanner",
+        ray_pair_not_generated: "пара точек не формирует допустимую линию",
+        ray_pair_filtered: "линия отклонена действующим фильтром",
+        pivot_evaluation_budget_exceeded: "слишком много пивотов для быстрой проверки",
+        robot_pattern_unsupported: "Robot не поддерживает этот паттерн",
+        trusted_scanner_strategy_snapshot_required:
+          "нужна дополнительная проверка стратегии, входа и защиты",
+      };
       setProposalStatus(
-        `Предложение ${receipt.proposalId.slice(0, 12)} сохранено. ${receipt.decision}: ${receipt.reason}. ` +
+        `Новый сигнал ${receipt.proposalId.slice(0, 12)} сохранён. ` +
+        `${receipt.decision === "REJECTED" ? "Предварительно отклонён" : "Предварительная геометрия проверена"}: ` +
+        `${reasons[receipt.reason] ?? "оценка требует дополнительной проверки"}. ` +
         "Торговый кандидат не создан.",
       );
     } catch (error) {
