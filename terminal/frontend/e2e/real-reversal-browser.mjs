@@ -204,11 +204,49 @@ try {
   }
   console.log("REAL_ACTIVE_M5_RAY_SHORT_OK " + JSON.stringify(m5RayEnds));
 
+  // A newly confirmed LOWER LOW must unlock its preceding confirmed
+  // LOWER HIGH as the real next BEAR support, not keep the obsolete
+  // 27 Aug source when that source would pierce subsequent H1 wicks.
+  const descendingVersions = [
+    [Date.UTC(2026, 7, 29, 6), Date.UTC(2026, 7, 28, 9),
+      Date.UTC(2026, 7, 28, 23), 0.3566],
+    [Date.UTC(2026, 7, 29, 11), Date.UTC(2026, 7, 28, 9),
+      Date.UTC(2026, 7, 29, 5), 0.3546],
+  ];
+  for (const [publishedAt, originAt, supportAt, supportPrice] of descendingVersions) {
+    const version = yellow.find(line =>
+      line.side === "BEAR" && line.available_at_ms === publishedAt &&
+      line.from_ms === originAt && line.to_ms === supportAt &&
+      Number(line.to_price) === supportPrice);
+    assert.ok(version,
+      "confirmed GRASS lower-low must publish next frozen lower-high: " + publishedAt);
+  }
   for (const { event, i, opposite } of proven) {
     const index = byEventTime.get(event.confirmed_at_ms);
     assert.ok(Number.isInteger(index), "kernel break must be attached to an actual M5 close");
     const firstYellowIndex = byEventTime.get(opposite.available_at_ms);
     assert.ok(firstYellowIndex > index, "new yellow main line must NOT predate the break");
+    if (event.previous_side === "BEAR" &&
+        event.confirmed_at_ms === Date.UTC(2026, 7, 29, 14, 5)) {
+      for (const [publishedAt, originAt, supportAt, supportPrice] of descendingVersions) {
+        const structuralIndex = byEventTime.get(publishedAt);
+        assert.ok(Number.isInteger(structuralIndex) && structuralIndex >= position);
+        await advanceTo(structuralIndex + 1);
+        await page.getByRole("button", { name: "H1", exact: true }).click();
+        const supports = JSON.parse(await overlay.getAttribute("data-h1-main-wick-supports") ?? "[]");
+        const version = supports.find(x =>
+          x.origin_ms === originAt && x.support_ms === supportAt &&
+          x.price === supportPrice && x.adjusted === false);
+        assert.ok(version,
+          "real browser must paint the new BEAR lower-high at its confirmed H1 wick");
+        await page.screenshot({
+          path: join(screenshotDir, "real-h1-bear-lower-high-" + publishedAt + ".png"),
+          fullPage: true,
+        });
+        await page.getByRole("button", { name: "M5", exact: true }).click();
+      }
+      console.log("REAL_GRASS_BEAR_LOWER_HIGH_VERSIONS_OK");
+    }
     await advanceTo(index);
     const priorText = await page.getByRole("status", { name: "Приор H1" }).innerText();
     assert.match(priorText, new RegExp(String(Number(event.prior_price)).replace(".", "\\.")));
@@ -248,9 +286,9 @@ try {
       const slopes = JSON.parse(await overlay.getAttribute("data-h1-main-wick-supports") ?? "[]");
       const mainIII = slopes.find(x => x.origin_ms === opposite.from_ms);
       assert.ok(mainIII, "owner's new BULL III must be visible in real H1");
-      assert.equal(mainIII.support_ms, Date.UTC(2026, 7, 30, 15));
-      assert.equal(mainIII.price, 0.3589,
-        "real H1 support III must NOT be flattened onto 30 Aug 23:00 LOW=0.3489");
+      assert.equal(mainIII.support_ms, Date.UTC(2026, 7, 30, 6));
+      assert.equal(mainIII.price, 0.3606,
+        "after earlier BEAR prior break, BULL III must retain its first confirmed HIGHER LOW");
       assert.equal(mainIII.adjusted, false);
       console.log("REAL_GRASS_H1_III_SUPPORT_UNCHANGED_OK " + JSON.stringify(mainIII));
     }
@@ -278,64 +316,63 @@ try {
       "forward step must reproduce identical real H1 geometry");
     position = firstYellowIndex + 1;
   }
-  // Owner's marked I-IV GRASS case on the actual official-trades archive:
-  // I = retired descending MAIN, II = its purple prior, III = new BULL
-  // 1--3 line from the 29 Aug low, IV = 30 Aug low 0.35890. A red M5
-  // opens 31 Aug 05:00 BELOW IV, then a green candle closes back above it.
-  // That recovery does not undo the already-confirmed trend break.
-  const ownerBullMain = yellow.find(line =>
+  // The owner's earlier IV=0.35890 interpretation was made BEFORE the
+  // subsequently supplied lower-low correction. The newly confirmed BEAR
+  // lower-high retires the old descending movement earlier (29 Aug), so the
+  // following BULL 1--3/2--4 is published sooner. This is a NEW diagnostic
+  // timeline, not a claim of owner visual acceptance.
+  const revisedBullMain = yellow.find(line =>
     line.side === "BULL" &&
     line.from_ms === Date.UTC(2026, 7, 29, 8) &&
-    line.to_ms === Date.UTC(2026, 7, 30, 15) &&
-    Number(line.to_price) === 0.3589);
-  const ownerPrior = archive.hourly_prior_updates.find(level =>
-    level.side === "BULL" && level.at_ms === ownerBullMain?.to_ms &&
-    Number(level.price) === 0.3589);
-  const ownerBreak = breaks.find(event =>
-    event.previous_side === "BULL" && Number(event.prior_price) === 0.3589 &&
-    event.next_hour_open_ms === Date.UTC(2026, 7, 31, 5));
-  assert.ok(ownerBullMain && ownerPrior && ownerBreak,
-    "GRASS I-IV must contain the independently confirmed H1 main/prior/break");
-  assert.equal(ownerBullMain.from_price, "0.34370");
-  assert.equal(ownerBreak.prior_at_ms, ownerBullMain.to_ms);
-  assert.ok(ownerBullMain.available_at_ms < ownerBreak.confirmed_at_ms);
-  assert.ok(ownerPrior.available_at_ms < ownerBreak.confirmed_at_ms);
+    line.to_ms === Date.UTC(2026, 7, 30, 6) &&
+    Number(line.to_price) === 0.3606);
+  const revisedPrior = archive.hourly_prior_updates.find(level =>
+    level.side === "BULL" && level.at_ms === revisedBullMain?.to_ms &&
+    Number(level.price) === 0.3606);
+  const revisedBreak = breaks.find(event =>
+    event.previous_side === "BULL" && Number(event.prior_price) === 0.3606 &&
+    event.next_hour_open_ms === Date.UTC(2026, 7, 31, 0));
+  assert.ok(revisedBullMain && revisedPrior && revisedBreak,
+    "earlier BEAR lower-high requires a causal NEW BULL main/prior/break timeline");
+  assert.equal(Number(revisedBullMain.from_price), 0.3437);
+  assert.equal(revisedBreak.prior_at_ms, revisedBullMain.to_ms);
+  assert.ok(revisedBullMain.available_at_ms < revisedBreak.confirmed_at_ms);
+  assert.ok(revisedPrior.available_at_ms < revisedBreak.confirmed_at_ms);
   const openingCandle = archive.events.find(event =>
-    event.candle?.start_ms === ownerBreak.next_hour_open_ms)?.candle;
-  assert.ok(openingCandle && Number(openingCandle.open) < 0.3589,
-    "the next H1 must actually OPEN beyond IV prior");
-  const reclaimIndex = archive.events.findIndex(event =>
-    event.time_ms > ownerBreak.confirmed_at_ms &&
-    Number(event.candle?.close) > 0.3589);
-  assert.ok(reclaimIndex > byEventTime.get(ownerBreak.confirmed_at_ms),
-    "real price must return above IV later in the same H1");
-  const breakIndex = byEventTime.get(ownerBreak.confirmed_at_ms);
+    event.candle?.start_ms === revisedBreak.next_hour_open_ms)?.candle;
+  assert.ok(openingCandle && Number(openingCandle.open) < 0.3606 &&
+    Number(openingCandle.close) > 0.3606,
+    "first M5 OPEN must be below prior even though that very M5 CLOSE already reclaims");
+  const breakIndex = byEventTime.get(revisedBreak.confirmed_at_ms);
   assert.ok(breakIndex >= position);
   await advanceTo(breakIndex);
   assert.doesNotMatch(await page.getByRole("status", { name: "Приор H1" }).innerText(),
-    /Исторический \(сломанный\)/, "BULL prior must remain active before the next OPEN");
+    /Исторический \(сломанный\)/, "BULL prior must stay active until the next OPEN");
   await advanceTo(breakIndex + 1);
   assert.match(await page.getByRole("status", { name: "Приор H1" }).innerText(),
     /Исторический \(сломанный\)/,
-    "opening behind IV must retire the BULL prior");
+    "an M5 closing above prior must not undo break confirmed by next-hour OPEN");
   assert.equal(await overlay.getAttribute("data-visible-geometry"), "0",
-    "no opposite confirmed H1 may be fabricated at the exact opening");
-  await advanceTo(reclaimIndex + 1);
+    "do not fabricate an opposite four-pivot trend from the first recovering M5");
+  const laterIndex = archive.events.findIndex(event =>
+    event.time_ms > revisedBreak.confirmed_at_ms &&
+    event.time_ms < revisedBreak.next_hour_open_ms + 3_600_000 &&
+    Number(event.candle?.close) > 0.3606);
+  assert.ok(laterIndex > breakIndex);
+  await advanceTo(laterIndex + 1);
   assert.match(await page.getByRole("status", { name: "Приор H1" }).innerText(),
     /Исторический \(сломанный\)/,
-    "return above III/IV must not retroactively restore the BULL prior");
-  assert.equal(await overlay.getAttribute("data-visible-geometry"), "0",
-    "price reclaim without four new confirmed pivots is not a fresh trend");
+    "the reclaimed price never resurrects a structurally broken BULL prior");
   await page.getByRole("button", { name: "H1", exact: true }).click();
   await page.screenshot({
-    path: join(screenshotDir, "real-h1-owner-IV-reclaim.png"), fullPage: true,
+    path: join(screenshotDir, "real-h1-revised-IV-reclaim.png"), fullPage: true,
   });
   await page.getByRole("button", { name: "M5", exact: true }).click();
-  console.log("REAL_GRASS_OWNER_I_IV_RECLAIM_OK " + JSON.stringify({
-    main_from_ms: ownerBullMain.from_ms, main_to_ms: ownerBullMain.to_ms,
-    prior_at_ms: ownerPrior.at_ms, prior_price: ownerPrior.price,
-    break_at_ms: ownerBreak.confirmed_at_ms,
-    reclaim_at_ms: archive.events[reclaimIndex].time_ms,
+  console.log("REAL_GRASS_REVISED_I_IV_RECLAIM_OK " + JSON.stringify({
+    main_from_ms: revisedBullMain.from_ms, main_to_ms: revisedBullMain.to_ms,
+    prior_at_ms: revisedPrior.at_ms, prior_price: revisedPrior.price,
+    break_at_ms: revisedBreak.confirmed_at_ms,
+    reclaim_at_ms: revisedBreak.confirmed_at_ms,
   }));
   assert.deepEqual(errors, [], "browser runtime errors");
   assert.ok(requests.every(uri => {
