@@ -143,6 +143,7 @@ export function ChartPanel({
   referenceDrawings = [],
   editableSeedDrawings = [],
   signalIdentity = null,
+  originalPattern = null,
   snapshotRevision = null,
   barsSha256 = null,
   savedReviewId = null,
@@ -193,6 +194,7 @@ export function ChartPanel({
   referenceDrawings?: readonly DrawingObject[];
   editableSeedDrawings?: readonly DrawingObject[];
   signalIdentity?: string | null;
+  originalPattern?: string | null;
   snapshotRevision?: string | null;
   barsSha256?: string | null;
   savedReviewId?: string | null;
@@ -1032,6 +1034,7 @@ export function ChartPanel({
                 </button>
               </nav>
             </div>
+            <small aria-label="Название исходного сигнала">Исходный сигнал: {originalPattern ?? "тип неизвестен"}</small>
             <button type="button" disabled={extensionPending || reviewPending || proposalPending}
               onClick={() => {
                 if (!onExtendEditorHistory) return;
