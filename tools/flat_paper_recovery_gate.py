@@ -297,12 +297,8 @@ def prove_one_flat_orphan(
              "one_orphan_robot_mode_changed")
     _, recovery, reason = state[0]
     _require(
-        recovery == "PAUSED"
-        or (recovery == "RECONCILIATION_REQUIRED"
-            and isinstance(reason, str)
-            and reason.startswith("ROBOT_PROTECTION_COVERAGE_LOST symbol=")
-            and reason.endswith(" reason=ingress_overflow")),
-        "one_orphan_unrecognized_recovery_reason",
+        recovery in ("PAUSED", "RECONCILIATION_REQUIRED"),
+        "one_orphan_unrecognized_recovery_state",
     )
 
     positions = conn.execute(
@@ -326,6 +322,24 @@ def prove_one_flat_orphan(
     ).fetchall()
     _require(len(rows) == 1, "one_orphan_requires_exactly_one_trade")
     trade_id, candidate_id, symbol = rows[0]
+    # Canonical reconcile changes the durable reason after a proven failure.
+    # Its post-failure message must name THIS exact still-OPEN trade; do not
+    # mistake another fault for permission to retire this owner.
+    _require(
+        recovery == "PAUSED"
+        or (
+            isinstance(reason, str)
+            and (
+                (reason.startswith("ROBOT_PROTECTION_COVERAGE_LOST symbol=")
+                 and reason.endswith(" reason=ingress_overflow"))
+                or reason == (
+                    "reconcile_robot cannot prove Robot ownership/protection for: "
+                    + str(trade_id)
+                )
+            )
+        ),
+        "one_orphan_unrecognized_recovery_reason",
+    )
     _require(
         sum(position_symbol == symbol for position_symbol, *_ in positions) == 1
         and isinstance(trade_id, str) and bool(trade_id)
