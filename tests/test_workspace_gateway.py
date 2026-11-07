@@ -318,6 +318,46 @@ class AuthorizedTrafficTests(GatewayTestCase):
         self.assertEqual(body, b"<html>app</html>")
         self.assertEqual(self.backend_hits(), [])
 
+    def test_unknown_nested_action_routes_are_denied_before_backend(self):
+        # Previously all descendants of these action roots were exposed. A
+        # future backend admin endpoint must never become reachable just by
+        # choosing a prefix the frontend already uses.
+        headers = {**self.session_header(), "Origin": ORIGIN,
+                   "X-BybitScanner-Operator-Token": "client-supplied"}
+        for method, path in (
+            ("POST", "/api/market/force"),
+            ("POST", "/api/limit/force-submit"),
+            ("POST", "/api/stop/disable-protection"),
+            ("POST", "/api/take/force"),
+            ("POST", "/api/full-close/reconcile"),
+            ("POST", "/api/close-all/emergency"),
+            ("POST", "/api/robot/autopilot/reconcile"),
+            ("GET", "/api/robot/autopilot/private-state"),
+            ("POST", "/api/robot/autopilot/synchronize-pending-entries"),
+            ("GET", "/api/robot/autopilot/../autopilot/private-state"),
+        ):
+            with self.subTest(method=method, path=path):
+                status, _, _ = self.request(
+                    method, path, headers=headers,
+                    body="{}" if method == "POST" else None,
+                )
+                self.assertEqual(status, 403)
+        self.assertEqual(self.backend_hits(), [])
+
+    def test_existing_supported_order_routes_still_have_exact_gateway_access(self):
+        # Only a route-shape check; no real Backend or trading call is made.
+        for route in (
+            "/api/market", "/api/limit", "/api/limit/amend",
+            "/api/limit/cancel", "/api/stop", "/api/stop/amend",
+            "/api/stop/delete", "/api/take", "/api/take/amend",
+            "/api/take/delete", "/api/full-close", "/api/close-all",
+            "/api/robot/autopilot",
+        ):
+            with self.subTest(route=route):
+                self.assertTrue(gw.api_decision("POST", route, allow_live=False))
+        self.assertTrue(gw.api_decision("GET", "/api/public-klines", allow_live=False))
+        self.assertTrue(gw.api_decision("GET", "/api/workspace/state", allow_live=False))
+
     def test_live_routes_are_read_only_unless_explicitly_enabled(self):
         header = {**self.session_header(), "Origin": ORIGIN}
         self.assertEqual(self.request("GET", "/api/live/limit/state", headers=header)[0], 200)
