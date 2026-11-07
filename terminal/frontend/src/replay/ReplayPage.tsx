@@ -19,14 +19,6 @@ import {
 } from "./lastM5Acceleration";
 import "./replay.css";
 
-function label(event: ReplayEvent): string {
-  switch (event.kind) {
-    case "CANDLE_CLOSED": return "Свеча закрылась";
-    case "ENTRY_SIGNAL": return "Сигнал " + (event.side ?? "");
-    case "ENTRY_FILLED": return "Вход " + (event.side ?? "");
-    case "EXIT_FILLED": return "Выход " + (event.reason ?? "");
-  }
-}
 // The replay tools share the terminal's compact icon-first interaction, with
 // real vector pictograms rather than font-dependent textual approximations.
 const REPLAY_DRAWING_TOOLS: Array<{ tool: DrawingTool; label: string }> = [
@@ -595,7 +587,18 @@ export function ReplayPage() {
   const [fileLabel, setFileLabel] = useState("Синтетический пример");
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const total = document.events.length;
-  const progress = Math.round(100 * cursor / total);
+  // Frame-index timeline: one step per actually CLOSED M5 candle. This avoids
+  // irregular event counts skewing video-style scrub positions.
+  const closedFrameTimes = useMemo(() => document.events
+    .filter(event => event.kind === "CANDLE_CLOSED" && event.candle)
+    .map(event => event.time_ms), [document.events]);
+  const seekFrame = (frame: number) => {
+    setPlaying(false);
+    setPendingStartMs(null);
+    const bounded = Math.max(0, Math.min(closedFrameTimes.length, Math.floor(frame)));
+    setCursor(bounded === 0 ? 0 :
+      replayCursorAtUtc(document.events, closedFrameTimes[bounded - 1], timeframe));
+  };
   const priorBreaks = useMemo(
     () => visiblePriorBreaks(document, shown.lastTimeMs),
     [document, shown.lastTimeMs],
@@ -625,17 +628,6 @@ export function ReplayPage() {
     event.prior_price === latestPrior.price &&
     event.trend_version === latestPrior.trend_version
   );
-  const recentEvents = document.events.slice(Math.max(0, cursor - 8), cursor);
-  const recentFromMs = recentEvents[0]?.time_ms ?? Infinity;
-  const lastTimeline = [
-    ...recentEvents.map(event => ({
-      kind: "REPLAY" as const, time_ms: event.time_ms, key: String(event.sequence), event,
-    })),
-    ...priorBreaks.filter(item => item.confirmed_at_ms >= recentFromMs).map(item => ({
-      kind: "PRIOR_BREAK" as const, time_ms: item.confirmed_at_ms,
-      key: "prior-" + item.trend_version, breakEvent: item,
-    })),
-  ].sort((a, b) => b.time_ms - a.time_ms).slice(0, 8);
   const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
   const blueRiskPreviews = useMemo(
     () => visibleH017BlueRiskPreviews(document, shown.lastTimeMs),
@@ -861,17 +853,6 @@ export function ReplayPage() {
         <div><span>Свечи / входы / выходы</span>
           <strong>{shown.candles.length} / {shown.fills.length} / {shown.exits.length}</strong></div>
       </section>
-      <div className="replay-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100}
-        aria-valuenow={progress} aria-label="Прогресс воспроизведения">
-        <div style={{ width: progress + "%" }} />
-      </div>
-      {document.mode === "MARKET_ONLY" && <p className="replay-note">
-        РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ СДЕЛОК:
-        {" "}{document.market_data_source === "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M"
-          ? "исторические сделки из официального публичного архива, агрегированные в закрытые 5m OHLCV"
-          : "публичные свечи API Bybit"}
-        {" "}· жёлтые 1H и синие 5m линии — предварительные кандидаты из подтверждённых экстремумов, не проверенная стратегия.
-      </p>}
       <details className="replay-diagnostics">
         <summary>Диагностика</summary>
         <label><input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} /> Показать опорные маркеры</label>
@@ -932,9 +913,6 @@ export function ReplayPage() {
           {" "}Пересечения — дополнительные аргументы, не входы и не обязательный фильтр.
         </p>}
       </details>
-      {document.demo && <p className="replay-note">
-        ДЕМО: синтетические свечи и условные события, не реальные сигналы стратегии и не результат Bybit.
-      </p>}
       <div className="replay-grid">
         <section className="replay-chart-panel">
           <div className="replay-timeframe-switch" role="group" aria-label="Таймфрейм графика">
@@ -1005,6 +983,17 @@ export function ReplayPage() {
             </label>
                         <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
           </div>
+          <div className="replay-seek-bar" role="group" aria-label="Перемотка графика">
+            <span className="replay-seek-start">Начало</span>
+            <input type="range" aria-label="Перемотка графика по закрытым свечам"
+              min={0} max={closedFrameTimes.length} step={1}
+              value={shown.candles.length}
+              disabled={closedFrameTimes.length === 0}
+              onChange={(e) => seekFrame(Number(e.target.value))}
+              title="Перетащите ползунок или щёлкните по полосе, чтобы перейти к закрытой свече"
+            />
+            <span className="replay-seek-end">Конец</span>
+          </div>
           <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
             drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
             magnet={magnet}
@@ -1029,23 +1018,6 @@ export function ReplayPage() {
                 onClick={() => setPendingStartMs(null)}>Нет</button>
             </div>
           </div>}
-        <aside className="replay-events" aria-label="Журнал событий">
-          <h2>События</h2>
-          {lastTimeline.length === 0 && <p>Нажмите «Пуск» или «Шаг».</p>}
-          {lastTimeline.map((item) => (
-            <div className="replay-event" key={item.key}>
-              <time>{new Date(item.time_ms).toLocaleTimeString("ru-RU", { timeZone: "UTC" })} UTC</time>
-              {item.kind === "REPLAY" ? <>
-                <strong>{label(item.event)}</strong>
-                {item.event.price !== undefined && <span>{item.event.price}</span>}
-                {item.event.trade_id && <small>{item.event.trade_id}</small>}
-              </> : <>
-                <strong>Слом приора H1 · {item.breakEvent.new_side === "BULL" ? "восходящий" : "нисходящий"} тренд</strong>
-                <span>{item.breakEvent.prior_price}</span>
-              </>}
-            </div>
-          ))}
-        </aside>
       </div>
       <footer className="replay-footer">
         {cursor} из {total} событий. Вход на следующем открытии не раскрывает будущую свечу.
