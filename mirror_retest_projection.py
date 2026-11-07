@@ -177,7 +177,7 @@ def project_observations(
                     malformed += 1
                     continue
                 account = record.get("account_id")
-                if account is not None and (not isinstance(account, str) or not account):
+                if "account_id" in record and (not isinstance(account, str) or not account):
                     malformed += 1  # Invalid explicit scope is not legacy scope absence.
                     continue
                 if isinstance(account, str) and account != account_scope:
