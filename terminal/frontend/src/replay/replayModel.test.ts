@@ -1,7 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { completeHourlyCandles, nextClosedCandleCursor, timeframeStepCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, nextClosedCandleCursor, timeframeStepCursor, parseReplayDocument, replayContactWithinFloatPrecision, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
+  it("accepts real GRASS Decimal→JS H1 wick touch roundoff but never real pierces", () => {
+    const bar = { low: 0.3661, high: 0.3681, close: 0.3663 };
+    const atOpen = 0.3660999999999999;
+    const atClose = 0.36614074074074066;
+    // Public H1/M5 evidence, 2026-08-30: double rounding differs by 1 ULP.
+    expect(replayContactWithinFloatPrecision(bar, "BULL", atOpen, atClose)).toBe(true);
+    expect(replayContactWithinFloatPrecision(
+      { ...bar, low: 0.36611 }, "BULL", atOpen, atClose,
+    )).toBe(false); // a REAL low wick piercing is never tolerated
+    expect(replayContactWithinFloatPrecision(
+      { ...bar, high: 0.36612 }, "BULL", atOpen, atClose,
+    )).toBe(false);
+    expect(replayContactWithinFloatPrecision(
+      { ...bar, close: 0.36612 }, "BULL", atOpen, atClose,
+    )).toBe(false);
+    expect(replayContactWithinFloatPrecision(
+      { low: 0.364, high: 0.3661000000000001, close: 0.365 },
+      "BEAR", 0.3661, 0.3659,
+    )).toBe(true);
+    expect(replayContactWithinFloatPrecision(
+      { low: 0.364, high: 0.36611, close: 0.365 },
+      "BEAR", 0.3661, 0.3659,
+    )).toBe(false);
+  });
+
   it("derives only completed hourly OHLCV from contiguous 5m Bybit candles", () => {
     const t = Date.UTC(2026, 10, 2);
     const bars = Array.from({ length: 13 }, (_, i) => ({
