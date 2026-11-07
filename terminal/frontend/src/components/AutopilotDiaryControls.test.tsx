@@ -5,9 +5,9 @@ import { AutopilotDiaryControls } from "./AutopilotDiaryControls";
 
 const statisticsResponse = {
   ok: true,
-  active_account_id: "paper",
-  session_generation: 1,
-  environment: "PAPER",
+  account_id: "paper",
+  owner: "ROBOT",
+  source_revision: 2,
   statistics: {
     sample: {
       total: 1,
@@ -130,7 +130,7 @@ describe("AutopilotDiaryControls", () => {
     await screen.findByText("Выборка");
     expect(screen.getByText("Результативность")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith("/api/diary/statistics");
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/scoped-statistics?account_id=paper&owner=ROBOT");
   });
 
   it("opens only the explicitly linked trade episode", async () => {
