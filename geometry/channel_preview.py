@@ -74,7 +74,7 @@ def observe_four_pivot_channel(candles, as_of_index: int | None = None) -> Chann
         except (TypeError, ValueError, OverflowError):
             return None
         if (not all(math.isfinite(x) for x in (opening, high, low, close))
-                or low <= 0 or low > min(opening, close)
+                or low <= 0 or high <= low or low > min(opening, close)
                 or high < max(opening, close)):
             return None
 
