@@ -67,6 +67,19 @@ def observe_four_pivot_channel(candles, as_of_index: int | None = None) -> Chann
     prefix = candles.iloc[:as_of_index + 1].reset_index(drop=True)
     if any(col not in prefix.columns for col in ("open", "high", "low", "close")):
         return None
+    # If candle-open times are available, row order is not enough to prove
+    # chronology. Duplicated/reversed times can invent a four-swing channel.
+    if "time" in prefix.columns:
+        previous_time = None
+        for raw_time in prefix["time"]:
+            try:
+                timestamp = float(raw_time)
+            except (ValueError, TypeError, OverflowError):
+                return None
+            if (not math.isfinite(timestamp) or timestamp < 0
+                    or (previous_time is not None and timestamp <= previous_time)):
+                return None
+            previous_time = timestamp
     # Existing OHLC-only callers supply a closed decision-time prefix. If
     # a source also provides explicit close-state evidence, never ignore an
     # unfinished bar (including one before the last confirmed pivot).
