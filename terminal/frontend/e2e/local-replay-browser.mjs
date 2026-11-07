@@ -72,8 +72,8 @@ try {
   const fibTool = drawingBar.getByRole("button", { name: "Fibonacci" });
   assert.equal((await fibTool.innerText()).trim(), "", "Fibonacci uses a pictogram, not a text word");
   assert.equal(await fibTool.locator('svg[data-tool-icon="fibonacci"] path').count(), 1);
-  assert.equal(await drawingBar.locator('button[aria-label] svg.replay-tool-icon').count(), 12,
-    "ten drawing tools plus undo and delete all have true graphical icons");
+  assert.equal(await drawingBar.locator('button[aria-label] svg.replay-tool-icon').count(), 13,
+    "ten drawing tools plus magnet, undo and delete all have graphical icons");
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
   const progress = page.locator('[role="progressbar"]');
   const forward = page.getByRole("button", { name: "Шаг вперёд ▶", exact: true });
@@ -208,18 +208,43 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "3");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-priors"), "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-priors"), "1");
+  // The magnet is a real on/off control, independent of replay state.
+  const magnet = page.getByRole("button", { name: "Магнит", exact: true });
+  assert.equal(await magnet.getAttribute("aria-pressed"), "false");
+  await magnet.click();
+  assert.equal(await magnet.getAttribute("aria-pressed"), "true");
+  await magnet.click();
+  assert.equal(await magnet.getAttribute("aria-pressed"), "false");
   // Manual annotations use the same UTC anchor across real M5/H1 candles;
   // they survive replay rewind and can be deleted without altering geometry.
   await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
   await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 160 } });
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
-  const undo = page.getByRole("button", { name: "Отменить последнюю фигуру" });
+  const undo = page.getByRole("button", { name: "Отменить последнее действие" });
   assert.equal(await undo.isDisabled(), false);
   assert.equal(await undo.locator('svg[data-tool-icon="undo"] path').count(), 1);
+  // One-shot drawing: completion must restore crosshair, not start the next line.
+  assert.equal(await page.getByRole("button", { name: "Курсор / сдвиг" }).getAttribute("aria-pressed"), "true");
+  await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
   await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 230 } });
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "2");
   await undo.click();
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
+  assert.equal(await undo.getAttribute("data-undo-depth"), "1");
+  // A whole drag is exactly ONE undo action (not one for every pointermove).
+  await page.getByRole("button", { name: "Редактировать", exact: true }).click();
+  const drawingCanvas = page.locator(".replay-drawing-layer canvas");
+  const bounds = await drawingCanvas.boundingBox();
+  assert.ok(bounds, "editing overlay must have a usable browser viewport");
+  await page.mouse.move(bounds.x + 280, bounds.y + 160);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + 280, bounds.y + 196, { steps: 8 });
+  await page.mouse.up();
+  assert.equal(await undo.getAttribute("data-undo-depth"), "2", "one drag = one history entry");
+  await undo.click();
+  assert.equal(await undo.getAttribute("data-undo-depth"), "1");
+  assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1",
+    "Undo restores the moved line rather than deleting it");
   await page.getByRole("button", { name: "H1", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
