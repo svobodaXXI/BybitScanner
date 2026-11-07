@@ -64,11 +64,13 @@ class TrendCandidate:
 class ConfirmedSwingStream:
     """Strict, tie-free swing detection from closed candles, never future data."""
 
-    def __init__(self, *, timeframe_ms: int, wing: int = 2) -> None:
+    def __init__(self, *, timeframe_ms: int, wing: int = 2,
+                 seed_first_pivot: bool = False) -> None:
         if timeframe_ms <= 0 or wing < 1:
             raise ValueError("invalid swing timeframe/wing")
         self.timeframe_ms = timeframe_ms
         self.wing = wing
+        self.seed_first_pivot = seed_first_pivot
         self._bars: list[Candle] = []
         self._pivots: list[ConfirmedPivot] = []
 
@@ -94,6 +96,22 @@ class ConfirmedSwingStream:
             raise ValueError("missing, duplicate or unordered candle")
         self._bars.append(bar)
         i = len(self._bars) - 1 - self.wing
+        if self.seed_first_pivot and len(self._bars) == self.wing + 1:
+            # The source boundary has no candles to its left. The initial H1
+            # candle is a *candidate*, not an instantly confirmed extremum:
+            # it qualifies only after the usual right-side wing has CLOSED.
+            first = self._bars[0]
+            following = self._bars[1:]
+            high = all(first.high > bar.high for bar in following)
+            low = all(first.low < bar.low for bar in following)
+            if high != low:
+                pivot = ConfirmedPivot(
+                    kind="HIGH" if high else "LOW", index=0,
+                    at_ms=first.start_ms, confirmed_at_ms=bar.end_ms,
+                    price=first.high if high else first.low,
+                )
+                self._pivots.append(pivot)
+                return pivot
         if i < self.wing:
             return None
         center = self._bars[i]
@@ -357,7 +375,9 @@ class CausalGeometryFeed:
     def __init__(self, *, wing_1h: int = 2, wing_5m: int = 2) -> None:
         from research.historical_candle_feed import FIVE_MINUTES_MS, ONE_HOUR_MS
 
-        self._hourly = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=wing_1h)
+        self._hourly = ConfirmedSwingStream(
+            timeframe_ms=ONE_HOUR_MS, wing=wing_1h, seed_first_pivot=True,
+        )
         self._five = ConfirmedSwingStream(timeframe_ms=FIVE_MINUTES_MS, wing=wing_5m)
         self._hourly_trend: TrendCandidate | None = None
         # Purple prior is confirmed from CLOSED H1 wicks; it is separate
