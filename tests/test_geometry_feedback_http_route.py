@@ -42,6 +42,15 @@ def test_geometry_feedback_owner_route_roundtrip_without_paper_db(monkeypatch, t
         signal_archive, "load_frozen_signal_geometry",
         lambda signal_id: source if signal_id == source["signal_id"] else None,
     )
+    monkeypatch.setattr(
+        signal_archive, "load_original_signal",
+        lambda signal_ids: {
+            "candidate_id": source["signal_id"],
+            "symbol": source["symbol"],
+            "timeframe": source["timeframe"],
+            "pattern": "Triangle Compression",
+        } if list(signal_ids) == [source["signal_id"]] else None,
+    )
     server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
@@ -52,6 +61,7 @@ def test_geometry_feedback_owner_route_roundtrip_without_paper_db(monkeypatch, t
             original = json.load(reply)
         assert original["ok"] is True
         assert original["snapshot"] == source
+        assert original["source_pattern"] == "Triangle Compression"
         assert original["snapshot_revision"] == source_revision(source)
         assert original["bars_sha256"] == bars_digest(source)
         assert original["latest_review"] is None
@@ -93,6 +103,8 @@ def test_geometry_feedback_owner_route_roundtrip_without_paper_db(monkeypatch, t
             reopened = json.load(reply)
         assert reopened["latest_review"]["review_id"] == recorded["review"]["review_id"]
         assert reopened["snapshot"]["boundaries"][0]["anchors"][0]["price"] == 13
+        # Owner-changed wedge rays must not rename the original triangle.
+        assert reopened["source_pattern"] == "Triangle Compression"
 
         with pytest.raises(HTTPError) as error:
             send({**body, "bars_sha256": "0" * 64})
