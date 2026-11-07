@@ -54,3 +54,42 @@ export function geometryLogicalSegment(
   const to = chartLogicalAtTime(untilMs, displayedCandles);
   return from === null || to === null || to <= from ? null : { from, to };
 }
+
+/** Replay magnet: only already-visible candle HIGH/LOW, in the selected TF.
+ * This adapter maps absolute UTC slots to canvas pixels without rounding
+ * 5m anchors to H1 or touching the automatic research geometry.
+ */
+export function nearestReplayHighLowAnchor(
+  anchor: { logical: number; price: number },
+  displayedCandles: readonly ReplayCandle[],
+  logicalToX: (logical: number) => number | null,
+  priceToY: (price: number) => number | null,
+  radius = 14,
+): { logical: number; price: number } {
+  if (!displayedCandles.length) return anchor;
+  const rawX = logicalToX(anchor.logical);
+  const rawY = priceToY(anchor.price);
+  if (rawX === null || rawY === null) return anchor;
+  const atMs = drawingLogicalToTime(anchor.logical);
+  const pivot = chartLogicalAtTime(atMs, displayedCandles);
+  if (pivot === null) return anchor;
+  const nearest = Math.max(0, Math.min(displayedCandles.length - 1, Math.round(pivot)));
+  let best = anchor, bestDistance = radius;
+  for (let i = Math.max(0, nearest - 1);
+    i <= Math.min(displayedCandles.length - 1, nearest + 1); i++) {
+    const candle = displayedCandles[i];
+    const logical = timeToDrawingLogical(candle.start_ms);
+    const x = logicalToX(logical);
+    if (x === null) continue;
+    for (const price of [candle.high, candle.low]) {
+      const y = priceToY(price);
+      if (y === null) continue;
+      const distance = Math.hypot(x - rawX, y - rawY);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { logical, price };
+      }
+    }
+  }
+  return best;
+}
