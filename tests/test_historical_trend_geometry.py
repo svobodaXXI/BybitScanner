@@ -238,8 +238,11 @@ class ConfirmedGeometryTests(unittest.TestCase):
             pivot("HIGH", 4), pivot("LOW", 7),
             pivot("HIGH", 8), pivot("LOW", 11),
         )
-        previous = recent_hourly_trend((a, b, c, d))
-        self.assertIsNotNone(previous)
+        previous = TrendCandidate(
+            "BEAR", CausalLine(a, c, d.confirmed_at_ms),
+            CausalLine(b, d, d.confirmed_at_ms),
+            (a, b, c, d), d.confirmed_at_ms,
+        )
         # Test the helper at the actual fourth-pivot confirmation boundary.
         # Earlier than this, the last LOW is not a confirmed structural point.
         before = confirmed_continuation_with_successive_origins(
