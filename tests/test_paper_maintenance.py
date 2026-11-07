@@ -402,7 +402,7 @@ def test_one_proven_flat_orphan_uses_existing_stop_and_only_opted_callback(
             return SimpleNamespace(ok=True, runtime_stopped=True)
 
     monkeypatch.setattr(stop_runtime, "build_proven_one_flat_orphan_handoff", builder)
-    monkeypatch.setattr(stop_runtime, "RuntimeShutdown", Runtime)
+    monkeypatch.setattr("tools.paper_maintenance.RuntimeShutdown", Runtime)
     result = deploy_staged_editor_only(
         target, stage=stage, root=root,
         proven_one_flat_orphan_handoff=True,
