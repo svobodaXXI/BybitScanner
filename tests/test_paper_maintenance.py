@@ -2806,7 +2806,7 @@ def test_monolith_staged_update_auto_uses_sealed_frontend_before_paper_start(
         "--start-paper-after-editor",
     ]) == 0
     assert calls == [("update", bundle), ("start", "READY: EDITOR_ONLY")]
-    assert capsys.readouterr().out == "READY: PAPER\\n"
+    assert capsys.readouterr().out == "READY: PAPER\n"
 
 
 def test_monolith_frontend_failure_never_starts_paper(
@@ -2835,7 +2835,7 @@ def test_monolith_frontend_failure_never_starts_paper(
         "--start-paper-after-editor",
     ]) == 2
     assert calls == [bundle]
-    assert capsys.readouterr().out == "BLOCKED: frontend_publication_unproven\\n"
+    assert capsys.readouterr().out == "BLOCKED: frontend_publication_unproven\n"
 
 
 def test_frontend_only_command_requires_editor_proof_and_never_replays_stop(
