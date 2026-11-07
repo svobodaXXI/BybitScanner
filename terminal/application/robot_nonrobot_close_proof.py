@@ -159,7 +159,7 @@ def prove_nonrobot_robot_close(
     entry_notional = sum(
         (fill.price.value * fill.quantity.value for fill in entry_fills), Decimal("0"),
     )
-    if entry_notional != trade.average_entry * trade.entry_quantity:
+    if entry_notional / trade.entry_quantity != trade.average_entry:
         return None
     timestamps = [fill.exchange_timestamp_ms for fill in window]
     if any(left >= right for left, right in zip(timestamps, timestamps[1:])):
