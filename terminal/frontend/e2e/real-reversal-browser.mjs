@@ -146,10 +146,24 @@ try {
   archive.context_1h.length + 11);
   assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 2,
     "initial H1 main and target must render against their real context OHLC");
+  // The real first frame previously showed a BLUE M5 continuation ray
+  // crossing the entire H1 pane. Keep its history, but only through its
+  // own M5 confirmation time on the coarser H1 chart.
+  const blueBeforeFirstH1 = archive.geometry.some(line =>
+    line.kind === "REFERENCE_5M" && line.available_at_ms <= firstMain.available_at_ms);
+  if (blueBeforeFirstH1) {
+    await page.waitForFunction(() =>
+      Number(document.querySelector(".replay-execution-overlay")
+        ?.getAttribute("data-painted-m5-on-h1")) > 0);
+  }
   await page.screenshot({
     path: join(screenshotDir, "real-h1-first-anchors.png"), fullPage: true,
   });
   await page.getByRole("button", { name: "M5", exact: true }).click();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-chart-shell")?.getAttribute("data-chart-timeframe") === "5m");
+  assert.equal(await overlay.getAttribute("data-painted-m5-on-h1"), "0",
+    "M5 native timeframe must never use the H1-only shortened projection");
 
   for (const { event, i, opposite } of proven) {
     const index = byEventTime.get(event.confirmed_at_ms);
