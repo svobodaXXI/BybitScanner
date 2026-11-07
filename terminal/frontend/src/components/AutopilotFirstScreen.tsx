@@ -206,6 +206,7 @@ export function AutopilotFirstScreen({
   onStatistics,
   onTerminal,
   accountControl,
+  onRobotControls,
 }: {
   now?: () => number;
   onOpenPositions?: () => void;
@@ -214,6 +215,7 @@ export function AutopilotFirstScreen({
   onStatistics?: () => void;
   onTerminal?: () => void;
   accountControl?: ReactNode;
+  onRobotControls?: () => void;
 }) {
   const [autopilot, setAutopilot] = useState<Loadable<AutopilotModeState>>({
     status: "loading",
@@ -320,6 +322,7 @@ export function AutopilotFirstScreen({
         <button className="workspace-nav-button" type="button" aria-label="Терминал" title="Терминал" disabled={!onTerminal} onClick={onTerminal}>
           <span className="workspace-nav-icon" aria-hidden="true">$</span>
         </button>
+        <button className="workspace-nav-button" type="button" aria-label="Управление роботом" title="Управление роботом" disabled={!onRobotControls} onClick={onRobotControls}><svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M14.7 6.3a5 5 0 0 0-6.4 6.4L3 18l3 3 5.3-5.3a5 5 0 0 0 6.4-6.4l-3.3 3.3-3-3z"/></svg></button>
         {accountControl ? <div className="workspace-nav-account">{accountControl}</div> : null}
       </nav>
 
