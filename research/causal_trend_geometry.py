@@ -241,14 +241,19 @@ def last_correction_reference(
     five_minute_pivots: tuple[ConfirmedPivot, ...],
     five_minute_bars: tuple[Candle, ...],
 ) -> CausalLine | None:
-    """Provisional counter-trend reference through last H-L-H or L-H-L.
+    """Validate a counter-H1 reference through ORIGINAL confirmed M5 pivots.
 
-    Rejects a line pierced by any intermediate wick; never evaluates an unseen
-    candle. Does not itself detect an entry or require a prior candle close.
+    This helper validates the 1--3 boundary of an H-L-H/L-H-L sequence.
+    Publication is separately gated on the confirmed fourth M5 swing by
+    CausalGeometryFeed. Never refit point 3 to an intermediate non-pivot wick:
+    a piercing candle invalidates the candidate, not its pivot provenance.
     """
     if hourly is None or len(five_minute_pivots) < 3:
         return None
     p, middle, q = five_minute_pivots[-3:]
+    if not (p.at_ms < middle.at_ms < q.at_ms and
+            p.confirmed_at_ms <= middle.confirmed_at_ms <= q.confirmed_at_ms):
+        return None
     if hourly.side == "BULL":
         if (p.kind, middle.kind, q.kind) != ("HIGH", "LOW", "HIGH"):
             return None
@@ -259,40 +264,18 @@ def last_correction_reference(
             return None
         if q.price <= p.price:
             return None
-    # Keep the first known correction extreme fixed. For a descending upper
-    # bound choose the candle with the greatest slope from that anchor;
-    # for a rising lower bound choose the smallest slope. A mere absolute
-    # max/min wick is not enough to keep every intervening candle inside.
-    # No future data: only already closed candles through pivot q are used.
-    selected = q
-    slope = (q.price - p.price) / Decimal(q.at_ms - p.at_ms)
-    for bar in five_minute_bars:
-        if not (p.at_ms < bar.start_ms <= q.at_ms):
-            continue
-        price = bar.high if hourly.side == "BULL" else bar.low
-        trial = (price - p.price) / Decimal(bar.start_ms - p.at_ms)
-        tighter = trial > slope if hourly.side == "BULL" else trial < slope
-        if tighter:
-            slope = trial
-            # A closed candle's wick is known at its close, not a pivot
-            # inferred from future bars. It is still a geometry-only anchor.
-            selected = ConfirmedPivot(
-                kind=p.kind,
-                index=p.index + (bar.start_ms - p.at_ms) // bar.interval_ms,
-                at_ms=bar.start_ms,
-                confirmed_at_ms=bar.end_ms,
-                price=price,
-            )
-    if not (slope < 0 if hourly.side == "BULL" else slope > 0):
-        return None
-    available = max(q.confirmed_at_ms, selected.confirmed_at_ms,
-                    hourly.available_at_ms)
-    line = CausalLine(p, selected, available)
-    # Verify the whole known segment, including wicks after the chosen
-    # second anchor. Do not hide a later breakout by retroactively moving
-    # this frozen candidate once emitted.
+    available = max(q.confirmed_at_ms, hourly.available_at_ms)
+    line = CausalLine(p, q, available)
+    # Validate only already closed M5 candles between true pivots 1 and 3;
+    # the right-confirmation of pivot 4 remains the publication gate.
     for bar in five_minute_bars:
         if p.at_ms < bar.start_ms <= q.at_ms:
+            if bar.end_ms > available:
+                return None
+            if bar.start_ms == q.at_ms:
+                extreme = bar.high if hourly.side == "BULL" else bar.low
+                if extreme != q.price:
+                    return None
             level = line.value_at(bar.start_ms)
             if (hourly.side == "BULL" and bar.high > level) or (
                 hourly.side == "BEAR" and bar.low < level
