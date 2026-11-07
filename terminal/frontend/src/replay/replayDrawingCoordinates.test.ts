@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReplayCandle } from "./replayModel";
 import {
-  chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, timeAtChartLogical, timeToDrawingLogical,
+  chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical,
 } from "./replayDrawingCoordinates";
 
 const start = Date.UTC(2026, 10, 2);
@@ -46,6 +46,33 @@ describe("manual replay UTC drawing anchors", () => {
       .toBeCloseTo(1);
     // No future retirement may be painted beyond the last closed bar.
     expect(geometryLogicalSegment({ from_ms: firstMs, retired_at_ms: start + 5 * 3_600_000 }, hourly.slice(0, 1))!.to).toBeCloseTo(1);
+  });
+
+  it("magnet snaps to selected TF's visible High/Low without changing future data", () => {
+    const five = Array.from({ length: 4 }, (_, i) => mkBar(i));
+    const toX = (logical: number) => {
+      const slot = chartLogicalAtTime(drawingLogicalToTime(logical), five);
+      return slot === null ? null : slot * 24;
+    };
+    const toY = (price: number) => (110 - price) * 10;
+    const source = { logical: timeToDrawingLogical(five[2].start_ms) + 0.015, price: 101.8 };
+    const snapped = nearestReplayHighLowAnchor(source, five.slice(0, 3), toX, toY);
+    expect(snapped).toEqual({ logical: timeToDrawingLogical(five[2].start_ms), price: 102 });
+    // Different selected TF: use only completed H1 and retain UTC anchor.
+    const hour = [mkBar(0, 60), mkBar(1, 60)];
+    const hourAnchor = { logical: timeToDrawingLogical(hour[1].start_ms) + 0.01, price: 99.2 };
+    const hourX = (logical: number) => {
+      const slot = chartLogicalAtTime(drawingLogicalToTime(logical), hour);
+      return slot === null ? null : slot * 30;
+    };
+    expect(nearestReplayHighLowAnchor(hourAnchor, hour, hourX, toY))
+      .toEqual({ logical: timeToDrawingLogical(hour[1].start_ms), price: 99 });
+    const future = { logical: timeToDrawingLogical(five[3].start_ms), price: 102 };
+    expect(nearestReplayHighLowAnchor(future, five.slice(0, 2), toX, toY))
+      .toEqual(future);
+    const remote = { logical: timeToDrawingLogical(five[1].start_ms), price: 120 };
+    expect(nearestReplayHighLowAnchor(remote, five, toX, toY))
+      .toEqual(remote);
   });
 
   it("preserves actual UTC time across M5 gaps without inventing candles", () => {
