@@ -43,12 +43,16 @@ export function timeAtChartLogical(logical: number, candles: readonly ReplayCand
  * retirement; the source line, prices and historical publication are unchanged.
  */
 export function geometryLogicalSegment(
-  line: { from_ms: number; retired_at_ms?: number },
+  line: { from_ms: number; retired_at_ms?: number; superseded_at_ms?: number },
   displayedCandles: readonly ReplayCandle[],
 ): { from: number; to: number } | null {
   const last = displayedCandles.at(-1);
   if (!last) return null;
-  const untilMs = Math.min(line.retired_at_ms ?? last.end_ms, last.end_ms);
+  // Preserve old anchors and history, but stop the drawn extent when the
+  // replacement becomes known. Historical rays must not cross the entire
+  // later chart while masquerading as the active trend.
+  const untilMs = Math.min(line.retired_at_ms ?? Infinity,
+    line.superseded_at_ms ?? Infinity, last.end_ms);
   if (untilMs <= line.from_ms) return null;
   const from = chartLogicalAtTime(line.from_ms, displayedCandles);
   const to = chartLogicalAtTime(untilMs, displayedCandles);
