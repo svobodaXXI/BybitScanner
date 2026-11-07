@@ -104,6 +104,15 @@ def test_closed_engulfing_observation_has_no_trade_confirmation(direction, first
     }
 
 
+@pytest.mark.parametrize("invalid", [None, [], "not-a-candle", 42, False])
+def test_closed_engulfing_rejects_non_mapping_rows_without_exception(invalid):
+    from geometry.reversal_patterns import observe_closed_engulfing
+    first = candle(0, 10, 11, 8.8, 9)
+    second = candle(1, 8.9, 10.4, 8.5, 10.1)
+    assert observe_closed_engulfing(invalid, second, "LONG") is None
+    assert observe_closed_engulfing(first, invalid, "LONG") is None
+
+
 def test_closed_engulfing_rejects_unfinished_gaps_bad_ohlc_and_wrong_direction():
     from geometry.reversal_patterns import observe_closed_engulfing
     first = candle(0, 10, 11, 8.8, 9)
