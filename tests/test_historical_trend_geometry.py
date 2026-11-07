@@ -5,6 +5,7 @@ import unittest
 from research.causal_trend_geometry import (
     CausalGeometryFeed, ConfirmedPivot, ConfirmedSwingStream,
     last_correction_reference, main_line_contact, recent_hourly_trend,
+    original_reversal_trend, trend_from_frozen_first_pair,
     wick_tight_hourly_line,
 )
 from research.historical_candle_feed import FIVE_MINUTES_MS, ONE_HOUR_MS
@@ -216,6 +217,63 @@ class ConfirmedGeometryTests(unittest.TestCase):
         )
         self.assertIsNotNone(fitted)
         self.assertEqual((fitted.first, fitted.second), (p1, p3))
+
+    def test_reversal_anchors_first_confirmed_impulse_extreme_not_latest_four(self):
+        # A later four-pivot suffix would start from HIGH=113 instead of
+        # the first movement high=120. The earliest LOW=80 is the target
+        # anchor; both remain frozen when points 3/4 are revised.
+        points = [
+            ("HIGH", 0, 120), ("LOW", 2, 80),
+            ("HIGH", 5, 112), ("LOW", 7, 81),
+            ("HIGH", 11, 113), ("LOW", 14, 78),
+            ("HIGH", 17, 110), ("LOW", 20, 74),
+        ]
+        pivots = tuple(
+            ConfirmedPivot(kind, i, i * ONE_HOUR_MS,
+                           (i + 3) * ONE_HOUR_MS, Decimal(price))
+            for kind, i, price in points
+        )
+        # Fourth pivot is not yet confirmed; showing a main/target line
+        # at this earlier instant would be an H1 look-ahead.
+        self.assertIsNone(original_reversal_trend(
+            pivots[:6], side="BEAR", source_start_ms=0,
+            known_at_ms=16 * ONE_HOUR_MS,
+        ))
+        first = original_reversal_trend(
+            pivots[:6], side="BEAR", source_start_ms=0,
+            known_at_ms=17 * ONE_HOUR_MS,
+        )
+        self.assertIsNotNone(first)
+        self.assertEqual([p.index for p in first.pivot_sequence], [0, 2, 11, 14])
+        self.assertEqual(first.available_at_ms, 17 * ONE_HOUR_MS)
+        self.assertEqual((first.main.first.price, first.target.first.price),
+                         (Decimal(120), Decimal(80)))
+        revised = original_reversal_trend(
+            pivots, side="BEAR", source_start_ms=0,
+            known_at_ms=23 * ONE_HOUR_MS,
+        )
+        self.assertIsNotNone(revised)
+        self.assertEqual([p.index for p in revised.pivot_sequence], [0, 2, 17, 20])
+        self.assertEqual(revised.main.first, first.main.first)
+        self.assertEqual(revised.target.first, first.target.first)
+        self.assertEqual(
+            trend_from_frozen_first_pair(
+                pivots, first.main.first, first.target.first,
+            ).pivot_sequence, revised.pivot_sequence,
+        )
+        # Symmetric BULL origin: initial deepest low, then first high.
+        opposite = tuple(
+            ConfirmedPivot("LOW" if p.kind == "HIGH" else "HIGH",
+                           p.index, p.at_ms, p.confirmed_at_ms,
+                           Decimal(200) - p.price)
+            for p in pivots
+        )
+        bull = original_reversal_trend(
+            opposite[:6], side="BULL", source_start_ms=0,
+            known_at_ms=17 * ONE_HOUR_MS,
+        )
+        self.assertIsNotNone(bull)
+        self.assertEqual([p.index for p in bull.pivot_sequence], [0, 2, 11, 14])
 
     def test_bear_main_is_through_highs_and_target_through_lows(self):
         stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
