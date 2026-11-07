@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
-from geometry.channel_preview import observe_four_pivot_channel
-from tests.test_broadening_detector import FOUR, zigzag
+from geometry.channel_preview import compare_channel_preview, observe_four_pivot_channel
+from tests.test_broadening_detector import FIVE, FOUR, zigzag
 
 
 @pytest.mark.parametrize("points,expected", [
@@ -79,3 +79,71 @@ def test_reflection_preserves_relation_without_trade_bias():
     assert preview is not None
     assert preview.geometry_relation == "DIVERGING"
     assert [p[1] for p in preview.anchor_identity] == ["L", "H", "L", "H"]
+
+
+def test_followup_retains_exact_four_anchors_until_new_confirmed_pivot():
+    bars = zigzag(FIVE, 140)
+    original = observe_four_pivot_channel(bars, 111)
+    assert original is not None
+    first = compare_channel_preview(original, bars, 113)
+    assert first is not None
+    assert first.status == "SAME_ANCHORS_PROVISIONAL"
+    assert first.original_identity == first.current_identity == original.anchor_identity
+    assert first.body_breach_indices == ()
+    # The new fifth confirmed pivot is a NEW identity requiring explicit
+    # review, not an automatic rewrite of lines/START on the original record.
+    renewed = compare_channel_preview(original, bars, 123)
+    assert renewed is not None
+    assert renewed.status == "NEW_ANCHORS_REVIEW_REQUIRED"
+    assert renewed.original_identity == original.anchor_identity
+    assert renewed.current_identity is not None
+    assert renewed.current_identity != renewed.original_identity
+    assert original.anchor_identity == first.original_identity
+    assert original.as_of_index == 111
+
+
+def test_followup_wick_only_is_not_body_breach_and_body_cross_is_diagnostic():
+    bars = zigzag(FIVE, 140)
+    original = observe_four_pivot_channel(bars, 111)
+    assert original is not None
+    wick = bars.copy()
+    wick.loc[112, "high"] = 1000.0  # Unconfirmed wick; do not treat as body.
+    observed = compare_channel_preview(original, wick, 113)
+    assert observed is not None
+    assert observed.status == "SAME_ANCHORS_PROVISIONAL"
+    assert not observed.body_breach_indices
+
+    breached = bars.copy()
+    upper, _ = original.project(112)
+    breached.loc[112, "open"] = upper + 1.0
+    breached.loc[112, "close"] = upper + 2.0
+    breached.loc[112, "high"] = upper + 2.5
+    breached.loc[112, "low"] = upper + 0.9
+    observed = compare_channel_preview(original, breached, 113)
+    assert observed is not None
+    assert observed.status == "BODY_BREACH_OBSERVED"
+    assert observed.body_breach_indices == (112,)
+    # A body crossing is evidence, NOT a trade signal/automatic invalidation.
+    assert not {"entry", "stop", "take", "order"} & vars(observed).keys()
+
+
+def test_followup_ignores_future_and_fails_closed_when_unproved():
+    bars = zigzag(FIVE, 140)
+    original = observe_four_pivot_channel(bars, 111)
+    assert original is not None
+    full = compare_channel_preview(original, bars, 113)
+    assert full == compare_channel_preview(original, bars.iloc[:114].copy(), 113)
+    future_changed = bars.copy()
+    future_changed.loc[114:, "close"] = 9999.0
+    future_changed.loc[114:, "high"] = 9999.0
+    assert compare_channel_preview(original, future_changed, 113) == full
+
+    corrupted = bars.copy()
+    corrupted.loc[112, "high"] = float("nan")
+    unavailable = compare_channel_preview(original, corrupted, 113)
+    assert unavailable is not None
+    assert unavailable.status == "NOT_PROVEN"
+    assert unavailable.current_identity is None
+    assert compare_channel_preview(original, bars, 111) is None
+    assert compare_channel_preview(original, bars, 110) is None
+    assert compare_channel_preview(original, bars, True) is None
