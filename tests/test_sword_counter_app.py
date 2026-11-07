@@ -392,6 +392,36 @@ class ConnectionControllerTests(unittest.TestCase):
         self.assertFalse(controller.save(FAKE_KEY, FAKE_SECRET).ok)
         self.assertEqual(fake_store.saves, [])
 
+    def test_older_check_cannot_complete_or_confirm_a_newer_check(self):
+        controller, fake_store, _seen, jobs = self.make()
+        self.assertEqual(controller.start_check(FAKE_KEY, FAKE_SECRET), connection.CHECKING)
+        self.assertEqual(controller.start_check(FAKE_KEY, FAKE_SECRET + "new"), connection.CHECKING)
+        # The first response comes back while the latest request still runs.
+        jobs.pop(0)()
+        self.assertIsNone(controller.poll())
+        self.assertTrue(controller.checking)
+        self.assertFalse(controller.confirmed)
+        self.assertFalse(controller.save(FAKE_KEY, FAKE_SECRET).ok)
+        jobs.pop(0)()
+        self.assertTrue(controller.poll().ok)
+        self.assertFalse(controller.checking)
+        self.assertFalse(controller.save(FAKE_KEY, FAKE_SECRET).ok)
+        self.assertTrue(controller.save(FAKE_KEY, FAKE_SECRET + "new").ok)
+        self.assertEqual(fake_store.saves, [(FAKE_KEY, FAKE_SECRET + "new")])
+
+    def test_late_superseded_response_does_not_unconfirm_latest_check(self):
+        controller, fake_store, _seen, jobs = self.make()
+        controller.start_check(FAKE_KEY, FAKE_SECRET)
+        controller.start_check(FAKE_KEY, FAKE_SECRET + "new")
+        jobs.pop()()  # Latest finishes first.
+        self.assertTrue(controller.poll().ok)
+        self.assertTrue(controller.confirmed)
+        jobs.pop()()  # Older answer arrives later.
+        self.assertIsNone(controller.poll())
+        self.assertTrue(controller.confirmed)
+        self.assertTrue(controller.save(FAKE_KEY, FAKE_SECRET + "new").ok)
+        self.assertEqual(fake_store.saves, [(FAKE_KEY, FAKE_SECRET + "new")])
+
     def test_a_check_finished_after_an_edit_is_discarded(self):
         controller, fake_store, _seen, jobs = self.make()
         controller.start_check(FAKE_KEY, FAKE_SECRET)
