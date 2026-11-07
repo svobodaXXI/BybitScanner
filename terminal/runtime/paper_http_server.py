@@ -3175,6 +3175,38 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **projection})
             return
 
+        if parsed.path == "/api/workspace/signal-geometry/continuation":
+            # Explicit owner-initiated historical extension; archival source
+            # stays immutable, only fully closed Bybit candles are returned.
+            import re
+            from signal_archive import load_frozen_signal_geometry
+            from retrospective_signal_bars import (
+                RetrospectiveBarsError, extension_digest, fetch_closed_extension,
+            )
+            ids = parse_qs(parsed.query).get("signal_id", [])
+            if len(ids) != 1 or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", ids[0]):
+                self._json_response(400, {"ok": False, "error": "signal_id_required"})
+                return
+            snapshot = load_frozen_signal_geometry(ids[0])
+            if snapshot is None:
+                self._json_response(404, {"ok": False, "error": "source_geometry_not_found"})
+                return
+            try:
+                as_of_ms, extra = fetch_closed_extension(snapshot)
+            except RetrospectiveBarsError as exc:
+                self._json_response(409 if str(exc) != "retrospective_history_unavailable" else 503,
+                                    {"ok": False, "error": str(exc)})
+                return
+            self._json_response(200, {
+                "ok": True,
+                "signal_id": ids[0],
+                "source_revision": __import__("geometry_feedback_store").source_revision(snapshot),
+                "as_of_ms": as_of_ms,
+                "bars_sha256": extension_digest(extra),
+                "bars": extra,
+            })
+            return
+
         if parsed.path == "/api/workspace/signal-geometry":
             # Read-only exact immutable source evidence, behind the same
             # Nginx owner-auth gate as the other /api/workspace/ routes.
@@ -3674,7 +3706,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     "schema_version", "signal_id", "snapshot_revision",
                     "bars_sha256", "pattern", "proposed_boundaries",
                     "idempotency_key",
-                }, frozenset({"note"}))
+                }, frozenset({"note", "context_as_of_ms", "context_bars_sha256"}))
                 source = payload.get("signal_id")
                 import re
                 if (not isinstance(source, str) or
@@ -3684,7 +3716,20 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 if snapshot is None:
                     self._json_response(404, {"ok": False, "error": "source_geometry_not_found"})
                     return
-                proposal = record_owner_signal_proposal(payload, snapshot)
+                extension = None
+                if "context_as_of_ms" in payload:
+                    from retrospective_signal_bars import (
+                        RetrospectiveBarsError, fetch_closed_extension,
+                    )
+                    try:
+                        _, extension = fetch_closed_extension(
+                            snapshot, as_of_ms=payload["context_as_of_ms"],
+                        )
+                    except RetrospectiveBarsError as exc:
+                        raise OwnerSignalProposalError(str(exc)) from exc
+                proposal = record_owner_signal_proposal(
+                    payload, snapshot, review_bars=extension,
+                )
             except OwnerSignalProposalConflict as exc:
                 self._json_response(409, {"ok": False, "error": str(exc)})
                 return
@@ -3711,7 +3756,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 payload = self._payload({
                     "schema_version", "signal_id", "snapshot_revision", "bars_sha256",
                     "label", "corrected_boundaries", "idempotency_key",
-                }, frozenset({"note"}))
+                }, frozenset({"note", "context_as_of_ms", "context_bars_sha256"}))
                 signal_id = payload.get("signal_id")
                 import re
                 if not isinstance(signal_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", signal_id):
@@ -3720,7 +3765,18 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 if snapshot is None:
                     self._json_response(404, {"ok": False, "error": "signal_geometry_not_found"})
                     return
-                review = record_review(payload, snapshot)
+                extension = None
+                if "context_as_of_ms" in payload:
+                    from retrospective_signal_bars import (
+                        RetrospectiveBarsError, fetch_closed_extension,
+                    )
+                    try:
+                        _, extension = fetch_closed_extension(
+                            snapshot, as_of_ms=payload["context_as_of_ms"],
+                        )
+                    except RetrospectiveBarsError as exc:
+                        raise GeometryFeedbackError(str(exc)) from exc
+                review = record_review(payload, snapshot, review_bars=extension)
             except GeometryFeedbackConflict as exc:
                 self._json_response(409, {"ok": False, "error": str(exc)})
                 return
