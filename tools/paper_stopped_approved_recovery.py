@@ -496,7 +496,7 @@ def _one_flat_snapshot(
 
 
 def recover_one_flat_after_failed_stop(
-    *, target: str, stage: Path, prior_stop: str,
+    *, target: str, stage: Path, prior_stop: str, expected_old_sha: str,
     root: Path = ROOT, transactions: Path = TRANSACTIONS,
     manifest: Path = MANIFEST, uid: int = 0,
     inspect=None, backend_handoff=None, installer=None, resume=None,
@@ -517,12 +517,13 @@ def recover_one_flat_after_failed_stop(
         execute_flat_handoff, get_snapshots, _service_pid,
     )
     from tools.vps_release_identity import ReleaseIdentityBlocked
-    import json
 
     _demand(
-        len(target) == len(prior_stop) == 40
-        and all(ch in "0123456789abcdef" for ch in target + prior_stop)
-        and target != prior_stop, "invalid_exact_recovery_target",
+        len(target) == len(prior_stop) == len(expected_old_sha) == 40
+        and all(ch in "0123456789abcdef"
+                for ch in target + prior_stop + expected_old_sha)
+        and len({target, prior_stop, expected_old_sha}) == 3,
+        "invalid_exact_recovery_target",
     )
     _demand(os.geteuid() == uid, "trusted_operator_required")
     _demand(root.is_dir() and not root.is_symlink() and not (root / ".git").exists()
@@ -545,8 +546,11 @@ def recover_one_flat_after_failed_stop(
             ) for marker in transactions.glob(".stop-invoked-*")),
         "another_unresolved_STOP_intent",
     )
-    (inspect or inspect_staged_release)(target, stage=stage, root=root,
-                                         manifest=manifest, uid=uid)
+    # A partially committed Gitless transaction cannot pass pre-install
+    # collision checks a second time. Only the existing installer may resume it.
+    if not (transactions / target).is_dir():
+        (inspect or inspect_staged_release)(target, stage=stage, root=root,
+                                             manifest=manifest, uid=uid)
     phases = ("handoff-attempt", "backend-exited", "telegram-attempt", "handoff-proven")
     observed = {
         name: _one_flat_receipt(transactions, prior_stop, name, target, uid=uid)
@@ -572,8 +576,8 @@ def recover_one_flat_after_failed_stop(
         _demand(observed["handoff-proven"] and (transactions / target).is_dir(),
                 "unverified_old_release_without_install_transaction")
         old = _one_flat_snapshot(transactions, prior_stop, uid=uid)["backend"]["build_sha"]
-    _demand(old != target or observed["handoff-proven"],
-            "target_already_installed_without_handoff")
+    _demand(old == expected_old_sha and (old != target or observed["handoff-proven"]),
+            "old_release_identity_not_pinned_to_partial_STOP")
     if not observed["handoff-attempt"]:
         owner = RuntimeShutdown(root=root, env=env)
         _demand(owner._probe_backend() == PRESENT, "backend_not_proven_active")
