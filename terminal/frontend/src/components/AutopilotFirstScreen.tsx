@@ -15,7 +15,7 @@ import {
   loadRuntimeHealth,
   type PositionProtection,
   type RuntimeHealth,
-  summarizeDay,
+  summarizeRobotDay,
   uniqueOpenEpisodeId,
 } from "../autopilot/autopilotFirstScreenData";
 import type { PaperOpenPosition } from "../contracts/trading";
@@ -277,8 +277,10 @@ export function AutopilotFirstScreen({
           <LoadState
             value={trades}
             render={(value) => {
-              const day = summarizeDay(value, now());
-              return day.netPnl === null ? (
+              const day = summarizeRobotDay(value, now());
+              return day === null ? (
+                <span className="autopilot-missing">Нет подтверждённых данных робота</span>
+              ) : day.netPnl === null ? (
                 <span className="autopilot-missing">
                   Нет данных: {day.tradesWithoutPnl} из {day.closedTrades}{" "}
                   сделок без PnL
@@ -292,7 +294,7 @@ export function AutopilotFirstScreen({
         <SummaryItem label="Сделок за день">
           <LoadState
             value={trades}
-            render={(value) => summarizeDay(value, now()).closedTrades}
+            render={(value) => summarizeRobotDay(value, now())?.closedTrades ?? "—"}
           />
         </SummaryItem>
       </dl>
