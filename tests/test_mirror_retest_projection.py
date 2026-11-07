@@ -173,6 +173,22 @@ def test_a_violation_after_the_requested_page_is_still_detected(tmp_path):
         project(path, limit=1)                                  # the page ends at line 1; line 3 is checked anyway
 
 
+
+@pytest.mark.parametrize("invalid", [[], {}, ["ALLOW"], {"unexpected": True}])
+def test_non_string_decision_is_a_controlled_permission_violation(tmp_path, invalid):
+    path = write(tmp_path / "j.jsonl", [record(1), record(2, decision=invalid)])
+    with pytest.raises(ProjectionViolation, match="decision"):
+        project(path, limit=1)
+
+
+@pytest.mark.parametrize("invalid", [[], {}, ["NAKED_BREAKOUT"], {"unexpected": True}])
+def test_non_string_event_is_counted_as_malformed(tmp_path, invalid):
+    path = write(tmp_path / "j.jsonl", [record(1), record(2, event=invalid), record(3)])
+    result = project(path)
+    assert [row["seq"] for row in result["observations"]] == [1, 3]
+    assert result["malformed_lines"] == 1
+
+
 def test_internal_account_numbers_never_leave_the_projection(tmp_path):
     path = write(tmp_path / "j.jsonl", [record(1, r0_usdt=987.65, facts={"r0": {"r0_usdt": 987.65}, "daily_loss_gate": {"equity": 4321}})])
 
