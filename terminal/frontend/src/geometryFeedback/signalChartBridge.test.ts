@@ -65,6 +65,22 @@ describe("GFL frozen signal-to-chart bridge", () => {
 });
 
 
+describe("read-only Terminal signal projection on live candles", () => {
+  it("preserves immutable timestamp anchors after later live candles append", () => {
+    const later = [
+      { time: "2026-10-19T00:15:00.000Z", open: 10, high: 12, low: 9, close: 11 },
+    ];
+    const currentCandles = [candles[0], candles[1], candles[2], ...later];
+    const drawn = projectSignalGeometry(source, currentCandles).referenceDrawings;
+    expect(drawn.map((line) => line.anchors.map((point) => point.logical)))
+      .toEqual([[0, 2], [0, 2]]);
+    expect(drawn.every((line) => line.locked && !line.hidden)).toBe(true);
+    expect(projectSignalGeometry(source, currentCandles).editableDrawings)
+      .not.toBe(drawn);
+    expect(() => projectSignalGeometry(source, currentCandles.slice(1))).toThrow(/absent/);
+  });
+});
+
 describe("persisted Editor correction restores by frozen boundary identity", () => {
   const references = projectSignalGeometry(source, candles).referenceDrawings;
   const changedUpper = { ...source[0], anchors: [at(0, 11.25), at(2, 13.5)] };
