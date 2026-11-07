@@ -32,7 +32,7 @@ def _correction(snapshot, extension):
         "snapshot_revision": source_revision(snapshot),
         "bars_sha256": bars_digest(snapshot),
         "context_as_of_ms": 1_200_000,
-        "context_bars_sha256": extension_digest(extension),
+        "context_bars_sha256": extension_digest(validate_extension(snapshot, extension, 1_200_000)),
         "label": "GEOMETRY_CORRECTED",
         "corrected_boundaries": rays,
         "idempotency_key": "review-retrospective-1234567",
