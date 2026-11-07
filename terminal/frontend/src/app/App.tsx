@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { ChartPanel } from "../components/ChartPanel";
 import { DomPanel } from "../components/DomPanel";
+import { RobotJournal } from "../components/RobotJournal";
 import { ModePanel, type WorkspaceMode } from "../components/ModePanel";
 import { TapePanel } from "../components/TapePanel";
 import { WorkspaceHeader } from "../components/WorkspaceHeader";
@@ -1554,6 +1555,7 @@ export function App() {
           averageEntryPrice={mode === "TERMINAL" && protectionPositionSide !== "Flat" || mode === "AUTOPILOT" && robotPosition ? protectionAverageEntry : null}
           readOnly={mode === "AUTOPILOT"}
           positionFooter={mode === "AUTOPILOT" && accountProjection?.provider === "PAPER" ? (
+            <div className="autopilot-below-chart">
             <div className="autopilot-position-readout" aria-label="Позиция робота под графиком">
               {robotPosition ? (
                 <>
@@ -1566,6 +1568,8 @@ export function App() {
                 <span>{robotPositions === null ? "Данные позиций робота загружаются или недоступны" :
                   `Нет подтверждённой позиции робота по ${tradingSymbol}`}</span>
               )}
+            </div>
+            <RobotJournal symbol={tradingSymbol} />
             </div>
           ) : null}
           workspaceControls={(
