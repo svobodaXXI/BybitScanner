@@ -12,7 +12,7 @@ import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from
 import { rayEndPoint } from "../chart/drawingGeometry";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
-import { automaticGeometryTimeframeCap, chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
+import { automaticGeometryTimeframeCap, chartLogicalAtTime, chartXAtCandleTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import { ReplayDrawingUndo } from "./replayDrawingUndo";
 import {
   automaticLineStyle, lastM5AccelerationTimeline, visibleLastM5Accelerations,
@@ -294,8 +294,17 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         if (!segment) continue;
         const priceAt = (at_ms: number) => line.from_price +
           (line.to_price - line.from_price) * (at_ms - line.from_ms) / (line.to_ms - line.from_ms);
-        const x1 = api.timeScale().logicalToCoordinate(segment.from as Logical);
-        const x2 = api.timeScale().logicalToCoordinate(segment.to as Logical);
+        // A fractional H1 logical index can be decoupled from the live
+        // multi-pane time axis. Project the M5 UTC source via the NATIVE
+        // displayed H1 candle coordinates instead of an assumed logical index.
+        const nativeBarX = (ms: number) =>
+          api.timeScale().timeToCoordinate((ms / 1000) as UTCTimestamp);
+        const x1 = isM5OnH1
+          ? chartXAtCandleTime(line.from_ms, displayCandles, nativeBarX)
+          : api.timeScale().logicalToCoordinate(segment.from as Logical);
+        const x2 = isM5OnH1
+          ? chartXAtCandleTime(endingAtMs, displayCandles, nativeBarX)
+          : api.timeScale().logicalToCoordinate(segment.to as Logical);
         const y1 = candleSeries.priceToCoordinate(priceAt(line.from_ms));
         const y2 = candleSeries.priceToCoordinate(priceAt(endingAtMs));
         if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
