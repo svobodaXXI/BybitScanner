@@ -1008,6 +1008,18 @@ class OneProvenFlatOrphanPreflightTests(TestCase):
         self.assertEqual(result,"ONE_FLAT_ORPHAN_IMMUTABLE_CLOSE_EVIDENCE_ONLY")
         self.assertEqual(store.get_paper_command_by_order_link.call_count,1)
 
+    def test_canonical_reconcile_can_leave_exact_proven_trade_unresolved(self):
+        conn,payload,store,proof=self.make_case()
+        conn.execute(
+            "UPDATE robot_runtime_state SET reason=?",
+            ("reconcile_robot cannot prove Robot ownership/protection for: "
+             "robot-trade-based",),
+        )
+        self.assertEqual(
+            self.run_case(conn,payload,store,proof),
+            "ONE_FLAT_ORPHAN_IMMUTABLE_CLOSE_EVIDENCE_ONLY",
+        )
+
     def test_unproven_manual_close_does_not_grant_handoff(self):
         conn,payload,store,proof=self.make_case()
         with self.assertRaisesRegex(FlatRecoveryBlocked,"one_orphan_manual_close_proof_missing"):
