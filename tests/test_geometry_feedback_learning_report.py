@@ -97,3 +97,67 @@ def test_candle_reanchor_and_non_overlapping_time_windows_are_reported():
     assert len(groups) == 2
     assert groups[0]["signal_ids"] == ["test-1"]
     assert groups[1]["signal_ids"] == ["test-2"]
+
+
+def test_pivot_provenance_distinguishes_valid_pivot_from_nonlocal_wick():
+    from geometry_feedback_learning_report import _pivot_provenance
+
+    highs = [2, 3, 4, 9, 2, 2, 2, 10, 2, 1, 2]
+    bars = [{"open_time_ms": i * 300000, "high": price, "low": 0.5,
+             "open": 1, "close": 1} for i, price in enumerate(highs)]
+    base = {
+        "frozen_bars": bars,
+        "original_boundaries": [{"boundary_id": "upper", "kind": "ray", "anchors": [
+            {"bar_open_time_ms": 2 * 300000, "price": 4},
+            {"bar_open_time_ms": 8 * 300000, "price": 2},
+        ]}],
+        "corrected_boundaries": [{"boundary_id": "upper", "kind": "ray", "anchors": [
+            {"bar_open_time_ms": 3 * 300000, "price": 9},
+            {"bar_open_time_ms": 6 * 300000, "price": 2},
+        ]}],
+    }
+    report, = _pivot_provenance(base)
+    first, second = report["anchors"]
+    assert first["local_3x3"] and first["in_scanner_pivots"]
+    assert first["status"] == "IN_SCANNER_PIVOT_SET"
+    assert second["price_on_wick"] is True
+    assert not second["local_3x3"] and not second["in_scanner_pivots"]
+    assert second["status"] == "NOT_STRICT_3X3_EXTREMUM"
+    assert second["blocking_neighbor_bar_offsets"] == [-3, 1]
+    assert report["first_unmatched_stage"] == "PIVOT_IDENTIFICATION"
+    assert report["generated_as_candidate"] is None
+
+    # Both edited wick anchors may be confirmed pivots, yet their pair may
+    # still fail generator requirements (minimum anchor span).
+    base["corrected_boundaries"][0]["anchors"][1] = {
+        "bar_open_time_ms": 7 * 300000, "price": 10,
+    }
+    generated, = _pivot_provenance(base)
+    assert all(a["in_scanner_pivots"] for a in generated["anchors"])
+    assert generated["first_unmatched_stage"] == "CANDIDATE_GENERATION"
+    assert generated["generated_as_candidate"] is False
+
+
+def test_pivot_provenance_does_not_pretend_to_confirm_edge_or_non_wick():
+    from geometry_feedback_learning_report import _pivot_provenance
+
+    highs = [2, 3, 4, 9, 2, 2, 2, 10, 2, 1, 2]
+    bars = [{"open_time_ms": i * 300000, "high": price, "low": 0.5}
+            for i, price in enumerate(highs)]
+    example = {
+        "frozen_bars": bars,
+        "original_boundaries": [{"boundary_id": "upper", "kind": "ray", "anchors": [
+            {"bar_open_time_ms": 0, "price": 2},
+            {"bar_open_time_ms": 5 * 300000, "price": 2},
+        ]}],
+        "corrected_boundaries": [{"boundary_id": "upper", "kind": "ray", "anchors": [
+            {"bar_open_time_ms": 1 * 300000, "price": 3},
+            {"bar_open_time_ms": 7 * 300000, "price": 9},
+        ]}],
+    }
+    report, = _pivot_provenance(example)
+    left, right = report["anchors"]
+    assert left["status"] == "NOT_YET_CONFIRMABLE_3X3_AT_SNAPSHOT"
+    assert right["status"] == "NOT_ON_CANDLE_WICK"
+    assert right["in_scanner_pivots"] is False
+    assert report["first_unmatched_stage"] == "PIVOT_IDENTIFICATION"
