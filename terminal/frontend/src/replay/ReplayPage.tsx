@@ -12,7 +12,7 @@ import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from
 import { rayEndPoint } from "../chart/drawingGeometry";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
-import { chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
+import { chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import "./replay.css";
 
 function label(event: ReplayEvent): string {
@@ -37,7 +37,7 @@ const REPLAY_DRAWING_TOOLS: Array<{ tool: DrawingTool; label: string }> = [
   { tool: "ruler", label: "Линейка" },
   { tool: "rectangle", label: "Прямоугольник" },
 ];
-const REPLAY_TOOL_PATHS: Record<DrawingTool | "delete" | "undo", string> = {
+const REPLAY_TOOL_PATHS: Record<DrawingTool | "delete" | "undo" | "magnet", string> = {
   crosshair: "M12 2v20M2 12h20M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6",
   select: "M4 3l5 17 3.4-6.6L19 10z",
   trend: "M4 20L20 4M4 17v3h3M17 4h3v3",
@@ -50,17 +50,19 @@ const REPLAY_TOOL_PATHS: Record<DrawingTool | "delete" | "undo", string> = {
   rectangle: "M4 5h16v14H4zM4 9v2M20 13v2",
   delete: "M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 10v7M14 10v7",
   undo: "M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-2",
+  magnet: "M5 3v9a7 7 0 0 0 14 0V3h-4v9a3 3 0 0 1-6 0V3H5z",
 };
-function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" | "undo" }) {
+function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" | "undo" | "magnet" }) {
   return <svg className="replay-tool-icon" viewBox="0 0 24 24"
     data-tool-icon={tool} aria-hidden="true" focusable="false">
     <path d={REPLAY_TOOL_PATHS[tool]} />
   </svg>;
 }
 function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selectedId,
-  drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture, onDrawingComplete, onChooseStart }: {
+  drawingTool, magnet, onDrawingsChange, onSelectDrawing, onDrawingGesture, onDrawingComplete, onChooseStart }: {
   document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h";
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
+  magnet: boolean;
   onDrawingComplete: () => void;
   onChooseStart: (startMs: number) => void;
   onDrawingsChange: (next: DrawingObject[]) => void;
@@ -437,7 +439,11 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
           <div className={`replay-drawing-layer tool-${drawingTool}`} style={{ height: pricePaneHeight }}
             data-drawing-count={drawings.length}>
             <DrawingOverlay drawings={drawings} selectedId={selectedId} tool={drawingTool}
-              magnet={false} candles={[]} coordinates={drawingCoordinates}
+              magnet={magnet} candles={[]} coordinates={drawingCoordinates}
+              magnetAnchor={(anchor, radius) => nearestReplayHighLowAnchor(
+                anchor, displayCandles, drawingCoordinates.logicalToX,
+                drawingCoordinates.priceToY, radius,
+              )}
               onCommit={onDrawingsChange} onSelect={onSelectDrawing}
               onDrawingGesture={onDrawingGesture} onDrawingComplete={onDrawingComplete} />
           </div>}
@@ -478,6 +484,7 @@ export function ReplayPage() {
   const [showDebug, setShowDebug] = useState(false);
   const [timeframe, setTimeframe] = useState<"5m" | "1h">("5m");
   const [drawingTool, setDrawingTool] = useState<DrawingTool>("crosshair");
+  const [magnet, setMagnet] = useState(false);
   const [drawings, setDrawings] = useState<DrawingObject[]>([]);
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -838,6 +845,10 @@ export function ReplayPage() {
                 <ReplayToolIcon tool={tool} />
               </button>
             ))}
+            <button type="button" title="Магнит High/Low" aria-label="Магнит"
+              aria-pressed={magnet} onClick={() => setMagnet(value => !value)}>
+              <ReplayToolIcon tool="magnet" />
+            </button>
             <button type="button" disabled={drawings.length === 0}
               onClick={() => {
                 setPlaying(false);
@@ -855,6 +866,7 @@ export function ReplayPage() {
           </div>
           <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
             drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
+            magnet={magnet}
             onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
             onDrawingGesture={() => setPlaying(false)}
             onDrawingComplete={() => setDrawingTool("crosshair")}
