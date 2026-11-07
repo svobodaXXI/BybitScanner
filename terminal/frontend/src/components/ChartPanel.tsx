@@ -48,6 +48,10 @@ import { chartPriceFormat } from "../chart/priceFormat";
 import { editorMoscowCrosshairTime, editorMoscowTickMark } from "../chart/editorMoscowTime";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
+import {
+  TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR,
+  visibleRobotTradeMarkers, type RobotTradeMarker,
+} from "../chart/robotTradeMarkers";
 import { buildEditorGeometryReview, compareEditorRayChanges, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
 import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
 import { buildOwnerSignalDraft, type OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
@@ -141,6 +145,7 @@ export function ChartPanel({
   workspaceControls,
   positionFooter,
   readOnly = false,
+  robotTradeMarkers = [],
   editorMode = false,
   referenceDrawings = [],
   editableSeedDrawings = [],
@@ -194,6 +199,8 @@ export function ChartPanel({
   positionFooter?: ReactNode;
   /** Robot observation: no active order or protection interactions. */
   readOnly?: boolean;
+  /** Confirmed Telegram card TradeMarkers. Never projected for manual/Editor. */
+  robotTradeMarkers?: readonly RobotTradeMarker[];
   editorMode?: boolean;
   /** Read-only source geometry; only supplied from a verified signal snapshot. */
   referenceDrawings?: readonly DrawingObject[];
@@ -648,6 +655,28 @@ export function ChartPanel({
       yToPrice: (v) => seriesRef.current?.coordinateToPrice(v) ?? null,
     };
   }, [renderTick]);
+  const visibleRobotMarkers = useMemo(
+    () => readOnly
+      ? visibleRobotTradeMarkers(robotTradeMarkers, candles, timeframe)
+      : [],
+    [readOnly, robotTradeMarkers, candles, timeframe],
+  );
+  const robotMarkerShapes = visibleRobotMarkers.flatMap((marker, index) => {
+    const x = coordinates.logicalToX(marker.logical);
+    const y = coordinates.priceToY(marker.price);
+    if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y))
+      return [];
+    const color = marker.side === "Buy" ? TELEGRAM_BUY_COLOR : TELEGRAM_SELL_COLOR;
+    const points = marker.side === "Buy"
+      ? `${x},${y - 8} ${x - 7},${y + 6} ${x + 7},${y + 6}`
+      : `${x},${y + 8} ${x - 7},${y - 6} ${x + 7},${y - 6}`;
+    return [<polygon
+      key={`${marker.logical}:${marker.price}:${marker.side}:${index}`}
+      points={points} fill={marker.filled ? color : "none"}
+      stroke={marker.filled ? "#000000" : color}
+      strokeWidth={marker.filled ? 0.8 : 1.8}
+    />];
+  });
   const relative = (event: { clientX: number; clientY: number }) => {
     const r = hostRef.current?.getBoundingClientRect();
     return r ? { x: event.clientX - r.left, y: event.clientY - r.top } : null;
@@ -1178,6 +1207,13 @@ export function ChartPanel({
       >
         {workspaceControls}
         <div ref={hostRef} className="chart-engine" />
+        {robotMarkerShapes.length > 0 ? (
+          <svg className="robot-execution-marker-layer" aria-label="Маркеры исполнений робота"
+            aria-hidden="true" viewBox={`0 0 ${hostRef.current?.clientWidth ?? 1} ${hostRef.current?.clientHeight ?? 1}`}
+            preserveAspectRatio="none">
+            {robotMarkerShapes}
+          </svg>
+        ) : null}
         <DrawingOverlay
           drawings={drawings}
           referenceDrawings={referenceDrawings}
