@@ -1,0 +1,69 @@
+import type { DrawingObject } from "../chart/drawingModel";
+import type { Candle } from "../contracts/marketData";
+import { serializeReviewDrawings, type TimestampDrawing } from "./geometryReviewDraft";
+
+export type OwnerSignalDraft = {
+  schema_version: 1;
+  signal_id: string;
+  snapshot_revision: string;
+  bars_sha256: string;
+  pattern: "Falling Wedge" | "Rising Wedge";
+  proposed_boundaries: TimestampDrawing[];
+  note: string;
+  idempotency_key: string;
+};
+
+/** New geometry is separate from the Scanner correction. Never reuse the
+ * review's original boundary ids or claim a trusted Robot candidate here.
+ */
+export function buildOwnerSignalDraft(input: {
+  signalId: string;
+  snapshotRevision: string;
+  barsSha256: string;
+  pattern: OwnerSignalDraft["pattern"];
+  drawings: readonly DrawingObject[];
+  frozenCandles: readonly Candle[];
+  note: string;
+  idempotencyKey: string;
+}): OwnerSignalDraft {
+  if (!input.signalId || !/^[0-9a-f]{64}$/i.test(input.snapshotRevision) ||
+      !/^[0-9a-f]{64}$/i.test(input.barsSha256))
+    throw new Error("Нет подтверждённого исходного сигнала");
+  if (input.drawings.length !== 2 || input.drawings.some((d) =>
+    d.type !== "ray" || d.anchors.length !== 2 || d.hidden))
+    throw new Error("Для нового клина нарисуйте ровно два луча");
+  if (input.pattern !== "Falling Wedge" && input.pattern !== "Rising Wedge")
+    throw new Error("Неподдерживаемый тип нового сигнала");
+  const lines = serializeReviewDrawings(input.drawings, input.frozenCandles);
+  if (lines.some((line) =>
+    line.anchors[0].bar_open_time_ms >= line.anchors[1].bar_open_time_ms))
+    throw new Error("Точки каждого луча должны идти по времени вперёд");
+  // Identify upper/lower by the y-value at the last frozen candle. The
+  // classifier does not infer a strategy from the two owner-drawn lines.
+  const last = Date.parse(input.frozenCandles.at(-1)?.time ?? "");
+  const projected = lines.map((line) => {
+    const [a, b] = line.anchors;
+    const price = a.price + (b.price - a.price) *
+      ((last - a.bar_open_time_ms) / (b.bar_open_time_ms - a.bar_open_time_ms));
+    return { line, price };
+  }).sort((a, b) => b.price - a.price);
+  if (!Number.isFinite(projected[0].price) ||
+      !Number.isFinite(projected[1].price) ||
+      projected[0].price <= projected[1].price)
+    throw new Error("Верхняя и нижняя линии неразличимы");
+  if (input.note.length > 1024) throw new Error("Комментарий слишком длинный");
+  return {
+    schema_version: 1,
+    signal_id: input.signalId,
+    snapshot_revision: input.snapshotRevision,
+    bars_sha256: input.barsSha256,
+    pattern: input.pattern,
+    proposed_boundaries: projected.map(({ line }, index) => ({
+      id: index === 0 ? "upper" : "lower",
+      type: "ray",
+      anchors: line.anchors,
+    })),
+    note: input.note,
+    idempotency_key: input.idempotencyKey,
+  };
+}
