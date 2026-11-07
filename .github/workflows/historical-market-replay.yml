@@ -13,6 +13,7 @@ on:
       - "research/local_replay_viewer/**"
       - "research/export_historical_replay.py"
       - "research/h017_real_bybit_readonly_acceptance.py"
+      - "research/h017_public_h1_window_probe.py"
       - "research/simulation_runs/.gitignore"
       - "tests/test_historical_replay_export.py"
       - "tests/test_historical_market_replay.py"
@@ -127,6 +128,20 @@ jobs:
         run: |
           python -B server.py --check
           python -B smoke_package.py
+
+  real-h1-window-probe:
+    # Candidate discovery only. Verified proof remains the separate trade-derived
+    # GRASSUSDT seven-day archive and Chromium acceptance below.
+    if: github.event_name == 'pull_request' && github.head_ref == 'fix/h017-four-pivot-causal-geometry-20261107'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Find bounded public H1 candidate weeks (NOT final acceptance)
+        run: python -m research.h017_public_h1_window_probe
 
   real-bybit-h017-readonly-acceptance:
     # Bounded public-market-data proof for the active isolated H-017 PR.
