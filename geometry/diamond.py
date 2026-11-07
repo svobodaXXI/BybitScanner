@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Mapping
 
 from pivots import find_pivots
 from .broadening import HIGH, LOW, _line, _positive_width, _sequence
@@ -29,10 +31,10 @@ class DiamondCandidate:
     start_index: int
     as_of_index: int
     anchors: tuple[tuple[int, str, float], ...]
-    expansion_upper: dict
-    expansion_lower: dict
-    contraction_upper: dict
-    contraction_lower: dict
+    expansion_upper: Mapping[str, object]
+    expansion_lower: Mapping[str, object]
+    contraction_upper: Mapping[str, object]
+    contraction_lower: Mapping[str, object]
     turn_indices: tuple[int, int]
     width_first: float
     width_widest_anchor_pair: float
@@ -135,10 +137,13 @@ def detect_diamond_candidate(candles, as_of_index=None) -> DiamondCandidate | No
         start_index=run[0][0],
         as_of_index=as_of_index,
         anchors=tuple(run),
-        expansion_upper=expanding_upper,
-        expansion_lower=expanding_lower,
-        contraction_upper=contracting_upper,
-        contraction_lower=contracting_lower,
+        # Frozen dataclass alone does not freeze nested line dictionaries.
+        # Keep a copied, read-only snapshot so observation geometry cannot
+        # change after it is emitted or via aliases to the source lines.
+        expansion_upper=MappingProxyType(dict(expanding_upper)),
+        expansion_lower=MappingProxyType(dict(expanding_lower)),
+        contraction_upper=MappingProxyType(dict(contracting_upper)),
+        contraction_lower=MappingProxyType(dict(contracting_lower)),
         turn_indices=(h2[0], l2[0]),
         width_first=width_first,
         width_widest_anchor_pair=width_peak,
