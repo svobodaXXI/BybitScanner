@@ -1,0 +1,25 @@
+name: SwordCounter offline Windows regression
+
+on:
+  pull_request:
+    paths:
+      - "tools/SwordCounter/**"
+      - "tests/test_sword_counter_*.py"
+      - ".github/workflows/sword-counter-offline.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sword-counter-offline:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install offline test dependency
+        run: python -m pip install requests==2.34.2
+      - name: Run SwordCounter S1-S5 tests (mocked exchange, no keys)
+        run: python -m unittest -v tests.test_sword_counter_bybit_positions tests.test_sword_counter_swords tests.test_sword_counter_app tests.test_sword_counter_launcher tests.test_sword_counter_credentials
