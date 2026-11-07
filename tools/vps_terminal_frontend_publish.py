@@ -19,6 +19,7 @@ from tools.vps_gitless_release_activate import _atomic_file, _atomic_new_file, _
 from tools.vps_release_identity import verify_release
 
 WEBROOT = Path("/var/www/bybitscanner")
+TRANSACTIONS = Path("/var/lib/bybitscanner-release-transactions")
 RECEIPT = ".bybitscanner-frontend-release.json"
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SHA40 = re.compile(r"[0-9a-f]{40}\Z")
@@ -65,7 +66,8 @@ def _paths(bundle: Path) -> dict[str, bytes]:
         _require(not path.is_symlink() and path.is_file(), "frontend_bundle_symlink")
         if relative == "frontend-release.json":
             continue
-        _require(relative == "index.html" or relative.startswith("assets/"),
+        _require(relative == "index.html" or
+                 (len(parts) == 2 and parts[0] == "assets" and parts[1] not in (".", "..")),
                  "unexpected_frontend_file")
         files[relative] = _content(path)
     _require("index.html" in files and any(p.endswith(".js") for p in files),
@@ -95,6 +97,7 @@ def publish_frontend(
     sha: str, *, bundle: Path, root: Path = Path("/opt/BybitScanner"),
     webroot: Path = WEBROOT, expected_index_sha256: str | None = None,
     uid: int = 0, release_verifier=verify_release,
+    transactions: Path = TRANSACTIONS,
 ) -> str:
     """An owner-authorized static-only switch for an already-installed release.
 
@@ -106,6 +109,9 @@ def publish_frontend(
     _require(release_verifier(root) == sha, "frontend_backend_release_mismatch")
     _trusted_directory(webroot.parent, uid)
     _trusted_directory(webroot, uid)
+    _trusted_directory(transactions, uid)
+    journal = transactions / sha
+    _trusted_directory(journal, uid)
     _require(not (webroot / "assets").is_symlink(), "unsafe_frontend_assets_path")
     files = inspect_bundle(bundle, sha)
     index = webroot / "index.html"
@@ -115,6 +121,9 @@ def publish_frontend(
     new_digest = _digest(files["index.html"])
     receipt_path = webroot / RECEIPT
     if receipt_path.exists() or receipt_path.is_symlink():
+        _require(receipt_path.stat().st_uid == uid and
+                 not receipt_path.stat().st_mode & 0o022,
+                 "frontend_receipt_owner_unproven")
         receipt = json.loads(_content(receipt_path))
         _require(set(receipt) == {"source_sha", "index_sha256", "previous_index_sha256"},
                  "frontend_receipt_invalid")
@@ -140,6 +149,14 @@ def publish_frontend(
         _require(not target.parent.is_symlink(), "unsafe_frontend_asset_parent")
         if target.exists() or target.is_symlink():
             _require(_content(target) == data, "frontend_asset_collision:" + name)
+
+    backup = journal / "frontend-previous-index.html"
+    if backup.exists() or backup.is_symlink():
+        _require(_digest(_content(backup)) == prior_digest,
+                 "frontend_previous_index_backup_mismatch")
+    else:
+        _require(old_digest == prior_digest, "frontend_initial_index_not_pinned")
+        _atomic_new_file(backup, original, 0o600)
 
     assets = webroot / "assets"
     if not assets.exists():
