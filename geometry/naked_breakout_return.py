@@ -125,10 +125,10 @@ def observe_naked_breakout_return(
         # impulse. Strict successive lows/highs and closes exclude chop.
         if downside:
             if not (current[2] < before[2] and current[3] < before[3]
-                    and current[3] < level(i)):
+                    and current[0] < level(i) and current[3] < level(i)):
                 return None
         elif not (current[1] > before[1] and current[3] > before[3]
-                  and current[3] > level(i)):
+                  and current[0] > level(i) and current[3] > level(i)):
             return None
 
     impulse = prices[breakout_index:impulse_end + 1]
