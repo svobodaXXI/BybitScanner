@@ -414,6 +414,9 @@ _NISON_SMALL_BODY = Decimal("0.30")
 _NISON_LARGE_BODY = Decimal("0.50")
 _NISON_DOJI_BODY = Decimal("0.10")
 _NISON_SHORT_WICK_TO_BODY = Decimal("0.25")
+# "Near the high/low" is qualitative in Nison: 15% is an explicit
+# conservative engineering approximation, not a book-specified constant.
+_NISON_END_WICK_TO_RANGE = Decimal("0.15")
 
 
 def _nison_closed_window(rows: Sequence[Mapping[str, Any]]):
@@ -549,6 +552,30 @@ def observe_nison_reversals(
 
         else:
             first, star, last = formation
+            # Nison: Three Advancing White Soldiers / Three Black Crows.
+            # They have three sizeable same-direction real bodies, each of
+            # the latter two OPENING INSIDE the preceding body and closing
+            # progressively nearer the session high/low. Unlike the stars,
+            # no gap is required. Separate prior-trend context is mandatory.
+            def near_close_end(x, side):
+                wick = x[1] - x[3] if side == "LONG" else x[3] - x[2]
+                return wick <= _NISON_END_WICK_TO_RANGE * (x[1] - x[2])
+
+            if (trend == "DOWN"
+                    and all(bullish(x) and ratio(x) >= _NISON_LARGE_BODY
+                            and near_close_end(x, "LONG") for x in formation)
+                    and all(previous[0] <= following[0] <= previous[3]
+                            and following[3] > previous[3]
+                            for previous, following in zip(formation, formation[1:]))):
+                record("THREE_WHITE_SOLDIERS", "LONG")
+            elif (trend == "UP"
+                  and all(bearish(x) and ratio(x) >= _NISON_LARGE_BODY
+                          and near_close_end(x, "SHORT") for x in formation)
+                  and all(previous[3] <= following[0] <= previous[0]
+                          and following[3] < previous[3]
+                          for previous, following in zip(formation, formation[1:]))):
+                record("THREE_BLACK_CROWS", "SHORT")
+
             if (ratio(first) < _NISON_LARGE_BODY
                     or ratio(star) > _NISON_SMALL_BODY
                     or ratio(last) < _NISON_LARGE_BODY):
