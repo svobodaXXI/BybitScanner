@@ -153,13 +153,17 @@ def publish_frontend(
     backup = journal / "frontend-previous-index.html"
     # The protected backup is the predecessor of this release, not the
     # current index digest once the new UI has been activated.
+    # The previous release's receipt pins the currently served index.
+    # A *new* release needs its own backup of that index; only a same-release
+    # retry must find the backup already sealed in its transaction journal.
+    same_release = receipt_path.exists() and receipt["source_sha"] == sha
     backed_up_digest = (receipt["previous_index_sha256"]
-                        if receipt_path.exists() else prior_digest)
+                        if same_release else prior_digest)
     if backup.exists() or backup.is_symlink():
         _require(_digest(_content(backup)) == backed_up_digest,
                  "frontend_previous_index_backup_mismatch")
     else:
-        _require(not receipt_path.exists(), "frontend_previous_index_backup_missing")
+        _require(not same_release, "frontend_previous_index_backup_missing")
         _require(old_digest == prior_digest, "frontend_initial_index_not_pinned")
         _atomic_new_file(backup, original, 0o600)
 

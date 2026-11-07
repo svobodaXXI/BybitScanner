@@ -2779,6 +2779,65 @@ def test_new_handoff_ready_receipt_seals_original_stop_without_replay(
         m._complete_stop_intent(transactions, target, uid=uid)
 
 
+def test_monolith_staged_update_auto_uses_sealed_frontend_before_paper_start(
+    tmp_path, monkeypatch, capsys,
+):
+    from tools import paper_maintenance as maintenance
+
+    target = "a" * 40
+    stage = tmp_path / "stage"
+    bundle = stage / "terminal/frontend/dist"
+    bundle.mkdir(parents=True)
+    (bundle / "frontend-release.json").write_text("{}", encoding="utf-8")
+    calls = []
+
+    def update(*args, **kwargs):
+        calls.append(("update", kwargs.get("frontend_bundle")))
+        return "READY: EDITOR_ONLY"
+
+    def start(*args, **kwargs):
+        calls.append(("start", kwargs.get("editor_status")))
+        return "READY: PAPER"
+
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only", update)
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor", start)
+    assert maintenance.main([
+        target, "--staged-gitless-editor-only", str(stage),
+        "--start-paper-after-editor",
+    ]) == 0
+    assert calls == [("update", bundle), ("start", "READY: EDITOR_ONLY")]
+    assert capsys.readouterr().out == "READY: PAPER\n"
+
+
+def test_monolith_frontend_failure_never_starts_paper(
+    tmp_path, monkeypatch, capsys,
+):
+    from tools import paper_maintenance as maintenance
+
+    target = "a" * 40
+    stage = tmp_path / "stage"
+    bundle = stage / "terminal/frontend/dist"
+    bundle.mkdir(parents=True)
+    (bundle / "frontend-release.json").write_text("{}", encoding="utf-8")
+    calls = []
+
+    def blocked(*args, **kwargs):
+        calls.append(kwargs["frontend_bundle"])
+        return "BLOCKED: frontend_publication_unproven"
+
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only", blocked)
+    monkeypatch.setattr(
+        maintenance, "start_installed_paper_from_editor",
+        lambda *args, **kwargs: pytest.fail("PAPER start after failed frontend"),
+    )
+    assert maintenance.main([
+        target, "--staged-gitless-editor-only", str(stage),
+        "--start-paper-after-editor",
+    ]) == 2
+    assert calls == [bundle]
+    assert capsys.readouterr().out == "BLOCKED: frontend_publication_unproven\n"
+
+
 def test_frontend_only_command_requires_editor_proof_and_never_replays_stop(
     tmp_path, monkeypatch, capsys,
 ):
