@@ -212,6 +212,8 @@ export function DrawingOverlay({
         const [origin, destination] = drawing.anchors;
         const m = rulerMeasurement(origin, destination);
         const sign = m.priceDelta >= 0 ? "+" : "";
+        // Canvas defaults to 10px; make ruler measurements 2x larger.
+        ctx.font = "20px Inter, ui-sans-serif, sans-serif";
         ctx.fillText(
           `${sign}${m.percentDelta.toFixed(2)}% · ${sign}${m.priceDelta.toFixed(4)} · ${m.bars} bars · ${fmtDuration(m.elapsedSeconds)}`,
           b.x + 6,
