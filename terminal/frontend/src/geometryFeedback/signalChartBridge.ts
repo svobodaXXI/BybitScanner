@@ -99,3 +99,47 @@ export function restoreSavedSignalCorrection(
     return editable;
   });
 }
+
+
+export type RetrospectiveOhlc = {
+  open_time_ms: number; open: number; high: number; low: number; close: number;
+};
+
+/** Add server-verified later closed candles without changing Scanner source.
+ * This is a review-time view, NEVER a source-time replacement for a signal.
+ */
+export function appendRetrospectiveCandles(
+  source: readonly Candle[],
+  continuation: readonly RetrospectiveOhlc[],
+  timeframe: string,
+  asOfMs: number,
+): Candle[] {
+  const intervals: Record<string, number> = {
+    "1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000, "1d": 86_400_000,
+    "1": 60_000, "5": 300_000, "15": 900_000, "60": 3_600_000, "D": 86_400_000,
+  };
+  const step = intervals[timeframe];
+  const originalEnd = Date.parse(source.at(-1)?.time ?? "");
+  if (!source.length || !step || !Number.isSafeInteger(originalEnd) ||
+      !Number.isSafeInteger(asOfMs) || continuation.length < 1 ||
+      continuation.length > 1000 || source.length + continuation.length > 2000 ||
+      asOfMs !== originalEnd + continuation.length * step)
+    throw new Error("Некорректное продолжение исторических свечей");
+  let previous = originalEnd;
+  const added = continuation.map((bar) => {
+    if (!Number.isSafeInteger(bar.open_time_ms) ||
+        bar.open_time_ms !== previous + step) throw new Error("Пропуск свечи в истории");
+    const values = [bar.open, bar.high, bar.low, bar.close];
+    if (values.some((value) => typeof value !== "number" ||
+        !Number.isFinite(value) || value <= 0) ||
+        bar.high < Math.max(bar.open, bar.close) ||
+        bar.low > Math.min(bar.open, bar.close))
+      throw new Error("Некорректная историческая свеча");
+    previous = bar.open_time_ms;
+    return {
+      time: new Date(bar.open_time_ms).toISOString(),
+      open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+    };
+  });
+  return [...source, ...added];
+}
