@@ -1553,21 +1553,6 @@ export function App() {
           onTakeDelete={() => deleteProtection("TAKE")}
           averageEntryPrice={mode === "TERMINAL" && protectionPositionSide !== "Flat" || mode === "AUTOPILOT" && robotPosition ? protectionAverageEntry : null}
           readOnly={mode === "AUTOPILOT"}
-          positionFooter={mode === "AUTOPILOT" && accountProjection?.provider === "PAPER" ? (
-            <div className="autopilot-position-readout" aria-label="Позиция робота под графиком">
-              {robotPosition ? (
-                <>
-                  <strong>{robotPosition.symbol} · {robotPosition.position_side === "Long" ? "LONG" : "SHORT"}</strong>
-                  <span>Объём {robotPosition.position_quantity} · {robotPosition.engaged_notional_usdt} USDT</span>
-                  <span>Вход {robotPosition.average_entry ?? "—"}</span>
-                  <span>Снимок PnL {robotPosition.unrealized_pnl ?? "—"} USDT</span>
-                </>
-              ) : (
-                <span>{robotPositions === null ? "Данные позиций робота загружаются или недоступны" :
-                  `Нет подтверждённой позиции робота по ${tradingSymbol}`}</span>
-              )}
-            </div>
-          ) : null}
           workspaceControls={(
             <WorkspaceHeader
               instruments={instruments}
@@ -1630,6 +1615,7 @@ export function App() {
           mode={mode}
           onModeChange={setMode}
           onRobotPositionsLoaded={setRobotPositions}
+          verifiedRobotPosition={robotPosition}
           symbol={tradingSymbol}
           paperState={currentPaperState}
           activeLimitOrders={
