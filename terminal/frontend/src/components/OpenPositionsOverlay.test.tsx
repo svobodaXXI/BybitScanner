@@ -30,10 +30,11 @@ function inventory(positions: PaperOpenPosition[]) {
   };
 }
 
-function renderOverlay(onNavigate = vi.fn(), activeSymbol = "BTCUSDT") {
+function renderOverlay(onNavigate = vi.fn(), activeSymbol = "BTCUSDT", robotOnly = false) {
   render(
     <OpenPositionsOverlay
       activeSymbol={activeSymbol}
+      robotOnly={robotOnly}
       onClose={vi.fn()}
       onNavigate={onNavigate}
       runPaperMutation={(_key, operation) => operation()}
@@ -49,6 +50,37 @@ async function confirmFullClose() {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("Autopilot Robot positions use the existing inventory view safely", () => {
+  it("shows only proven Robot-linked PAPER positions and never exposes close actions", async () => {
+    const robot = { ...position, robot_trade_id: "robot-trade-btc" };
+    const manual = { ...position, symbol: "ETHUSDT", robot_trade_id: null };
+    const fetchMock = vi.fn().mockResolvedValueOnce(inventory([manual, robot]));
+    vi.stubGlobal("fetch", fetchMock);
+    const onNavigate = vi.fn();
+    renderOverlay(onNavigate, "BTCUSDT", true);
+
+    expect(await screen.findByRole("region", { name: "Открытые позиции робота" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Показать позицию BTCUSDT на графике" })).toBeInTheDocument();
+    expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Закрыть все" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Закрыть позицию/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Показать позицию BTCUSDT на графике" }));
+    expect(screen.getByRole("dialog", { name: "Показать позицию BTCUSDT на графике?" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Показать" }));
+    expect(onNavigate).toHaveBeenCalledWith("BTCUSDT");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.every(([url, options]) => url === "/api/open-positions" && !options)).toBe(true);
+  });
+
+  it("does not misclassify an old backend inventory as a Robot inventory", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(inventory([position])));
+    renderOverlay(vi.fn(), "BTCUSDT", true);
+    expect(await screen.findByText("Принадлежность позиций роботу не подтверждена")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Показать позицию/ })).not.toBeInTheDocument();
+  });
 });
 
 describe("account-wide PAPER Full Close reconciliation", () => {

@@ -3647,6 +3647,8 @@ class PaperRuntime:
         projected = []
         for item in self.store.load_open_position_projections(self._account_id):
             symbol = item.position_key.symbol
+            # Link to durable Robot ledger, never guess from symbol or entry timing.
+            robot_trade = self.store.get_open_robot_trade_for_symbol(self._account_id, symbol)
             instrument = self._context._instrument_for(symbol.value)
             # Read-only valuation on the owner: only an already-streamed book,
             # never the provider's REST fallback. Without a fresh one the
@@ -3686,6 +3688,7 @@ class PaperRuntime:
                 current_price=current_price,
                 unrealized_pnl=unrealized_pnl,
                 tick_size=instrument.tick_size,
+                robot_trade_id=robot_trade.trade_id if robot_trade is not None else None,
             ))
         return PaperOpenPositionsResponse(account.trading_account_id.value, tuple(projected))
 

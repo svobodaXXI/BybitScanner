@@ -59,6 +59,8 @@ export type PaperOpenPosition = {
   current_price: string | null;
   unrealized_pnl: string | null;
   tick_size: string;
+  /** Durable Robot trade association, null when not proven by the backend. */
+  robot_trade_id?: string | null;
 };
 
 export type CloseAllCommandResponse = {
