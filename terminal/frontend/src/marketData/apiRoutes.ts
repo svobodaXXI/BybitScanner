@@ -19,5 +19,7 @@ export const marketApiRoutes = {
   workspaceSymbol: "/api/workspace/symbol",
   health: "/api/health",
   robotAutopilot: "/api/robot/autopilot",
+  robotState: "/api/robot/state",
+  scannerStatus: "/api/scanner/status",
   robotProtectionHealth: "/api/robot/protection-health",
 };
