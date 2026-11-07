@@ -18,8 +18,12 @@ def box_first_grid_already_completed(closed, formation):
         direction = formation.direction
         f1 = Decimal(str(formation.fibonacci_1_0))
         f1618 = Decimal(str(formation.fibonacci_1_618))
-        b = int(formation.anchor_end_index)
-        end = int(formation.as_of_index)
+        b = formation.anchor_end_index
+        end = formation.as_of_index
+        # A non-integral/boolean index must not be silently rounded to a
+        # different candle: that can hide a spent first-grid opportunity.
+        if type(b) is not int or type(end) is not int:
+            return True
         if direction not in ("LONG", "SHORT") or not 0 <= b < end < len(closed):
             return True
         if not f1.is_finite() or not f1618.is_finite() or f1 <= 0 or f1618 <= 0:
