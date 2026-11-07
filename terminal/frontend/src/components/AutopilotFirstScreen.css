@@ -166,3 +166,17 @@
 .autopilot-legacy-navigation > div:first-child,
 .autopilot-legacy-navigation > .mode-switcher { display: none; }
 .mode-switcher .workspace-nav-button { flex: 0 0 2.15rem; }
+
+/* Reuses the chart shell: position state is a compact, noninteractive footer. */
+.autopilot-position-readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.9rem;
+  padding: 0.35rem 0.55rem;
+  border-top: 1px solid #27313b;
+  background: #10151b;
+  color: #d5dde5;
+  font-size: 0.72rem;
+}
+.autopilot-position-readout strong { color: #e1e8ef; }
