@@ -51,6 +51,55 @@ def fake_runner(calls, *, fail=None):
     return run
 
 
+@pytest.mark.parametrize("arguments,reason", [
+    (["--unexpected-switch"], "unrecognized arguments: --unexpected-switch"),
+    (["a" * 40, "--staged-gitless-editor-only"], "expected one argument"),
+    (["a" * 40, "--proven-one-flat-orphan-handoff"],
+     "one orphan handoff requires staged Gitless operation"),
+])
+def test_invalid_editor_cli_reports_single_line_without_mutation(
+    arguments, reason, monkeypatch, capsys,
+):
+    import tools.paper_maintenance as maintenance
+
+    monkeypatch.setattr(
+        maintenance, "deploy_staged_editor_only",
+        lambda *_args, **_kw: pytest.fail("no deployment after invalid CLI"),
+    )
+    with pytest.raises(SystemExit) as exc:
+        maintenance.main(arguments)
+    assert exc.value.code == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err.startswith("BLOCKED: paper_maintenance_cli:")
+    assert reason in output.err
+    assert "\n" not in output.err.rstrip("\n")
+
+
+def test_proven_one_orphan_editor_cli_accepts_exact_arguments(
+    monkeypatch, capsys,
+):
+    import tools.paper_maintenance as maintenance
+
+    target = "a" * 40
+    stage = "/var/tmp/bybitscanner-editor-proof"
+    calls = []
+    def no_side_effect(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "BLOCKED: TEST_ONLY_NO_RUNTIME_ACTION"
+
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only", no_side_effect)
+    assert maintenance.main([
+        target, "--staged-gitless-editor-only", stage,
+        "--proven-one-flat-orphan-handoff",
+    ]) == 2
+    assert len(calls) == 1
+    assert calls[0][0] == (target,)
+    assert calls[0][1]["stage"] == Path(stage)
+    assert calls[0][1]["proven_one_flat_orphan_handoff"] is True
+    assert capsys.readouterr().out == "BLOCKED: TEST_ONLY_NO_RUNTIME_ACTION\n"
+
+
 def test_rejects_bad_sha_without_stop_or_mutation():
     calls = []
     assert run_maintenance("bad", stop=lambda _: calls.append("stop")) .startswith("BLOCKED:")
