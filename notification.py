@@ -407,7 +407,7 @@ def _owner_workspace_button(mode, symbol, timeframe, signal_id=None):
             url = workspace_link(
                 urlunsplit((parts.scheme, parts.netloc, "/login", "", "")),
                 mode, symbol, timeframe,
-                signal_id=signal_id if mode == "EDITOR" else None,
+                signal_id=signal_id,
             )
             return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
                     "web_app": {"url": url}}
@@ -417,13 +417,13 @@ def _owner_workspace_button(mode, symbol, timeframe, signal_id=None):
             pass
     # Preserve the immutable signal identity even when only a callback can be
     # delivered; a 24-hex source handle fits Telegram's 64-byte callback limit.
-    if mode == "EDITOR" and isinstance(signal_id, str):
+    if mode in ("EDITOR", "TERMINAL") and isinstance(signal_id, str):
         import re
         match = re.fullmatch(r"(source-original|mirror-origin):([0-9a-f]{24})", signal_id)
         if match:
             source_kind = "S" if match.group(1) == "source-original" else "M"
-            return {"text": "✏️ Редактор",
-                    "callback_data": f"workspace:EDITOR:{source_kind}:{match.group(2)}"}
+            return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
+                    "callback_data": f"workspace:{mode}:{source_kind}:{match.group(2)}"}
     return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
             "callback_data": f"workspace:{mode}:{symbol}:{timeframe}"}
 
@@ -504,7 +504,7 @@ def build_tradingview_keyboard(
         if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
             keyboard.append([
                 _owner_workspace_button("EDITOR", symbol, tf, signal_id=signal_id),
-                _owner_workspace_button("TERMINAL", symbol, tf),
+                _owner_workspace_button("TERMINAL", symbol, tf, signal_id=signal_id),
             ])
 
     return {
