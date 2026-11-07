@@ -139,6 +139,8 @@ export function ChartPanel({
   onTakeDelete,
   averageEntryPrice = null,
   workspaceControls,
+  positionFooter,
+  readOnly = false,
   editorMode = false,
   referenceDrawings = [],
   editableSeedDrawings = [],
@@ -189,6 +191,9 @@ export function ChartPanel({
   onTakeDelete?: () => void | Promise<void>;
   averageEntryPrice?: string | null;
   workspaceControls?: ReactNode;
+  positionFooter?: ReactNode;
+  /** Robot observation: no active order or protection interactions. */
+  readOnly?: boolean;
   editorMode?: boolean;
   /** Read-only source geometry; only supplied from a verified signal snapshot. */
   referenceDrawings?: readonly DrawingObject[];
@@ -1006,7 +1011,7 @@ export function ChartPanel({
   }, [deleteSelected]);
   return (
     <section
-      className="chart-panel workspace-panel"
+      className={`chart-panel workspace-panel${positionFooter ? " has-position-footer" : ""}`}
       aria-label="Candlestick chart"
     >
       <div className="chart-content-row">
@@ -1218,6 +1223,7 @@ export function ChartPanel({
               onCancel={onStopCancelDraft}
               onEdit={onStopEdit}
               onDelete={() => void onStopDelete?.()}
+              readOnly={readOnly}
             />
           );
         })()}
@@ -1250,6 +1256,7 @@ export function ChartPanel({
               onCancel={onTakeCancelDraft}
               onEdit={onTakeEdit}
               onDelete={() => void onTakeDelete?.()}
+              readOnly={readOnly}
             />
           );
         })()}
@@ -1282,10 +1289,10 @@ export function ChartPanel({
               aria-label={`Active ${order.side} Limit at ${displayedPrice}`}
               data-active-limit-line
               data-active-limit-edit={order.order_id}
-              onPointerDown={(event) => activeLimitEdit.pointerDown(event, order)}
-              onPointerMove={activeLimitEdit.pointerMove}
-              onPointerUp={activeLimitEdit.pointerUp}
-              onPointerCancel={activeLimitEdit.pointerCancel}
+              onPointerDown={readOnly ? undefined : (event) => activeLimitEdit.pointerDown(event, order)}
+              onPointerMove={readOnly ? undefined : activeLimitEdit.pointerMove}
+              onPointerUp={readOnly ? undefined : activeLimitEdit.pointerUp}
+              onPointerCancel={readOnly ? undefined : activeLimitEdit.pointerCancel}
               style={{
                 top,
                 right:
@@ -1294,13 +1301,13 @@ export function ChartPanel({
               }}
             >
               <span>{displayedPrice}</span>
-              {editing && (activeLimitEdit.state.mode === "PENDING_CONFIRM" || activeLimitEdit.state.mode === "AMENDING" || activeLimitEdit.state.mode === "CANCELLING") ? (
+              {!readOnly && editing && (activeLimitEdit.state.mode === "PENDING_CONFIRM" || activeLimitEdit.state.mode === "AMENDING" || activeLimitEdit.state.mode === "CANCELLING") ? (
                 <div className="active-limit-actions">
                   <TradingControlButton className="active-limit-confirm" aria-label={`Confirm amend ${order.order_id}`} onTap={() => void activeLimitEdit.confirm()} disabled={activeLimitEdit.state.mode !== "PENDING_CONFIRM"}>✓</TradingControlButton>
                   <TradingControlButton className="active-limit-dismiss" aria-label={`Cancel Limit ${order.order_id}`} onTap={() => void activeLimitEdit.cancel().catch(() => {})} disabled={activeLimitEdit.state.mode !== "PENDING_CONFIRM"}>×</TradingControlButton>
                 </div>
               ) : null}
-              {activeCancelVisible ? (
+              {!readOnly && activeCancelVisible ? (
                 <div className="active-limit-actions">
                   <TradingControlButton className="active-limit-dismiss" aria-label={`Cancel Limit ${order.order_id}`} onTap={() => void activeLimitEdit.cancel().catch(() => {})} disabled={activeLimitEdit.state.mode !== "ACTIVE_CANCEL"}>×</TradingControlButton>
                 </div>
@@ -1491,6 +1498,7 @@ export function ChartPanel({
         ) : null}
       </div>
       </div>
+      {positionFooter}
     </section>
   );
 }

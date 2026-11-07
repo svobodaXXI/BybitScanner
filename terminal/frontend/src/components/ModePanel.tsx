@@ -7,15 +7,18 @@ import { AutopilotDiaryControls } from "./AutopilotDiaryControls";
 import { AutopilotFirstScreen } from "./AutopilotFirstScreen";
 import { AccountMenu } from "./AccountMenu";
 import { RobotManagerPanel } from "./RobotManagerPanel";
+import type { PaperOpenPosition } from "../contracts/trading";
 
 export type WorkspaceMode = LegacyWorkspaceMode;
 
 type ModePanelProps = ComponentProps<typeof LegacyModePanel> & {
   autopilotTradeEpisodeId?: string | null;
+  onRobotPositionsLoaded?: (positions: PaperOpenPosition[] | null) => void;
 };
 
 export function ModePanel({
   autopilotTradeEpisodeId = null,
+  onRobotPositionsLoaded,
   ...props
 }: ModePanelProps) {
   const [openPositionsRequest, setOpenPositionsRequest] = useState(0);
@@ -35,6 +38,7 @@ export function ModePanel({
             <>
               <AutopilotFirstScreen
                 accountKey={accountKey}
+                onPositionsLoaded={onRobotPositionsLoaded}
                 onOpenPositions={props.accountWorkspaceProjection?.provider === "PAPER"
                   ? () => setOpenPositionsRequest((value) => value + 1)
                   : undefined}

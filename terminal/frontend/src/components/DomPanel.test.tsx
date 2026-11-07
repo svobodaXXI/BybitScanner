@@ -235,3 +235,33 @@ describe("DOM fast-Limit row activation", () => {
     expect(onFastLimitPriceSelect).not.toHaveBeenCalled();
   });
 });
+
+
+describe("Robot observation DOM", () => {
+  it("shows real PAPER LIMIT markers without an order-cancel action", () => {
+    const onCancel = vi.fn();
+    render(
+      <DomPanel
+        book={book}
+        centerPrice={0.169}
+        onCenterPriceChange={vi.fn()}
+        ownOrders={[{ id: "robot-limit", price: 0.16899, notionalUsdt: 250, side: "BUY" }]}
+        ownOrdersReadOnly
+        positionSummary={{
+          symbol: "ONGUSDT", position_side: "Long", position_quantity: "2",
+          average_entry: "0.1689", engaged_notional_usdt: "50", engaged_wv: "1",
+          current_price: "0.169", unrealized_pnl: "0.20", tick_size: "0.00001",
+          robot_trade_id: "robot-trade-1",
+        }}
+        compression={3}
+        onCompressionChange={vi.fn()}
+        onOwnOrderCancel={onCancel}
+      />,
+    );
+    expect(screen.getByLabelText("PAPER Limit robot-limit")).toBeInTheDocument();
+    expect(screen.getByLabelText("Позиция робота в стакане")).toHaveTextContent("LONG");
+    expect(screen.getByLabelText("Позиция робота в стакане")).toHaveTextContent("0.20 USDT");
+    expect(screen.queryByRole("button", { name: "Cancel Limit robot-limit" })).not.toBeInTheDocument();
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+});
