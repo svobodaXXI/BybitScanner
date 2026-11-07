@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
 import unittest
 
-from terminal.runtime.paper_http_server import RobotProtectionCoverageManager
+from terminal.runtime.paper_http_server import (
+    ProtectionIngressOverflow, RobotProtectionCoverageManager, SerializedPaperRuntime,
+)
 
 
 SYMBOL = "KSMUSDT"
@@ -70,6 +73,9 @@ class _Owner:
         self.releases = []
         self.durable_loss = durable_loss
 
+    def close(self):
+        pass
+
     def robot_protection_coverage_symbols(self):
         return (SYMBOL,)
 
@@ -125,6 +131,72 @@ class _QueuedRuntime(_Runtime):
 
 
 class RobotProtectionOverflowRecoveryTests(unittest.TestCase):
+    def test_full_ingress_still_persists_continuity_fence_in_owner_order(self):
+        owner = _Owner()
+        entered, release = threading.Event(), threading.Event()
+        runtime = SerializedPaperRuntime(lambda: owner, protection_ingress_capacity=2)
+        try:
+            def hold_owner(_owner):
+                entered.set()
+                if not release.wait(5):
+                    raise AssertionError("owner stall did not release")
+
+            runtime.enqueue(hold_owner, symbol=SYMBOL, coverage_role="OPEN_POSITION")
+            self.assertTrue(entered.wait(2))
+            runtime.enqueue(
+                lambda current: current.processed.append("admitted"),
+                symbol=SYMBOL, coverage_role="OPEN_POSITION",
+            )
+            manager = RobotProtectionCoverageManager(object(), runtime)
+            manager._covered[SYMBOL] = _Context(public_orderbook=_BookSnapshot())
+            manager._roles[SYMBOL] = "OPEN_POSITION"
+
+            manager._on_update(SYMBOL, f"{SYMBOL}:177600000001:10680001")
+            self.assertEqual(manager.health()["unhealthy_symbols"], {
+                SYMBOL: "ingress_overflow",
+            })
+            self.assertEqual(runtime.protection_ingress_metrics()["current_pending"], 2)
+            with self.assertRaises(ProtectionIngressOverflow):
+                runtime.enqueue(lambda current: None, symbol=SYMBOL)
+
+            release.set()
+            runtime.call(lambda current: None)
+            self.assertEqual(owner.processed, ["admitted"])
+            self.assertEqual(owner.fences, [(SYMBOL, "ingress_overflow")])
+            self.assertEqual(runtime.protection_ingress_metrics()["current_pending"], 0)
+        finally:
+            release.set()
+            runtime.close()
+
+    def test_continuity_reconcile_defers_while_protection_events_are_queued(self):
+        """Reconcile must not stall STOP/TAKE behind existing protection backlog."""
+        owner = _Owner()
+        owner.robot_continuity_release_deferred = lambda: False
+        runtime = _Runtime(owner)
+        ingress = {"capacity": 64, "current_pending": 24}
+        runtime.protection_ingress_metrics = lambda: dict(ingress)
+        manager = RobotProtectionCoverageManager(object(), runtime, recovery_session=_Session())
+
+        manager._release_continuity_fence(owner, SYMBOL)
+        self.assertEqual(owner.releases, [])
+        self.assertEqual(manager._release_retry, {SYMBOL})
+
+        # A subsequent calm watchdog pass invokes canonical Robot release.
+        ingress["current_pending"] = 0
+        manager._retry_deferred_fence_releases()
+        self.assertEqual(owner.releases, [(SYMBOL, True)])
+        self.assertEqual(manager._release_retry, set())
+
+    def test_continuity_reconcile_without_metrics_uses_canonical_proof(self):
+        """Missing optional metrics do not invent a Robot READY transition."""
+        owner = _Owner()
+        owner.robot_continuity_release_deferred = lambda: False
+        manager = RobotProtectionCoverageManager(
+            object(), _Runtime(owner), recovery_session=_Session(),
+        )
+        manager._release_continuity_fence(owner, SYMBOL)
+        self.assertEqual(owner.releases, [(SYMBOL, True)])
+
     def test_restart_rehydrates_durable_continuity_loss_and_recovers(self):
         owner = _Owner((SYMBOL, "ingress_overflow"))
         runtime = _Runtime(owner)

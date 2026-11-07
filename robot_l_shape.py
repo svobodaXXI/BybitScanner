@@ -5,6 +5,17 @@ module therefore owns only the pattern-specific frozen contract, horizontal
 retest transition and initial 1-WV LIMIT construction.  Order execution,
 fill/position ownership proof, protection submission, durable trades and
 recovery remain owned by the existing shared Robot components.
+
+The same frozen reference/target/stop lifecycle carries a standalone MIRROR
+entry (``pattern == "MIRROR"``, terms under ``mirror_entry``): reference = close
+of the NEXT candle confirming the reversal, stop = beyond the underlying
+formation extreme, target = the MIRROR level (100 % TAKE at the first retest).
+Unlike L-shape, MIRROR is already entry-eligible after confirmation; it does
+NOT wait for a second closed-candle retest of its reference.
+``is_l_shape_snapshot`` answers
+for both: every shared path (admission, freshness, monitor, recovery) treats
+them as one single-LIMIT frozen-level adapter; the L-shape-only signal
+threshold (potential >= 0.8 %) is not applied to MIRROR.
 """
 
 from __future__ import annotations
@@ -28,11 +39,19 @@ from terminal.domain.models import OrderSide
 
 
 PATTERN = "L-shape"
+MIRROR_PATTERN = "MIRROR"
+DOUBLE_PATTERNS = frozenset({"Double Top", "Double Bottom"})
+# Frozen-terms key per pattern of this single-LIMIT frozen-level adapter.
+TERMS_KEYS = {PATTERN: "l_shape", MIRROR_PATTERN: "mirror_entry",
+              "Double Top": "neckline_entry", "Double Bottom": "neckline_entry"}
 STATE_VERSION = "1.0"
+# Standalone MIRROR entries are OFF unless the owner sets exactly "1" (separate authorization).
+MIRROR_STANDALONE_ENV = "BYBITSCANNER_MIRROR_STANDALONE_ROBOT"
 PHASE_WAITING_RETEST = "L_SHAPE_WAITING_RETEST"
 PHASE_INVALIDATED = "L_SHAPE_INVALIDATED"
 
 EVENT_INITIALIZED = "L_SHAPE_INITIALIZED"
+EVENT_MIRROR_CONFIRMATION_READY = "MIRROR_CONFIRMATION_READY"
 EVENT_NO_TRANSITION = "L_SHAPE_NO_TRANSITION"
 EVENT_RETEST = "L_SHAPE_RETEST"
 EVENT_INVALIDATED_TARGET = "L_SHAPE_TARGET_REACHED_BEFORE_ENTRY"
@@ -74,8 +93,44 @@ class LShapeEntryPlan:
     request: LimitCommandRequest
 
 
+def snapshot_pattern(snapshot: Mapping[str, Any] | None) -> str | None:
+    if not isinstance(snapshot, Mapping):
+        return None
+    pattern = str(snapshot.get("pattern", "")).strip()
+    return pattern if pattern in TERMS_KEYS else None
+
+
 def is_l_shape_snapshot(snapshot: Mapping[str, Any] | None) -> bool:
-    return isinstance(snapshot, Mapping) and str(snapshot.get("pattern", "")).strip() == PATTERN
+    """True for every snapshot of this frozen-level adapter (L-shape and standalone MIRROR)."""
+    return snapshot_pattern(snapshot) is not None
+
+
+def mirror_standalone_enabled(environ: Mapping[str, str] | None = None) -> bool:
+    import os
+    return (os.environ if environ is None else environ).get(MIRROR_STANDALONE_ENV, "").strip() == "1"
+
+
+def preferred_stop(
+    snapshot: Mapping[str, Any], terms: "FrozenLShapeTerms", *, tick_size: Any = None,
+) -> Decimal:
+    """STOP before the shared 1.5% non-Box limit.
+
+    L-shape: its frozen structural STOP. MIRROR: the frozen extreme of the confirming
+    candle plus the approved one-tick technical buffer beyond it
+    (AUTOPILOT_V0_1_STOP_TECHNICAL_BUFFER_DECISION.md), the tick coming from the
+    authoritative instrument metadata of the caller.
+    """
+    if not is_mirror_snapshot(snapshot):
+        return terms.stop
+    tick = _decimal(tick_size, "tick_size")
+    stop = terms.stop - tick if terms.direction == DIRECTION_LONG else terms.stop + tick
+    if stop <= 0:
+        raise RobotLShapeError("MIRROR STOP is not positive")
+    return stop
+
+
+def is_mirror_snapshot(snapshot: Mapping[str, Any] | None) -> bool:
+    return snapshot_pattern(snapshot) == MIRROR_PATTERN
 
 
 def _decimal(value: Any, field: str) -> Decimal:
@@ -105,9 +160,10 @@ def _timestamp(value: Any, field: str) -> int:
 
 
 def frozen_terms(snapshot: Mapping[str, Any]) -> FrozenLShapeTerms:
-    if not is_l_shape_snapshot(snapshot):
+    pattern = snapshot_pattern(snapshot)
+    if pattern is None:
         raise RobotLShapeError("snapshot is not L-shape")
-    terms = snapshot.get("l_shape")
+    terms = snapshot.get(TERMS_KEYS[pattern])
     if not isinstance(terms, Mapping):
         raise RobotLShapeError("L-shape frozen terms are missing")
 
@@ -138,7 +194,7 @@ def frozen_terms(snapshot: Mapping[str, Any]) -> FrozenLShapeTerms:
     elif not (target < reference < stop):
         raise RobotLShapeError("SHORT L-shape frozen price geometry is invalid")
 
-    if potential < MIN_POTENTIAL_PERCENT:
+    if pattern == PATTERN and potential < MIN_POTENTIAL_PERCENT:
         raise RobotLShapeError("L-shape potential is below 0.8%")
     if reward_risk < MIN_REWARD_RISK:
         raise RobotLShapeError("L-shape frozen reward/risk is below 2:1")
@@ -167,8 +223,13 @@ def net_reward_risk(
     stop_price: Decimal,
     target_price: Decimal,
     fee_rate: Decimal = PAPER_ROBOT_FEE_RATE,
+    exit_slippage_fraction: Decimal = Decimal("0"),
 ) -> Decimal:
-    """Fee-aware planned RR using the PAPER Robot's conservative per-side fee."""
+    """Fee-aware planned RR using the PAPER Robot's conservative per-side fee.
+
+    ``exit_slippage_fraction`` (MIRROR) charges an adverse slippage of that
+    fraction of the exit price on both exits: less reward at TAKE, more risk at STOP.
+    """
     direction = str(direction).strip().upper()
     if direction not in {DIRECTION_LONG, DIRECTION_SHORT}:
         raise RobotLShapeError("L-shape direction is invalid")
@@ -182,9 +243,18 @@ def net_reward_risk(
         or fee_rate >= 1
     ):
         raise RobotLShapeError("fee_rate must be a finite Decimal in [0, 1)")
+    if (
+        not isinstance(exit_slippage_fraction, Decimal)
+        or not exit_slippage_fraction.is_finite()
+        or exit_slippage_fraction < 0
+        or exit_slippage_fraction >= 1
+    ):
+        raise RobotLShapeError("exit_slippage_fraction must be a finite Decimal in [0, 1)")
     sign = Decimal(1 if direction == DIRECTION_LONG else -1)
-    reward = sign * (target - entry) - entry * fee_rate - target * fee_rate
-    risk = sign * (entry - stop) + entry * fee_rate + stop * fee_rate
+    reward = (sign * (target - entry) - entry * fee_rate - target * fee_rate
+              - target * exit_slippage_fraction)
+    risk = (sign * (entry - stop) + entry * fee_rate + stop * fee_rate
+            + stop * exit_slippage_fraction)
     if reward <= 0 or risk <= 0:
         raise RobotLShapeError("fees leave no positive L-shape reward/risk")
     return reward / risk
@@ -196,10 +266,66 @@ def initialize_state(candidate: Mapping[str, Any]) -> tuple[dict[str, Any], str]
     if not isinstance(snapshot, Mapping):
         raise RobotLShapeError("signal snapshot is missing")
     terms = frozen_terms(snapshot)
+    if snapshot_pattern(snapshot) in DOUBLE_PATTERNS:
+        # The Scanner independently proved a neckline BODY CLOSE on the last
+        # closed 1m/5m candle. Exactly as in confirmed MIRROR, the entry is
+        # immediately eligible; waiting for another retest would be a new
+        # strategy rule and could miss the owner's neckline-close entry.
+        neck = snapshot.get("neckline_entry")
+        confirmation = neck.get("confirmation") if isinstance(neck, Mapping) else None
+        if not isinstance(confirmation, Mapping):
+            raise RobotLShapeError("double extremum neckline confirmation missing")
+        close_ms = _timestamp(confirmation.get("close_time_ms"), "neckline close_time_ms")
+        interval = int(terms.source_timeframe) * 60_000
+        neckline = _decimal(neck.get("neckline"), "neckline")
+        confirmed_close = _decimal(confirmation.get("close"), "confirmed close")
+        kind = "Double Top" if terms.direction == DIRECTION_SHORT else "Double Bottom"
+        if (
+            snapshot_pattern(snapshot) != kind
+            or close_ms != terms.breakout_time_ms + interval
+            or confirmation.get("timeframe") != terms.source_timeframe
+            or confirmation.get("kind") != "NECKLINE_BODY_CLOSE"
+            or confirmed_close != terms.reference
+            or (terms.direction == DIRECTION_SHORT and confirmed_close >= neckline)
+            or (terms.direction == DIRECTION_LONG and confirmed_close <= neckline)
+        ):
+            raise RobotLShapeError("double extremum closed neckline identity mismatch")
+        return {
+            "state_version": STATE_VERSION, "phase": PHASE_RETEST_DETECTED,
+            "pattern": snapshot_pattern(snapshot), "direction": terms.direction,
+            "last_candle_time_ms": close_ms,
+            "breakout_time_ms": terms.breakout_time_ms,
+            "retest_time_ms": close_ms,
+            "last_event": "NECKLINE_CLOSE_CONFIRMATION_READY",
+        }, "NECKLINE_CLOSE_CONFIRMATION_READY"
+    if is_mirror_snapshot(snapshot):
+        # Scanner already proved an immediately following, CLOSED confirming
+        # candle. Requiring another reference retest delays a trade contrary
+        # to the owner's entry rule. Reuse the same protected, idempotent LIMIT
+        # phase; this is a signal-confirmation event, not a price retest.
+        confirmation = snapshot.get("mirror_entry", {}).get("confirmation")
+        if not isinstance(confirmation, Mapping):
+            raise RobotLShapeError("MIRROR confirmation is missing")
+        close_ms = _timestamp(confirmation.get("close_time_ms"), "MIRROR confirmation close_time_ms")
+        source_tf_ms = int(terms.source_timeframe) * 60_000
+        if (close_ms != terms.breakout_time_ms + source_tf_ms
+                or confirmation.get("timeframe") != terms.source_timeframe
+                or str(confirmation.get("kind")) not in {"ENGULFING", "HAMMER", "HANGING_MAN"}):
+            raise RobotLShapeError("MIRROR closed confirmation identity mismatch")
+        return {
+            "state_version": STATE_VERSION,
+            "phase": PHASE_RETEST_DETECTED,
+            "pattern": MIRROR_PATTERN,
+            "direction": terms.direction,
+            "last_candle_time_ms": close_ms,
+            "breakout_time_ms": terms.breakout_time_ms,
+            "retest_time_ms": close_ms,
+            "last_event": EVENT_MIRROR_CONFIRMATION_READY,
+        }, EVENT_MIRROR_CONFIRMATION_READY
     return {
         "state_version": STATE_VERSION,
         "phase": PHASE_WAITING_RETEST,
-        "pattern": PATTERN,
+        "pattern": snapshot_pattern(snapshot),
         "direction": terms.direction,
         "last_candle_time_ms": terms.breakout_time_ms,
         "breakout_time_ms": terms.breakout_time_ms,
@@ -214,7 +340,7 @@ def _validate_state(snapshot: Mapping[str, Any], state: Mapping[str, Any]) -> Fr
     if state.get("state_version") != STATE_VERSION:
         raise RobotLShapeError("unsupported L-shape Robot state version")
     terms = frozen_terms(snapshot)
-    if state.get("pattern") != PATTERN or state.get("direction") != terms.direction:
+    if state.get("pattern") != snapshot_pattern(snapshot) or state.get("direction") != terms.direction:
         raise RobotLShapeError("L-shape state differs from frozen snapshot")
     if state.get("phase") not in {
         PHASE_WAITING_RETEST,

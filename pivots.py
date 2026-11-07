@@ -46,22 +46,20 @@ def find_pivots(df, left=3, right=3, min_change=0.003):
     ).reset_index(drop=True)
 
 
+    # Column arrays: the same values and comparisons as the former per-row
+    # df.loc slices (identical output), without pandas indexing per candle.
+    high_values = df["high"].to_numpy()
+    low_values = df["low"].to_numpy()
+
     for i in range(left, len(df) - right):
 
-        high = df.loc[i, "high"]
-        low = df.loc[i, "low"]
-
-
-        left_high = df.loc[i-left:i-1, "high"]
-        right_high = df.loc[i+1:i+right, "high"]
-
-        left_low = df.loc[i-left:i-1, "low"]
-        right_low = df.loc[i+1:i+right, "low"]
+        high = high_values[i]
+        low = low_values[i]
 
 
         if (
-            high > left_high.max()
-            and high > right_high.max()
+            high > high_values[i-left:i].max()
+            and high > high_values[i+1:i+right+1].max()
         ):
 
             highs.append({
@@ -72,8 +70,8 @@ def find_pivots(df, left=3, right=3, min_change=0.003):
 
 
         if (
-            low < left_low.min()
-            and low < right_low.min()
+            low < low_values[i-left:i].min()
+            and low < low_values[i+1:i+right+1].min()
         ):
 
             lows.append({

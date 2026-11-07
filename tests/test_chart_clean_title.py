@@ -73,7 +73,7 @@ class ChartTitleTests(unittest.TestCase):
         )
         self.assertEqual(title.splitlines(), [
             "BTCUSDT · 5м",
-            "Сжимающийся треугольник",
+            "Треугольник",
             "Потенциал: РАСЧЁТ НЕДОСТУПЕН",
             "КАЧЕСТВО СТРУКТУРЫ: 82/100",
         ])
@@ -94,7 +94,7 @@ class ChartTitleTests(unittest.TestCase):
         )
         self.assertEqual(title.splitlines(), [
             "BTCUSDT · 5м",
-            "Сжимающийся треугольник",
+            "Треугольник",
             "Потенциал: ±4.28%",
             "КАЧЕСТВО СТРУКТУРЫ: 82/100",
         ])

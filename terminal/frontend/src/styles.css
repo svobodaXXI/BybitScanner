@@ -226,6 +226,80 @@ button {
   grid-column: 1;
   grid-row: 1;
 }
+/* The Editor review controls share the chart cell; they must never create
+   another grid row or shift the existing trading/utility controls. */
+.editor-correction-export {
+  grid-column: 1;
+  grid-row: 1;
+  z-index: 7;
+  align-self: end;
+  justify-self: stretch;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  min-width: 0;
+  margin: 0.45rem;
+  padding: 0.4rem;
+  padding-right: 2.9rem;
+  border: 1px solid #394653;
+  border-radius: 0.35rem;
+  background: rgba(15, 19, 24, 0.96);
+  color: #d7e0e8;
+  font-size: 0.72rem;
+}
+.editor-review-topline {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+}
+.editor-workspace-shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.editor-workspace-shortcuts button {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0.32rem;
+  cursor: pointer;
+}
+.editor-workspace-shortcuts svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.editor-workspace-shortcuts button:hover,
+.editor-workspace-shortcuts button:focus-visible {
+  background: #293745;
+  border-color: #8babbf;
+}
+.editor-correction-export button,
+.editor-correction-export select,
+.editor-correction-export input {
+  min-height: 1.8rem;
+  max-width: 100%;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid #455363;
+  border-radius: 0.25rem;
+  background: #171d24;
+  color: inherit;
+}
+.editor-correction-export button:disabled {
+  opacity: 0.45;
+}
+.editor-correction-export output {
+  flex-basis: 100%;
+}
 
 .drawing-tools-panel {
   grid-column: 1;
@@ -3689,5 +3763,23 @@ button {
 @media (max-width: 620px) {
   .market-sidecar .prints-position-indicator {
     top: 2.15rem;
+  }
+}
+
+/* Editor owns the mobile viewport: no empty trading-action row below the chart. */
+@media (max-width: 620px) {
+  .workspace-editor .workspace-grid {
+    grid-template-rows: minmax(0, 1fr);
+    min-height: 0;
+  }
+  .workspace-editor .mode-panel {
+    display: none;
+  }
+  .workspace-editor .workspace-market-row {
+    min-height: 0;
+  }
+  .workspace-editor .chart-stage,
+  .workspace-editor .chart-engine {
+    min-height: 0;
   }
 }

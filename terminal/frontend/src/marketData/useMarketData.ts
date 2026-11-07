@@ -10,9 +10,18 @@ type WorkspaceStateResponse = {
   };
 };
 
+// A confirmed workspace activation outranks an older in-flight bootstrap GET.
+// Otherwise a slow /workspace/state response can undo a Telegram deep-link ACK.
+let confirmedSymbolIntentRevision = 0;
+export const setMarketSymbol = (symbol: string, generation?: number) => {
+  confirmedSymbolIntentRevision += 1;
+  marketDataStore.setSymbol(symbol, generation);
+};
+
 export function useMarketData() {
   useEffect(() => {
     const controller = new AbortController();
+    const bootstrapRevision = confirmedSymbolIntentRevision;
 
     const start = async () => {
       try {
@@ -29,6 +38,7 @@ export function useMarketData() {
           && symbol.trim()
           && Number.isInteger(generation)
           && Number(generation) > 0
+          && bootstrapRevision === confirmedSymbolIntentRevision
         ) {
           marketDataStore.setSymbol(symbol, Number(generation));
         }
@@ -54,4 +64,3 @@ export function useMarketData() {
 }
 
 export const setMarketTimeframe = marketDataStore.setTimeframe;
-export const setMarketSymbol = marketDataStore.setSymbol;

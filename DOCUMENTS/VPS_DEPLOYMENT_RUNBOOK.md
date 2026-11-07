@@ -1,6 +1,288 @@
-﻿# BybitScanner VPS Deployment Runbook
+# BybitScanner VPS Deployment Runbook
 
-## Current authoritative state
+> **Актуальная приёмка 27.10.2026 после PR #638:** Telegram optional для запуска PAPER-ядра; доказанный SSH reverse tunnel, ошибки запуска и требования будущей кнопки описаны в [VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md](VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md). Начальные разделы этого runbook ниже описывают прежнее подготовительное состояние и не являются текущим runtime-статусом.
+
+## Resuming a partially completed Gitless PAPER deployment — no repeated stop (2026-11-01)
+
+**Scope:** backend was **already safely stopped**, approved target files and root-owned
+release manifest are **already installed**, and an auxiliary systemd command
+failed before the authorized restart. This is not a general rollout installer,
+a stop authorization, a SQL repair, or permission to change live/protected PAPER
+positions. Use this path only after checking the operator's actual host result,
+not merely a prior script exit code.
+
+**Read-only stage checkpoint** from the installed target:
+
+```sh
+/opt/BybitScanner/venv/bin/python -m tools.vps_release_resume --expected-sha <approved-40-char-SHA>
+```
+
+The checkpoint independently proves: the root-protected tracked-blob manifest
+matches **every** installed tracked file and the requested exact SHA; all three
+installed systemd unit files match the tracked release bytes; backend,
+Telegram and PAPER-start units have stopped states (`inactive|failed` and
+`MainPID=0`), without alternate unit origins/drop-ins; and neither PAPER
+TCP port 8765 nor Telegram port 8766 has any listener (including IPv6). It
+does **not** trust a previous transition success message or require a repeat
+of SIGINT. It never starts, stops, resets systemd, writes DB or installs code.
+
+- `RESUME_READY`: the **already-installed** exact release is stopped. The
+  **next separately authorized** operator action is the existing
+  `tools.vps_systemd_unit_prepare` (daemon-reload / verify loaded /
+  conditional reset-failed) followed by canonical PAPER backend startup,
+  reconciliation and admission checks. Do **not** repeat safe-stop, exceptional
+  transition, staging or the release copy.
+- `BLOCKED`: preserve current state and report the exact missing evidence;
+  do not restart, repeat a prior signal, rebuild manifest to match unexpected
+  bytes, or remove unrelated user files. If target was *not yet installed*,
+  this checkpoint cannot authorize copying it: first follow the separate
+  immutable-release staging/safe-switch procedure.
+- If any service is **still active** or a listener remains, classify the
+  runtime as active/ambiguous, not a stopped-deployment checkpoint. Existing
+  protected positions require canonical protection and owner-safe-stop
+  authority. No automatic restart or LIVE escalation.
+
+For this incident the erroneous `Unit not loaded` after a successful target
+copy did **not** require another transition. Read-only proof of the installed
+release plus correct systemd unit order is the fast path. Note that adding the
+checkpoint does not prove an end-to-end unattended deploy: the actual
+Gitless release switch remains a separate guarded, operator-owned procedure.
+
+## PAPER runtime SHA provenance on Gitless VPS (2026-11-01)
+
+**Deployment contract — not an authorization to restart the live PAPER runtime.**
+The backend previously reported empty `build_sha` because its systemd
+environment did not supply `BYBITSCANNER_BUILD_SHA`. A release-marker file
+without checking the tracked source is not proof of the loaded build.
+
+For **future authorized releases only**, stage an approved exact Git commit
+outside the installed tree. In that checkout, `python -m
+tools.vps_release_identity generate --expected-sha <approved-40-char-SHA>`
+requires `HEAD` to match exactly and verifies the complete regular-file Git
+tree against bytes on disk (Git object hashes). Save its JSON output as the
+root-owned, non-symlink `/etc/bybitscanner/paper-release-manifest.json`, mode
+0644, **only as part of the same validated release activation**. Verify that
+the approved target is an authorized stable commit independently at staging;
+the manifest generator does not perform a remote signature or approval check.
+Preserve the manifest, source, DB/WAL, venv and user files as a matched
+deployment set, with a safe rollback/resume plan; do not modify the manifest
+of the currently running release or claim a hot-swap is safe.
+
+At the **separately authorized** backend start, the systemd `ExecStart`
+runs `python -m tools.vps_release_identity exec-backend`: it verifies each
+tracked installed file byte-for-byte against the protected staging manifest
+and then performs `os.execve` within the **same systemd PID**, replacing
+any inherited `BYBITSCANNER_BUILD_SHA` with the verified manifest SHA.
+Absent/mismatched manifests, changed source, unexpected symlinks or unreadable
+tracked files make start fail-closed. The backend then exposes the exact
+verified SHA via `/api/health.build_sha`; deployment acceptance must also
+compare it with the approved release and the actual systemd MainPID/listener.
+Do not treat metadata copied from an untrusted source or a manifest edited
+after process start as proof of already loaded Python modules. This is
+**startup content attestation** under root-owned deployment provenance, not
+a cryptographic proof of in-memory execution or a substitute for process
+identity, DB continuity, STOP/TAKE protection or canonical safe-stop.
+
+This new unit requires a generated manifest at the *next* approved start:
+never deploy the unit alone and then restart a working protected backend.
+The 2026-11-01 recovered VPS continues running its installed release until
+a separate safe-stop/deploy authorization; this document does not imply
+the new wrapper was executed on VPS.
+
+## systemd unit preparation after an approved PAPER release switch (2026-11-01)
+
+On a host with an already safely stopped backend, **after** all three approved
+`deploy/systemd/bybitscanner-*.service` unit files have been installed, but
+**before** any PAPER backend/start-unit invocation, run the tracked command:
+
+```sh
+/opt/BybitScanner/venv/bin/python -m tools.vps_systemd_unit_prepare
+```
+
+The command performs only `systemctl daemon-reload`, then verifies
+`LoadState=loaded` and `ActiveState=inactive|failed` **for all three**
+backend/Telegram/PAPER-start units, then calls `reset-failed` on failed units
+only. A reset error is followed by **one read-only state recheck**: it is
+nonblocking only if the unit is now loaded/inactive. It never starts/stops any
+runtime, modifies a DB, bypasses admission, or installs systemd files.
+Exit 0/`READY` allows the **separately authorized** PAPER backend start;
+exit 2/`BLOCKED` forbids start until the exact missing state is known.
+Never run it as permission to stop a running/protected backend. Use root or
+a systemd-authorized operator account; do not change secrets/permissions.
+The existing `tools.paper_maintenance` path now invokes this gate after its
+canonical safe-stop and fast-forward, before PAPER core start. For the proven
+gitless VPS release switch, invoke this same helper after immutable content
+verification/staging activation; do not attempt `git merge` in `/opt`.
+
+Historical note: the 2026-11-01 `reset-failed` `Unit not loaded` was a
+partial-deploy ordering failure, *not* proof of a trading protection defect.
+See [PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md](PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md).
+This helper does not retroactively prove newer code is installed on the VPS.
+
+## Linux contour integration (stacked on #628; no runtime acceptance)
+
+The start chain is now prepared as three static units:
+backend -> Telegram's identity-checked readiness gate -> the oneshot
+`bybitscanner-paper-start.service` -> one canonical `runtime_intent ALL`.
+Linux waits for systemd-owned dependencies and never spawns a second owner.
+A failed identity check sends no intent; an HTTP 409 fails the oneshot with the
+backend's blocker. A failed start does not stop or roll back dependencies:
+they may remain active and require the canonical safe-stop described below.
+
+The integration preserves Claude's unfinished work in commit
+`2898abe8ba06622ad84a6f7b6b07650ccaf530a7`. The original Windows worktree
+`C:\\BybitScanner-vps-contour` is retained unchanged.
+
+### First VPS start remains blocked until
+
+- #628 and this stacked integration have been reviewed and owner-approved for
+  merge, then the stopped VPS has safely fast-forwarded to the approved stable SHA.
+- All three units are installed from that SHA; the existing prepare-only procedure
+  must also install `deploy/systemd/bybitscanner-paper-start.service`.
+- Machine-local `config.py`, Telegram identity and exactly one polling owner
+  are verified without exposing secrets or sharing the PC database. The current
+  VPS state must be checked directly; repository/CI evidence is not host evidence.
+- `paper.env` selects the separate VPS PAPER DB and intended full-universe Scanner
+  and MIRROR settings. Preparation keeps standalone MIRROR off. Its owner-approved
+  enablement is allowed by the pre-start gate; every LIVE gate stays disabled.
+- For PAPER_AUTO, `/etc/bybitscanner/owner.env` (root:root, 0600) supplies
+  `BYBITSCANNER_AUTOPILOT_OWNER_TOKEN` (at least 32 characters) to the backend.
+  Never print or commit its value. Autopilot remains OFF after every restart:
+  the existing owner-authenticated `POST /api/robot/autopilot` requires
+  `mode=PAPER_AUTO` and `confirm_paper_auto=true`. The start unit does not enable it.
+- The owner explicitly chooses the first runtime start. No automatic boot start,
+  restart or bypass of reconciliation/protection is introduced.
+
+After these gates, the owner entrypoint is `systemctl start
+bybitscanner-paper-start.service`. Its success proves the canonical intent only;
+verify Scanner, MIRROR candidate/admission, Autopilot PAPER_AUTO, protection and
+Telegram delivery before claiming the complete autonomous PAPER outcome.
+No real runtime was started by the integration work.
+
+### Evidence boundary
+
+Linux CI exercises real systemd with isolated `bbs-start-probe-*` HTTP dummies:
+delayed backend readiness, exactly one intent, blocked reconciliation and wrong
+database identity. It refuses existing production/probe units and non-CI hosts.
+It never starts Scanner, Telegram polling, Robot, or a real PAPER database.
+Shutdown semantics remain covered by the separate #628 dummy-unit probe.
+Offline Linux and Windows tests cover readiness timeout/mismatch, LIVE gate
+preservation, systemd environment-file parsing and the stdlib signal API.
+
+## VPS 83.217.213.181 — prepare-only, stopped (issue #624, 2026-10-25)
+
+Target: Ubuntu 24.04 VDSina VPS, repository `/opt/BybitScanner`, Terminal static files in
+`/var/www/bybitscanner`, Nginx on `127.0.0.1:8080` only (SSH tunnel). The server is prepared and
+**stays stopped**: no backend, Scanner, MIRROR, Autopilot, PAPER Robot or Telegram; no LIVE; the main
+PC PAPER DB is not transferred.
+
+What the repository provides:
+- `tools/vps_check.py` — offline validator (`python -m tools.vps_check`). Reads files, package
+  metadata and read-only system state only (`systemctl show`, `nginx -T`, `ss -ltn`); never imports
+  the backend/Scanner/Telegram, never connects to Bybit, never opens or creates the PAPER DB, never
+  starts, enables or reloads anything. `OK` only after the *installed* units (identical to the
+  repository, no drop-ins, static, inactive), their *effective* environment (env file + inline
+  `Environment=`, LIVE gates off), the *effective* nginx config (only loopback `listen`, enabled
+  site identical to the repository), the actual listening sockets and the write-target ownership
+  were all verified; skipped checks give `INCOMPLETE`, never `OK`.
+- `deploy/systemd/bybitscanner-paper-backend.service`, `bybitscanner-telegram.service` — existing
+  venv `/opt/BybitScanner/venv`, **no `[Install]` section** (cannot be enabled, no start at boot),
+  `Restart=no`, PAPER DB in the systemd `StateDirectory` `/var/lib/bybitscanner`. The backend unit's
+  `ExecStartPre` runs `tools.vps_check --pre-start`: a start is refused while any LIVE gate or the
+  operator token is set, `config.py` is missing, or 8765/8766 is already taken.
+- `deploy/systemd/paper.env.example` — template for `/etc/bybitscanner/paper.env` (LIVE gates off,
+  fresh PAPER DB under `/var/lib/bybitscanner`, no secrets, standalone MIRROR off, no bytecode writes).
+- `deploy/nginx/bybitscanner-loopback.conf` — loopback-only Terminal site.
+- On Linux `python -m tools.runtime_intent` never spawns processes: systemd is the only owner of the
+  backend and Telegram, so the bootstrap fails closed instead of starting a second owner.
+
+Least privilege: the repository keeps its current owner. The service user `bybitscanner` gets
+ownership only of `/var/lib/bybitscanner` and of the gitignored runtime outputs it writes
+(`runtime/`, `charts/`, `debug/`, `review_queue/`, `reports/`, `signals_history.json`); no tracked file
+changes owner.
+
+Procedure (as root, after the PR is merged; it starts nothing):
+
+    cd /opt/BybitScanner
+    test "$(git branch --show-current)" = stable/adfb50b-forward
+    git diff --quiet && git diff --cached --quiet
+    git fetch origin stable/adfb50b-forward
+    git merge --ff-only origin/stable/adfb50b-forward
+    id bybitscanner || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin bybitscanner
+    install -d -m 750 -o bybitscanner -g bybitscanner /var/lib/bybitscanner
+    for d in runtime charts debug review_queue reports; do install -d -m 750 -o bybitscanner -g bybitscanner "$d"; done
+    touch signals_history.json && chown bybitscanner:bybitscanner signals_history.json
+    install -d -m 750 -o root -g bybitscanner /etc/bybitscanner
+    test -e /etc/bybitscanner/paper.env || install -m 640 -o root -g bybitscanner deploy/systemd/paper.env.example /etc/bybitscanner/paper.env
+    install -m 644 deploy/systemd/bybitscanner-paper-backend.service deploy/systemd/bybitscanner-telegram.service deploy/systemd/bybitscanner-paper-start.service /etc/systemd/system/
+    systemctl daemon-reload
+    diff -u deploy/nginx/bybitscanner-loopback.conf /etc/nginx/sites-enabled/bybitscanner
+    /opt/BybitScanner/venv/bin/python -m tools.vps_check
+
+Stop at the first failing line: wrong branch, a dirty tracked tree or a non-fast-forward merge are
+reported to the owner, never resolved with `checkout`, `reset`, `stash` or `clean` (untracked files
+stay). `install -d` changes the owner of those directories only (not their contents recursively).
+If `diff` shows a difference, the installed site is not the repository one and `vps_check` reports
+`nginx_site_matches_repo` FAIL: replace it only with owner approval, then `nginx -t`.
+
+Expected: `VPS_PREPARE_CHECK OK`. Known open item until the owner decides: `scanner_config_present`
+(machine-local `config.py` with the Telegram identity is not in Git). Do **not** run
+`systemctl start` and do not run `python -m terminal.runtime.paper_http_server` as a check: both
+start the PAPER runtime.
+
+### Stopping (issue #627) — only through the canonical safe-stop
+
+A signal is not a safe stop: ending the backend while a Robot-owned position is open removes its
+local STOP/TAKE protection. The only supported stop order is the one `tools.stop_robot_runtime`
+implements, through identity-checked localhost endpoints: Scanner STOPPED -> Robot safe-stop
+(reconcile first when `RECONCILIATION_REQUIRED`) -> protection quiescence -> Telegram `/shutdown` ->
+backend `/api/runtime/shutdown` (always last; the backend itself refuses with `runtime_still_required`
+while the Robot, Scanner or protection coverage is not fully stopped).
+
+Normal stop (as root) — the canonical safe-stop, as the service user with the unit's environment:
+
+    runuser -u bybitscanner -- /opt/BybitScanner/venv/bin/python -m tools.stop_robot_runtime all --env-file /etc/bybitscanner/paper.env
+
+`systemctl stop|restart bybitscanner-paper-backend.service` is **refused** (`RefuseManualStop=yes`):
+systemd cannot cancel a stop job once it has started, and a blocked safe-stop inside one would leave
+the backend alive but no longer tracked by the unit (verified on systemd 255 with a dummy unit).
+The Telegram stop buttons start the same safe-stop as a detached helper.
+
+Result (printed by the command; exit code 0 = stopped, 1 = blocked):
+- **Stopped** — `Runtime STOPPED.`: the backend exited through its own identity-checked
+  `/api/runtime/shutdown`; the unit is `inactive` (`Result=success`), Telegram too.
+- **Blocked** — `STOP BLOCKED: <reason>` (open Robot position, unresolved protection obligation,
+  unknown or unreachable state): **nothing changed** — the backend keeps running, protected, and the
+  unit stays `active` and managed. Resolve the reason (e.g. let the position reach its STOP/TAKE or
+  close it through the Robot), then run the command again. Never answer a blocked stop with `kill`,
+  `systemctl kill` or `pkill`.
+- On Linux there is no forced-termination fallback at all: an unreachable-but-listening backend,
+  a missing shutdown endpoint or an unknown state is reported and nothing is terminated by PID,
+  name or port. `tools.legacy_runtime_process` refuses off Windows.
+- Host shutdown/reboot (a stop job systemd starts itself, where `RefuseManualStop` does not apply)
+  still runs the same safe-stop as `ExecStop`; if it is blocked, the unit sends only `SIGCONT` and
+  never SIGKILL, and the host shutdown itself ends the process after up to 2 x `TimeoutStopSec`
+  (~6 min). PAPER restart recovery is fail-closed.
+- Stopping only the Telegram worker (`systemctl stop bybitscanner-telegram.service`) is allowed and
+  not safety-relevant; its unit uses `KillMode=process` so the stop helper started by its own buttons
+  (own session) is not reaped with it.
+
+Limits — this is a guard against operator mistakes, not an absolute guarantee: root can still end the
+process (`systemctl kill -s KILL`, `kill -9`, editing the unit, `systemctl daemon-reexec`) and a host
+reboot or power loss ends it regardless. `RefuseManualStop` does not stop root from editing the unit. No unit restarts automatically and none starts at boot.
+
+After this change the installed units must be refreshed (the `unit_state` / `installed_unit` checks
+of `tools.vps_check` fail while the installed copy differs from the repository):
+
+    install -m 644 deploy/systemd/bybitscanner-paper-backend.service deploy/systemd/bybitscanner-telegram.service deploy/systemd/bybitscanner-paper-start.service /etc/systemd/system/
+    systemctl daemon-reload
+    /opt/BybitScanner/venv/bin/python -m tools.vps_check
+
+---
+
+## Previous VPS 91.84.98.100 (historical record; not the #624 target)
+
+### State as recorded for that VPS
 
 Authoritative Git checkpoint:
 `8c6a5b6`

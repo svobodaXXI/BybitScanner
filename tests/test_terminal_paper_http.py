@@ -2244,6 +2244,83 @@ class _FakeCoverageRuntime:
         return self.recover_result
 
 
+def test_protection_resync_reaps_only_proven_abandoned_pre_limit_arms():
+    """An error after coverage arm cannot keep a flat symbol streaming forever."""
+    from contextlib import contextmanager
+    from terminal.domain.models import Symbol
+
+    class ArmedRuntime(_FakeCoverageRuntime):
+        def __init__(self):
+            super().__init__()
+            self.store = self
+            self.active_limits = {"LITEUSDT"}
+            self.pending_commands = set()
+            self.busy = False
+
+        def robot_shutdown_idle_guard(self):
+            @contextmanager
+            def guard():
+                if self.busy:
+                    raise RuntimeError("robot_entry_tick_busy")
+                yield
+            return guard()
+
+        def load_open_position_projections(self, _account):
+            return ()
+
+        def load_unresolved_paper_protection_obligations(self, _account):
+            return ()
+
+        def load_unfinished_commands(self):
+            from types import SimpleNamespace
+            return tuple(
+                SimpleNamespace(symbol=Symbol(symbol))
+                for symbol in sorted(self.pending_commands)
+            )
+
+        def load_active_paper_limits(self, _account, symbol):
+            return (object(),) if symbol.value in self.active_limits else ()
+
+    runtime = ArmedRuntime()
+    hub = MarketDataHub(
+        _CoverageRegistry(["FOLKSUSDT", "LITEUSDT"]),
+        _coverage_context, connection_factory=lambda *args, **kwargs: None,
+    )
+    manager = RobotProtectionCoverageManager(hub, runtime, resync_interval_s=60)
+    assert manager.arm_entry_coverage("FOLKSUSDT")
+    assert manager.arm_entry_coverage("LITEUSDT")
+    assert set(manager.health()["armed_symbols"]) == {"FOLKSUSDT", "LITEUSDT"}
+
+    # An in-flight Robot tick must keep even an apparently empty arm.
+    runtime.busy = True
+    manager.resync()
+    assert set(manager.health()["armed_symbols"]) == {"FOLKSUSDT", "LITEUSDT"}
+
+    runtime.busy = False
+    manager.resync()
+    # A fresh arm must survive resync until its first LIMIT handover.
+    assert set(manager.health()["armed_symbols"]) == {"FOLKSUSDT", "LITEUSDT"}
+    import time
+    with manager._lock:
+        manager._armed_since["FOLKSUSDT"] = time.monotonic() - 500
+        manager._armed_since["LITEUSDT"] = time.monotonic() - 500
+    manager.resync()
+    assert not hub.has_context("FOLKSUSDT")
+    assert hub.has_context("LITEUSDT")
+    assert manager.health()["armed_symbols"] == ("LITEUSDT",)
+
+    # An unfinished dispatch also preserves a temporarily armed subscription.
+    runtime.active_limits.clear()
+    runtime.pending_commands.add("LITEUSDT")
+    manager.resync()
+    assert hub.has_context("LITEUSDT")
+    runtime.pending_commands.clear()
+    manager.resync()
+    assert not hub.has_context("LITEUSDT")
+    assert manager.health()["armed_symbols"] == ()
+    manager.close()
+
+
 def test_robot_protection_coverage_manager_subscribes_and_forwards_updates():
     hub = MarketDataHub(
         _CoverageRegistry(["BTCUSDT"]), _coverage_context,
@@ -3112,3 +3189,385 @@ def test_protection_overflow_still_fails_closed_behind_one_overlong_ordinary_tas
     finally:
         release.set()
         runtime.close()
+
+def test_backend_shutdown_requires_durable_paper_quiescence():
+    """A clear subscription and stopped Robot cannot hide an unsettled order."""
+    from types import SimpleNamespace
+
+    class Owner:
+        def live_limit_acceptance_diagnostics(self):
+            return {"database_identity": "synthetic-paper-db"}
+
+        def robot_runtime_state(self):
+            return SimpleNamespace(mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
+
+        def scanner_status(self):
+            return SimpleNamespace(mode="SCANNER_STOPPED")
+
+        def paper_shutdown_blocker(self):
+            return "active_or_unknown_paper_limit"
+
+    class Runtime:
+        def call(self, fn):
+            return fn(Owner())
+
+    class Coverage:
+        def shutdown_idle_guard(self):
+            from contextlib import nullcontext
+            return nullcontext()
+
+        def health(self):
+            return {
+                "healthy": True, "covered_symbols": [], "armed_symbols": [],
+                "unhealthy_symbols": {},
+            }
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.runtime = Runtime()
+    server.robot_protection_coverage = Coverage()
+    response = {}
+
+    def post():
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/runtime/shutdown",
+            data=b'{"database_identity":"synthetic-paper-db"}',
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request) as result:
+                response.update(status=result.status, body=json.load(result))
+        except urllib.error.HTTPError as exc:
+            response.update(status=exc.code, body=json.load(exc))
+
+    client = threading.Thread(target=post)
+    client.start()
+    try:
+        server.handle_request()
+        client.join(timeout=5)
+        assert not client.is_alive()
+        assert response == {
+            "status": 409,
+            "body": {"ok": False, "error": "runtime_still_required"},
+        }
+    finally:
+        server.server_close()
+
+def test_retire_entry_coverage_requires_durable_autopilot_off():
+    """Reactivated admission cannot retire arms even after Scanner/Robot STOP."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from terminal.runtime.paper_http_server import RobotRouteLegalityError
+
+    class Owner:
+        def __init__(self, mode):
+            self.store = SimpleNamespace(
+                get_robot_autopilot_state=lambda account: SimpleNamespace(mode=mode)
+                if mode is not None else None,
+            )
+        def robot_shutdown_idle_guard(self):
+            return nullcontext()
+        def live_limit_acceptance_diagnostics(self):
+            return {"database_identity": "synthetic-paper-db"}
+        def robot_runtime_state(self):
+            return SimpleNamespace(mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
+        def scanner_status(self):
+            return SimpleNamespace(mode="SCANNER_STOPPED")
+
+    class Runtime:
+        def __init__(self, mode):
+            self.owner = Owner(mode)
+        def call(self, operation):
+            return operation(self.owner)
+
+    for mode in ("PAPER_AUTO", "SHADOW", None):
+        manager = RobotProtectionCoverageManager.__new__(RobotProtectionCoverageManager)
+        manager._runtime = Runtime(mode)
+        manager._subscription_lock = threading.RLock()
+        manager._armed = {"RISKUSDT"}
+        with pytest.raises(RobotRouteLegalityError, match="autopilot_not_durably_off"):
+            manager.retire_shutdown_entry_arms("synthetic-paper-db")
+        assert manager._armed == {"RISKUSDT"}
+
+
+def test_runtime_shutdown_rejects_missing_or_malformed_coverage_evidence():
+    """A healthy flag alone cannot prove protection coverage quiescence."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    class Owner:
+        def live_limit_acceptance_diagnostics(self):
+            return {"database_identity": "synthetic-paper-db"}
+        def robot_runtime_state(self):
+            return SimpleNamespace(mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
+        def scanner_status(self):
+            return SimpleNamespace(mode="SCANNER_STOPPED")
+        def paper_shutdown_blocker(self):
+            return None
+
+    class Runtime:
+        def __init__(self):
+            self.seals = 0
+        def call(self, operation):
+            return operation(Owner())
+        def seal_shutdown(self):
+            self.seals += 1
+
+    class Coverage:
+        def __init__(self, snapshot):
+            self.snapshot = snapshot
+        def shutdown_idle_guard(self):
+            return nullcontext()
+        def health(self):
+            return self.snapshot
+
+    complete = {
+        "healthy": True, "covered_symbols": (),
+        "armed_symbols": (), "coverage_roles": {}, "unhealthy_symbols": {},
+    }
+    snapshots = [
+        {k: v for k, v in complete.items() if k != missing}
+        for missing in ("covered_symbols", "armed_symbols", "coverage_roles",
+                        "unhealthy_symbols")
+    ] + [
+        {**complete, "covered_symbols": None},
+        {**complete, "armed_symbols": None},
+        {**complete, "coverage_roles": None},
+        {**complete, "unhealthy_symbols": None},
+        {**complete, "covered_symbols": {}},
+        {**complete, "armed_symbols": {}},
+        {**complete, "coverage_roles": []},
+        {**complete, "coverage_roles": {"BTCUSDT": "ENTRY_PENDING"}},
+        {**complete, "covered_symbols": ("BTCUSDT",)},
+        {**complete, "armed_symbols": ("BTCUSDT",)},
+        {**complete, "unhealthy_symbols": []},
+    ]
+    for snapshot in snapshots:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = Runtime()
+        server.robot_protection_coverage = Coverage(snapshot)
+        server.shutdown = lambda: None
+        result = {}
+        def post():
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/runtime/shutdown",
+                data=b'{"database_identity":"synthetic-paper-db"}',
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request) as answer:
+                    result["status"] = answer.status
+                    result["body"] = json.load(answer)
+            except urllib.error.HTTPError as exc:
+                result["status"] = exc.code
+                result["body"] = json.load(exc)
+        client = threading.Thread(target=post)
+        client.start()
+        try:
+            server.handle_request()
+            client.join(timeout=5)
+            assert not client.is_alive()
+            assert result == {
+                "status": 409,
+                "body": {"ok": False, "error": "runtime_still_required"},
+            }, snapshot
+            assert server.runtime.seals == 0
+        finally:
+            server.server_close()
+
+
+def test_shutdown_seals_owner_queue_after_final_quiescence_proof():
+    """A queued operation behind the successful final proof cannot run."""
+    from terminal.runtime.paper_http_server import SerializedPaperRuntime
+
+    class Owned:
+        def close(self):
+            pass
+
+    runtime = SerializedPaperRuntime(Owned)
+    entered = threading.Event()
+    release = threading.Event()
+    ran_after_proof = threading.Event()
+    results = {}
+    def prove_and_seal():
+        def operation(_owned):
+            entered.set()
+            assert release.wait(3)
+            runtime.seal_shutdown()
+            return "sealed"
+        results["proof"] = runtime.call(operation, timeout=5)
+    def queued_operation():
+        try:
+            runtime.call(lambda _owned: ran_after_proof.set(), timeout=5)
+        except RuntimeError as exc:
+            results["late"] = str(exc)
+    first = threading.Thread(target=prove_and_seal)
+    second = threading.Thread(target=queued_operation)
+    try:
+        first.start()
+        assert entered.wait(3)
+        second.start()
+        # Wait for the second call to join the existing owner queue before seal.
+        for _ in range(100):
+            if runtime._requests.qsize() >= 1:
+                break
+            time.sleep(0.005)
+        assert runtime._requests.qsize() >= 1
+        release.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+        assert not first.is_alive() and not second.is_alive()
+        assert results == {
+            "proof": "sealed",
+            "late": "PAPER shutdown sealed; queued owner work refused",
+        }
+        assert not ran_after_proof.is_set()
+        with pytest.raises(RuntimeError, match="shutdown sealed"):
+            runtime.call(lambda _owned: None)
+        with pytest.raises(RuntimeError, match="shutdown sealed"):
+            runtime.enqueue_book_update("book-1")
+        with pytest.raises(RuntimeError, match="shutdown sealed"):
+            runtime.enqueue(lambda _owned: None, symbol="BTCUSDT")
+    finally:
+        release.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+        runtime.close()
+
+
+def test_runtime_shutdown_refuses_backend_exit_while_scanner_child_is_active():
+    """Direct shutdown cannot bypass the Scanner drain proof in the CLI."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    class Owner:
+        def __init__(self, worker_state):
+            self.worker_state = worker_state
+        def live_limit_acceptance_diagnostics(self):
+            return {"database_identity": "synthetic-paper-db"}
+        def robot_runtime_state(self):
+            return SimpleNamespace(mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
+        def scanner_status(self):
+            return SimpleNamespace(mode="SCANNER_STOPPED")
+        def scanner_worker_quiescent(self):
+            return self.worker_state
+        def paper_shutdown_blocker(self):
+            return None
+
+    class Runtime:
+        def __init__(self, state):
+            self.owner = Owner(state)
+            self.seals = 0
+        def call(self, callback):
+            return callback(self.owner)
+        def seal_shutdown(self):
+            self.seals += 1
+
+    class Coverage:
+        def shutdown_idle_guard(self):
+            return nullcontext()
+        def health(self):
+            return {
+                "healthy": True, "covered_symbols": (),
+                "armed_symbols": (), "coverage_roles": {},
+                "unhealthy_symbols": {},
+            }
+
+    for worker_state in (False, None, "yes"):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = Runtime(worker_state)
+        server.robot_protection_coverage = Coverage()
+        # Refused shutdown must not schedule the server exit.
+        server.shutdown = lambda: None
+        reply = {}
+
+        def post():
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/runtime/shutdown",
+                data=b'{"database_identity":"synthetic-paper-db"}',
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request) as answer:
+                    reply["status"] = answer.status
+                    reply["body"] = json.load(answer)
+            except urllib.error.HTTPError as error:
+                reply["status"] = error.code
+                reply["body"] = json.load(error)
+
+        client = threading.Thread(target=post)
+        client.start()
+        try:
+            server.handle_request()
+            client.join(timeout=5)
+            assert not client.is_alive()
+            assert reply == {
+                "status": 409,
+                "body": {"ok": False, "error": "runtime_still_required"},
+            }, worker_state
+            assert server.runtime.seals == 0
+        finally:
+            server.server_close()
+
+
+def test_runtime_shutdown_seals_only_on_complete_evidence():
+    """No special shutdown API: existing route seals after durable+coverage proof."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    class Owner:
+        def live_limit_acceptance_diagnostics(self):
+            return {"database_identity": "synthetic-paper-db"}
+        def robot_runtime_state(self):
+            return SimpleNamespace(mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
+        def scanner_status(self):
+            return SimpleNamespace(mode="SCANNER_STOPPED")
+        def paper_shutdown_blocker(self):
+            return None
+
+    class Runtime:
+        def __init__(self):
+            self.seals = 0
+        def call(self, fn):
+            return fn(Owner())
+        def seal_shutdown(self):
+            self.seals += 1
+
+    class Coverage:
+        def shutdown_idle_guard(self):
+            return nullcontext()
+        def health(self):
+            return {"healthy": True, "covered_symbols": (), "armed_symbols": (),
+                    "coverage_roles": {}, "unhealthy_symbols": {}}
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.runtime = Runtime()
+    server.robot_protection_coverage = Coverage()
+    ended = threading.Event()
+    server.shutdown = ended.set
+    response = {}
+
+    def post():
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/runtime/shutdown",
+            data=b'{"database_identity":"synthetic-paper-db"}',
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request) as answer:
+                response["status"] = answer.status
+                response["body"] = json.load(answer)
+        except urllib.error.HTTPError as exc:
+            response["status"] = exc.code
+            response["body"] = json.load(exc)
+    client = threading.Thread(target=post)
+    client.start()
+    try:
+        server.handle_request()
+        client.join(timeout=5)
+        assert not client.is_alive()
+        assert response == {"status": 200, "body": {"ok": True, "shutdown": "scheduled"}}
+        assert server.runtime.seals == 1
+        assert ended.wait(3)
+    finally:
+        server.server_close()

@@ -111,7 +111,19 @@ def build_lifecycle_keyboard() -> dict[str, list[list[dict[str, str]]]]:
 
 def format_lifecycle_caption(event: LifecycleEvent, view: PositionView) -> str:
     if event.kind == EVENT_OPENED:
-        header = f"{ROBOT_EMOJI} Сделка открыта"
+        attempt = view.reentry_attempt_index
+        phase = (f"Повторный перезаход №{attempt - 1}"
+                 if attempt in (2, 3) else "Сделка открыта")
     else:
-        header = f"{ROBOT_EMOJI} Сделка закрыта · {exit_reason_label(event.exit_reason)}"
-    return f"{header}\n\n{format_position_card(view)}"[:CAPTION_LIMIT]
+        phase = f"Сделка закрыта · {exit_reason_label(event.exit_reason)}"
+
+    if view.mirror_campaign:
+        # Trade events originate in durable Robot trades, not candidate admission.
+        from mirror_scanner import mirror_subtype
+        subtype = mirror_subtype(
+            view.mirror_level_source, view.mirror_pattern, "first_retest",
+            retest_confirmed=view.mirror_retest_confirmed,
+        )
+        timeframe = view.mirror_timeframe or str(view.chart_candle_minutes)
+        return f"🪞 MIRROR · {view.symbol} · {timeframe}m\n{subtype}\n{phase}"[:CAPTION_LIMIT]
+    return f"{ROBOT_EMOJI} {phase}\n\n{format_position_card(view)}"[:CAPTION_LIMIT]

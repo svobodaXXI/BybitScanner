@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 import sqlite3
 import time
 import threading
@@ -40,13 +41,16 @@ from terminal.application.robot_admission import (
     box_plan_source_admission_error,
     box_plan_admission_handle,
     candidate_snapshot_sha256,
+    linked_mirror_parent_candidate,
     scanner_candidate_admission_error,
 )
+from terminal.application.robot_reentry_adapter import automatic_reentry_proposal
 from terminal.application.robot_autopilot import (
     OUTCOME_ALLOW,
     OUTCOME_WAIT,
     POLICY_VERSION,
     REASON_ALREADY_ADMITTED,
+    REASON_REENTRY_THESIS_UNPROVEN,
     RobotAutoAdmissionFacts,
     RobotAutoAdmissionResult,
     daily_loss_gate_facts,
@@ -460,6 +464,25 @@ def _fresh_facts(
         daily_gate = _daily_loss_gate(
             store, account, now_ms=now_ms, decisions=decisions,
             enabled=daily_loss_gate_enabled, daily_marks=daily_marks)
+    linked_parent = None
+    if mode == PAPER_AUTO_MODE and candidate.pattern == "IKIGAI_BOX":
+        identity = candidate.snapshot.get("identity") or {}
+        direction = str(identity.get("direction", "")) if isinstance(identity, Mapping) else ""
+        linked_parent = linked_mirror_parent_candidate(
+            store,
+            account,
+            candidate.symbol,
+            direction,
+            excluded_candidate_ids=candidate.own_ids,
+        )
+        if linked_parent is not None:
+            # The Box is a subordinate attempt of the already-reserved Wedge
+            # campaign, not a second independent Robot idea.
+            portfolio["new_reserve_ro"] = 0
+    symbol_owned = (
+        _symbol_owned(store, account, candidate)
+        or candidate.symbol.value in portfolio.get("owned_symbols", [])
+    )
     return RobotAutoAdmissionFacts(
         autopilot_mode=mode,
         environment="PAPER",
@@ -475,13 +498,15 @@ def _fresh_facts(
         reconciliation_clear=(
             runtime is not None and runtime.recovery_status != "RECONCILIATION_REQUIRED"
         ),
-        symbol_owned=(_symbol_owned(store, account, candidate)
-                      or candidate.symbol.value in portfolio.get("owned_symbols", [])),
+        symbol_owned=symbol_owned and linked_parent is None,
         protection_healthy=healthy,
         portfolio_policy_ready=True,
         portfolio_facts=portfolio,
         candidate_fresh=fresh,
         daily_loss_gate=daily_gate,
+        linked_mirror_parent_candidate_id=(
+            linked_parent.candidate_id if linked_parent is not None else None
+        ),
     )
 
 
@@ -544,6 +569,31 @@ def _observe_shadow_candidate_locked(
     )
     batch.appended(decision, created)
     return ShadowObservation(facts, result, decision, created)
+
+
+def _auto_reentry_proposal_for_candidate(
+    store: SQLiteStore, account: TradingAccountId, *,
+    source: str, candidate: _Candidate, now_ms: int,
+):
+    """Opt-in extension to the existing canonical admission only.
+
+    Older deployments keep exactly their original admission behaviour.
+    PAPER only; feature OFF until owner approves completed cross-pattern E2E.
+    """
+    if os.environ.get("BYBITSCANNER_STOP_REENTRY_AUTO", "").strip() != "1":
+        return None
+    if source not in {SOURCE_SCANNER, SOURCE_BOX_PLAN} or not candidate.valid:
+        raise PersistenceError("unverified source cannot bypass reentry campaign")
+    proposal = automatic_reentry_proposal(
+        store, account, candidate_id=candidate.ref, symbol=candidate.symbol,
+        snapshot=candidate.snapshot, now_ms=now_ms,
+    )
+    if proposal is None:
+        # Never silently continue normal PAPER_AUTO admission while the
+        # universal campaign risk fence is explicitly enabled. Unsupported
+        # or ambiguous candidates wait, not become untracked first trades.
+        raise PersistenceError("candidate has no verified reentry strategy proof")
+    return proposal
 
 
 def admit_paper_auto_candidate(
@@ -627,18 +677,34 @@ def admit_paper_auto_candidate(
             robot_candidate = None
             candidate_created = False
             if result.outcome == OUTCOME_ALLOW:
-                admission_ref = (
-                    candidate.ref if source == SOURCE_SCANNER
-                    else box_plan_admission_handle(candidate.ref)
-                )
-                robot_candidate, candidate_created = admit_robot_candidate(
-                    admission_ref,
-                    store_dir=candidate_store_dir,
-                    clock_ms=lambda: now,
-                    transaction_store=store,
-                    expected_snapshot_sha256=candidate.snapshot_sha256,
-                    mark_legacy_approved=False,
-                )
+                try:
+                    reentry_plan = _auto_reentry_proposal_for_candidate(
+                        store, account, source=source, candidate=candidate,
+                        now_ms=now,
+                    )
+                except PersistenceError:
+                    # No candidate was admitted or reserved; keep the audit
+                    # observation and let the next fresh signal retry.
+                    result = RobotAutoAdmissionResult(
+                        OUTCOME_WAIT, REASON_REENTRY_THESIS_UNPROVEN, POLICY_VERSION,
+                    )
+                else:
+                    admission_ref = (
+                        candidate.ref if source == SOURCE_SCANNER
+                        else box_plan_admission_handle(candidate.ref)
+                    )
+                    robot_candidate, candidate_created = admit_robot_candidate(
+                        admission_ref,
+                        store_dir=candidate_store_dir,
+                        clock_ms=lambda: now,
+                        transaction_store=store,
+                        expected_snapshot_sha256=candidate.snapshot_sha256,
+                        mark_legacy_approved=False,
+                        linked_mirror_parent_candidate_id=(
+                            facts.linked_mirror_parent_candidate_id
+                        ),
+                        reentry=reentry_plan,
+                    )
             decision, decision_created = record_auto_decision(
                 store,
                 trading_account_id=account,
@@ -732,18 +798,34 @@ def admit_arrived_auto_candidate(
         robot_candidate = None
         candidate_created = False
         if result.outcome == OUTCOME_ALLOW:
-            admission_ref = (
-                candidate.ref if source == SOURCE_SCANNER
-                else box_plan_admission_handle(candidate.ref)
-            )
-            robot_candidate, candidate_created = admit_robot_candidate(
-                admission_ref,
-                store_dir=candidate_store_dir,
-                clock_ms=lambda: now,
-                transaction_store=store,
-                expected_snapshot_sha256=candidate.snapshot_sha256,
-                mark_legacy_approved=False,
-            )
+            try:
+                reentry_plan = _auto_reentry_proposal_for_candidate(
+                    store, account, source=source, candidate=candidate,
+                    now_ms=now,
+                )
+            except PersistenceError:
+                # No candidate was admitted or reserved; keep the audit
+                # observation and let the next fresh signal retry.
+                result = RobotAutoAdmissionResult(
+                    OUTCOME_WAIT, REASON_REENTRY_THESIS_UNPROVEN, POLICY_VERSION,
+                )
+            else:
+                admission_ref = (
+                    candidate.ref if source == SOURCE_SCANNER
+                    else box_plan_admission_handle(candidate.ref)
+                )
+                robot_candidate, candidate_created = admit_robot_candidate(
+                    admission_ref,
+                    store_dir=candidate_store_dir,
+                    clock_ms=lambda: now,
+                    transaction_store=store,
+                    expected_snapshot_sha256=candidate.snapshot_sha256,
+                    mark_legacy_approved=False,
+                    linked_mirror_parent_candidate_id=(
+                        facts.linked_mirror_parent_candidate_id
+                    ),
+                    reentry=reentry_plan,
+                )
         decision, decision_created = record_auto_decision(
             store,
             trading_account_id=account,

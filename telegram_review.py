@@ -1,11 +1,13 @@
 ﻿from pathlib import Path
 from datetime import datetime
+import hashlib
 import json
 import re
 import time
 
 import requests
 
+import telegram_gateway_client
 import config
 import telegram_bot
 import telegram_runtime_intent
@@ -13,8 +15,10 @@ from telegram_labels import ROBOT_EMOJI
 from robot_candidate_store import RobotCandidateNotFound
 from robot_telegram_feed import (
     build_robot_close_all_confirmation_keyboard,
+    build_paper_close_all_confirmation_keyboard,
     build_robot_control_keyboard,
     format_robot_status_text,
+    robot_control_status_note,
     parse_robot_control_callback,
 )
 from terminal.application.robot_admission import (
@@ -23,6 +27,7 @@ from terminal.application.robot_admission import (
 )
 from terminal.application.robot_control import (
     RobotControlRejected,
+    DEFAULT_PAPER_BACKEND_URL,
     close_all_now,
     get_robot_runtime_status,
     pause_robot,
@@ -30,7 +35,7 @@ from terminal.application.robot_control import (
 from tools import stop_robot_runtime
 
 
-PROJECT_ROOT = Path(r"C:\BybitScanner")
+PROJECT_ROOT = Path(__file__).resolve().parent
 REVIEW_QUEUE = PROJECT_ROOT / "review_queue"
 OFFSET_FILE = REVIEW_QUEUE / ".telegram_offset"
 
@@ -95,40 +100,36 @@ def _save_offset(offset):
     )
 
 
-def _telegram_request(
-    method,
-    **params
-):
+def _telegram_request(method, **params):
+    # On VPS the Telegram API is not directly reachable. Route callback
+    # acknowledgement through the same authorized Gateway as the worker.
+    # A configured Gateway must never silently fall back to SOCKS/direct
+    # Telegram on error (which would hide transport failures).
+    if method == "answerCallbackQuery" and telegram_gateway_client.configured():
+        return telegram_gateway_client.bot_method(method, **params)
     url = (
         "https://api.telegram.org/"
         f"bot{config.TELEGRAM_TOKEN}/"
         f"{method}"
     )
-
-    response = requests.get(
-        url,
-        params=params,
-        timeout=40
-    )
-
+    response = requests.get(url, params=params, timeout=40)
     return response.json()
 
 
-def _answer_callback(
-    callback_id,
-    text
-):
+def _answer_callback(callback_id, text):
     try:
-        _telegram_request(
+        result = _telegram_request(
             "answerCallbackQuery",
             callback_query_id=callback_id,
-            text=text
+            text=text,
         )
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            raise RuntimeError("Telegram callback acknowledgement not accepted")
+        print("[TELEGRAM CALLBACK ACK] status=accepted", flush=True)
+        return True
     except Exception as exc:
-        print(
-            "[REVIEW] answer callback error:",
-            exc
-        )
+        print("[PAPER CALLBACK ACK] status=failed reason=" + type(exc).__name__, flush=True)
+        return False
 
 
 def _download_telegram_photo(
@@ -192,6 +193,10 @@ def _parse_workspace_callback(data):
     """Only a verified owner callback may request local UI opening."""
     import re
     parts = str(data).split(":")
+    if len(parts) == 4 and parts[:2] == ["workspace", "EDITOR"] and parts[2] in ("S", "M"):
+        return ({"kind": "workspace", "mode": "EDITOR", "source_token": parts[3],
+                 "source_kind": parts[2]}
+                if re.fullmatch(r"[0-9a-f]{24}", parts[3]) else None)
     if len(parts) != 4 or parts[0] != "workspace":
         return None
     _, mode, symbol, timeframe = parts
@@ -205,15 +210,56 @@ def _parse_workspace_callback(data):
 
 
 def _run_workspace_callback(callback_query, parsed):
-    """Queue-only boundary: no shell execution or robot startup in listener."""
+    """Owner-only view handoff: Windows local launcher OR verified VPS HTTPS link."""
+    import os
+    callback_id = callback_query.get("id")
+    if parsed.get("source_token"):
+        from signal_archive import load_frozen_signal_geometry
+        import re
+        source_prefix = "mirror-origin:" if parsed.get("source_kind") == "M" else "source-original:"
+        source_id = source_prefix + parsed["source_token"]
+        source = load_frozen_signal_geometry(source_id)
+        timeframe = {
+            "1": "1m", "5": "5m", "15": "15m", "60": "1h", "D": "1d",
+            "15s": "15s", "1m": "1m", "5m": "5m", "15m": "15m",
+            "1h": "1h", "1d": "1d",
+        }.get(str((source or {}).get("timeframe")))
+        symbol = (source or {}).get("symbol")
+        if (not isinstance(symbol, str)
+                or not re.fullmatch(r"[A-Z0-9]{2,32}USDT", symbol)
+                or timeframe is None
+                or (source or {}).get("signal_id") != source_id):
+            _answer_callback(callback_id, "Исходная геометрия сигнала недоступна")
+            return
+        parsed = {"kind": "workspace", "mode": "EDITOR", "symbol": symbol,
+                  "timeframe": timeframe, "signal_id": source_id}
+    context = {"signal_id": parsed["signal_id"]} if parsed.get("signal_id") else {}
+    if os.name != "nt":
+        from workspace_telegram_handoff import (
+            WorkspaceHandoffUnavailable, deliver_workspace_link,
+        )
+        chat_id = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
+        try:
+            deliver_workspace_link(
+                str(chat_id), mode=parsed["mode"],
+                symbol=parsed["symbol"], timeframe=parsed["timeframe"],
+                **context,
+            )
+        except WorkspaceHandoffUnavailable as exc:
+            print("[WORKSPACE HANDOFF BLOCKED]", type(exc).__name__)
+            _answer_callback(callback_id, "Редактор: защищённое HTTPS-соединение недоступно")
+            return
+        _answer_callback(callback_id, "Ссылка на редактор/терминал отправлена в чат")
+        return
     from workspace_owner_launcher import request_owner_workspace_open
     try:
-        request_owner_workspace_open(parsed["mode"], parsed["symbol"], parsed["timeframe"])
+        request_owner_workspace_open(
+            parsed["mode"], parsed["symbol"], parsed["timeframe"], **context)
     except Exception as exc:
         print("[WORKSPACE OPEN FAILED]", type(exc).__name__)
-        _answer_callback(callback_query.get("id"), "Редактор/Терминал недоступен на ПК")
+        _answer_callback(callback_id, "Редактор/Терминал недоступен на ПК")
         return
-    _answer_callback(callback_query.get("id"), "Команда открытия передана на ПК")
+    _answer_callback(callback_id, "Команда открытия передана на ПК")
 
 
 def _parse_robot_callback(data):
@@ -381,27 +427,37 @@ def _call_robot_control_command(command):
     raise ValueError(f"unsupported Robot control command: {command}")
 
 
-def _post_robot_close_all_now(url, payload):
-    # close_all_now() itself imports no network client (see
-    # terminal.application.robot_control's module docstring) -- this is the
-    # transport it is handed, kept here since telegram_review.py already
-    # depends on requests.
+def _post_robot_backend_command(url, payload, *, command):
+    """Shared Telegram transport: preserve each Robot command's wire contract."""
     response = requests.post(url, json=payload, timeout=15)
     body = response.json()
+    if command == "paper_close_all":
+        # Do not log payload, callback id, token, position data or PnL.
+        print(
+            f"[PAPER CLOSE ALL HTTP] status={response.status_code} "
+            f"accepted={response.status_code == 200 and isinstance(body, dict) and body.get('ok') is True}",
+            flush=True,
+        )
     if response.status_code != 200 or not body.get("ok", False):
-        raise RobotControlRejected(f"PAPER backend rejected close_all_now: {body}")
+        raise RobotControlRejected(f"PAPER backend rejected {command}: {body}")
     return body
+
+
+def _post_robot_close_all_now(url, payload):
+    # close_all_now() owns legality; Telegram supplies the existing network
+    # transport without duplicating response validation.
+    return _post_robot_backend_command(url, payload, command="close_all_now")
+
+
+def _post_paper_close_all(payload):
+    """One account-wide PAPER request. Never fall back to Robot-only Close-All."""
+    url = f"{DEFAULT_PAPER_BACKEND_URL}/api/close-all"
+    return _post_robot_backend_command(url, payload, command="paper_close_all")
 
 
 def _post_robot_synchronize_pending_entries(url, payload):
-    # pause_robot()/stop_robot()'s synchronous bridge (AUTOPILOT_ROBOT_V0_1_
-    # ROBOT_CONTROL_DECISION.md v1.3 Section 7) -- same transport pattern as
-    # _post_robot_close_all_now above.
-    response = requests.post(url, json=payload, timeout=15)
-    body = response.json()
-    if response.status_code != 200 or not body.get("ok", False):
-        raise RobotControlRejected(f"PAPER backend rejected synchronize_pending_entries: {body}")
-    return body
+    # Shared bridge for pause/stop, with its original rejection identity.
+    return _post_robot_backend_command(url, payload, command="synchronize_pending_entries")
 
 
 def _request_close_all_confirmation(callback_query):
@@ -421,9 +477,150 @@ def _request_close_all_confirmation(callback_query):
         )
 
 
-def _confirm_close_all_now(callback_query):
+def _request_paper_close_all_confirmation(callback_query):
+    message = callback_query.get("message") or {}
+    chat_id = (message.get("chat") or {}).get("id")
+    _answer_callback(
+        callback_query.get("id"),
+        "Подтвердите закрытие ВСЕХ PAPER-позиций, включая ручные",
+    )
+    if chat_id is not None:
+        telegram_bot.send_message(
+            config.TELEGRAM_TOKEN, chat_id,
+            "⚠️ Закрыть ВСЕ PAPER-позиции (ручные + Robot) Market-ордерами? "
+            "Ожидающие входы будут отменены, Robot поставлен на паузу, "
+            "PAPER_AUTO выключен. Действие необратимо.",
+            reply_markup=build_paper_close_all_confirmation_keyboard(),
+        )
+
+
+def _paper_close_all_callback_action_id(callback_query):
+    """Opaque, route-separated replay key for this EXACT confirmed callback."""
+    callback_id = callback_query.get("id")
+    if not isinstance(callback_id, str) or not callback_id:
+        raise RobotControlRejected("paper_close_all confirmation identity is missing")
+    digest = hashlib.sha256(
+        ("paper-close-all-confirm" + chr(0) + callback_id).encode("utf-8")
+    ).hexdigest()[:32]
+    return f"paper-close-all-cb-{digest}"
+
+
+def _paper_close_all_report_messages(result):
+    """Present only backend-verified economics, without inventing Net PnL.
+
+    All symbols are included across short Telegram messages; missing
+    economics is displayed as unproven even when the account is FLAT.
+    """
+    reports = result.get("symbol_reports")
+    if not isinstance(reports, list) or not reports:
+        return ()
+    lines = []
+    for item in reports:
+        if not isinstance(item, dict):
+            lines.append("Неизвестный символ: экономические данные недоступны")
+            continue
+        symbol = str(item.get("symbol") or "UNKNOWN")[:32]
+        owner = str(item.get("owner") or "UNKNOWN")[:12]
+        proven = (
+            item.get("evidence_status") == "VERIFIED"
+            and all(item.get(field) is not None for field in (
+                "entry_price", "exit_price", "quantity",
+                "gross_pnl_usdt", "fees_costs_usdt", "net_pnl_usdt",
+            ))
+        )
+        if proven:
+            lines.append(
+                f"{symbol} ({owner}): вход {item['entry_price']}; "
+                f"выход {item['exit_price']}; объём {item['quantity']}; "
+                f"Gross {item['gross_pnl_usdt']} USDT; "
+                f"комиссии {item['fees_costs_usdt']} USDT; "
+                f"Net {item['net_pnl_usdt']} USDT"
+            )
+        else:
+            lines.append(f"{symbol} ({owner}): Net PnL не подтверждён")
+    messages = []
+    for i in range(0, len(lines), 10):
+        heading = (
+            "PAPER Close-All — экономика закрытия:"
+            if i == 0 else "PAPER Close-All — продолжение отчёта:"
+        )
+        messages.append(heading + "\n" + "\n".join(lines[i:i+10]))
+    return tuple(messages)
+
+
+def _confirm_paper_close_all(callback_query):
+    # Correlate this callback with the monitor's update number, never the
+    # raw Telegram user/chat/callback identifiers.
+    update_id = callback_query.get("_paper_monitor_update_id")
+    if isinstance(update_id, int) and update_id >= 0:
+        print(f"[PAPER CLOSE ALL CALLBACK] update_id={update_id} phase=received", flush=True)
     try:
-        result = close_all_now(http_post=_post_robot_close_all_now)
+        action_id = _paper_close_all_callback_action_id(callback_query)
+        result = _post_paper_close_all({"client_action_id": action_id})
+        # The backend is authoritative. A transport 200 with malformed
+        # position/result fields is NOT an account-wide FLAT proof.
+        if (
+            not isinstance(result, dict)
+            or result.get("ok") is not True
+            or result.get("client_action_id") != action_id
+            or result.get("positions") != []
+            or not isinstance(result.get("results"), list)
+            or any(item.get("status") != "completed"
+                   for item in result["results"]
+                   if isinstance(item, dict))
+            or any(not isinstance(item, dict) for item in result["results"])
+        ):
+            raise RobotControlRejected("paper_close_all FLAT confirmation was not proven")
+    except RobotControlRejected as exc:
+        _answer_callback(
+            callback_query.get("id"),
+            f"PAPER: закрытие не подтверждено — {exc}",
+        )
+        print("[PAPER CLOSE ALL REJECTED]", exc)
+        return None
+    except Exception as exc:
+        _answer_callback(callback_query.get("id"), "PAPER: ошибка закрытия")
+        print("[PAPER CLOSE ALL ERROR]", exc)
+        return None
+
+    summary = f"✅ PAPER FLAT: закрытие подтверждено. Команд: {len(result['results'])}"
+    _answer_callback(callback_query.get("id"), summary)
+    _send_robot_status_panel(callback_query, summary)
+    chat_id = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
+    if chat_id is not None:
+        for text in _paper_close_all_report_messages(result):
+            try:
+                telegram_bot.send_message(config.TELEGRAM_TOKEN, chat_id, text)
+            except Exception as exc:
+                print("[PAPER CLOSE ALL REPORT DELIVERY ERROR]", type(exc).__name__)
+    print("[PAPER CLOSE ALL CONFIRMED]", action_id, len(result["results"]))
+    return result
+
+
+def _robot_close_all_callback_action_id(callback_query):
+    """Tie a retried Telegram delivery to its original PAPER close action.
+
+    Telegram callback_query.id uniquely identifies the confirmed button tap.
+    We hash it into the existing opaque client_action_id rather than storing
+    Telegram data in PAPER commands. Separate confirmation taps remain separate
+    operator actions; legacy callers without callback IDs keep their default.
+    """
+    callback_id = callback_query.get("id")
+    if not isinstance(callback_id, str) or not callback_id:
+        return None
+    digest = hashlib.sha256(
+        ("robot-close-all-confirm" + chr(0) + callback_id).encode("utf-8")
+    ).hexdigest()[:32]
+    return f"robot-close-all-cb-{digest}"
+
+
+def _confirm_close_all_now(callback_query):
+    action_id = _robot_close_all_callback_action_id(callback_query)
+    try:
+        result = close_all_now(
+            http_post=_post_robot_close_all_now,
+            **({"client_action_id": action_id} if action_id is not None else {}),
+        )
     except RobotControlRejected as exc:
         _answer_callback(
             callback_query.get("id"),
@@ -457,6 +654,16 @@ def _run_robot_control_command(
     # close, so it is never fired directly from a single tap -- see
     # AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.2 Rationale and
     # CR-ROBOT-CONTROL-001's approved_scope for the one-tap confirmation.
+    if command == "paper_close_all":
+        # Owner-only private-chat authorization is enforced by the callback
+        # dispatcher. The explicitly labelled emergency PAPER button is a
+        # direct one-tap close, never a Robot admission command.
+        return _confirm_paper_close_all(callback_query)
+    if command == "paper_close_all_confirm":
+        return _confirm_paper_close_all(callback_query)
+    if command == "paper_close_all_cancel":
+        _answer_callback(callback_query.get("id"), "Закрытие PAPER отменено")
+        return None
     if command == "close_all":
         _request_close_all_confirmation(callback_query)
         return None
@@ -606,7 +813,8 @@ def _send_robot_status_panel(
         telegram_bot.send_message(
             config.TELEGRAM_TOKEN,
             chat_id,
-            f"{prefix}\n\nСтатус робота: {format_robot_status_text(mode, recovery_status)}",
+            f"{prefix}\n\nСтатус робота: {format_robot_status_text(mode, recovery_status)}"
+            f"{robot_control_status_note(mode, recovery_status)}",
             reply_markup=build_robot_control_keyboard(mode, recovery_status),
         )
     except Exception as exc:
@@ -665,6 +873,23 @@ def _process_callback(
             return
         _run_workspace_callback(callback_query, parsed)
         return
+
+    if parsed["kind"] == "robot_control" and parsed["command"] in {
+        "paper_close_all", "paper_close_all_confirm", "paper_close_all_cancel",
+    }:
+        # Unlike the legacy Robot-only controls, account-wide flatten can
+        # close manual positions. Restrict this higher-impact confirmation
+        # to the verified owner's personal chat (no forwarded/group callbacks).
+        callback_chat = (callback_query.get("message") or {}).get("chat") or {}
+        if (
+            str(callback_chat.get("id", "")).strip() != owner_id
+            or callback_chat.get("type") != "private"
+        ):
+            _answer_callback(
+                callback_query.get("id"),
+                "Закрытие всех PAPER-позиций разрешено только в личном чате",
+            )
+            return
 
     if parsed["kind"] == "robot_control":
         _run_robot_control_command(

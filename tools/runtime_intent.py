@@ -6,6 +6,10 @@ Scanner transitions and their capability gates belong to that backend route;
 this module only owns process bootstrap and dependency identity.
 
 Usage: python -m tools.runtime_intent [ALL|SCANNER|ROBOT]
+       python -m tools.runtime_intent --wait-backend   (readiness gate for dependent systemd units)
+
+On Linux the backend and Telegram worker are owned by systemd units (deploy/systemd); the bootstrap
+then waits for them and never spawns anything.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import time
 from typing import Callable, Mapping
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 INTENTS = ("ALL", "SCANNER", "ROBOT")
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8765"
@@ -84,6 +89,10 @@ class Mismatch(Exception):
     """Something answered, but it is not the expected canonical dependency."""
 
 
+class BackendListenerStarting(Mismatch):
+    """A proven existing Backend listener may still be initializing HTTP."""
+
+
 class HttpResponse:
     def __init__(self, status: int, body: bytes) -> None:
         self.status = status
@@ -138,8 +147,38 @@ def paper_safe_backend_env(env: Mapping[str, str]) -> dict[str, str]:
     return child
 
 
+TELEGRAM_EXCLUDED_CREDENTIALS = frozenset((
+    "BYBITSCANNER_OPERATOR_TOKEN",
+    "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN",
+    "BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN",
+))
+
+
+def telegram_safe_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Do not pass unrelated operator credentials to the Telegram worker.
+
+    Telegram handles external callbacks and may spawn child processes; it
+    needs its own bot/Gateway/workspace configuration, not trading operator,
+    Autopilot owner or geometry service credentials. Never log the values.
+    """
+    return {
+        key: value for key, value in env.items()
+        if key.upper() not in TELEGRAM_EXCLUDED_CREDENTIALS
+    }
+
+
 def spawn_console(argv: list[str], cwd: Path, env: Mapping[str, str] | None = None) -> None:
-    """Start a dependency in its own visible console that closes when the child exits."""
+    """Start a dependency in its own visible console that closes when the child exits.
+
+    Windows only. On Linux the PAPER backend and the Telegram worker are owned by
+    their systemd units (``deploy/systemd``, issue #624); a second owner spawned
+    here could race them, so the bootstrap fails closed and no intent is sent.
+    """
+    if os.name != "nt":
+        raise OSError(
+            "on Linux the PAPER backend and Telegram worker are owned by systemd "
+            "(deploy/systemd); this bootstrap never spawns them"
+        )
     subprocess.Popen(
         ["cmd.exe", "/c", *argv], cwd=str(cwd),
         env=None if env is None else dict(env),
@@ -252,8 +291,16 @@ class RuntimeIntentBootstrap:
         monotonic: Callable[[], float] = time.monotonic,
         out: Callable[[str], None] = lambda line: print(line, flush=True),
         require_telegram: bool = True,
+        systemd_managed: bool | None = None,
+        listener_probe: Callable[[str, int], tuple[int, ...]] | None = None,
     ) -> None:
         self._require_telegram = require_telegram
+        self._listener_probe = listener_probe
+        # Linux (#627 contour): the backend and Telegram are started by their systemd units, so the
+        # bootstrap only waits for them to prove READY and never spawns a second owner. An explicitly
+        # injected ``spawn`` keeps the Windows console behaviour (used by tests on every platform).
+        self._systemd_managed = (os.name != "nt" and spawn is None) if systemd_managed is None \
+            else systemd_managed
         self._root = root
         self._env = dict(os.environ if env is None else env)
         self._get = get
@@ -294,7 +341,8 @@ class RuntimeIntentBootstrap:
             if self._require_telegram:
                 self._ensure(
                     "Telegram monitoring", self._probe_telegram,
-                    telegram_argv(self._root, self._python), None,
+                    telegram_argv(self._root, self._python),
+                    telegram_safe_env(self._env),
                 )
         except (Mismatch, TimeoutError, OSError) as error:
             return BootstrapResult(
@@ -310,19 +358,62 @@ class RuntimeIntentBootstrap:
         if state == READY:
             return
         if state == ABSENT:
-            self._out(f"Starting {name}...")
-            self._spawn(name, argv, self._root, child_env)
+            if self._systemd_managed:
+                self._out(f"Waiting for {name} (started by its systemd unit)...")
+            else:
+                self._out(f"Starting {name}...")
+                self._spawn(name, argv, self._root, child_env)
         deadline = self._monotonic() + READY_TIMEOUT_S
         while self._monotonic() < deadline:
             self._sleep(POLL_INTERVAL_S)
             if probe() == READY:
                 return
-        raise TimeoutError(f"{name} did not prove READY within {int(READY_TIMEOUT_S)} s")
+        owner = " (on Linux it is started by its systemd unit; nothing was spawned)" \
+            if self._systemd_managed else ""
+        raise TimeoutError(f"{name} did not prove READY within {int(READY_TIMEOUT_S)} s{owner}")
+
+    def wait_backend(self) -> int:
+        """Readiness gate for dependent units: 0 once the canonical PAPER backend for the expected
+        PAPER DB answers its health probe, 1 otherwise. Never spawns, never sends an intent."""
+        deadline = self._monotonic() + READY_TIMEOUT_S
+        while True:
+            try:
+                state = self._probe_backend()
+            except BackendListenerStarting:
+                # systemd Type=simple can report started while the existing
+                # listener has not yet exposed /api/health. Wait for the same
+                # canonical Backend; never spawn/restart a second owner.
+                state = STARTING
+            except Mismatch as error:
+                self._out(f"FAILED: {error}")
+                return EXIT_BOOTSTRAP_FAILED
+            if state == READY:
+                break
+            if self._monotonic() >= deadline:
+                break
+            self._sleep(POLL_INTERVAL_S)
+        if state == READY:
+            self._out("PAPER backend READY")
+            return EXIT_OK
+        self._out(f"FAILED: PAPER backend did not prove READY within {int(READY_TIMEOUT_S)} s")
+        return EXIT_BOOTSTRAP_FAILED
 
     def _probe_backend(self) -> str:
         try:
             response = self._get(self._backend + "/api/health", PROBE_TIMEOUT_S)
         except Unreachable:
+            # A saturated PAPER owner can time out on /health while still
+            # owning the listener and SQLite. Never spawn a second backend
+            # solely because HTTP is unreachable.
+            from tools.legacy_runtime_process import LegacyOwnerUnproven, probe_listener_pids
+            location = urlsplit(self._backend)
+            try:
+                probe = self._listener_probe or probe_listener_pids
+                listeners = probe(location.hostname or "", location.port or 0)
+            except (LegacyOwnerUnproven, ValueError) as exc:
+                raise Mismatch("PAPER backend listener state cannot be proven; not starting another owner") from exc
+            if listeners:
+                raise BackendListenerStarting("PAPER backend listener is alive but health is unavailable; not starting another owner")
             return ABSENT
         health = _json_or_none(response)
         if (
@@ -343,6 +434,18 @@ class RuntimeIntentBootstrap:
         try:
             response = self._get(self._telegram_health, PROBE_TIMEOUT_S)
         except Unreachable:
+            # HTTP timeout is not proof the getUpdates owner has exited.
+            # Never start a duplicate Telegram polling worker over a live or
+            # unprovable loopback listener.
+            from tools.legacy_runtime_process import LegacyOwnerUnproven, probe_listener_pids
+            location = urlsplit(self._telegram_health)
+            try:
+                probe = self._listener_probe or probe_listener_pids
+                listeners = probe(location.hostname or "", location.port or 0)
+            except (LegacyOwnerUnproven, ValueError) as exc:
+                raise Mismatch("Telegram listener state cannot be proven; not starting another worker") from exc
+            if listeners:
+                raise Mismatch("Telegram listener is alive but health is unavailable; not starting another worker")
             return ABSENT
         health = _json_or_none(response)
         if not isinstance(health, dict) or health.get("component") != "telegram_monitoring":
@@ -413,8 +516,18 @@ def execute_runtime_intent(
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
+    if args == ["--wait-backend"]:
+        return RuntimeIntentBootstrap(require_telegram=False).wait_backend()
+    # VPS systemd owns Telegram independently. Its network outage must not block
+    # the canonical Backend runtime intent or weaken any Robot safety gate.
+    if args == ["--no-telegram", "ALL"]:
+        if os.name == "nt":
+            print("ERROR: --no-telegram is only supported on Linux VPS", flush=True)
+            return EXIT_USAGE
+        print("INFO: Telegram readiness not required for PAPER core; notifications unverified.", flush=True)
+        return RuntimeIntentBootstrap(require_telegram=False).run("ALL")
     if len(args) > 1:
-        print("usage: python -m tools.runtime_intent [ALL|SCANNER|ROBOT]", flush=True)
+        print("usage: python -m tools.runtime_intent [ALL|SCANNER|ROBOT] | --wait-backend | --no-telegram ALL (Linux VPS)", flush=True)
         return EXIT_USAGE
     return RuntimeIntentBootstrap(require_telegram=True).run(
         args[0] if args else "ALL", desktop_notice=True,

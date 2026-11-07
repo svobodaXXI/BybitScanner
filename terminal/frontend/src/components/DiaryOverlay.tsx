@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { marketApiRoutes } from "../marketData/apiRoutes";
 import "./DiaryOverlay.css";
 
-export type DiarySection = "TRADES" | "SETUPS" | "STATISTICS";
+export type DiarySection = "TRADES" | "SETUPS" | "STATISTICS" | "MIRROR";
 type DiaryFilter = "ALL" | "OPEN" | "CLOSED" | "ATTENTION";
 type SetupFilter = "ALL" | "ATTENTION";
 
@@ -89,6 +89,34 @@ type DiarySetup = {
   trade_episode_ids: string[];
   needs_attention: boolean;
   missing_evidence: string[];
+};
+
+type MirrorLevelRow = {
+  symbol: string;
+  timeframe: string;
+  level_id: string;
+  status: string;
+  lifecycle: string;
+  candidate: boolean | null;
+  freshness: string | null;
+  rejection_reason: string | null;
+  breakout: { direction: string; campaign_direction: string; open_time_ms: number; open: number; close: number } | null;
+  breakout_evidence: { kind: string; body_atr: number | null } | null;
+  level_label: string;
+  level_geometry_text: string;
+  first_retest_text: string;
+  imbalance_text: string;
+  sources_text: string;
+  parent_patterns: Array<{ pattern: string; formation_id: string | null }>;
+  robot: { mode: string; risk_reason: string; paper_admission: string; paper_blockers: string[] } | null;
+};
+
+type MirrorLevelsResponse = {
+  ok: boolean;
+  levels: MirrorLevelRow[];
+  counts: Record<string, number>;
+  paper_admission: string;
+  paper_blockers: string[];
 };
 
 type FactorCoverage = {
@@ -342,6 +370,43 @@ function SetupList({ setups }: { setups: DiarySetup[] }) {
   );
 }
 
+function MirrorList({ levels }: { levels: MirrorLevelRow[] }) {
+  return (
+    <div className="diary-setups-list">
+      {levels.map((row) => (
+        <article className={`diary-setup-row ${row.breakout?.campaign_direction?.toLowerCase() ?? ""}`} key={`${row.symbol}:${row.timeframe}:${row.level_id}`}>
+          <div className="diary-trade-heading">
+            <strong>{row.symbol}</strong>
+            <span>{row.timeframe}m</span>
+            <span className="diary-trade-side">{row.breakout ? `Пробой ${row.breakout.direction === "UP" ? "вверх" : "вниз"}` : "Ждёт пробоя"}</span>
+            <span className={row.candidate ? "attention" : ""}>{row.candidate ? "КАНДИДАТ" : row.status}</span>
+          </div>
+          <div className="diary-setup-metrics">
+            <span>Уровень {row.level_label}: {row.level_geometry_text}</span>
+          </div>
+          <div className="diary-setup-metrics">
+            <span>Свеча пробоя {row.breakout ? `${formatDate(row.breakout.open_time_ms)} O ${row.breakout.open} C ${row.breakout.close}` : "—"}</span>
+            <span>{row.breakout_evidence ? `${row.breakout_evidence.kind}${row.breakout_evidence.body_atr === null ? "" : ` ${row.breakout_evidence.body_atr.toFixed(2)} ATR`}` : "—"}</span>
+          </div>
+          <div className="diary-setup-metrics">
+            <span>Ретест: {row.first_retest_text}</span>
+            <span>Свежесть {row.freshness ?? "—"}</span>
+            <span>Причина {row.rejection_reason ?? "—"}</span>
+          </div>
+          <div className="diary-setup-metrics">
+            <span>FVG: {row.imbalance_text}</span>
+          </div>
+          <div className="diary-setup-metrics">
+            <span>Источники {row.sources_text}</span>
+            <span>Паттерн {row.parent_patterns.length ? row.parent_patterns.map((parent) => parent.pattern).join(", ") : "нет (swing)"}</span>
+          </div>
+          {row.robot ? <small className="diary-attention-detail">Робот: {row.robot.mode}, PAPER {row.robot.paper_admission} ({row.robot.paper_blockers.join(", ")})</small> : null}
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function StatisticsView({ statistics }: { statistics: DiaryStatistics }) {
   const mae = statistics.coverage.post_trade_factors["trade.mae_pct"];
   const mfe = statistics.coverage.post_trade_factors["trade.mfe_pct"];
@@ -409,6 +474,7 @@ export function DiaryOverlay({
   const [trades, setTrades] = useState<DiaryTrade[]>([]);
   const [setups, setSetups] = useState<DiarySetup[]>([]);
   const [statistics, setStatistics] = useState<DiaryStatistics | null>(null);
+  const [mirrorLevels, setMirrorLevels] = useState<MirrorLevelRow[]>([]);
   const [tradeFilter, setTradeFilter] = useState<DiaryFilter>("ALL");
   const [setupFilter, setSetupFilter] = useState<SetupFilter>("ALL");
   const [loading, setLoading] = useState(true);
@@ -448,6 +514,13 @@ export function DiaryOverlay({
         const result = (await response.json()) as DiarySetupsResponse;
         if (!result.ok || !Array.isArray(result.setups)) throw new Error("diary setups response is invalid");
         setSetups(result.setups);
+      } else if (section === "MIRROR") {
+        setRequestedTradeMissing(false);
+        const response = await fetch(marketApiRoutes.scannerMirrorLevels);
+        if (!response.ok) throw new Error("mirror levels request failed");
+        const result = (await response.json()) as MirrorLevelsResponse;
+        if (!result.ok || !Array.isArray(result.levels)) throw new Error("mirror levels response is invalid");
+        setMirrorLevels(result.levels);
       } else {
         setRequestedTradeMissing(false);
         const response = await fetch(marketApiRoutes.diaryStatistics);
@@ -501,9 +574,10 @@ export function DiaryOverlay({
           <button aria-current={section === "TRADES" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("TRADES"); setSelectedTradeId(null); }} type="button">Сделки</button>
           <button aria-current={section === "SETUPS" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("SETUPS"); setSelectedTradeId(null); }} type="button">Сетапы</button>
           <button aria-current={section === "STATISTICS" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("STATISTICS"); setSelectedTradeId(null); }} type="button">Статистика</button>
+          <button aria-current={section === "MIRROR" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("MIRROR"); setSelectedTradeId(null); }} type="button">MIRROR</button>
         </nav>
 
-        {!selectedTrade && section !== "STATISTICS" ? (
+        {!selectedTrade && section !== "STATISTICS" && section !== "MIRROR" ? (
           <div className="diary-filter-bar" aria-label={section === "TRADES" ? "Фильтры сделок" : "Фильтры сетапов"}>
             {(section === "TRADES" ? tradeFilters : setupFilters).map((candidate) => {
               const pressed = section === "TRADES" ? tradeFilter === candidate.id : setupFilter === candidate.id;
@@ -564,6 +638,8 @@ export function DiaryOverlay({
 
           {!loading && !loadError && !selectedTrade && section === "SETUPS" && visibleSetups.length > 0 ? <SetupList setups={visibleSetups} /> : null}
           {!loading && !loadError && !selectedTrade && section === "STATISTICS" && statistics ? <StatisticsView statistics={statistics} /> : null}
+          {!loading && !loadError && !selectedTrade && section === "MIRROR" && mirrorLevels.length === 0 ? <p className="diary-state">Нет MIRROR-уровней с пробоем</p> : null}
+          {!loading && !loadError && !selectedTrade && section === "MIRROR" && mirrorLevels.length > 0 ? <MirrorList levels={mirrorLevels} /> : null}
         </div>
       </section>
     </div>
