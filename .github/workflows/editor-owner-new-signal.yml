@@ -17,6 +17,7 @@ on:
       - "terminal/frontend/src/geometryFeedback/ownerSignalDraft.ts"
       - "terminal/frontend/src/geometryFeedback/ownerSignalDraft.test.ts"
       - "tests/test_owner_signal_proposal.py"
+      - "tests/test_geometry_feedback_http_route.py"
       - ".github/workflows/editor-owner-new-signal.yml"
 
 permissions:
@@ -34,7 +35,7 @@ jobs:
       - name: Install only offline review dependencies
         run: python -m pip install pytest==8.4.2 numpy==2.5.1 pandas==3.0.5 requests==2.34.2
       - name: Run isolated owner new-signal proposal tests
-        run: python -m pytest -q tests/test_owner_signal_proposal.py tests/test_geometry_feedback_export.py tests/test_geometry_feedback_learning_report.py tests/test_geometry_feedback_retrospective.py
+        run: python -m pytest -q tests/test_owner_signal_proposal.py tests/test_geometry_feedback_export.py tests/test_geometry_feedback_learning_report.py tests/test_geometry_feedback_retrospective.py tests/test_geometry_feedback_http_route.py
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
