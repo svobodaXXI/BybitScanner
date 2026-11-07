@@ -38,6 +38,7 @@ on:
       - "terminal/api/**"
       - "tests/test_robot_manager_http_stop.py"
       - "tests/test_robot_day_summary.py"
+      - "tests/test_autopilot_telegram_markers.py"
       - "tests/test_robot_paper_acceptance.py"
       - "tests/test_robot_protection_overflow_recovery.py"
       - "tests/test_robot_sync_pending_wedge_stop.py"
@@ -246,6 +247,7 @@ jobs:
           python -m unittest -v
           tests.test_robot_manager_http_stop
           tests.test_robot_day_summary
+          tests.test_autopilot_telegram_markers
           tests.test_robot_paper_acceptance
           tests.test_robot_sync_pending_wedge_stop
           tests.test_paper_flat_robot_execution_fence
