@@ -12,7 +12,7 @@ import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from
 import { rayEndPoint } from "../chart/drawingGeometry";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
-import { chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
+import { chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import { ReplayDrawingUndo } from "./replayDrawingUndo";
 import {
   automaticLineStyle, lastM5AccelerationTimeline, visibleLastM5Accelerations,
@@ -283,6 +283,10 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         // Only a confirmed retirement ends the line. Add a short VISUAL
         // tail beyond that point; no arbitrary candle-based strategy rule.
         const historical = Number.isFinite(stoppedAt);
+        // A retired line with only a small remainder at the viewport's left
+        // edge is visual noise, not evidence of an active nearby structure.
+        // Scroll left to reveal the entire archived segment again.
+        if (historical && isLeftEdgeHistoricalFragment(x1, x2, priceWidth)) continue;
         const tailPx = historical ? Math.max(0, Math.min(8, priceWidth - x2)) : 0;
         const end = historical
           ? { x: x2 + tailPx, y: y2 + (x2 > x1 ? (y2 - y1) * tailPx / (x2 - x1) : 0) }
