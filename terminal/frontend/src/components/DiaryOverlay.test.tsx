@@ -339,10 +339,10 @@ describe("scoped statistics fail-closed UX", () => {
   });
 
   it("does not publish a stale report after switching the requested account", async () => {
-    let finishOld: ((response: Response) => void) | null = null;
+    const pending: { resolve?: (response: Response) => void } = {};
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (url.includes("account_id=paper")) {
-        return new Promise<Response>((resolve) => { finishOld = resolve; });
+        return new Promise<Response>((resolve) => { pending.resolve = resolve; });
       }
       return Promise.resolve(new Response(JSON.stringify({
         ...statisticsResponse, account_id: "bybit-main",
@@ -360,8 +360,8 @@ describe("scoped statistics fail-closed UX", () => {
       onClose={() => {}} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     await screen.findByText("Результативность");
-    if (!finishOld) throw new Error("old request missing");
-    finishOld(new Response(JSON.stringify(statisticsResponse), { status: 200 }));
+    if (!pending.resolve) throw new Error("old request missing");
+    pending.resolve(new Response(JSON.stringify(statisticsResponse), { status: 200 }));
     await waitFor(() => expect(screen.getByText(/bybit-main · раздельная статистика/)).toBeInTheDocument());
     expect(screen.queryByText("Не удалось загрузить дневник")).not.toBeInTheDocument();
   });
