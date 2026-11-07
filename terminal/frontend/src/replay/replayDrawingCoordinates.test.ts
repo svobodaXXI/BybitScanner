@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReplayCandle } from "./replayModel";
 import {
-  chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical,
+  automaticGeometryTimeframeCap, chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical,
 } from "./replayDrawingCoordinates";
 
 const start = Date.UTC(2026, 10, 2);
@@ -56,6 +56,35 @@ describe("manual replay UTC drawing anchors", () => {
       .toBeCloseTo(1);
     // No future retirement may be painted beyond the last closed bar.
     expect(geometryLogicalSegment({ from_ms: firstMs, retired_at_ms: start + 5 * 3_600_000 }, hourly.slice(0, 1))!.to).toBeCloseTo(1);
+  });
+
+  it("caps M5 slopes on H1 at their real publication, never on native M5", () => {
+    const published = start + 6 * 3_600_000;
+    const m5 = { kind: "REFERENCE_5M" as const, available_at_ms: published };
+    const acceleration = { kind: "ACCELERATION_5M" as const, available_at_ms: published };
+    const yellow = { kind: "MAIN_1H" as const, available_at_ms: published };
+    const target = { kind: "TARGET_1H" as const, available_at_ms: published };
+    expect(automaticGeometryTimeframeCap(m5, "1h")).toBe(published);
+    expect(automaticGeometryTimeframeCap(acceleration, "1h")).toBe(published);
+    expect(automaticGeometryTimeframeCap(m5, "5m")).toBe(Infinity);
+    expect(automaticGeometryTimeframeCap(acceleration, "5m")).toBe(Infinity);
+    expect(automaticGeometryTimeframeCap(yellow, "1h")).toBe(Infinity);
+    expect(automaticGeometryTimeframeCap(target, "1h")).toBe(Infinity);
+
+    const h1 = Array.from({ length: 10 }, (_, i) => mkBar(i, 60));
+    const a = start + 2 * 3_600_000 + 10 * 60_000;
+    const original = { from_ms: a };
+    const capped = geometryLogicalSegment({
+      ...original,
+      retired_at_ms: Math.min(
+        automaticGeometryTimeframeCap(m5, "1h"), h1.at(-1)!.end_ms,
+      ),
+    }, h1);
+    expect(capped?.from).toBeCloseTo(2 + 10 / 60);
+    expect(capped?.to).toBe(6);
+    expect(geometryLogicalSegment(original, h1)?.to).toBe(10);
+    // Neither the archive nor the calculated M5 source coordinates move.
+    expect(m5).toEqual({ kind: "REFERENCE_5M", available_at_ms: published });
   });
 
   it("culls only small retired-line fragments clipped by the left viewport edge", () => {
