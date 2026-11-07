@@ -70,6 +70,27 @@ def test_bad_cutoff_corrupt_ohlc_and_crossing_lines_rejected():
         assert observe_four_pivot_channel(bars, 111) is None
 
 
+def test_explicit_closed_flags_reject_provisional_or_ambiguous_bars():
+    bars = zigzag(FOUR, 140)
+    bars["closed"] = True
+    original = observe_four_pivot_channel(bars, 111)
+    assert original is not None
+    for index in (85, 111):
+        unfinished = bars.copy()
+        unfinished.loc[index, "closed"] = False
+        assert observe_four_pivot_channel(unfinished, 111) is None
+        followup = compare_channel_preview(original, unfinished, 113)
+        assert followup is not None
+        assert followup.status == "NOT_PROVEN"
+    ambiguous = bars.copy()
+    ambiguous["closed"] = 1  # Numeric truthiness is not close evidence.
+    assert observe_four_pivot_channel(ambiguous, 111) is None
+    # A future unfinished candle is irrelevant at the old decision time.
+    future = bars.copy()
+    future.loc[112, "closed"] = False
+    assert observe_four_pivot_channel(future, 111) == original
+
+
 def test_non_alternating_or_split_wave_is_not_a_four_pivot_channel():
     bars = zigzag(FOUR, 140)
     highs = [{"index": 72, "price": 101.0}, {"index": 84, "price": 102.0}]
