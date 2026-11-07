@@ -392,28 +392,40 @@ class CausalGeometryFeed:
             self._last_prior_candidate_touch_ms = line.second.at_ms
             self._prior_candidates = []
             return
-        touch = line.second.at_ms
-        if self._last_prior_candidate_touch_ms is None or touch > self._last_prior_candidate_touch_ms:
+        # The PURPLE prior follows new confirmed H1 touches of the already
+        # frozen 1--3 line; it does not need a newly refitted yellow 1--3/2--4.
+        # A wick-pierced H1 proposal must be rejected, but that rejection
+        # cannot erase a legitimate later pivot touching the old line.
+        for pivot in self._hourly.pivots:
+            touch = pivot.at_ms
+            if pivot.kind != line.first.kind or touch <= line.second.at_ms or (
+                self._last_prior_candidate_touch_ms is not None and
+                touch <= self._last_prior_candidate_touch_ms
+            ) or pivot.confirmed_at_ms > closed_at_ms:
+                continue
+            # Only an actual confirmed H1 pivot at the time-evaluated line
+            # level qualifies; not a near miss, a local M5 wick or a re-fit.
+            if pivot.price != line.value_at(touch):
+                continue
             self._last_prior_candidate_touch_ms = touch
-            if self._prior_price is not None and (
-                (trend.side == "BULL" and line.second.price > self._prior_price) or
-                (trend.side == "BEAR" and line.second.price < self._prior_price)
+            if self._prior_price is None or not (
+                (trend.side == "BULL" and pivot.price > self._prior_price) or
+                (trend.side == "BEAR" and pivot.price < self._prior_price)
             ):
-                # The original first wick remains fixed; the old trend
-                # extreme is known from H1 bars strictly BEFORE this touch.
-                earlier = [
-                    bar for bar in self._hourly.bars
-                    if line.first.at_ms <= bar.start_ms < touch
-                    and bar.end_ms <= closed_at_ms
-                ]
-                if earlier:
-                    extreme = (
-                        max(bar.high for bar in earlier) if trend.side == "BULL"
-                        else min(bar.low for bar in earlier)
-                    )
-                    self._prior_candidates.append((
-                        touch, line.second.price, extreme, trend.side, line.available_at_ms,
-                    ))
+                continue
+            earlier = [
+                bar for bar in self._hourly.bars
+                if line.first.at_ms <= bar.start_ms < touch
+                and bar.end_ms <= closed_at_ms
+            ]
+            if earlier:
+                extreme = (
+                    max(bar.high for bar in earlier) if trend.side == "BULL"
+                    else min(bar.low for bar in earlier)
+                )
+                self._prior_candidates.append((
+                    touch, pivot.price, extreme, trend.side, pivot.confirmed_at_ms,
+                ))
         # A touch is never enough. Only a later, FULLY CLOSED H1 extreme
         # advances the prior. Pending touches remain eligible after a re-fit.
         for touch, price, extreme, side, known_at in self._prior_candidates:
