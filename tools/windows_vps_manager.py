@@ -38,6 +38,7 @@ ACTIONS = {
     # tools.vps_check is a pre-start gate (ports must be free, secret env file
     # readable), so on a running VPS it can only fail; read live health instead.
     "Диагностика PAPER": (
+        "set -e; "
         "systemctl show bybitscanner-paper-backend.service "
         "-p ActiveState -p SubState -p MainPID -p NRestarts -p ActiveEnterTimestamp; "
         f"{HEALTH} | python3 -m json.tool"
@@ -48,6 +49,7 @@ ACTIONS = {
         f"{GIT} rev-parse --short HEAD"
     ),
     "Предпроверка обновления": (
+        "set -e; "
         "printf '=== GIT ===\\n'; "
         f"{GIT} status --porcelain=v1; "
         f"{GIT} branch --show-current; "
