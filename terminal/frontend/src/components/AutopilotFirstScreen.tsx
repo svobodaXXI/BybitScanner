@@ -12,10 +12,11 @@ import {
   loadAutopilotMode,
   loadDiaryTrades,
   loadOpenPositions,
+  loadRobotDaySummary,
+  type RobotDaySummary,
   loadRuntimeHealth,
   type PositionProtection,
   type RuntimeHealth,
-  summarizeRobotDay,
   uniqueOpenEpisodeId,
 } from "../autopilot/autopilotFirstScreenData";
 import type { PaperOpenPosition } from "../contracts/trading";
@@ -229,6 +230,7 @@ export function AutopilotFirstScreen({
   const [trades, setTrades] = useState<Loadable<DiaryTradeSummaryRow[]>>({
     status: "loading",
   });
+  const [robotDay, setRobotDay] = useState<Loadable<RobotDaySummary>>({ status: "loading" });
   const generation = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -242,11 +244,13 @@ export function AutopilotFirstScreen({
     setHealth({ status: "loading" });
     setPositions({ status: "loading" });
     setTrades({ status: "loading" });
+    setRobotDay({ status: "loading" });
 
     await Promise.all([
       settle(loadAutopilotMode).then(apply(setAutopilot)),
       settle(loadRuntimeHealth).then(apply(setHealth)),
       settle(() => loadDiaryTrades(accountKey)).then(apply(setTrades)),
+      settle(loadRobotDaySummary).then(apply(setRobotDay)),
       settle(loadOpenPositions).then(apply(setPositions)),
     ]);
   }, [accountKey]);
@@ -277,27 +281,20 @@ export function AutopilotFirstScreen({
       <dl className="autopilot-summary" aria-label="Сводка дня">
         <SummaryItem label="PnL за день">
           <LoadState
-            value={trades}
-            render={(value) => {
-              const day = summarizeRobotDay(value, now());
-              return day === null ? (
-                <span className="autopilot-missing">Нет подтверждённых данных робота</span>
-              ) : day.netPnl === null ? (
-                <span className="autopilot-missing">
-                  Нет данных: {day.tradesWithoutPnl} из {day.closedTrades}{" "}
-                  сделок без PnL
-                </span>
-              ) : (
-                formatUsdt(day.netPnl)
-              );
-            }}
+            value={robotDay}
+            render={(day) => day.netPnl === null ? (
+              <span className="autopilot-missing">
+                Нет данных: {day.tradesWithoutPnl} из {day.closedTrades} сделок без полного PnL
+              </span>
+            ) : (
+              <span title="PAPER Robot: закрытые сделки за день (МСК), результат за вычетом записанных комиссий">
+                {formatUsdt(day.netPnl)}
+              </span>
+            )}
           />
         </SummaryItem>
         <SummaryItem label="Сделок за день">
-          <LoadState
-            value={trades}
-            render={(value) => summarizeRobotDay(value, now())?.closedTrades ?? "—"}
-          />
+          <LoadState value={robotDay} render={(day) => day.closedTrades} />
         </SummaryItem>
       </dl>
 
