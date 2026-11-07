@@ -59,6 +59,19 @@ export function geometryLogicalSegment(
   return from === null || to === null || to <= from ? null : { from, to };
 }
 
+/**
+ * Hide tiny remnants of already-ended lines at the left viewport edge.
+ * This affects canvas visibility only: source anchors and archived versions
+ * remain untouched and reappear when the user scrolls back to their time.
+ */
+export function isLeftEdgeHistoricalFragment(
+  fromX: number, toX: number, paneWidth: number,
+): boolean {
+  if (![fromX, toX, paneWidth].every(Number.isFinite) || paneWidth <= 0) return false;
+  return fromX < 0 && toX > 0 &&
+    toX < Math.min(120, paneWidth * 0.15);
+}
+
 /** Replay magnet: only already-visible candle HIGH/LOW, in the selected TF.
  * This adapter maps absolute UTC slots to canvas pixels without rounding
  * 5m anchors to H1 or touching the automatic research geometry.
