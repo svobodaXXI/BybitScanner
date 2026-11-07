@@ -1011,7 +1011,7 @@ export function ChartPanel({
   }, [deleteSelected]);
   return (
     <section
-      className="chart-panel workspace-panel"
+      className={`chart-panel workspace-panel${positionFooter ? " has-position-footer" : ""}`}
       aria-label="Candlestick chart"
     >
       <div className="chart-content-row">
