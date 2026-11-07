@@ -152,14 +152,19 @@ $index = Join-Path $dist 'index.html'
 if (-not (Test-Path -LiteralPath $index)) { throw 'BLOCKED: Built index.html missing' }
 $jsFiles = @(Get-ChildItem -LiteralPath (Join-Path $dist 'assets') -File -Filter '*.js')
 if ($jsFiles.Count -eq 0) { throw 'BLOCKED: No generated JavaScript files' }
-$dayMarker = $false
+# ASCII-only markers: Windows PowerShell 5.1 opens UTF-8 .ps1 without BOM as ANSI.
+# The CSS-class string literals survive Vite minification and prove the
+# exact Autopilot first-screen component was included in the JS bundle.
+$screenMarker = $false
 foreach ($file in $jsFiles) {
-    if ((Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8).Contains('Сделок за день')) {
-        $dayMarker = $true
+    $compiledJs = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
+    if ($compiledJs.Contains('autopilot-first-screen') -and
+        $compiledJs.Contains('autopilot-utility-stack')) {
+        $screenMarker = $true
         break
     }
 }
-if (-not $dayMarker) { throw 'BLOCKED: New Autopilot UI marker absent from built JS' }
+if (-not $screenMarker) { throw 'BLOCKED: Autopilot first-screen component missing from built JS' }
 
 $files = @{}
 foreach ($file in (Get-ChildItem -LiteralPath $dist -File -Recurse)) {
