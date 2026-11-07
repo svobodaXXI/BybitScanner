@@ -78,7 +78,12 @@ def observe_four_pivot_channel(candles, as_of_index: int | None = None) -> Chann
             return None
 
     try:
-        highs, lows = find_pivots(prefix.copy())
+        # The shared pivot finder normally filters repeated same-side prices
+        # by 0.3%. That intentionally removes flat ranges from active detectors.
+        # For this OBSERVATION-ONLY channel preview retain true 3/3 pivots
+        # even at exactly equal prices, so horizontal boxes can be described.
+        # Do not change the production pivot-finder default or active callers.
+        highs, lows = find_pivots(prefix.copy(), min_change=0)
         sequence = _sequence(highs, lows)
     except (TypeError, KeyError, ValueError, IndexError, ArithmeticError, OverflowError):
         return None
