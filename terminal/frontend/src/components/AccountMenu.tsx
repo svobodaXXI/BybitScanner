@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { marketApiRoutes } from "../marketData/apiRoutes";
 import { accountWorkspaceStore } from "../accountWorkspace/accountWorkspaceStore";
 import type { AccountWorkspaceProjection } from "../accountWorkspace/accountWorkspaceStore";
+import { manualMainReadProjection } from "../accountWorkspace/manualMainReadProjection";
+import { LiveAccountInventory } from "./LiveAccountInventory";
 import {
   dismissPopupFromBackdrop,
   shieldPopupClickInteraction,
@@ -60,6 +62,10 @@ export function AccountMenu({
   const [catalogError, setCatalogError] = useState(false);
   const [manualMain, setManualMain] = useState<AccountDescriptor[]>([]);
   const [manualMainUnavailable, setManualMainUnavailable] = useState(false);
+  const [mainInventory, setMainInventory] = useState<{ name: string; projection: AccountWorkspaceProjection } | null>(null);
+  const [mainInventoryError, setMainInventoryError] = useState("");
+  const [mainInventoryLoading, setMainInventoryLoading] = useState<string | null>(null);
+  const mainInventoryRequest = useRef(0);
   const [addOpen, setAddOpen] = useState(false);
   const [name, setName] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -106,6 +112,27 @@ export function AccountMenu({
     } catch {
       setManualMain([]);
       setManualMainUnavailable(true);
+    }
+  };
+
+  const openMainInventory = async (account: AccountDescriptor) => {
+    const request = ++mainInventoryRequest.current;
+    setMainInventory(null);
+    setMainInventoryError("");
+    setMainInventoryLoading(account.id);
+    try {
+      const refreshed = await fetch(marketApiRoutes.manualMainRefresh(account.id), { method: "POST" });
+      if (!refreshed.ok) throw new Error("main_refresh_failed");
+      const response = await fetch(marketApiRoutes.manualMainSummary(account.id), { cache: "no-store" });
+      if (!response.ok) throw new Error("main_summary_unavailable");
+      const payload = await response.json() as { ok?: boolean; summary?: unknown };
+      const projection = payload.ok === true ? manualMainReadProjection(account.id, payload.summary) : null;
+      if (!projection) throw new Error("main_snapshot_invalid");
+      if (request === mainInventoryRequest.current) setMainInventory({ name: account.display_name, projection });
+    } catch {
+      if (request === mainInventoryRequest.current) setMainInventoryError("MAIN positions unavailable. PAPER was not changed.");
+    } finally {
+      if (request === mainInventoryRequest.current) setMainInventoryLoading(null);
     }
   };
 
@@ -331,6 +358,10 @@ export function AccountMenu({
                 <strong>{account.display_name}</strong>
                 <small>BYBIT · MAINNET · {account.status} · Separate MAIN service</small>
                 <small>Read-only in this terminal. Trading and account switching are not enabled yet.</small>
+                <button type="button" disabled={mainInventoryLoading === account.id}
+                  onClick={() => void openMainInventory(account)}>
+                  {mainInventoryLoading === account.id ? "Loading positions…" : "All MAIN positions"}
+                </button>
                 {refreshError[account.id] ? <small role="alert">{refreshError[account.id]}</small> : null}
                 <button type="button" disabled={refreshingAccount === account.id}
                   onClick={() => void (async () => {
@@ -346,11 +377,19 @@ export function AccountMenu({
                   })()}>Refresh MAIN</button>
               </article>
             ))}
+            {mainInventoryError ? <small role="alert">{mainInventoryError}</small> : null}
             {manualMainUnavailable ? <small role="status">Separate MAIN service unavailable; PAPER unchanged.</small> : null}
             <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add MAIN account</button>
           </section>
         </div>
       ) : null}
+      {mainInventory ? <LiveAccountInventory
+        activeAccountName={mainInventory.name + " · MAIN · READ ONLY"}
+        activeSymbol=""
+        projection={mainInventory.projection}
+        onClose={() => { ++mainInventoryRequest.current; setMainInventory(null); }}
+        onNavigate={() => { ++mainInventoryRequest.current; setMainInventory(null); }}
+      /> : null}
       {confirmAccount ? (
         <div className="account-dialog-backdrop" role="presentation">
           <section aria-label="Confirm account switch" aria-modal="true" className="account-dialog" role="dialog">
