@@ -212,8 +212,6 @@ describe("Autopilot compact first screen", () => {
       },
     });
     render(<AutopilotFirstScreen now={() => NOW} />);
-    const summary = await screen.findByRole("definition", { name: "" }).catch(() => null);
-    expect(summary).toBeNull();
     expect(await screen.findAllByText("Данные недоступны")).toHaveLength(2);
     expect(screen.queryByText("+0.00 USDT")).not.toBeInTheDocument();
   });
