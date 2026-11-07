@@ -738,10 +738,13 @@ export function ModePanel({
         {alternatives.map((candidate) => (
           <button
             key={candidate}
+            className="workspace-nav-button"
+            aria-label={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Автопилот" : "Редактор"}
+            title={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Автопилот" : "Редактор"}
             onClick={() => onModeChange(candidate)}
             type="button"
           >
-            {candidate}
+            <span aria-hidden="true" className="workspace-nav-icon">{candidate === "TERMINAL" ? "$" : candidate === "AUTOPILOT" ? "◉" : "✎"}</span>
           </button>
         ))}
       </nav>
