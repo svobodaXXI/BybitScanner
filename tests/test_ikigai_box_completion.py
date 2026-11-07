@@ -38,6 +38,16 @@ class BoxCompletedSignalTests(unittest.TestCase):
         candles = rows([(99, 101), (87, 93), (84, 99), (85, 91)])
         self.assertTrue(box_first_grid_already_completed(candles, formation("LONG")))
 
+    def test_non_integer_candle_indices_cannot_skip_completed_history(self):
+        candles = rows([(99, 101), (90, 94), (83, 87), (85, 92)])
+        self.assertFalse(box_first_grid_already_completed(candles, formation("LONG")))
+        for field in ("anchor_end_index", "as_of_index"):
+            for invalid in (True, False, 0.5, 1.9, "0", None):
+                with self.subTest(field=field, invalid=invalid):
+                    candidate = formation("LONG")
+                    setattr(candidate, field, invalid)
+                    self.assertTrue(box_first_grid_already_completed(candles, candidate))
+
     def test_invalid_or_insufficient_history_fails_closed(self):
         candles = rows([(99, 101), (85, 95), (86, 94), (87, 93)])
         invalid = formation("LONG")
