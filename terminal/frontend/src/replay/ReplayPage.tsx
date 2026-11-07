@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  completeHourlyCandles, nextClosedCandleCursor, timeframeStepCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  completeHourlyCandles, hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -84,7 +84,10 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
    const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const displayCandles = useMemo(() => timeframe === "1h"
-    ? completeHourlyCandles(shown.candles) : shown.candles, [shown.candles, timeframe]);
+    ? hourlyChartCandles(document, shown.candles) : shown.candles,
+  [shown.candles, timeframe, document]);
+  const replayStartMs = document.events.find(event =>
+    event.kind === "CANDLE_CLOSED")?.candle?.start_ms ?? Infinity;
   // Build a frozen visual-only record once per archive. Each already
   // revealed provisional line persists as drawn; rewinding masks its future.
   const earlyTimeline = useMemo(() => earlyGeometryTimeline(document), [document]);
@@ -182,6 +185,11 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
     candleSeries.setData(displayCandles.map((c) => ({
       time: (c.start_ms / 1000) as UTCTimestamp,
       open: c.open, high: c.high, low: c.low, close: c.close,
+      // H1 before the replay's first M5 belongs to the known warmup, not
+      // to an event/frame. Muted candles distinguish evidence from playback.
+      ...(timeframe === "1h" && c.start_ms < replayStartMs
+        ? { color: "#617287", wickColor: "#8190a3", borderColor: "#617287" }
+        : {}),
     })));
      const dmiSeries = indicators.current;
     if (dmiSeries) {
@@ -444,7 +452,10 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
   };
   return (
     <div className="replay-chart-shell" data-chart-timeframe={timeframe}
-      data-displayed-candles={displayCandles.length} data-drawing-viewport={drawingViewport}>
+      data-displayed-candles={displayCandles.length}
+      data-first-chart-candle-ms={displayCandles[0]?.start_ms ?? ""}
+      data-context-hourly-candles={timeframe === "1h" ? document.context_1h?.length ?? 0 : 0}
+      data-drawing-viewport={drawingViewport}>
       <div className="replay-chart-frame" onDoubleClick={event => {
         if (drawingTool !== "crosshair" || !chart.current || displayCandles.length === 0) return;
         const rect = event.currentTarget.getBoundingClientRect();
@@ -455,10 +466,15 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         const selected = displayCandles.find(bar => bar.start_ms <= at && at < bar.end_ms)
           ?? displayCandles.reduce((best, bar) =>
             Math.abs(bar.start_ms - at) < Math.abs(best.start_ms - at) ? bar : best);
+        // The grey H1 evidence predates the replay's first actionable M5.
+        // It can be inspected/drawn over but cannot become a virtual start.
+        if (selected.start_ms < replayStartMs) return;
         onChooseStart(selected.start_ms);
       }}>
         <div className="replay-chart-watermark" aria-label={`Инструмент ${document.symbol}, ${timeframe}`}>
           {document.symbol} · {timeframe === "1h" ? "1H" : "5M"}
+          {timeframe === "1h" && document.context_1h?.length
+            ? <span>Серые свечи — предыстория H1</span> : null}
         </div>
         <div className="replay-chart" ref={container}
           aria-label="Свечной график и нижняя панель ADX DMI" />
