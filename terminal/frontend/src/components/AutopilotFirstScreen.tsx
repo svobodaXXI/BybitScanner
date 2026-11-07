@@ -307,18 +307,18 @@ export function AutopilotFirstScreen({
             const id = uniqueOpenEpisodeId(positions.value[0].symbol, trades.value);
             if (id) onTradeDetails?.(id);
           }}>
-          <span className="workspace-nav-icon" aria-hidden="true">◎</span>
+          <span className="workspace-nav-icon" aria-hidden="true"><svg className="workspace-nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="6.5" cy="16" r="3.5"/><circle cx="17.5" cy="16" r="3.5"/><path d="M3.5 14V8l2-4h3l2 8M20.5 14V8l-2-4h-3l-2 8M10 11h4"/></svg></span>
         </button>
         <button className="workspace-nav-button" type="button" aria-label="Все открытые позиции" title="Все открытые позиции" disabled={!onOpenPositions} onClick={onOpenPositions}>
-          <span className="workspace-nav-icon" aria-hidden="true">☷</span>
+          <span className="workspace-nav-icon" aria-hidden="true"><svg className="workspace-nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg></span>
         </button>
         <button className="workspace-nav-button" type="button" aria-label="Статистика" title="Статистика" disabled={!onStatistics} onClick={onStatistics}>
-          <span className="workspace-nav-icon" aria-hidden="true">▂▅▇</span>
+          <span className="workspace-nav-icon" aria-hidden="true"><svg className="workspace-nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3"><rect x="4" y="15" width="2.5" height="5" rx="0.3"/><rect x="10.75" y="10" width="2.5" height="10" rx="0.3"/><rect x="17.5" y="5" width="2.5" height="15" rx="0.3"/></svg></span>
         </button>
         <button className="workspace-nav-button" type="button" aria-label="Терминал" title="Терминал" disabled={!onTerminal} onClick={onTerminal}>
           <span className="workspace-nav-icon" aria-hidden="true">$</span>
         </button>
-        <button className="workspace-nav-button" type="button" aria-label="Управление роботом" title="Управление роботом" disabled={!onRobotControls} onClick={onRobotControls}><svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M14.7 6.3a5 5 0 0 0-6.4 6.4L3 18l3 3 5.3-5.3a5 5 0 0 0 6.4-6.4l-3.3 3.3-3-3z"/></svg></button>
+        <button className="workspace-nav-button" type="button" aria-label="Управление роботом" title="Управление роботом" disabled={!onRobotControls} onClick={onRobotControls}><svg className="workspace-nav-symbol" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M14.7 6.3a5 5 0 0 0-6.4 6.4L3 18l3 3 5.3-5.3a5 5 0 0 0 6.4-6.4l-3.3 3.3-3-3z"/></svg></button>
         {accountControl ? <div className="workspace-nav-account">{accountControl}</div> : null}
       </nav>
 
