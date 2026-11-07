@@ -6,7 +6,7 @@ from research.causal_trend_geometry import (
     CausalGeometryFeed, ConfirmedPivot, ConfirmedSwingStream,
     last_correction_reference, main_line_contact, recent_hourly_trend,
     original_reversal_trend, trend_from_frozen_first_pair,
-    wick_tight_hourly_line,
+    wick_tight_hourly_line, confirmed_continuation_with_successive_origins,
 )
 from research.historical_candle_feed import FIVE_MINUTES_MS, ONE_HOUR_MS
 from research.historical_market_replay import Candle
@@ -215,6 +215,42 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual((line.first, line.second), (start, candidate))
         for bar in compatible[1:]:
             self.assertLessEqual(line.value_at(bar.start_ms), bar.low)
+
+    def test_h1_bear_continuation_moves_to_prior_confirmed_lower_high_after_new_low(self):
+        # A newer 4-pivot structure can use a later confirmed 1/2 pair
+        # when the original 1/2 would intersect genuine H1 wicks.
+        # This must not mint a version before the fourth point is confirmed.
+        from research.causal_trend_geometry import (
+            CausalLine, TrendCandidate, recent_hourly_trend,
+        )
+        highs_lows = [
+            (130, 112), (127, 107), (125, 109), (124, 100),
+            (122, 106), (118, 99), (116, 100), (115, 92),
+            (114, 98), (111, 91), (109, 93), (107, 87),
+        ]
+        bars = tuple(make_bar(i, high, low) for i, (high, low) in enumerate(highs_lows))
+        def pivot(kind, i):
+            bar = bars[i]
+            return ConfirmedPivot(kind, i, bar.start_ms, bar.end_ms + ONE_HOUR_MS,
+                                  bar.high if kind == "HIGH" else bar.low)
+        a, b, c, d, e, f = (
+            pivot("HIGH", 0), pivot("LOW", 3),
+            pivot("HIGH", 4), pivot("LOW", 7),
+            pivot("HIGH", 8), pivot("LOW", 11),
+        )
+        previous = recent_hourly_trend((a, b, c, d))
+        self.assertIsNotNone(previous)
+        # Test the helper at the actual fourth-pivot confirmation boundary.
+        # Earlier than this, the last LOW is not a confirmed structural point.
+        before = confirmed_continuation_with_successive_origins(
+            (a, b, c, d, e), previous, bars)
+        self.assertIsNone(before)
+        new = confirmed_continuation_with_successive_origins(
+            (a, b, c, d, e, f), previous, bars)
+        self.assertIsNotNone(new)
+        self.assertEqual(new.side, "BEAR")
+        self.assertEqual(new.main.second, e)
+        self.assertEqual(new.pivot_sequence[-1], f)
 
     def test_real_grass_august_22_h1_upper_wick_rejects_pivot_substitution(self):
         # Public GRASSUSDT H1 evidence (2026-08-22, UTC): the wick at
