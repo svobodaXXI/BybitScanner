@@ -172,13 +172,13 @@ $rootFiles = @(Get-ChildItem -LiteralPath $dist -File)
 $subdirs = @(Get-ChildItem -LiteralPath $dist -Directory -Recurse)
 if ($rootFiles.Count -ne 1 -or $rootFiles[0].Name -cne 'index.html' -or
     $subdirs.Count -ne 1 -or $subdirs[0].Name -cne 'assets' -or
-    $subdirs[0].LinkType) {
+    ($subdirs[0].Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
     throw 'BLOCKED: Unexpected Vite dist layout'
 }
 $files = @{}
 $files['index.html'] = (Get-FileHash -LiteralPath $index -Algorithm SHA256).Hash.ToLowerInvariant()
 foreach ($asset in (Get-ChildItem -LiteralPath (Join-Path $dist 'assets') -File)) {
-    if ($asset.LinkType) { throw 'BLOCKED: Symlink in Vite assets' }
+    if (($asset.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { throw 'BLOCKED: Symlink in Vite assets' }
     $files['assets/' + $asset.Name] = (Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 $manifest = [ordered]@{ source_sha = $sourceSha; files = $files }
