@@ -23,7 +23,7 @@ import {
 } from "../marketData/workspaceSwitch";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
-import { projectSignalGeometry, restoreSavedSignalCorrection } from "../geometryFeedback/signalChartBridge";
+import { appendRetrospectiveCandles, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
 import type { OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
@@ -101,6 +101,8 @@ export function App() {
   const [mode, setMode] = useState<WorkspaceMode>(launchLink?.mode ?? "TERMINAL");
   const [frozenSignal, setFrozenSignal] = useState<{
     candles: Candle[];
+    sourceCandles: Candle[];
+    context: { asOfMs: number; barsSha256: string } | null;
     referenceDrawings: DrawingObject[];
     editableDrawings: DrawingObject[];
     signalId: string;
@@ -146,7 +148,10 @@ export function App() {
           throw new Error("Frozen snapshot provenance is unavailable");
         const savedReview = payload.latest_review as {
           review_id?: string;
+          retrospective_bars?: RetrospectiveOhlc[];
           submission?: {
+            context_as_of_ms?: number;
+            context_bars_sha256?: string;
             signal_id?: string; snapshot_revision?: string; bars_sha256?: string;
             label?: GeometryReviewDraft["label"]; note?: string;
             corrected_boundaries?: Array<{
@@ -165,6 +170,22 @@ export function App() {
           || typeof savedReview.submission?.note !== "string"
           || savedReview.submission.note.length > 1024
         )) throw new Error("Saved review does not match source signal");
+        const savedContext = savedReview?.submission?.context_as_of_ms !== undefined
+          ? {
+              asOfMs: savedReview.submission.context_as_of_ms,
+              barsSha256: savedReview.submission.context_bars_sha256 ?? "",
+            }
+          : null;
+        if ((savedContext && (!/^[0-9a-f]{64}$/i.test(savedContext.barsSha256) ||
+              !Array.isArray(savedReview?.retrospective_bars))) ||
+            (!savedContext && savedReview?.retrospective_bars))
+          throw new Error("Invalid saved retrospective context");
+        const reviewCandles = savedContext
+          ? appendRetrospectiveCandles(
+              candles, savedReview?.retrospective_bars ?? [],
+              snapshot.timeframe, savedContext.asOfMs,
+            )
+          : candles;
         let editableDrawings = projected.editableDrawings;
         if (savedReviewLabel === "GEOMETRY_CORRECTED") {
           if (!Array.isArray(savedReview?.submission?.corrected_boundaries))
@@ -173,12 +194,13 @@ export function App() {
             id: line.boundary_id, type: line.kind, anchors: line.anchors,
           }));
           editableDrawings = restoreSavedSignalCorrection(
-            projected.referenceDrawings, reviewedLines, candles,
+            projected.referenceDrawings, reviewedLines, reviewCandles,
           );
         }
         if (!controller.signal.aborted) {
           setFrozenSignal({
-            candles, ...projected, editableDrawings, signalId: link.signalId!,
+            candles: reviewCandles, sourceCandles: candles, context: savedContext,
+            ...projected, editableDrawings, signalId: link.signalId!,
             snapshotRevision: payload.snapshot_revision, barsSha256: payload.bars_sha256,
             savedReviewId: typeof savedReview?.review_id === "string" ? savedReview.review_id : null,
             savedReviewLabel,
@@ -1290,6 +1312,43 @@ export function App() {
           candles={mode === "EDITOR" && frozenSignal ? frozenSignal.candles : market.candles}
           editorMode={mode === "EDITOR"}
           onEditorNavigate={setMode}
+          retrospectiveContext={mode === "EDITOR" ? frozenSignal?.context ?? null : null}
+          onExtendEditorHistory={mode === "EDITOR" && frozenSignal ? async () => {
+            const current = frozenSignal;
+            const response = await fetch(
+              `/api/workspace/signal-geometry/continuation?signal_id=${encodeURIComponent(current.signalId)}`,
+              { credentials: "same-origin" },
+            );
+            const data = await response.json();
+            if (!response.ok || data.ok !== true ||
+                data.signal_id !== current.signalId ||
+                data.source_revision !== current.snapshotRevision ||
+                !Array.isArray(data.bars) ||
+                typeof data.bars_sha256 !== "string" ||
+                !/^[0-9a-f]{64}$/i.test(data.bars_sha256))
+              throw new Error(data.error || "Нет подтверждённых последующих свечей");
+            const expanded = appendRetrospectiveCandles(
+              current.sourceCandles, data.bars as RetrospectiveOhlc[],
+              launchLink?.timeframe ?? timeframe, data.as_of_ms,
+            );
+            // Existing owner edits use stable logical indices: refuse a
+            // changed historical prefix, never silently shift those anchors.
+            if (expanded.length < current.candles.length ||
+                expanded.slice(0, current.candles.length).some(
+                  (bar, index) => JSON.stringify(bar) !== JSON.stringify(current.candles[index]),
+                ))
+              throw new Error("История свечей изменилась; текущая разметка сохранена");
+            if (expanded.length === current.candles.length)
+              throw new Error("Новых закрытых свечей пока нет");
+            setFrozenSignal((previous) =>
+              previous?.signalId === current.signalId &&
+              previous.snapshotRevision === current.snapshotRevision
+                ? { ...previous, candles: expanded, context: {
+                    asOfMs: data.as_of_ms, barsSha256: data.bars_sha256,
+                  } }
+                : previous,
+            );
+          } : undefined}
           referenceDrawings={mode === "EDITOR" ? frozenSignal?.referenceDrawings ?? [] : []}
           editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
           signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
@@ -1320,6 +1379,8 @@ export function App() {
                 record?.submission?.bars_sha256 !== proposal.bars_sha256 ||
                 record?.submission?.pattern !== proposal.pattern ||
                 record?.submission?.idempotency_key !== proposal.idempotency_key ||
+                record?.submission?.context_as_of_ms !== proposal.context_as_of_ms ||
+                record?.submission?.context_bars_sha256 !== proposal.context_bars_sha256 ||
                 record?.candidate_created !== false || record?.robot_candidate_id !== null ||
                 typeof record?.assessment?.decision !== "string" ||
                 typeof record?.assessment?.reason !== "string")
