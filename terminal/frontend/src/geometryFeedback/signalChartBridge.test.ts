@@ -102,3 +102,23 @@ describe("persisted Editor correction restores by frozen boundary identity", () 
       candles.slice(1))).toThrow(/absent/);
   });
 });
+
+
+describe("retrospective Editor candles", () => {
+  it("appends contiguous later closed OHLC without changing original source geometry", async () => {
+    const { appendRetrospectiveCandles } = await import("./signalChartBridge");
+    const original = [...candles];
+    const asof = Date.parse(candles[2].time) + 600000;
+    const later = [
+      { open_time_ms: asof - 300000, open: 10, high: 13, low: 9, close: 12 },
+      { open_time_ms: asof, open: 12, high: 15, low: 11, close: 14 },
+    ];
+    const extended = appendRetrospectiveCandles(candles, later, "5m", asof);
+    expect(extended).toHaveLength(5);
+    expect(original).toEqual(candles);
+    expect(projectSignalGeometry(source, extended).referenceDrawings.map((line) => line.anchors.map((a) => a.logical)))
+      .toEqual([[0, 2], [0, 2]]);
+    expect(() => appendRetrospectiveCandles(candles, [later[1]], "5m", asof)).toThrow();
+    expect(() => appendRetrospectiveCandles(candles, later, "1h", asof)).toThrow();
+  });
+});
