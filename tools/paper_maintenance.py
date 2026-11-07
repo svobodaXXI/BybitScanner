@@ -1715,6 +1715,8 @@ def main(argv=None) -> int:
                         help="owner-approved exact staged checkout; safe-stop and install once")
     parser.add_argument("--start-paper-after-editor", action="store_true",
                         help="after safe Gitless Editor recovery, start owner PAPER oneshot")
+    parser.add_argument("--publish-frontend-only", action="store_true",
+                        help="verified existing EDITOR_ONLY; static-only publication, no systemd or STOP")
     parser.add_argument("--frontend-bundle", type=Path,
                         help="exact-SHA Vite artifact; publish static files after EDITOR_ONLY proof")
     parser.add_argument("--frontend-current-index-sha256",
@@ -1730,9 +1732,16 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if args.resume_installed_editor_only and args.staged_gitless_editor_only:
         parser.error("choose exactly one Gitless operation")
-    if args.frontend_bundle and not (args.resume_installed_editor_only
+    if args.frontend_bundle and not (args.publish_frontend_only
                                     or args.staged_gitless_editor_only):
-        parser.error("frontend publication requires an existing Gitless EDITOR_ONLY operation")
+        parser.error("frontend publication requires --publish-frontend-only or staged Gitless update")
+    if args.publish_frontend_only and (not args.frontend_bundle
+            or args.resume_installed_editor_only or args.staged_gitless_editor_only
+            or args.start_paper_after_editor or args.proven_one_flat_orphan_handoff
+            or args.dual_orphan_handoff_20261103
+            or args.resume_one_flat_from_prior_stop
+            or args.expected_old_backend):
+        parser.error("frontend-only cannot replay STOP, resume, start or exceptional handoff")
     if args.frontend_current_index_sha256 and not args.frontend_bundle:
         parser.error("frontend index pin requires a frontend bundle")
     if args.frontend_bundle and args.start_paper_after_editor:
@@ -1757,6 +1766,29 @@ def main(argv=None) -> int:
         or args.start_paper_after_editor
     ):
         parser.error("partial one-flat continuation requires Editor staging alone")
+    if args.publish_frontend_only:
+        # This branch never invokes shutdown, service start, release switch,
+        # Robot commands or a DB write. Installed EDITOR_ONLY must be proven.
+        from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+        from tools.vps_terminal_frontend_publish import (
+            FrontendPublishBlocked, inspect_bundle, publish_frontend,
+        )
+        try:
+            if verify_release(REPO) != args.sha:
+                raise FrontendPublishBlocked("installed_frontend_source_sha_mismatch")
+            identity = _durable_editor_freeze(REPO, args.env_file)
+            if not _editor_runtime_ready(args.sha, identity):
+                raise FrontendPublishBlocked("editor_only_runtime_not_proven")
+            inspect_bundle(args.frontend_bundle, args.sha)
+            status = publish_frontend(
+                args.sha, bundle=args.frontend_bundle, root=REPO,
+                expected_index_sha256=args.frontend_current_index_sha256,
+            )
+        except (ReleaseIdentityBlocked, FrontendPublishBlocked,
+                OSError, ValueError, UnicodeError, sqlite3.Error) as exc:
+            status = "BLOCKED: frontend_only_preflight_or_publication:" + type(exc).__name__
+        print(status)
+        return 0 if status.startswith("FRONTEND_READY:") else 2
     if args.start_paper_after_editor and (
         args.staged_gitless_editor_only or args.resume_installed_editor_only
     ):
@@ -1826,18 +1858,6 @@ def main(argv=None) -> int:
         )
     elif args.resume_installed_editor_only:
         status = resume_installed_release(args.sha, root=REPO, env_file=args.env_file)
-        if status.startswith("READY:") and args.frontend_bundle:
-            from tools.vps_terminal_frontend_publish import (
-                FrontendPublishBlocked, inspect_bundle, publish_frontend,
-            )
-            try:
-                inspect_bundle(args.frontend_bundle, args.sha)
-                publish_frontend(
-                    args.sha, bundle=args.frontend_bundle, root=REPO,
-                    expected_index_sha256=args.frontend_current_index_sha256,
-                )
-            except (FrontendPublishBlocked, OSError, ValueError, UnicodeError) as exc:
-                status = "BLOCKED: frontend_publication_unproven:" + type(exc).__name__
         if status.startswith("READY:"):
             # Standalone recovery must finalize the same pinned transaction
             # as staged deploy; otherwise the next planned release remains
