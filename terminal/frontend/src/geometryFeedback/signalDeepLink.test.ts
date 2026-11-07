@@ -9,6 +9,9 @@ describe("GFL editor and terminal deep link", () => {
     expect(parseSignalWorkspaceLink("?mode=TERMINAL&symbol=SOLUSDT&timeframe=1m")).toEqual({
       mode: "TERMINAL", symbol: "SOLUSDT", timeframe: "1m", signalId: null,
     });
+    expect(parseSignalWorkspaceLink("?mode=TERMINAL&symbol=BTCUSDT&timeframe=5m&signal_id=source-original%3Aabc")).toEqual({
+      mode: "TERMINAL", symbol: "BTCUSDT", timeframe: "5m", signalId: "source-original:abc",
+    });
   });
   it("rejects unknown modes, malformed symbols and unsupported timeframes", () => {
     for (const query of ["?mode=AUTOPILOT&symbol=BTCUSDT&timeframe=5m",
