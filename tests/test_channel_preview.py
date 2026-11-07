@@ -147,3 +147,23 @@ def test_followup_ignores_future_and_fails_closed_when_unproved():
     assert compare_channel_preview(original, bars, 111) is None
     assert compare_channel_preview(original, bars, 110) is None
     assert compare_channel_preview(original, bars, True) is None
+
+
+def test_channel_snapshot_lines_cannot_be_mutated_after_first_observation():
+    # A frozen dataclass alone did not freeze its dict-valued boundaries;
+    # accidental edits would silently change the original chart projection.
+    bars = zigzag(FOUR, 140)
+    original = observe_four_pivot_channel(bars, 111)
+    assert original is not None
+    before = original.project(113)
+    for line in (original.upper_line, original.lower_line):
+        with pytest.raises(TypeError):
+            line["slope"] = 123.0
+        with pytest.raises(AttributeError):
+            line.clear()
+    assert original.project(113) == before
+    assert original == observe_four_pivot_channel(bars.iloc[:112].copy(), 111)
+    result = compare_channel_preview(original, bars, 113)
+    assert result is not None
+    assert result.status == "SAME_ANCHORS_PROVISIONAL"
+    assert result.original_identity == original.anchor_identity
