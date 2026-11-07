@@ -101,6 +101,61 @@ export function chartXAtCandleTime(
 }
 
 /**
+ * Keep the first H1 movement wick fixed, but pivot the VISIBLE main support/
+ * resistance ray onto the most protruding already-closed H1 wick. The four
+ * structural pivots and canonical publication remain unchanged. A later
+ * candle can tighten the display only when its H1 close is in the replay.
+ *
+ * BULL main is below all lows (minimum slope); BEAR main above all highs
+ * (maximum slope). No future H1 candle can influence a prior frame.
+ */
+export function wickTightH1MainProjection(
+  line: { kind: string; side: "BULL" | "BEAR";
+    from_ms: number; to_ms: number; from_price: number; to_price: number },
+  closedHours: readonly ReplayCandle[],
+  knownAtMs: number,
+): { from_ms: number; to_ms: number; from_price: number; to_price: number;
+     adjusted: boolean } {
+  const original = {
+    from_ms: line.from_ms, to_ms: line.to_ms,
+    from_price: line.from_price, to_price: line.to_price, adjusted: false,
+  };
+  if (line.kind !== "MAIN_1H" || !Number.isFinite(knownAtMs) ||
+      line.to_ms <= line.from_ms) return original;
+  let slope = (line.to_price - line.from_price) / (line.to_ms - line.from_ms);
+  let supporting: ReplayCandle | undefined;
+  for (const bar of closedHours) {
+    if (bar.start_ms <= line.from_ms || bar.end_ms > knownAtMs) continue;
+    const wick = line.side === "BULL" ? bar.low : bar.high;
+    const candidateSlope = (wick - line.from_price) / (bar.start_ms - line.from_ms);
+    if ((line.side === "BULL" && candidateSlope < slope - 1e-18) ||
+        (line.side === "BEAR" && candidateSlope > slope + 1e-18)) {
+      slope = candidateSlope;
+      supporting = bar;
+    }
+  }
+  // The original first anchor is immutable. A real closed candle, not an
+  // invented pivot or a backdated future candle, supplies the new second tip.
+  return supporting
+    ? { from_ms: line.from_ms, to_ms: supporting.start_ms,
+        from_price: line.from_price,
+        to_price: line.side === "BULL" ? supporting.low : supporting.high,
+        adjusted: true }
+    : original;
+}
+
+export function shortActiveM5Ray(
+  from: { x: number; y: number }, through: { x: number; y: number },
+  lastCandleX: number, paneWidth: number,
+): { x: number; y: number } {
+  const dx = through.x - from.x;
+  if (!Number.isFinite(dx) || dx <= 0) return through;
+  const endX = Math.min(paneWidth, Math.max(through.x, lastCandleX + 36));
+  return { x: endX, y: through.y + (through.y - from.y) *
+    (endX - through.x) / dx };
+}
+
+/**
  * Hide tiny remnants of already-ended lines at the left viewport edge.
  * This affects canvas visibility only: source anchors and archived versions
  * remain untouched and reappear when the user scrolls back to their time.
