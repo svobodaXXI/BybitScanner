@@ -112,9 +112,11 @@ def observe_naked_breakout_return(
 
     prior, first = prices[breakout_index - 1], prices[breakout_index]
     at_prior, at_break = level(breakout_index - 1), level(breakout_index)
-    downside = (prior[3] >= at_prior and first[0] >= at_break
+    # The previous close must be strictly on the unbroken side.
+    # A close touching the exact boundary is not a proved body breakout.
+    downside = (prior[3] > at_prior and first[0] >= at_break
                 and first[3] < at_break)
-    upside = (prior[3] <= at_prior and first[0] <= at_break
+    upside = (prior[3] < at_prior and first[0] <= at_break
               and first[3] > at_break)
     if not (downside or upside):
         return None
