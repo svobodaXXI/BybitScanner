@@ -79,6 +79,7 @@ def observe_naked_breakout_return(
     if (type(breakout_index) is not int or type(as_of_index) is not int
             or type(min_impulse_bars) is not int or min_impulse_bars < 2
             or breakout_index < 1 or as_of_index < breakout_index + min_impulse_bars
+            or type(min_excursion_fraction) not in (int, float)
             or not isinstance(boundary, Mapping)):
         return None
     try:
