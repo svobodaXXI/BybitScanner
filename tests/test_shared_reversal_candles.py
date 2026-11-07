@@ -104,6 +104,26 @@ def test_closed_engulfing_observation_has_no_trade_confirmation(direction, first
     }
 
 
+def test_closed_engulfing_keeps_decimal_boundary_precision():
+    from geometry.reversal_patterns import observe_closed_engulfing
+    prior = candle(0, "10", "11", "8", "9")
+    # Float conversion rounds this open down to 9 and would falsely
+    # claim it engulfs the previous bearish real body.
+    near_miss = candle(1, "9.0000000000000000000000000001",
+                       "11.5", "8.5", "10.5")
+    assert observe_closed_engulfing(prior, near_miss, "LONG") is None
+    valid = {**near_miss, "open": "9"}
+    result = observe_closed_engulfing(prior, valid, "LONG")
+    assert result is not None
+    assert result["confirmed"] is False
+
+    # A genuine large-magnitude engulfing must not be lost because float
+    # converts finite Decimal OHLC to inf.
+    large = candle(0, "1e400", "1.1e400", "8e399", "9e399")
+    after = candle(1, "8.9e399", "1.2e400", "8.7e399", "1.05e400")
+    assert observe_closed_engulfing(large, after, "LONG") is not None
+
+
 @pytest.mark.parametrize("invalid", [None, [], "not-a-candle", 42, False])
 def test_closed_engulfing_rejects_non_mapping_rows_without_exception(invalid):
     from geometry.reversal_patterns import observe_closed_engulfing
