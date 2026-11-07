@@ -12,6 +12,7 @@ on:
       - "research/causal_trend_geometry.py"
       - "research/local_replay_viewer/**"
       - "research/export_historical_replay.py"
+      - "research/h017_real_bybit_readonly_acceptance.py"
       - "research/simulation_runs/.gitignore"
       - "tests/test_historical_replay_export.py"
       - "tests/test_historical_market_replay.py"
