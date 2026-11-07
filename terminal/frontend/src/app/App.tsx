@@ -23,7 +23,7 @@ import {
 } from "../marketData/workspaceSwitch";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
-import { appendRetrospectiveCandles, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
+import { appendRetrospectiveCandles, projectSignalGeometry, projectSourceReferenceOnLiveCandles, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
 import type { OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
@@ -98,7 +98,11 @@ const sameProtectionPrice = (left: string | null, right: string | null) => {
 
 export function App() {
   const launchLink = useMemo(() => parseSignalWorkspaceLink(window.location.search), []);
-  const [mode, setMode] = useState<WorkspaceMode>(launchLink?.mode ?? "TERMINAL");
+  // Signal-specific Telegram "Терминал" opens the Robot observation view;
+  // plain Terminal links retain their existing manual-trading destination.
+  const [mode, setMode] = useState<WorkspaceMode>(
+    launchLink?.mode === "TERMINAL" && launchLink.signalId ? "AUTOPILOT" : launchLink?.mode ?? "TERMINAL",
+  );
   const [frozenSignal, setFrozenSignal] = useState<{
     candles: Candle[];
     sourceCandles: Candle[];
@@ -116,7 +120,7 @@ export function App() {
   const [frozenGeometryStatus, setFrozenGeometryStatus] = useState<"loading" | "unavailable" | "ready">("loading");
   useEffect(() => {
     const link = launchLink;
-    if (!link || link.mode !== "EDITOR" || !link.signalId) return;
+    if (!link || !link.signalId || !["EDITOR", "TERMINAL"].includes(link.mode)) return;
     const controller = new AbortController();
     const load = async () => {
       try {
@@ -147,7 +151,7 @@ export function App() {
         if (typeof payload.snapshot_revision !== "string" || !/^[0-9a-f]{64}$/i.test(payload.snapshot_revision)
             || typeof payload.bars_sha256 !== "string" || !/^[0-9a-f]{64}$/i.test(payload.bars_sha256))
           throw new Error("Frozen snapshot provenance is unavailable");
-        const savedReview = payload.latest_review as {
+        const savedReview = (link.mode === "EDITOR" ? payload.latest_review : null) as {
           review_id?: string;
           retrospective_bars?: RetrospectiveOhlc[];
           submission?: {
@@ -263,6 +267,16 @@ export function App() {
   );
   const market = useMarketData();
   const tradingSymbol = market.book.symbol;
+  const autopilotSignalDrawings = useMemo(() => {
+    if (mode !== "AUTOPILOT" || launchLink?.mode !== "TERMINAL" ||
+        !launchLink.signalId || !frozenSignal ||
+        frozenSignal.signalId !== launchLink.signalId ||
+        tradingSymbol !== launchLink.symbol || timeframe !== launchLink.timeframe)
+      return null;
+    return projectSourceReferenceOnLiveCandles(
+      frozenSignal.referenceDrawings, frozenSignal.sourceCandles, market.candles,
+    );
+  }, [mode, launchLink, frozenSignal, tradingSymbol, timeframe, market.candles]);
   const { paperState, pendingActions } = usePaperTrading(tradingSymbol);
   const accountWorkspace = useAccountWorkspace(tradingSymbol);
   const accountProjection = accountWorkspace.projection;
@@ -1299,6 +1313,16 @@ export function App() {
           Исходный сигнал не указан в ссылке. Показаны текущие свечи без сохранённых линий паттерна.
         </output>
       )}
+      {mode === "AUTOPILOT" && launchLink?.mode === "TERMINAL" && launchLink.signalId &&
+        tradingSymbol === launchLink.symbol && timeframe === launchLink.timeframe ? (
+        <output role="status" aria-live="polite">
+          {frozenGeometryStatus === "loading" ? "Загрузка исходного сигнала…" :
+            frozenGeometryStatus !== "ready" ? "Исходная разметка сигнала недоступна." :
+            !market.candles.length ? "Ожидаю свечи для разметки сигнала…" :
+            !autopilotSignalDrawings ? "Поворотные свечи исходного сигнала отсутствуют в текущем окне графика; разметка не подменяется." :
+            `Исходный сигнал: ${frozenSignal?.originalPattern ?? "паттерн"} · ${launchLink.symbol}`}
+        </output>
+      ) : null}
       <section className="workspace-grid" aria-label="Trading workspace">
         <div
           className={`workspace-market-row ${mode !== "EDITOR" && marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
@@ -1352,7 +1376,8 @@ export function App() {
                 : previous,
             );
           } : undefined}
-          referenceDrawings={mode === "EDITOR" ? frozenSignal?.referenceDrawings ?? [] : []}
+          referenceDrawings={mode === "EDITOR" ? frozenSignal?.referenceDrawings ?? [] :
+            mode === "AUTOPILOT" ? autopilotSignalDrawings ?? [] : []}
           editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
           signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
           originalPattern={mode === "EDITOR" ? frozenSignal?.originalPattern ?? null : null}
