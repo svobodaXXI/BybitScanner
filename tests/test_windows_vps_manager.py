@@ -1,11 +1,15 @@
 """Safety regression tests for standalone Windows VPS Manager commands."""
 from __future__ import annotations
 
+import queue
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
-from tools.windows_vps_manager import ACTIONS, parse_args, ssh_command
+from tools.windows_vps_manager import ACTIONS, VPSManager, parse_args, ssh_command
 
 
 class TestWindowsVpsManager(unittest.TestCase):
@@ -40,6 +44,43 @@ class TestWindowsVpsManager(unittest.TestCase):
                 self.assertEqual(remote, ACTIONS[action])
                 self.assertNotIn("systemctl start", remote)
                 self.assertNotIn("systemctl stop", remote)
+
+    def test_failed_ssh_and_timeout_are_not_reported_as_success(self) -> None:
+        for result, expected in (
+            (subprocess.CompletedProcess(["ssh"], 0, stdout="healthy", stderr=""), "success"),
+            (subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="denied"), "failure"),
+        ):
+            with self.subTest(exit_code=result.returncode):
+                state = SimpleNamespace(events=queue.Queue())
+                with patch("tools.windows_vps_manager.subprocess.run", return_value=result):
+                    VPSManager.worker(state, ["ssh", "example"])
+                kind, output = state.events.get_nowait()
+                self.assertEqual(kind, expected)
+                self.assertIn(f"Exit code: {result.returncode}", output)
+
+        state = SimpleNamespace(events=queue.Queue())
+        with patch("tools.windows_vps_manager.subprocess.run",
+                   side_effect=subprocess.TimeoutExpired("ssh", 45)):
+            VPSManager.worker(state, ["ssh", "example"])
+        kind, output = state.events.get_nowait()
+        self.assertEqual(kind, "failure")
+        self.assertIn("TimeoutExpired", output)
+
+    def test_status_bar_distinguishes_failures_from_success(self) -> None:
+        for kind, expected in (("failure", "Ошибка"), ("success", "Успешно")):
+            with self.subTest(kind=kind):
+                status = Mock()
+                button = Mock()
+                fake = SimpleNamespace(
+                    events=queue.Queue(), write=Mock(), status=status,
+                    buttons=[button], after=Mock(), busy=True,
+                )
+                fake.events.put((kind, "diagnostic output"))
+                VPSManager.drain(fake)
+                self.assertFalse(fake.busy)
+                self.assertTrue(status.set.call_args.args[0].startswith(expected))
+                button.state.assert_called_with(["!disabled"])
+                fake.write.assert_called_once_with("diagnostic output")
 
     def test_git_actions_are_safe_directory_scoped(self) -> None:
         for action, remote in ACTIONS.items():
