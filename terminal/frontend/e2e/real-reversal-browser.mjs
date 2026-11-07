@@ -146,6 +146,14 @@ try {
   archive.context_1h.length + 11);
   assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 2,
     "initial H1 main and target must render against their real context OHLC");
+  const wickProjections = JSON.parse(await overlay.getAttribute("data-h1-main-wick-supports") ?? "[]");
+  const startingMain = wickProjections.find(line => line.origin_ms === firstMain.from_ms);
+  assert.ok(startingMain, "first H1 main must be drawn at its original source wick");
+  assert.equal(startingMain.adjusted, true,
+    "already-closed protruding GRASS H1 wick must tighten the visible support");
+  assert.ok(startingMain.support_ms > firstMain.to_ms,
+    "the tightened support must use a later REAL closed H1 candle");
+  console.log("REAL_FIRST_H1_WICK_SUPPORT_OK " + JSON.stringify(startingMain));
   // The real first frame previously showed a BLUE M5 continuation ray
   // crossing the entire H1 pane. Keep its history, but only through its
   // own M5 confirmation time on the coarser H1 chart.
