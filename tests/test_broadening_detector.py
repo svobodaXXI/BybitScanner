@@ -92,6 +92,15 @@ class PreliminaryAndMatureTest(unittest.TestCase):
         self.assertFalse({"direction", "side", "bias", "long", "short"} & {f.lower() for f in fields})
 
 
+class DecisionCutoffValidationTest(unittest.TestCase):
+    def test_ambiguous_asof_indices_do_not_create_horn_or_crash(self):
+        frame = zigzag(FOUR, 121)
+        self.assertIsNotNone(detect_broadening(frame, 111))
+        for invalid in (True, False, 111.0, 111.5, "111", -1, 121):
+            with self.subTest(index=invalid):
+                self.assertIsNone(detect_broadening(frame, invalid))
+
+
 class LocalStartTest(unittest.TestCase):
     def test_start_comes_from_local_wave_structure(self):
         # HIGH5 / LOW14 extend the same expanding sequence but lie beyond the
