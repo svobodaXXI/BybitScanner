@@ -17,7 +17,11 @@ from dataclasses import dataclass
 
 from pivots import find_pivots
 from .broadening import HIGH, LOW, _line, _positive_width, _sequence
-from .engine import GEOMETRY_MAX_STRUCTURE_SPAN_RATIO
+from .engine import (
+    GEOMETRY_MAX_BODY_BREACH_RUN,
+    GEOMETRY_MAX_STRUCTURE_SPAN_RATIO,
+)
+from .envelope_metrics import evaluate_formation_body_fit
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,34 @@ def detect_diamond_candidate(candles, as_of_index=None) -> DiamondCandidate | No
         and _positive_width(contracting_upper, contracting_lower, turn_start, run[-1][0])
     ):
         return None
+
+    # The six pivots prove only the extremal skeleton. A false Diamond can
+    # still have malformed source bars or a sustained run of real candle bodies
+    # outside either regime. Match HORN's existing body-fit tolerance and
+    # max-consecutive-breach rule, separately for expansion and contraction.
+    # Never use the contraction bars to score expansion or future data at as-of.
+    for index in range(run[0][0], as_of_index + 1):
+        row = prefix.iloc[index]
+        try:
+            opening, high, low, close = (float(row[name])
+                                        for name in ("open", "high", "low", "close"))
+        except (KeyError, ValueError, TypeError, OverflowError):
+            return None
+        if (not all(math.isfinite(x) and x > 0 for x in (opening, high, low, close))
+                or high <= low or low > min(opening, close)
+                or high < max(opening, close)):
+            return None
+
+    for upper, lower, end in (
+        (expanding_upper, expanding_lower, turn_end),
+        (contracting_upper, contracting_lower, run[-1][0]),
+    ):
+        fit = evaluate_formation_body_fit(upper, lower, prefix, end)
+        if fit is None or any(
+            fit[side]["max_consecutive_breaches"] >= GEOMETRY_MAX_BODY_BREACH_RUN
+            for side in ("upper", "lower")
+        ):
+            return None
 
     return DiamondCandidate(
         start_index=run[0][0],
