@@ -3272,7 +3272,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             # Nginx owner-auth gate as the other /api/workspace/ routes.
             # Backend remains loopback-only; never expose :8765 publicly.
             import re
-            from signal_archive import load_frozen_signal_geometry
+            from signal_archive import load_frozen_signal_geometry, load_original_signal
             ids = parse_qs(parsed.query).get("signal_id", [])
             if (len(ids) != 1 or
                     not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", ids[0])):
@@ -3289,8 +3289,21 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 LOGGER.exception("Geometry feedback lookup failed")
                 self._json_response(503, {"ok": False, "error": "geometry_review_unavailable"})
                 return
+            original = load_original_signal([ids[0]])
+            archived_pattern = original.get("pattern") if original else None
+            # Source classification is immutable Telegram archive metadata.
+            # Never guess from owner-adjusted rays, the review label or symbol.
+            source_pattern = (
+                archived_pattern.strip()
+                if isinstance(archived_pattern, str) and archived_pattern.strip()
+                and original.get("candidate_id") == ids[0]
+                and original.get("symbol") == snapshot["symbol"]
+                and str(original.get("timeframe")) == str(snapshot["timeframe"])
+                else None
+            )
             self._json_response(200, {
                 "ok": True, "snapshot": snapshot,
+                "source_pattern": source_pattern,
                 "snapshot_revision": source_revision(snapshot),
                 "bars_sha256": bars_digest(snapshot),
                 "latest_review": review,
