@@ -65,8 +65,14 @@ class RobotLShapePolicyTests(unittest.TestCase):
         protection = robot_protection.build_l_shape_protection_plan(
             candidate, state, average_entry=Decimal("100.2"),
         )
-        self.assertEqual(protection.stop_price, Decimal("96"))
+        # Frozen STOP 96 is 4.2% away: non-Box 1.5% fallback from actual entry.
+        self.assertEqual(protection.stop_price, Decimal("100.2") * Decimal("0.985"))
         self.assertEqual(protection.take_price, Decimal("110"))
+
+        within = robot_protection.build_l_shape_protection_plan(
+            candidate, state, average_entry=Decimal("97"),
+        )
+        self.assertEqual(within.stop_price, Decimal("96"))  # 1.03%: frozen STOP kept
 
     def test_target_or_stop_before_entry_invalidates_without_retest(self):
         candidate = _candidate()

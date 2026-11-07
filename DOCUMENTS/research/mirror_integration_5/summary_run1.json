@@ -1,0 +1,218 @@
+{
+ "A_gate_closed": {
+  "candidates_tracked": 0,
+  "gate_reason": "backend_unreachable",
+  "kline_requests": 0,
+  "produced": 0,
+  "skipped_for_protection": 3
+ },
+ "B_catch_up": {
+  "all_observe_only_non_executable": true,
+  "cycles": [
+   {
+    "cpu_s": 16.266,
+    "cycle": 1,
+    "new_observations": 60,
+    "progressed": 23
+   },
+   {
+    "cpu_s": 6.328,
+    "cycle": 2,
+    "new_observations": 0,
+    "progressed": 0
+   }
+  ],
+  "decisions": {
+   "BLOCK": 29,
+   "WAIT": 31
+  },
+  "errors": {},
+  "events": {
+   "NAKED_BREAKOUT": 31,
+   "RETEST_PROVEN": 29
+  },
+  "exchange_time_ceiling_ms": 1792448630707,
+  "kline_requests": 302,
+  "median_latency_ms": 281.1,
+  "metrics": {
+   "candidates_tracked": 23,
+   "candidates_unusable": 7,
+   "cycles": 2,
+   "duplicates_ignored": 0,
+   "fine_unavailable": 0,
+   "observations_dropped": 0,
+   "observations_submitted": 60,
+   "read_failures": 0,
+   "skipped_for_protection": 0
+  },
+  "source_stale": 0,
+  "source_unavailable": 0
+ },
+ "B_independent_checks": {
+  "checked_candles": 2722,
+  "checked_observations": 60,
+  "continuity_gaps": [],
+  "lookahead_violations": 0,
+  "proven_without_1m_contact": [],
+  "stale_candidates": [],
+  "strict_body_mismatch": [
+   [
+    "CAPUSDT",
+    1792412400000
+   ],
+   [
+    "CAPUSDT",
+    1792425900000
+   ],
+   [
+    "DGAIUSDT",
+    1792412400000
+   ],
+   [
+    "DGAIUSDT",
+    1792415400000
+   ],
+   [
+    "DRAMUSDT",
+    1792412700000
+   ],
+   [
+    "DRAMUSDT",
+    1792416000000
+   ],
+   [
+    "FLUIDUSDT",
+    1792417200000
+   ],
+   [
+    "FLUIDUSDT",
+    1792441200000
+   ],
+   [
+    "GRASSUSDT",
+    1792413300000
+   ],
+   [
+    "GRASSUSDT",
+    1792418700000
+   ],
+   [
+    "GWEIUSDT",
+    1792413900000
+   ],
+   [
+    "LSKUSDT",
+    1792413600000
+   ],
+   [
+    "LULUUSDT",
+    1792416000000
+   ],
+   [
+    "LULUUSDT",
+    1792417200000
+   ],
+   [
+    "NIGHTUSDT",
+    1792413900000
+   ],
+   [
+    "NIGHTUSDT",
+    1792420500000
+   ],
+   [
+    "PBRUSDT",
+    1792415700000
+   ],
+   [
+    "PBRUSDT",
+    1792421100000
+   ],
+   [
+    "PIXELUSDT",
+    1792413900000
+   ],
+   [
+    "PONSUSDT",
+    1792422000000
+   ],
+   [
+    "RLCUSDT",
+    1792414800000
+   ],
+   [
+    "RLCUSDT",
+    1792418400000
+   ],
+   [
+    "SAMSUNGUSDT",
+    1792416900000
+   ],
+   [
+    "SENTUSDT",
+    1792414500000
+   ],
+   [
+    "SENTUSDT",
+    1792439100000
+   ],
+   [
+    "SKDDUSDT",
+    1792416900000
+   ],
+   [
+    "SKDDUSDT",
+    1792419900000
+   ],
+   [
+    "TAUSDT",
+    1792415100000
+   ],
+   [
+    "TAUSDT",
+    1792418400000
+   ],
+   [
+    "TMXUSDT",
+    1792415100000
+   ],
+   [
+    "TRUTHUSDT",
+    1792416000000
+   ]
+  ]
+ },
+ "C_recovery": {
+  "b_count": 60,
+  "c_count": 60,
+  "cycles": 27,
+  "injected_failures_seen": 12,
+  "kline_requests": 461,
+  "same_observations_as_B_up_to_ceiling": true
+ },
+ "D_restart_dedupe": {
+  "duplicate_ids": 0,
+  "lines_after": 60,
+  "lines_before": 60,
+  "new_lines_all_after_ceiling": true
+ },
+ "arrivals_available_with_envelope": 468,
+ "backend_listening": false,
+ "candidates_selected": 30,
+ "finished_utc": "2026-10-19T22:37:36Z",
+ "resources": {
+  "cpu_s_total": 256.7,
+  "tracemalloc_peak_mb": 50.1
+ },
+ "safety": {
+  "db_unchanged": true,
+  "urls_hit": [
+   "https://api.bybit.com/v5/market/kline"
+  ]
+ },
+ "selected_window_utc": [
+  "2026-10-19 12:06",
+  "2026-10-19 12:52"
+ ],
+ "started_utc": "2026-10-19T22:19:53Z"
+}

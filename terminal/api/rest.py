@@ -92,6 +92,7 @@ class TerminalCommandApi:
 
     def full_close(
         self, request: FullCloseCommandRequest, *, market_book=PROVIDER_BOOK,
+        identity: CommandIdentityCandidate | None = None,
     ) -> CommandResult:
         action_id = request.client_action_id.value
         try:
@@ -102,14 +103,22 @@ class TerminalCommandApi:
                 return _result(action_id, CommandResultStatus.COMPLETED, "already_flat",
                                "position is already flat")
             side = OrderSide.SELL if pretrade.position_side.value == "Long" else OrderSide.BUY
+            # A caller-capped chunk never exceeds the authoritative confirmed
+            # quantity; PreTradeGuard's own instrument-maximum check still
+            # runs on whatever quantity reaches it, unchanged.
+            close_quantity = pretrade.confirmed_position_quantity
+            if request.quantity is not None and request.quantity < close_quantity:
+                close_quantity = request.quantity
             intent = PreTradeIntent(
                 symbol, side, OrderKind.MARKET,
-                ExactQuantityIntent(pretrade.confirmed_position_quantity),
+                ExactQuantityIntent(close_quantity),
                 _close_reference_price(context), None,
                 SlippageMetadata(SlippageToleranceType.PERCENT, Decimal("0.5")),
             )
             return _application_result(action_id, self._application.submit(
-                intent, pretrade, **_market_book_kwargs(market_book),
+                intent, pretrade,
+                **({"identity": identity} if identity is not None else {}),
+                **_market_book_kwargs(market_book),
             ))
         except Exception as exc:
             return _safe_error(action_id, exc)

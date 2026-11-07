@@ -51,7 +51,9 @@ def _snapshot(
     apex_index=130,
     current_index=100,
     anchor_index=None,
-    lower_touch_prices=(80.0, 82.0),
+    # Structural STOP 95.9 is within the 1.5% non-Box limit of the initial
+    # retest LIMIT (96.2-97.2); fills far below it are protected by the fallback.
+    lower_touch_prices=(96.0, 97.0),
     upper_touch_prices=(150.0, 152.0),
     reference_price=100.0,
     start_width=20.0,
@@ -88,7 +90,8 @@ def _snapshot(
     }
 
 
-def _l_shape_snapshot():
+def _l_shape_snapshot(stop=98.8):
+    # LIMIT is reference + 2 ticks = 100.2; STOP 98.8 is 1.4% away (< 1.5% limit).
     return {
         "symbol": SYMBOL,
         "pattern": "L-shape",
@@ -102,9 +105,9 @@ def _l_shape_snapshot():
             "extreme_time_ms": T0_MS - 300_000,
             "reference": 100,
             "target": 110,
-            "stop": 96,
+            "stop": stop,
             "stop_kind": "STRUCTURAL",
-            "structural_stop": 96,
+            "structural_stop": stop,
             "potential_percent": 10,
             "reward_risk": 2.5,
         },
@@ -912,7 +915,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.load_robot_candidates_by_status(ACCOUNT_ID, ("DONE",))
 
-    # --- retest LIMIT take/stop filter (MIN_ENTRY_RR) -------------------------------------
+    # --- Wedge retest LIMIT hard >=2R take/stop filter -----------------------------------
 
     def _rr_check(self, direction, *, reference, extreme, entry="1000", env=None):
         """Call the pre-placement filter directly with a planned entry of ``entry``.
@@ -947,7 +950,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(
             {key: Decimal(value) for key, value in long_skip[1].items()},
             {
-                "entry_price": Decimal("1000"), "min_rr": Decimal("1.5"),
+                "entry_price": Decimal("1000"), "min_rr": Decimal("2"),
                 "stop_price": Decimal("990"), "take_price": Decimal("1014"), "rr": Decimal("1.4"),
             },
         )
@@ -959,34 +962,45 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             (Decimal("1010"), Decimal("986"), Decimal("1.4")),
         )
 
-    def test_entry_rr_at_or_above_threshold_is_not_skipped(self):
-        for direction, extreme, references in (
-            ("LONG", 990.1, (1006.0, 1011.0)),   # take 1015 -> rr 1.5, take 1020 -> rr 2.0
-            ("SHORT", 1009.9, (994.0, 989.0)),   # take 985 -> rr 1.5, take 980 -> rr 2.0
+    def test_wedge_2r_owner_floor_both_sides_and_exact_boundary(self):
+        for direction, extreme, weak_reference, valid_reference in (
+            ("LONG", 990.1, 1006.0, 1011.0),  # 1.5R and exactly 2R
+            ("SHORT", 1009.9, 994.0, 989.0),
         ):
-            for reference in references:
-                with self.subTest(direction=direction, reference=reference):
-                    self.assertIsNone(
-                        self._rr_check(direction, reference=reference, extreme=extreme)
-                    )
+            with self.subTest(direction=direction):
+                skipped = self._rr_check(direction, reference=weak_reference, extreme=extreme)
+                self.assertEqual(skipped[0], "SKIPPED_POOR_RR")
+                self.assertEqual(Decimal(skipped[1]["rr"]), Decimal("1.5"))
+                self.assertEqual(Decimal(skipped[1]["min_rr"]), Decimal("2"))
+                self.assertIsNone(self._rr_check(
+                    direction, reference=valid_reference, extreme=extreme,
+                ))
 
-    def test_entry_rr_threshold_follows_environment_variable(self):
-        # rr is 1.5 here: passes by default, skipped when the threshold is raised.
-        self.assertIsNone(self._rr_check("LONG", reference=1006.0, extreme=990.1))
-        raised = self._rr_check("LONG", reference=1006.0, extreme=990.1, env="1.6")
-        self.assertEqual(raised[0], "SKIPPED_POOR_RR")
-        self.assertEqual((Decimal(raised[1]["min_rr"]), Decimal(raised[1]["rr"])), (Decimal("1.6"), Decimal("1.5")))
-        # rr 1.4 passes when the threshold is lowered.
-        self.assertIsNone(self._rr_check("LONG", reference=1005.0, extreme=990.1, env="1.4"))
-        # Invalid values fall back to the default 1.5.
-        for bad in ("abc", "-1", "11", "NaN", ""):
-            with self.subTest(env=bad):
-                skipped = self._rr_check("LONG", reference=1005.0, extreme=990.1, env=bad)
-                self.assertEqual(Decimal(skipped[1]["min_rr"]), Decimal("1.5"))
+    def test_environment_cannot_lower_wedge_2r_floor_but_can_raise_it(self):
+        for raw in (None, "0", "1.4", "1.6", "abc", "-1", "11", "NaN", ""):
+            with self.subTest(env=raw):
+                skipped = self._rr_check("LONG", reference=1006.0, extreme=990.1, env=raw)
+                self.assertEqual(skipped[0], "SKIPPED_POOR_RR")
+                self.assertEqual(Decimal(skipped[1]["min_rr"]), Decimal("2"))
+        self.assertIsNone(self._rr_check("LONG", reference=1011.0, extreme=990.1, env="2"))
+        stricter = self._rr_check("LONG", reference=1011.0, extreme=990.1, env="2.5")
+        self.assertEqual(stricter[0], "SKIPPED_POOR_RR")
+        self.assertEqual(Decimal(stricter[1]["min_rr"]), Decimal("2.5"))
+
+    def test_owner_bbusdt_example_is_not_wedge_eligible(self):
+        from robot_market_confirmation import risk_reward_ratio
+        rr = risk_reward_ratio(
+            "LONG", entry_price=Decimal("0.00891976"),
+            stop_price=Decimal("0.008756"), take_price=Decimal("0.009172"),
+        )
+        self.assertGreater(rr, Decimal("1.5"))
+        self.assertLess(rr, robot_protection.wedge_min_entry_rr())
 
     def test_entry_rr_unavailable_blocks_initial_entry(self):
         # A zero-width frozen target cannot yield a valid TAKE.
-        snapshot = _snapshot(reference_price=100.0, start_width=0.0)
+        snapshot = _snapshot(
+            reference_price=100.0, start_width=0.0, lower_touch_prices=(99.0,),
+        )
         record = SimpleNamespace(
             candidate_id="candidate-rr", symbol=Symbol(SYMBOL), signal_snapshot=snapshot,
         )
@@ -995,7 +1009,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             skipped = self.monitor._entry_rr_skip(record, plan)
         self.assertEqual(skipped[0], "SKIPPED_RR_UNAVAILABLE")
         self.assertEqual(skipped[1]["entry_price"], "100")
-        self.assertEqual(skipped[1]["min_rr"], "1.5")
+        self.assertEqual(skipped[1]["min_rr"], "2")
         self.assertIn("error", skipped[1])
         self.assertIn("[ROBOT ENTRY RR UNAVAILABLE]", output.getvalue())
 
@@ -1023,7 +1037,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         skipped = self._rr_check("LONG", reference=991.0, extreme=990.1, env="0")
         self.assertEqual(skipped[0], "SKIPPED_POOR_RR")
         self.assertEqual(Decimal(skipped[1]["rr"]), Decimal("0"))
-        self.assertEqual(skipped[1]["min_rr"], "0")
+        self.assertEqual(skipped[1]["min_rr"], "2")
 
     def test_poor_rr_candidate_places_no_limit_and_is_terminated_with_reason(self):
         # start_width=1 keeps the frozen take close: rr is about 1.9 (default fixture is above 10).
@@ -1047,7 +1061,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertLess(Decimal(details["rr"]), Decimal("10"))
 
     def test_rr_equal_to_threshold_still_places_the_limit(self):
-        self._create_candidate(start_width=1.0)
+        self._create_candidate(start_width=2.0)
         record = self._drive_to_retest_detected()
         plan = self.monitor._build_initial_retest_limit_plan(record, record.robot_state)
         with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "10"}), redirect_stdout(io.StringIO()):
@@ -1111,7 +1125,13 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(self.executor.limit_calls, [])
 
     def test_unfilled_entry_limit_reprices_same_order_after_five_closed_candles(self):
-        self._create_candidate(apex_index=130)
+        # Reprice mechanics only: this fixture's boundary drops 5 points, so a
+        # wider STOP limit is patched in (the 1.5% limit itself is covered by
+        # test_reprice_beyond_stop_limit_keeps_original_entry).
+        limit = patch.object(robot_protection, "MAX_STOP_DISTANCE", Decimal("0.10"))
+        limit.start()
+        self.addCleanup(limit.stop)
+        self._create_candidate(apex_index=130, lower_touch_prices=(89.1,))
         self._drive_to_retest_detected()
         self.monitor.tick()  # initial LIMIT; freshness index=104
         record = self.store.get_robot_candidate("candidate-1")
@@ -1145,10 +1165,14 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(len(self.executor.limit_calls), 1)
 
     def test_poor_rr_reprice_does_not_amend_or_cancel_original_entry(self):
-        # Initial RR is valid with a 5-point frozen width, but a stricter
-        # threshold would reject the proposed reprice. Keep the original
-        # accepted order under observation rather than making a worse amend.
-        self._create_candidate(start_width=5.0)
+        # At entry 97.2, frozen TAKE 110.8 and structural STOP 95.0
+        # give 6.18R (>2). After reprice to 91.2 the same extreme is on the
+        # wrong side; the 10% STOP fallback gives only 2.15R (< strict 10R).
+        # Keep the original admissible order, never amend to rejected terms.
+        limit = patch.object(robot_protection, "MAX_STOP_DISTANCE", Decimal("0.10"))
+        limit.start()
+        self.addCleanup(limit.stop)
+        self._create_candidate(start_width=12.0, lower_touch_prices=(95.1,))
         self._drive_to_retest_detected()
         self.monitor.tick()
         record = self.store.get_robot_candidate("candidate-1")
@@ -1169,6 +1193,56 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         record = self.store.get_robot_candidate("candidate-1")
         self.assertEqual(record.status, "APPROVED")
         self.assertEqual(record.robot_state["execution"]["last_limit_index"], 104)
+
+    def test_reprice_with_structure_above_entry_uses_fallback_and_amends(self):
+        # Initial LIMIT with structural STOP 95.9 is within 1.5%; after the
+        # reprice to 91.2 the structure is above entry, so RR is planned with
+        # the 1.5% fallback (91.2 * 0.985) and the reprice is not rejected.
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        order_id = record.robot_state["execution"]["limit_order_id"]
+
+        self.feed.push(SYMBOL, _candle_at(109, high=99, low=90, close=92))
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(len(self.executor.amend_calls), 1)
+        self.assertEqual(self.executor.amend_calls[0].limit_price, Decimal("91.2"))
+        self.assertEqual(self.store.get_paper_limit(order_id, ACCOUNT_ID).price, Decimal("91.2"))
+        self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "APPROVED")
+
+    def test_far_structural_stop_does_not_reject_initial_entry(self):
+        # Structural STOP 79.9 is ~17% below the LIMIT: RR uses the 1.5%
+        # fallback and the LIMIT is placed; distance alone never rejects.
+        self._create_candidate(lower_touch_prices=(80.0, 82.0))
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertIn("limit_order_id", record.robot_state["execution"])
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
+    def test_entry_rr_uses_structural_stop_at_limit_and_fallback_beyond(self):
+        # Entry 1000: structural STOP exactly 1.5% away is used as-is; one tick
+        # farther, RR is planned with the 1.5% fallback. A strict threshold
+        # exposes the planned STOP in the skip details.
+        for direction, at_limit, beyond, expected_stop in (
+            ("LONG", 985.1, 985.0, Decimal("985")),      # 985.0 / 984.9 -> 985.000
+            ("SHORT", 1014.9, 1015.0, Decimal("1015")),  # 1015.0 / 1015.1 -> 1015.000
+        ):
+            with self.subTest(direction=direction):
+                reference = 1100.0 if direction == "LONG" else 900.0
+                self.assertIsNone(self._rr_check(direction, reference=reference, extreme=at_limit))
+                self.assertIsNone(self._rr_check(direction, reference=reference, extreme=beyond))
+                for extreme in (at_limit, beyond):
+                    skipped = self._rr_check(
+                        direction, reference=reference, extreme=extreme, env="10",
+                    )
+                    self.assertEqual(skipped[0], "SKIPPED_POOR_RR")
+                    self.assertEqual(Decimal(skipped[1]["stop_price"]), expected_stop)
 
     def test_unavailable_rr_reprice_does_not_amend_original_entry(self):
         self._create_candidate()
@@ -1449,7 +1523,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.monitor.tick()  # submits the initial LIMIT
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
 
-        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("97"))
         # Ground truth for the D2.3 ownership attestation: whatever the
         # authoritative position projection actually is right after the
         # fill, before _finalize_trade() reads it again for entry_quantity/
@@ -1466,15 +1540,26 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertIsNotNone(trade)
         self.assertEqual(trade.entry_path, "LIMIT")
         self.assertEqual(trade.actual_wv, Decimal("1"))
-        self.assertEqual(trade.average_entry, Decimal("81"))
+        self.assertEqual(trade.average_entry, Decimal("97"))
         # D2.3 ownership attestation (owner-frozen convention): must be
         # exactly the authoritative projection's own quantity/version, not
         # any derived or re-guessed value.
         self.assertEqual(trade.entry_quantity, entry_projection.quantity.value)
         self.assertEqual(trade.entry_position_version, entry_projection.version)
-        # structural_extreme = min(counted lower_touch_points) = 80.0; tick=0.1
-        # -> candidate stop = 79.9; distance (81-79.9)/81 = 0.0136 <= 2% -> structural, not fallback.
-        self.assertEqual(trade.stop_price, Decimal("79.9"))
+        # Trade entry time must be the exact first immutable Robot fill time;
+        # the monitor's later local clock is only the record creation time.
+        owned_fills = self.store.load_executions_for_order(
+            ACCOUNT_ID, OrderId(order_id),
+        )
+        self.assertTrue(owned_fills)
+        self.assertEqual(
+            trade.entry_time_ms,
+            min(fill.exchange_timestamp_ms for fill in owned_fills),
+        )
+        self.assertGreaterEqual(trade.created_at_ms, trade.entry_time_ms)
+        # structural_extreme = min(counted lower_touch_points) = 96.0; tick=0.1
+        # -> candidate stop = 95.9; distance (97-95.9)/97 = 0.0113 <= 1.5% -> structural, not fallback.
+        self.assertEqual(trade.stop_price, Decimal("95.9"))
         # reference=100, start_width=20 -> target=120 (Falling Wedge/LONG -> UP); take = 100 + 20*0.9 = 118.
         self.assertEqual(trade.take_price, Decimal("118"))
         self.assertEqual(
@@ -1622,12 +1707,13 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         structural extreme (lower_touch_points) can end up on the wrong side
         of -- or equal to -- the actual fill's average_entry by the time the
         LIMIT fills (retest slippage, later touches). structural_stop() must
-        fall back to the 2% distance rather than raise, so the filled
+        fall back to the 1.5% non-Box distance rather than raise, so the filled
         position still gets a valid STOP/TAKE and a robot_trade, instead of
-        being left open and unprotected."""
-        # lower_touch_points min = 85.0 -- above the 81 fill price used below,
-        # exactly the "structural candidate on the wrong side of entry" shape.
-        self._create_candidate(lower_touch_prices=(85.0, 86.0))
+        being left open and unprotected. The pre-entry limit check passed at
+        the LIMIT price; only the actual fill moved the structure out."""
+        # lower_touch_points min = 96.0 -- within 1.5% of the LIMIT, but above
+        # the 81 fill price used below: "structural candidate on the wrong side".
+        self._create_candidate()
         self._drive_to_retest_detected()
         self.monitor.tick()  # submits the initial LIMIT
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
@@ -1640,9 +1726,9 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(record.status, "OPEN")
         trade = self.store.get_robot_trade("robot-trade-candidate-1")
         self.assertIsNotNone(trade)
-        # Fallback: entry * (1 - 2%) = 81 * 0.98 = 79.38, not the (invalid,
-        # above-entry) structural candidate 85.0 - 0.1 = 84.9.
-        self.assertEqual(trade.stop_price, Decimal("79.38"))
+        # Post-fill fallback: entry * (1 - 1.5%) = 81 * 0.985 = 79.785, not
+        # the (invalid, above-entry) structural candidate 96.0 - 0.1 = 95.9.
+        self.assertEqual(trade.stop_price, Decimal("79.785"))
         self.assertLess(trade.stop_price, trade.average_entry)
         self.assertEqual(trade.take_price, Decimal("118"))
         self.assertEqual(
@@ -1651,6 +1737,53 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         )
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.LONG)
+
+    def test_post_fill_rr_below_two_keeps_protection_and_closes_without_open_trade(self):
+        """A safely admitted LIMIT can fill at a price that collapses Net RR."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        order_id = self.store.get_robot_candidate(
+            "candidate-1"
+        ).robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81")
+        )
+        with patch.object(
+            RobotBreakoutMonitor, "_frozen_prices",
+            return_value=(Decimal("80"), Decimal("82")),
+        ):
+            self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take", "full_close"],
+        )
+        self.assertIn(
+            "POST_FILL_NET_RR_BELOW_2",
+            record.robot_state["execution"]["protection_failure"],
+        )
+        self.assertEqual(
+            self.store.get_position_projection(
+                PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+            ).side,
+            PositionSide.FLAT,
+        )
+
+    def test_aioz_short_fee_aware_actual_fill_rr_regression(self):
+        """Durable short fill and post-fill 1.5% fallback must not pass 2:1."""
+        rr = robot_protection.post_fill_net_rr(
+            "SHORT",
+            average_entry=Decimal("0.09599739878"),
+            quantity=Decimal("2618"),
+            entry_fee=Decimal("0.150792714"),
+            stop_price=Decimal("0.09743735976"),
+            take_price=Decimal("0.09299934035"),
+        )
+        self.assertGreater(rr, Decimal("1.85"))
+        self.assertLess(rr, Decimal("2"))
 
     def test_pre_plan_exception_after_fill_triggers_emergency_close(self):
         """Any ordinary exception in the post-fill region BEFORE
@@ -2018,6 +2151,14 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         )
         self.assertEqual(evidence.position_version, projection.version)
+        expected_first_fill_ms = min(
+            fill.exchange_timestamp_ms
+            for order_id in (first_order_id, second_order_id)
+            for fill in self.store.load_executions_for_order(
+                ACCOUNT_ID, OrderId(order_id),
+            )
+        )
+        self.assertEqual(evidence.first_execution_at_ms, expected_first_fill_ms)
 
     def test_owned_topup_refreshes_same_open_trade_attestation(self):
         self._create_candidate()
@@ -2755,12 +2896,63 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(trade.entry_path, "LIMIT")
         self.assertEqual(trade.actual_wv, Decimal("1"))
         self.assertEqual(trade.average_entry, Decimal("100.2"))
-        self.assertEqual(trade.stop_price, Decimal("96"))
+        self.assertEqual(trade.stop_price, Decimal("98.8"))
         self.assertEqual(trade.take_price, Decimal("110"))
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
             ["create_stop", "create_take"],
         )
+
+    def test_l_shape_far_stop_enters_and_protects_with_fallback(self):
+        # Frozen L-shape STOP 96 is 4.2% from the 100.2 LIMIT: the entry is not
+        # rejected; RR and protection use the 1.5% fallback 100.2 * 0.985.
+        snapshot = _l_shape_snapshot(stop=96)
+        candidate, _ = self.store.create_robot_candidate(
+            candidate_id="candidate-lshape",
+            trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL),
+            status="APPROVED",
+            signal_snapshot=snapshot,
+            approved_at_ms=1,
+            updated_at_ms=1,
+        )
+        state, _ = robot_l_shape.initialize_state({
+            "candidate_id": candidate.candidate_id,
+            "status": "APPROVED",
+            "timeframe": "5",
+            "signal_snapshot": snapshot,
+        })
+        self.store.save_robot_candidate_state(
+            candidate.candidate_id,
+            status="APPROVED",
+            robot_state=state,
+            expected_revision=candidate.state_revision,
+            updated_at_ms=2,
+        )
+        self.feed.push(
+            SYMBOL,
+            {
+                "time_ms": T0_MS + 60_000,
+                "high": Decimal("101"),
+                "low": Decimal("99.5"),
+                "close": Decimal("100.4"),
+            },
+        )
+        self.monitor.tick()  # RETEST_DETECTED
+        self.monitor.tick()  # entry evaluation places the LIMIT
+
+        order_id = self.store.get_robot_candidate("candidate-lshape").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("100.2"),
+        )
+        self.assertEqual(
+            self.monitor.process_authoritative_fill(SYMBOL),
+            ("candidate-lshape",),
+        )
+        trade = self.store.get_robot_trade("robot-trade-candidate-lshape")
+        self.assertEqual(trade.average_entry, Decimal("100.2"))
+        self.assertEqual(trade.stop_price, Decimal("100.2") * Decimal("0.985"))
+        self.assertEqual(trade.take_price, Decimal("110"))
 
 
 class RobotBreakoutMonitorRealThreadTests(unittest.TestCase):

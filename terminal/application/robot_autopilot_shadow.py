@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 import sqlite3
 import time
 import threading
@@ -40,20 +41,25 @@ from terminal.application.robot_admission import (
     box_plan_source_admission_error,
     box_plan_admission_handle,
     candidate_snapshot_sha256,
+    linked_mirror_parent_candidate,
     scanner_candidate_admission_error,
 )
+from terminal.application.robot_reentry_adapter import automatic_reentry_proposal
 from terminal.application.robot_autopilot import (
     OUTCOME_ALLOW,
     OUTCOME_WAIT,
     POLICY_VERSION,
     REASON_ALREADY_ADMITTED,
+    REASON_REENTRY_THESIS_UNPROVEN,
     RobotAutoAdmissionFacts,
     RobotAutoAdmissionResult,
     daily_loss_gate_facts,
     evaluate_auto_admission,
     record_auto_decision,
 )
-from terminal.application.paper_daily_equity import MarkPrice, paper_daily_equity_facts_in_transaction
+from terminal.application.paper_daily_equity import (
+    MarkPrice, msk_day_start_ms, paper_daily_equity_facts_in_transaction,
+)
 from terminal.application.robot_portfolio import _source_terminal_identities, collect_portfolio_facts
 from terminal.domain.models import Category, PositionKey, PositionSide, Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import (
@@ -208,7 +214,7 @@ def _box_plan_candidate(
         raise LookupError(f"Box plan source not found: {ref}")
     identity = source.signal_snapshot.get("identity") or {}
     if robot_candidates is None:
-        robot_candidates = store.load_robot_candidates(account)
+        robot_candidates = store.load_robot_candidates_for_box_source(account, source.candidate_id)
     linked = [
         item for item in robot_candidates
         if item.status != "BOX_PLAN_ONLY"
@@ -423,17 +429,23 @@ def _fresh_facts(
     prior_shadow_allow: RobotAutoDecisionRecord | None = None,
     batch: _BatchSnapshot | None = None,
     now_ms: int | None = None,
+    decision_count: int | None = None,
     daily_loss_gate_enabled: bool = True,
     daily_marks: DailyMarkProvider | None = None,
 ) -> RobotAutoAdmissionFacts:
-    portfolio = (collect_portfolio_facts(store, account) if batch is None
+    portfolio = (collect_portfolio_facts(
+        store, account, auto_decisions=decisions,
+        robot_candidates=store.load_robot_candidates_for_portfolio(
+            account, plan_only_status="BOX_PLAN_ONLY"),
+    ) if batch is None
                  else dict(batch.portfolio()))  # the batch copy is never mutated here
     # S3 conversion first: it keeps its fail-closed "exactly one matching reservation" proof.
     portfolio = _without_own_shadow_reservation(portfolio, candidate, prior_shadow_allow)
     if mode == PAPER_AUTO_MODE:
         portfolio = _physical_capital_only(portfolio)
     # A batch holds a reduced decision read set; its count is the real audit size.
-    portfolio["audit_sequence"] = (len(decisions) if batch is None else batch.decision_count) + 1
+    count = (len(decisions) if decision_count is None else decision_count)
+    portfolio["audit_sequence"] = (count if batch is None else batch.decision_count) + 1
     runtime = store.get_robot_runtime_state(account)
     try:
         healthy = None if protection_healthy is None else protection_healthy()
@@ -452,6 +464,25 @@ def _fresh_facts(
         daily_gate = _daily_loss_gate(
             store, account, now_ms=now_ms, decisions=decisions,
             enabled=daily_loss_gate_enabled, daily_marks=daily_marks)
+    linked_parent = None
+    if mode == PAPER_AUTO_MODE and candidate.pattern == "IKIGAI_BOX":
+        identity = candidate.snapshot.get("identity") or {}
+        direction = str(identity.get("direction", "")) if isinstance(identity, Mapping) else ""
+        linked_parent = linked_mirror_parent_candidate(
+            store,
+            account,
+            candidate.symbol,
+            direction,
+            excluded_candidate_ids=candidate.own_ids,
+        )
+        if linked_parent is not None:
+            # The Box is a subordinate attempt of the already-reserved Wedge
+            # campaign, not a second independent Robot idea.
+            portfolio["new_reserve_ro"] = 0
+    symbol_owned = (
+        _symbol_owned(store, account, candidate)
+        or candidate.symbol.value in portfolio.get("owned_symbols", [])
+    )
     return RobotAutoAdmissionFacts(
         autopilot_mode=mode,
         environment="PAPER",
@@ -467,13 +498,15 @@ def _fresh_facts(
         reconciliation_clear=(
             runtime is not None and runtime.recovery_status != "RECONCILIATION_REQUIRED"
         ),
-        symbol_owned=(_symbol_owned(store, account, candidate)
-                      or candidate.symbol.value in portfolio.get("owned_symbols", [])),
+        symbol_owned=symbol_owned and linked_parent is None,
         protection_healthy=healthy,
         portfolio_policy_ready=True,
         portfolio_facts=portfolio,
         candidate_fresh=fresh,
         daily_loss_gate=daily_gate,
+        linked_mirror_parent_candidate_id=(
+            linked_parent.candidate_id if linked_parent is not None else None
+        ),
     )
 
 
@@ -538,6 +571,31 @@ def _observe_shadow_candidate_locked(
     return ShadowObservation(facts, result, decision, created)
 
 
+def _auto_reentry_proposal_for_candidate(
+    store: SQLiteStore, account: TradingAccountId, *,
+    source: str, candidate: _Candidate, now_ms: int,
+):
+    """Opt-in extension to the existing canonical admission only.
+
+    Older deployments keep exactly their original admission behaviour.
+    PAPER only; feature OFF until owner approves completed cross-pattern E2E.
+    """
+    if os.environ.get("BYBITSCANNER_STOP_REENTRY_AUTO", "").strip() != "1":
+        return None
+    if source not in {SOURCE_SCANNER, SOURCE_BOX_PLAN} or not candidate.valid:
+        raise PersistenceError("unverified source cannot bypass reentry campaign")
+    proposal = automatic_reentry_proposal(
+        store, account, candidate_id=candidate.ref, symbol=candidate.symbol,
+        snapshot=candidate.snapshot, now_ms=now_ms,
+    )
+    if proposal is None:
+        # Never silently continue normal PAPER_AUTO admission while the
+        # universal campaign risk fence is explicitly enabled. Unsupported
+        # or ambiguous candidates wait, not become untracked first trades.
+        raise PersistenceError("candidate has no verified reentry strategy proof")
+    return proposal
+
+
 def admit_paper_auto_candidate(
     store: SQLiteStore, account: TradingAccountId, *, allow_decision_id: str,
     source: str, protection_healthy: Callable[[], bool] | None = None,
@@ -584,7 +642,10 @@ def admit_paper_auto_candidate(
             raise PersistenceError("SHADOW ALLOW immutable candidate identity changed")
 
         now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
-        decisions = store.load_robot_auto_decisions(account)
+        decisions = store.load_robot_auto_decisions_for_admission(
+            account, candidate_ref=candidate.ref, source_identity=candidate.source_identity,
+            policy_version=POLICY_VERSION, business_date_msk=msk_day_start_ms(now)[0])
+        decision_count = store.count_robot_auto_decisions(account)
         existing = _latest_decision(
             decisions, candidate.ref, candidate.source_identity, PAPER_AUTO_MODE,
         )
@@ -608,25 +669,42 @@ def admit_paper_auto_candidate(
                 store, account, mode=PAPER_AUTO_MODE, candidate=candidate,
                 decisions=decisions, protection_healthy=protection_healthy,
                 candidate_fresh=candidate_fresh, prior_shadow_allow=prior,
-                now_ms=now, daily_loss_gate_enabled=daily_loss_gate_enabled,
+                now_ms=now, decision_count=decision_count,
+                daily_loss_gate_enabled=daily_loss_gate_enabled,
                 daily_marks=daily_marks,
             )
             result = evaluate_auto_admission(facts)
             robot_candidate = None
             candidate_created = False
             if result.outcome == OUTCOME_ALLOW:
-                admission_ref = (
-                    candidate.ref if source == SOURCE_SCANNER
-                    else box_plan_admission_handle(candidate.ref)
-                )
-                robot_candidate, candidate_created = admit_robot_candidate(
-                    admission_ref,
-                    store_dir=candidate_store_dir,
-                    clock_ms=lambda: now,
-                    transaction_store=store,
-                    expected_snapshot_sha256=candidate.snapshot_sha256,
-                    mark_legacy_approved=False,
-                )
+                try:
+                    reentry_plan = _auto_reentry_proposal_for_candidate(
+                        store, account, source=source, candidate=candidate,
+                        now_ms=now,
+                    )
+                except PersistenceError:
+                    # No candidate was admitted or reserved; keep the audit
+                    # observation and let the next fresh signal retry.
+                    result = RobotAutoAdmissionResult(
+                        OUTCOME_WAIT, REASON_REENTRY_THESIS_UNPROVEN, POLICY_VERSION,
+                    )
+                else:
+                    admission_ref = (
+                        candidate.ref if source == SOURCE_SCANNER
+                        else box_plan_admission_handle(candidate.ref)
+                    )
+                    robot_candidate, candidate_created = admit_robot_candidate(
+                        admission_ref,
+                        store_dir=candidate_store_dir,
+                        clock_ms=lambda: now,
+                        transaction_store=store,
+                        expected_snapshot_sha256=candidate.snapshot_sha256,
+                        mark_legacy_approved=False,
+                        linked_mirror_parent_candidate_id=(
+                            facts.linked_mirror_parent_candidate_id
+                        ),
+                        reentry=reentry_plan,
+                    )
             decision, decision_created = record_auto_decision(
                 store,
                 trading_account_id=account,
@@ -689,7 +767,10 @@ def admit_arrived_auto_candidate(
             candidate_store_dir=candidate_store_dir,
         )
         now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
-        decisions = store.load_robot_auto_decisions(account)
+        decisions = store.load_robot_auto_decisions_for_admission(
+            account, candidate_ref=candidate.ref, source_identity=candidate.source_identity,
+            policy_version=POLICY_VERSION, business_date_msk=msk_day_start_ms(now)[0])
+        decision_count = store.count_robot_auto_decisions(account)
         existing = _latest_decision(
             decisions, candidate.ref, candidate.source_identity, PAPER_AUTO_MODE,
         )
@@ -710,25 +791,41 @@ def admit_arrived_auto_candidate(
         facts = _fresh_facts(
             store, account, mode=PAPER_AUTO_MODE, candidate=candidate,
             decisions=decisions, protection_healthy=protection_healthy,
-            candidate_fresh=candidate_fresh, now_ms=now,
+            candidate_fresh=candidate_fresh, now_ms=now, decision_count=decision_count,
             daily_loss_gate_enabled=daily_loss_gate_enabled, daily_marks=daily_marks,
         )
         result = evaluate_auto_admission(facts)
         robot_candidate = None
         candidate_created = False
         if result.outcome == OUTCOME_ALLOW:
-            admission_ref = (
-                candidate.ref if source == SOURCE_SCANNER
-                else box_plan_admission_handle(candidate.ref)
-            )
-            robot_candidate, candidate_created = admit_robot_candidate(
-                admission_ref,
-                store_dir=candidate_store_dir,
-                clock_ms=lambda: now,
-                transaction_store=store,
-                expected_snapshot_sha256=candidate.snapshot_sha256,
-                mark_legacy_approved=False,
-            )
+            try:
+                reentry_plan = _auto_reentry_proposal_for_candidate(
+                    store, account, source=source, candidate=candidate,
+                    now_ms=now,
+                )
+            except PersistenceError:
+                # No candidate was admitted or reserved; keep the audit
+                # observation and let the next fresh signal retry.
+                result = RobotAutoAdmissionResult(
+                    OUTCOME_WAIT, REASON_REENTRY_THESIS_UNPROVEN, POLICY_VERSION,
+                )
+            else:
+                admission_ref = (
+                    candidate.ref if source == SOURCE_SCANNER
+                    else box_plan_admission_handle(candidate.ref)
+                )
+                robot_candidate, candidate_created = admit_robot_candidate(
+                    admission_ref,
+                    store_dir=candidate_store_dir,
+                    clock_ms=lambda: now,
+                    transaction_store=store,
+                    expected_snapshot_sha256=candidate.snapshot_sha256,
+                    mark_legacy_approved=False,
+                    linked_mirror_parent_candidate_id=(
+                        facts.linked_mirror_parent_candidate_id
+                    ),
+                    reentry=reentry_plan,
+                )
         decision, decision_created = record_auto_decision(
             store,
             trading_account_id=account,

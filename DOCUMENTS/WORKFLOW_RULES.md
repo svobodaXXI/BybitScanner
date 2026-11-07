@@ -2,11 +2,11 @@
 
 Version:
 
-1.5
+1.6
 
 Date:
 
-2026-07-28
+2026-10-18
 
 Document Type:
 
@@ -15,6 +15,37 @@ WORKFLOW_RULES_DOCUMENT
 Status:
 
 ACTIVE
+
+---
+
+## Result-First applicability — OWNER RULE 2026-10-18
+
+This document retains the Project Sync / legacy full-document delivery
+state machine. It does **not** require every ordinary repository task,
+assistant response, continuation («э») or GitHub-authored documentation
+change to enter that state machine.
+
+For ordinary BybitScanner work, root `AGENTS.md` routes the task and
+`DOCUMENTS/ASSISTANT_PROTOCOL.md` owns Result-First next-action decisions.
+`DOCUMENTS/GITHUB_FIRST_WORKFLOW.md` governs GitHub repository publication.
+Apply WORKFLOW-001/002/003 and full PROJECT_CONTEXT_LOADING only when
+a Project Sync run is expressly needed; do not automatically execute
+`tree /A`, activate venv, or read all PROJECT_STATE/MAP/TREE/ROADMAP/SNAPSHOT
+for a focused GitHub read/review/edit.
+
+WORKFLOW-005-A/B full-artifact delivery applies when the owner explicitly
+requests a complete replacement artifact or the task genuinely requires
+manual/offline document delivery. For a GitHub-first edit, a complete
+versioned file is already persisted in the reviewed commit/PR; give the
+owner its PR/diff and relevant evidence, not a duplicate full file in chat,
+and do not require manual `notepad` or file transport.
+
+WORKFLOW-009 impact analysis is scoped to actual affected components.
+WORKFLOW-010 mandatory states apply **only within the selected workflow**,
+not as universal preparatory stages. Mandatory safety, protected-task,
+contract, change-approval and migration gates remain fully binding when
+applicable. Never confuse a local tool receipt with real PAPER acceptance.
+The owner-approved critical path must resume after the required gate.
 
 ---
 
@@ -101,8 +132,8 @@ Session Start
 
 description:
 
-Каждая новая рабочая сессия
-начинается с проверки состояния проекта.
+Полный Project Sync начинается с проверки состояния проекта.
+Обычная сессия следует минимальному staged entry из AGENTS.md.
 
 sequence:
 
@@ -144,9 +175,9 @@ Environment Preparation
 
 description:
 
-Перед анализом проекта
-необходимо получить актуальное
-состояние рабочей среды.
+При фактическом локальном запуске Project Sync
+необходимо получить актуальное состояние целевой среды.
+Для GitHub-only чтения/PR локальная среда не требуется.
 
 commands:
 
@@ -188,8 +219,9 @@ Project Context Loading
 
 description:
 
-После проверки среды необходимо
-получить актуальный контекст проекта.
+При полном Project Sync после проверки среды требуется
+его согласованный контекст. Для routine задачи читать
+только AGENTS.md и применимые разделы owning authority.
 
 required_sources:
 
@@ -313,14 +345,10 @@ ACTIVE
 
 description:
 
-Любое изменение официального документа
-должно завершаться созданием полного
-актуализированного документного артефакта.
-
-Официальный документ после изменения
-является новой версией проектного
-артефакта и должен быть готов
-для прямой замены исходного файла.
+Когда явно требуется полный документный артефакт,
+он должен быть полным и готовым для прямой замены.
+Для GitHub-first изменение полного файла фиксируется
+в коммите/PR; полная выдача в чат не обязательна.
 
 applies_to:
 
@@ -392,9 +420,9 @@ ACTIVE
 
 description:
 
-При возврате обновлённого официального
-документа применяется единый порядок
-доставки результата.
+Только при ручной выдаче полного документного артефакта
+(не при прямой публикации через GitHub PR) применяется
+следующий порядок доставки.
 
 required_sequence:
 
@@ -720,9 +748,10 @@ Mandatory Workflow States
 
 description:
 
-Состояния workflow являются частью
-инженерного процесса
-и не должны пропускаться без основания.
+Состояния выбранного Project Sync / ручного документационного
+workflow являются частью процесса и не пропускаются, когда
+действительно применимы. Обычный GitHub-first edit не
+обязан воспроизводить эти состояния.
 
 allowed_exceptions:
 
@@ -766,10 +795,8 @@ Workflow BybitScanner
 и приводить к следующему
 определённому результату.
 
-Любой изменённый официальный документ
-должен проходить через workflow полного
-обновления и возвращаться как полный,
-актуальный и готовый к сохранению
-проектный артефакт.
+Полная ручная выдача документа обязательна только в рамках
+применимого full-artifact workflow. В GitHub-first источником
+обновлённого файла служит версия в коммите/PR.
 
 # END_OF_DOCUMENT

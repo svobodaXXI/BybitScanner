@@ -1,0 +1,2074 @@
+{
+ "generated_ms": 1792388642275,
+ "pool_candidates": 1528,
+ "sampled_candidates": 60,
+ "brusdt_candidates": 6,
+ "boundaries_with_naked_breakout": 67,
+ "brusdt_boundaries_with_naked_breakout": 7,
+ "split_as_of_ms": 1791159139000,
+ "reference_status": {
+  "AMBIGUOUS": 2,
+  "DATA_GAP": 2,
+  "TOUCH": 62,
+  "NO_TOUCH": 1
+ },
+ "skipped_reasons": {
+  "no naked breakout": 40,
+  "breakout after apex": 13
+ },
+ "results": {
+  "7x0.0": {
+   "all": {
+    "TP": 56,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 0,
+    "FN": 6,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 56,
+    "precision_lower": 1.0,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9032258064516129,
+    "median_delay_ms": 180000
+   },
+   "train": {
+    "TP": 27,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 0,
+    "FN": 3,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 27,
+    "precision_lower": 1.0,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9,
+    "median_delay_ms": 240000
+   },
+   "test": {
+    "TP": 29,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 0,
+    "FN": 3,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 29,
+    "precision_lower": 1.0,
+    "precision_upper": 1.0,
+    "touch_recall": 0.90625,
+    "median_delay_ms": 180000
+   }
+  },
+  "7x0.05": {
+   "all": {
+    "TP": 49,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 6,
+    "FN": 7,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 55,
+    "precision_lower": 0.8909090909090909,
+    "precision_upper": 1.0,
+    "touch_recall": 0.8870967741935484,
+    "median_delay_ms": 180000
+   },
+   "train": {
+    "TP": 27,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 2,
+    "FN": 1,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 29,
+    "precision_lower": 0.9310344827586207,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9666666666666667,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 22,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 4,
+    "FN": 6,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 26,
+    "precision_lower": 0.8461538461538461,
+    "precision_upper": 1.0,
+    "touch_recall": 0.8125,
+    "median_delay_ms": 180000
+   }
+  },
+  "7x0.1": {
+   "all": {
+    "TP": 47,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 12,
+    "FN": 4,
+    "TN": 0,
+    "EXCLUDED": 4,
+    "detections": 59,
+    "precision_lower": 0.7966101694915254,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9354838709677419,
+    "median_delay_ms": 180000
+   },
+   "train": {
+    "TP": 25,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 4,
+    "FN": 2,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 29,
+    "precision_lower": 0.8620689655172413,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9333333333333333,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 22,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 8,
+    "FN": 2,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 30,
+    "precision_lower": 0.7333333333333333,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9375,
+    "median_delay_ms": 120000
+   }
+  },
+  "7x0.15": {
+   "all": {
+    "TP": 41,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 16,
+    "FN": 6,
+    "TN": 0,
+    "EXCLUDED": 4,
+    "detections": 57,
+    "precision_lower": 0.7192982456140351,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9032258064516129,
+    "median_delay_ms": 120000
+   },
+   "train": {
+    "TP": 23,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 5,
+    "FN": 3,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 28,
+    "precision_lower": 0.8214285714285714,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 18,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 11,
+    "FN": 3,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 29,
+    "precision_lower": 0.6206896551724138,
+    "precision_upper": 1.0,
+    "touch_recall": 0.90625,
+    "median_delay_ms": 60000
+   }
+  },
+  "7x0.2": {
+   "all": {
+    "TP": 38,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 21,
+    "FN": 4,
+    "TN": 0,
+    "EXCLUDED": 4,
+    "detections": 59,
+    "precision_lower": 0.6440677966101694,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9354838709677419,
+    "median_delay_ms": 120000
+   },
+   "train": {
+    "TP": 22,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 8,
+    "FN": 1,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 30,
+    "precision_lower": 0.7333333333333333,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9666666666666667,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 16,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 13,
+    "FN": 3,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 29,
+    "precision_lower": 0.5517241379310345,
+    "precision_upper": 1.0,
+    "touch_recall": 0.90625,
+    "median_delay_ms": 0
+   }
+  },
+  "7x0.3": {
+   "all": {
+    "TP": 36,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 25,
+    "FN": 2,
+    "TN": 0,
+    "EXCLUDED": 4,
+    "detections": 61,
+    "precision_lower": 0.5901639344262295,
+    "precision_upper": 1.0,
+    "touch_recall": 0.967741935483871,
+    "median_delay_ms": 60000
+   },
+   "train": {
+    "TP": 21,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 9,
+    "FN": 1,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 30,
+    "precision_lower": 0.7,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9666666666666667,
+    "median_delay_ms": 120000
+   },
+   "test": {
+    "TP": 15,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 16,
+    "FN": 1,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 31,
+    "precision_lower": 0.4838709677419355,
+    "precision_upper": 1.0,
+    "touch_recall": 0.96875,
+    "median_delay_ms": -60000
+   }
+  },
+  "14x0.0": {
+   "all": {
+    "TP": 56,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 0,
+    "FN": 6,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 56,
+    "precision_lower": 1.0,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9032258064516129,
+    "median_delay_ms": 180000
+   },
+   "train": {
+    "TP": 27,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 0,
+    "FN": 3,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 27,
+    "precision_lower": 1.0,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9,
+    "median_delay_ms": 240000
+   },
+   "test": {
+    "TP": 29,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 0,
+    "FN": 3,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 29,
+    "precision_lower": 1.0,
+    "precision_upper": 1.0,
+    "touch_recall": 0.90625,
+    "median_delay_ms": 180000
+   }
+  },
+  "14x0.05": {
+   "all": {
+    "TP": 52,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 4,
+    "FN": 6,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 56,
+    "precision_lower": 0.9285714285714286,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9032258064516129,
+    "median_delay_ms": 180000
+   },
+   "train": {
+    "TP": 27,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 2,
+    "FN": 1,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 29,
+    "precision_lower": 0.9310344827586207,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9666666666666667,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 25,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 2,
+    "FN": 5,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 27,
+    "precision_lower": 0.9259259259259259,
+    "precision_upper": 1.0,
+    "touch_recall": 0.84375,
+    "median_delay_ms": 180000
+   }
+  },
+  "14x0.1": {
+   "all": {
+    "TP": 48,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 8,
+    "FN": 6,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 56,
+    "precision_lower": 0.8571428571428571,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9032258064516129,
+    "median_delay_ms": 180000
+   },
+   "train": {
+    "TP": 25,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 2,
+    "FN": 3,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 27,
+    "precision_lower": 0.9259259259259259,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 23,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 6,
+    "FN": 3,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 29,
+    "precision_lower": 0.7931034482758621,
+    "precision_upper": 1.0,
+    "touch_recall": 0.90625,
+    "median_delay_ms": 120000
+   }
+  },
+  "14x0.15": {
+   "all": {
+    "TP": 43,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 13,
+    "FN": 7,
+    "TN": 0,
+    "EXCLUDED": 4,
+    "detections": 56,
+    "precision_lower": 0.7678571428571429,
+    "precision_upper": 1.0,
+    "touch_recall": 0.8870967741935484,
+    "median_delay_ms": 120000
+   },
+   "train": {
+    "TP": 23,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 3,
+    "FN": 5,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 26,
+    "precision_lower": 0.8846153846153846,
+    "precision_upper": 1.0,
+    "touch_recall": 0.8333333333333334,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 20,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 10,
+    "FN": 2,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 30,
+    "precision_lower": 0.6666666666666666,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9375,
+    "median_delay_ms": 60000
+   }
+  },
+  "14x0.2": {
+   "all": {
+    "TP": 41,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 18,
+    "FN": 4,
+    "TN": 0,
+    "EXCLUDED": 4,
+    "detections": 59,
+    "precision_lower": 0.6949152542372882,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9354838709677419,
+    "median_delay_ms": 120000
+   },
+   "train": {
+    "TP": 23,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 8,
+    "FN": 0,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 31,
+    "precision_lower": 0.7419354838709677,
+    "precision_upper": 1.0,
+    "touch_recall": 1.0,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 18,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 10,
+    "FN": 4,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 28,
+    "precision_lower": 0.6428571428571429,
+    "precision_upper": 1.0,
+    "touch_recall": 0.875,
+    "median_delay_ms": 60000
+   }
+  },
+  "14x0.3": {
+   "all": {
+    "TP": 36,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 24,
+    "FN": 3,
+    "TN": 0,
+    "EXCLUDED": 4,
+    "detections": 60,
+    "precision_lower": 0.6,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9516129032258065,
+    "median_delay_ms": 60000
+   },
+   "train": {
+    "TP": 20,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 9,
+    "FN": 2,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 29,
+    "precision_lower": 0.6896551724137931,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9333333333333333,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 16,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 15,
+    "FN": 1,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 31,
+    "precision_lower": 0.5161290322580645,
+    "precision_upper": 1.0,
+    "touch_recall": 0.96875,
+    "median_delay_ms": 0
+   }
+  },
+  "21x0.0": {
+   "all": {
+    "TP": 56,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 0,
+    "FN": 6,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 56,
+    "precision_lower": 1.0,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9032258064516129,
+    "median_delay_ms": 180000
+   },
+   "train": {
+    "TP": 27,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 0,
+    "FN": 3,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 27,
+    "precision_lower": 1.0,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9,
+    "median_delay_ms": 240000
+   },
+   "test": {
+    "TP": 29,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 0,
+    "FN": 3,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 29,
+    "precision_lower": 1.0,
+    "precision_upper": 1.0,
+    "touch_recall": 0.90625,
+    "median_delay_ms": 180000
+   }
+  },
+  "21x0.05": {
+   "all": {
+    "TP": 52,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 4,
+    "FN": 6,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 56,
+    "precision_lower": 0.9285714285714286,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9032258064516129,
+    "median_delay_ms": 180000
+   },
+   "train": {
+    "TP": 27,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 2,
+    "FN": 1,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 29,
+    "precision_lower": 0.9310344827586207,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9666666666666667,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 25,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 2,
+    "FN": 5,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 27,
+    "precision_lower": 0.9259259259259259,
+    "precision_upper": 1.0,
+    "touch_recall": 0.84375,
+    "median_delay_ms": 180000
+   }
+  },
+  "21x0.1": {
+   "all": {
+    "TP": 49,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 7,
+    "FN": 6,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 56,
+    "precision_lower": 0.875,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9032258064516129,
+    "median_delay_ms": 180000
+   },
+   "train": {
+    "TP": 26,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 2,
+    "FN": 2,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 28,
+    "precision_lower": 0.9285714285714286,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9333333333333333,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 23,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 5,
+    "FN": 4,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 28,
+    "precision_lower": 0.8214285714285714,
+    "precision_upper": 1.0,
+    "touch_recall": 0.875,
+    "median_delay_ms": 180000
+   }
+  },
+  "21x0.15": {
+   "all": {
+    "TP": 44,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 13,
+    "FN": 5,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 57,
+    "precision_lower": 0.7719298245614035,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9193548387096774,
+    "median_delay_ms": 120000
+   },
+   "train": {
+    "TP": 24,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 3,
+    "FN": 3,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 27,
+    "precision_lower": 0.8888888888888888,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 20,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 10,
+    "FN": 2,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 30,
+    "precision_lower": 0.6666666666666666,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9375,
+    "median_delay_ms": 60000
+   }
+  },
+  "21x0.2": {
+   "all": {
+    "TP": 41,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 17,
+    "FN": 5,
+    "TN": 0,
+    "EXCLUDED": 4,
+    "detections": 58,
+    "precision_lower": 0.7068965517241379,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9193548387096774,
+    "median_delay_ms": 120000
+   },
+   "train": {
+    "TP": 23,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 7,
+    "FN": 1,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 30,
+    "precision_lower": 0.7666666666666667,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9666666666666667,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 18,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 10,
+    "FN": 4,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 28,
+    "precision_lower": 0.6428571428571429,
+    "precision_upper": 1.0,
+    "touch_recall": 0.875,
+    "median_delay_ms": 60000
+   }
+  },
+  "21x0.3": {
+   "all": {
+    "TP": 36,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 26,
+    "FN": 1,
+    "TN": 0,
+    "EXCLUDED": 4,
+    "detections": 62,
+    "precision_lower": 0.5806451612903226,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9838709677419355,
+    "median_delay_ms": 0
+   },
+   "train": {
+    "TP": 21,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 9,
+    "FN": 1,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 30,
+    "precision_lower": 0.7,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9666666666666667,
+    "median_delay_ms": 120000
+   },
+   "test": {
+    "TP": 15,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 17,
+    "FN": 0,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 32,
+    "precision_lower": 0.46875,
+    "precision_upper": 1.0,
+    "touch_recall": 1.0,
+    "median_delay_ms": -60000
+   }
+  },
+  "28x0.0": {
+   "all": {
+    "TP": 56,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 0,
+    "FN": 6,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 56,
+    "precision_lower": 1.0,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9032258064516129,
+    "median_delay_ms": 180000
+   },
+   "train": {
+    "TP": 27,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 0,
+    "FN": 3,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 27,
+    "precision_lower": 1.0,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9,
+    "median_delay_ms": 240000
+   },
+   "test": {
+    "TP": 29,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 0,
+    "FN": 3,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 29,
+    "precision_lower": 1.0,
+    "precision_upper": 1.0,
+    "touch_recall": 0.90625,
+    "median_delay_ms": 180000
+   }
+  },
+  "28x0.05": {
+   "all": {
+    "TP": 52,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 4,
+    "FN": 6,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 56,
+    "precision_lower": 0.9285714285714286,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9032258064516129,
+    "median_delay_ms": 180000
+   },
+   "train": {
+    "TP": 27,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 2,
+    "FN": 1,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 29,
+    "precision_lower": 0.9310344827586207,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9666666666666667,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 25,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 2,
+    "FN": 5,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 27,
+    "precision_lower": 0.9259259259259259,
+    "precision_upper": 1.0,
+    "touch_recall": 0.84375,
+    "median_delay_ms": 180000
+   }
+  },
+  "28x0.1": {
+   "all": {
+    "TP": 47,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 8,
+    "FN": 7,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 55,
+    "precision_lower": 0.8545454545454545,
+    "precision_upper": 1.0,
+    "touch_recall": 0.8870967741935484,
+    "median_delay_ms": 180000
+   },
+   "train": {
+    "TP": 26,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 2,
+    "FN": 2,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 28,
+    "precision_lower": 0.9285714285714286,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9333333333333333,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 21,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 6,
+    "FN": 5,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 27,
+    "precision_lower": 0.7777777777777778,
+    "precision_upper": 1.0,
+    "touch_recall": 0.84375,
+    "median_delay_ms": 120000
+   }
+  },
+  "28x0.15": {
+   "all": {
+    "TP": 44,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 13,
+    "FN": 5,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 57,
+    "precision_lower": 0.7719298245614035,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9193548387096774,
+    "median_delay_ms": 120000
+   },
+   "train": {
+    "TP": 24,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 2,
+    "FN": 4,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 26,
+    "precision_lower": 0.9230769230769231,
+    "precision_upper": 1.0,
+    "touch_recall": 0.8666666666666667,
+    "median_delay_ms": 240000
+   },
+   "test": {
+    "TP": 20,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 11,
+    "FN": 1,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 31,
+    "precision_lower": 0.6451612903225806,
+    "precision_upper": 1.0,
+    "touch_recall": 0.96875,
+    "median_delay_ms": 60000
+   }
+  },
+  "28x0.2": {
+   "all": {
+    "TP": 41,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 15,
+    "FN": 6,
+    "TN": 1,
+    "EXCLUDED": 4,
+    "detections": 56,
+    "precision_lower": 0.7321428571428571,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9032258064516129,
+    "median_delay_ms": 120000
+   },
+   "train": {
+    "TP": 23,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 3,
+    "FN": 4,
+    "TN": 1,
+    "EXCLUDED": 2,
+    "detections": 26,
+    "precision_lower": 0.8846153846153846,
+    "precision_upper": 1.0,
+    "touch_recall": 0.8666666666666667,
+    "median_delay_ms": 180000
+   },
+   "test": {
+    "TP": 18,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 12,
+    "FN": 2,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 30,
+    "precision_lower": 0.6,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9375,
+    "median_delay_ms": 0
+   }
+  },
+  "28x0.3": {
+   "all": {
+    "TP": 37,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 25,
+    "FN": 1,
+    "TN": 0,
+    "EXCLUDED": 4,
+    "detections": 62,
+    "precision_lower": 0.5967741935483871,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9838709677419355,
+    "median_delay_ms": 60000
+   },
+   "train": {
+    "TP": 21,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 9,
+    "FN": 1,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 30,
+    "precision_lower": 0.7,
+    "precision_upper": 1.0,
+    "touch_recall": 0.9666666666666667,
+    "median_delay_ms": 120000
+   },
+   "test": {
+    "TP": 16,
+    "FP_LATE": 0,
+    "UNLABELED_NEAR_MISS": 16,
+    "FN": 0,
+    "TN": 0,
+    "EXCLUDED": 2,
+    "detections": 32,
+    "precision_lower": 0.5,
+    "precision_upper": 1.0,
+    "touch_recall": 1.0,
+    "median_delay_ms": 0
+   }
+  }
+ },
+ "manifest": [
+  {
+   "boundary_id": "7f17fe7c0ec2bda6284b837d:upper",
+   "symbol": "1000LUNCUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1789847427000,
+   "anchor_time_ms": 1789847400000,
+   "anchor_price": 0.052939366197183105,
+   "slope_per_ms": 1.7136150234741818e-11,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1789920600000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1789920840000,
+    "touch_close_time_ms": 1789920900000
+   }
+  },
+  {
+   "boundary_id": "7f17fe7c0ec2bda6284b837d:lower",
+   "symbol": "1000LUNCUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1789847427000,
+   "anchor_time_ms": 1789847400000,
+   "anchor_price": 0.05244270676691729,
+   "slope_per_ms": 2.2556390977443562e-11,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1789920600000,
+   "reference": {
+    "status": "NO_TOUCH",
+    "touch_close_time_ms": null
+   }
+  },
+  {
+   "boundary_id": "522aa6f921e1dbcf9280b839:upper",
+   "symbol": "REUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1789850248000,
+   "anchor_time_ms": 1789850100000,
+   "anchor_price": 0.45991627906976745,
+   "slope_per_ms": -1.0077519379844927e-10,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1789874100000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1789874220000,
+    "touch_close_time_ms": 1789874280000
+   }
+  },
+  {
+   "boundary_id": "522aa6f921e1dbcf9280b839:lower",
+   "symbol": "REUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1789850248000,
+   "anchor_time_ms": 1789850100000,
+   "anchor_price": 0.45458421052631565,
+   "slope_per_ms": -6.432748538011962e-11,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1789894500000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1789894980000,
+    "touch_close_time_ms": 1789895040000
+   }
+  },
+  {
+   "boundary_id": "f94e98c12983a610a57ed9b4:upper",
+   "symbol": "ZEREBROUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1789851124000,
+   "anchor_time_ms": 1789851000000,
+   "anchor_price": 0.0315925,
+   "slope_per_ms": -2.9166666666666605e-11,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1789852200000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1789853040000,
+    "touch_close_time_ms": 1789853100000
+   }
+  },
+  {
+   "boundary_id": "195b7a0e6ae8f595ed9209a2:upper",
+   "symbol": "1000NEIROCTOUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1789994088000,
+   "anchor_time_ms": 1789993800000,
+   "anchor_price": 0.09389434482758621,
+   "slope_per_ms": 6.85057471264367e-11,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1789995300000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1789995420000,
+    "touch_close_time_ms": 1789995480000
+   }
+  },
+  {
+   "boundary_id": "195b7a0e6ae8f595ed9209a2:lower",
+   "symbol": "1000NEIROCTOUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1789994088000,
+   "anchor_time_ms": 1789993800000,
+   "anchor_price": 0.09205129032258064,
+   "slope_per_ms": 1.0215053763440855e-10,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1789999500000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1789999500000,
+    "touch_close_time_ms": 1789999560000
+   }
+  },
+  {
+   "boundary_id": "804573b2149f403e10c8fa82:upper",
+   "symbol": "BBXUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1789994683000,
+   "anchor_time_ms": 1789994400000,
+   "anchor_price": 8.17849295774648,
+   "slope_per_ms": 2.0187793427230532e-09,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1789996800000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1789997400000,
+    "touch_close_time_ms": 1789997460000
+   }
+  },
+  {
+   "boundary_id": "699b0a37417b458f7d8ac8e2:lower",
+   "symbol": "HOODUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1789995992000,
+   "anchor_time_ms": 1789995900000,
+   "anchor_price": 126.03148351648352,
+   "slope_per_ms": 1.3388278388278392e-07,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1789997100000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1789997400000,
+    "touch_close_time_ms": 1789997460000
+   }
+  },
+  {
+   "boundary_id": "8b2ff5f76e4370e0d5e37942:upper",
+   "symbol": "ORDIUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1789996960000,
+   "anchor_time_ms": 1789996800000,
+   "anchor_price": 4.919089285714285,
+   "slope_per_ms": 5.65476190476189e-09,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790003400000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790003400000,
+    "touch_close_time_ms": 1790003460000
+   }
+  },
+  {
+   "boundary_id": "8b2ff5f76e4370e0d5e37942:lower",
+   "symbol": "ORDIUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1789996960000,
+   "anchor_time_ms": 1789996800000,
+   "anchor_price": 4.853166666666667,
+   "slope_per_ms": 7.722222222222235e-09,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790000700000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790001060000,
+    "touch_close_time_ms": 1790001120000
+   }
+  },
+  {
+   "boundary_id": "7f741979fda0ec5b1e953918:lower",
+   "symbol": "RUNEUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1789997368000,
+   "anchor_time_ms": 1789997100000,
+   "anchor_price": 0.6051285714285713,
+   "slope_per_ms": 1.7619047619047593e-09,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790002500000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790002560000,
+    "touch_close_time_ms": 1790002620000
+   }
+  },
+  {
+   "boundary_id": "2ef70997e4c8b82eff04c181:lower",
+   "symbol": "SSVUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1789997704000,
+   "anchor_time_ms": 1789997400000,
+   "anchor_price": 3.273333333333333,
+   "slope_per_ms": 7.098765432098751e-09,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790003100000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790003100000,
+    "touch_close_time_ms": 1790003160000
+   }
+  },
+  {
+   "boundary_id": "7e713869fd3f80910e1a6ff2:upper",
+   "symbol": "AUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1790002411000,
+   "anchor_time_ms": 1790002200000,
+   "anchor_price": 0.09285035714285715,
+   "slope_per_ms": 5.261904761904771e-11,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790006700000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790007000000,
+    "touch_close_time_ms": 1790007060000
+   }
+  },
+  {
+   "boundary_id": "7e713869fd3f80910e1a6ff2:lower",
+   "symbol": "AUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1790002411000,
+   "anchor_time_ms": 1790002200000,
+   "anchor_price": 0.09069408163265306,
+   "slope_per_ms": 9.41043083900227e-11,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1790004900000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790004900000,
+    "touch_close_time_ms": 1790004960000
+   }
+  },
+  {
+   "boundary_id": "09be39b87b0bb961364c3ed0:lower",
+   "symbol": "BRUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1790002823000,
+   "anchor_time_ms": 1790002800000,
+   "anchor_price": 1.2030850000000002,
+   "slope_per_ms": 5.023611111111116e-09,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1790004000000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790004060000,
+    "touch_close_time_ms": 1790004120000
+   }
+  },
+  {
+   "boundary_id": "ae3f65f005080f287303443e:upper",
+   "symbol": "DATAUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1790003266000,
+   "anchor_time_ms": 1790003100000,
+   "anchor_price": 0.20240789473684212,
+   "slope_per_ms": 8.771929824561655e-12,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790022000000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790024640000,
+    "touch_close_time_ms": 1790024700000
+   }
+  },
+  {
+   "boundary_id": "ae3f65f005080f287303443e:lower",
+   "symbol": "DATAUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1790003266000,
+   "anchor_time_ms": 1790003100000,
+   "anchor_price": 0.19981556886227544,
+   "slope_per_ms": 5.988023952095814e-11,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1790013300000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790013360000,
+    "touch_close_time_ms": 1790013420000
+   }
+  },
+  {
+   "boundary_id": "236638137175db933687faff:lower",
+   "symbol": "HIVEUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1790003957000,
+   "anchor_time_ms": 1790003700000,
+   "anchor_price": 0.054826946564885494,
+   "slope_per_ms": 4.5547073791348593e-11,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1790004300000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790005800000,
+    "touch_close_time_ms": 1790005860000
+   }
+  },
+  {
+   "boundary_id": "0f91dc378d9ae7344c4a0d7b:lower",
+   "symbol": "EULUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1790272922000,
+   "anchor_time_ms": 1790272800000,
+   "anchor_price": 1.4091400000000003,
+   "slope_per_ms": 1.4666666666666742e-09,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1790289900000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790289900000,
+    "touch_close_time_ms": 1790289960000
+   }
+  },
+  {
+   "boundary_id": "6e00791127c911fc032513e8:upper",
+   "symbol": "XNYUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1790275240000,
+   "anchor_time_ms": 1790275200000,
+   "anchor_price": 0.007057716216216217,
+   "slope_per_ms": 7.657657657657893e-13,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790279700000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790279700000,
+    "touch_close_time_ms": 1790279760000
+   }
+  },
+  {
+   "boundary_id": "6e00791127c911fc032513e8:lower",
+   "symbol": "XNYUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1790275240000,
+   "anchor_time_ms": 1790275200000,
+   "anchor_price": 0.006980276923076923,
+   "slope_per_ms": 8.051282051282052e-12,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790277300000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790277300000,
+    "touch_close_time_ms": 1790277360000
+   }
+  },
+  {
+   "boundary_id": "48d8289799566f15f1ab5a9c:upper",
+   "symbol": "ATHUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1790540012000,
+   "anchor_time_ms": 1790539800000,
+   "anchor_price": 0.006387891891891892,
+   "slope_per_ms": 3.603603603603613e-12,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1790540400000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790551740000,
+    "touch_close_time_ms": 1790551800000
+   }
+  },
+  {
+   "boundary_id": "48d8289799566f15f1ab5a9c:lower",
+   "symbol": "ATHUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1790540012000,
+   "anchor_time_ms": 1790539800000,
+   "anchor_price": 0.006331317073170731,
+   "slope_per_ms": 7.886178861788607e-12,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1790541000000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790541000000,
+    "touch_close_time_ms": 1790541060000
+   }
+  },
+  {
+   "boundary_id": "f71d2bb6472262c52e1abe0a:upper",
+   "symbol": "BRUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1790540380000,
+   "anchor_time_ms": 1790540100000,
+   "anchor_price": 0.885470625,
+   "slope_per_ms": -2.4937500000000074e-09,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790541600000,
+   "reference": {
+    "status": "AMBIGUOUS",
+    "touch_close_time_ms": null
+   }
+  },
+  {
+   "boundary_id": "c1a954a1a869d8898d60d48d:upper",
+   "symbol": "BANUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1790588825000,
+   "anchor_time_ms": 1790588700000,
+   "anchor_price": 0.06427018867924529,
+   "slope_per_ms": -1.2767295597484258e-10,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790589900000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790590200000,
+    "touch_close_time_ms": 1790590260000
+   }
+  },
+  {
+   "boundary_id": "d412eadf5b517a7c83064c02:upper",
+   "symbol": "ALLOUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1790623621000,
+   "anchor_time_ms": 1790623500000,
+   "anchor_price": 0.2867724137931034,
+   "slope_per_ms": -1.379310344827594e-10,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790640900000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790640900000,
+    "touch_close_time_ms": 1790640960000
+   }
+  },
+  {
+   "boundary_id": "d412eadf5b517a7c83064c02:lower",
+   "symbol": "ALLOUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1790623621000,
+   "anchor_time_ms": 1790623500000,
+   "anchor_price": 0.2803196078431372,
+   "slope_per_ms": -6.535947712419395e-12,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790626200000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790628600000,
+    "touch_close_time_ms": 1790628660000
+   }
+  },
+  {
+   "boundary_id": "4dcc434d17a8689d1a8843bb:upper",
+   "symbol": "BRUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1790624460000,
+   "anchor_time_ms": 1790624400000,
+   "anchor_price": 0.8987459574468085,
+   "slope_per_ms": -1.0113475177304922e-09,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790627100000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790627400000,
+    "touch_close_time_ms": 1790627460000
+   }
+  },
+  {
+   "boundary_id": "4dcc434d17a8689d1a8843bb:lower",
+   "symbol": "BRUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1790624460000,
+   "anchor_time_ms": 1790624400000,
+   "anchor_price": 0.89101725,
+   "slope_per_ms": -8.158333333333305e-10,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790625900000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790626020000,
+    "touch_close_time_ms": 1790626080000
+   }
+  },
+  {
+   "boundary_id": "54182b8833825034cd7b5493:upper",
+   "symbol": "TQQQUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1790628723000,
+   "anchor_time_ms": 1790628600000,
+   "anchor_price": 76.92027777777777,
+   "slope_per_ms": -8.425925925926027e-08,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790629200000,
+   "reference": {
+    "status": "DATA_GAP",
+    "touch_close_time_ms": null
+   }
+  },
+  {
+   "boundary_id": "554f40b17ba1134cd756b359:upper",
+   "symbol": "LONGXIAUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1790766725000,
+   "anchor_time_ms": 1790766600000,
+   "anchor_price": 0.056726315789473666,
+   "slope_per_ms": -3.1578947368421103e-10,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1790767500000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790775300000,
+    "touch_close_time_ms": 1790775360000
+   }
+  },
+  {
+   "boundary_id": "554f40b17ba1134cd756b359:lower",
+   "symbol": "LONGXIAUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1790766725000,
+   "anchor_time_ms": 1790766600000,
+   "anchor_price": 0.05416708860759494,
+   "slope_per_ms": -2.61603375527426e-10,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1790790000000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1790790240000,
+    "touch_close_time_ms": 1790790300000
+   }
+  },
+  {
+   "boundary_id": "d8dda51e50c8aedba1bbe1d4:upper",
+   "symbol": "ENAUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1791159139000,
+   "anchor_time_ms": 1791159000000,
+   "anchor_price": 0.243184,
+   "slope_per_ms": 4.8888888888888444e-11,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791185100000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791210720000,
+    "touch_close_time_ms": 1791210780000
+   }
+  },
+  {
+   "boundary_id": "d8dda51e50c8aedba1bbe1d4:lower",
+   "symbol": "ENAUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1791159139000,
+   "anchor_time_ms": 1791159000000,
+   "anchor_price": 0.239675,
+   "slope_per_ms": 1.6111111111111104e-10,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1791164100000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791165900000,
+    "touch_close_time_ms": 1791165960000
+   }
+  },
+  {
+   "boundary_id": "958702bf55601cdc631789c5:upper",
+   "symbol": "UBUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791244923000,
+   "anchor_time_ms": 1791244800000,
+   "anchor_price": 0.13823923076923075,
+   "slope_per_ms": -1.4786324786324865e-10,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791251100000,
+   "reference": {
+    "status": "AMBIGUOUS",
+    "touch_close_time_ms": null
+   }
+  },
+  {
+   "boundary_id": "339a2064644097ed658a22b0:upper",
+   "symbol": "METUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791366632000,
+   "anchor_time_ms": 1791366600000,
+   "anchor_price": 0.3143369863013699,
+   "slope_per_ms": -3.287671232876705e-10,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791370500000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791372180000,
+    "touch_close_time_ms": 1791372240000
+   }
+  },
+  {
+   "boundary_id": "339a2064644097ed658a22b0:lower",
+   "symbol": "METUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791366632000,
+   "anchor_time_ms": 1791366600000,
+   "anchor_price": 0.31004933333333334,
+   "slope_per_ms": -8.888888888890377e-12,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1791373200000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791373380000,
+    "touch_close_time_ms": 1791373440000
+   }
+  },
+  {
+   "boundary_id": "7195301ed96960a10e92e6a2:upper",
+   "symbol": "AEROUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791460419000,
+   "anchor_time_ms": 1791460200000,
+   "anchor_price": 0.7772951612903225,
+   "slope_per_ms": -3.6021505376344297e-10,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1791460800000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791461580000,
+    "touch_close_time_ms": 1791461640000
+   }
+  },
+  {
+   "boundary_id": "eca4c3119b6cc113f8ae7ed0:upper",
+   "symbol": "LYNUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791463135000,
+   "anchor_time_ms": 1791462900000,
+   "anchor_price": 0.0192775,
+   "slope_per_ms": -3.020833333333337e-11,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1791463800000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791463800000,
+    "touch_close_time_ms": 1791463860000
+   }
+  },
+  {
+   "boundary_id": "eca4c3119b6cc113f8ae7ed0:lower",
+   "symbol": "LYNUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791463135000,
+   "anchor_time_ms": 1791462900000,
+   "anchor_price": 0.019020175438596493,
+   "slope_per_ms": -1.9883040935672517e-11,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1791470400000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791471000000,
+    "touch_close_time_ms": 1791471060000
+   }
+  },
+  {
+   "boundary_id": "eb1b04c363c101acb1617350:upper",
+   "symbol": "API3USDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791468286000,
+   "anchor_time_ms": 1791468000000,
+   "anchor_price": 0.3061,
+   "slope_per_ms": -1.666666666666663e-10,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791468600000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791471720000,
+    "touch_close_time_ms": 1791471780000
+   }
+  },
+  {
+   "boundary_id": "eb1b04c363c101acb1617350:lower",
+   "symbol": "API3USDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791468286000,
+   "anchor_time_ms": 1791468000000,
+   "anchor_price": 0.2989210526315789,
+   "slope_per_ms": -4.093567251461862e-11,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1791472800000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791518700000,
+    "touch_close_time_ms": 1791518760000
+   }
+  },
+  {
+   "boundary_id": "d1ddccabcb56244336405bfd:upper",
+   "symbol": "SKHYUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791472231000,
+   "anchor_time_ms": 1791472200000,
+   "anchor_price": 175.4645945945946,
+   "slope_per_ms": -1.3903903903903892e-07,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791499500000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791499560000,
+    "touch_close_time_ms": 1791499620000
+   }
+  },
+  {
+   "boundary_id": "d1ddccabcb56244336405bfd:lower",
+   "symbol": "SKHYUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791472231000,
+   "anchor_time_ms": 1791472200000,
+   "anchor_price": 173.9688235294118,
+   "slope_per_ms": -1.0130718954248255e-07,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791497700000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791502020000,
+    "touch_close_time_ms": 1791502080000
+   }
+  },
+  {
+   "boundary_id": "3bd96373eb5c9b4e32071469:upper",
+   "symbol": "ARBUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1791574553000,
+   "anchor_time_ms": 1791574500000,
+   "anchor_price": 0.18212666666666666,
+   "slope_per_ms": 2.222222222222242e-11,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791589200000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791590340000,
+    "touch_close_time_ms": 1791590400000
+   }
+  },
+  {
+   "boundary_id": "3bd96373eb5c9b4e32071469:lower",
+   "symbol": "ARBUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1791574553000,
+   "anchor_time_ms": 1791574500000,
+   "anchor_price": 0.17865684210526317,
+   "slope_per_ms": 7.894736842105367e-11,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791575700000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791575700000,
+    "touch_close_time_ms": 1791575760000
+   }
+  },
+  {
+   "boundary_id": "40b5276fdf1de7386c7a1989:upper",
+   "symbol": "PIXELUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791684698000,
+   "anchor_time_ms": 1791684600000,
+   "anchor_price": 0.0062575178571428565,
+   "slope_per_ms": -9.464285714285732e-12,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791697800000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791698160000,
+    "touch_close_time_ms": 1791698220000
+   }
+  },
+  {
+   "boundary_id": "40b5276fdf1de7386c7a1989:lower",
+   "symbol": "PIXELUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791684698000,
+   "anchor_time_ms": 1791684600000,
+   "anchor_price": 0.006170056074766355,
+   "slope_per_ms": -5.825545171339581e-12,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791685500000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791685500000,
+    "touch_close_time_ms": 1791685560000
+   }
+  },
+  {
+   "boundary_id": "ea4fccd84a849940bc1210ce:upper",
+   "symbol": "UBUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1791700213000,
+   "anchor_time_ms": 1791700200000,
+   "anchor_price": 0.14129139534883717,
+   "slope_per_ms": 1.2015503875968098e-11,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791722700000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791723300000,
+    "touch_close_time_ms": 1791723360000
+   }
+  },
+  {
+   "boundary_id": "ea4fccd84a849940bc1210ce:lower",
+   "symbol": "UBUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1791700213000,
+   "anchor_time_ms": 1791700200000,
+   "anchor_price": 0.13962,
+   "slope_per_ms": 8.333333333333289e-11,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1791702600000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791720960000,
+    "touch_close_time_ms": 1791721020000
+   }
+  },
+  {
+   "boundary_id": "552b518dfdfd5981083c2218:upper",
+   "symbol": "BMTUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791718193000,
+   "anchor_time_ms": 1791717900000,
+   "anchor_price": 0.019003062499999997,
+   "slope_per_ms": -2.0486111111111116e-11,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791720000000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791720000000,
+    "touch_close_time_ms": 1791720060000
+   }
+  },
+  {
+   "boundary_id": "c37b810f2e10d46b20851f64:upper",
+   "symbol": "BRUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791718381000,
+   "anchor_time_ms": 1791718200000,
+   "anchor_price": 0.4940862790697673,
+   "slope_per_ms": -9.77519379844962e-10,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791720000000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791720000000,
+    "touch_close_time_ms": 1791720060000
+   }
+  },
+  {
+   "boundary_id": "2a1c1301760dd5eb18250f50:upper",
+   "symbol": "OPUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791726614000,
+   "anchor_time_ms": 1791726300000,
+   "anchor_price": 0.14137333333333332,
+   "slope_per_ms": -1.2888888888888825e-10,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791727800000,
+   "reference": {
+    "status": "DATA_GAP",
+    "touch_close_time_ms": null
+   }
+  },
+  {
+   "boundary_id": "75858ad22cef77f6d56e77c5:upper",
+   "symbol": "CXMTUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791843041000,
+   "anchor_time_ms": 1791843000000,
+   "anchor_price": 7.061103448275863,
+   "slope_per_ms": -2.8160919540229844e-09,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1791847800000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791855240000,
+    "touch_close_time_ms": 1791855300000
+   }
+  },
+  {
+   "boundary_id": "75858ad22cef77f6d56e77c5:lower",
+   "symbol": "CXMTUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791843041000,
+   "anchor_time_ms": 1791843000000,
+   "anchor_price": 7.039913043478261,
+   "slope_per_ms": -5.797101449275153e-10,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1791848100000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791855240000,
+    "touch_close_time_ms": 1791855300000
+   }
+  },
+  {
+   "boundary_id": "84965620633d126a5bb91f72:upper",
+   "symbol": "SKLUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791894027000,
+   "anchor_time_ms": 1791894000000,
+   "anchor_price": 0.005322556701030929,
+   "slope_per_ms": -1.9106529209621996e-11,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1791896700000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1791897000000,
+    "touch_close_time_ms": 1791897060000
+   }
+  },
+  {
+   "boundary_id": "6251b220723e2c073facbb69:upper",
+   "symbol": "KITEUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1791993570000,
+   "anchor_time_ms": 1791993300000,
+   "anchor_price": 0.1305804761904762,
+   "slope_per_ms": -4.3015873015872967e-10,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1791995700000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1792002720000,
+    "touch_close_time_ms": 1792002780000
+   }
+  },
+  {
+   "boundary_id": "47914a42294abbbfa2851753:upper",
+   "symbol": "ALABUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1792013036000,
+   "anchor_time_ms": 1792012800000,
+   "anchor_price": 298.8691262135922,
+   "slope_per_ms": -8.676375404530745e-07,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1792016400000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1792016640000,
+    "touch_close_time_ms": 1792016700000
+   }
+  },
+  {
+   "boundary_id": "b85e4a8754d01106ded5a375:upper",
+   "symbol": "BRUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1792089785000,
+   "anchor_time_ms": 1792089600000,
+   "anchor_price": 0.3865792307692308,
+   "slope_per_ms": -3.410256410256405e-10,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1792160400000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1792160580000,
+    "touch_close_time_ms": 1792160640000
+   }
+  },
+  {
+   "boundary_id": "b85e4a8754d01106ded5a375:lower",
+   "symbol": "BRUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1792089785000,
+   "anchor_time_ms": 1792089600000,
+   "anchor_price": 0.3782874193548387,
+   "slope_per_ms": -2.362007168458776e-10,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1792090200000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1792090200000,
+    "touch_close_time_ms": 1792090260000
+   }
+  },
+  {
+   "boundary_id": "db61754a9ec703d56fde776e:upper",
+   "symbol": "AVAUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1792100179000,
+   "anchor_time_ms": 1792100100000,
+   "anchor_price": 0.2949045454545455,
+   "slope_per_ms": 3.787878787878791e-10,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1792113600000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1792114500000,
+    "touch_close_time_ms": 1792114560000
+   }
+  },
+  {
+   "boundary_id": "db61754a9ec703d56fde776e:lower",
+   "symbol": "AVAUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1792100179000,
+   "anchor_time_ms": 1792100100000,
+   "anchor_price": 0.27681643835616443,
+   "slope_per_ms": 6.255707762557099e-10,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1792122600000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1792123260000,
+    "touch_close_time_ms": 1792123320000
+   }
+  },
+  {
+   "boundary_id": "6d0c2b171b1deca73a191947:upper",
+   "symbol": "POPCATUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1792108352000,
+   "anchor_time_ms": 1792108200000,
+   "anchor_price": 0.046640454545454554,
+   "slope_per_ms": 2.3484848484848843e-11,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1792110000000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1792110060000,
+    "touch_close_time_ms": 1792110120000
+   }
+  },
+  {
+   "boundary_id": "6d0c2b171b1deca73a191947:lower",
+   "symbol": "POPCATUSDT",
+   "pattern": "Rising Wedge",
+   "as_of_ms": 1792108352000,
+   "anchor_time_ms": 1792108200000,
+   "anchor_price": 0.04627,
+   "slope_per_ms": 5.098039215686271e-11,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1792113900000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1792118400000,
+    "touch_close_time_ms": 1792118460000
+   }
+  },
+  {
+   "boundary_id": "87285dc066d90364d90dd51f:upper",
+   "symbol": "ENSOUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1792171694000,
+   "anchor_time_ms": 1792171500000,
+   "anchor_price": 0.7577199999999998,
+   "slope_per_ms": -4.0000000000000353e-10,
+   "breakout_direction": "UP",
+   "breakout_close_time_ms": 1792191900000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1792193220000,
+    "touch_close_time_ms": 1792193280000
+   }
+  },
+  {
+   "boundary_id": "87285dc066d90364d90dd51f:lower",
+   "symbol": "ENSOUSDT",
+   "pattern": "Falling Wedge",
+   "as_of_ms": 1792171694000,
+   "anchor_time_ms": 1792171500000,
+   "anchor_price": 0.7499799999999999,
+   "slope_per_ms": -3.111111111111139e-10,
+   "breakout_direction": "DOWN",
+   "breakout_close_time_ms": 1792176300000,
+   "reference": {
+    "status": "TOUCH",
+    "touch_open_time_ms": 1792184160000,
+    "touch_close_time_ms": 1792184220000
+   }
+  }
+ ]
+}

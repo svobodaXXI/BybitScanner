@@ -211,6 +211,43 @@ class RuntimeWiringTests(unittest.TestCase):
             finally:
                 runtime.close()
 
+    def test_autopilot_owner_timeout_keeps_the_frozen_box_plan_and_robot_action(self):
+        from unittest.mock import patch
+
+        from tests.test_terminal_paper_runtime import _CONFIRMED_BOX_FORMATION
+
+        with tempfile.TemporaryDirectory() as temp:
+            runtime = self._runtime(temp)
+            try:
+                runtime.bind_autopilot_protection_health(lambda: True)
+                runtime.set_autopilot_mode("PAPER_AUTO", confirm_paper_auto=True)
+                runtime.robot_catchup_evidence = None
+                timeout = TimeoutError("PAPER runtime operation timed out")
+                with patch.object(runtime, "observe_autopilot_candidate", side_effect=timeout):
+                    source_id = runtime._dispatch_ikigai_box_plan_preparation(
+                        "BTCUSDT", "5", _CONFIRMED_BOX_FORMATION)
+
+                self.assertEqual(runtime.store.get_robot_candidate(source_id).status,
+                                 "BOX_PLAN_ONLY")
+                self.assertEqual(runtime.store.load_robot_auto_decisions(ACCOUNT), ())
+
+                with patch.object(runtime, "_prepare_ikigai_box_robot_plan", side_effect=timeout):
+                    with self.assertRaises(TimeoutError):
+                        runtime._dispatch_ikigai_box_plan_preparation(
+                            "ETHUSDT", "5", _CONFIRMED_BOX_FORMATION)
+
+                unavailable = RuntimeError("PAPER runtime owner is unavailable")
+                with patch.object(runtime, "observe_autopilot_candidate", side_effect=unavailable):
+                    with self.assertRaises(RuntimeError):
+                        runtime._dispatch_ikigai_box_plan_preparation(
+                            "SOLUSDT", "5", _CONFIRMED_BOX_FORMATION)
+
+                self.assertEqual(runtime.store.load_robot_auto_decisions(ACCOUNT), ())
+                self.assertEqual([c for c in runtime.store.load_robot_candidates(ACCOUNT)
+                                  if c.status != "BOX_PLAN_ONLY"], [])
+            finally:
+                runtime.close()
+
     def test_unproven_evidence_keeps_the_runtime_freshness_answer_unknown(self):
         with tempfile.TemporaryDirectory() as temp:
             runtime = self._runtime(temp)

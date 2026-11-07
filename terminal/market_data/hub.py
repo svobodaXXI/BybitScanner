@@ -4,16 +4,33 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Callable, Protocol
 
 import websocket
 
 from terminal.market_data.instrument_registry import InstrumentRegistry
+from terminal.runtime.incident_telemetry import report_incident
 
 LOGGER = logging.getLogger(__name__)
+
+_REASON_MAX_CHARS = 200
+_URL_CREDENTIALS = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^\s/@]+@")
+_QUERY_STRING = re.compile(r"\?[^\s'\"]*")
+_BOT_TOKEN = re.compile(r"\bbot\d+:[A-Za-z0-9_-]+")
+
+
+def _safe_reason(error: BaseException) -> str:
+    """Bounded one-line exception text without URL credentials, queries or bot tokens."""
+    text = " ".join(str(error).split())
+    text = _URL_CREDENTIALS.sub(r"\1<redacted>@", text)
+    text = _QUERY_STRING.sub("?<redacted>", text)
+    text = _BOT_TOKEN.sub("bot<redacted>", text)
+    return text[:_REASON_MAX_CHARS]
 
 
 class _BookBuffer(Protocol):
@@ -320,6 +337,25 @@ class MarketDataHub:
                             context.reconnect_count,
                             context.last_error,
                         )
+                    # Structured bounded evidence never contains raw WS exception
+                    # text or credentials; reconnect and continuity fencing unchanged.
+                    report_incident(
+                        "WS_DISCONNECT", error_class=type(exc).__name__,
+                        contexts=len(contexts),
+                        symbol=contexts[0].symbol if contexts else "",
+                        generation=max((c.reconnect_count for c in contexts), default=0),
+                    )
+                    # Existing console diagnostics, best-effort only.
+                    try:
+                        LOGGER.warning(
+                            "Market-data WebSocket disconnected; utc=%s error_class=%s "
+                            "reason=%s contexts=%d generations=%s",
+                            datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                            type(exc).__name__, _safe_reason(exc), len(contexts),
+                            ",".join(f"{c.symbol}:{c.reconnect_count}" for c in contexts[:20]),
+                        )
+                    except Exception:
+                        pass
                     self._stop.wait(self._reconnect_delay)
             finally:
                 with self._lock:

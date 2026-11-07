@@ -48,8 +48,8 @@ const runMutationDirectly: PaperMutationRunner = (_key, operation) => operation(
 
 const descriptions: Record<WorkspaceMode, string> = {
   TERMINAL: "Manual PAPER execution is available for the development instrument.",
-  AUTOPILOT: "Robot observation and control are intentionally not implemented.",
-  EDITOR: "Editor tools are reserved for a later authorized slice.",
+  AUTOPILOT: "Robot observation is read-only; Robot control is not implemented yet.",
+  EDITOR: "Локальная разметка графика. Торговые действия отключены; отправка исправлений и изменение позиции пока недоступны.",
 };
 
 export function ModePanel({
@@ -100,6 +100,7 @@ export function ModePanel({
   liveMarketAllowed = false,
   liveLimitAllowed = false,
   liveProtectionAllowed = false,
+  openPositionsRequest = 0,
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
@@ -150,6 +151,7 @@ export function ModePanel({
   liveMarketAllowed?: boolean;
   liveLimitAllowed?: boolean;
   liveProtectionAllowed?: boolean;
+  openPositionsRequest?: number;
 }) {
   const tradingInputFocus = useTradingNumericInputFocusPolicy();
   const [executionStatus, setExecutionStatus] = useState("");
@@ -157,6 +159,13 @@ export function ModePanel({
   const [openPositionsVisible, setOpenPositionsVisible] = useState(
     () => new URLSearchParams(window.location.search).get("view") === "positions",
   );
+  // Reuse the existing Terminal positions overlay; a request is navigation only.
+  const lastOpenPositionsRequest = useRef(openPositionsRequest);
+  useEffect(() => {
+    if (openPositionsRequest === lastOpenPositionsRequest.current) return;
+    lastOpenPositionsRequest.current = openPositionsRequest;
+    setOpenPositionsVisible(true);
+  }, [openPositionsRequest]);
   const [diaryVisible, setDiaryVisible] = useState(false);
   const [activeAccountLabel, setActiveAccountLabel] = useState<{ id: string; name: string } | null>(null);
   const [limitPresentationSide, setLimitPresentationSide] =
@@ -308,7 +317,7 @@ export function ModePanel({
     previousPopupLimitDraftCount.current = popupLimitDrafts.length;
   }, [limitPresentationSide, popupLimitDrafts.length]);
 
-  const alternatives = (["TERMINAL", "AUTOPILOT"] as const).filter(
+  const alternatives = (["TERMINAL", "AUTOPILOT", "EDITOR"] as const).filter(
     (candidate) => candidate !== mode,
   );
   const pnlPercent = positionPnlPercent(
@@ -718,7 +727,7 @@ export function ModePanel({
   };
 
   return (
-    <section className="mode-panel" aria-label={`${mode} controls`}>
+    <section className={`mode-panel${mode === "AUTOPILOT" ? " autopilot-legacy-navigation" : ""}`} aria-label={`${mode} controls`}>
       <div>
         <p className="eyebrow">Active mode</p>
         <h2>{mode}</h2>
@@ -729,13 +738,20 @@ export function ModePanel({
         {alternatives.map((candidate) => (
           <button
             key={candidate}
+            className="workspace-nav-button"
+            aria-label={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Автопилот" : "Редактор"}
+            title={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Автопилот" : "Редактор"}
             onClick={() => onModeChange(candidate)}
             type="button"
           >
-            {candidate}
+            <span aria-hidden="true" className="workspace-nav-icon">{candidate === "TERMINAL" ? "$" : candidate === "AUTOPILOT" ? "◉" : "✎"}</span>
           </button>
         ))}
       </nav>
+
+      {mode === "EDITOR" ? (
+        <p role="status">Редактор: разметка сохраняется отдельно от торговых рисунков. Исправления Scanner и STOP/TAKE пока не отправляются.</p>
+      ) : null}
 
       {mode === "TERMINAL" ? (
         <>
@@ -759,7 +775,7 @@ export function ModePanel({
                 onCancel={() => onFastLimitHoldChange(null)}
                 holdMs={200}
                 className="paper-market-buy"
-                disabled={pendingActions.has("MARKET:Buy")}
+                disabled={(!mutationsAllowed && !liveMarketAllowed) || pendingActions.has("MARKET:Buy")}
                 type="button"
               >
                 {pendingActions.has("MARKET:Buy") ? "..." : "BUY"}
@@ -791,7 +807,7 @@ export function ModePanel({
                 onCancel={() => onFastLimitHoldChange(null)}
                 holdMs={200}
                 className="paper-market-sell"
-                disabled={pendingActions.has("MARKET:Sell")}
+                disabled={(!mutationsAllowed && !liveMarketAllowed) || pendingActions.has("MARKET:Sell")}
                 type="button"
               >
                 {pendingActions.has("MARKET:Sell") ? "..." : "SELL"}
@@ -1150,32 +1166,6 @@ export function ModePanel({
             </div>
           ) : null}
 
-          {openPositionsVisible && accountWorkspaceProjection?.provider === "PAPER" ? (
-            <OpenPositionsOverlay
-              activeSymbol={symbol}
-              onClose={() => setOpenPositionsVisible(false)}
-              onNavigate={(nextSymbol) => {
-                setOpenPositionsVisible(false);
-                onWorkspaceSymbolSelect?.(nextSymbol);
-              }}
-              runPaperMutation={runPaperMutation}
-              applyPaperState={applyPaperState}
-            />
-          ) : null}
-          {openPositionsVisible && accountWorkspaceProjection?.provider !== "PAPER" ? (
-            <LiveAccountInventory
-              activeAccountName={activeAccountLabel && activeAccountLabel.id === accountWorkspaceProjection?.account_id
-                ? activeAccountLabel.name : ""}
-              activeSymbol={symbol}
-              onClose={() => setOpenPositionsVisible(false)}
-              onNavigate={(nextSymbol) => {
-                setOpenPositionsVisible(false);
-                onWorkspaceSymbolSelect?.(nextSymbol);
-              }}
-              projection={accountWorkspaceProjection}
-            />
-          ) : null}
-
           {diaryVisible ? (
             <DiaryOverlay
               accountKey={`${accountWorkspaceProjection?.account_id ?? "unknown"}:${accountWorkspaceProjection?.session_generation ?? 0}`}
@@ -1252,6 +1242,7 @@ export function ModePanel({
                       aria-expanded={
                         limitPresentationSide === side || limitsInventorySide === side
                       }
+                      disabled={!mutationsAllowed && !liveLimitAllowed}
                       onTap={() => openLimitPresentation(side)}
                       onHoldStart={() => openLimitsInventory(side)}
                       holdMs={500}
@@ -1337,6 +1328,32 @@ export function ModePanel({
         </div>
         </>
       ) : null}
+          {openPositionsVisible && accountWorkspaceProjection?.provider === "PAPER" ? (
+            <OpenPositionsOverlay
+              activeSymbol={symbol}
+              onClose={() => setOpenPositionsVisible(false)}
+              onNavigate={(nextSymbol) => {
+                setOpenPositionsVisible(false);
+                onWorkspaceSymbolSelect?.(nextSymbol);
+              }}
+              runPaperMutation={runPaperMutation}
+              applyPaperState={applyPaperState}
+            />
+          ) : null}
+          {openPositionsVisible && accountWorkspaceProjection?.provider !== "PAPER" ? (
+            <LiveAccountInventory
+              activeAccountName={activeAccountLabel && activeAccountLabel.id === accountWorkspaceProjection?.account_id
+                ? activeAccountLabel.name : ""}
+              activeSymbol={symbol}
+              onClose={() => setOpenPositionsVisible(false)}
+              onNavigate={(nextSymbol) => {
+                setOpenPositionsVisible(false);
+                onWorkspaceSymbolSelect?.(nextSymbol);
+              }}
+              projection={accountWorkspaceProjection}
+            />
+          ) : null}
+
     </section>
   );
 }

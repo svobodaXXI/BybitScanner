@@ -6,6 +6,11 @@ Scope: 5m Scanner wedge geometry and development of the separate L-shaped patter
 This is a navigation/working index, not approval to change strategy, risk,
 Robot/LIVE execution or running services.
 
+**Broadening Formation (HORN, 2026-10-14):** a separate offline detector,
+outside the converging `analyze_geometry` pipeline; design, controls and
+acceptance are in [SCANNER_BROADENING_FORMATION_HORN_1.md](SCANNER_BROADENING_FORMATION_HORN_1.md).
+Wedge and Triangle rules below do not apply to it and are not changed by it.
+
 **Owner's universal Scanner acceptance rule (2026-09-23):** for this L-shaped
 pattern, every other new pattern, and every future Scanner correction, perform
 a complete real Scanner pass on the entire available eligible symbol universe

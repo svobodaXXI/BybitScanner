@@ -1,0 +1,247 @@
+{
+"source": "Bybit public klines cache (RETEST-4), boundary f71d2bb6472262c52e1abe0a:upper",
+"manifest": {
+"boundary_id": "f71d2bb6472262c52e1abe0a:upper",
+"symbol": "BRUSDT",
+"pattern": "Falling Wedge",
+"as_of_ms": 1790540380000,
+"anchor_time_ms": 1790540100000,
+"anchor_price": 0.885470625,
+"slope_per_ms": -2.4937500000000074e-09,
+"breakout_direction": "UP",
+"breakout_close_time_ms": 1790541600000,
+"reference": {
+"status": "AMBIGUOUS",
+"touch_close_time_ms": null
+}
+},
+"coarse_5m": [
+{
+"open_time_ms": 1790539500000,
+"close_time_ms": 1790539800000,
+"open": 0.88149,
+"high": 0.88293,
+"low": 0.88087,
+"close": 0.88159,
+"closed": true
+},
+{
+"open_time_ms": 1790539800000,
+"close_time_ms": 1790540100000,
+"open": 0.88159,
+"high": 0.88376,
+"low": 0.88159,
+"close": 0.88186,
+"closed": true
+},
+{
+"open_time_ms": 1790540100000,
+"close_time_ms": 1790540400000,
+"open": 0.88186,
+"high": 0.8832,
+"low": 0.87801,
+"close": 0.87978,
+"closed": true
+},
+{
+"open_time_ms": 1790540400000,
+"close_time_ms": 1790540700000,
+"open": 0.87978,
+"high": 0.88413,
+"low": 0.87693,
+"close": 0.8834,
+"closed": true
+},
+{
+"open_time_ms": 1790540700000,
+"close_time_ms": 1790541000000,
+"open": 0.8834,
+"high": 0.88513,
+"low": 0.88212,
+"close": 0.88319,
+"closed": true
+},
+{
+"open_time_ms": 1790541000000,
+"close_time_ms": 1790541300000,
+"open": 0.88319,
+"high": 0.88365,
+"low": 0.88037,
+"close": 0.88176,
+"closed": true
+},
+{
+"open_time_ms": 1790541300000,
+"close_time_ms": 1790541600000,
+"open": 0.88176,
+"high": 0.88395,
+"low": 0.88132,
+"close": 0.8827,
+"closed": true
+},
+{
+"open_time_ms": 1790541600000,
+"close_time_ms": 1790541900000,
+"open": 0.8827,
+"high": 0.88288,
+"low": 0.88122,
+"close": 0.88257,
+"closed": true
+},
+{
+"open_time_ms": 1790541900000,
+"close_time_ms": 1790542200000,
+"open": 0.88257,
+"high": 0.88354,
+"low": 0.88145,
+"close": 0.88246,
+"closed": true
+},
+{
+"open_time_ms": 1790542200000,
+"close_time_ms": 1790542500000,
+"open": 0.88246,
+"high": 0.88414,
+"low": 0.88084,
+"close": 0.88084,
+"closed": true
+}
+],
+"fine_1m": [
+{
+"open_time_ms": 1790541600000,
+"close_time_ms": 1790541660000,
+"open": 0.8827,
+"high": 0.88288,
+"low": 0.88236,
+"close": 0.88282,
+"closed": true
+},
+{
+"open_time_ms": 1790541660000,
+"close_time_ms": 1790541720000,
+"open": 0.88282,
+"high": 0.88282,
+"low": 0.88236,
+"close": 0.88236,
+"closed": true
+},
+{
+"open_time_ms": 1790541720000,
+"close_time_ms": 1790541780000,
+"open": 0.88236,
+"high": 0.88236,
+"low": 0.88144,
+"close": 0.88176,
+"closed": true
+},
+{
+"open_time_ms": 1790541780000,
+"close_time_ms": 1790541840000,
+"open": 0.88176,
+"high": 0.88176,
+"low": 0.88122,
+"close": 0.88158,
+"closed": true
+},
+{
+"open_time_ms": 1790541840000,
+"close_time_ms": 1790541900000,
+"open": 0.88158,
+"high": 0.88257,
+"low": 0.88158,
+"close": 0.88257,
+"closed": true
+},
+{
+"open_time_ms": 1790541900000,
+"close_time_ms": 1790541960000,
+"open": 0.88257,
+"high": 0.88257,
+"low": 0.88257,
+"close": 0.88257,
+"closed": true
+},
+{
+"open_time_ms": 1790541960000,
+"close_time_ms": 1790542020000,
+"open": 0.88257,
+"high": 0.88354,
+"low": 0.88192,
+"close": 0.88228,
+"closed": true
+},
+{
+"open_time_ms": 1790542020000,
+"close_time_ms": 1790542080000,
+"open": 0.88228,
+"high": 0.88267,
+"low": 0.88145,
+"close": 0.88236,
+"closed": true
+},
+{
+"open_time_ms": 1790542080000,
+"close_time_ms": 1790542140000,
+"open": 0.88236,
+"high": 0.88286,
+"low": 0.88214,
+"close": 0.88214,
+"closed": true
+},
+{
+"open_time_ms": 1790542140000,
+"close_time_ms": 1790542200000,
+"open": 0.88214,
+"high": 0.88247,
+"low": 0.8819,
+"close": 0.88246,
+"closed": true
+},
+{
+"open_time_ms": 1790542200000,
+"close_time_ms": 1790542260000,
+"open": 0.88246,
+"high": 0.88315,
+"low": 0.88217,
+"close": 0.88315,
+"closed": true
+},
+{
+"open_time_ms": 1790542260000,
+"close_time_ms": 1790542320000,
+"open": 0.88315,
+"high": 0.88393,
+"low": 0.88278,
+"close": 0.88292,
+"closed": true
+},
+{
+"open_time_ms": 1790542320000,
+"close_time_ms": 1790542380000,
+"open": 0.88292,
+"high": 0.88414,
+"low": 0.88257,
+"close": 0.8827,
+"closed": true
+},
+{
+"open_time_ms": 1790542380000,
+"close_time_ms": 1790542440000,
+"open": 0.8827,
+"high": 0.8827,
+"low": 0.88122,
+"close": 0.88122,
+"closed": true
+},
+{
+"open_time_ms": 1790542440000,
+"close_time_ms": 1790542500000,
+"open": 0.88122,
+"high": 0.88152,
+"low": 0.88084,
+"close": 0.88084,
+"closed": true
+}
+]
+}

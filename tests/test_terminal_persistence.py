@@ -60,8 +60,11 @@ class TerminalPersistenceTests(unittest.TestCase):
 
     @staticmethod
     def drop_v24_autopilot_objects(connection):
-        # Downgrade fixtures that start from today's schema must remove v24
-        # objects before replaying an older -> current migration chain.
+        # Downgrade fixtures built from the current schema must drop *all*
+        # newer objects before replaying an older-to-current migration chain.
+        # v26 attempt lineage is append-only metadata in the canonical DB.
+        connection.execute("DROP TABLE IF EXISTS robot_reentry_attempts")
+        connection.execute("DROP TABLE IF EXISTS robot_reentry_campaigns")
         connection.execute("DROP TABLE IF EXISTS robot_auto_decisions")
         connection.execute("DROP TABLE IF EXISTS robot_autopilot_state")
 
@@ -1650,3 +1653,199 @@ class TerminalPersistenceBoundaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PaperShutdownDurableQuiescenceTests(unittest.TestCase):
+    """Full backend stop must not confuse empty protection coverage with FLAT."""
+
+    @staticmethod
+    def fixture():
+        connection = sqlite3.connect(":memory:", isolation_level=None)
+        connection.executescript("""
+            CREATE TABLE robot_autopilot_state (trading_account_id TEXT, mode TEXT);
+            CREATE TABLE position_projections (
+                trading_account_id TEXT, side TEXT, quantity TEXT, sync_state TEXT);
+            CREATE TABLE robot_trades (
+                trading_account_id TEXT, candidate_id TEXT, exit_time_ms INTEGER);
+            CREATE TABLE robot_candidates (
+                trading_account_id TEXT, candidate_id TEXT, symbol TEXT,
+                status TEXT, approved_at_ms INTEGER);
+            CREATE TABLE executions (
+                trading_account_id TEXT, symbol TEXT, exchange_timestamp_ms INTEGER);
+            CREATE TABLE paper_limit_orders (trading_account_id TEXT, status TEXT);
+            CREATE TABLE trading_commands (trading_account_id TEXT, current_state TEXT);
+            CREATE TABLE paper_protection_obligations (trading_account_id TEXT, status TEXT);
+            CREATE TABLE reconciliation_checkpoints (
+                trading_account_id TEXT, completed_at_ms INTEGER);
+            INSERT INTO robot_autopilot_state VALUES ('paper', 'OFF');
+            INSERT INTO position_projections VALUES ('paper', 'Flat', '0', 'synced');
+        """)
+        return SQLiteStore(connection, Path(":memory:"), 5000), connection
+
+    def test_quiescent_paper_is_only_read_and_does_not_modify_db(self):
+        store, db = self.fixture()
+        try:
+            before = db.total_changes
+            self.assertIsNone(store.paper_shutdown_blocker(TradingAccountId("paper")))
+            self.assertEqual(db.total_changes, before)
+        finally:
+            store.close()
+
+    def test_every_durable_blocker_rejects_full_shutdown(self):
+        cases = (
+            ("UPDATE robot_autopilot_state SET mode='PAPER_AUTO'",
+             "autopilot_not_durably_off"),
+            ("UPDATE position_projections SET side='Long', quantity='1'",
+             "paper_position_not_flat_and_synced"),
+            ("UPDATE position_projections SET side=NULL",
+             "paper_position_not_flat_and_synced"),
+            ("UPDATE position_projections SET sync_state='reconciliation_required'",
+             "paper_position_not_flat_and_synced"),
+            ("UPDATE position_projections SET quantity='NaN'",
+             "paper_position_not_flat_and_synced"),
+            ("INSERT INTO robot_trades (trading_account_id, exit_time_ms) VALUES ('paper', NULL)",
+             "open_robot_trade"),
+            ("INSERT INTO robot_candidates (trading_account_id, status) VALUES ('paper', 'OPEN')",
+             "active_robot_candidate"),
+            ("INSERT INTO robot_candidates (trading_account_id, status) VALUES ('paper', 'APPROVED')",
+             "active_robot_candidate"),
+            ("INSERT INTO robot_candidates (trading_account_id, status) VALUES ('paper', NULL)",
+             "active_robot_candidate"),
+            ("INSERT INTO robot_candidates (trading_account_id, status) VALUES ('paper', 'UNRECOGNIZED')",
+             "active_robot_candidate"),
+            ("INSERT INTO robot_candidates (trading_account_id, status) VALUES ('paper', '')",
+             "active_robot_candidate"),
+            ("INSERT INTO paper_limit_orders VALUES ('paper', 'partially_filled')",
+             "active_or_unknown_paper_limit"),
+            ("INSERT INTO paper_limit_orders VALUES ('paper', 'unrecognized')",
+             "active_or_unknown_paper_limit"),
+            ("INSERT INTO paper_limit_orders VALUES ('paper', NULL)",
+             "active_or_unknown_paper_limit"),
+            ("INSERT INTO trading_commands VALUES ('paper', 'dispatching')",
+             "unfinished_or_unknown_command"),
+            ("INSERT INTO trading_commands VALUES ('paper', NULL)",
+             "unfinished_or_unknown_command"),
+            ("INSERT INTO paper_protection_obligations VALUES ('paper', 'DISPATCHING')",
+             "unresolved_protection_obligation"),
+            ("INSERT INTO paper_protection_obligations VALUES ('paper', NULL)",
+             "unresolved_protection_obligation"),
+            ("INSERT INTO reconciliation_checkpoints VALUES ('paper', NULL)",
+             "unfinished_reconciliation"),
+        )
+        for mutation, expected in cases:
+            with self.subTest(mutation=mutation):
+                store, db = self.fixture()
+                try:
+                    db.execute(mutation)
+                    before = db.total_changes
+                    self.assertEqual(
+                        store.paper_shutdown_blocker(TradingAccountId("paper")),
+                        expected,
+                    )
+                    self.assertEqual(db.total_changes, before)
+                finally:
+                    store.close()
+
+    def test_proven_inert_approved_does_not_block_frozen_paper_shutdown(self):
+        store, db = self.fixture()
+        try:
+            db.execute(
+                "INSERT INTO robot_candidates VALUES ('paper', 'candidate-1', "
+                "'FOOUSDT', 'APPROVED', 1000)"
+            )
+            # Earlier history on the same symbol is not a post-approval fill.
+            db.execute("INSERT INTO executions VALUES ('paper', 'FOOUSDT', 999)")
+            before = db.total_changes
+            self.assertIsNone(store.paper_shutdown_blocker(TradingAccountId("paper")))
+            self.assertEqual(db.total_changes, before)
+        finally:
+            store.close()
+
+    def test_approved_without_complete_immutable_evidence_remains_blocked(self):
+        cases = (
+            ("UPDATE robot_candidates SET candidate_id=NULL",),
+            ("UPDATE robot_candidates SET symbol=''",),
+            ("UPDATE robot_candidates SET approved_at_ms=NULL",),
+            ("UPDATE robot_candidates SET approved_at_ms=0",),
+            ("UPDATE robot_candidates SET approved_at_ms='unknown'",),
+            ("INSERT INTO executions VALUES ('paper', 'FOOUSDT', 1000)",),
+            ("INSERT INTO executions VALUES ('paper', 'FOOUSDT', NULL)",),
+            ("INSERT INTO robot_trades VALUES ('paper', 'candidate-1', 2000)",),
+        )
+        for (mutation,) in cases:
+            with self.subTest(mutation=mutation):
+                store, db = self.fixture()
+                try:
+                    db.execute(
+                        "INSERT INTO robot_candidates VALUES "
+                        "('paper','candidate-1','FOOUSDT','APPROVED',1000)"
+                    )
+                    db.execute(mutation)
+                    before = db.total_changes
+                    self.assertEqual(
+                        store.paper_shutdown_blocker(TradingAccountId("paper")),
+                        "active_robot_candidate",
+                    )
+                    self.assertEqual(db.total_changes, before)
+                finally:
+                    store.close()
+
+    def test_other_account_candidate_executions_are_not_paper_ownership(self):
+        store, db = self.fixture()
+        try:
+            db.execute(
+                "INSERT INTO robot_candidates VALUES "
+                "('paper','candidate-1','FOOUSDT','APPROVED',1000)"
+            )
+            db.execute("INSERT INTO executions VALUES ('other', 'FOOUSDT', 2000)")
+            self.assertIsNone(store.paper_shutdown_blocker(TradingAccountId("paper")))
+            db.execute(
+                "INSERT INTO robot_candidates VALUES "
+                "('other','candidate-2','BARUSDT','OPEN',1000)"
+            )
+            self.assertIsNone(store.paper_shutdown_blocker(TradingAccountId("paper")))
+        finally:
+            store.close()
+
+    def test_real_schema_converged_flat_from_authoritative_reconciliation_can_stop(self):
+        # The canonical reconciler writes 'synchronized'; ordinary PAPER
+        # execution writes 'synced'. Neither is an unfinished sync.
+        with tempfile.TemporaryDirectory() as temp:
+            with SQLiteStore.open(Path(temp) / "paper.sqlite3") as store:
+                db = store._connection
+                db.execute(
+                    "INSERT INTO robot_autopilot_state "
+                    "(trading_account_id, mode, version, updated_at_ms) "
+                    "VALUES ('paper', 'OFF', 1, 1)"
+                )
+                db.execute(
+                    "INSERT INTO position_projections "
+                    "(trading_account_id, category, symbol, position_idx, side, "
+                    "quantity, realized_pnl, accumulated_fee, engaged_notional, "
+                    "sync_state, version, updated_at_ms) "
+                    "VALUES ('paper','linear','JASMYUSDT',0,'Flat',"
+                    "'0','0','0','0','synchronized',1,1)"
+                )
+                before = db.total_changes
+                self.assertIsNone(store.paper_shutdown_blocker(TradingAccountId("paper")))
+                self.assertEqual(db.total_changes, before)
+                db.execute("UPDATE position_projections SET sync_state='synced'")
+                self.assertIsNone(store.paper_shutdown_blocker(TradingAccountId("paper")))
+                for not_converged in ("reconciliation_required", "unknown", ""):
+                    with self.subTest(sync_state=not_converged):
+                        db.execute(
+                            "UPDATE position_projections SET sync_state=?",
+                            (not_converged,),
+                        )
+                        self.assertEqual(
+                            store.paper_shutdown_blocker(TradingAccountId("paper")),
+                            "paper_position_not_flat_and_synced",
+                        )
+
+    def test_foreign_account_work_does_not_block_paper(self):
+        store, db = self.fixture()
+        try:
+            db.execute("INSERT INTO trading_commands VALUES ('another-account','dispatching')")
+            self.assertIsNone(store.paper_shutdown_blocker(TradingAccountId("paper")))
+        finally:
+            store.close()

@@ -1,0 +1,47 @@
+{
+ "BASE": {
+  "signals": 169,
+  "status": {
+   "CLOSED": 16,
+   "NO_FILL": 1,
+   "SIGNAL_REJECTED": 149,
+   "SKIPPED_SYMBOL_BUSY": 3
+  },
+  "closed": 16,
+  "net_pnl_pct_wv_closed": -3.8821066941837588,
+  "wins": 4,
+  "losses": 12,
+  "exits": {
+   "STOP": 12,
+   "TAKE": 4
+  },
+  "ambiguous_bounds_pct_wv": [
+   0,
+   0
+  ],
+  "boundaries_with_trades": 11
+ },
+ "MIRROR": {
+  "signals": 169,
+  "status": {
+   "CLOSED": 8,
+   "NOT_ADMITTED": 9,
+   "NO_FILL": 1,
+   "SIGNAL_REJECTED": 149,
+   "SKIPPED_SYMBOL_BUSY": 2
+  },
+  "closed": 8,
+  "net_pnl_pct_wv_closed": 0.9271604230633047,
+  "wins": 2,
+  "losses": 6,
+  "exits": {
+   "RETEST": 2,
+   "STOP": 6
+  },
+  "ambiguous_bounds_pct_wv": [
+   0,
+   0
+  ],
+  "boundaries_with_trades": 6
+ }
+}

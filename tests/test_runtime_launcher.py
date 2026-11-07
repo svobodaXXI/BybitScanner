@@ -7,6 +7,9 @@ Scanner routing are owned by tools.runtime_intent and POST /api/runtime/intent
 
 from pathlib import Path
 import unittest
+from unittest import mock
+
+from tools import runtime_intent
 
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "start_robot_runtime.bat"
@@ -36,9 +39,11 @@ class RuntimeLauncherTests(unittest.TestCase):
             'if exist "%~dp0start_runtime.local.bat" call "%~dp0start_runtime.local.bat"'
         )
         self.assertEqual(commands[load + 1], "if errorlevel 1 (")
-        self.assertEqual(commands[load + 3], "exit /b 1")
+        self.assertEqual(commands[load + 3], "pause")
+        self.assertEqual(commands[load + 4], "exit /b 1")
         venv = commands.index('if not exist "%~dp0venv\\Scripts\\python.exe" (')
-        self.assertEqual(commands[venv + 2], "exit /b 1")
+        self.assertEqual(commands[venv + 2], "pause")
+        self.assertEqual(commands[venv + 3], "exit /b 1")
         bootstrap = next(i for i, line in enumerate(commands) if "tools.runtime_intent" in line)
         self.assertTrue(load < venv < bootstrap)
 
@@ -64,6 +69,100 @@ class RuntimeLauncherTests(unittest.TestCase):
                 self.assertFalse(any(
                     line.lower().startswith("start ") for line in _commands(path)
                 ))
+
+
+
+class DesktopStartupNoticeTests(unittest.TestCase):
+    def _result(self, outcome, changed=(), blocked_by=()):
+        return runtime_intent.BootstrapResult(
+            "ALL", outcome, f"{outcome}: intent=ALL", tuple(changed),
+            {"robot": "READY", "scanner": "STOPPED", "protection": "UNHEALTHY"},
+            tuple(blocked_by),
+        )
+
+    def test_blocked_notice_shows_cause_and_partial_runtime_transitions(self):
+        result = self._result(
+            runtime_intent.OUTCOME_BLOCKED,
+            changed=("robot:start",), blocked_by=("ROBOT_PROTECTION_UNHEALTHY",),
+        )
+        notice = runtime_intent.startup_issue_notice(result)
+        self.assertIn("ROBOT_PROTECTION_UNHEALTHY", notice)
+        self.assertIn("Защита Robot", notice)
+        self.assertIn("robot:start", notice)
+        self.assertIn("scanner=STOPPED", notice)
+        self.assertIn("частично изменить состояние", notice)
+
+    def test_unknown_outcome_warns_not_to_retry_automatically(self):
+        notice = runtime_intent.startup_issue_notice(
+            self._result(runtime_intent.OUTCOME_ERROR)
+        )
+        self.assertIn("Исход команды неизвестен", notice)
+        self.assertIn("Не повторяйте запуск вслепую", notice)
+
+    def test_desktop_run_shows_one_dialog_only_on_failure_without_retry(self):
+        for outcome in (
+            runtime_intent.OUTCOME_READY,
+            runtime_intent.OUTCOME_BLOCKED,
+            runtime_intent.OUTCOME_FAILED,
+            runtime_intent.OUTCOME_ERROR,
+        ):
+            with self.subTest(outcome=outcome):
+                result = self._result(outcome)
+                with mock.patch.object(runtime_intent.RuntimeIntentBootstrap, "execute",
+                                       return_value=result) as execute:
+                    with mock.patch.object(runtime_intent, "show_startup_issue_dialog",
+                                           return_value=True) as dialog:
+                        lines = []
+                        bootstrap = runtime_intent.RuntimeIntentBootstrap(out=lines.append)
+                        self.assertEqual(
+                            bootstrap.run("ALL", desktop_notice=True), result.exit_code,
+                        )
+                        execute.assert_called_once_with("ALL")
+                        self.assertEqual(
+                            dialog.call_count, 0 if outcome == runtime_intent.OUTCOME_READY else 1,
+                        )
+
+    def test_desktop_main_routes_through_dialog_enabled_run(self):
+        with mock.patch.object(runtime_intent.RuntimeIntentBootstrap, "run",
+                               return_value=runtime_intent.EXIT_BLOCKED) as run:
+            self.assertEqual(
+                runtime_intent.main(["ALL"]), runtime_intent.EXIT_BLOCKED,
+            )
+            run.assert_called_once_with("ALL", desktop_notice=True)
+
+    def test_programmatic_run_does_not_open_any_dialog(self):
+        result = self._result(runtime_intent.OUTCOME_BLOCKED)
+        with mock.patch.object(runtime_intent.RuntimeIntentBootstrap, "execute",
+                               return_value=result):
+            with mock.patch.object(runtime_intent, "show_startup_issue_dialog") as dialog:
+                self.assertEqual(
+                    runtime_intent.RuntimeIntentBootstrap(out=lambda _: None).run("ALL"),
+                    runtime_intent.EXIT_BLOCKED,
+                )
+                dialog.assert_not_called()
+
+    def test_native_dialog_uses_topmost_flag(self):
+        result = self._result(
+            runtime_intent.OUTCOME_BLOCKED, blocked_by=("ROBOT_PROTECTION_UNHEALTHY",),
+        )
+        with mock.patch.object(runtime_intent.os, "name", "nt"):
+            with mock.patch("ctypes.windll", create=True) as windll:
+                windll.user32.MessageBoxW.return_value = 1
+                self.assertTrue(runtime_intent.show_startup_issue_dialog(result))
+                windll.user32.MessageBoxW.assert_called_once()
+                args = windll.user32.MessageBoxW.call_args.args
+                self.assertIn("ROBOT_PROTECTION_UNHEALTHY", args[1])
+                self.assertTrue(args[3] & 0x40000)
+
+    def test_dialog_failure_does_not_change_exit_code(self):
+        result = self._result(runtime_intent.OUTCOME_BLOCKED)
+        with mock.patch.object(runtime_intent, "show_startup_issue_dialog",
+                               return_value=False):
+            bootstrap = runtime_intent.RuntimeIntentBootstrap(out=lambda _: None)
+            with mock.patch.object(bootstrap, "execute", return_value=result):
+                self.assertEqual(
+                    bootstrap.run("ALL", desktop_notice=True), runtime_intent.EXIT_BLOCKED,
+                )
 
 
 class OwnerShortcutProvisioningTests(unittest.TestCase):

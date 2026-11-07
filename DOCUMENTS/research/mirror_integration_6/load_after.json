@@ -1,0 +1,77 @@
+{
+ "label": "after",
+ "sidecar_file": "C:\\BybitScanner-mirror-int6\\mirror_retest_sidecar.py",
+ "empty_source_cycles": [
+  {
+   "cycle": 1,
+   "cpu_s": 5.328,
+   "wall_s": 6.997,
+   "tracked": 364
+  },
+  {
+   "cycle": 2,
+   "cpu_s": 0.016,
+   "wall_s": 0.014,
+   "tracked": 364
+  },
+  {
+   "cycle": 3,
+   "cpu_s": 0.016,
+   "wall_s": 0.014,
+   "tracked": 364
+  },
+  {
+   "cycle": 4,
+   "cpu_s": 0.016,
+   "wall_s": 0.014,
+   "tracked": 364
+  },
+  {
+   "cycle": 5,
+   "cpu_s": 0.016,
+   "wall_s": 0.013,
+   "tracked": 364
+  },
+  {
+   "cycle": 6,
+   "cpu_s": 0.0,
+   "wall_s": 0.015,
+   "tracked": 364
+  }
+ ],
+ "event_cycle": {
+  "cpu_s": 4.25,
+  "wall_s": 5.409,
+  "records": [
+   [
+    "NAKED_BREAKOUT",
+    "WAIT",
+    [
+     "r0_wait:daily_gate_data_unavailable",
+     "policy_wait:robot_execution_not_authorized",
+     "observe_only"
+    ]
+   ]
+  ]
+ },
+ "after_event_empty_cycle": {
+  "cpu_s": 0.016,
+  "wall_s": 0.016
+ },
+ "metrics": {
+  "cycles": 8,
+  "skipped_for_protection": 0,
+  "read_failures": 0,
+  "candidates_tracked": 364,
+  "duplicates_ignored": 5,
+  "candidates_unusable": 317,
+  "observations_submitted": 1,
+  "observations_dropped": 0,
+  "fine_unavailable": 0,
+  "arrival_reads": 1,
+  "arrival_reads_skipped": 7,
+  "account_reads": 1,
+  "account_read_failures": 0
+ },
+ "db_unchanged": true
+}
