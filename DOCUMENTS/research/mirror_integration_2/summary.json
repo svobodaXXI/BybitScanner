@@ -1,0 +1,29 @@
+{
+ "cases": 67,
+ "observations_written": 131,
+ "final_phase": {
+  "RETEST_PROVEN": 62,
+  "RETEST_CAMPAIGN_ACTIVE": 3,
+  "RETEST_UNPROVEN": 2
+ },
+ "events": {
+  "NAKED_BREAKOUT": 67,
+  "RETEST_PROVEN": 62,
+  "RETEST_UNPROVEN": 2
+ },
+ "event_decisions": {
+  "NAKED_BREAKOUT:WAIT": 67,
+  "RETEST_PROVEN:BLOCK": 62,
+  "RETEST_UNPROVEN:BLOCK": 2
+ },
+ "reasons": {
+  "r0_wait:daily_gate_unavailable": 67,
+  "policy_wait:robot_execution_not_authorized": 67,
+  "observe_only": 131,
+  "campaign_not_active:RETEST_PROVEN": 62,
+  "campaign_not_active:RETEST_UNPROVEN": 2
+ },
+ "phase_mismatches_vs_retest5": [],
+ "executable_observations": 0,
+ "admission_allowed_observations": 0
+}

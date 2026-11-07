@@ -5,6 +5,47 @@ Date: 2026-09-27
 Purpose: compact evidence-first runbook for recurring Scanner / PAPER Robot / Telegram / desktop-launch failures.  
 Primary objective: minimize owner time. Known failure classes are diagnosed from repository authority and one bounded host snapshot before any exploratory sequence.
 
+## PAPER P0 — цепочка блокировок доказательства APPROVED после незавершённого STOP (2026-11-04)
+
+**Назначение:** готовый путь повторного применения, не новый квест. Цель владельца прежняя: безопасно завершить монолитное обслуживание PAPER, установить готовый релиз и принять редактор через Telegram. **Нельзя** «лечить» инцидент последовательным разрешением всё новых ревизий, повторением STOP или обнулением одноразовых маркеров.
+
+### Подтверждённые факты и причины (отделять от гипотез)
+
+1. **INUSDT — подтверждённая причина первоначальной ложной блокировки.** Инцидентная проверка ранее требовала, чтобы *все исторические* LIMIT-ордера по символу имели `cancelled` и нулевое исполнение, не ограничиваясь текущим APPROVED-кандидатом. READ-ONLY staging [run 41738096705](https://github.com/svobodaXXI/BybitScanner/actions/runs/41738096705) доказал: **ровно 2** предшествующих APPROVED ордера `cancelled` с **положительными частичными исполнениями**, оба с executions и robot_entry_orders, без box_order_ownership. Это **не** «невыполненные» ордера. **Готовое решение:** PR #829 дал агрегированную диагностику без ослабления gate; PR #830 разрешил *исключительно два старых INUSDT-ордера* лишь при точной сверке объёмов executions, нулевом подписанном итоге всего журнала, отсутствии новых fills, открытых Robot trades и при синхронизированной FLAT-проекции. [READ-ONLY preflight 41744174822](https://github.com/svobodaXXI/BybitScanner/actions/runs/41744174822) после #830 показал PREFLIGHT_PASS. Запрещено общее правило «cancelled значит не исполнен».
+2. **Незавершённый STOP — доказанный прерыватель перехода, причина изменения ревизий ещё не атрибутирована.** Один разрешённый `/paper-vps execute 094d74f...` прошёл preflight, записал `EXECUTE_INTENT_FSYNCED`, затем завершился `BLOCKED: canonical_safe_stop_unproven; no retry, no deployment` — [run 41744751691](https://github.com/svobodaXXI/BybitScanner/actions/runs/41744751691). После этого оставлены `chatops_marker=true`, `stop_marker=true`, `install_journal=false`. На [READ-ONLY диагностике 41747040889](https://github.com/svobodaXXI/BybitScanner/actions/runs/41747040889) backend всё ещё работал на `f100ef369a1105443332b5729b558464c27be48f`; Scanner STOPPED, Autopilot OFF, Robot RUNNING/RECONCILIATION_REQUIRED, две OPEN Robot-trades, ноль активных LIMIT, защита unhealthy (2). **Из этого нельзя вывести**, какое именно внутреннее действие STOP/Robot изменило candidate metadata. Повторный execute/STOP и сброс маркеров не разрешены.
+3. **BNCUSDT — доказанный drift ожидаемой ревизии, не доказанная причина drift.** До execute строгий proof принимал `APPROVED / revision=6 / RETEST_DETECTED`. После попытки STOP READ-ONLY показал `APPROVED / revision=7 / RETEST_DETECTED` (тип JSON object), а preflight [41744921288](https://github.com/svobodaXXI/BybitScanner/actions/runs/41744921288) блокировал `revision_or_state_type_mismatch`. Причина *отказа proof* — жёсткое ожидание `6`; причина *изменения ревизии* не установлена. **Готовое решение:** PR #833 допускает только BNC ревизию 7 при неизменной фазе и всей проверке отсутствия executions, незакрытых ордеров, commands/trades и конкурирующего владельца. Регрессионные тесты отвергают revision=8, другую фазу и fill. Это изменение доказательства, **не** завершение STOP и не разрешение на продолжение.
+4. **PLAYSOUTUSDT — новый обнаруженный BLOCKED, первопричина НЕ УСТАНОВЛЕНА.** После #833 [READ-ONLY preflight 41750752442](https://github.com/svobodaXXI/BybitScanner/actions/runs/41750752442) прошёл staging точного `2fb98b8d2a5143b9c723f7c9e6973628f57a80d0`, но остановился на `PLAYSOUTUSDT:revision_or_state_type_mismatch`. Код ожидает `revision=4, RETEST_DETECTED`. **Фактическая ревизия и тип на VPS не считаны в этом запуске**; ошибка допускает и несовпадение ревизии, и неверный тип JSON. Не утверждать, что revision вырос, что кандидат был исполнен или что STOP это вызвал.
+
+### Готовый алгоритм для следующего аналогичного случая (один проход по всем владельцам)
+
+1. **Один READ-ONLY снимок всех APPROVED-кандидатов**, а не по одному символу/PR: точные candidate ID, status, revision, phase, timestamp APPROVED, исходный Box/Mirror owner, история переходов; отдельно все LIMIT (status, filled_quantity, created_at), executions, trading_commands, robot_entry_orders, box_order_ownership, box_attempt_ownership, Robot trades, position projections и текущие HTTP snapshots/protection. Доступ к фактическим данным только через разрешённый защищённый канал; в публичные Actions-логи — лишь ограниченные категории, без идентификаторов и секретов. Если фиксированный `diagnose` ещё не возвращает нужные поля, расширять только фиксированный READ-ONLY отчёт, а не исполнять произвольный SQL или повторять мутации.
+2. **Сопоставить с до-STOP доказательством и журналом операции.** Отдельно доказать порядок/источник каждого перехода состояния (где возможно по имеющимся audit records), не приписывать причины только по корреляции во времени. Проверить все шесть кандидатов сразу, чтобы не проходить цепочку INUSDT → BNCUSDT → PLAYSOUTUSDT отдельными попытками.
+3. **Разрешать только подтверждённый инертный исторический прогресс.** Строгие identity, phase, order/fill provenance, отсутствие post-approval executions, pending/unknown orders, commands, конкурентных owner и OPEN trades; независимо FLAT/quiescent и неизменный PAPER DB identity. Отсутствующая или неоднозначная запись = **BLOCKED**. Никогда не корректировать данные SQLite вручную, не подменять текущий status, не превращать revision range в универсальный allowlist.
+4. **После узкой кодовой поправки** — адресные synthetic/regression tests, merge только с отдельным разрешением, **один** exact-SHA READ-ONLY preflight. При PASS это доказывает лишь готовность к следующему *разрешённому* шагу, не безопасность повторного STOP. Уже записанные one-shot markers требуют отдельного, доказательно безопасного recovery/resume контракта; любой неизвестный исход = **STOP**.
+5. **Вернуться к цели владельца:** только после защищённого перехода установить релиз и реально проверить Telegram → редактор → исходную и редактируемую геометрию → сохранение → повторное открытие. PR, тесты и preflight сами по себе не являются готовностью UI на VPS.
+
+**Операционный урок:** различать *исторические исполнения*, *неидемпотентную остановку* и *изменение метаданных кандидата*. Не порождать отдельные исправления «на каждый следующий символ», пока не снят один согласованный срез по всем шести. При любом неизвестном STOP сохранять runtime и маркеры; не проводить hot upgrade и LIVE.
+
+## VPS normal one-action stop: blocker register (2026-11-01)
+
+Current stage: protected PAPER exposure was flattened by a separately approved one-shot Close All, but normal full stop and release installation have not yet been verified. Target stable is 12cc0822; installed marker was 86fda079; running process SHA was not attested.
+
+- Running Scanner, PAPER_AUTO, active positions and entry LIMIT initially blocked shutdown. Autopilot was switched to durable OFF; Scanner stopped through its canonical API, while Backend/Robot continued maintaining STOP/TAKE.
+- A direct control process failed before any mutation: shell quoting supplied database_path with spaces around the absolute database pathname. SQLite interpreted it as a nonexistent relative path. The authoritative PAPER DB remained intact. Never infer DB corruption from this failure or recreate the DB.
+- The Telegram worker has no HTTP pause endpoint. Its canonical Robot Pause is triggered by an authenticated owner Telegram callback. The owner pressed Pause; durable Robot became RUNNING/PAUSED, and synchronisation cancelled all 15 remaining entry LIMIT without fills or unresolved pending protection.
+- The exceptional flat_paper_recovery_gate is specifically for RECONCILIATION_REQUIRED and the historical BUSDT STOP incident, **not** ordinary RUNNING/PAUSED FLAT shutdown. Its unexpected_robot_state response on a healthy PAUSED robot is expected. Never force the Robot into an error state to make this gate pass.
+- The owner-authorized PAPER Close All closed the final BLUAIUSDT Long 8240 for Net -0.3019660520 USDT. Following that close: positions 0, active LIMIT 0, unfinished commands 0, unresolved obligations 0, protection healthy and quiescent, Scanner STOPPED, Autopilot OFF, Robot RUNNING/PAUSED.
+- The canonical full stop belongs to tools.stop_robot_runtime, which transitions the stoppable Robot to STOPPED then shuts down Telegram and Backend, with Backend last. Each current ownership and quiescence condition must be re-proven; do not rerun ambiguous mutations, bypass protections or manually change DB state.
+- After demonstrated full stop, install needs exact code/build provenance and unchanged PAPER DB identity, then protected start acceptance. A release marker or GitHub merge alone does not prove a running target version.
+
+- **New post-install resume blocker:** the canonical full stop and exact tracked release installation of `12cc082267cfd3631642a5923b54be80bcb2e85e` were reported successful, with all PAPER units stopped and protected manifest verified. Read-only `tools.vps_release_resume` then returned `unexpected_systemd_dropin`, because its `_systemd_state` rejects **every** nonempty `DropInPaths`. Existing backend `telegram-proxy.conf` and Telegram `proxy.conf` / `terminal-ingress.conf` must not be erased: these are user-owned network/Terminal configurations. Filenames alone do **not** prove safety; inspect complete installed bytes, ownership, paths, and effective `systemctl cat/show` directives before a narrowly-scoped acceptance change. Keep reject-on-unknown and protections for `ExecStart`, `ExecStop`, `User`, DB identity, `Restart`, `KillSignal`, `SendSIGKILL`, environment and privilege boundaries. Do not bypass the resume gate or mutate already verified tracked release files in-place. No start authority is inferred from installed SHA or passed stop.
+
+This is an incident record and next-step boundary, not evidence of completed monolithic shutdown/restart. The owner authorized the guarded full stop and subsequent update; neither has yet been observed.
+
+## Stuck PAPER recovery / release switch — 2026-11-01
+
+For `RECONCILIATION_REQUIRED` with BUSDT-like `DISPATCHING` STOP, stale incident coverage, unversioned backend, or partially completed release transition, **do not rediscover this case**: read [PAPER VPS recovery postmortem and state-based runbook](PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md) and apply only the branch proven by the **current** host state. Especially: no HTTP inside SQLite writer barrier; an inactive systemd unit *after* authorized SIGINT may prove exit rather than failed preflight; when backend is already absent, do not repeat transition; release without `.git` needs exact tracked-content verification; load units after `daemon-reload` before `reset-failed`; canonical BUSDT reconcile comes **before** opening admission/PAPER_AUTO. Incident-specific legacy PID and flags must not be reused. The 2026-11-01 outcome was RECOVERED as reported by Codex, but post-SIGINT classification, systemd ordering and automatic build attestation still have open engineering debt. Preserve any new protected PAPER exposure on the running host.
+
 ## Universal principle
 
 **Known path before investigation.**
@@ -63,6 +104,74 @@ For Scanner / Robot / Telegram / backend incidents, classify in this order:
    - One manual start -> at most one full pass.
    - Do not diagnose Scanner control from window presence alone.
    - Final Scanner visual acceptance remains one complete owner-manual universe pass with ordinary Telegram delivery.
+
+## Historical PAPER exposure → recovery → acceptance — 2026-10-20
+
+**Trigger only:** owner wants to resume a PAPER acceptance run and earlier
+Robot positions remain open after runtime downtime. Do not automatically
+perform this entire procedure for a clean start. Case study:
+LSKUSDT LONG and SAMSUNGUSDT SHORT, entered 2026-10-19; runtime stopped
+after ~20:40 UTC. A historical minute-kline STOP touch on LSK and TAKE
+touch on SAMSUNG on 2026-10-20 did **not** mean PAPER orders had executed.
+The two trade exits were absent in the working SQLite/WAL. The initial LSK
+loss estimate had a factor-of-ten error; use quantity × actual price delta
+and separately account for entry/exit fees rather than copying old figures.
+
+**One bounded end-to-end recovery brief, not serial investigations:**
+
+1. **One host snapshot:** prove canonical PAPER DB identity (including WAL),
+   runtime/process and listener ownership, durable Robot admission status,
+   open trade/position/protection/obligation/limit/candidate records, and a
+   verified SQLite Backup API snapshot. Reuse fresh evidence; do not change
+   unrelated user files or LIVE.
+2. **Separate facts:** last healthy live-protection observation, true durable
+   executions and current open exposure. Historical public *last* and *mark*
+   candles may establish probable STOP/TAKE contact and order, but not bid/ask
+   fills during downtime. Label any trigger-price PnL hypothetical; do not
+   invent executions or merge scenario outcomes with realized PnL.
+3. **Pick recovery route once:** existing Robot restart + protection-crossing
+   evaluated on a **fresh real book** gives a current-market PAPER close when
+   gates allow. Historical backfill is a different, explicitly authorized
+   durable-data modification requiring its own proof and provenance; it is not
+   the default. PR #545 ONGUSDT owner attestation applies to LIVE *commands*,
+   not PAPER trades or positions; do not repeat that search for this class.
+4. **No new-entry window:** before any backend start, prove *every relevant*
+   admission and order-entry path is fenced; `READY` with APPROVED retest
+   candidates can open fresh exposure. In the 2026-10-20 case,
+   `pause_robot_fallback.py` while backend was down moved durable state to
+   `RECONCILIATION_REQUIRED`; the normal `RobotBreakoutMonitor` admission
+   gate rejected entry in that state, while protection processing was coded
+   independently. This was proven by source inspection and state probe,
+   **not** yet by a running-paper result. Do not generalize to uninspected
+   alternative entry routes, and do not mark safe from source inspection
+   alone. No direct SQLite edit to force READY/STOPPED.
+5. **Owner runtime boundary:** Scanner starts remain exclusively owner-manual;
+   owner-only launch/approval constraints from ASSISTANT_PROTOCOL apply to
+   backend/Robot as well where prescribed. The agent prepares the single
+   verified launch surface and separately observes the outcome; never claim
+   a prompt itself authorized a prohibited launch. Do not start Scanner or
+   open PAPER_AUTO during position recovery.
+6. **Observe closure and continue:** require actual exit executions and
+   `robot_trades` exit reason/time, FLAT position projection, coherent
+   protection/candidate/ledger/obligations, no unexpected new fills, and
+   actual fees/net PnL. If not flat, name the one evidenced blocker and stop
+   unsafe progression. If flat, use canonical reconciliation (may land PAUSED),
+   then advance to the **already-requested** single owner-controlled Scanner
+   + PAPER Robot + integrated feature acceptance run; no extra generic
+   regression campaign.
+
+**Evidence checkpoint (2026-10-20):** backup created at
+`C:\BybitScanner_pc_backup_20261020_preclose\paper_runtime.sqlite3`
+and integrity checked, durable admission moved to
+`ROBOT_RUNNING/RECONCILIATION_REQUIRED`, zero outstanding entry limits
+reported. **Backend launch and both position closures were not observed
+at this checkpoint.** Do not report recovery PASS or E2E READY.
+
+**Time-saving stop rule:** after one bounded confirmation of the known
+signature, take the canonical authorized transition. Further research is
+justified only by a proven mandatory safety unknown or contradictory
+evidence; return to the same original trading acceptance goal immediately
+after that blocker is resolved.
 
 ## 2026-09-27 incident — closed path
 

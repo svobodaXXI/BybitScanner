@@ -19,6 +19,8 @@ notification.py
 """
 
 import os
+import hashlib
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from telegram_bot import (
     send_message,
@@ -31,7 +33,9 @@ from tradingview_bridge import (
 
 from pattern_robot_integration import prepare_robot_handoff
 
-from signal_archive import record_original_signal
+from signal_archive import load_frozen_signal_geometry, record_original_signal
+from signal_geometry_producer import build_wedge_geometry_snapshot
+from signal_geometry_snapshot import canonical_bytes
 
 from timeframe_format import format_timeframe_ru
 
@@ -49,7 +53,7 @@ from telegram_labels import SCANNER_EMOJI
 PATTERN_LABELS_RU = {
     "Falling Wedge": "Клин",
     "Rising Wedge": "Клин",
-    "Triangle Compression": "Сжимающийся треугольник",
+    "Triangle Compression": "Треугольник",
     "No wedge": "Клин не найден",
     "Unknown": "Неизвестная структура",
 }
@@ -122,6 +126,59 @@ def signal_stage_circle(result):
 
 
 CHARTS_DIR = "charts"
+
+
+def archive_source_chart(*, symbol, timeframe, pattern, text, chart_path,
+                         formation_id=None, geometry=None, frozen_candles=None):
+    """Archive the exact original chart for identity-based Telegram navigation.
+
+    Returns (callback token or None, PNG bytes or None). This is presentation
+    state only; failures never alter Robot admission or Scanner decisions.
+    Call only for real owner-deliverable signals, never synthetic TEST MODE.
+    """
+    try:
+        with open(chart_path, "rb") as chart_file:
+            image = chart_file.read()
+    except OSError:
+        return None, None
+    if not image:
+        return None, None
+    # Image/text bytes can repeat even if the detector's frozen source
+    # anchors change (for example when a chart file is reused). Binding only
+    # those bytes to source_id would silently reopen the first immutable
+    # archive for a later, different signal. Include the *validated frozen*
+    # OHLC and rays in the deterministic handle; retries of the same source
+    # still resolve to exactly one archived record.
+    provisional_id = "source-original:" + "0" * 24
+    frozen = build_wedge_geometry_snapshot(
+        provisional_id, symbol, timeframe, geometry, frozen_candles,
+    )
+    token_input = (
+        f"{symbol}|{timeframe}|".encode("utf-8")
+        + image + str(text).encode("utf-8")
+    )
+    if frozen is not None:
+        token_input += b"\0frozen-geometry-v1\0" + canonical_bytes(frozen)
+    token = hashlib.sha256(token_input).hexdigest()[:24]
+    source_id = f"source-original:{token}"
+    snapshot = {**frozen, "signal_id": source_id} if frozen is not None else None
+    if not record_original_signal(
+        source_id, symbol=symbol, timeframe=timeframe,
+        pattern=pattern, text=text, image_bytes=image,
+        geometry_snapshot=snapshot,
+    ):
+        return None, image
+    if formation_id:
+        record_original_signal(
+            f"origin:{symbol}:{timeframe}:{formation_id}",
+            symbol=symbol, timeframe=timeframe,
+            pattern=pattern, text=text, image_bytes=image,
+        )
+    # An image can be archived when source geometry is invalid or unavailable.
+    # Never give Telegram an exact handle that Editor cannot reopen.
+    # A previous image-only archive must also remain immutable.
+    return (token if load_frozen_signal_geometry(source_id) is not None else None), image
+
 
 
 def get_telegram_chat_ids():
@@ -330,12 +387,54 @@ def format_signal(
     return message.strip()
 
 
+
+def _owner_workspace_button(mode, symbol, timeframe, signal_id=None):
+    """Direct Mini App for owner-only private signal cards.
+
+    Never embed credentials or degrade an invalid configured origin into an
+    unauthenticated URL. Without a configured origin, retain the old callback
+    so existing installations still have a working handoff.
+    """
+    from workspace_ready_link import workspace_link
+
+    base = (os.environ.get("BYBITSCANNER_TERMINAL_HTTPS_URL") or
+            os.environ.get("BYBITSCANNER_WORKSPACE_URL") or "").strip()
+    if base:
+        try:
+            parts = urlsplit(base)
+            if parts.path not in ("", "/", "/login") or parts.query or parts.fragment:
+                raise ValueError("Unexpected public workspace URL path")
+            url = workspace_link(
+                urlunsplit((parts.scheme, parts.netloc, "/login", "", "")),
+                mode, symbol, timeframe,
+                signal_id=signal_id if mode == "EDITOR" else None,
+            )
+            return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
+                    "web_app": {"url": url}}
+        except ValueError:
+            # Do not expose an unsafe URL. The callback path will verify HTTPS
+            # independently before offering a link.
+            pass
+    # Preserve the immutable signal identity even when only a callback can be
+    # delivered; a 24-hex source handle fits Telegram's 64-byte callback limit.
+    if mode == "EDITOR" and isinstance(signal_id, str):
+        import re
+        match = re.fullmatch(r"(source-original|mirror-origin):([0-9a-f]{24})", signal_id)
+        if match:
+            source_kind = "S" if match.group(1) == "source-original" else "M"
+            return {"text": "✏️ Редактор",
+                    "callback_data": f"workspace:EDITOR:{source_kind}:{match.group(2)}"}
+    return {"text": "✏️ Редактор" if mode == "EDITOR" else "🖥 Терминал",
+            "callback_data": f"workspace:{mode}:{symbol}:{timeframe}"}
+
+
 def build_tradingview_keyboard(
     symbol,
     timeframe,
     include_review_actions=True,
     robot_candidate_id=None,
     robot_status_button=False,
+    signal_id=None,
 ):
     """Telegram inline keyboard for TradingView, review, and Robot admission."""
 
@@ -353,7 +452,7 @@ def build_tradingview_keyboard(
         [
             {
                 "text":
-                    "\U0001F4C8 Open TradingView",
+                    "\U0001F4C8 TradingView",
 
                 "url":
                     tradingview_url
@@ -398,43 +497,15 @@ def build_tradingview_keyboard(
             ]
         )
 
+    # Owner callback targets the listener on the PC, not the phone browser.
+    # The listener prepares the local UI; HTTPS/QR are delivered separately.
     if include_review_actions:
-        keyboard.extend(
-            [
-            [
-                {
-                    "text":
-                        "\U0001F4CC \u0412 \u0440\u0430\u0437\u0431\u043e\u0440",
-
-                    "callback_data":
-                        f"review:queue:{symbol}:{timeframe}"
-                },
-                {
-                    "text":
-                        "\u2705 \u0425\u043e\u0440\u043e\u0448\u0438\u0439",
-
-                    "callback_data":
-                        f"review:good:{symbol}:{timeframe}"
-                }
-            ],
-            [
-                {
-                    "text":
-                        "\u274C \u0413\u0435\u043e\u043c\u0435\u0442\u0440\u0438\u044f",
-
-                    "callback_data":
-                        f"review:geometry:{symbol}:{timeframe}"
-                },
-                {
-                    "text":
-                        "\u2693 Anchor/START",
-
-                    "callback_data":
-                        f"review:anchor:{symbol}:{timeframe}"
-                }
-            ]
-            ]
-        )
+        tf = {"1": "1m", "5": "5m", "15": "15m", "60": "1h", "D": "1d"}.get(timeframe, timeframe)
+        if tf in ("15s", "1m", "5m", "15m", "1h", "1d"):
+            keyboard.append([
+                _owner_workspace_button("EDITOR", symbol, tf, signal_id=signal_id),
+                _owner_workspace_button("TERMINAL", symbol, tf),
+            ])
 
     return {
         "inline_keyboard": keyboard
@@ -466,16 +537,12 @@ def send_signal(
     if not message:
         return False
 
-    all_delivered = send_message_to_recipients(
-        message
-    )
-
     symbol = result.get(
         "symbol"
     )
 
     if not symbol:
-        return all_delivered
+        return False
 
     timeframe = str(
         result.get(
@@ -501,26 +568,36 @@ def send_signal(
             f"[TELEGRAM] Chart not found: "
             f"{chart_path}"
         )
-        return all_delivered
+        # A text-only message is not a completed Scanner signal card.
+        # Preserve a failed delivery result for the bounded retry path.
+        return False
+
+    # Do not emit an orphan text-only Scanner card when its image was
+    # missing at send time. The caller can retain/retry the same signal.
+    all_delivered = send_message_to_recipients(
+        message
+    )
 
     owner_chat_id = get_telegram_owner_chat_id()
+    # A transient pandas DataFrame is used only by immutable presentation
+    # archive; never persist it in the durable Robot candidate JSON.
+    handoff_payload = {key: value for key, value in result.items()
+                       if key != "_frozen_geometry_candles"}
     handoff = prepare_robot_handoff(
-        result,
+        handoff_payload,
         timeframe=timeframe,
         enabled=bool(owner_chat_id) and not test_mode,
     )
     robot_candidate_id = handoff.candidate_id
     robot_candidate_failed = handoff.persistence_failed
 
-    # The chart file is overwritten by the next signal for this symbol: keep the
-    # exact bytes about to be sent so "К сигналу" can repost the original.
-    archived_image = None
-    if robot_candidate_id:
-        try:
-            with open(chart_path, "rb") as chart_file:
-                archived_image = chart_file.read()
-        except OSError:
-            archived_image = None
+    source_token, archived_image = archive_source_chart(
+        symbol=symbol, timeframe=timeframe, pattern=result.get("pattern", ""),
+        text=message, chart_path=chart_path,
+        formation_id=result.get("scanner_formation_id"),
+        geometry=result.get("geometry"),
+        frozen_candles=result.get("_frozen_geometry_candles"),
+    ) if owner_chat_id and not test_mode else (None, None)
     owner_photo_response = None
 
     for chat_id in get_telegram_chat_ids():
@@ -539,6 +616,7 @@ def send_signal(
                         if is_owner
                         else None
                     ),
+                    signal_id=(f"source-original:{source_token}" if is_owner and source_token else None),
                 )
             )
 
@@ -566,10 +644,23 @@ def send_signal(
             )
 
     if robot_candidate_id and archived_image and owner_photo_response is not None:
+        # A Robot candidate repost links its Editor to the candidate archive,
+        # not the source-original handle on the first Telegram card. Freeze
+        # that same validated detector evidence under the candidate identity,
+        # or the repost would open an Editor without its original rays.
+        frozen_source = (
+            load_frozen_signal_geometry(f"source-original:{source_token}")
+            if source_token else None
+        )
+        candidate_geometry = (
+            {**frozen_source, "signal_id": robot_candidate_id}
+            if frozen_source is not None else None
+        )
         record_original_signal(
             robot_candidate_id, symbol=symbol, timeframe=timeframe,
             pattern=result.get("pattern", ""), text=message,
             image_bytes=archived_image, photo_response=owner_photo_response,
+            geometry_snapshot=candidate_geometry,
         )
 
     # After the ordinary card/photo delivery, tell the owner (only) why the

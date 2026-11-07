@@ -17,6 +17,8 @@ telegram_bot.py
 
 import json
 
+import telegram_gateway_client
+
 import requests
 
 
@@ -24,6 +26,12 @@ def set_workspace_menu_button(token, chat_id, web_app_url, text="Open Workspace"
     """Configure one private chat menu button without exposing the token to the frontend."""
     if not web_app_url.startswith("https://"):
         raise ValueError("Telegram Mini App URL must use HTTPS")
+    if telegram_gateway_client.configured():
+        return telegram_gateway_client.bot_method(
+            "setChatMenuButton", chat_id=str(chat_id),
+            menu_button=json.dumps({"type": "web_app", "text": text,
+                                    "web_app": {"url": web_app_url}}),
+        )
     url = f"https://api.telegram.org/bot{token}/setChatMenuButton"
     data = {
         "chat_id": str(chat_id),
@@ -45,6 +53,11 @@ def send_message(
     """
     Отправка текстового сообщения Telegram.
     """
+
+    if telegram_gateway_client.configured():
+        return telegram_gateway_client.send_text(
+            chat_id, text, reply_markup=reply_markup
+        )
 
     url = (
         f"https://api.telegram.org/"
@@ -82,6 +95,11 @@ def send_photo(
 
     Поддерживает optional inline keyboard.
     """
+
+    if telegram_gateway_client.configured():
+        return telegram_gateway_client.send_photo_upload(
+            chat_id, photo_path, caption=caption, reply_markup=reply_markup
+        )
 
     url = (
         f"https://api.telegram.org/"
@@ -127,6 +145,11 @@ def send_photo_by_file_id(
     """
     Повторная отправка уже загруженного Telegram изображения по file_id.
     """
+
+    if telegram_gateway_client.configured():
+        return telegram_gateway_client.send_photo_file_id(
+            chat_id, file_id, caption=caption, reply_markup=reply_markup
+        )
 
     url = (
         f"https://api.telegram.org/"

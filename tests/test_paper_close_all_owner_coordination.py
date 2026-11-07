@@ -1,0 +1,689 @@
+"""PAPER account-wide Close-All coordinates admission, entry LIMITs and owners.
+
+Synthetic serialized owner only. No real DB, backend, Telegram, exchange, or LIVE.
+"""
+
+from __future__ import annotations
+
+from decimal import Decimal
+from types import SimpleNamespace
+import unittest
+from unittest.mock import Mock
+
+from terminal.api.models import (
+    ClientActionId, CloseAllCommandRequest, CloseAllCommandResponse,
+    CommandResult, CommandResultStatus,
+)
+from terminal.domain.models import OrderId, OrderSide, PositionSide, Symbol, TradingAccountId
+from terminal.runtime.paper_runtime import PaperCloseAllRejected, PaperRuntime
+
+ACCOUNT = TradingAccountId("paper")
+
+
+def position(name, side=PositionSide.LONG):
+    return SimpleNamespace(position_key=SimpleNamespace(symbol=Symbol(name)), side=side)
+
+
+def limit(name, symbol="MANUALUSDT", side=OrderSide.BUY):
+    return SimpleNamespace(order_id=OrderId(name), symbol=Symbol(symbol), side=side)
+
+
+def candidate(symbol="BOTUSDT"):
+    return SimpleNamespace(
+        candidate_id="candidate-bot", symbol=Symbol(symbol), status="OPEN",
+    )
+
+
+def trade(symbol="BOTUSDT"):
+    return SimpleNamespace(
+        trade_id="trade-bot", candidate_id="candidate-bot", symbol=Symbol(symbol),
+    )
+
+
+def response(results=(), positions=()):
+    return CloseAllCommandResponse("confirmed-owner-action", tuple(results), tuple(positions))
+
+
+def completed(action="robot-close"):
+    return CommandResult(action, CommandResultStatus.COMPLETED, "closed", "closed")
+
+
+def fixture(
+    *, mode="ROBOT_RUNNING", status="READY", robot=False,
+    manual=True, orders=(), obligations=(),
+):
+    initial_positions = ([position("BOTUSDT")] if robot else []) + (
+        [position("MANUALUSDT")] if manual else []
+    )
+    state = SimpleNamespace(
+        mode=mode, recovery_status=status, version=4, updated_at_ms=0,
+    )
+    autopilot = SimpleNamespace(mode="PAPER_AUTO", version=3, updated_at_ms=0)
+    current = {"robot": state, "trades": (trade(),) if robot else (), "limits": list(orders)}
+
+    def update_robot(account, *, mode, recovery_status, reason, expected_version, updated_at_ms):
+        assert expected_version == current["robot"].version
+        new = SimpleNamespace(
+            mode=mode, recovery_status=recovery_status,
+            reason=reason, version=expected_version + 1, updated_at_ms=updated_at_ms,
+        )
+        current["robot"] = new
+        return new
+
+    candidates = (candidate(),) if robot else ()
+    store = SimpleNamespace(
+        get_robot_runtime_state=Mock(side_effect=lambda account: current["robot"]),
+        update_robot_runtime_state=Mock(side_effect=update_robot),
+        get_robot_autopilot_state=Mock(return_value=autopilot),
+        update_robot_autopilot_state=Mock(),
+        load_robot_candidates_by_status=Mock(return_value=candidates),
+        load_open_robot_trades=Mock(side_effect=lambda account: current["trades"]),
+        load_active_robot_candidate_states=Mock(return_value=candidates),
+        load_active_robot_entry_orders=Mock(return_value={}),
+        load_unfinished_commands=Mock(return_value=()),
+        load_unresolved_paper_protection_obligations=Mock(return_value=tuple(obligations)),
+        load_open_position_projections=Mock(side_effect=lambda account: (
+            tuple(initial_positions) if current["trades"] or not robot else (
+                (position("MANUALUSDT"),) if manual else ()
+            )
+        )),
+        load_active_paper_limits_for_account=Mock(
+            side_effect=lambda account: tuple(current["limits"]),
+        ),
+    )
+    # A successful Robot close removes that one durable owner before manual
+    # close, as the production close_robot_trade transaction does.
+    def close_robot(request, **kwargs):
+        current["trades"] = ()
+        return response((completed(),))
+    runtime = SimpleNamespace(
+        _paper_account_id=ACCOUNT, store=store,
+        require_paper_mutations=Mock(),
+        robot_synchronize_pending_entries=Mock(return_value=SimpleNamespace(
+            unresolved_candidate_ids=(), still_pending_protection=(),
+        )),
+        robot_close_all=Mock(side_effect=close_robot),
+        robot_reconcile=Mock(return_value=SimpleNamespace(success=False)),
+        close_all=Mock(return_value=response(
+            (completed("manual-close"),) if manual else (),
+        )),
+        _robot_cancel_limit=Mock(side_effect=lambda request: (
+            current["limits"].__setitem__(
+                slice(None), [item for item in current["limits"]
+                              if item.order_id.value != request.order_id],
+            )
+            or SimpleNamespace(status=CommandResultStatus.COMPLETED)
+        )),
+        open_positions=Mock(return_value=SimpleNamespace(positions=())),
+    )
+    # The production runtime owns this read-only formatter; the synthetic
+    # SimpleNamespace owner must expose the same method for integration tests.
+    runtime._paper_close_all_symbol_reports = (
+        lambda request, before, trades: PaperRuntime._paper_close_all_symbol_reports(
+            runtime, request, before, trades,
+        )
+    )
+    runtime._robot_linked_entry_limits = Mock(return_value={})
+    runtime._cancel_robot_entries_for_account_flatten = (
+        lambda action_id: PaperRuntime._cancel_robot_entries_for_account_flatten(
+            runtime, action_id,
+        )
+    )
+    return runtime, current
+
+
+def run(runtime):
+    return PaperRuntime.coordinated_paper_close_all(
+        runtime, CloseAllCommandRequest(ClientActionId("confirmed-owner-action")),
+    )
+
+
+class CoordinatedPaperCloseAllTests(unittest.TestCase):
+    def test_operator_close_ignores_workspace_gate_for_paper_only(self):
+        """UI may select LIVE without taking authority over PAPER exit."""
+        paper_api = SimpleNamespace(full_close=Mock(return_value=completed()))
+        workspace_api = SimpleNamespace(full_close=Mock())
+        store = SimpleNamespace(
+            load_open_position_projections=Mock(
+                return_value=(position("MANUALUSDT"),),
+            ),
+        )
+        runtime = SimpleNamespace(
+            _paper_account_id=ACCOUNT,
+            _account_id=ACCOUNT,
+            store=store,
+            api=workspace_api,
+            _robot_api=paper_api,
+            require_paper_mutations=Mock(
+                side_effect=RuntimeError("live_mutations_disabled"),
+            ),
+            _robot_execution_book=Mock(return_value=object()),
+            open_positions=Mock(return_value=SimpleNamespace(positions=())),
+        )
+        request = CloseAllCommandRequest(ClientActionId("confirmed-owner-action"))
+        result = PaperRuntime.close_all(
+            runtime, request, operator_paper_exit=True,
+        )
+        self.assertFalse(result.positions)
+        self.assertEqual(len(result.results), 1)
+        runtime.require_paper_mutations.assert_not_called()
+        store.load_open_position_projections.assert_called_once_with(ACCOUNT)
+        paper_api.full_close.assert_called_once()
+        workspace_api.full_close.assert_not_called()
+
+    def test_normal_manual_close_still_requires_workspace_paper_gate(self):
+        runtime = SimpleNamespace(
+            require_paper_mutations=Mock(
+                side_effect=RuntimeError("live_mutations_disabled"),
+            ),
+        )
+        with self.assertRaisesRegex(RuntimeError, "live_mutations_disabled"):
+            PaperRuntime.close_all(
+                runtime,
+                CloseAllCommandRequest(ClientActionId("confirmed-owner-action")),
+            )
+        runtime.require_paper_mutations.assert_called_once()
+
+    def test_coordinated_operator_close_is_independent_of_workspace_gate(self):
+        runtime, _ = fixture(mode="ROBOT_STOPPED", status="ROBOT_STOPPED")
+        runtime.require_paper_mutations.side_effect = RuntimeError(
+            "live_mutations_disabled",
+        )
+        result = run(runtime)
+        self.assertFalse(result.positions)
+        runtime.require_paper_mutations.assert_not_called()
+        self.assertTrue(runtime.close_all.call_args.kwargs["operator_paper_exit"])
+
+    def test_ready_robot_is_paused_and_autopilot_off_before_market_dispatch(self):
+        runtime, state = fixture(robot=True, manual=True)
+        def close_robot(request, **kwargs):
+            self.assertEqual(state["robot"].recovery_status, "PAUSED")
+            runtime.store.update_robot_autopilot_state.assert_called_once()
+            state["trades"] = ()
+            return response((completed(),))
+        runtime.robot_close_all.side_effect = close_robot
+        result = run(runtime)
+        self.assertEqual(len(result.results), 2)
+        self.assertEqual(result.positions, ())
+        runtime.robot_close_all.assert_called_once()
+        runtime.close_all.assert_called_once()
+        self.assertEqual(runtime.store.update_robot_runtime_state.call_args.kwargs["recovery_status"], "PAUSED")
+
+    def test_robot_box_close_receives_off_owner_execution_evidence(self):
+        runtime, state = fixture(robot=True, manual=False)
+        book = object()
+        run_request = CloseAllCommandRequest(ClientActionId("confirmed-owner-action"))
+        PaperRuntime.coordinated_paper_close_all(
+            runtime, run_request, evidence={"BOTUSDT": book},
+        )
+        self.assertIs(runtime.robot_close_all.call_args.kwargs["evidence"]["BOTUSDT"], book)
+
+    def test_box_missing_fresh_book_preserves_exit_before_market_dispatch(self):
+        runtime = SimpleNamespace(
+            _paper_account_id=ACCOUNT,
+            store=SimpleNamespace(
+                get_open_robot_trade_for_symbol=Mock(return_value=SimpleNamespace(
+                    candidate_id="box-child",
+                )),
+                get_robot_candidate=Mock(return_value=SimpleNamespace(
+                    status="BOX_PLAN_ONLY", candidate_id="box-source",
+                )),
+                prove_box_owned_position=Mock(return_value=SimpleNamespace(
+                    remaining_quantity=Decimal("519.2"),
+                )),
+                reserve_box_order_identity=Mock(),
+                cancel_paper_limit=Mock(),
+            ),
+            _fresh_box_close_book=Mock(return_value=None),
+            _robot_api=SimpleNamespace(market=Mock()),
+        )
+        box = SimpleNamespace(
+            candidate_id="box-child", symbol=Symbol("BOTUSDT"),
+            signal_snapshot={"source_box_candidate_id": "box-source"},
+        )
+        result = PaperRuntime._robot_close_box_candidate(runtime, box)
+        self.assertEqual(result.status, CommandResultStatus.UNAVAILABLE)
+        self.assertEqual(result.reason_code, "box_close_fresh_book_unavailable")
+        runtime.store.reserve_box_order_identity.assert_not_called()
+        runtime.store.cancel_paper_limit.assert_not_called()
+        runtime._robot_api.market.assert_not_called()
+
+    def test_box_prefers_fresh_handler_evidence_over_stale_stream(self):
+        symbol = Symbol("BOTUSDT")
+        stale = SimpleNamespace(symbol=symbol, received_at_ms=5000)
+        fresh = SimpleNamespace(symbol=symbol, received_at_ms=9900)
+        def validate(request_symbol, book):
+            if book is None or book.symbol != request_symbol:
+                raise RuntimeError("unavailable")
+            if not 0 <= 10000 - book.received_at_ms <= 1000:
+                raise RuntimeError("stale")
+        runtime = SimpleNamespace(
+            _streamed_book=Mock(return_value=stale),
+            _market_executor=SimpleNamespace(validate_book=Mock(side_effect=validate)),
+        )
+        selected = PaperRuntime._fresh_box_close_book(runtime, symbol, fresh)
+        self.assertIs(selected, fresh)
+        self.assertIsNone(PaperRuntime._fresh_box_close_book(runtime, symbol))
+
+    def test_stop_mode_manual_only_uses_original_paper_path(self):
+        runtime, _ = fixture(mode="ROBOT_STOPPED", status="ROBOT_STOPPED")
+        result = run(runtime)
+        self.assertEqual(len(result.results), 1)
+        runtime.robot_close_all.assert_not_called()
+        runtime.robot_synchronize_pending_entries.assert_not_called()
+        runtime.close_all.assert_called_once()
+
+    def test_operator_close_works_under_reconciliation_fence_with_proven_ownership(self):
+        runtime, state = fixture(status="RECONCILIATION_REQUIRED", robot=True)
+        result = run(runtime)
+        self.assertEqual(len(result.results), 2)
+        runtime.robot_reconcile.assert_not_called()
+        runtime.robot_close_all.assert_called_once()
+        runtime.close_all.assert_called_once()
+        runtime.store.update_robot_autopilot_state.assert_called_once()
+        self.assertEqual(state["robot"].recovery_status, "RECONCILIATION_REQUIRED")
+
+    def test_operator_close_still_fences_unresolved_pending_entries(self):
+        runtime, _ = fixture(status="RECONCILIATION_REQUIRED", robot=True)
+        runtime.robot_synchronize_pending_entries.return_value = SimpleNamespace(
+            unresolved_candidate_ids=("entry-unresolved",),
+            still_pending_protection=(),
+        )
+        with self.assertRaisesRegex(PaperCloseAllRejected, "pending_robot_entry_unresolved"):
+            run(runtime)
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+
+    def test_operator_close_does_not_override_unproven_trade_ledger(self):
+        runtime, _ = fixture(status="RECONCILIATION_REQUIRED", robot=True)
+        runtime.store.load_open_robot_trades.side_effect = lambda account: ()
+        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_trade_ledger_unproven"):
+            run(runtime)
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+
+    def test_operator_exit_preempts_reconciling_state_when_owner_ledger_is_proven(self):
+        runtime, _ = fixture(status="RECONCILING", robot=True)
+        result = run(runtime)
+        self.assertFalse(result.positions)
+        runtime.robot_reconcile.assert_not_called()
+        runtime.robot_close_all.assert_called_once()
+        runtime.close_all.assert_called_once()
+
+    def test_orphan_trade_fails_closed_before_any_market_order(self):
+        runtime, _ = fixture()
+        runtime.store.load_open_robot_trades.return_value = (trade(),)
+        # A side-effect is used for other tests; here replace it explicitly.
+        runtime.store.load_open_robot_trades.side_effect = lambda account: (trade(),)
+        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_trade_ledger_unproven"):
+            run(runtime)
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+        self.assertEqual(runtime.store.get_robot_runtime_state(ACCOUNT).recovery_status,
+                         "RECONCILIATION_REQUIRED")
+
+    def _open_box_with_remaining_entries(self, *, status="READY"):
+        entry = limit("box-entry", symbol="BOTUSDT", side=OrderSide.BUY)
+        take = limit("box-exit", symbol="BOTUSDT", side=OrderSide.SELL)
+        runtime, state = fixture(
+            robot=True, manual=False, status=status, orders=(entry, take),
+        )
+        orders = {"box-entry": "open", "box-exit": "open"}
+        runtime._robot_linked_entry_limits.return_value = {"box-entry": 4}
+        runtime.store.load_active_robot_entry_orders.side_effect = lambda account: (
+            {"box-entry": (Symbol("BOTUSDT"), 4)}
+            if orders["box-entry"] == "open" else {}
+        )
+        runtime.store.get_paper_limit = Mock(side_effect=lambda order_id, account: (
+            SimpleNamespace(symbol=Symbol("BOTUSDT"), status=orders[order_id])
+            if order_id in orders else None
+        ))
+        def cancel(request):
+            orders[request.order_id] = "cancelled"
+            state["limits"] = [
+                item for item in state["limits"]
+                if item.order_id.value != request.order_id
+            ]
+            return SimpleNamespace(status=CommandResultStatus.COMPLETED)
+        runtime._robot_cancel_limit.side_effect = cancel
+        return runtime, state, orders
+
+    def test_open_box_remaining_entry_is_cancelled_before_market_and_exit_survives_until_flat(self):
+        runtime, state, orders = self._open_box_with_remaining_entries()
+        def close_robot(request, **kwargs):
+            self.assertEqual(orders["box-entry"], "cancelled")
+            self.assertEqual(orders["box-exit"], "open")
+            state["trades"] = ()
+            return response((completed(),))
+        runtime.robot_close_all.side_effect = close_robot
+        result = run(runtime)
+        self.assertFalse(result.positions)
+        self.assertEqual(orders["box-exit"], "cancelled")
+        self.assertEqual(
+            [x.args[0].order_id for x in runtime._robot_cancel_limit.call_args_list],
+            ["box-entry", "box-exit"],
+        )
+
+    def test_reconciliation_required_cancels_box_entry_without_robot_reconcile(self):
+        runtime, state, orders = self._open_box_with_remaining_entries(
+            status="RECONCILIATION_REQUIRED",
+        )
+        result = run(runtime)
+        self.assertFalse(result.positions)
+        self.assertEqual(orders["box-entry"], "cancelled")
+        self.assertEqual(orders["box-exit"], "cancelled")
+        runtime.robot_reconcile.assert_not_called()
+        runtime.robot_close_all.assert_called_once()
+
+    def test_unconfirmed_open_box_entry_cancel_never_dispatches_market(self):
+        runtime, state, orders = self._open_box_with_remaining_entries()
+        runtime._robot_cancel_limit.return_value = SimpleNamespace(
+            status=CommandResultStatus.UNKNOWN,
+        )
+        runtime._robot_cancel_limit.side_effect = None
+        with self.assertRaisesRegex(
+            PaperCloseAllRejected, "robot_entry_limit_cancel_unconfirmed",
+        ):
+            run(runtime)
+        self.assertEqual(orders["box-entry"], "open")
+        self.assertEqual(orders["box-exit"], "open")
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+        self.assertEqual(state["robot"].recovery_status, "RECONCILIATION_REQUIRED")
+
+    def test_unproven_protection_never_dispatches_market_close(self):
+        runtime, _ = fixture(robot=True, obligations=(
+            SimpleNamespace(trade_id="trade-bot", status="UNKNOWN"),
+        ))
+        with self.assertRaisesRegex(
+            PaperCloseAllRejected, "operator_close_protection_state_unproven",
+        ):
+            run(runtime)
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+
+    def test_operator_triggered_stop_closes_before_reconcile_even_when_required(self):
+        obligation = SimpleNamespace(
+            trade_id="trade-bot", symbol=Symbol("BOTUSDT"), status="TRIGGERED",
+        )
+        runtime, current = fixture(
+            status="RECONCILIATION_REQUIRED", robot=True, manual=False,
+        )
+        unresolved = [obligation]
+        runtime.store.load_unresolved_paper_protection_obligations.side_effect = (
+            lambda account: tuple(unresolved)
+        )
+        def dispatch(item, *, now_ms, recovery_book):
+            self.assertIs(item, obligation)
+            current["trades"] = ()
+            # Production STOP closes the exact Robot candidate as well.
+            runtime.store.load_active_robot_candidate_states.return_value = ()
+            unresolved.clear()
+            return SimpleNamespace(status="RESOLVED")
+        runtime._dispatch_paper_protection_obligation = Mock(side_effect=dispatch)
+        result = PaperRuntime.coordinated_paper_close_all(
+            runtime,
+            CloseAllCommandRequest(ClientActionId("confirmed-owner-action")),
+            evidence={"BOTUSDT": object()},
+        )
+        self.assertFalse(result.positions)
+        runtime.robot_reconcile.assert_not_called()
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+        runtime._dispatch_paper_protection_obligation.assert_called_once()
+        runtime.store.update_robot_autopilot_state.assert_called_once()
+
+    def test_completed_stop_fastpath_blocks_stale_candidate_and_pending_work(self):
+        """Flat and resolved STOP cannot mask admission or unfinished commands."""
+        obligation = SimpleNamespace(
+            trade_id="trade-bot", symbol=Symbol("BOTUSDT"), status="TRIGGERED",
+        )
+        for kind in ("candidate", "entry", "command"):
+            with self.subTest(kind=kind):
+                runtime, state = fixture(
+                    status="RECONCILIATION_REQUIRED", robot=True, manual=False,
+                )
+                unresolved = [obligation]
+                runtime.store.load_unresolved_paper_protection_obligations.side_effect = (
+                    lambda account: tuple(unresolved)
+                )
+
+                def dispatch(item, *, now_ms, recovery_book):
+                    self.assertIs(item, obligation)
+                    state["trades"] = ()
+                    unresolved.clear()
+                    return SimpleNamespace(status="RESOLVED")
+
+                runtime._dispatch_paper_protection_obligation = Mock(side_effect=dispatch)
+                if kind == "entry":
+                    runtime.store.load_active_robot_candidate_states.return_value = ()
+                    runtime.store.load_active_robot_entry_orders.return_value = {
+                        "orphan-entry": (Symbol("BOTUSDT"), 2),
+                    }
+                elif kind == "command":
+                    runtime.store.load_active_robot_candidate_states.return_value = ()
+                    runtime.store.load_unfinished_commands.return_value = (
+                        SimpleNamespace(
+                            trading_account_id=ACCOUNT,
+                            symbol=Symbol("BOTUSDT"),
+                        ),
+                    )
+                # The candidate case retains its initial APPROVED/OPEN row.
+                with self.assertRaisesRegex(
+                    PaperCloseAllRejected, "operator_close_post_stop_work_unresolved",
+                ):
+                    run(runtime)
+                runtime._dispatch_paper_protection_obligation.assert_called_once()
+                runtime.robot_close_all.assert_not_called()
+                runtime.close_all.assert_not_called()
+                self.assertEqual(state["trades"], ())
+                self.assertEqual(runtime.store.get_robot_runtime_state(ACCOUNT).recovery_status,
+                                 "RECONCILIATION_REQUIRED")
+
+    def test_operator_triggered_stop_without_fill_remains_fenced(self):
+        obligation = SimpleNamespace(
+            trade_id="trade-bot", symbol=Symbol("BOTUSDT"), status="TRIGGERED",
+        )
+        runtime, _ = fixture(
+            status="RECONCILIATION_REQUIRED", robot=True, manual=False,
+            obligations=(obligation,),
+        )
+        runtime._dispatch_paper_protection_obligation = Mock(return_value=obligation)
+        with self.assertRaisesRegex(
+            PaperCloseAllRejected, "operator_close_triggered_stop_unconfirmed",
+        ):
+            run(runtime)
+        runtime.robot_reconcile.assert_not_called()
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+
+    def test_failed_pending_robot_entry_sync_fences_and_stops(self):
+        runtime, _ = fixture(robot=True)
+        runtime.robot_synchronize_pending_entries.return_value = SimpleNamespace(
+            unresolved_candidate_ids=("candidate-bot",), still_pending_protection=(),
+        )
+        with self.assertRaisesRegex(PaperCloseAllRejected, "pending_robot_entry_unresolved"):
+            run(runtime)
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+
+    def test_opening_limits_cancel_before_any_market_and_exit_limits_after_flat(self):
+        entry = limit("entry", side=OrderSide.BUY)
+        take = limit("take", side=OrderSide.SELL)
+        runtime, _ = fixture(orders=(entry, take))
+        def manual_close(request, **kwargs):
+            requests = [x.args[0].order_id for x in runtime._robot_cancel_limit.call_args_list]
+            self.assertIn("entry", requests)
+            self.assertNotIn("take", requests)
+            return response((completed("manual"),))
+        runtime.close_all.side_effect = manual_close
+        result = run(runtime)
+        self.assertFalse(result.positions)
+        requests = [x.args[0].order_id for x in runtime._robot_cancel_limit.call_args_list]
+        self.assertEqual(requests, ["entry", "take"])
+        self.assertEqual(runtime.store.load_active_paper_limits_for_account(ACCOUNT), ())
+
+    def test_residual_position_preserves_exit_limit_and_non_success(self):
+        take = limit("take", side=OrderSide.SELL)
+        runtime, _ = fixture(orders=(take,))
+        runtime.close_all.return_value = response(
+            (CommandResult("manual", CommandResultStatus.UNKNOWN, "stale", "unconfirmed"),),
+            (SimpleNamespace(symbol="MANUALUSDT", position_quantity=Decimal("1")),),
+        )
+        result = run(runtime)
+        self.assertTrue(result.positions)
+        runtime._robot_cancel_limit.assert_not_called()
+        runtime.open_positions.assert_not_called()
+
+    def test_failed_robot_close_blocks_manual_market_dispatch(self):
+        runtime, state = fixture(robot=True)
+        runtime.robot_close_all.side_effect = lambda request, **kwargs: response((
+            CommandResult("robot", CommandResultStatus.UNKNOWN, "stale", "unconfirmed"),
+        ))
+        with self.assertRaisesRegex(PaperCloseAllRejected, "robot_owned_close_unconfirmed"):
+            run(runtime)
+        runtime.close_all.assert_not_called()
+
+    def test_operator_closes_proven_robot_owner_even_when_robot_stopped(self):
+        runtime, _ = fixture(mode="ROBOT_STOPPED", status="ROBOT_STOPPED", robot=True)
+        result = run(runtime)
+        self.assertFalse(result.positions)
+        runtime.robot_close_all.assert_called_once()
+        runtime.close_all.assert_called_once()
+        runtime.robot_synchronize_pending_entries.assert_not_called()
+
+    def test_stopped_robot_with_unresolved_entry_cannot_close_unsafely(self):
+        runtime, _ = fixture(mode="ROBOT_STOPPED", status="ROBOT_STOPPED", robot=True)
+        runtime.store.load_active_robot_entry_orders.return_value = {
+            "live-entry": (Symbol("BOTUSDT"), 1),
+        }
+        with self.assertRaisesRegex(PaperCloseAllRejected, "stopped_robot_has_active_entry_orders"):
+            run(runtime)
+        runtime.robot_close_all.assert_not_called()
+        runtime.close_all.assert_not_called()
+
+    def test_paper_only_account_identity_is_mandatory(self):
+        runtime, _ = fixture()
+        runtime._paper_account_id = TradingAccountId("not-paper")
+        with self.assertRaisesRegex(
+            PaperCloseAllRejected, "operator_close_paper_account_unavailable",
+        ):
+            run(runtime)
+        runtime.store.update_robot_runtime_state.assert_not_called()
+        runtime.close_all.assert_not_called()
+
+    def test_no_positions_or_limits_is_clean_idempotent_noop(self):
+        runtime, _ = fixture(manual=False)
+        runtime.close_all.return_value = response()
+        result = run(runtime)
+        self.assertEqual(result.results, ())
+        self.assertEqual(result.positions, ())
+
+
+class TriggeredStopRetryEvidenceTests(unittest.TestCase):
+    """A latched STOP must consume current quotes and preserve EXITs on stale data."""
+
+    def test_latched_stop_for_open_trade_passes_current_book(self):
+        from terminal.domain.models import TradingAccountId
+        symbol = Symbol("API3USDT")
+        book = object()
+        obligation = SimpleNamespace(status="TRIGGERED")
+        runtime = SimpleNamespace(
+            _paper_account_id=TradingAccountId("paper"),
+            store=SimpleNamespace(
+                get_open_robot_trade_for_symbol=Mock(
+                    return_value=SimpleNamespace(trade_id="api3-trade"),
+                ),
+                get_paper_protection_obligation_for_trade=Mock(return_value=obligation),
+            ),
+            _dispatch_paper_protection_obligation=Mock(return_value=obligation),
+        )
+        PaperRuntime.evaluate_robot_protection_crossing(
+            runtime, symbol.value, book, event_id="new-book", received_at_ms=10000,
+        )
+        runtime._dispatch_paper_protection_obligation.assert_called_once_with(
+            obligation, now_ms=10000, recovery_book=book,
+        )
+
+    def test_latched_stop_without_open_trade_passes_current_book(self):
+        from terminal.domain.models import TradingAccountId
+        symbol = Symbol("API3USDT")
+        book = object()
+        obligation = SimpleNamespace(symbol=symbol, status="DISPATCHING")
+        runtime = SimpleNamespace(
+            _paper_account_id=TradingAccountId("paper"),
+            store=SimpleNamespace(
+                get_open_robot_trade_for_symbol=Mock(return_value=None),
+                load_unresolved_paper_protection_obligations=Mock(
+                    return_value=(obligation,),
+                ),
+            ),
+            _dispatch_paper_protection_obligation=Mock(return_value=obligation),
+        )
+        PaperRuntime.evaluate_robot_protection_crossing(
+            runtime, symbol.value, book, event_id="new-book", received_at_ms=10000,
+        )
+        runtime._dispatch_paper_protection_obligation.assert_called_once_with(
+            obligation, now_ms=10000, recovery_book=book,
+        )
+
+    def test_stale_book_fences_stop_without_cancelling_exit(self):
+        from terminal.domain.models import TradingAccountId, ExecutionId
+        account = TradingAccountId("paper")
+        obligation = SimpleNamespace(
+            obligation_id="api3-triggered-stop",
+            trade_id="api3-trade", status="TRIGGERED",
+            exec_id=ExecutionId("api3-exec"),
+        )
+        runtime = SimpleNamespace(
+            store=SimpleNamespace(
+                get_robot_trade=Mock(return_value=SimpleNamespace(
+                    trading_account_id=account, symbol=Symbol("API3USDT"),
+                    trade_id="api3-trade",
+                )),
+                get_execution=Mock(return_value=None),
+                reserve_box_order_identity=Mock(),
+                cancel_paper_limit=Mock(),
+                transition_paper_protection_obligation=Mock(),
+            ),
+            _streamed_book=Mock(return_value=None),
+            _market_executor=SimpleNamespace(
+                validate_book=Mock(side_effect=RuntimeError("stale")),
+                execute=Mock(),
+            ),
+        )
+        result = PaperRuntime._dispatch_paper_protection_obligation(
+            runtime, obligation, now_ms=10000,
+        )
+        self.assertIs(result, obligation)
+        runtime.store.reserve_box_order_identity.assert_not_called()
+        runtime.store.cancel_paper_limit.assert_not_called()
+        runtime.store.transition_paper_protection_obligation.assert_not_called()
+        runtime._market_executor.execute.assert_not_called()
+
+
+class BoxStopImmutableExitZeroIntegrationTests(unittest.TestCase):
+    """Run real SQLite stop-supersession proofs in the Close-All safety CI."""
+
+    def _run_box_store_case(self, name):
+        from tests.test_box_order_ownership import BoxOrderOwnershipTests
+        case = BoxOrderOwnershipTests(methodName=name)
+        case.setUp()
+        try:
+            getattr(case, name)()
+        finally:
+            case.tearDown()
+
+    def test_latched_stop_closes_proven_box_lot_without_changing_original_slot(self):
+        self._run_box_store_case(
+            "test_latched_stop_successor_is_proven_without_mutating_immutable_box_owner"
+        )
+
+    def test_submitted_manual_order_blocks_stop_successor(self):
+        self._run_box_store_case(
+            "test_submitted_manual_exit_prevents_stop_successor_attribution"
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

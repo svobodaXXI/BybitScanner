@@ -259,23 +259,78 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             .kwargs["reply_markup"]["inline_keyboard"]
         )
 
-        self.assertEqual(len(owner_keyboard), 3)
+        self.assertEqual(len(owner_keyboard), 2)
+        self.assertFalse(any(
+            button.get("callback_data", "").startswith("signal:source:")
+            for row in owner_keyboard for button in row
+        ))
         self.assertEqual(
             [button["text"] for row in owner_keyboard for button in row],
             [
-                "📈 Open TradingView",
+                "📈 TradingView",
                 "📊 MetaScalp",
-                "📌 В разбор",
-                "✅ Хороший",
-                "❌ Геометрия",
-                "⚓ Anchor/START",
+                "✏️ Редактор",
+                "🖥 Терминал",
             ],
         )
         self.assertEqual(len(friend_keyboard), 1)
         self.assertEqual(
             [button["text"] for button in friend_keyboard[0]],
-            ["📈 Open TradingView"],
+            ["📈 TradingView"],
         )
+
+    def test_owner_signal_card_opens_mini_app_in_one_tap(self):
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_WORKSPACE_URL": "https://83.217.213.181/login",
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "",
+        }):
+            keyboard = notification.build_tradingview_keyboard(
+                "HEIUSDT", "5m", include_review_actions=True,
+            )["inline_keyboard"]
+            self.assertEqual(keyboard[-1][0], {
+                "text": "✏️ Редактор",
+                "web_app": {"url": "https://83.217.213.181/login?mode=EDITOR&symbol=HEIUSDT&timeframe=5m"},
+            })
+            self.assertEqual(keyboard[-1][1], {
+                "text": "🖥 Терминал",
+                "web_app": {"url": "https://83.217.213.181/login?mode=TERMINAL&symbol=HEIUSDT&timeframe=5m"},
+            })
+            public = notification.build_tradingview_keyboard(
+                "HEIUSDT", "5m", include_review_actions=False,
+            )["inline_keyboard"]
+            self.assertFalse(any("web_app" in button for row in public for button in row))
+
+    def test_one_tap_editor_preserves_exact_source_identity_only_for_owner(self):
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_WORKSPACE_URL": "https://83.217.213.181/login",
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "",
+        }):
+            owner = notification.build_tradingview_keyboard(
+                "HEIUSDT", "5m", include_review_actions=True,
+                signal_id="source-original:archive-abc",
+            )["inline_keyboard"]
+            public = notification.build_tradingview_keyboard(
+                "HEIUSDT", "5m", include_review_actions=False,
+                signal_id="source-original:archive-abc",
+            )["inline_keyboard"]
+        self.assertIn("signal_id=source-original%3Aarchive-abc", owner[-1][0]["web_app"]["url"])
+        self.assertNotIn("signal_id=", owner[-1][1]["web_app"]["url"])
+        self.assertFalse(any("web_app" in button for row in public for button in row))
+
+    def test_invalid_editor_origin_never_exposed(self):
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_TERMINAL_HTTPS_URL": "http://127.0.0.1:8080",
+            "BYBITSCANNER_WORKSPACE_URL": "",
+        }):
+            keyboard = notification.build_tradingview_keyboard("HEIUSDT", "5m")["inline_keyboard"]
+        self.assertEqual(keyboard[-1][0]["callback_data"], "workspace:EDITOR:HEIUSDT:5m")
+        self.assertNotIn("web_app", keyboard[-1][0])
+
+    def test_owner_workspace_buttons_request_pc_launch(self):
+        keyboard = notification.build_tradingview_keyboard("XDPUSDT", "5m")["inline_keyboard"]
+        self.assertEqual([item["text"] for item in keyboard[-1]], ["✏️ Редактор", "🖥 Терминал"])
+        self.assertEqual(keyboard[-1][0]["callback_data"], "workspace:EDITOR:XDPUSDT:5m")
+        self.assertEqual(keyboard[-1][1]["callback_data"], "workspace:TERMINAL:XDPUSDT:5m")
 
     def test_triangle_compression_owner_card_has_metascalp_button(self):
         # TG-METASCALP-2: every send_signal pattern shares the common card builder.
@@ -438,7 +493,11 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
                 notification,
                 "send_photo",
                 return_value={"ok": True},
-            ) as photo_mock:
+            ) as photo_mock, patch.object(
+                notification,
+                "record_original_signal",
+                return_value=True,
+            ):
                 delivered = notification.send_signal(self.signal())
 
         self.assertTrue(delivered)
@@ -451,44 +510,42 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             self.assertEqual(len(keyboard), 1)
             self.assertEqual(
                 [button["text"] for button in keyboard[0]],
-                ["📈 Open TradingView"],
+                ["📈 TradingView"],
             )
 
     def test_first_recipient_failure_does_not_block_second(self):
-        with patch.object(
-            notification.config,
-            "TELEGRAM_CHAT_IDS",
-            ("owner", "friend"),
-        ), patch.object(
-            notification,
-            "send_message",
-            side_effect=[RuntimeError("owner unavailable"), {"ok": True}],
-        ) as message_mock, patch.object(
-            notification.os.path,
-            "exists",
-            return_value=False,
-        ):
-            delivered = notification.send_signal(self.signal())
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "BTCUSDT_analysis.png").write_bytes(b"test-image")
+            with patch.object(
+                notification.config, "TELEGRAM_CHAT_IDS", ("owner", "friend"),
+            ), patch.object(
+                notification, "CHARTS_DIR", directory,
+            ), patch.object(
+                notification, "send_message",
+                side_effect=[RuntimeError("owner unavailable"), {"ok": True}],
+            ) as message_mock, patch.object(
+                notification, "send_photo", return_value={"ok": True},
+            ):
+                delivered = notification.send_signal(self.signal())
 
         self.assertFalse(delivered)
         self.assertEqual(message_mock.call_count, 2)
         self.assertEqual(message_mock.call_args_list[1].args[1], "friend")
 
     def test_second_recipient_failure_does_not_cancel_first(self):
-        with patch.object(
-            notification.config,
-            "TELEGRAM_CHAT_IDS",
-            ("owner", "friend"),
-        ), patch.object(
-            notification,
-            "send_message",
-            side_effect=[{"ok": True}, {"ok": False, "description": "blocked"}],
-        ) as message_mock, patch.object(
-            notification.os.path,
-            "exists",
-            return_value=False,
-        ):
-            delivered = notification.send_signal(self.signal())
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "BTCUSDT_analysis.png").write_bytes(b"test-image")
+            with patch.object(
+                notification.config, "TELEGRAM_CHAT_IDS", ("owner", "friend"),
+            ), patch.object(
+                notification, "CHARTS_DIR", directory,
+            ), patch.object(
+                notification, "send_message",
+                side_effect=[{"ok": True}, {"ok": False, "description": "blocked"}],
+            ) as message_mock, patch.object(
+                notification, "send_photo", return_value={"ok": True},
+            ):
+                delivered = notification.send_signal(self.signal())
 
         self.assertFalse(delivered)
         self.assertEqual(message_mock.call_count, 2)

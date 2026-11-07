@@ -98,6 +98,29 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
             updated_at_ms=self.clock(),
         )
 
+    def _create_box_waiting_candidate(self):
+        candidate, created = self.store.create_robot_candidate(
+            candidate_id="box-candidate",
+            trading_account_id=ACCOUNT_ID,
+            symbol=Symbol("BOXUSDT"),
+            status="APPROVED",
+            signal_snapshot={"symbol": "BOXUSDT", "pattern": "IKIGAI_BOX"},
+            approved_at_ms=self.clock(),
+            updated_at_ms=self.clock(),
+        )
+        self.assertTrue(created)
+        return self.store.save_robot_candidate_state(
+            candidate.candidate_id,
+            status="APPROVED",
+            robot_state={
+                "state_version": "1.0",
+                "phase": "BOX_ENTRY_READY",
+                "pattern": "IKIGAI_BOX",
+            },
+            expected_revision=candidate.state_revision,
+            updated_at_ms=self.clock(),
+        )
+
     def _create_open_candidate(self):
         symbol = Symbol("TESTUSDT")
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, symbol, 0)
@@ -372,6 +395,43 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(result.runtime_state.recovery_status, PAUSED)
         self.assertFalse(result.admission_ready)
         self.assertEqual(result.decisions[0].status, "RESUME_OPEN_POSITION")
+
+    def test_unchanged_box_resume_does_not_write_candidate_revision(self):
+        original = self._create_box_waiting_candidate()
+        self._initialize_running()
+        coordinator = RobotRecoveryCoordinator(
+            self.store, ACCOUNT_ID, clock_ms=self.clock,
+        )
+        result = coordinator.recover()
+        self.assertEqual(result.runtime_state.recovery_status, READY)
+        self.assertEqual(result.decisions[0].status, "RESUME_WAITING")
+        current = self.store.get_robot_candidate(original.candidate_id)
+        self.assertEqual(current.state_revision, original.state_revision)
+        self.assertEqual(current.updated_at_ms, original.updated_at_ms)
+        self.assertEqual(current.robot_state, original.robot_state)
+
+    def test_required_reconcile_does_not_age_inert_box_candidate(self):
+        original = self._create_box_waiting_candidate()
+        running = self._initialize_running()
+        self.store.update_robot_runtime_state(
+            ACCOUNT_ID, mode="ROBOT_RUNNING",
+            recovery_status="RECONCILIATION_REQUIRED",
+            reason="orphan trade proof pending",
+            expected_version=running.version,
+            updated_at_ms=self.clock(),
+        )
+        coordinator = RobotRecoveryCoordinator(
+            self.store, ACCOUNT_ID, clock_ms=self.clock,
+        )
+        result = coordinator.reconcile_required()
+        self.assertEqual(result.runtime_state.recovery_status, RECONCILING)
+        self.assertFalse(result.admission_ready)
+        self.assertEqual(result.decisions[0].status, "RESUME_WAITING")
+        current = self.store.get_robot_candidate(original.candidate_id)
+        self.assertEqual(current.status, "APPROVED")
+        self.assertEqual(current.state_revision, original.state_revision)
+        self.assertEqual(current.updated_at_ms, original.updated_at_ms)
+        self.assertEqual(current.robot_state, original.robot_state)
 
     def test_reconcile_required_holds_reconciling_until_runtime_finishes(self):
         running = self._initialize_running()

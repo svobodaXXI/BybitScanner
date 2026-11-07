@@ -217,6 +217,8 @@ class RobotAutopilotPersistenceTests(unittest.TestCase):
         with self._open() as store:
             self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
         connection = sqlite3.connect(self.db)
+        connection.execute("DROP TABLE robot_reentry_attempts")
+        connection.execute("DROP TABLE robot_reentry_campaigns")
         connection.execute("DROP TABLE robot_auto_decisions")
         connection.execute("DROP TABLE robot_autopilot_state")
         connection.execute("PRAGMA user_version = 23")

@@ -64,6 +64,7 @@ from terminal.application.robot_recovery import (
     ROBOT_STOPPED,
     RobotRecoveryCoordinator,
 )
+from terminal.api.models import ClientActionId
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import (
     PersistenceError,
@@ -82,6 +83,19 @@ DEFAULT_PAPER_BACKEND_URL = os.environ.get(
 
 class RobotControlRejected(PersistenceError):
     """Raised when an operator control command is illegal from the current durable state."""
+
+
+# One internal authority for Telegram and backend close-all legality.
+# Keep these two states aligned with the existing Robot v0.1 control contract.
+ROBOT_CLOSE_ALL_ALLOWED_STATES = frozenset({
+    (ROBOT_RUNNING, READY),
+    (ROBOT_RUNNING, PAUSED),
+})
+
+
+def robot_close_all_is_legal(mode: str, recovery_status: str) -> bool:
+    """Pure state check shared by both ends of the existing close-all channel."""
+    return (mode, recovery_status) in ROBOT_CLOSE_ALL_ALLOWED_STATES
 
 
 def _clock(clock_ms: Callable[[], int] | None) -> Callable[[], int]:
@@ -336,6 +350,7 @@ def close_all_now(
     database_path: Path | str | None = None,
     clock_ms: Callable[[], int] | None = None,
     backend_url: str | None = None,
+    client_action_id: str | None = None,
 ) -> dict:
     """Legal only from ``(ROBOT_RUNNING, READY)`` or ``(ROBOT_RUNNING, PAUSED)`` (Section 4).
 
@@ -350,7 +365,9 @@ def close_all_now(
 
     ``http_post(url, payload) -> dict`` performs the actual network call and
     is supplied by the caller — see the module docstring for why this
-    function never imports a network client itself.
+    function never imports a network client itself. The optional action ID
+    is a transport correlation hook: it does not change Robot command
+    legality or close scope. By default, the existing clock-derived ID is used.
     """
     store = _open_store(database_path)
     try:
@@ -358,7 +375,7 @@ def close_all_now(
         runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
         if runtime is None:
             raise RobotControlRejected("Robot runtime state is unavailable")
-        if runtime.mode != ROBOT_RUNNING or runtime.recovery_status not in (READY, PAUSED):
+        if not robot_close_all_is_legal(runtime.mode, runtime.recovery_status):
             raise RobotControlRejected(
                 "close_all_now is legal only from (ROBOT_RUNNING, READY) "
                 "or (ROBOT_RUNNING, PAUSED)"
@@ -367,9 +384,15 @@ def close_all_now(
         store.close()
 
     url = f"{backend_url or DEFAULT_PAPER_BACKEND_URL}/api/robot/close-all-now"
-    client_action_id = f"robot-close-all-{now}"
+    # Telegram supplies a stable opaque action id for redelivery of the SAME
+    # confirmed callback. Other existing callers keep the time-based default.
+    action_id = (
+        f"robot-close-all-{now}"
+        if client_action_id is None
+        else ClientActionId(client_action_id).value
+    )
     try:
-        return http_post(url, {"client_action_id": client_action_id})
+        return http_post(url, {"client_action_id": action_id})
     except RobotControlRejected:
         raise
     except Exception as exc:
@@ -518,6 +541,15 @@ def stop_robot(
                 "stop_robot is legal only from (ROBOT_RUNNING, READY) or (ROBOT_RUNNING, PAUSED)"
             )
         candidates = store.load_robot_candidates(PAPER_ACCOUNT_ID)
+        # Candidate status is not trade ledger authority: a failed or partial
+        # close may leave an OPEN trade even after its candidate is terminal.
+        # Never commit STOPPED with unresolved durable ownership.
+        open_trades = store.load_open_robot_trades(PAPER_ACCOUNT_ID)
+        if open_trades:
+            raise RobotControlRejected(
+                "stop_robot is rejected while OPEN Robot trades remain: "
+                + ",".join(sorted(trade.trade_id for trade in open_trades))
+            )
         if any(item.status == "OPEN" for item in candidates):
             raise RobotControlRejected(
                 "stop_robot is rejected while a Robot-owned position is open; "

@@ -22,6 +22,12 @@ import {
   type WorkspaceSemanticFailure,
 } from "../marketData/workspaceSwitch";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
+import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
+import { appendRetrospectiveCandles, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
+import type { OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
+import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
+import type { Candle } from "../contracts/marketData";
+import type { DrawingObject } from "../chart/drawingModel";
 import {
   createLimitDraft,
   EMPTY_LIMIT_DRAFT_STATE,
@@ -91,7 +97,128 @@ const sameProtectionPrice = (left: string | null, right: string | null) => {
 };
 
 export function App() {
-  const [mode, setMode] = useState<WorkspaceMode>("TERMINAL");
+  const launchLink = useMemo(() => parseSignalWorkspaceLink(window.location.search), []);
+  const [mode, setMode] = useState<WorkspaceMode>(launchLink?.mode ?? "TERMINAL");
+  const [frozenSignal, setFrozenSignal] = useState<{
+    candles: Candle[];
+    sourceCandles: Candle[];
+    context: { asOfMs: number; barsSha256: string } | null;
+    referenceDrawings: DrawingObject[];
+    editableDrawings: DrawingObject[];
+    signalId: string;
+    originalPattern: string | null;
+    snapshotRevision: string;
+    barsSha256: string;
+    savedReviewId: string | null;
+    savedReviewLabel: GeometryReviewDraft["label"] | null;
+    savedReviewNote: string | null;
+  } | null>(null);
+  const [frozenGeometryStatus, setFrozenGeometryStatus] = useState<"loading" | "unavailable" | "ready">("loading");
+  useEffect(() => {
+    const link = launchLink;
+    if (!link || link.mode !== "EDITOR" || !link.signalId) return;
+    const controller = new AbortController();
+    const load = async () => {
+      try {
+        const response = await fetch(
+          `/api/workspace/signal-geometry?signal_id=${encodeURIComponent(link.signalId!)}`,
+          { signal: controller.signal, credentials: "same-origin" },
+        );
+        if (!response.ok) throw new Error("Source snapshot not found");
+        const payload = await response.json();
+        const snapshot = payload.snapshot;
+        const expectedTimeframe = ({ "15s": "15s", "1m": "1", "5m": "5", "15m": "15", "1h": "60", "1d": "D" } as Record<string, string>)[link.timeframe];
+        if (!payload.ok || !snapshot || snapshot.signal_id !== link.signalId ||
+            snapshot.symbol !== link.symbol || String(snapshot.timeframe) !== expectedTimeframe)
+          throw new Error("Source identity mismatch");
+        if (!Array.isArray(snapshot.bars) || !Array.isArray(snapshot.boundaries))
+          throw new Error("Incomplete immutable geometry");
+        const candles: Candle[] = snapshot.bars.map((bar: {
+          open_time_ms: number; open: number; high: number; low: number; close: number;
+        }) => ({
+          time: new Date(bar.open_time_ms).toISOString(),
+          open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+        }));
+        const boundaries: TimestampDrawing[] = snapshot.boundaries.map((line: {
+          boundary_id: string; kind: "ray" | "segment" | "horizontal" | "horizontal-ray";
+          anchors: { bar_open_time_ms: number; price: number }[];
+        }) => ({ id: line.boundary_id, type: line.kind, anchors: line.anchors }));
+        const projected = projectSignalGeometry(boundaries, candles);
+        if (typeof payload.snapshot_revision !== "string" || !/^[0-9a-f]{64}$/i.test(payload.snapshot_revision)
+            || typeof payload.bars_sha256 !== "string" || !/^[0-9a-f]{64}$/i.test(payload.bars_sha256))
+          throw new Error("Frozen snapshot provenance is unavailable");
+        const savedReview = payload.latest_review as {
+          review_id?: string;
+          retrospective_bars?: RetrospectiveOhlc[];
+          submission?: {
+            context_as_of_ms?: number;
+            context_bars_sha256?: string;
+            signal_id?: string; snapshot_revision?: string; bars_sha256?: string;
+            label?: GeometryReviewDraft["label"]; note?: string;
+            corrected_boundaries?: Array<{
+              boundary_id: string; kind: TimestampDrawing["type"]; anchors: TimestampDrawing["anchors"];
+            }>;
+          };
+        } | null;
+        const savedReviewLabel = savedReview?.submission?.label ?? null;
+        if (savedReview && (
+          typeof savedReview.review_id !== "string"
+          || !/^[0-9a-f]{64}$/i.test(savedReview.review_id)
+          || savedReview.submission?.signal_id !== link.signalId
+          || savedReview.submission?.snapshot_revision !== payload.snapshot_revision
+          || savedReview.submission?.bars_sha256 !== payload.bars_sha256
+          || !["CONFIRMED", "GEOMETRY_CORRECTED", "FALSE_POSITIVE", "UNCERTAIN"].includes(savedReviewLabel ?? "")
+          || typeof savedReview.submission?.note !== "string"
+          || savedReview.submission.note.length > 1024
+        )) throw new Error("Saved review does not match source signal");
+        const savedContext = savedReview?.submission?.context_as_of_ms !== undefined
+          ? {
+              asOfMs: savedReview.submission.context_as_of_ms,
+              barsSha256: savedReview.submission.context_bars_sha256 ?? "",
+            }
+          : null;
+        if ((savedContext && (!/^[0-9a-f]{64}$/i.test(savedContext.barsSha256) ||
+              !Array.isArray(savedReview?.retrospective_bars))) ||
+            (!savedContext && savedReview?.retrospective_bars))
+          throw new Error("Invalid saved retrospective context");
+        const reviewCandles = savedContext
+          ? appendRetrospectiveCandles(
+              candles, savedReview?.retrospective_bars ?? [],
+              snapshot.timeframe, savedContext.asOfMs,
+            )
+          : candles;
+        let editableDrawings = projected.editableDrawings;
+        if (savedReviewLabel === "GEOMETRY_CORRECTED") {
+          if (!Array.isArray(savedReview?.submission?.corrected_boundaries))
+            throw new Error("Saved correction does not match source signal");
+          const reviewedLines: TimestampDrawing[] = savedReview.submission.corrected_boundaries.map((line) => ({
+            id: line.boundary_id, type: line.kind, anchors: line.anchors,
+          }));
+          editableDrawings = restoreSavedSignalCorrection(
+            projected.referenceDrawings, reviewedLines, reviewCandles,
+          );
+        }
+        if (!controller.signal.aborted) {
+          setFrozenSignal({
+            candles: reviewCandles, sourceCandles: candles, context: savedContext,
+            ...projected, editableDrawings, signalId: link.signalId!,
+            originalPattern: typeof payload.original_pattern === "string" && payload.original_pattern.trim()
+              ? payload.original_pattern.trim() : null,
+            snapshotRevision: payload.snapshot_revision, barsSha256: payload.bars_sha256,
+            savedReviewId: typeof savedReview?.review_id === "string" ? savedReview.review_id : null,
+            savedReviewLabel,
+            savedReviewNote: savedReview?.submission?.note ?? null,
+          });
+          setFrozenGeometryStatus("ready");
+        }
+      } catch {
+        // No live-candle refit or symbol-only fallback for missing source lines.
+        if (!controller.signal.aborted) setFrozenGeometryStatus("unavailable");
+      }
+    };
+    void load();
+    return () => controller.abort();
+  }, [launchLink]);
   const [accountOpen, setAccountOpen] = useState(false);
   const [marketSidePanelOpen, setMarketSidePanelOpen] = useState(true);
   const [domCompression, setDomCompression] = useState(3);
@@ -100,7 +227,7 @@ export function App() {
     rowHeightPx: DOM_ROW_HEIGHT_REM * 16,
     viewportHeightPx: DOM_ROW_HEIGHT_REM * 16 * DOM_VISIBLE_ROWS,
   });
-  const [timeframe, setTimeframe] = useState<ChartTimeframe>("5m");
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>(launchLink?.timeframe ?? "5m");
   const [instruments, setInstruments] = useState<string[]>([]);
   const [workspaceSwitchError, setWorkspaceSwitchError] = useState<WorkspaceSemanticFailure | null>(null);
   const workspaceSwitchAttempt = useRef(0);
@@ -271,6 +398,13 @@ export function App() {
     setPositionAverageEntry(null);
     setMarketSymbol(result.symbol, result.generation);
   }, [tradingSymbol]);
+  const initialLinkConsumed = useRef(false);
+  useEffect(() => {
+    if (initialLinkConsumed.current || !launchLink) return;
+    initialLinkConsumed.current = true;
+    setMarketTimeframe(launchLink.timeframe);
+    void switchWorkspaceSymbol(launchLink.symbol);
+  }, [launchLink, switchWorkspaceSymbol]);
   useEffect(() => {
     const oneWvUsdt = accountProjection?.one_wv_usdt ?? currentPaperState?.one_wv_usdt ?? null;
     if (!accountProjection || !oneWvUsdt || !isValidSelectedVolume(oneWvUsdt)) return;
@@ -1143,7 +1277,7 @@ export function App() {
     (limitDraftState.draft ? [limitDraftState.draft] : []);
 
   return (
-    <main className="workspace-shell">
+    <main className={`workspace-shell${mode === "EDITOR" ? " workspace-editor" : ""}`}>
       {workspaceSwitchError && (
         <output
           aria-live="polite"
@@ -1160,22 +1294,169 @@ export function App() {
         </output>
       )}
       <TelegramMiniAppBridge />
+      {mode === "EDITOR" && launchLink?.mode === "EDITOR" && !launchLink.signalId && (
+        <output role="status" aria-live="polite">
+          Исходный сигнал не указан в ссылке. Показаны текущие свечи без сохранённых линий паттерна.
+        </output>
+      )}
       <section className="workspace-grid" aria-label="Trading workspace">
         <div
-          className={`workspace-market-row ${marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
+          className={`workspace-market-row ${mode !== "EDITOR" && marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
         >
+          {mode === "EDITOR" && launchLink?.signalId && !frozenSignal ? (
+            <div role="status" aria-live="polite">
+              {frozenGeometryStatus === "loading"
+                ? "Загрузка сохранённых линий исходного сигнала…"
+                : "Исходная геометрия недоступна. Текущие свечи не заменяют исходный сигнал."}
+            </div>
+          ) : (
           <ChartPanel
-          key={`${market.book.symbol}:${timeframe}`}
-          candles={market.candles}
-          tickSize={market.tickSize}
-          symbol={market.book.symbol}
-          timeframe={timeframe}
+          key={mode === "EDITOR" && frozenSignal ? `frozen:${frozenSignal.signalId}:${frozenSignal.savedReviewId ?? "initial"}` : `${market.book.symbol}:${timeframe}:${mode}`}
+          candles={mode === "EDITOR" && frozenSignal ? frozenSignal.candles : market.candles}
+          editorMode={mode === "EDITOR"}
+          onEditorNavigate={setMode}
+          retrospectiveContext={mode === "EDITOR" ? frozenSignal?.context ?? null : null}
+          onExtendEditorHistory={mode === "EDITOR" && frozenSignal ? async () => {
+            const current = frozenSignal;
+            const response = await fetch(
+              `/api/workspace/signal-geometry/continuation?signal_id=${encodeURIComponent(current.signalId)}`,
+              { credentials: "same-origin" },
+            );
+            const data = await response.json();
+            if (!response.ok || data.ok !== true ||
+                data.signal_id !== current.signalId ||
+                data.source_revision !== current.snapshotRevision ||
+                !Array.isArray(data.bars) ||
+                typeof data.bars_sha256 !== "string" ||
+                !/^[0-9a-f]{64}$/i.test(data.bars_sha256))
+              throw new Error(data.error || "Нет подтверждённых последующих свечей");
+            const expanded = appendRetrospectiveCandles(
+              current.sourceCandles, data.bars as RetrospectiveOhlc[],
+              launchLink?.timeframe ?? timeframe, data.as_of_ms,
+            );
+            // Existing owner edits use stable logical indices: refuse a
+            // changed historical prefix, never silently shift those anchors.
+            if (expanded.length < current.candles.length ||
+                expanded.slice(0, current.candles.length).some(
+                  (bar, index) => JSON.stringify(bar) !== JSON.stringify(current.candles[index]),
+                ))
+              throw new Error("История свечей изменилась; текущая разметка сохранена");
+            if (expanded.length === current.candles.length)
+              throw new Error("Новых закрытых свечей пока нет");
+            setFrozenSignal((previous) =>
+              previous?.signalId === current.signalId &&
+              previous.snapshotRevision === current.snapshotRevision
+                ? { ...previous, candles: expanded, context: {
+                    asOfMs: data.as_of_ms, barsSha256: data.bars_sha256,
+                  } }
+                : previous,
+            );
+          } : undefined}
+          referenceDrawings={mode === "EDITOR" ? frozenSignal?.referenceDrawings ?? [] : []}
+          editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
+          signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
+          originalPattern={mode === "EDITOR" ? frozenSignal?.originalPattern ?? null : null}
+          snapshotRevision={mode === "EDITOR" ? frozenSignal?.snapshotRevision ?? null : null}
+          barsSha256={mode === "EDITOR" ? frozenSignal?.barsSha256 ?? null : null}
+          savedReviewId={mode === "EDITOR" ? frozenSignal?.savedReviewId ?? null : null}
+          savedReviewLabel={mode === "EDITOR" ? frozenSignal?.savedReviewLabel ?? null : null}
+          savedReviewNote={mode === "EDITOR" ? frozenSignal?.savedReviewNote ?? null : null}
+          onSubmitOwnerSignal={mode === "EDITOR" && frozenSignal ? async (
+            proposal: OwnerSignalDraft,
+          ) => {
+            if (proposal.signal_id !== frozenSignal.signalId ||
+                proposal.snapshot_revision !== frozenSignal.snapshotRevision ||
+                proposal.bars_sha256 !== frozenSignal.barsSha256)
+              throw new Error("Исходный сигнал изменился");
+            const response = await fetch("/api/workspace/owner-signal-proposal", {
+              method: "POST", credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(proposal),
+            });
+            const result = await response.json();
+            const record = result.proposal;
+            if (!response.ok || result.ok !== true ||
+                typeof record?.proposal_id !== "string" ||
+                !/^[0-9a-f]{64}$/.test(record.proposal_id) ||
+                record?.submission?.signal_id !== proposal.signal_id ||
+                record?.submission?.snapshot_revision !== proposal.snapshot_revision ||
+                record?.submission?.bars_sha256 !== proposal.bars_sha256 ||
+                record?.submission?.pattern !== proposal.pattern ||
+                record?.submission?.idempotency_key !== proposal.idempotency_key ||
+                record?.submission?.context_as_of_ms !== proposal.context_as_of_ms ||
+                record?.submission?.context_bars_sha256 !== proposal.context_bars_sha256 ||
+                record?.candidate_created !== false || record?.robot_candidate_id !== null ||
+                typeof record?.assessment?.decision !== "string" ||
+                typeof record?.assessment?.reason !== "string")
+              throw new Error(result.error || "Нет подтверждённой оценки новой разметки");
+            return {
+              proposalId: record.proposal_id,
+              decision: record.assessment.decision,
+              reason: record.assessment.reason,
+            };
+          } : undefined}
+          onSaveGeometryReview={mode === "EDITOR" && frozenSignal ? async (
+            review: GeometryReviewDraft & { note: string; idempotency_key: string },
+          ) => {
+            if (review.signal_id !== frozenSignal.signalId
+                || review.snapshot_revision !== frozenSignal.snapshotRevision
+                || review.bars_sha256 !== frozenSignal.barsSha256)
+              throw new Error("Несовпадение исходного сигнала");
+            const verifiedReceipt = (record: { review_id?: unknown; submission?: unknown } | null | undefined) =>
+              typeof record?.review_id === "string"
+              && /^[0-9a-f]{64}$/.test(record.review_id)
+              && matchesStoredGeometryReview(review, record.submission)
+                ? { reviewId: record.review_id as string, label: review.label }
+                : null;
+            let failure: string | null = null;
+            try {
+              const response = await fetch("/api/workspace/geometry-feedback", {
+                method: "POST", credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(review),
+              });
+              const result = await response.json();
+              if (response.ok && result.ok === true) {
+                const receipt = verifiedReceipt(result.review);
+                if (receipt) return receipt;
+              }
+              failure = result.error || "Сервер не подтвердил точное сохранение отзыва";
+              // Definitive client errors are not transport ambiguity.
+              if (response.status >= 400 && response.status < 500)
+                throw new Error(failure ?? "Сервер отклонил сохранение");
+            } catch (error) {
+              failure = error instanceof Error ? error.message : "Нет ответа сервера";
+              if (failure && failure !== "Failed to fetch" && failure !== "NetworkError when attempting to fetch resource."
+                  && failure !== "Сервер не подтвердил точное сохранение отзыва"
+                  && !/^(geometry_feedback_unavailable|Unexpected token|JSON)/.test(failure))
+                throw error;
+            }
+            // A POST can commit durably before the browser loses its response.
+            // Confirm exact identity and idempotency key; never infer success from HTTP alone.
+            try {
+              const response = await fetch(
+                `/api/workspace/signal-geometry?signal_id=${encodeURIComponent(review.signal_id)}`,
+                { credentials: "same-origin" },
+              );
+              if (response.ok) {
+                const result = await response.json();
+                const receipt = result.ok === true ? verifiedReceipt(result.latest_review) : null;
+                if (receipt) return receipt;
+              }
+            } catch {
+              // Unknown outcome must remain explicitly unconfirmed.
+            }
+            throw new Error(`${failure ?? "Нет подтверждения"}; запись не подтверждена, повторите сохранение`);
+          } : undefined}
+          tickSize={mode === "EDITOR" && frozenSignal ? null : market.tickSize}
+          symbol={mode === "EDITOR" && frozenSignal ? launchLink?.symbol ?? market.book.symbol : market.book.symbol}
+          timeframe={mode === "EDITOR" && frozenSignal ? launchLink?.timeframe ?? timeframe : timeframe}
           activeLimitOrders={
-            currentPaperState?.ok ? currentPaperState.active_limit_orders : []
+            mode !== "EDITOR" && currentPaperState?.ok ? currentPaperState.active_limit_orders : []
           }
-          pendingLimitDraft={limitDraftState.draft}
+          pendingLimitDraft={mode === "EDITOR" ? null : limitDraftState.draft}
           liveLimitDrafts={accountProjection?.provider === "BYBIT"}
-          pendingLimitDrafts={visibleLimitDrafts}
+          pendingLimitDrafts={mode === "EDITOR" ? [] : visibleLimitDrafts}
           pendingLimitVolumeValid={{
             Buy: sideDraftVolumesValid(visibleLimitDrafts, "Buy", selectedVolumes.Buy),
             Sell: sideDraftVolumesValid(visibleLimitDrafts, "Sell", selectedVolumes.Sell),
@@ -1193,12 +1474,12 @@ export function App() {
             dispatchLimitDraft({ type: "update-price", price, draftId })
           }
           onPendingLimitConfirm={submitLimitDraft}
-          fastLimitActive={fastLimitIntent !== null}
+          fastLimitActive={mode !== "EDITOR" && fastLimitIntent !== null}
           onFastLimitPriceSelect={createFastLimitDraft}
           onActiveLimitAmend={amendPaperLimit}
           onActiveLimitCancel={cancelPaperLimit}
-          authoritativeStopPrice={activeStopPrice}
-          stopDraft={stopDraft}
+          authoritativeStopPrice={mode === "EDITOR" ? null : activeStopPrice}
+          stopDraft={mode === "EDITOR" ? null : stopDraft}
           onStopDraftPriceChange={updateStopDraftPrice}
           onStopConfirm={() => {
             setProtectionSettings(null);
@@ -1210,8 +1491,8 @@ export function App() {
           }}
           onStopEdit={beginStopEdit}
           onStopDelete={() => deleteProtection("STOP")}
-          authoritativeTakePrice={activeTakePrice}
-          takeDraft={takeDraft}
+          authoritativeTakePrice={mode === "EDITOR" ? null : activeTakePrice}
+          takeDraft={mode === "EDITOR" ? null : takeDraft}
           onTakeDraftPriceChange={updateTakeDraftPrice}
           onTakeConfirm={() => {
             setProtectionSettings(null);
@@ -1223,7 +1504,7 @@ export function App() {
           }}
           onTakeEdit={beginTakeEdit}
           onTakeDelete={() => deleteProtection("TAKE")}
-          averageEntryPrice={protectionPositionSide !== "Flat" ? protectionAverageEntry : null}
+          averageEntryPrice={mode !== "EDITOR" && protectionPositionSide !== "Flat" ? protectionAverageEntry : null}
           workspaceControls={(
             <WorkspaceHeader
               instruments={instruments}
@@ -1234,46 +1515,51 @@ export function App() {
             />
           )}
           />
-          <button
-            aria-expanded={marketSidePanelOpen}
-            aria-label={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
-            className="market-side-panel-toggle"
-            onClick={() => setMarketSidePanelOpen((open) => !open)}
-            title={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
-            type="button"
-          >
-            {marketSidePanelOpen ? "›" : "‹"}
-          </button>
-          <aside
-            aria-hidden={!marketSidePanelOpen}
-            className={`market-sidecar workspace-side-panel${marketSidePanelOpen ? "" : " is-hidden"}`}
-            aria-label="Market depth and tape"
-          >
-              <TapePanel
-                book={market.book}
-                centerPrice={ladderCenterPrice}
-                trades={market.trades}
-                positionSide={positionSide}
-                averageEntryPrice={positionAverageEntry}
-                currentPrice={liveMidPrice}
-                compression={domCompression}
-                viewportGeometry={domViewportGeometry}
-              />
-              <DomPanel
-                book={market.book}
-                centerPrice={ladderCenterPrice}
-                onCenterPriceChange={setLadderCenterPrice}
-                ownOrders={domOwnOrders}
-                onOwnOrderCancel={(orderId) => {
-                  void cancelPaperLimit(orderId).catch(() => {});
-                }}
-                compression={domCompression}
-                onCompressionChange={setDomCompression}
-                fastLimitActive={fastLimitIntent !== null}
-                onFastLimitPriceSelect={submitDomLimit}
-                onViewportGeometryChange={setDomViewportGeometry}
-              />
-          </aside>
+          )}
+          {mode !== "EDITOR" && (
+            <>
+              <button
+                aria-expanded={marketSidePanelOpen}
+                aria-label={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
+                className="market-side-panel-toggle"
+                onClick={() => setMarketSidePanelOpen((open) => !open)}
+                title={`${marketSidePanelOpen ? "Hide" : "Show"} DOM and Smart Tape`}
+                type="button"
+              >
+                {marketSidePanelOpen ? "›" : "‹"}
+              </button>
+              <aside
+                aria-hidden={!marketSidePanelOpen}
+                className={`market-sidecar workspace-side-panel${marketSidePanelOpen ? "" : " is-hidden"}`}
+                aria-label="Market depth and tape"
+              >
+                  <TapePanel
+                    book={market.book}
+                    centerPrice={ladderCenterPrice}
+                    trades={market.trades}
+                    positionSide={positionSide}
+                    averageEntryPrice={positionAverageEntry}
+                    currentPrice={liveMidPrice}
+                    compression={domCompression}
+                    viewportGeometry={domViewportGeometry}
+                  />
+                  <DomPanel
+                    book={market.book}
+                    centerPrice={ladderCenterPrice}
+                    onCenterPriceChange={setLadderCenterPrice}
+                    ownOrders={domOwnOrders}
+                    onOwnOrderCancel={(orderId) => {
+                      void cancelPaperLimit(orderId).catch(() => {});
+                    }}
+                    compression={domCompression}
+                    onCompressionChange={setDomCompression}
+                    fastLimitActive={fastLimitIntent !== null}
+                    onFastLimitPriceSelect={submitDomLimit}
+                    onViewportGeometryChange={setDomViewportGeometry}
+                  />
+              </aside>
+            </>
+          )}
         </div>
         <ModePanel
           mode={mode}

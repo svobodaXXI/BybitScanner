@@ -248,6 +248,134 @@ The owner is never used as a human search/filter/parser when the same diagnostic
 If host-local evidence is required, the assistant supplies one ready command or delegated prompt that performs the
 search, filtering and parsing itself and returns only the decisive result.
 
+### STRATEGIC EXECUTION / OWNER-TIME CONTRACT — OWNER RULE 2026-10-20
+
+This is an **execution behavior inside Result-First**, not a new phase, skill
+installation, audit, document queue, agent hierarchy or approval gate. The
+owner expects strategic initiative: anticipate the whole dependency chain,
+reuse working mechanisms, and minimize human orchestration. Repeated
+one-question prompts and serial investigations for the same outcome consumed
+owner time and trust; the owner explicitly warned of discontinuing ChatGPT
+if that pattern continues.
+
+Before the first delegated prompt, privately map (in bounded scope):
+**desired observable outcome → known evidence → likely dependencies and
+failure modes → relevant authority / required owner-only actions → minimum
+complete execution and verification route**. Front-load discoverable launch,
+admission, protection, data and permission constraints; do not discover them
+one at a time in separate owner handoffs. This is a thought step, not a required
+written plan or preflight project.
+
+- **One goal, one delegated end-to-end brief** within approved scope. Permit
+  the executor to complete dependent safe technical work and report milestones
+  without sending every small decision back to the owner. Keep the prompt lean;
+  existing AGENTS/protocol/contracts remain linked, not copied.
+- Distinguish technical choices (agent-owned), material product/strategy
+  decisions (owner-owned), and explicitly owner-only trading/runtime/merge
+  actions. Anticipate the **first unavoidable** owner action and request it
+  once at the actual dependency boundary. Never imply that a broad prompt
+  delegates an expressly nondelegable Scanner/Robot launch.
+- Reuse existing code, snapshots, evidence, focused tests and recovery
+  machinery before proposing custom tooling. Prefer one decisive bounded check
+  over successive exploratory checklists; do not repeat identical validation.
+- Report only **verified new outcomes**, actual blocker or essential next
+  action. Upon blocker removal, automatically resume the original objective
+  within the existing authority. Do not claim readiness, closure or profitability
+  from code review, price touches, CI, unexecuted plans or illustrative PnL.
+- **Failure signal:** another proposed prompt, audit or owner task that does
+  not directly cross the next product edge or mandatory safety/approval gate.
+  Rewrite it into the existing execution brief or discard it.
+
+For historical/open PAPER positions found before a requested Scanner/Robot
+run, use `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` section
+`Historical PAPER exposure → recovery → acceptance`. This is the canonical
+incident playbook, not a new standing prerequisite for every launch.
+Existing owner-only runtime, PAPER/LIVE isolation and fail-closed rules prevail.
+
+### AI-FIRST RESULT DELIVERY — OWNER DECISION 2026-11-02
+
+Apply **inside** the existing Result-First workflow, not as a new gate,
+quest, agent role, approval or required document.
+
+- **One outcome:** owner specifies observable success and product constraints;
+  ChatGPT carries GitHub work through implementation, focused evidence and the
+  next authorized action. Codex handles VPS operations only. Internal PRs are
+  not separate user tasks; request only genuinely required owner approvals.
+- **Small context:** use AGENTS routing, current BACKLOG and owning code/spec;
+  load more only when a concrete dependency demands it. Do not duplicate state
+  or write progress logs without a significant verified change.
+- **Proportionate proof:** a routine bug needs a reproducible case and targeted
+  test; a material architecture/trading change needs its existing owning
+  contract, invariants and independent safety/compatibility checks. Reuse
+  FAST/REPLAY/affected CI, then actual owner acceptance. A green PR is not a
+  working PAPER result. Never adjust tests just to excuse a wrong design.
+- **Stop drift, not progress:** fix a proven ownership/design boundary instead
+  of patch loops. Optional independent review for high-risk changes only.
+  Remove repeating toil via issue #766 when measured, never by imposing a
+  new toolchain, dashboard, process stage or XP incentive.
+
+All protected trading, runtime, merge and fail-closed rules remain unchanged.
+Evidence and application examples: DEVELOPMENT_VALIDATION_LOOP_PLAN §14.
+
+### SINGLE-OUTCOME RECOVERY AND NON-REPEAT — OWNER DECISION 2026-11-04
+
+This applies **inside** RESULT-FIRST / STRATEGIC EXECUTION, not as a new
+workflow, gate, issue, document, quest, permission or review cycle. The
+overarching owner priority is **owner time saved**; technical BACKLOG P0 is
+the current engineering dependency, not a replacement for that priority.
+
+**One bounded critical path:** finish the already authorized protected PAPER
+transition to an actually verified EDITOR_ONLY Backend + Telegram state;
+then finish the existing monolithic PAPER coordinator
+(freeze → protected drain → FLAT/quiescence and orphan proof → one-shot
+handoff → immutable switch → safe runtime restoration → end-to-end acceptance).
+Do not create a parallel "PAPER liberation" project or promote Editor/Telegram
+acceptance, diagnostics, CI, PR count or game mechanics above the active safety
+boundary. Resume Scanner/Robot/PAPER_AUTO and any reconcile only under their
+own explicit authority; EDITOR_ONLY does not imply trading permission.
+
+**Preflight once, including post-stop races:** before an irreversible action,
+the executor uses the existing contracts and already available evidence to
+map the entire authorized dependency chain, including CLI source versus
+installed Gitless root, immutable stage/manifest, protected transaction
+ownership, exact receipts and target SHA, systemd unit/drop-in origins, listener
+ownership, PAPER DB identity, and transition states. A stopped listener alone
+does not prove systemd inactive: the *same unit set* required by the installer
+must reach its accepted stable states before recording a completion proof or
+installing. Race-safe bounded observation belongs in the owning orchestration
+code with focused regression coverage, not in repeated owner-driven VPS checks.
+A timeout or ambiguous state remains BLOCKED; do not weaken the gates.
+
+**Phase-oriented failure handling:** durable one-shot receipts describe what
+already happened. After BLOCKED/unknown outcome, never blindly rerun the
+recovery CLI, installer, STOP, handoff, SIGINT or a service shutdown. First
+classify the last proved phase and the *exact* exception/reason with the
+smallest READ-ONLY inspection, independently reattest current host reality,
+and distinguish a safe continuation from a replay of an irreversible effect.
+An existing receipt is not permission to resume: resume only if the existing
+code supports that exact phase, its safety checks pass, and the owner explicitly
+authorizes the new runtime mutation after a terminated one-shot attempt.
+Unknown outcome stays BLOCKED; no marker editing, fake receipt, alternative
+installer or ad-hoc source patch on VPS. When safely possible, finish the
+original objective rather than spinning up successive diagnostic quests.
+
+**Prevent recurrence at the owning boundary:** following a proven root cause,
+make one minimal GitHub fix and exercise the **real external entrypoint** and
+transition timing/state boundary—not only internal helpers or mocked success
+paths. A passing targeted test and required CI qualify the code for a separate
+authorized merge; neither is runtime acceptance. Do not interrupt a pending,
+safe, expressly authorized operational continuation solely to merge preventive
+code unless that code is a proven prerequisite. Codex is a VPS executor only;
+ChatGPT owns GitHub implementation.
+
+**One result to the owner:** return verified postconditions or a single
+specific BLOCKED cause and the next truly owner-only authorization. Do not
+require serial prompts, separate manual diagnostics, progress documents, or
+new PRs unless they advance that edge. Preserve unrelated user work and
+existing protected artifacts.
+
+
+
 ### Owner desktop launch surface — HARD UX CONTRACT (OWNER RULE 2026-09-27)
 
 The owner's canonical manual runtime UX is the existing desktop shortcut surface.

@@ -45,8 +45,12 @@ import {
   translatePriceRangeByPixels,
 } from "../chart/gestureMath";
 import { chartPriceFormat } from "../chart/priceFormat";
+import { editorMoscowCrosshairTime, editorMoscowTickMark } from "../chart/editorMoscowTime";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
+import { buildEditorGeometryReview, compareEditorRayChanges, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
+import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
+import { buildOwnerSignalDraft, type OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
 import { normalizedLimitDraftPrice } from "../orders/limitDraft";
@@ -135,6 +139,21 @@ export function ChartPanel({
   onTakeDelete,
   averageEntryPrice = null,
   workspaceControls,
+  editorMode = false,
+  referenceDrawings = [],
+  editableSeedDrawings = [],
+  signalIdentity = null,
+  originalPattern = null,
+  snapshotRevision = null,
+  barsSha256 = null,
+  savedReviewId = null,
+  savedReviewLabel = null,
+  savedReviewNote = null,
+  onSaveGeometryReview,
+  onSubmitOwnerSignal,
+  retrospectiveContext = null,
+  onExtendEditorHistory,
+  onEditorNavigate,
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
@@ -170,6 +189,23 @@ export function ChartPanel({
   onTakeDelete?: () => void | Promise<void>;
   averageEntryPrice?: string | null;
   workspaceControls?: ReactNode;
+  editorMode?: boolean;
+  /** Read-only source geometry; only supplied from a verified signal snapshot. */
+  referenceDrawings?: readonly DrawingObject[];
+  editableSeedDrawings?: readonly DrawingObject[];
+  signalIdentity?: string | null;
+  originalPattern?: string | null;
+  snapshotRevision?: string | null;
+  barsSha256?: string | null;
+  savedReviewId?: string | null;
+  savedReviewLabel?: GeometryReviewDraft["label"] | null;
+  savedReviewNote?: string | null;
+  onSaveGeometryReview?: (review: GeometryReviewDraft & { note: string; idempotency_key: string }) =>
+    Promise<{ reviewId: string; label: GeometryReviewDraft["label"] }>;
+  onSubmitOwnerSignal?: (proposal: OwnerSignalDraft) => Promise<{ proposalId: string; decision: string; reason: string }>;
+  retrospectiveContext?: { asOfMs: number; barsSha256: string } | null;
+  onExtendEditorHistory?: () => Promise<void>;
+  onEditorNavigate?: (mode: "TERMINAL" | "AUTOPILOT") => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -185,32 +221,250 @@ export function ChartPanel({
     timer: ReturnType<typeof setTimeout> | null;
   }>({ state: { mode: "IDLE" }, pointerId: null, last: null, timer: null });
   const followLatestRef = useRef(true);
+  const initialSourceFrameApplied = useRef(false);
+  const previousEditorBars = useRef<number | null>(null);
   const panBatcherRef = useRef<ReturnType<typeof createFrameBatcher> | null>(null);
   const [renderTick, setRenderTick] = useState(0),
     [tool, setTool] = useState<DrawingTool>("select"),
-    [magnet, setMagnet] = useState(false),
+    [magnet, setMagnet] = useState(editorMode),
     [selectedId, setSelectedId] = useState<string | null>(null),
     [clearConfirmationOpen, setClearConfirmationOpen] = useState(false),
     [confirmAllPendingOpen, setConfirmAllPendingOpen] = useState(false),
     [dismissAllPendingOpen, setDismissAllPendingOpen] = useState(false);
-  const storageKey = `bybitscanner:drawings:v1:${symbol}:${timeframe}`;
+  const [newSignalMode, setNewSignalMode] = useState(false);
+  const storageKey = `bybitscanner:${newSignalMode ? "new-signal-drawings" : editorMode ? "editor-drawings" : "drawings"}:v1:${symbol}:${timeframe}${editorMode && signalIdentity ? `:${signalIdentity}${savedReviewId && !newSignalMode ? `:review-${savedReviewId}` : ""}` : ""}${editorMode && retrospectiveContext ? `:review-asof-${retrospectiveContext.asOfMs}` : ""}`;
   const historyRef = useRef(
     new DrawingHistory(
-      deserializeDrawings(globalThis.localStorage?.getItem(storageKey) ?? null),
+      (() => {
+        // For a server-confirmed review, the verified frozen source and
+        // reviewed rays are authoritative. Local drafts from an earlier session
+        // must never override those immutable UTC anchors.
+        // Unsaved initial Editor work and ordinary trading drawings retain
+        // their existing local draft recovery behavior.
+        if (!(editorMode && signalIdentity && savedReviewId)) {
+          // Browser storage can throw SecurityError or QuotaExceededError
+          // (private mode, managed devices, storage disabled). Optional local
+          // drafts cannot prevent an authenticated frozen Editor opening.
+          try {
+            const stored = globalThis.localStorage?.getItem(storageKey);
+            if (stored !== null && stored !== undefined) {
+              const recovered = deserializeDrawings(stored);
+              // Only Editor requires exact original topology and valid frozen
+              // anchors; preserve regular trading drawing recovery as before.
+              if (!editorMode || !signalIdentity ||
+                  isValidCachedEditorDraft(recovered, referenceDrawings, candles))
+                return recovered;
+            }
+          } catch {
+            // Fall back to immutable Scanner/review seed; never refit live bars.
+          }
+        }
+        return editableSeedDrawings.map((drawing) => ({
+          ...drawing,
+          anchors: drawing.anchors.map((anchor) => ({ ...anchor })),
+          style: { ...drawing.style },
+        }));
+      })(),
     ),
   );
-  const [drawings, setDrawings] = useState<DrawingObject[]>(
-    historyRef.current.current,
+  const correctionHistoryRef = useRef(historyRef.current);
+  const proposalHistoryRef = useRef(new DrawingHistory([]));
+  const [drawings, setDrawings] = useState<DrawingObject[]>(historyRef.current.current);
+  const [proposalPattern, setProposalPattern] = useState<OwnerSignalDraft["pattern"]>("Falling Wedge");
+  const [proposalNote, setProposalNote] = useState("");
+  const [proposalPending, setProposalPending] = useState(false);
+  const [proposalStatus, setProposalStatus] = useState("");
+  const [extensionPending, setExtensionPending] = useState(false);
+  const [extensionStatus, setExtensionStatus] = useState("");
+  const proposalToken = useRef<{ content: string; key: string } | null>(null);
+  const rayComparison = useMemo(() => {
+    if (!editorMode || !signalIdentity || !referenceDrawings.length) return null;
+    try {
+      return compareEditorRayChanges({
+        referenceDrawings, editableDrawings: drawings, frozenCandles: candles,
+      });
+    } catch {
+      // Incomplete/stale coordinates must never produce misleading deltas.
+      return null;
+    }
+  }, [editorMode, signalIdentity, referenceDrawings, drawings, candles]);
+  const [reviewLabel, setReviewLabel] = useState<GeometryReviewDraft["label"]>(
+    savedReviewLabel ?? "GEOMETRY_CORRECTED",
   );
+  // Persisted review text belongs to the same immutable review ID as the
+  // restored editable rays. A fresh editor must not silently erase the note.
+  const [reviewNote, setReviewNote] = useState(savedReviewNote ?? "");
+  const [reviewPending, setReviewPending] = useState(false);
+  const [reviewStatus, setReviewStatus] = useState("");
+  const [savedReceipt, setSavedReceipt] = useState<{
+    reviewId: string; label: GeometryReviewDraft["label"];
+  } | null>(null);
+  const reviewEditSequence = useRef(0);
+  const [reviewDirty, setReviewDirty] = useState(() =>
+    Boolean(editorMode && signalIdentity && (
+      drawings.length !== editableSeedDrawings.length ||
+      drawings.some((drawing) => {
+        const source = editableSeedDrawings.find((seed) => seed.id === drawing.id);
+        return !source || JSON.stringify(drawing.anchors) !== JSON.stringify(source.anchors);
+      })
+    )),
+  );
+  const markReviewEdited = useCallback(() => {
+    if (!editorMode || !signalIdentity) return;
+    reviewEditSequence.current += 1;
+    setReviewDirty(true);
+    setReviewStatus("");
+  }, [editorMode, signalIdentity]);
+  const previousReviewAsOf = useRef(retrospectiveContext?.asOfMs ?? null);
+  useEffect(() => {
+    const current = retrospectiveContext?.asOfMs ?? null;
+    const previous = previousReviewAsOf.current;
+    previousReviewAsOf.current = current;
+    if (previous !== current && current !== null && !newSignalMode) markReviewEdited();
+  }, [retrospectiveContext?.asOfMs, newSignalMode, markReviewEdited]);
+  const latestReceipt = savedReceipt ?? (savedReviewId && savedReviewLabel
+    ? { reviewId: savedReviewId, label: savedReviewLabel } : null);
+  const reviewVerdicts: Record<GeometryReviewDraft["label"], string> = {
+    CONFIRMED: "Верный сигнал",
+    GEOMETRY_CORRECTED: "Исправлена геометрия",
+    FALSE_POSITIVE: "Ложный сигнал",
+    UNCERTAIN: "Неоднозначно",
+  };
+  const submitToken = useRef<{ content: string; key: string } | null>(null);
+  const saveCorrection = async () => {
+    if (newSignalMode) return;
+    if (!editorMode || !signalIdentity || !snapshotRevision || !barsSha256 || !onSaveGeometryReview || reviewPending) return;
+    try {
+      const draft = buildEditorGeometryReview({
+        signalId: signalIdentity, snapshotRevision, barsSha256,
+        label: reviewLabel, frozenCandles: candles,
+        referenceDrawings, editableDrawings: drawings,
+        contextAsOfMs: retrospectiveContext?.asOfMs,
+        contextBarsSha256: retrospectiveContext?.barsSha256,
+      });
+      const note = reviewNote.trim();
+      const content = JSON.stringify({ ...draft, note });
+      if (submitToken.current?.content !== content) {
+        const key = globalThis.crypto?.randomUUID?.() ?? `geometry-review-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        submitToken.current = { content, key };
+      }
+      const submittedSequence = reviewEditSequence.current;
+      setReviewPending(true);
+      setReviewStatus("Сохранение исправления…");
+      const receipt = await onSaveGeometryReview({
+        ...draft, note, idempotency_key: submitToken.current.key,
+      });
+      setSavedReceipt(receipt);
+      if (submittedSequence === reviewEditSequence.current) {
+        setReviewDirty(false);
+        setReviewStatus("Исправление сохранено в дневнике обратной связи. Scanner автоматически не менялся.");
+      } else {
+        setReviewDirty(true);
+        setReviewStatus("Отзыв сохранён, но изменения после отправки ещё не сохранены.");
+      }
+    } catch (error) {
+      setReviewStatus(`Не удалось сохранить: ${error instanceof Error ? error.message : "неизвестная ошибка"}`);
+    } finally {
+      setReviewPending(false);
+    }
+  };
   const commit = useCallback((next: DrawingObject[]) => {
     historyRef.current.commit(next);
     setDrawings(next);
-  }, []);
+    if (!newSignalMode) markReviewEdited();
+    else setProposalStatus("");
+  }, [newSignalMode, markReviewEdited]);
+
+  const switchSignalDrawingMode = () => {
+    if (reviewPending || proposalPending) return;
+    if (newSignalMode) {
+      proposalHistoryRef.current = historyRef.current;
+      historyRef.current = correctionHistoryRef.current;
+      setDrawings(historyRef.current.current);
+      setNewSignalMode(false);
+      setTool("select");
+    } else {
+      correctionHistoryRef.current = historyRef.current;
+      // Restore the owner's separate new-signal draft only from this exact
+      // source signal, never from the original Scanner correction cache.
+      if (proposalHistoryRef.current.current.length === 0) {
+        try {
+          const key = `bybitscanner:new-signal-drawings:v1:${symbol}:${timeframe}:${signalIdentity}`;
+          const cached = deserializeDrawings(globalThis.localStorage?.getItem(key) ?? null);
+          if (cached.length <= 2 && cached.every((line) =>
+            line.type === "ray" && line.anchors.length === 2 &&
+            !line.hidden && typeof line.id === "string" &&
+            line.anchors.every((anchor) =>
+              Number.isInteger(anchor.logical) && anchor.logical >= 0 &&
+              anchor.logical < candles.length &&
+              Number.isFinite(anchor.price) && anchor.price > 0) &&
+            typeof line.style?.color === "string" && Number.isFinite(line.style?.lineWidth)
+          )) proposalHistoryRef.current = new DrawingHistory(cached);
+        } catch {
+          // Optional browser cache must never prevent opening the Editor.
+        }
+      }
+      historyRef.current = proposalHistoryRef.current;
+      setDrawings(historyRef.current.current);
+      setNewSignalMode(true);
+      setTool("ray");
+    }
+    setSelectedId(null);
+    setClearConfirmationOpen(false);
+  };
+  const submitOwnerProposal = async () => {
+    if (!newSignalMode || !onSubmitOwnerSignal || !signalIdentity || !snapshotRevision ||
+        !barsSha256 || proposalPending || reviewPending) return;
+    try {
+      const content = JSON.stringify({ drawings, proposalPattern, proposalNote, retrospectiveContext });
+      if (proposalToken.current?.content !== content) {
+        proposalToken.current = {
+          content,
+          key: globalThis.crypto?.randomUUID?.() ??
+            `owner-proposal-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        };
+      }
+      const draft = buildOwnerSignalDraft({
+        signalId: signalIdentity, snapshotRevision, barsSha256,
+        pattern: proposalPattern, drawings, frozenCandles: candles,
+        note: proposalNote.trim(), idempotencyKey: proposalToken.current.key,
+        contextAsOfMs: retrospectiveContext?.asOfMs,
+        contextBarsSha256: retrospectiveContext?.barsSha256,
+      });
+      setProposalPending(true);
+      setProposalStatus("Проверка нового сигнала…");
+      const receipt = await onSubmitOwnerSignal(draft);
+      const reasons: Record<string, string> = {
+        ray_anchor_not_confirmed_pivot: "опорная точка не подтверждена Scanner",
+        ray_pair_not_generated: "пара точек не формирует допустимую линию",
+        ray_pair_filtered: "линия отклонена действующим фильтром",
+        pivot_evaluation_budget_exceeded: "слишком много пивотов для быстрой проверки",
+        robot_pattern_unsupported: "Robot не поддерживает этот паттерн",
+        trusted_scanner_strategy_snapshot_required:
+          "нужна дополнительная проверка стратегии, входа и защиты",
+      };
+      setProposalStatus(
+        `Новый сигнал ${receipt.proposalId.slice(0, 12)} сохранён. ` +
+        `${receipt.decision === "REJECTED" ? "Предварительно отклонён" : "Предварительная геометрия проверена"}: ` +
+        `${reasons[receipt.reason] ?? "оценка требует дополнительной проверки"}. ` +
+        "Торговый кандидат не создан.",
+      );
+    } catch (error) {
+      setProposalStatus(`Не удалось передать: ${error instanceof Error ? error.message : "неизвестная ошибка"}`);
+    } finally {
+      setProposalPending(false);
+    }
+  };
   const applyFollowLatest = useCallback((next: boolean) => {
     followLatestRef.current = next;
   }, []);
   useEffect(() => {
-    globalThis.localStorage?.setItem(storageKey, serializeDrawings(drawings));
+    try {
+      globalThis.localStorage?.setItem(storageKey, serializeDrawings(drawings));
+    } catch {
+      // Persisted review delivery is server-owned; a failed optional browser
+      // drawing cache must not crash the Editor or alter feedback authority.
+    }
   }, [drawings, storageKey]);
   useEffect(() => {
     const host = hostRef.current;
@@ -220,6 +474,7 @@ export function ChartPanel({
         css.getPropertyValue(name).trim() || fallback;
     const chart = createChart(host, {
       autoSize: true,
+      ...(editorMode ? { localization: { locale: "ru-RU", timeFormatter: editorMoscowCrosshairTime } } : {}),
       layout: {
         background: {
           type: ColorType.Solid,
@@ -253,6 +508,7 @@ export function ChartPanel({
         minimumWidth: 0,
       },
       timeScale: {
+        ...(editorMode ? { tickMarkFormatter: editorMoscowTickMark } : {}),
         visible: true,
         borderColor: "#303b47",
         timeVisible: true,
@@ -316,8 +572,27 @@ export function ChartPanel({
       series,
       timeScale,
     );
+    const previousCount = previousEditorBars.current;
+    previousEditorBars.current = candles.length;
+    if (editorMode && signalIdentity && !initialSourceFrameApplied.current) {
+      const sourceRange = initialSourceGeometryRange(referenceDrawings);
+      if (sourceRange) {
+        timeScale.setVisibleLogicalRange(sourceRange);
+        followLatestRef.current = false;
+        initialSourceFrameApplied.current = true;
+      }
+    }
+    // An explicit "Add later candles" action should reveal the newly closed
+    // market context instead of silently leaving it far right off-screen.
+    if (editorMode && previousCount !== null && candles.length > previousCount &&
+        initialSourceFrameApplied.current) {
+      const range = timeScale.getVisibleLogicalRange();
+      const span = range ? Math.max(25, range.to - range.from) : 70;
+      const to = candles.length + 6;
+      timeScale.setVisibleLogicalRange({ from: to - span, to });
+    }
     setRenderTick((v) => v + 1);
-  }, [candles]);
+  }, [candles, editorMode, signalIdentity, referenceDrawings]);
   useEffect(() => {
     const priceFormat = tickSize === null ? null : chartPriceFormat(tickSize);
     if (priceFormat) seriesRef.current?.applyOptions({ priceFormat });
@@ -714,6 +989,12 @@ export function ChartPanel({
   }, [commit, drawings, selectedId]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
+      // This listener is global: typing or deleting an owner review note (or
+      // another workspace form value) must never delete a selected chart ray.
+      const target = event.target;
+      if (event.isComposing || (target instanceof Element && target.closest(
+        "input, textarea, select, button, [contenteditable], [role='textbox'], [role='combobox']",
+      ))) return;
       if (event.key === "Delete" || event.key === "Backspace") deleteSelected();
       if (event.key === "Escape") {
         setSelectedId(null);
@@ -729,13 +1010,130 @@ export function ChartPanel({
       aria-label="Candlestick chart"
     >
       <div className="chart-content-row">
+        {editorMode && signalIdentity && (
+          <div className="editor-correction-export">
+            <div className="editor-review-topline">
+              <nav className="editor-workspace-shortcuts" aria-label="Переход между вкладками">
+                <button type="button" aria-label="Терминал" title="Терминал"
+                  onClick={() => onEditorNavigate?.("TERMINAL")}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <line x1="12" x2="12" y1="2" y2="22" />
+                    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                  </svg>
+                </button>
+                <button type="button" aria-label="Автопилот" title="Автопилот"
+                  onClick={() => onEditorNavigate?.("AUTOPILOT")}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" />
+                    <circle cx="12" cy="12" r="2.2" />
+                    <line x1="4.5" y1="9.5" x2="10.2" y2="11.3" />
+                    <line x1="19.5" y1="9.5" x2="13.8" y2="11.3" />
+                    <line x1="12" y1="14.2" x2="12" y2="20.5" />
+                    <path d="M4.8 9.8 Q12 6.5 19.2 9.8" />
+                  </svg>
+                </button>
+              </nav>
+            </div>
+            <small aria-label="Название исходного сигнала">Исходный сигнал: {originalPattern ?? "тип неизвестен"}</small>
+            <button type="button" disabled={extensionPending || reviewPending || proposalPending}
+              onClick={() => {
+                if (!onExtendEditorHistory) return;
+                setExtensionPending(true);
+                setExtensionStatus("Загружаются следующие закрытые свечи…");
+                void onExtendEditorHistory()
+                  .then(() => setExtensionStatus("Поздние свечи добавлены для ретроспективной разметки."))
+                  .catch((error) => setExtensionStatus(
+                    `Не удалось получить поздние свечи: ${error instanceof Error ? error.message : "ошибка"}`,
+                  ))
+                  .finally(() => setExtensionPending(false));
+              }}>
+              {extensionPending ? "Загрузка…" : "Добавить поздние свечи"}
+            </button>
+            {retrospectiveContext && <small>Ретроспективный обзор: до {new Date(retrospectiveContext.asOfMs).toLocaleString("ru-RU")}. Будущие свечи не считаются известными исходному Scanner.</small>}
+            {extensionStatus && <output role="status" aria-live="polite">{extensionStatus}</output>}
+            <button type="button" disabled={extensionPending || reviewPending || proposalPending}
+              aria-pressed={newSignalMode} onClick={switchSignalDrawingMode}>
+              {newSignalMode ? "Вернуться к исправлению" : "Создать новый сигнал"}
+            </button>
+            {newSignalMode ? (
+              <>
+                <select aria-label="Тип нового сигнала" value={proposalPattern}
+                  onChange={(event) => { setProposalPattern(event.target.value as OwnerSignalDraft["pattern"]); setProposalStatus(""); }}>
+                  <option value="Falling Wedge">Нисходящий клин</option>
+                  <option value="Rising Wedge">Восходящий клин</option>
+                </select>
+                <input aria-label="Комментарий к новому сигналу"
+                  placeholder="Комментарий (необязательно)" maxLength={1024}
+                  value={proposalNote} onChange={(event) => { setProposalNote(event.target.value); setProposalStatus(""); }} />
+                <button type="button" disabled={proposalPending || !onSubmitOwnerSignal}
+                  onClick={() => void submitOwnerProposal()}>
+                  {proposalPending ? "Проверка…" : "Передать на оценку Robot"}
+                </button>
+                <small>Исходные линии — пунктир. Нарисуй два новых луча; оценка не разрешает торговлю.</small>
+                {proposalStatus && <output role="status" aria-live="polite">{proposalStatus}</output>}
+              </>
+            ) : (
+              <>
+            <select
+              aria-label="Оценка сигнала"
+              value={reviewLabel}
+              onChange={(event) => { setReviewLabel(event.target.value as GeometryReviewDraft["label"]); markReviewEdited(); }}
+            >
+              <option value="GEOMETRY_CORRECTED">Исправлена геометрия</option>
+              <option value="CONFIRMED">Верный сигнал</option>
+              <option value="FALSE_POSITIVE">Ложный сигнал</option>
+              <option value="UNCERTAIN">Неоднозначно</option>
+            </select>
+            <input
+              aria-label="Комментарий к исправлению"
+              placeholder="Комментарий (необязательно)"
+              maxLength={1024}
+              value={reviewNote}
+              onChange={(event) => { setReviewNote(event.target.value); markReviewEdited(); }}
+            />
+            <button type="button" disabled={reviewPending || !snapshotRevision || !barsSha256 || !onSaveGeometryReview}
+              onClick={() => void saveCorrection()}>
+              {reviewPending ? "Сохранение…" : "Передать исправление"}
+            </button>
+            {latestReceipt && (
+              <span>
+                Сохранённый отзыв: {latestReceipt.reviewId.slice(0, 12)}
+                {" · "}{reviewVerdicts[latestReceipt.label]}
+                {reviewDirty ? " (предыдущая версия)" : ""}
+              </span>
+            )}
+            {reviewDirty && <output aria-label="Несохранённый отзыв">Новые изменения не сохранены</output>}
+            {reviewLabel === "GEOMETRY_CORRECTED" && rayComparison && (
+              <output aria-label="Сравнение линий Scanner и исправления">
+                {rayComparison.map((ray) => (
+                  <span key={ray.boundaryId}>
+                    {ray.boundaryId}: Δ точка 1 {ray.anchorChanges[0].priceShiftPercent.toFixed(2)}%
+                    {ray.anchorChanges.length === 2 && (
+                      <>; Δ точка 2 {ray.anchorChanges[1].priceShiftPercent.toFixed(2)}%; Δ наклон {ray.slopeDeltaPerHour.toPrecision(3)}/ч</>
+                    )}{" "}
+                  </span>
+                ))}
+              </output>
+            )}
+            {reviewStatus && <output role="status" aria-live="polite">{reviewStatus}</output>}
+              </>
+            )}
+          </div>
+        )}
         <DrawingToolbar
           activeTool={tool}
           magnet={magnet}
           selected={selectedId !== null}
           onTool={setTool}
           onMagnet={() => setMagnet((v) => !v)}
-          onUndo={() => setDrawings(historyRef.current.undo())}
+          onUndo={() => {
+            const previous = drawings;
+            const undone = historyRef.current.undo();
+            if (undone !== previous) {
+              setDrawings(undone);
+              if (!newSignalMode) markReviewEdited();
+            }
+          }}
           onDelete={deleteSelected}
           onClear={() => {
             if (drawings.length) setClearConfirmationOpen(true);
@@ -777,10 +1175,12 @@ export function ChartPanel({
         <div ref={hostRef} className="chart-engine" />
         <DrawingOverlay
           drawings={drawings}
+          referenceDrawings={editorMode ? referenceDrawings : []}
           selectedId={selectedId}
           tool={tool}
           magnet={magnet}
           candles={candles}
+          candleAligned={editorMode && signalIdentity !== null}
           coordinates={coordinates}
           priceFormatter={drawingPriceFormatter}
           onCommit={commit}
@@ -1083,6 +1483,7 @@ export function ChartPanel({
             onCancel={() => setClearConfirmationOpen(false)}
             onConfirm={() => {
               setDrawings(clearDrawingHistory(historyRef.current));
+              if (!newSignalMode) markReviewEdited();
               setSelectedId(null);
               setClearConfirmationOpen(false);
             }}
