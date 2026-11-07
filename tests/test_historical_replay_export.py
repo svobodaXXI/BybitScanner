@@ -6,7 +6,10 @@ import unittest
 from research.export_historical_replay import (
     MAX_BARS, build_market_only_document, write_run_document,
 )
-from research.h017_real_bybit_readonly_acceptance import retrospective_first_touch_study
+from research.h017_real_bybit_readonly_acceptance import (
+    retrospective_first_touch_study, verify_archived_hourly_wick_geometry,
+    verify_archived_prior_timeline,
+)
 from research.historical_candle_feed import FIVE_MINUTES_MS
 
 
@@ -116,9 +119,20 @@ class MarketOnlyExportTests(unittest.TestCase):
             geometry_warmup_bars=13*12,
         )
         self.assertEqual(no_seed["geometry"], [])
+        self.assertEqual(verify_archived_prior_timeline(no_seed)["events"], 0)
+        self.assertEqual(verify_archived_prior_timeline(seeded)["events"], 1)
         self.assertEqual(len(seeded["events"]), 24)
         self.assertEqual(seeded["events"][0]["candle"]["start_ms"], start_ms)
         self.assertEqual(seeded["geometry_warmup_hours"], 13)
+        self.assertEqual(no_seed["context_1h"], [])
+        self.assertEqual(len(seeded["context_1h"]), 13)
+        self.assertEqual(seeded["context_1h"][0]["start_ms"], 0)
+        self.assertEqual(seeded["context_1h"][-1]["end_ms"], start_ms)
+        self.assertEqual(seeded["context_1h"][4]["low"], "95")
+        self.assertTrue(all(
+            bar["end_ms"] <= seeded["events"][0]["candle"]["start_ms"]
+            for bar in seeded["context_1h"]
+        ))
         kinds = {line["kind"] for line in seeded["geometry"]}
         self.assertTrue({"MAIN_1H", "TARGET_1H"}.issubset(kinds))
         self.assertTrue(all(line["from_ms"] < start_ms
@@ -243,6 +257,47 @@ class MarketOnlyExportTests(unittest.TestCase):
             run_id="dmi-crosses-prefix", fetch_candles=fetch,
         )
         self.assertEqual(prefix["dmi_5m"]["points"], points[:40])
+
+    def test_official_h1_wick_checks_use_closed_hidden_context_not_future_m5(self):
+        hour, five = 3_600_000, FIVE_MINUTES_MS
+        context = []
+        for i in range(72):
+            context.append({
+                "start_ms": i * hour, "end_ms": (i + 1) * hour,
+                "open": "100", "close": "100",
+                "high": "120" if i == 20 else "116" if i == 22 else "110",
+                "low": "90" if i == 19 else "94" if i == 23 else "95",
+                "volume": "12",
+            })
+        events = [{
+            "candle": {"start_ms": 72 * hour + i * five,
+                       "end_ms": 72 * hour + (i + 1) * five,
+                       "open": "100", "close": "100",
+                       "high": "105", "low": "95", "volume": "1"}
+        } for i in range(12)]
+        geometry = [
+            {"kind": "MAIN_1H", "side": "BEAR",
+             "from_ms": 20 * hour, "to_ms": 22 * hour,
+             "from_price": "120", "to_price": "116",
+             "available_at_ms": 73 * hour},
+            {"kind": "TARGET_1H", "side": "BEAR",
+             "from_ms": 19 * hour, "to_ms": 23 * hour,
+             "from_price": "90", "to_price": "94",
+             "available_at_ms": 73 * hour},
+        ]
+        doc = {"context_1h": context, "events": events, "geometry": geometry}
+        self.assertEqual(
+            verify_archived_hourly_wick_geometry(doc),
+            {"MAIN_1H": 1, "TARGET_1H": 1},
+        )
+        bad = {**doc, "context_1h": [dict(bar) for bar in context]}
+        bad["context_1h"][21]["high"] = "119"
+        with self.assertRaisesRegex(AssertionError, "protrudes"):
+            verify_archived_hourly_wick_geometry(bad)
+        bad = {**doc, "geometry": [dict(line) for line in geometry]}
+        bad["geometry"][0]["to_price"] = "115"
+        with self.assertRaisesRegex(AssertionError, "anchor"):
+            verify_archived_hourly_wick_geometry(bad)
 
     def test_real_archive_first_touch_study_keeps_ambiguous_and_dmi_timing_honest(self):
         m5 = FIVE_MINUTES_MS

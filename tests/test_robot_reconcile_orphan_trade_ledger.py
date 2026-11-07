@@ -116,7 +116,7 @@ class RobotReconcileLedgerGateTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual(result.recovery_status, "RECONCILIATION_REQUIRED")
         self.assertEqual(result.unresolved_trade_ids, ("t-orphan",))
-        self.assertIn("OPEN Robot candidate/trade ledger", result.reason)
+        self.assertIn("before protection dispatch", result.reason)
         store.update_robot_runtime_state.assert_not_called()
         runtime._dispatch_paper_protection_obligation.assert_not_called()
 

@@ -508,7 +508,9 @@ class TelegramMonitoringTests(unittest.TestCase):
         port = self._shutdown_listener()
         status, payload = self._post_shutdown(port, {"database_identity": "a" * 64})
         self.assertEqual((status, payload["ok"]), (200, True))
-        self.assertTrue(monitoring._SHUTDOWN_REQUESTED.is_set())
+        # The handler schedules shutdown immediately after replying. HTTP
+        # response delivery can win this thread race; wait for the signal.
+        self.assertTrue(monitoring._SHUTDOWN_REQUESTED.wait(timeout=1.0))
 
     def test_run_loop_exits_normally_after_shutdown_and_releases_singleton(self):
         monitoring._SHUTDOWN_REQUESTED.clear()

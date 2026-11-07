@@ -6,6 +6,7 @@ never imports Bybit HTTP, PAPER runtime, credentials, or trading endpoints.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Callable, Mapping, Sequence
 
 from research.historical_market_replay import (
@@ -105,6 +106,9 @@ class ClosedMultiTimeframeView:
     last_closed_dmi_4h: DmiSnapshot | None = None
     hourly_trend: TrendCandidate | None = None
     reference_5m: CausalLine | None = None
+    hourly_prior_price: Decimal | None = None
+    hourly_prior_touch_ms: int | None = None
+    hourly_prior_break: dict[str, object] | None = None
 
 
 class ClosedHigherTimeframeFeed:
@@ -215,6 +219,9 @@ def replay_with_closed_context(
                 view, h1, h4, new_h1, new_h4,
                 dmi5, last_dmi_1h, last_dmi_4h,
                 hourly_trend, reference_5m,
+                geometry.confirmed_hourly_prior if hourly_trend is not None else None,
+                geometry.confirmed_hourly_prior_touch_ms if hourly_trend is not None else None,
+                geometry.confirmed_hourly_prior_break,
             )
         )
 

@@ -13,7 +13,8 @@ import re
 import secrets
 
 from research.historical_candle_feed import (
-    FIVE_MINUTES_MS, load_closed_five_minute_history, replay_with_closed_context,
+    ClosedHigherTimeframeFeed, FIVE_MINUTES_MS, load_closed_five_minute_history,
+    replay_with_closed_context,
 )
 from research.h017_blue_open_preview import blue_open_risk_preview
 from research.h017_local_risk import H017LocalRiskPolicy
@@ -52,16 +53,40 @@ def build_market_only_document(
     preload_count = (start_ms - preload_start_ms) // FIVE_MINUTES_MS
     warmup_candles = all_candles[:preload_count]
     candles = all_candles[preload_count:]
+    # Closed H1 evidence used during hidden warmup, never a visible replay bar.
+    # The viewer needs it to compare prior H1 extremes when the immutable
+    # first trendline wick predates the seven-day display window.
+    context = ClosedHigherTimeframeFeed()
+    context_1h = []
+    for earlier in warmup_candles:
+        _, _, newly_closed_hour, _ = context.observe_closed_five_minute(earlier)
+        if newly_closed_hour is not None:
+            context_1h.append({
+                "start_ms": newly_closed_hour.start_ms,
+                "end_ms": newly_closed_hour.end_ms,
+                "open": str(newly_closed_hour.open),
+                "high": str(newly_closed_hour.high),
+                "low": str(newly_closed_hour.low),
+                "close": str(newly_closed_hour.close),
+                "volume": str(newly_closed_hour.volume),
+            })
     events = []
     geometry: list[dict[str, object]] = []
     observations: list[dict[str, object]] = []
     blue_risk_previews: list[dict[str, object]] = []
+    blue_retirements: list[dict[str, object]] = []
+    hourly_prior_updates: list[dict[str, object]] = []
+    hourly_prior_breaks: list[dict[str, object]] = []
+    last_prior_identity: tuple[str, int, object] | None = None
     risk_policy = H017LocalRiskPolicy()
     previous_trend = None
     previous_blue = None
     dmi_points: list[dict[str, object]] = []
     pending_contact: tuple[int, int, str, object] | None = None
     versions: dict[str, tuple[int, int, int]] = {}
+    # The exported publication time can differ from CausalLine.available_at_ms
+    # when an unchanged M5 correction is republished under a revised H1 trend.
+    published_at: dict[str, int] = {}
 
     def collect_lines(view) -> None:
         def collect(kind: str, line, side: str, trend_version: int) -> None:
@@ -71,6 +96,7 @@ def build_market_only_document(
             if line.available_at_ms > view.five_minute.signal_time_ms:
                 raise ValueError("future geometry in simulated market archive")
             versions[kind] = identity
+            published_at[kind] = view.five_minute.signal_time_ms
             geometry.append({
                 "kind": kind, "side": side,
                 "available_at_ms": view.five_minute.signal_time_ms,
@@ -124,7 +150,7 @@ def build_market_only_document(
         pending_contact = (bar.end_ms, trend.available_at_ms, trend.side, bar.close)
 
     def collect_context(view) -> None:
-        nonlocal previous_trend, previous_blue
+        nonlocal previous_trend, previous_blue, last_prior_identity
         # Only geometry known at the PRIOR close may qualify this bar OPEN.
         preview = blue_open_risk_preview(
             bar=view.five_minute.bar, known_trend=previous_trend,
@@ -148,7 +174,73 @@ def build_market_only_document(
             ],
         })
         collect_lines(view)
+        # The strategy's frozen confirmed prior is authoritative. Export its
+        # changes once, rather than independently refitting purple levels from
+        # yellow geometry in the browser. A warmup prior first becomes visible
+        # on the FIRST displayed M5 close, not during hidden history.
+        prior = view.hourly_prior_price
+        touch = view.hourly_prior_touch_ms
+        trend = view.hourly_trend
+        if prior is not None and touch is not None and trend is not None:
+            identity = (trend.side, touch, prior)
+            if identity != last_prior_identity:
+                if touch >= view.five_minute.signal_time_ms:
+                    raise ValueError("future hourly prior touch")
+                hourly_prior_updates.append({
+                    "kind": "H1_PRIOR_CONFIRMED", "side": trend.side,
+                    "at_ms": touch, "price": str(prior),
+                    "available_at_ms": view.five_minute.signal_time_ms,
+                    "trend_version": trend.available_at_ms,
+                    "classification": "UNVALIDATED_GEOMETRY_ONLY",
+                })
+                last_prior_identity = identity
+        else:
+            last_prior_identity = None
+        break_event = getattr(view, "hourly_prior_break", None)
+        if break_event is not None:
+            # Never attribute a warmup-only break to an unpublished prior.
+            if any(
+                level["trend_version"] == break_event["trend_version"] and
+                level["at_ms"] == break_event["prior_at_ms"] and
+                level["price"] == str(break_event["prior_price"])
+                for level in hourly_prior_updates
+            ):
+                hourly_prior_breaks.append({
+                    "kind": "PRIOR_CLOSE_NEXT_OPEN",
+                    **{key: str(value) if key == "prior_price" else value
+                       for key, value in break_event.items()},
+                })
         collect_main_line_observations(view)
+        # The old frozen correction remains active through later M5 pivots.
+        # The first known M5 OPEN on the H1 trend side of that line retires
+        # it at this CLOSED M5, without revising earlier chart history.
+        if (previous_blue is not None and view.reference_5m is None and
+                previous_trend is not None and view.hourly_trend is not None and
+                previous_trend.side == view.hourly_trend.side and
+                previous_trend.main.first.at_ms == view.hourly_trend.main.first.at_ms):
+            bar = view.five_minute.bar
+            level = previous_blue.value_at(bar.start_ms)
+            beyond = ((previous_trend.side == "BULL" and bar.open > level) or
+                      (previous_trend.side == "BEAR" and bar.open < level))
+            # A correction may have existed only during the pre-history
+            # warmup, then broken on the FIRST displayed M5. The current
+            # archive has no such prior line, so it must not invent a
+            # retirement referencing a non-exported geometry version.
+            published = versions.get("REFERENCE_5M") == (
+                previous_blue.first.at_ms,
+                previous_blue.second.at_ms,
+                previous_trend.available_at_ms,
+            )
+            if beyond and published:
+                blue_retirements.append({
+                    "kind": "REFERENCE_5M_OPEN_BREAK",
+                    "time_ms": bar.end_ms, "open_ms": bar.start_ms,
+                    # Point to the exact EXPORTED blue version, not its
+                    # original first-confirmation time (which may predate a
+                    # same-movement H1 revision).
+                    "blue_available_at_ms": published_at["REFERENCE_5M"],
+                    "trend_version": previous_trend.available_at_ms,
+                })
         previous_trend = view.hourly_trend
         previous_blue = view.reference_5m
 
@@ -170,9 +262,13 @@ def build_market_only_document(
         "from_ms": start_ms, "until_ms": end_ms,
         "events": events,
         "geometry": geometry,
+        "hourly_prior_updates": hourly_prior_updates,
+        "hourly_prior_breaks": hourly_prior_breaks,
+        "reference_5m_retirements": blue_retirements,
         "observations": observations,
         "h017_blue_risk_previews": blue_risk_previews,
         "geometry_warmup_hours": len(warmup_candles) // 12,
+        "context_1h": context_1h,
         "dmi_5m": {
             "source": "SIMULATION", "timeframe": "5m",
             "di_length": 14, "adx_smoothing": 14,

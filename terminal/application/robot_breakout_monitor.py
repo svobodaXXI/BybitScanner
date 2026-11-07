@@ -132,6 +132,7 @@ class _EntryEvidence:
     quantity: Decimal
     average_entry: Decimal
     position_version: int
+    first_execution_at_ms: int
 
 
 def _cancel_partial_remainder_action_id(candidate_id: str) -> ClientActionId:
@@ -1990,7 +1991,9 @@ class RobotBreakoutMonitor:
                 )
             ).strip() or "1",
             signal_time_ms=record.approved_at_ms,
-            entry_time_ms=now_ms,
+            # Freeze the actual owned first fill, not the later local monitor
+            # clock. Reconciliation must use the immutable execution timestamp.
+            entry_time_ms=entry_evidence.first_execution_at_ms,
             entry_path=entry_path,
             actual_wv=actual_wv,
             average_entry=average_entry,
@@ -1998,7 +2001,7 @@ class RobotBreakoutMonitor:
             take_price=plan.take_price,
             entry_quantity=entry_quantity,
             entry_position_version=entry_position_version,
-            created_at_ms=now_ms,
+            created_at_ms=max(now_ms, entry_evidence.first_execution_at_ms),
         )
         return True
 
@@ -2272,6 +2275,7 @@ class RobotBreakoutMonitor:
             quantity=quantity,
             average_entry=average_entry,
             position_version=position.version,
+            first_execution_at_ms=first_at,
         )
 
     @staticmethod

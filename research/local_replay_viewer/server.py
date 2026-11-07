@@ -134,6 +134,29 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 self._error(403, "Local viewer only")
                 return
             url = urlsplit(self.path)
+            if url.path == "/local-replay/bundled":
+                # One immutable PUBLIC, MARKET_ONLY archive shipped with the
+                # Windows viewer; never arbitrary filesystem paths or accounts.
+                if url.query or self.headers.get("Sec-Fetch-Site") == "cross-site" or (
+                    self.headers.get("Origin") not in (
+                        None, "", f"http://127.0.0.1:{self.server.server_address[1]}",
+                        f"http://localhost:{self.server.server_address[1]}",
+                    )
+                ):
+                    self._error(403, "Local bundled history only")
+                    return
+                bundled = HERE / "real-h1-august.json"
+                try:
+                    if not bundled.is_file():
+                        self._send(204, b"", "application/json")
+                        return
+                    if bundled.stat().st_size > 24 * 1024 * 1024:
+                        self._error(413, "Bundled public archive too large")
+                        return
+                    self._send(200, bundled.read_bytes(), "application/json")
+                except OSError:
+                    self._error(500, "Bundled public archive unavailable")
+                return
             if url.path == "/local-replay/history":
                 if self.command != "GET":
                     self._error(405, "GET only")

@@ -19,6 +19,8 @@ export type GeometryReviewDraft = {
   bars_sha256: string;
   label: "CONFIRMED" | "GEOMETRY_CORRECTED" | "FALSE_POSITIVE" | "UNCERTAIN";
   corrected_boundaries: TimestampDrawing[];
+  context_as_of_ms?: number;
+  context_bars_sha256?: string;
 };
 
 /** Confirm the exact append-only review returned by the server, not only its
@@ -37,6 +39,8 @@ export function matchesStoredGeometryReview(
       stored.signal_id !== submitted.signal_id ||
       stored.snapshot_revision !== submitted.snapshot_revision ||
       stored.bars_sha256 !== submitted.bars_sha256 ||
+      stored.context_as_of_ms !== submitted.context_as_of_ms ||
+      stored.context_bars_sha256 !== submitted.context_bars_sha256 ||
       stored.label !== submitted.label ||
       stored.note !== submitted.note ||
       stored.idempotency_key !== submitted.idempotency_key ||
@@ -100,6 +104,8 @@ export function buildGeometryReviewDraft(input: {
   label: GeometryReviewDraft["label"];
   drawings: readonly DrawingObject[];
   frozenCandles: readonly Candle[];
+  contextAsOfMs?: number | null;
+  contextBarsSha256?: string | null;
 }): GeometryReviewDraft {
   if (!input.signalId.trim() || !input.snapshotRevision.trim() || !/^[0-9a-f]{64}$/i.test(input.barsSha256))
     throw new Error("Immutable signal provenance is missing");
@@ -110,7 +116,17 @@ export function buildGeometryReviewDraft(input: {
     : [];
   if (input.label === "GEOMETRY_CORRECTED" && !corrected_boundaries.length)
     throw new Error("Corrected geometry is empty");
+  if ((input.contextAsOfMs == null) !== (input.contextBarsSha256 == null))
+    throw new Error("Неполный контекст поздних свечей");
+  if (input.contextAsOfMs != null &&
+      (!Number.isSafeInteger(input.contextAsOfMs) ||
+       !/^[0-9a-f]{64}$/i.test(input.contextBarsSha256 ?? "")))
+    throw new Error("Неверный контекст поздних свечей");
   return {
+    ...(input.contextAsOfMs != null ? {
+      context_as_of_ms: input.contextAsOfMs,
+      context_bars_sha256: input.contextBarsSha256!,
+    } : {}),
     schema_version: 1,
     signal_id: input.signalId,
     snapshot_revision: input.snapshotRevision,
@@ -164,6 +180,8 @@ export function buildEditorGeometryReview(input: {
   referenceDrawings: readonly DrawingObject[];
   editableDrawings: readonly DrawingObject[];
   frozenCandles: readonly Candle[];
+  contextAsOfMs?: number | null;
+  contextBarsSha256?: string | null;
 }): GeometryReviewDraft {
   if (!input.referenceDrawings.length)
     throw new Error("Frozen source geometry is unavailable");

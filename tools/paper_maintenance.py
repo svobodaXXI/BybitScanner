@@ -210,6 +210,49 @@ PREFIX = ("sudo", "-n")
 
 
 
+def _proven_stopped_backend_handoff_to(
+    journal_root: Path, target: str, *, uid: int,
+) -> bool:
+    """Attest the new one-shot handoff before sealing EDITOR_ONLY.
+
+    This is *not* a canonical STOP receipt. The Backend must already have
+    exited under the separately authorized pinned signal and the protected
+    installer must have committed the verified target release.
+    """
+    from tools.paper_stopped_approved_recovery import (
+        OLD_BACKEND, PRIOR_TARGET, PartialStopBlocked, _receipt,
+    )
+    from tools.paper_interrupted_stop_recovery import RecoveryBlocked, _trusted_journal
+    from tools.vps_gitless_release_activate import (
+        ActivationBlocked, _manifest, _trusted_file,
+    )
+    from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+    try:
+        _trusted_journal(journal_root, uid)
+        if (verify_release(REPO) != target
+                or (journal_root / PRIOR_TARGET).exists()
+                or (journal_root / (".stop-confirmed-" + PRIOR_TARGET)).exists()
+                or _trusted_file(journal_root / (".stop-invoked-" + PRIOR_TARGET), uid)
+                != b"STOP_INVOKED; not install authorization\\n"):
+            return False
+        journal = journal_root / target
+        if (not journal.is_dir() or journal.is_symlink()
+                or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077):
+            return False
+        old = _manifest(_trusted_file(journal / "old.json", uid))
+        new = _manifest(_trusted_file(journal / "target.json", uid))
+        _trusted_file(journal / "units.json", uid)
+        return (
+            old["build_sha"] == OLD_BACKEND and new["build_sha"] == target
+            and target not in (PRIOR_TARGET, OLD_BACKEND)
+            and all(_receipt(journal_root, phase, uid, target=target)
+                    for phase in ("handoff-attempt", "backend-exited", "handoff-proven"))
+        )
+    except (ActivationBlocked, PartialStopBlocked, RecoveryBlocked, ReleaseIdentityBlocked,
+            OSError, ValueError, TypeError, KeyError):
+        return False
+
+
 def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
     """Record post-resume success only; never grant STOP or install authority."""
     from tools.vps_gitless_release_activate import (
@@ -221,6 +264,8 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
         return  # No protected installer transaction to attest.
     if marker.exists() or marker.is_symlink():
         _trusted_file(marker, uid)
+    elif _proven_stopped_backend_handoff_to(journal_root, target, uid=uid):
+        pass  # A distinct, sealed one-shot handoff; no canonical STOP receipt.
     else:
         # An exceptional prior-target handoff can install the pinned release
         # without a same-target ordinary STOP marker. Only its *own* protected
@@ -267,7 +312,9 @@ def _complete_stop_intent(journal_root: Path, target: str, *, uid: int) -> None:
     _sync_directory(journal)
 
 
-def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -> bool:
+def _record_one_shot_stop_intent(
+    journal_root: Path, target: str, *, uid: int, root: Path = REPO,
+) -> bool:
     """Durably fence STOP replay before the first irreversible owner call.
 
     This is only a stop-attempt marker, never an install entitlement. A crash
@@ -315,6 +362,10 @@ def _record_one_shot_stop_intent(journal_root: Path, target: str, *, uid: int) -
                     raise ActivationBlocked("untrusted_completed_release_transaction")
                 if _trusted_file(completed, uid) != previous.encode("ascii"):
                     raise ActivationBlocked("completed_release_receipt_mismatch")
+                continue
+            if _proven_prior_exceptional_completion(
+                journal_root, previous, root=root, uid=uid,
+            ):
                 continue
             return False
         marker = journal_root / (".stop-invoked-" + target)
@@ -383,9 +434,87 @@ def _confirmed_stop_receipt(
 
 
 
+def _proven_prior_exceptional_completion(
+    journal_root: Path, prior: str, *, root: Path, uid: int,
+) -> bool:
+    """Historical STOP intent is inert only after a durable verified handoff.
+
+    Its original STOP remains unconfirmed. The protected successor release
+    journal and handoff receipts, *not* the current installed SHA alone,
+    prove the old intent was superseded. This remains true after later
+    verified upgrades; unknown or incomplete handoffs remain a global fence.
+    """
+    from tools.paper_interrupted_stop_recovery import (
+        OLD_BACKEND as LEGACY_BACKEND, PRIOR_TARGET as LEGACY_TARGET,
+        MARKER_PREFIX as LEGACY_PREFIX, RecoveryBlocked,
+        _receipt as legacy_receipt, _trusted_journal,
+    )
+    from tools.paper_stopped_approved_recovery import (
+        OLD_BACKEND as NEW_BACKEND, PRIOR_TARGET as NEW_TARGET,
+        MARKER_PREFIX as NEW_PREFIX, PartialStopBlocked,
+        _receipt as new_receipt,
+    )
+    from tools.vps_gitless_release_activate import (
+        ActivationBlocked, _manifest, _trusted_file,
+    )
+    from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+
+    if prior == LEGACY_TARGET:
+        old_backend, prefix, receipt = LEGACY_BACKEND, LEGACY_PREFIX, legacy_receipt
+    elif prior == NEW_TARGET:
+        old_backend, prefix, receipt = NEW_BACKEND, NEW_PREFIX, new_receipt
+    else:
+        return False
+    try:
+        _trusted_journal(journal_root, uid)
+        if ((journal_root / prior).exists()
+                or (journal_root / (".stop-confirmed-" + prior)).exists()
+                or _trusted_file(journal_root / (".stop-invoked-" + prior), uid)
+                != b"STOP_INVOKED; not install authorization\\n"):
+            return False
+        if prior == LEGACY_TARGET and (
+            _trusted_file(journal_root / (".chatops-invoked-" + prior), uid)
+            != (prior + "\n").encode("ascii")
+        ):
+            return False
+        # The handoff-proven receipt binds the original STOP to exactly one
+        # successor SHA, even when that successor is no longer installed.
+        raw = _trusted_file(journal_root / (prefix + "handoff-proven-" + prior), uid)
+        successor = raw.decode("ascii").removesuffix("\n")
+        if (len(successor) != 40
+                or any(ch not in "0123456789abcdef" for ch in successor)
+                or successor in (old_backend, prior)
+                or raw != (successor + "\n").encode("ascii")):
+            return False
+        journal = journal_root / successor
+        if (not journal.is_dir() or journal.is_symlink()
+                or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077):
+            return False
+        old = _manifest(_trusted_file(journal / "old.json", uid))
+        new = _manifest(_trusted_file(journal / "target.json", uid))
+        _trusted_file(journal / "units.json", uid)
+        if (old["build_sha"] != old_backend or new["build_sha"] != successor
+                or not all(receipt(journal_root, phase, uid, target=successor)
+                           for phase in ("handoff-attempt", "backend-exited",
+                                         "handoff-proven"))):
+            return False
+        ready = journal / "editor-ready"
+        if ready.exists() or ready.is_symlink():
+            return _trusted_file(ready, uid) == successor.encode("ascii")
+        # Only the earlier #855 legacy handoff may lack editor-ready; it
+        # remains historical solely while its successor is *still* verified
+        # as installed. A later release requires a sealed ready receipt.
+        return prior == LEGACY_TARGET and verify_release(root) == successor
+    except (ActivationBlocked, RecoveryBlocked, PartialStopBlocked,
+            ReleaseIdentityBlocked, OSError, ValueError, TypeError,
+            UnicodeError, KeyError):
+        return False
+
+
 def deploy_staged_editor_only(
     target: str, *, stage: Path, root: Path = REPO, env_file: Path | None = None,
-    dual_orphan_handoff: bool = False, stop=None, preflight=None,
+    dual_orphan_handoff: bool = False, proven_one_flat_orphan_handoff: bool = False,
+    stop=None, preflight=None,
     installer=None, resume=None, manifest=None, unit_dir=None,
     transactions=None, trusted_uid: int = 0,
 ) -> str:
@@ -403,10 +532,14 @@ def deploy_staged_editor_only(
     from tools.vps_release_identity import (
         MANIFEST, ReleaseIdentityBlocked, verify_release,
     )
-    from tools.stop_robot_runtime import build_dual_orphan_handoff
+    from tools.stop_robot_runtime import (
+        build_dual_orphan_handoff, build_proven_one_flat_orphan_handoff,
+    )
 
     if len(target) != 40 or any(ch not in "0123456789abcdef" for ch in target):
         return "BLOCKED: invalid_approved_target"
+    if dual_orphan_handoff and proven_one_flat_orphan_handoff:
+        return "BLOCKED: competing_exceptional_handoff_options"
     if (not root.is_dir() or root.is_symlink() or (root / ".git").exists()
             or not stage.is_dir() or stage.is_symlink()):
         return "BLOCKED: incorrect_Gitless_release_layout"
@@ -456,6 +589,10 @@ def deploy_staged_editor_only(
             pending = [
                 marker for marker in journal_root.glob(".stop-invoked-*")
                 if not (journal_root / marker.name.removeprefix(".stop-invoked-")).is_dir()
+                and not _proven_prior_exceptional_completion(
+                    journal_root, marker.name.removeprefix(".stop-invoked-"),
+                    root=root, uid=trusted_uid,
+                )
             ] if journal_root.is_dir() else []
             if pending:
                 if (len(pending) != 1
@@ -484,14 +621,25 @@ def deploy_staged_editor_only(
                 # fallback requires its own explicit opt-in, never implied by update.
                 if stop is None:
                     env = _environment(env_file)
+                    if proven_one_flat_orphan_handoff and (
+                        not isinstance(current, str)
+                        or len(current) != 40
+                        or any(c not in "0123456789abcdef" for c in current)
+                    ):
+                        return "BLOCKED: old_release_not_pinned_for_one_orphan_handoff"
                     callback = build_dual_orphan_handoff(env) if dual_orphan_handoff else None
+                    one_orphan = (
+                        build_proven_one_flat_orphan_handoff(env, current)
+                        if proven_one_flat_orphan_handoff else None
+                    )
                     action = RuntimeShutdown(
                         root=root, env=env, dual_orphan_handoff=callback,
+                        proven_one_flat_orphan_handoff=one_orphan,
                     ).run
                 else:
                     action = stop
                 if not _record_one_shot_stop_intent(
-                    journal_root, target, uid=trusted_uid,
+                    journal_root, target, uid=trusted_uid, root=root,
                 ):
                     return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
                 try:
@@ -504,7 +652,16 @@ def deploy_staged_editor_only(
                             + type(exc).__name__ + "; no retry, no deployment")
                 if not (getattr(result, "ok", False) is True
                         and getattr(result, "runtime_stopped", False) is True):
-                    return "BLOCKED: canonical_safe_stop_unproven; no retry, no deployment"
+                    # Preserve the canonical refusal reason for the operator;
+                    # never infer STOP success or authorize a replay from it.
+                    reason = getattr(result, "message", None)
+                    if not isinstance(reason, str) or not reason.strip():
+                        reason = "reason_unavailable"
+                    return (
+                        "BLOCKED: canonical_safe_stop_unproven: "
+                        + reason.replace(chr(10), " ").replace(chr(13), " ")[:500]
+                        + "; no retry, no deployment"
+                    )
                 # Write the receipt only after a confirmed successful canonical
                 # STOP. If this write fails, do not install or repeat STOP.
                 _confirmed_stop_receipt(
@@ -788,15 +945,18 @@ def _editor_retire_inert_approvals(root: Path, env_file: Path | None) -> bool | 
             for cid, symbol, _, approved in candidates:
                 if (conn.execute(
                     "SELECT 1 FROM executions WHERE trading_account_id='paper' "
-                    "AND symbol=? AND exchange_timestamp_ms>=? LIMIT 1",
+                    "AND symbol=? AND (exchange_timestamp_ms IS NULL "
+                    "OR exchange_timestamp_ms>=?) LIMIT 1",
                     (symbol, approved),
                 ).fetchone() is not None or conn.execute(
                     "SELECT 1 FROM paper_limit_orders WHERE trading_account_id='paper' "
-                    "AND symbol=? AND created_at_ms>=? LIMIT 1",
+                    "AND symbol=? AND (created_at_ms IS NULL "
+                    "OR created_at_ms>=?) LIMIT 1",
                     (symbol, approved),
                 ).fetchone() is not None or conn.execute(
                     "SELECT 1 FROM trading_commands WHERE trading_account_id='paper' "
-                    "AND symbol=? AND created_at_ms>=? LIMIT 1",
+                    "AND symbol=? AND (created_at_ms IS NULL "
+                    "OR created_at_ms>=?) LIMIT 1",
                     (symbol, approved),
                 ).fetchone() is not None or conn.execute(
                     "SELECT 1 FROM robot_trades WHERE trading_account_id='paper' "
@@ -1169,7 +1329,8 @@ def _active_required_flat_proof(db: Path) -> tuple[str, str, str | None] | None:
                     return None
                 if conn.execute(
                     "SELECT 1 FROM executions WHERE trading_account_id='paper' "
-                    "AND symbol=? AND exchange_timestamp_ms>=? LIMIT 1",
+                    "AND symbol=? AND (exchange_timestamp_ms IS NULL "
+                    "OR exchange_timestamp_ms>=?) LIMIT 1",
                     (symbol, approved),
                 ).fetchone() is not None:
                     return None
@@ -1438,8 +1599,17 @@ def _recover_active_ingress_overflow(
         return "BLOCKED: active_PAPER_recovery_preflight_or_transition_unproven; no_replay"
 
 
+class _MaintenanceParser(argparse.ArgumentParser):
+    """Keep CLI refusal visible even when PowerShell truncates stderr usage."""
+
+    def error(self, message: str) -> None:
+        # A parsing error is always before STOP intent, deployment and API calls.
+        # One bounded line survives SSH/PowerShell's native-command error surface.
+        self.exit(2, "BLOCKED: paper_maintenance_cli: " + message.replace("\n", " ")[:240] + "\n")
+
+
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Fail-closed one-action PAPER maintenance")
+    parser = _MaintenanceParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
     parser.add_argument("--wait-seconds", type=float, default=0)
@@ -1451,6 +1621,8 @@ def main(argv=None) -> int:
                         help="after safe Gitless Editor recovery, start owner PAPER oneshot")
     parser.add_argument("--dual-orphan-handoff-20261103", action="store_true",
                         help="separate explicit opt-in to exact JASMY/FLOW protected handoff")
+    parser.add_argument("--proven-one-flat-orphan-handoff", action="store_true",
+                        help="explicit owner opt-in: one immutable manual Flat/OPEN close, no trade replay")
     args = parser.parse_args(argv)
     if args.resume_installed_editor_only and args.staged_gitless_editor_only:
         parser.error("choose exactly one Gitless operation")
@@ -1460,6 +1632,10 @@ def main(argv=None) -> int:
         parser.error("full PAPER start requires verified Gitless Editor recovery")
     if args.dual_orphan_handoff_20261103 and not args.staged_gitless_editor_only:
         parser.error("exceptional handoff requires staged Gitless operation")
+    if args.proven_one_flat_orphan_handoff and not args.staged_gitless_editor_only:
+        parser.error("one orphan handoff requires staged Gitless operation")
+    if args.proven_one_flat_orphan_handoff and args.dual_orphan_handoff_20261103:
+        parser.error("choose exactly one exceptional handoff policy")
     if args.start_paper_after_editor and (
         args.staged_gitless_editor_only or args.resume_installed_editor_only
     ):
@@ -1508,6 +1684,7 @@ def main(argv=None) -> int:
             args.sha, stage=args.staged_gitless_editor_only,
             env_file=args.env_file,
             dual_orphan_handoff=args.dual_orphan_handoff_20261103,
+            proven_one_flat_orphan_handoff=args.proven_one_flat_orphan_handoff,
         )
     elif args.resume_installed_editor_only:
         status = resume_installed_release(args.sha, root=REPO, env_file=args.env_file)

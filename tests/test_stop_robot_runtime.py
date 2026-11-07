@@ -47,6 +47,7 @@ class FakeRuntime:
         self.telegram_health = {"component": "telegram_monitoring", "status": "ready",
                                 "database_identity": IDENTITY}
         self.scanner_mode = "SCANNER_RUNNING"
+        self.scanner_worker_quiescent = True
         self.robot_ownership_open = True
         self.autopilot_mode = "OFF"
         self.autopilot_off_reply = (200, {
@@ -74,7 +75,10 @@ class FakeRuntime:
         if url == BACKEND + "/api/robot/protection-health":
             return 200, dict(self.protection)
         if url == BACKEND + "/api/scanner/status":
-            return 200, {"ok": True, "mode": self.scanner_mode}
+            return 200, {
+                "ok": True, "mode": self.scanner_mode,
+                "worker_quiescent": self.scanner_worker_quiescent,
+            }
         if url == BACKEND + "/api/robot/autopilot":
             return 200, {
                 "ok": True, "mode": self.autopilot_mode,
@@ -278,6 +282,53 @@ class FullShutdownTests(unittest.TestCase):
                 self.assertEqual(runtime.scanner_mode, "SCANNER_RUNNING")
                 self.assertEqual(runtime.robot, READY)
 
+    def test_full_stop_waits_for_scanner_child_before_robot_or_backend(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_worker_quiescent = False
+        original_sleep = runtime.sleep
+        observed_robot = []
+
+        def finish_child_after_two_polls(seconds):
+            observed_robot.append(runtime.robot)
+            original_sleep(seconds)
+            if runtime.now >= 1.0:
+                runtime.scanner_worker_quiescent = True
+
+        runtime.sleep = finish_child_after_two_polls
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertGreaterEqual(len(observed_robot), 2)
+        self.assertTrue(all(state == READY for state in observed_robot))
+        self.assertEqual(runtime.calls, [
+            "scanner:stop", "robot:stop", "backend:shutdown",
+            "telegram:shutdown",
+        ])
+
+    def test_unsettled_scanner_child_blocks_robot_and_backend_shutdown(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_worker_quiescent = False
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertFalse(result.ok)
+        self.assertIn("child is still active", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.robot, READY)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_malformed_scanner_worker_evidence_blocks_shutdown(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_worker_quiescent = None
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertFalse(result.ok)
+        self.assertIn("worker quiescence evidence is malformed", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.robot, READY)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_scanner_ack_without_stopped_postcondition_keeps_robot_and_backend(self):
         runtime = FakeRuntime(robot=READY)
         runtime.autopilot_mode = "PAPER_AUTO"
@@ -373,6 +424,37 @@ class FullShutdownTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
         self.assertEqual(runtime.calls, ["scanner:stop"])
+
+    def test_full_stop_accepts_canonically_paused_scanner(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_mode = "SCANNER_PAUSED"
+        runtime.autopilot_mode = "PAPER_AUTO"
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertEqual(runtime.scanner_mode, "SCANNER_STOPPED")
+        self.assertEqual(runtime.autopilot_mode, "OFF")
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_scanner_scope_accepts_canonically_paused_scanner(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_mode = "SCANNER_PAUSED"
+        runtime.autopilot_mode = "PAPER_AUTO"
+
+        result = runtime.orchestrator().run("scanner")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.scanner_mode, "SCANNER_STOPPED")
+        self.assertEqual(runtime.robot, READY)
+        self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
     def test_partial_stop_skips_already_stopped_scanner(self):
         runtime = FakeRuntime(robot=READY)
@@ -1141,6 +1223,93 @@ class ShutdownArmFixture:
         handler._json_response = lambda status, body: replies.append((status, json.loads(json.dumps(body))))
         handler.do_POST()
         return replies[0]
+
+
+class BackendShutdownRefusalReasonTests(unittest.TestCase):
+    def test_empty_internal_tuple_coverage_allows_shutdown(self):
+        # health() returns tuples; only the public JSON projection uses lists.
+        for covered, armed, expected_status in (
+            ((), (), 200), ([], [], 200), (("BTCUSDT",), (), 409),
+        ):
+            with self.subTest(covered=covered, armed=armed):
+                owner = SimpleNamespace(
+                    live_limit_acceptance_diagnostics=lambda: {"database_identity": IDENTITY},
+                    robot_runtime_state=lambda: SimpleNamespace(
+                        mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED",
+                    ),
+                    scanner_status=lambda: SimpleNamespace(mode="SCANNER_STOPPED"),
+                    scanner_worker_quiescent=lambda: True,
+                    paper_shutdown_blocker=lambda: None,
+                )
+                runtime = SimpleNamespace(
+                    call=lambda operation: operation(owner), seal_shutdown=mock.Mock(),
+                )
+                coverage = SimpleNamespace(
+                    health=lambda: {
+                        "healthy": True, "covered_symbols": covered,
+                        "armed_symbols": armed,
+                        "coverage_roles": {} if not covered else {"BTCUSDT": "EXPOSURE"},
+                        "unhealthy_symbols": {},
+                    },
+                    shutdown_idle_guard=lambda: nullcontext(),
+                )
+                handler = object.__new__(PaperHttpHandler)
+                handler.path = "/api/runtime/shutdown"
+                handler.server = SimpleNamespace(
+                    runtime=runtime, robot_protection_coverage=coverage,
+                    shutdown=lambda: None,
+                )
+                handler._payload = lambda *_args: {"database_identity": IDENTITY}
+                replies = []
+                handler._json_response = lambda status, body: replies.append((status, body))
+                with mock.patch("terminal.runtime.paper_http_server.threading.Thread") as thread:
+                    handler.do_POST()
+                self.assertEqual([status for status, _ in replies], [expected_status])
+                if expected_status == 200:
+                    runtime.seal_shutdown.assert_called_once_with()
+                    thread.return_value.start.assert_called_once_with()
+                else:
+                    runtime.seal_shutdown.assert_not_called()
+                    thread.assert_not_called()
+
+    def test_preserves_durable_blocker_without_sealing_backend(self):
+        for reason in ("active_robot_candidate", "unfinished_or_unknown_command"):
+            with self.subTest(reason=reason):
+                owner = SimpleNamespace(
+                    live_limit_acceptance_diagnostics=lambda: {"database_identity": IDENTITY},
+                    robot_runtime_state=lambda: SimpleNamespace(
+                        mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED",
+                    ),
+                    scanner_status=lambda: SimpleNamespace(mode="SCANNER_STOPPED"),
+                    scanner_worker_quiescent=lambda: True,
+                    paper_shutdown_blocker=lambda: reason,
+                )
+                runtime = SimpleNamespace(
+                    call=lambda operation: operation(owner),
+                    seal_shutdown=mock.Mock(),
+                )
+                coverage = SimpleNamespace(
+                    health=lambda: {
+                        "healthy": True, "covered_symbols": [],
+                        "armed_symbols": [], "coverage_roles": {},
+                        "unhealthy_symbols": {},
+                    },
+                    shutdown_idle_guard=lambda: nullcontext(),
+                )
+                handler = object.__new__(PaperHttpHandler)
+                handler.path = "/api/runtime/shutdown"
+                handler.server = SimpleNamespace(
+                    runtime=runtime, robot_protection_coverage=coverage,
+                )
+                handler._payload = lambda *_args: {"database_identity": IDENTITY}
+                responses = []
+                handler._json_response = lambda status, body: responses.append((status, body))
+                handler.do_POST()
+                self.assertEqual(
+                    responses,
+                    [(409, {"ok": False, "error": "runtime_still_required:" + reason})],
+                )
+                runtime.seal_shutdown.assert_not_called()
 
 
 class ShutdownArmRetirementTests(unittest.TestCase):

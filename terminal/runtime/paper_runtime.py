@@ -491,8 +491,10 @@ class ScannerControlRuntime:
                     break
                 if not self._start_requested.is_set():
                     continue
-                self._start_requested.clear()
+                # Publish in-flight ownership before consuming START:
+                # no observer may see both flags clear in the handoff gap.
                 self._start_inflight.set()
+                self._start_requested.clear()
                 failure_reason = None
                 try:
                     # One owner START retains RUNNING across successful passes.
@@ -643,6 +645,18 @@ class ScannerControlRuntime:
                 return True
             self._stop.wait(0.2)
         return False
+
+    def worker_quiescent(self) -> bool:
+        """True only once the Scanner worker has reaped its current pass.
+
+        A durable SCANNER_STOPPED row can precede child-supervisor teardown.
+        The proof is a non-blocking Event read: never wait for the worker on
+        the serialized PAPER owner thread (the child may need that owner).
+        """
+        return (
+            not self._start_inflight.is_set()
+            and not self._start_requested.is_set()
+        )
 
     def status(self) -> ScannerRuntimeStateRecord:
         store = self._store()
@@ -1176,12 +1190,24 @@ class PaperRuntime:
         self._observe_autopilot_with_prepared_evidence(SOURCE_SCANNER, candidate_id)
 
     def _observe_autopilot_with_prepared_evidence(self, source: str, candidate_ref: str) -> None:
-        """A8: closed-candle evidence is fetched here, off the owner, then observed.
+        """Keep blocked PAPER_AUTO callbacks off the serialized protection owner.
 
-        Runs on the Scanner/handler thread. The owner only reads the prepared
-        result; a failed preparation leaves no evidence, so the freshness proof
-        is unknown and the Autopilot WAITs. It never reaches the Scanner pass.
+        SHADOW still evaluates and commits on its read-only deferred path.
+        PAPER_AUTO starts expensive candle/mark preparation only after its
+        off-owner protection-load gate has proved there is room for entry work.
+        A saturated ingress is already a trading WAIT, not a reason to queue
+        heavyweight discretionary work ahead of STOP/TAKE. Scanner retains
+        the source candidate; no order or audit ALLOW is fabricated here.
         """
+        # No owner round trip is needed for the SHADOW->PAPER_AUTO handover
+        # decision. This also avoids fetching candles for SHADOW/OFF.
+        if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
+            return
+        if self._shadow_protection_health() is False:
+            # Proven unhealthy or overloaded: suppress this optional arrival
+            # rather than spend the owner's next slot on an impossible entry.
+            # No new entry is admitted, and no protection event is discarded.
+            return
         try:
             self._prepare_autopilot_evidence(source, candidate_ref)
         except Exception as error:
@@ -1190,13 +1216,8 @@ class PaperRuntime:
                 f"source={source} candidate_ref={candidate_ref} "
                 f"error_class={type(error).__name__}"
             )
-        # Fetch exchange mark prices on the Scanner/handler thread, never under
-        # the owner's serialized admission transaction. Capture immutable marks
-        # for this one decision; late arrivals remain fail-closed by age.
-        # SHADOW: evaluated here, off the owner; only a bounded commit reaches the owner.
-        # No ticker REST request unless a real PAPER_AUTO handover is due.
-        if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
-            return
+        # Marks are prepared off-owner only when PAPER_AUTO can evaluate.
+        # A late state change is rechecked at the canonical owner admission.
         prepared_marks = self._prepare_autopilot_daily_marks()
         try:
             self._dispatch_robot_command(
@@ -1587,6 +1608,9 @@ class PaperRuntime:
 
     def scanner_status(self) -> ScannerRuntimeStateRecord:
         return self._scanner_control.status()
+
+    def scanner_worker_quiescent(self) -> bool:
+        return self._scanner_control.worker_quiescent()
 
     def robot_admission_ready(self) -> bool:
         """Return durable Robot startup admission; never infer readiness locally."""
@@ -5321,6 +5345,25 @@ class PaperRuntime:
             # would be too late. Never dispatch any close until every active
             # symbol proves at most one Robot owner.
             candidates = self.store.load_active_robot_candidate_states(self._paper_account_id)
+            # A protection obligation can dispatch an irreversible PAPER close.
+            # Before dispatch, prove that every durable OPEN Robot trade still
+            # has a corresponding active owner with the same symbol. Include
+            # APPROVED for the attested legacy-entry recovery path: its
+            # triggered obligation must remain recoverable before the candidate
+            # is terminalized. Terminal/missing/mismatched owners never qualify.
+            active_by_id = {
+                item.candidate_id: item.symbol
+                for item in candidates if item.status in {"APPROVED", "OPEN"}
+            }
+            for trade in self.store.load_open_robot_trades(self._paper_account_id):
+                if active_by_id.get(trade.candidate_id) != trade.symbol:
+                    unresolved_trade_ids.add(trade.trade_id)
+            if unresolved_trade_ids:
+                return fail(
+                    "reconcile_robot found OPEN trade without matching active candidate "
+                    "before protection dispatch: "
+                    + ",".join(sorted(unresolved_trade_ids))
+                )
             symbols = sorted({
                 item.symbol for item in candidates if item.status in {"APPROVED", "OPEN"}
             }, key=lambda item: item.value)

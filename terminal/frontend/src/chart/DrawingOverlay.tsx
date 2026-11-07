@@ -99,15 +99,19 @@ export function DrawingOverlay({
       // Never clamp a drag beyond the frozen window to its first/last bar.
       if (candleAligned && (logical < 0 || logical > candles.length - 1))
         return null;
-      const a = { logical: candleAligned ? Math.round(logical) : logical, price };
-      return magnet
-        ? nearestOhlcAnchor(
-            a,
-            candles,
-            coordinates.logicalToX,
-            coordinates.priceToY,
-          )
-        : a;
+      // Search from the *actual pointer pixel*. Rounding before the magnet
+      // discards horizontal distance and can select the wrong bar on zoomed
+      // mobile charts. Only persisted Editor anchors must use integer candles.
+      const raw = { logical, price };
+      const aligned = { logical: candleAligned ? Math.round(logical) : logical, price };
+      if (!magnet) return aligned;
+      const snapped = nearestOhlcAnchor(
+        raw, candles, coordinates.logicalToX, coordinates.priceToY,
+        event.pointerType === "touch" ? 26 : 14,
+      );
+      return candleAligned
+        ? { logical: Math.round(snapped.logical), price: snapped.price }
+        : snapped;
     },
     [candles, coordinates, magnet, candleAligned],
   );

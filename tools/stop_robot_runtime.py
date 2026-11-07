@@ -53,6 +53,7 @@ MUTATION_TIMEOUT_S = 15.0
 LEGACY_WRITER_BARRIER_TIMEOUT_S = 5.0
 LEGACY_HEALTH_REPROOF_WAIT_S = 30.0
 NATURAL_ROBOT_DRAIN_WAIT_S = 10.0
+SCANNER_WORKER_DRAIN_WAIT_S = 15.0
 
 ROBOT_STOPPED_PAIR = ("ROBOT_STOPPED", "ROBOT_STOPPED")
 ROBOT_STOPPABLE = {("ROBOT_RUNNING", "READY"), ("ROBOT_RUNNING", "PAUSED")}
@@ -391,6 +392,7 @@ class RuntimeShutdown:
         legacy_paper_guard: Callable[[], ContextManager[None]] | None = None,
         progress: Callable[[str], None] | None = None,
         dual_orphan_handoff: Callable[[], str] | None = None,
+        proven_one_flat_orphan_handoff: Callable[[], str] | None = None,
         legacy_supported: bool | None = None,
     ) -> None:
         env = dict(os.environ if env is None else env)
@@ -429,8 +431,14 @@ class RuntimeShutdown:
         self._sleep = sleep
         self._monotonic = monotonic
         self._progress = progress or (lambda _message: None)
-        # Explicit opt-in only. Normal stop cannot bypass Robot lifecycle.
-        self._dual_orphan_handoff = dual_orphan_handoff
+        # Preserve the existing one-shot exceptional callback slot. Normal
+        # STOP never gets one, and two competing handoffs cannot be selected.
+        if dual_orphan_handoff is not None and proven_one_flat_orphan_handoff is not None:
+            raise SafeStopError("ambiguous_protected_flat_handoff")
+        self._dual_orphan_handoff = (
+            dual_orphan_handoff if dual_orphan_handoff is not None
+            else proven_one_flat_orphan_handoff
+        )
 
     def _mark(self, message: str) -> None:
         try:
@@ -845,7 +853,9 @@ class RuntimeShutdown:
         mode = body.get("mode")
         if mode == "SCANNER_STOPPED":
             return False
-        if mode != "SCANNER_RUNNING":
+        # The Scanner owner accepts STOP from both RUNNING and PAUSED.
+        # A prior owner pause must not paralyze the canonical full shutdown.
+        if mode not in ("SCANNER_RUNNING", "SCANNER_PAUSED"):
             raise SafeStopError(
                 "Scanner is not in a legal stoppable state; runtime kept alive"
             )
@@ -903,7 +913,7 @@ class RuntimeShutdown:
         self._require_autopilot_off()
         if self._robot_state() != expected_robot_state:
             raise SafeStopError("Robot state changed before dual orphan handoff")
-        self._mark("checking exact JASMY/FLOW evidence before one-shot handoff")
+        self._mark("checking immutable Flat/OPEN evidence before one-shot handoff")
         try:
             result = self._dual_orphan_handoff()
         except Exception as exc:
@@ -1007,15 +1017,42 @@ class RuntimeShutdown:
             self._sleep(POLL_INTERVAL_S)
 
     def _require_scanner_stopped(self) -> None:
-        try:
-            status, body = self._get(self._backend + "/api/scanner/status", PROBE_TIMEOUT_S)
-        except Unreachable as exc:
-            raise SafeStopError("Scanner state is unavailable from legacy PAPER backend") from exc
-        if not (
-            status == 200 and isinstance(body, dict) and body.get("ok") is True
-            and body.get("mode") == "SCANNER_STOPPED"
-        ):
-            raise SafeStopError("Scanner is not proven STOPPED on legacy PAPER backend")
+        # Modern Scanner commits STOPPED before its child-supervisor has fully
+        # returned. Poll only the read-only worker observation off the PAPER
+        # owner, and never advance Robot/Backend shutdown with a live child.
+        # Legacy runtimes without this optional proof preserve their existing
+        # shutdown semantics for upgrade compatibility.
+        deadline = self._monotonic() + SCANNER_WORKER_DRAIN_WAIT_S
+        while True:
+            try:
+                status, body = self._get(
+                    self._backend + "/api/scanner/status", PROBE_TIMEOUT_S,
+                )
+            except Unreachable as exc:
+                raise SafeStopError(
+                    "Scanner state is unavailable from legacy PAPER backend"
+                ) from exc
+            if not (
+                status == 200 and isinstance(body, dict) and body.get("ok") is True
+                and body.get("mode") == "SCANNER_STOPPED"
+            ):
+                raise SafeStopError(
+                    "Scanner is not proven STOPPED on legacy PAPER backend"
+                )
+            if "worker_quiescent" not in body:
+                return  # Pre-upgrade backend; retain its existing proof.
+            settled = body["worker_quiescent"]
+            if settled is True:
+                return
+            if settled is not False:
+                raise SafeStopError(
+                    "Scanner worker quiescence evidence is malformed; backend retained"
+                )
+            if self._monotonic() >= deadline:
+                raise SafeStopError(
+                    "Scanner STOPPED but child is still active; backend retained"
+                )
+            self._sleep(min(POLL_INTERVAL_S, deadline - self._monotonic()))
 
     def _require_temporary_entry_arm_shape(self) -> dict[str, object]:
         try:
@@ -1468,6 +1505,32 @@ def build_dual_orphan_handoff(env: Mapping[str, str]) -> Callable[[], str]:
             expected_pid=_service_pid(),
             expected_build_sha=INCIDENT_BACKEND_SHA,
             execute=True, dual_orphan_incident_20261103=True,
+        )
+
+    return handoff
+
+
+def build_proven_one_flat_orphan_handoff(
+    env: Mapping[str, str], expected_old_sha: str,
+) -> Callable[[], str]:
+    """Reuse the incident handoff machinery, not a second STOP controller.
+
+    The callback is admitted only by an explicitly authorized one-action
+    EDITOR_ONLY update; fresh frozen ownership is proved inside the same
+    SQLite writer barrier as the one-shot PID-pinned signal.
+    """
+    from tools.flat_paper_recovery_transition import (
+        ROOT as VPS_ROOT, _service_pid, execute_flat_handoff,
+    )
+
+    def handoff() -> str:
+        return execute_flat_handoff(
+            db_path=_database_path(VPS_ROOT, env),
+            expected_identity=expected_database_identity(VPS_ROOT, env),
+            expected_pid=_service_pid(),
+            expected_build_sha=expected_old_sha,
+            execute=True,
+            proven_one_flat_orphan=True,
         )
 
     return handoff

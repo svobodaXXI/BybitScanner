@@ -51,6 +51,55 @@ def fake_runner(calls, *, fail=None):
     return run
 
 
+@pytest.mark.parametrize("arguments,reason", [
+    (["a" * 40, "--unexpected-switch"], "unrecognized arguments: --unexpected-switch"),
+    (["a" * 40, "--staged-gitless-editor-only"], "expected one argument"),
+    (["a" * 40, "--proven-one-flat-orphan-handoff"],
+     "one orphan handoff requires staged Gitless operation"),
+])
+def test_invalid_editor_cli_reports_single_line_without_mutation(
+    arguments, reason, monkeypatch, capsys,
+):
+    import tools.paper_maintenance as maintenance
+
+    monkeypatch.setattr(
+        maintenance, "deploy_staged_editor_only",
+        lambda *_args, **_kw: pytest.fail("no deployment after invalid CLI"),
+    )
+    with pytest.raises(SystemExit) as exc:
+        maintenance.main(arguments)
+    assert exc.value.code == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err.startswith("BLOCKED: paper_maintenance_cli:")
+    assert reason in output.err
+    assert "\n" not in output.err.rstrip("\n")
+
+
+def test_proven_one_orphan_editor_cli_accepts_exact_arguments(
+    monkeypatch, capsys,
+):
+    import tools.paper_maintenance as maintenance
+
+    target = "a" * 40
+    stage = "/var/tmp/bybitscanner-editor-proof"
+    calls = []
+    def no_side_effect(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "BLOCKED: TEST_ONLY_NO_RUNTIME_ACTION"
+
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only", no_side_effect)
+    assert maintenance.main([
+        target, "--staged-gitless-editor-only", stage,
+        "--proven-one-flat-orphan-handoff",
+    ]) == 2
+    assert len(calls) == 1
+    assert calls[0][0] == (target,)
+    assert calls[0][1]["stage"] == Path(stage)
+    assert calls[0][1]["proven_one_flat_orphan_handoff"] is True
+    assert capsys.readouterr().out == "BLOCKED: TEST_ONLY_NO_RUNTIME_ACTION\n"
+
+
 def test_rejects_bad_sha_without_stop_or_mutation():
     calls = []
     assert run_maintenance("bad", stop=lambda _: calls.append("stop")) .startswith("BLOCKED:")
@@ -373,6 +422,66 @@ def test_staged_gitless_editor_executes_one_stop_then_install_and_resume(monkeyp
     assert steps == ["preflight", "stop", ("install", True), "resume"]
 
 
+def test_one_proven_flat_orphan_uses_existing_stop_and_only_opted_callback(
+    monkeypatch, tmp_path,
+):
+    import tools.stop_robot_runtime as stop_runtime
+    import tools.vps_release_identity as release
+    from tools.paper_maintenance import deploy_staged_editor_only
+
+    target, old = "a" * 40, "b" * 40
+    root, stage = tmp_path / "installed", tmp_path / "stage"
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_args: old)
+    calls = []
+    sentinel = lambda: "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
+    def builder(env, previous_sha):
+        assert previous_sha == old
+        calls.append("build-one-proven-orphan")
+        return sentinel
+    class Runtime:
+        def __init__(self, **kw):
+            assert kw["dual_orphan_handoff"] is None
+            assert kw["proven_one_flat_orphan_handoff"] is sentinel
+            calls.append("existing-stop-controller")
+        def run(self, scope):
+            assert scope == "all"
+            calls.append("stop")
+            return SimpleNamespace(ok=True, runtime_stopped=True)
+
+    monkeypatch.setattr(stop_runtime, "build_proven_one_flat_orphan_handoff", builder)
+    monkeypatch.setattr("tools.paper_maintenance.RuntimeShutdown", Runtime)
+    result = deploy_staged_editor_only(
+        target, stage=stage, root=root,
+        proven_one_flat_orphan_handoff=True,
+        preflight=lambda *_args, **kw: calls.append("preflight"),
+        installer=lambda *_args, **kw: (
+            calls.append("install"), "INSTALLED_STOPPED: exact"
+        )[1],
+        resume=lambda *_args, **kw: (
+            calls.append("resume"), "READY: EDITOR_ONLY"
+        )[1],
+        transactions=tmp_path/"journal", trusted_uid=os.geteuid(),
+    )
+    assert result == "READY: EDITOR_ONLY"
+    assert calls == [
+        "preflight","build-one-proven-orphan","existing-stop-controller",
+        "stop","install","resume",
+    ]
+
+
+def test_competing_one_orphan_and_legacy_opt_ins_do_not_attempt_stop(tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    root,stage = tmp_path / "installed",tmp_path / "stage"
+    root.mkdir()
+    stage.mkdir()
+    assert deploy_staged_editor_only(
+        "a"*40, stage=stage, root=root,
+        dual_orphan_handoff=True, proven_one_flat_orphan_handoff=True,
+    ) == "BLOCKED: competing_exceptional_handoff_options"
+
+
 def test_staged_gitless_editor_rejected_stop_never_installs(monkeypatch, tmp_path):
     from tools.paper_maintenance import deploy_staged_editor_only
     import tools.vps_release_identity as release
@@ -387,13 +496,18 @@ def test_staged_gitless_editor_rejected_stop_never_installs(monkeypatch, tmp_pat
         preflight=lambda *_args, **_kw: steps.append("preflight"),
         stop=lambda scope: (
             steps.append("stop"),
-            SimpleNamespace(ok=False, runtime_stopped=False)
+            SimpleNamespace(
+                ok=False, runtime_stopped=False,
+                message="STOP BLOCKED: PAPER backend refused shutdown: active APPROVED",
+            )
         )[1],
         installer=lambda *_args, **_kw: pytest.fail("no install after refused stop"),
         resume=lambda *_args, **_kw: pytest.fail("no resume after refused stop"),
         transactions=tmp_path / "transactions", trusted_uid=os.geteuid(),
     )
     assert result.startswith("BLOCKED: canonical_safe_stop_unproven")
+    assert "PAPER backend refused shutdown: active APPROVED" in result
+    assert result.endswith("; no retry, no deployment")
     assert steps == ["preflight", "stop"]
 
 
@@ -656,6 +770,121 @@ def test_staged_gitless_different_target_cannot_replay_unresolved_stop(monkeypat
     result = deploy_staged_editor_only("b" * 40, **args)
     assert result.startswith("BLOCKED: prior_STOP_outcome_unproven_without_install_journal")
     assert calls == ["stop"]
+
+
+def _proven_exceptional_prior_stop(monkeypatch, tmp_path):
+    """Old STOP 094d was superseded by an immutable, separately proven handoff."""
+    import json
+    import tools.paper_interrupted_stop_recovery as recovery
+    import tools.vps_release_identity as release
+
+    installed = "4090641514b8f558a0054fd577b2750b944fd8d6"
+    root = tmp_path / "installed"
+    root.mkdir()
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    transactions.mkdir(mode=0o700)
+    journal = transactions / installed
+    journal.mkdir(mode=0o700)
+    blobs = {
+        "terminal/runtime/paper_http_server.py": "c" * 40,
+        "tools/vps_release_identity.py": "d" * 40,
+    }
+    for name, sha in (("old.json", recovery.OLD_BACKEND),
+                      ("target.json", installed)):
+        entry = journal / name
+        entry.write_text(json.dumps({"build_sha": sha, "blobs": blobs}))
+        entry.chmod(0o600)
+    units = journal / "units.json"
+    units.write_text("{}")
+    units.chmod(0o600)
+    original = transactions / (".stop-invoked-" + recovery.PRIOR_TARGET)
+    original.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    original.chmod(0o600)
+    chatops = transactions / (".chatops-invoked-" + recovery.PRIOR_TARGET)
+    chatops.write_text(recovery.PRIOR_TARGET + "\n")
+    chatops.chmod(0o600)
+    for phase in ("handoff-attempt", "backend-exited", "handoff-proven"):
+        receipt = transactions / (
+            recovery.MARKER_PREFIX + phase + "-" + recovery.PRIOR_TARGET
+        )
+        receipt.write_text(installed + "\n")
+        receipt.chmod(0o600)
+    monkeypatch.setattr(release, "verify_release", lambda *_args: installed)
+    return root, stage, transactions, original, installed
+
+
+def test_proven_exceptional_old_stop_allows_new_target_without_replay(
+    monkeypatch, tmp_path,
+):
+    from tools.paper_maintenance import deploy_staged_editor_only
+
+    root, stage, transactions, old_stop, installed = (
+        _proven_exceptional_prior_stop(monkeypatch, tmp_path)
+    )
+    target = "a" * 40
+    stops = []
+
+    def install(sha, **_kwargs):
+        (transactions / sha).mkdir(mode=0o700)
+        return "INSTALLED_STOPPED: exact"
+
+    result = deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_args, **_kwargs: None,
+        stop=lambda scope: (stops.append(scope),
+                            SimpleNamespace(ok=True, runtime_stopped=True))[1],
+        installer=install,
+        resume=lambda *_args, **_kwargs: "READY: EDITOR_ONLY",
+    )
+    assert result == "READY: EDITOR_ONLY"
+    assert stops == ["all"]  # One new STOP, never replay the old one.
+    assert old_stop.read_bytes() == b"STOP_INVOKED; not install authorization\\n"
+    assert (transactions / installed / "editor-ready").exists() is False
+    assert (transactions / target / "editor-ready").read_bytes() == target.encode()
+
+
+@pytest.mark.parametrize("damage", [
+    "missing_handoff", "invalid_editor_ready", "wrong_installed_release",
+    "missing_backend_exit",
+])
+def test_unproven_exceptional_old_stop_still_blocks_new_stop(
+    monkeypatch, tmp_path, damage,
+):
+    import tools.paper_interrupted_stop_recovery as recovery
+    import tools.vps_release_identity as release
+    from tools.paper_maintenance import deploy_staged_editor_only
+
+    root, stage, transactions, old_stop, installed = (
+        _proven_exceptional_prior_stop(monkeypatch, tmp_path)
+    )
+    if damage == "missing_handoff":
+        (transactions / (
+            recovery.MARKER_PREFIX + "handoff-proven-" + recovery.PRIOR_TARGET
+        )).unlink()
+    elif damage == "missing_backend_exit":
+        (transactions / (
+            recovery.MARKER_PREFIX + "backend-exited-" + recovery.PRIOR_TARGET
+        )).unlink()
+    elif damage == "invalid_editor_ready":
+        (transactions / installed / "editor-ready").write_bytes(b"bad")
+    elif damage == "wrong_installed_release":
+        monkeypatch.setattr(release, "verify_release", lambda *_: "e" * 40)
+
+    result = deploy_staged_editor_only(
+        "a" * 40, stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_args, **_kwargs: pytest.fail("preflight after bad proof"),
+        stop=lambda *_args: pytest.fail("new STOP must remain blocked"),
+        installer=lambda *_args, **_kwargs: pytest.fail("no install"),
+    )
+    assert result.startswith(
+        "BLOCKED: prior_STOP_outcome_unproven_without_install_journal"
+    )
+    assert old_stop.is_file()
+    assert not (transactions / (".stop-invoked-" + "a" * 40)).exists()
 
 
 def test_staged_gitless_completed_release_allows_later_target_without_stop_replay(monkeypatch, tmp_path):
@@ -1096,6 +1325,65 @@ def _frozen_approval_test_db(tmp_path, monkeypatch):
         conn.execute("INSERT INTO robot_candidates VALUES "
                      "('paper','candidate-new','NEWUSDT','APPROVED',1000)")
     return db
+
+
+@pytest.mark.parametrize(
+    ("fill_time", "expected_safe"),
+    [(None, False), (1000, False), (1001, False), (999, True)],
+)
+def test_active_required_flat_proof_rejects_unknown_or_new_approval_fills(
+    monkeypatch, tmp_path, fill_time, expected_safe,
+):
+    from tools import paper_maintenance as maintenance
+
+    db = _frozen_approval_test_db(tmp_path, monkeypatch)
+    with sqlite3.connect(db) as conn:
+        conn.execute("ALTER TABLE robot_runtime_state ADD COLUMN reason TEXT")
+        conn.execute(
+            "INSERT INTO executions VALUES ('paper','NEWUSDT',?)", (fill_time,),
+        )
+    proof = maintenance._active_required_flat_proof(db)
+    if expected_safe:
+        assert proof == ("ROBOT_RUNNING", "PAUSED", None)
+    else:
+        assert proof is None
+
+
+def test_active_required_flat_proof_allows_no_approvals(monkeypatch, tmp_path):
+    from tools import paper_maintenance as maintenance
+
+    db = _frozen_approval_test_db(tmp_path, monkeypatch)
+    with sqlite3.connect(db) as conn:
+        conn.execute("ALTER TABLE robot_runtime_state ADD COLUMN reason TEXT")
+        conn.execute("DELETE FROM robot_candidates")
+    assert maintenance._active_required_flat_proof(db) == (
+        "ROBOT_RUNNING", "PAUSED", None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("table", "insert", "time_value"),
+    [
+        ("executions", "INSERT INTO executions VALUES ('paper','NEWUSDT',?)", None),
+        ("paper_limit_orders",
+         "INSERT INTO paper_limit_orders VALUES ('paper','NEWUSDT',?,'filled')", None),
+        ("trading_commands",
+         "INSERT INTO trading_commands VALUES ('paper','NEWUSDT',?,'filled')", None),
+    ],
+)
+def test_editor_retirement_refuses_unknown_timestamps_before_stop(
+    monkeypatch, tmp_path, table, insert, time_value,
+):
+    from tools import paper_maintenance as maintenance
+    from terminal.application import robot_control
+
+    db = _frozen_approval_test_db(tmp_path, monkeypatch)
+    with sqlite3.connect(db) as conn:
+        conn.execute(insert, (time_value,))
+    calls = []
+    monkeypatch.setattr(robot_control, "stop_robot", lambda **_: calls.append("stop"))
+    assert maintenance._editor_retire_inert_approvals(tmp_path, None) is False
+    assert calls == []
 
 
 def test_editor_retirement_uses_canonical_stop_for_new_inert_owner(monkeypatch, tmp_path):
@@ -2211,3 +2499,87 @@ def test_exceptional_gitless_receipt_reuses_original_protected_handoff(
     assert not ready.exists()
 
 
+def test_historical_legacy_stop_remains_proven_across_release_upgrade(
+    monkeypatch, tmp_path,
+):
+    from tools import paper_maintenance as m
+    import tools.paper_interrupted_stop_recovery as legacy
+    import tools.vps_release_identity as release
+
+    root, _, transactions, _, installed = _proven_exceptional_prior_stop(
+        monkeypatch, tmp_path,
+    )
+    m._complete_stop_intent(transactions, installed, uid=os.geteuid())
+    assert (transactions / installed / "editor-ready").read_bytes() == installed.encode()
+    monkeypatch.setattr(release, "verify_release", lambda *_: "a" * 40)
+    assert m._proven_prior_exceptional_completion(
+        transactions, legacy.PRIOR_TARGET, root=root, uid=os.geteuid(),
+    )
+
+
+def test_new_handoff_ready_receipt_seals_original_stop_without_replay(
+    monkeypatch, tmp_path,
+):
+    import json
+    from tools import paper_maintenance as m
+    import tools.paper_stopped_approved_recovery as partial
+    import tools.paper_interrupted_stop_recovery as legacy
+    import tools.vps_release_identity as release
+    from tools.vps_gitless_release_activate import ActivationBlocked
+
+    root, _, transactions, _, old = _proven_exceptional_prior_stop(
+        monkeypatch, tmp_path,
+    )
+    uid = os.geteuid()
+    m._complete_stop_intent(transactions, old, uid=uid)
+    target = "a" * 40
+    journal = transactions / target
+    journal.mkdir(mode=0o700)
+    blobs = {
+        "terminal/runtime/paper_http_server.py": "c" * 40,
+        "tools/vps_release_identity.py": "d" * 40,
+    }
+    for name, sha in (("old.json", old), ("target.json", target)):
+        path = journal / name
+        path.write_text(json.dumps({"build_sha": sha, "blobs": blobs}))
+        path.chmod(0o600)
+    units = journal / "units.json"
+    units.write_text("{}")
+    units.chmod(0o600)
+    marker = transactions / (".stop-invoked-" + partial.PRIOR_TARGET)
+    marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    marker.chmod(0o600)
+    for phase in ("handoff-attempt", "backend-exited", "handoff-proven"):
+        receipt = transactions / (
+            partial.MARKER_PREFIX + phase + "-" + partial.PRIOR_TARGET
+        )
+        receipt.write_text(target + "\n")
+        receipt.chmod(0o600)
+
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    assert not m._proven_prior_exceptional_completion(
+        transactions, partial.PRIOR_TARGET, root=root, uid=uid,
+    )
+    m._complete_stop_intent(transactions, target, uid=uid)
+    assert (journal / "editor-ready").read_bytes() == target.encode()
+    for prior in (legacy.PRIOR_TARGET, partial.PRIOR_TARGET):
+        assert m._proven_prior_exceptional_completion(
+            transactions, prior, root=root, uid=uid,
+        )
+    monkeypatch.setattr(release, "verify_release", lambda *_: "b" * 40)
+    for prior in (legacy.PRIOR_TARGET, partial.PRIOR_TARGET):
+        assert m._proven_prior_exceptional_completion(
+            transactions, prior, root=root, uid=uid,
+        )
+    # A tampered receipt cannot be accepted, even with the correct SHA.
+    (journal / "editor-ready").unlink()
+    exited = transactions / (
+        partial.MARKER_PREFIX + "backend-exited-" + partial.PRIOR_TARGET
+    )
+    exited.unlink()
+    monkeypatch.setattr(release, "verify_release", lambda *_: target)
+    assert not m._proven_prior_exceptional_completion(
+        transactions, partial.PRIOR_TARGET, root=root, uid=uid,
+    )
+    with pytest.raises(ActivationBlocked, match="exceptional_editor_receipt_proof_unproven"):
+        m._complete_stop_intent(transactions, target, uid=uid)
