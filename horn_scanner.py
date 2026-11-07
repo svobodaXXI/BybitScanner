@@ -231,7 +231,8 @@ def _deliver(event, send, key, stage, chat_id, test_mode, root):
         # An ambiguous 'ok' alone must remain retryable, never enter dedup memory.
         ok = (isinstance(response, dict) and response.get("ok") is True
               and type(message_id) is int and message_id > 0)
-        result.update(ok=ok, message_id=message_id)
+        # Keep the JSONL evidence schema stable even for malformed API replies.
+        result.update(ok=ok, message_id=message_id if ok else None)
     except Exception as error:
         ok = False
         # Error messages from transports may contain request URLs or secrets.
