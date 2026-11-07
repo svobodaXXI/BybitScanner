@@ -316,6 +316,8 @@ try {
         await advanceTo(structuralIndex + 1);
         await page.getByRole("button", { name: "H1", exact: true }).click();
         const supports = JSON.parse(await overlay.getAttribute("data-h1-main-wick-supports") ?? "[]");
+        assert.equal(supports.length, 1,
+          "new confirmed lower-high/low must replace old visible yellow slope, not add a second");
         const version = supports.find(x =>
           x.origin_ms === originAt && x.support_ms === supportAt &&
           x.price === supportPrice && x.adjusted === false);
