@@ -141,7 +141,13 @@ jobs:
         with:
           python-version: "3.11"
       - name: Select independently verified real GRASS H1 reversal from official trade archives
-        run: python -m research.h017_public_h1_window_probe --output-json "$RUNNER_TEMP/real-h1-august.json"
+        run: |
+          if [[ "$GITHUB_HEAD_REF" == "fix/h017-four-pivot-causal-geometry-20261107" ]]; then
+            # Preserve the exact owner's 27 Aug - 3 Sep comparison period.
+            python -m research.h017_public_h1_window_probe --output-json "$RUNNER_TEMP/real-h1-august.json" --exact-window-start 2026-08-27
+          else
+            python -m research.h017_public_h1_window_probe --output-json "$RUNNER_TEMP/real-h1-august.json"
+          fi
       - name: Export audited real MARKET_ONLY JSON for browser proof
         uses: actions/upload-artifact@v4
         with:
