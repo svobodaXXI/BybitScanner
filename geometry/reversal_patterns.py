@@ -361,3 +361,251 @@ def confirms_next_body_close(
     real_body_bottom = min(min(o, c) for o, _, _, c in values[:-1])
     return (values[-1][3] > real_body_top if direction == "LONG"
             else values[-1][3] < real_body_bottom)
+
+
+def observe_closed_engulfing(
+    previous: Mapping[str, Any], current: Mapping[str, Any], direction: str,
+) -> dict[str, object] | None:
+    """Observation-only engulfing on TWO adjacent, finished candles.
+
+    This stricter public observation API does not replace MIRROR's historical
+    directional_engulfing or any strategy's confirmation/admission policy.
+    It rejects incomplete/invalid OHLC, missing timestamps and time gaps.
+    """
+    if (direction not in ("LONG", "SHORT")
+            or not isinstance(previous, Mapping)
+            or not isinstance(current, Mapping)):
+        return None
+    before = closed_candle_numbers(previous)
+    now = closed_candle_numbers(current)
+    if before is None or now is None:
+        return None
+    try:
+        # Exact candle boundaries must be integer milliseconds: int() would
+        # silently truncate fractional floats and accept booleans/strings.
+        timestamps = (
+            previous["open_time_ms"], previous["close_time_ms"],
+            current["open_time_ms"], current["close_time_ms"],
+        )
+        if any(type(value) is not int for value in timestamps):
+            return None
+        start_before, end_before, start_now, end_now = timestamps
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    step = end_before - start_before
+    if step <= 0 or start_before < 0 or end_before != start_now or end_now - start_now != step:
+        return None
+
+    # Keep the validated Decimal prices exact. A Decimal -> float conversion
+    # can round near-equal body boundaries together or overflow to infinity,
+    # creating a false engulfing observation. This new API is observational;
+    # the legacy MIRROR directional_engulfing policy remains unchanged.
+    prior_open, _, _, prior_close = before
+    open_now, _, _, close_now = now
+    if direction == "LONG":
+        engulfed = (prior_close < prior_open and close_now > open_now
+                    and open_now <= prior_close and close_now >= prior_open)
+    else:
+        engulfed = (prior_close > prior_open and close_now < open_now
+                    and open_now >= prior_close and close_now <= prior_open)
+    if not engulfed:
+        return None
+    return {
+        "formation_type": "ENGULFING",
+        "direction": direction,
+        "formation_candle_ids": (start_before, start_now),
+        "confirmation_close_time": None,
+        "confirmed": False,
+        "evidence": {"formation_close_time_ms": end_now},
+    }
+
+
+# Nison-style classical candle formations (observation-only).
+# Nison defines qualitative relationships; ratios below are deliberately
+# transparent ENGINEERING thresholds, not numbers attributed to the author.
+# Classical star/piercing/cloud gaps remain mandatory, including on 24/7 crypto.
+# No use by Scanner, MIRROR, Robot or PAPER admission until separately approved.
+_NISON_SMALL_BODY = Decimal("0.30")
+_NISON_LARGE_BODY = Decimal("0.50")
+_NISON_DOJI_BODY = Decimal("0.10")
+_NISON_SHORT_WICK_TO_BODY = Decimal("0.25")
+# "Near the high/low" is qualitative in Nison: 15% is an explicit
+# conservative engineering approximation, not a book-specified constant.
+_NISON_END_WICK_TO_RANGE = Decimal("0.15")
+
+
+def _nison_closed_window(rows: Sequence[Mapping[str, Any]]):
+    """Validate consecutive closed OHLC and exact equal-duration time intervals."""
+    if not rows or any(not isinstance(row, Mapping) for row in rows):
+        return None
+    try:
+        prices = tuple(closed_candle_numbers(row) for row in rows)
+        if any(price is None for price in prices):
+            return None
+        spans = tuple((row["open_time_ms"], row["close_time_ms"]) for row in rows)
+        if any(type(start) is not int or type(end) is not int for start, end in spans):
+            return None
+        step = spans[0][1] - spans[0][0]
+        if step <= 0 or spans[0][0] < 0:
+            return None
+        if any(end - start != step or (i and start != spans[i - 1][1])
+               for i, (start, end) in enumerate(spans)):
+            return None
+        return prices
+    except (KeyError, TypeError, ValueError, ArithmeticError, AttributeError):
+        return None
+
+
+def observe_nison_reversals(
+    candles: Sequence[Mapping[str, Any]], *, trend_lookback: int = 3,
+) -> tuple[dict[str, object], ...]:
+    """Recognize classical Japanese reversal candle formations at the latest close.
+
+    Looks only at contiguous, fully CLOSED candles. Each 1/2/3-bar pattern must
+    have an independently established prior UP/DOWN close trend. A strictly
+    monotonic run of 3 preceding closes is a conservative *implementation
+    proxy*, NOT a universal Nison rule. It can be relaxed only after research.
+    Classic gaps are not silently dropped just because crypto trades 24/7.
+
+    Returns observations, not entry signals: even a completed three-candle
+    pattern is NOT strategy-confirmed; confirmation/TF/admission belong to the
+    caller, so every result explicitly has confirmed=False.
+    """
+    if type(trend_lookback) is not int or not 3 <= trend_lookback <= 8:
+        return ()
+    if not isinstance(candles, Sequence) or len(candles) < trend_lookback + 1:
+        return ()
+
+    observations: list[dict[str, object]] = []
+    for count in (1, 2, 3):
+        if len(candles) < trend_lookback + count:
+            continue
+        rows = candles[-(trend_lookback + count):]
+        prices = _nison_closed_window(rows)
+        if prices is None:
+            continue
+        closes = tuple(row[3] for row in prices[:trend_lookback])
+        if all(b > a for a, b in zip(closes, closes[1:])):
+            trend = "UP"
+        elif all(b < a for a, b in zip(closes, closes[1:])):
+            trend = "DOWN"
+        else:
+            continue
+        formation = prices[-count:]
+        opens = tuple(row["open_time_ms"] for row in rows[-count:])
+        closed_at = rows[-1]["close_time_ms"]
+
+        def record(name: str, direction: str) -> None:
+            observations.append({
+                "formation_type": name, "direction": direction,
+                "formation_candle_ids": opens,
+                "confirmation_close_time": None, "confirmed": False,
+                "evidence": {
+                    "prior_trend": trend, "formation_close_time_ms": closed_at,
+                    "classical_gap_required": name in (
+                        "PIERCING", "DARK_CLOUD_COVER", "MORNING_STAR",
+                        "MORNING_DOJI_STAR", "EVENING_STAR", "EVENING_DOJI_STAR",
+                    ),
+                },
+            })
+
+        def body(x):
+            return abs(x[3] - x[0])
+
+        def ratio(x):
+            return body(x) / (x[1] - x[2])
+
+        def bullish(x):
+            return x[3] > x[0]
+
+        def bearish(x):
+            return x[3] < x[0]
+
+        if count == 1:
+            x = formation[0]
+            if ratio(x) <= _NISON_DOJI_BODY:
+                record("DOJI", "NEUTRAL")  # Indecision, never directional entry.
+            # A near-zero real body is a DOJI, not also a directional
+            # Hammer/Hanging-Man or inverted-wick signal.
+            if ratio(x) <= _NISON_DOJI_BODY or ratio(x) > _NISON_SMALL_BODY:
+                continue
+            lower = min(x[0], x[3]) - x[2]
+            upper = x[1] - max(x[0], x[3])
+            if lower >= 2 * body(x) and upper <= _NISON_SHORT_WICK_TO_BODY * body(x):
+                record("HAMMER" if trend == "DOWN" else "HANGING_MAN",
+                       "LONG" if trend == "DOWN" else "SHORT")
+            elif upper >= 2 * body(x) and lower <= _NISON_SHORT_WICK_TO_BODY * body(x):
+                record("INVERTED_HAMMER" if trend == "DOWN" else "SHOOTING_STAR",
+                       "LONG" if trend == "DOWN" else "SHORT")
+
+        elif count == 2:
+            first, second = formation
+            direction = "LONG" if trend == "DOWN" else "SHORT"
+            if ((direction == "LONG" and bearish(first) and bullish(second)
+                 and second[0] <= first[3] and second[3] >= first[0])
+                or (direction == "SHORT" and bullish(first) and bearish(second)
+                    and second[0] >= first[3] and second[3] <= first[0])):
+                record("ENGULFING", direction)
+
+            if ratio(first) >= _NISON_LARGE_BODY and ratio(second) <= _NISON_SMALL_BODY:
+                lower_body = min(first[0], first[3])
+                upper_body = max(first[0], first[3])
+                inside = (lower_body <= min(second[0], second[3])
+                          and max(second[0], second[3]) <= upper_body)
+                opposite = ((direction == "LONG" and bearish(first) and bullish(second))
+                            or (direction == "SHORT" and bullish(first) and bearish(second)))
+                if inside and ((ratio(second) <= _NISON_DOJI_BODY) or opposite):
+                    record("HARAMI_CROSS" if ratio(second) <= _NISON_DOJI_BODY else "HARAMI",
+                           direction)
+
+            midpoint = (first[0] + first[3]) / 2
+            if ratio(first) >= _NISON_LARGE_BODY:
+                if (trend == "DOWN" and bearish(first) and bullish(second)
+                        and second[0] < first[2] and midpoint < second[3] < first[0]):
+                    record("PIERCING", "LONG")
+                elif (trend == "UP" and bullish(first) and bearish(second)
+                      and second[0] > first[1] and first[0] < second[3] < midpoint):
+                    record("DARK_CLOUD_COVER", "SHORT")
+
+        else:
+            first, star, last = formation
+            # Nison: Three Advancing White Soldiers / Three Black Crows.
+            # They have three sizeable same-direction real bodies, each of
+            # the latter two OPENING INSIDE the preceding body and closing
+            # progressively nearer the session high/low. Unlike the stars,
+            # no gap is required. Separate prior-trend context is mandatory.
+            def near_close_end(x, side):
+                wick = x[1] - x[3] if side == "LONG" else x[3] - x[2]
+                return wick <= _NISON_END_WICK_TO_RANGE * (x[1] - x[2])
+
+            if (trend == "DOWN"
+                    and all(bullish(x) and ratio(x) >= _NISON_LARGE_BODY
+                            and near_close_end(x, "LONG") for x in formation)
+                    and all(previous[0] <= following[0] <= previous[3]
+                            and following[3] > previous[3]
+                            for previous, following in zip(formation, formation[1:]))):
+                record("THREE_WHITE_SOLDIERS", "LONG")
+            elif (trend == "UP"
+                  and all(bearish(x) and ratio(x) >= _NISON_LARGE_BODY
+                          and near_close_end(x, "SHORT") for x in formation)
+                  and all(previous[3] <= following[0] <= previous[0]
+                          and following[3] < previous[3]
+                          for previous, following in zip(formation, formation[1:]))):
+                record("THREE_BLACK_CROWS", "SHORT")
+
+            if (ratio(first) < _NISON_LARGE_BODY
+                    or ratio(star) > _NISON_SMALL_BODY
+                    or ratio(last) < _NISON_LARGE_BODY):
+                continue
+            midpoint = (first[0] + first[3]) / 2
+            is_doji_star = ratio(star) <= _NISON_DOJI_BODY
+            if (trend == "DOWN" and bearish(first)
+                    and max(star[0], star[3]) < min(first[0], first[3])
+                    and bullish(last) and last[3] > midpoint):
+                record("MORNING_DOJI_STAR" if is_doji_star else "MORNING_STAR", "LONG")
+            elif (trend == "UP" and bullish(first)
+                  and min(star[0], star[3]) > max(first[0], first[3])
+                  and bearish(last) and last[3] < midpoint):
+                record("EVENING_DOJI_STAR" if is_doji_star else "EVENING_STAR", "SHORT")
+
+    return tuple(observations)
