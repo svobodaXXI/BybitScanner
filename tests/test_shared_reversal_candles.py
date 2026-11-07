@@ -150,6 +150,10 @@ _UP = [
              candle(4, 10, 10.7, 9.7, 10.2)], "HARAMI", "LONG"),
     (_DOWN, [candle(3, 11, 11.2, 9.7, 9.8),
              candle(4, 10, 10.5, 9.7, 10.01)], "HARAMI_CROSS", "LONG"),
+    (_UP, [candle(3, 12, 13.4, 11.8, 13.2),
+           candle(4, 12.8, 13.3, 12.3, 12.6)], "HARAMI", "SHORT"),
+    (_UP, [candle(3, 12, 13.4, 11.8, 13.2),
+           candle(4, 12.8, 13.2, 12.4, 12.8)], "HARAMI_CROSS", "SHORT"),
     (_DOWN, [candle(3, 11, 11.2, 9.7, 9.8),
              candle(4, 9.5, 10.8, 9.4, 10.6)], "PIERCING", "LONG"),
     (_UP, [candle(3, 12, 13.4, 11.8, 13.2),
@@ -199,7 +203,7 @@ def test_nison_rejects_unfinished_gapped_corrupt_and_unproved_trend():
     ):
         assert observe(_DOWN + [{**hammer, **defect}]) == ()
     assert observe([{**_DOWN[0], "closed": False}, *_DOWN[1:], hammer]) == ()
-    assert observe([_DOWN[0], _DOWN[1], {**_DOWN[2], "close": 12.5}, hammer]) == ()
+    assert observe([_DOWN[0], _DOWN[1], {**_DOWN[2], "close": 12.5, "high": 13.0}, hammer]) == ()
     assert observe(_DOWN + [hammer], trend_lookback=2) == ()
     assert observe(_DOWN + [hammer], trend_lookback=True) == ()
     assert observe(_DOWN + [hammer], trend_lookback=9) == ()
@@ -213,7 +217,7 @@ def test_nison_preserves_classical_gaps_and_never_uses_unclosed_future():
     valid = _DOWN + [first, star, third]
     assert any(x["formation_type"] == "MORNING_STAR" for x in observe(valid))
     # A gapless crypto-like construction must NOT be mislabelled a classic star.
-    no_gap = _DOWN + [first, {**star, "open": 9.85, "close": 9.83}, third]
+    no_gap = _DOWN + [first, {**star, "open": 9.85, "close": 9.83, "high": 9.95}, third]
     assert not any("MORNING" in x["formation_type"] for x in observe(no_gap))
     # The in-progress third candle is not available as decision-time evidence.
     assert not any("MORNING" in x["formation_type"]
