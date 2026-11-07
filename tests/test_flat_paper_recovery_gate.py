@@ -2,7 +2,9 @@
 import sqlite3
 import unittest
 
-from tools.flat_paper_recovery_gate import FlatRecoveryBlocked, prove_flat_recovery
+from tools.flat_paper_recovery_gate import (
+    FlatRecoveryBlocked, _prove_one_orphan_protection, prove_flat_recovery,
+)
 
 
 IDENTITY = "e0cbafb1c172b65f2db3a2c7cef2636b4164a4b1a229bd183bd907e7984ff0ad"
@@ -364,6 +366,60 @@ class FlatRecoveryGateTests(unittest.TestCase):
         conn, payload = fixture()
         conn.execute("UPDATE robot_trades SET exit_time_ms=NULL")
         assert_blocked(self, conn, payload)
+
+
+class OneFlatOrphanMonitorTests(unittest.TestCase):
+    def test_isolated_disconnected_flat_owner_requires_drain_and_no_arms(self):
+        protection = {
+            "healthy": False,
+            "covered_symbols": ["BASEDUSDT"],
+            "armed_symbols": [],
+            "coverage_roles": {"BASEDUSDT": "EXPOSURE"},
+            "unhealthy_symbols": {
+                "BASEDUSDT": "websocket_disconnect:WebSocketConnectionClosedException",
+            },
+            "ingress": {"current_pending": 0},
+        }
+        self.assertIsNone(_prove_one_orphan_protection(protection, "BASEDUSDT"))
+        for reason in ("ingress_overflow",):
+            protection["unhealthy_symbols"] = {"BASEDUSDT": reason}
+            self.assertIsNone(_prove_one_orphan_protection(protection, "BASEDUSDT"))
+
+    def test_disconnected_monitor_cannot_cover_active_or_unrelated_risk(self):
+        baseline = {
+            "healthy": False,
+            "covered_symbols": ["BASEDUSDT"],
+            "armed_symbols": [],
+            "coverage_roles": {"BASEDUSDT": "EXPOSURE"},
+            "unhealthy_symbols": {
+                "BASEDUSDT": "websocket_disconnect:WebSocketConnectionClosedException",
+            },
+            "ingress": {"current_pending": 0},
+        }
+        for changes in (
+            {"armed_symbols": ["BASEDUSDT"]},
+            {"covered_symbols": ["BASEDUSDT", "OTHERUSDT"]},
+            {"coverage_roles": {"BASEDUSDT": "ENTRY"}},
+            {"coverage_roles": {"BASEDUSDT": "EXPOSURE", "OTHERUSDT": "EXPOSURE"}},
+            {"unhealthy_symbols": {"OTHERUSDT": "websocket_disconnect:WebSocketConnectionClosedException"}},
+            {"unhealthy_symbols": {"BASEDUSDT": "websocket_disconnect:OtherException"}},
+            {"unhealthy_symbols": {"BASEDUSDT": "ingress_overflow", "OTHERUSDT": "ingress_overflow"}},
+            {"ingress": {"current_pending": 1}},
+            {"ingress": {}},
+            {"healthy": None},
+        ):
+            with self.subTest(changes=changes):
+                with self.assertRaises(FlatRecoveryBlocked):
+                    _prove_one_orphan_protection({**baseline, **changes}, "BASEDUSDT")
+
+    def test_healthy_monitor_requires_zero_coverage(self):
+        healthy = {"healthy": True, "covered_symbols": [],
+                   "armed_symbols": [], "coverage_roles": {}, "unhealthy_symbols": {}}
+        self.assertIsNone(_prove_one_orphan_protection(healthy, "BASEDUSDT"))
+        with self.assertRaises(FlatRecoveryBlocked):
+            _prove_one_orphan_protection({
+                **healthy, "covered_symbols": ["BASEDUSDT"],
+            }, "BASEDUSDT")
 
 
 if __name__ == "__main__":
