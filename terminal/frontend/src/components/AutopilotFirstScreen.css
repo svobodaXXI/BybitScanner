@@ -196,3 +196,8 @@
   color: #cbd7df;
 }
 .dom-robot-position-status strong { color: #e1e8ef; }
+
+/* Same PAPER position controls as the manual Terminal; observation only. */
+.autopilot-terminal-position-panel { grid-column: 1; grid-row: 2; min-width: 0; }
+.autopilot-terminal-position-panel .paper-position-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.autopilot-terminal-position-panel .paper-position-info { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }

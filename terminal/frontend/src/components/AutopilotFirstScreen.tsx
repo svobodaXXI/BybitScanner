@@ -23,6 +23,7 @@ import type { PaperOpenPosition } from "../contracts/trading";
 import {
   formatPositionPnlPercent,
   formatPositionPrice,
+  formatPositionAverageEntry,
   positionPnlPercent,
 } from "../marketData/positionPnl";
 import "./AutopilotFirstScreen.css";
@@ -208,6 +209,8 @@ export function AutopilotFirstScreen({
   accountControl,
   onRobotControls,
   onPositionsLoaded,
+  verifiedPosition = null,
+  oneWorkingVolumeUsdt = null,
 }: {
   now?: () => number;
   onOpenPositions?: () => void;
@@ -219,6 +222,8 @@ export function AutopilotFirstScreen({
   onRobotControls?: () => void;
   /** Share the already-loaded inventory; do not introduce a second API poller. */
   onPositionsLoaded?: (positions: PaperOpenPosition[] | null) => void;
+  verifiedPosition?: PaperOpenPosition | null;
+  oneWorkingVolumeUsdt?: string | null;
 }) {
   const [autopilot, setAutopilot] = useState<Loadable<AutopilotModeState>>({
     status: "loading",
@@ -304,6 +309,61 @@ export function AutopilotFirstScreen({
           <LoadState value={robotDay} render={(day) => day.closedTrades} />
         </SummaryItem>
       </dl>
+
+      <div className="autopilot-terminal-position-panel" aria-label="Позиция робота на панели управления">
+        <div className="paper-position-controls">
+          <div className="paper-wv-indicator" aria-label="Engaged working volume">
+            <div className="paper-wv-primary">
+              <span className="paper-wv-value paper-hold-target"
+                title={oneWorkingVolumeUsdt ? `1 РО = ${oneWorkingVolumeUsdt} USDT` : undefined}>
+                {"⚔️"} {verifiedPosition ? Number(verifiedPosition.engaged_wv).toFixed(1) : "—"}
+              </span>
+            </div>
+            <div className={`paper-wv-position ${verifiedPosition ? verifiedPosition.position_side.toLowerCase() : "flat"}`}>
+              <span className={`paper-wv-direction ${verifiedPosition ? verifiedPosition.position_side.toLowerCase() : "flat"}`} aria-hidden="true" />
+              <span className="paper-position-notional-hold"
+                title={verifiedPosition ? `${verifiedPosition.position_quantity} ${verifiedPosition.symbol.replace(/USDT$/, "")}` : undefined}>
+                <span className="paper-wv-amount">{verifiedPosition
+                  ? Math.round(Number(verifiedPosition.engaged_notional_usdt))
+                  : "0"}</span>
+                <span className="paper-wv-currency">USDT</span>
+              </span>
+            </div>
+          </div>
+          {verifiedPosition ? (
+            <div className="paper-position-info" aria-label="Current PAPER position">
+              <span className="paper-position-symbol">{verifiedPosition.symbol}</span>
+              {verifiedPosition.average_entry !== null ? (
+                <span className="paper-position-average">
+                  {formatPositionAverageEntry(Number(verifiedPosition.average_entry))}
+                </span>
+              ) : null}
+              {(() => {
+                const percent = positionPnlPercent(
+                  verifiedPosition.position_side,
+                  verifiedPosition.average_entry === null ? null : Number(verifiedPosition.average_entry),
+                  verifiedPosition.current_price === null ? null : Number(verifiedPosition.current_price),
+                );
+                const pnlValue = verifiedPosition.unrealized_pnl === null ? null : Number(verifiedPosition.unrealized_pnl);
+                return (
+                  <>
+                    {percent !== null ? (
+                      <span className={`paper-position-pnl ${percent > 0 ? "positive" : percent < 0 ? "negative" : "neutral"}`}>
+                        {formatPositionPnlPercent(percent)}
+                      </span>
+                    ) : null}
+                    {pnlValue !== null && Number.isFinite(pnlValue) ? (
+                      <span className={`paper-position-pnl ${pnlValue > 0 ? "positive" : pnlValue < 0 ? "negative" : "neutral"}`}>
+                        {formatUsdt(pnlValue)}
+                      </span>
+                    ) : null}
+                  </>
+                );
+              })()}
+            </div>
+          ) : null}
+        </div>
+      </div>
 
       <nav className="autopilot-utility-stack" aria-label="Панель управления Автопилотом">
         <button className="workspace-nav-button" type="button" aria-label="Подробности сделки" title="Подробности сделки"

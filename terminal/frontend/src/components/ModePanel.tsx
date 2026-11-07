@@ -14,6 +14,7 @@ export type WorkspaceMode = LegacyWorkspaceMode;
 type ModePanelProps = ComponentProps<typeof LegacyModePanel> & {
   autopilotTradeEpisodeId?: string | null;
   onRobotPositionsLoaded?: (positions: PaperOpenPosition[] | null) => void;
+  verifiedRobotPosition?: PaperOpenPosition | null;
 };
 
 export function ModePanel({
@@ -38,6 +39,8 @@ export function ModePanel({
             <>
               <AutopilotFirstScreen
                 accountKey={accountKey}
+                verifiedPosition={props.verifiedRobotPosition ?? null}
+                oneWorkingVolumeUsdt={props.paperState?.one_wv_usdt ?? null}
                 onPositionsLoaded={onRobotPositionsLoaded}
                 onOpenPositions={props.accountWorkspaceProjection?.provider === "PAPER"
                   ? () => setOpenPositionsRequest((value) => value + 1)
