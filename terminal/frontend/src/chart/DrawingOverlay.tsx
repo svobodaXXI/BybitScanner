@@ -42,6 +42,7 @@ export function DrawingOverlay({
   selectedId,
   tool,
   magnet,
+  magnetAnchor,
   candles,
   candleAligned = false,
   coordinates,
@@ -57,6 +58,8 @@ export function DrawingOverlay({
   selectedId: string | null;
   tool: DrawingTool;
   magnet: boolean;
+  /** Optional time-axis adapter for replay's UTC slots; terminal keeps its OHLC default. */
+  magnetAnchor?: (anchor: DrawingAnchor, radius: number) => DrawingAnchor;
   candles: readonly Candle[];
   /** Review-only: submitted pivot times must refer to exact frozen candles. */
   candleAligned?: boolean;
@@ -105,15 +108,16 @@ export function DrawingOverlay({
       const raw = { logical, price };
       const aligned = { logical: candleAligned ? Math.round(logical) : logical, price };
       if (!magnet) return aligned;
-      const snapped = nearestOhlcAnchor(
-        raw, candles, coordinates.logicalToX, coordinates.priceToY,
-        event.pointerType === "touch" ? 26 : 14,
-      );
+      const radius = event.pointerType === "touch" ? 26 : 14;
+      const snapped = magnetAnchor
+        ? magnetAnchor(raw, radius)
+        : nearestOhlcAnchor(raw, candles,
+          coordinates.logicalToX, coordinates.priceToY, radius);
       return candleAligned
         ? { logical: Math.round(snapped.logical), price: snapped.price }
         : snapped;
     },
-    [candles, coordinates, magnet, candleAligned],
+    [candles, coordinates, magnet, candleAligned, magnetAnchor],
   );
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
