@@ -87,3 +87,37 @@ def test_legacy_wedge_bullish_engulfing_remains_unchanged():
     ])
     assert is_bullish_engulfing(frame, 1)
     assert not is_bullish_engulfing(frame, 0)
+
+
+@pytest.mark.parametrize("direction,first,second", [
+    ("LONG", candle(0, 10, 11, 8.8, 9), candle(1, 8.9, 10.4, 8.5, 10.1)),
+    ("SHORT", candle(0, 9, 11, 8.8, 10), candle(1, 10.1, 10.4, 8.5, 8.9)),
+])
+def test_closed_engulfing_observation_has_no_trade_confirmation(direction, first, second):
+    from geometry.reversal_patterns import observe_closed_engulfing
+    result = observe_closed_engulfing(first, second, direction)
+    assert result == {
+        "formation_type": "ENGULFING", "direction": direction,
+        "formation_candle_ids": (0, STEP),
+        "confirmation_close_time": None, "confirmed": False,
+        "evidence": {"formation_close_time_ms": 2 * STEP},
+    }
+
+
+def test_closed_engulfing_rejects_unfinished_gaps_bad_ohlc_and_wrong_direction():
+    from geometry.reversal_patterns import observe_closed_engulfing
+    first = candle(0, 10, 11, 8.8, 9)
+    second = candle(1, 8.9, 10.4, 8.5, 10.1)
+    assert observe_closed_engulfing(first, second, "SHORT") is None
+    assert observe_closed_engulfing(first, second, "UNKNOWN") is None
+    for changed in (
+        {"closed": False},
+        {"high": 9},
+        {"open": float("nan")},
+        {"open_time_ms": 2 * STEP, "close_time_ms": 3 * STEP},
+        {"close_time_ms": 3 * STEP},
+        {"open_time_ms": "invalid"},
+    ):
+        assert observe_closed_engulfing(first, {**second, **changed}, "LONG") is None
+    assert observe_closed_engulfing({**first, "closed": False}, second, "LONG") is None
+    assert observe_closed_engulfing({**first, "open_time_ms": -STEP}, second, "LONG") is None
