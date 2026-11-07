@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from terminal.diary.scoped_statistics_archive import ScopedStatisticsArchive, StatisticsScopeError
+from terminal.diary.scoped_statistics_archive import (
+    ScopedStatisticsArchive, StatisticsScopeError, load_latest_scoped_statistics_read_only,
+)
 from terminal.diary.scoped_statistics_reporter import (
     load_paper_source_snapshot, refresh_paper_scoped_statistics,
 )
@@ -72,6 +74,15 @@ def test_automated_archive_is_durable_scoped_and_does_not_modify_source(tmp_path
     assert refresh_paper_scoped_statistics(paper_db_path=paper, archive_path=archive_path) == first
     assert hashlib.sha256(paper.read_bytes()).hexdigest() == fingerprint
     assert not (tmp_path / "diary" / "scoped_factors_unavailable.sqlite3").exists()
+    assert load_latest_scoped_statistics_read_only(
+        archive_path, account_id="paper", owner="MANUAL",
+    ) == first["MANUAL"]
+    assert load_latest_scoped_statistics_read_only(
+        archive_path, account_id="paper", owner="ROBOT",
+    ) == first["ROBOT"]
+    assert load_latest_scoped_statistics_read_only(
+        archive_path, account_id="bybit-main", owner="MANUAL",
+    ) is None
     a = ScopedStatisticsArchive(archive_path)
     try:
         assert a.latest(account_id="paper", owner="ROBOT") == first["ROBOT"]
@@ -163,3 +174,31 @@ def test_source_reconstruction_and_origins_share_snapshot(tmp_path: Path, monkey
     newer = load_paper_source_snapshot(paper)
     assert newer.source_revision == 3
     assert len(newer.origins) == 2
+
+
+def test_read_only_archive_loader_fails_closed_without_creating_any_database(tmp_path: Path):
+    path = tmp_path / "scoped_diary_statistics.sqlite3"
+    with pytest.raises(StatisticsScopeError, match="unavailable"):
+        load_latest_scoped_statistics_read_only(path, account_id="paper", owner="MANUAL")
+    assert not path.exists()
+    assert not (tmp_path / "scoped_diary_statistics.sqlite3-journal").exists()
+
+
+def test_read_only_archive_loader_rejects_corrupted_digest(tmp_path: Path):
+    paper = tmp_path / "source" / "paper.sqlite3"
+    paper.parent.mkdir()
+    source_db(paper)
+    archive = tmp_path / "diary" / "scoped_diary_statistics.sqlite3"
+    refresh_paper_scoped_statistics(paper_db_path=paper, archive_path=archive)
+    con = sqlite3.connect(archive)
+    con.execute("UPDATE scoped_statistics SET report_sha256='0' WHERE owner='ROBOT'")
+    con.commit()
+    con.close()
+    with pytest.raises(StatisticsScopeError, match="corrupt"):
+        load_latest_scoped_statistics_read_only(
+            archive, account_id="paper", owner="ROBOT",
+        )
+    # The unrelated MANUAL report is still accessible.
+    assert load_latest_scoped_statistics_read_only(
+        archive, account_id="paper", owner="MANUAL",
+    ) is not None
