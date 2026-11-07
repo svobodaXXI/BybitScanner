@@ -30,6 +30,17 @@ class TestWindowsVpsManager(unittest.TestCase):
         with self.assertRaises(ValueError):
             ssh_command("vps.example.org", "bybitscanner", "rm -rf /")
 
+    def test_paper_diagnostics_and_update_preflight_fail_on_early_errors(self) -> None:
+        # A failed Git inspection or systemctl query must not be masked by
+        # a later successful health response in the same SSH command.
+        for action in ("Диагностика PAPER", "Предпроверка обновления"):
+            with self.subTest(action=action):
+                remote = ssh_command("vps.example.org", "bybitscanner", action)[-1]
+                self.assertTrue(remote.startswith("set -e; "), remote)
+                self.assertEqual(remote, ACTIONS[action])
+                self.assertNotIn("systemctl start", remote)
+                self.assertNotIn("systemctl stop", remote)
+
     def test_git_actions_are_safe_directory_scoped(self) -> None:
         for action, remote in ACTIONS.items():
             if "git " in remote:
