@@ -155,7 +155,15 @@ try {
     await page.waitForFunction(() =>
       Number(document.querySelector(".replay-execution-overlay")
         ?.getAttribute("data-painted-m5-on-h1")) > 0);
+    const earlySpans = JSON.parse(await overlay.getAttribute("data-m5-h1-spans") ?? "[]");
+    await page.evaluate(() => new Promise(resolve =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const blueSpans = JSON.parse(await overlay.getAttribute("data-m5-h1-spans") ?? "[]");
+    console.log("FIRST_H1_M5_SPANS_INITIAL " + JSON.stringify(earlySpans));
+    console.log("FIRST_H1_M5_SPANS_STABLE " + JSON.stringify(blueSpans));
+    await page.screenshot({
+      path: join(screenshotDir, "real-h1-first-anchors.png"), fullPage: true,
+    });
     assert.ok(blueSpans.length > 0, "expected actual M5 history on H1, not a hidden layer");
     for (const span of blueSpans) {
       assert.ok(span.to_x >= span.from_x && span.to_x - span.from_x < 150,
