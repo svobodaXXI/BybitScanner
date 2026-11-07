@@ -1242,20 +1242,19 @@ export function visibleGeometry(
   return [...current.values()];
 }
 
-/** Early research overlays: a three-pivot H1 main can be displayed before a
- * four-pivot, converging 1-3 / 2-4 trend is confirmed. The blue M5 guide uses
- * the same already-closed three-pivot wick rule. Neither changes the archived
- * MAIN_1H, purple prior, risk, orders or trade records.
+/** Early research overlays share the four-pivot structural confirmation rule
+ * for H1 and M5; they cannot publish a provisional three-pivot trend.
+ * Neither changes the archived MAIN_1H, purple prior, risk, orders or trades.
  *
  * Work only on a prefix of CLOSED bars, including the immutable prehistory
  * context. Never backdate an H1/M5 guide to its anchor time.
  */
-type EarlyPivot = {
+export type EarlyPivot = {
   kind: "HIGH" | "LOW"; index: number; at_ms: number;
   confirmed_at_ms: number; price: number;
 };
 
-function appendEarlyPivot(bars: readonly ReplayCandle[], pivots: EarlyPivot[]): void {
+export function appendEarlyPivot(bars: readonly ReplayCandle[], pivots: EarlyPivot[]): void {
   const wing = 2;
   const index = bars.length - 1 - wing;
   if (index < wing) return;
@@ -1275,15 +1274,16 @@ function appendEarlyPivot(bars: readonly ReplayCandle[], pivots: EarlyPivot[]): 
   } else pivots.push(pivot);
 }
 
-function wickTightEarlySlope(
+export function wickTightEarlySlope<K extends ReplayGeometry["kind"] | "ACCELERATION_5M">(
   bars: readonly ReplayCandle[], first: EarlyPivot, second: EarlyPivot,
-  side: "BULL" | "BEAR", available_at_ms: number, kind: ReplayGeometry["kind"],
-): ReplayGeometry | null {
+  side: "BULL" | "BEAR", available_at_ms: number, kind: K,
+): (Omit<ReplayGeometry, "kind"> & { kind: K }) | null {
   if (first.index >= second.index || first.kind !== second.kind ||
       second.confirmed_at_ms > available_at_ms) return null;
   let best = second;
   let slope = (second.price - first.price) / (second.at_ms - first.at_ms);
-  const upper = side === "BEAR" ? kind === "MAIN_1H" : kind === "REFERENCE_5M";
+  const followsHourlyTrend = kind === "MAIN_1H" || kind === "ACCELERATION_5M";
+  const upper = followsHourlyTrend ? side === "BEAR" : side === "BULL";
   for (let i = first.index + 1; i <= second.index; i++) {
     const bar = bars[i];
     if (!bar || bar.end_ms > available_at_ms) return null;
@@ -1295,8 +1295,8 @@ function wickTightEarlySlope(
         confirmed_at_ms: bar.end_ms, price };
     }
   }
-  if (side === "BULL" ? (kind === "MAIN_1H" ? slope <= 0 : slope >= 0)
-      : (kind === "MAIN_1H" ? slope >= 0 : slope <= 0)) return null;
+  if (side === "BULL" ? (followsHourlyTrend ? slope <= 0 : slope >= 0)
+      : (followsHourlyTrend ? slope >= 0 : slope <= 0)) return null;
   for (let i = first.index + 1; i <= second.index; i++) {
     const bar = bars[i];
     const linePrice = first.price + slope * (bar.start_ms - first.at_ms);
@@ -1309,7 +1309,7 @@ function wickTightEarlySlope(
   };
 }
 
-/** A visibly earlier H1 yellow + M5 blue, explicitly NOT a fully confirmed 4-pivot trend. */
+/** Frozen four-pivot visual H1/M5 research geometry from closed candles only. */
 export function visibleEarlyGeometry(
   document: ReplayDocument, closedTimeMs: number | null,
 ): ReplayGeometryVersion[] {
