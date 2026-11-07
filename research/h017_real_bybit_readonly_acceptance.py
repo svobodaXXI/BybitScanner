@@ -167,16 +167,44 @@ def verify_archived_hourly_wick_geometry(document):
         first_price, second_price = Decimal(line["from_price"]), Decimal(line["to_price"])
         if first_price != Decimal(a[wick]) or second_price != Decimal(b[wick]):
             raise AssertionError("H1 line anchor is not an actual archived wick")
-        start, stop = line["from_ms"], line["to_ms"]
-        for at in range(start + 3_600_000, stop + 1, 3_600_000):
-            bar = by_hour.get(at)
-            if bar is None:
-                raise AssertionError("missing closed H1 within trendline anchor span")
-            level = first_price + (second_price - first_price) * (
-                Decimal(at - start) / Decimal(stop - start))
-            price = Decimal(bar[wick])
-            if lower and price < level or not lower and price > level:
-                raise AssertionError("H1 wick protrudes beyond frozen yellow geometry")
+        status = line.get("envelope_status", "WICK_TIGHT")
+        if status not in ("WICK_TIGHT", "STRUCTURAL_ONLY"):
+            raise AssertionError("unknown H1 envelope verification status")
+        if status == "STRUCTURAL_ONLY":
+            # A valid four-swing structure survives failure of strict wick
+            # fitting. It is NOT a verified wick envelope or entry signal.
+            pivots = line.get("source_pivots")
+            if not isinstance(pivots, list) or len(pivots) != 4:
+                raise AssertionError("structural-only H1 requires four source pivots")
+            for pivot in pivots:
+                source = by_hour.get(pivot["at_ms"])
+                side_kind = pivot.get("kind")
+                if side_kind not in ("HIGH", "LOW") or source is None:
+                    raise AssertionError("unknown original H1 pivot candle")
+                wick_kind = "high" if side_kind == "HIGH" else "low"
+                if (Decimal(pivot["price"]) != Decimal(source[wick_kind]) or
+                    pivot["confirmed_at_ms"] < source["end_ms"] or
+                    pivot["confirmed_at_ms"] > line["available_at_ms"]):
+                    raise AssertionError("unconfirmed or inaccurate original H1 pivot")
+            kinds = tuple(pivot["kind"] for pivot in pivots)
+            prices = [Decimal(pivot["price"]) for pivot in pivots]
+            valid = (kinds == ("LOW", "HIGH", "LOW", "HIGH") and
+                     prices[2] > prices[0] and prices[3] > prices[1]) if line["side"] == "BULL" else (
+                        kinds == ("HIGH", "LOW", "HIGH", "LOW") and
+                        prices[2] < prices[0] and prices[3] < prices[1])
+            if not valid:
+                raise AssertionError("invalid four-point directional H1 structure")
+        else:
+            start, stop = line["from_ms"], line["to_ms"]
+            for at in range(start + 3_600_000, stop + 1, 3_600_000):
+                bar = by_hour.get(at)
+                if bar is None:
+                    raise AssertionError("missing closed H1 within trendline anchor span")
+                level = first_price + (second_price - first_price) * (
+                    Decimal(at - start) / Decimal(stop - start))
+                price = Decimal(bar[wick])
+                if lower and price < level or not lower and price > level:
+                    raise AssertionError("H1 wick protrudes beyond frozen yellow geometry")
         if line["available_at_ms"] < b["end_ms"]:
             raise AssertionError("hourly line published before its second wick closed")
         counts[kind] += 1
