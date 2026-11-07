@@ -406,7 +406,29 @@ def diagnose_real_h1_pivot_boundary(doc):
         fitted = wick_tight_hourly_trend(proposed, swings.bars)
         if fitted is None:
             if not any(x["pivots"] == key for x in wick_rejects):
-                wick_rejects.append({"pivots": key, "seen_at_ms": hour.end_ms})
+                # Identify the FIRST closed H1 wick that violates the true
+                # 1--3 or 2--4 candidate. Never adjust any pivot or tolerance.
+                violations = []
+                for label, line, boundary in (
+                    ("MAIN_1H", proposed.main, "LOWER" if opposite == "BULL" else "UPPER"),
+                    ("TARGET_1H", proposed.target, "UPPER" if opposite == "BULL" else "LOWER"),
+                ):
+                    for index in range(line.first.index + 1, line.second.index + 1):
+                        bar = swings.bars[index]
+                        wick = bar.high if boundary == "UPPER" else bar.low
+                        level = line.value_at(bar.start_ms)
+                        if (wick > level if boundary == "UPPER" else wick < level):
+                            violations.append({
+                                "line": label, "candle_ms": bar.start_ms,
+                                "boundary": boundary, "actual_wick": str(wick),
+                                "pivot_line_price": str(level),
+                                "distance": str(abs(wick - level)),
+                            })
+                            break
+                wick_rejects.append({
+                    "pivots": key, "seen_at_ms": hour.end_ms,
+                    "first_wick_violations": violations[:2],
+                })
         else:
             wick_valid_keys.add(key)
     new_pivots = [
