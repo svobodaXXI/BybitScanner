@@ -60,6 +60,20 @@ API_ALLOWED = (
     "/api/diary", "/api/health", "/api/robot/autopilot", "/api/robot/protection-health",
     "/api/market", "/api/limit", "/api/stop", "/api/take", "/api/full-close", "/api/close-all",
 )
+# These trading and Autopilot endpoints are deliberately EXACT routes.
+# Never let a permissive prefix admit a future administrative child path.
+# Keep the existing explicitly supported order amendment/cancellation routes.
+ACTION_ROUTE_PREFIXES = (
+    "/api/market", "/api/limit", "/api/stop", "/api/take",
+    "/api/full-close", "/api/close-all", "/api/robot/autopilot",
+)
+ACTION_ROUTES = frozenset((
+    "/api/market",
+    "/api/limit", "/api/limit/amend", "/api/limit/cancel",
+    "/api/stop", "/api/stop/amend", "/api/stop/delete",
+    "/api/take", "/api/take/amend", "/api/take/delete",
+    "/api/full-close", "/api/close-all", "/api/robot/autopilot",
+))
 API_LIVE_PREFIX = "/api/live"
 HOP_BY_HOP = frozenset((
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
@@ -141,6 +155,10 @@ def _under(path: str, prefix: str) -> bool:
 
 
 def api_decision(method: str, path: str, *, allow_live: bool) -> bool:
+    # Check first: /api/robot/autopilot/foo and /api/market/foo would
+    # otherwise be silently exposed through API_ALLOWED's generic prefixes.
+    if any(_under(path, prefix) for prefix in ACTION_ROUTE_PREFIXES):
+        return path in ACTION_ROUTES
     if any(_under(path, prefix) for prefix in API_ALLOWED):
         return True
     if _under(path, API_LIVE_PREFIX):
