@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -91,6 +92,33 @@ def test_unknown_origin_or_mixed_episode_blocks_publication_not_pnl_estimate(tmp
                           factor_store_path=tmp_path / "none")
         assert store.latest(account_id="paper", owner="MANUAL") is None
         assert store.latest(account_id="paper", owner="ROBOT") is None
+    finally:
+        store.close()
+
+
+def test_mixed_manual_robot_episode_does_not_enter_either_account_report(tmp_path: Path):
+    store = ScopedStatisticsArchive(tmp_path / "scoped_diary_statistics.sqlite3")
+    manual = episode("paper", "manual")
+    robot = episode("paper", "robot")
+    # A single economic position episode may contain allocations from two
+    # different controllers. It is NOT legal to split PnL by execution origin.
+    mixed = replace(manual, allocations=(
+        manual.allocations[0],
+        replace(robot.allocations[0], trade_episode_id=manual.trade_episode_id),
+    ))
+    origins = {
+        manual.allocations[0].execution_key: Origin.TERMINAL_MANUAL,
+        robot.allocations[0].execution_key: Origin.ROBOT,
+    }
+    try:
+        for owner in ("MANUAL", "ROBOT"):
+            with pytest.raises(StatisticsScopeError, match="mixed_controller"):
+                store.publish(
+                    account_id="paper", owner=owner, source_revision=1,
+                    episodes=(mixed,), origin_evidence=origins,
+                    factor_store_path=tmp_path / "missing",
+                )
+            assert store.latest(account_id="paper", owner=owner) is None
     finally:
         store.close()
 
