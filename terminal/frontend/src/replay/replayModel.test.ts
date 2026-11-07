@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeHourlyCandles, hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, parseReplayDocument, replayContactWithinFloatPrecision, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, replayCursorAtUtc, parseReplayDocument, replayContactWithinFloatPrecision, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("exposes real H1 warmup candles on the chart but never advances the simulation clock", () => {
@@ -155,6 +155,36 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(timeframeStepCursor(events, 24, "5m", "back")).toBe(23);
     expect(timeframeStepCursor(events, 12, "5m", "forward")).toBe(13);
     expect(timeframeStepCursor(events, 25, "1h", "forward")).toBe(25);
+  });
+
+  it("seeks UTC clock to last COMPLETE candle without revealing a partial H1", () => {
+    const base = Date.UTC(2026, 7, 31, 0);
+    const m5 = 300_000;
+    const events = Array.from({ length: 36 }, (_, index) => ({
+      kind: "CANDLE_CLOSED" as const,
+      time_ms: base + (index + 1) * m5,
+      sequence: index + 1, simulation_run_id: "utc_seek",
+      candle: {
+        start_ms: base + index * m5, end_ms: base + (index + 1) * m5,
+        open: 1, high: 2, low: 0.5, close: 1, volume: 1,
+      },
+    }));
+    expect(replayCursorAtUtc(events, base - m5, "5m")).toBe(0);
+    expect(replayCursorAtUtc(events, base + 7 * m5 + 1, "5m")).toBe(7);
+    expect(replayCursorAtUtc(events, base + 7 * m5 + 1, "1h")).toBe(0);
+    expect(replayCursorAtUtc(events, base + 3_600_000, "1h")).toBe(12);
+    expect(replayCursorAtUtc(events, base + 3_600_000 + m5, "1h")).toBe(12);
+    expect(replayCursorAtUtc(events, base + 2 * 3_600_000, "1h")).toBe(24);
+    expect(replayCursorAtUtc(events, base + 2 * 3_600_000, "5m")).toBe(24);
+    expect(replayCursorAtUtc(events, base + 5 * 3_600_000, "1h")).toBe(36);
+    expect(replayCursorAtUtc(events, Number.NaN, "1h")).toBe(0);
+    // Seeking backwards, then replaying forward, reproduces the exact
+    // original source data without changing the event ledger.
+    const snap = JSON.stringify(events);
+    const back = replayCursorAtUtc(events, base + 3_600_000, "1h");
+    expect(visibleReplay(events, back).candles).toHaveLength(12);
+    expect(timeframeStepCursor(events, back, "1h", "forward")).toBe(24);
+    expect(JSON.stringify(events)).toBe(snap);
   });
 
   it("retains distinct official trade-derived provenance for real archive replay", () => {
