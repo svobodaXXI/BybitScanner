@@ -36,6 +36,16 @@ describe("manual replay UTC drawing anchors", () => {
     expect(hourSegment!.from).toBeCloseTo(10 / 12);
     expect(hourSegment!.to).toBeCloseTo(11 / 12);
     expect(hourSegment!.to).toBeGreaterThan(hourSegment!.from);
+    // After a same-direction H1 revision, the prior yellow slope remains
+    // reviewable at its original anchors but no longer projects indefinitely
+    // across later candles. Rewind hides the future supersession.
+    const revisedAt = start + 100 * 60_000;
+    const original = { from_ms: firstMs };
+    const oldVersion = { ...original, superseded_at_ms: revisedAt };
+    expect(geometryLogicalSegment(original, hourly)!.to).toBe(3);
+    expect(geometryLogicalSegment(oldVersion, hourly)!.to).toBeCloseTo(100 / 60);
+    expect(geometryLogicalSegment(oldVersion, five)!.to).toBeCloseTo(100 / 5);
+    expect(geometryLogicalSegment(original, hourly.slice(0, 1))!.to).toBe(1);
     const fiveSegment = geometryLogicalSegment(line, five);
     expect(fiveSegment).toEqual({ from: 10, to: 11 });
     // Later candles never erase or extend the same retired historical line.
