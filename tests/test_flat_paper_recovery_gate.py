@@ -422,5 +422,53 @@ class OneFlatOrphanMonitorTests(unittest.TestCase):
             }, "BASEDUSDT")
 
 
+    def test_proven_manual_flat_may_leave_only_its_own_healthy_stale_coverage(self):
+        healthy_stale = {
+            "healthy": True,
+            "covered_symbols": ["BASEDUSDT"],
+            "armed_symbols": [],
+            "coverage_roles": {"BASEDUSDT": "EXPOSURE"},
+            "unhealthy_symbols": {},
+            "ingress": {"current_pending": 0},
+        }
+        # This is NOT a standalone proof or a general relaxation. The caller
+        # must first prove immutable close and zero durable obligations.
+        with self.assertRaisesRegex(
+            FlatRecoveryBlocked, "one_orphan_protection_not_quiescent",
+        ):
+            _prove_one_orphan_protection(healthy_stale, "BASEDUSDT")
+        self.assertIsNone(_prove_one_orphan_protection(
+            healthy_stale, "BASEDUSDT", immutable_close_proven=True,
+        ))
+
+    def test_proven_flat_never_waives_real_or_ambiguous_protection(self):
+        healthy_stale = {
+            "healthy": True,
+            "covered_symbols": ["BASEDUSDT"],
+            "armed_symbols": [],
+            "coverage_roles": {"BASEDUSDT": "EXPOSURE"},
+            "unhealthy_symbols": {},
+            "ingress": {"current_pending": 0},
+        }
+        for changes in (
+            {"covered_symbols": ["BASEDUSDT", "OTHERUSDT"]},
+            {"covered_symbols": ["OTHERUSDT"]},
+            {"coverage_roles": {"BASEDUSDT": "ENTRY"}},
+            {"coverage_roles": {"BASEDUSDT": "EXPOSURE", "OTHERUSDT": "EXPOSURE"}},
+            {"armed_symbols": ["BASEDUSDT"]},
+            {"unhealthy_symbols": {"BASEDUSDT": "ingress_overflow"}},
+            {"ingress": {"current_pending": 1}},
+            {"ingress": {}},
+            {"ingress": {"current_pending": None}},
+            {"healthy": None},
+        ):
+            with self.subTest(changes=changes):
+                with self.assertRaises(FlatRecoveryBlocked):
+                    _prove_one_orphan_protection(
+                        {**healthy_stale, **changes}, "BASEDUSDT",
+                        immutable_close_proven=True,
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
