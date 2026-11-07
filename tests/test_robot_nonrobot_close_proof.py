@@ -187,6 +187,81 @@ class NonRobotCloseProofTests(unittest.TestCase):
             })}
         ))
 
+    def test_based_short_manual_flat_proves_owned_post_fill_timestamp(self):
+        # Observed BASEDUSDT PAPER lineage, represented only as synthetic facts:
+        # entry fill at :9689, Robot trade created at :9699, manual Buy at :0176.
+        symbol = Symbol("BASEDUSDT")
+        order_id = "paper-limit-tw_047fac3245a940a7ad0397c562c69312f"
+        link = "tw_1f73cc0145914ce7b5f3bfa5c036f27ea"
+        entry_at, trade_at, closed_at = (
+            1793999879689, 1793999879699, 1793999880176,
+        )
+        trade = SimpleNamespace(**{
+            **vars(self.trade), "trade_id": "robot-trade-2c95993d16177211b5a4edd5",
+            "candidate_id": "2c95993d16177211b5a4edd5",
+            "symbol": symbol, "direction": "SHORT", "pattern": "Double Top",
+            "entry_path": "LIMIT", "entry_quantity": Decimal("178"),
+            "entry_position_version": 1, "entry_time_ms": trade_at,
+            "created_at_ms": trade_at, "average_entry": Decimal("0.04587"),
+        })
+        candidate = SimpleNamespace(**{
+            **vars(self.candidate), "symbol": symbol, "candidate_id": trade.candidate_id,
+        })
+        position = SimpleNamespace(**{
+            **vars(self.position),
+            "position_key": PositionKey(ACCOUNT, Category.LINEAR, symbol, 0),
+            "version": 2, "updated_at_ms": closed_at,
+        })
+        entry = replace(
+            self.entry, symbol=symbol, order_id=OrderId(order_id),
+            quantity=Quantity(Decimal("178")), price=Price(Decimal("0.04587")),
+            fee=Decimal("0.004898916"), exchange_timestamp_ms=entry_at,
+        )
+        close = replace(
+            self.close, symbol=symbol,
+            dedup_key=ExecutionDedupKey(
+                ACCOUNT, Category.LINEAR, ExecutionId("paper-exec-" + link),
+            ),
+            order_id=OrderId("paper-order-" + link),
+            quantity=Quantity(Decimal("178")), price=Price(Decimal("0.04591")),
+            fee=Decimal("0.004903188"), exchange_timestamp_ms=closed_at,
+        )
+        command = SimpleNamespace(**{
+            **vars(self.command), "symbol": symbol, "order_link_id": link,
+            "exchange_order_id": close.order_id,
+            "normalized_quantity": Quantity(Decimal("178")),
+        })
+        facts = dict(
+            trade=trade, candidate=candidate, position=position,
+            executions=(entry, close), command=command,
+            entry_order_ids=(order_id,), entry_fees=entry.fee,
+            unique_open_owner=True, has_competing_work=False,
+        )
+        proof = prove_nonrobot_robot_close(**facts)
+        self.assertIsNotNone(proof)
+        self.assertEqual(proof.exit_time_ms, closed_at)
+        self.assertEqual(proof.realized_pnl_usdt, Decimal("-0.00712"))
+        self.assertEqual(proof.fees_costs_usdt, Decimal("0.009802104"))
+        self.assertEqual(proof.realized_pnl_usdt - proof.fees_costs_usdt,
+                         Decimal("-0.016922104"))
+
+        # Neither a fabricated creation timestamp nor an unrelated Robot lot
+        # may claim the historical close. The order/fill price must match the
+        # immutable Robot entry economics, regardless of timestamp agreement.
+        for changed in (
+            {"trade": SimpleNamespace(**{**vars(trade), "created_at_ms": trade_at + 1})},
+            {"trade": SimpleNamespace(**{**vars(trade), "entry_time_ms": entry_at - 1})},
+            {"trade": SimpleNamespace(**{**vars(trade), "entry_time_ms": closed_at})},
+            {"trade": SimpleNamespace(**{**vars(trade), "average_entry": Decimal("0.04588")})},
+            {"entry_order_ids": ("foreign-limit-order",)},
+            {"executions": (replace(entry, price=Price(Decimal("0.04588"))), close)},
+            {"command": SimpleNamespace(**{**vars(command), "controller": Controller.ROBOT})},
+            {"position": SimpleNamespace(**{**vars(position), "version": 3})},
+            {"has_competing_work": True},
+        ):
+            with self.subTest(changed=changed):
+                self.assertIsNone(prove_nonrobot_robot_close(**{**facts, **changed}))
+
     def test_owner_reconcile_finalizes_only_proven_existing_execution(self):
         trade = SimpleNamespace(**{
             **vars(self.trade), "entry_path": "LIMIT", "created_at_ms": 1793556278449,

@@ -135,13 +135,31 @@ def prove_nonrobot_robot_close(
     # The first recognized entry must be this trade's actual first fill.
     # Coincidentally equal quantities/fees from an earlier lot cannot be
     # substituted to manufacture a closing ledger attribution.
-    if (entry_fills[0].exchange_timestamp_ms != trade.entry_time_ms
-            and not _exact_legacy_entry_time_pair(
-                trade, entry_fills[0].exchange_timestamp_ms)):
-        return None
+    first_fill_ms = entry_fills[0].exchange_timestamp_ms
+    if first_fill_ms != trade.entry_time_ms and not _exact_legacy_entry_time_pair(
+        trade, first_fill_ms,
+    ):
+        # Pre-fix non-Box trades used the local post-fill timestamp as their
+        # entry_time_ms. Accept that distinct clock only if the immutable entry
+        # order(s), exclusive fill window, candidate/trade owner and synced
+        # position already agree, AND the recorded creation time is the exact
+        # local entry time strictly between the first fill and final close.
+        # This is causal provenance, not a blanket millisecond tolerance.
+        if not (
+            getattr(trade, "entry_path", None) in {"LIMIT", "MARKET"}
+            and getattr(trade, "created_at_ms", None) == trade.entry_time_ms
+            and first_fill_ms < trade.entry_time_ms < close.exchange_timestamp_ms
+        ):
+            return None
     if sum((fill.quantity.value for fill in entry_fills), Decimal("0")) != trade.entry_quantity:
         return None
     if sum((fill.fee for fill in entry_fills), Decimal("0")) != entry_fees:
+        return None
+    # Bind the Robot's frozen entry price to these same immutable entry fills.
+    entry_notional = sum(
+        (fill.price.value * fill.quantity.value for fill in entry_fills), Decimal("0"),
+    )
+    if entry_notional / trade.entry_quantity != trade.average_entry:
         return None
     timestamps = [fill.exchange_timestamp_ms for fill in window]
     if any(left >= right for left, right in zip(timestamps, timestamps[1:])):
