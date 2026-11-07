@@ -276,7 +276,7 @@ def prove_one_flat_orphan(
     _require(conn.execute("PRAGMA quick_check").fetchone() == ("ok",),
              "one_orphan_database_not_integral")
     _require(
-        conn.execute("SELECT mode FROM robot_scanner_state "
+        conn.execute("SELECT mode FROM scanner_runtime_state "
                      "WHERE trading_account_id='paper'").fetchone()
         == ("SCANNER_STOPPED",),
         "one_orphan_durable_scanner_not_frozen",
@@ -388,7 +388,7 @@ def prove_one_flat_orphan(
              and isinstance(unhealthy, dict) and not armed,
              "one_orphan_protection_shape_unknown")
     if protection.get("healthy") is True:
-        _require(unhealthy == {} and covered == [] and roles == {},
+        _require(unhealthy == {} and not covered and roles == {},
                  "one_orphan_protection_not_quiescent")
     else:
         _require(
