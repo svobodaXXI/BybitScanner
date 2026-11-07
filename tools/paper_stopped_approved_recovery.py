@@ -421,6 +421,259 @@ def recover_editor_only(
     return finish_resume()
 
 
+
+# The same protected partial-STOP lifecycle can continue a generic, evidence-
+# proved Flat/OPEN Robot orphan. It has an independent receipt namespace from
+# the historical incident above; neither path replays the original STOP.
+ONE_FLAT_PREFIX = ".one-flat-handoff-"
+
+
+def _one_flat_path(transactions: Path, prior: str, phase: str) -> Path:
+    return transactions / (ONE_FLAT_PREFIX + phase + "-" + prior)
+
+
+def _one_flat_receipt(transactions: Path, prior: str, phase: str, target: str,
+                      *, uid: int) -> bool:
+    path = _one_flat_path(transactions, prior, phase)
+    if not path.exists() and not path.is_symlink():
+        return False
+    _demand(_trusted_file(path, uid) == (target + "\n").encode("ascii"),
+            "one_flat_receipt_mismatch:" + phase)
+    return True
+
+
+def _one_flat_record(transactions: Path, prior: str, phase: str, target: str,
+                     *, uid: int) -> None:
+    path = _one_flat_path(transactions, prior, phase)
+    with os.fdopen(os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+    ), "wb") as stream:
+        stream.write((target + "\n").encode("ascii"))
+        stream.flush()
+        os.fsync(stream.fileno())
+    _sync_directory(transactions)
+
+
+def _one_flat_snapshot(
+    transactions: Path, prior: str, *, uid: int, value: dict | None = None,
+) -> dict:
+    """Keep the immutable pre-exit API evidence for post-exit SQL reproving."""
+    import json
+
+    path = _one_flat_path(transactions, prior, "snapshot")
+    if value is not None:
+        # Retain only fields consulted by the existing Flat/OPEN proof.
+        keys = {
+            "backend": ("ok", "component", "mode", "paper_live_safe",
+                        "database_identity", "build_sha", "process_instance_id"),
+            "scanner": ("mode", "worker_quiescent"),
+            "autopilot": ("mode",),
+            "protection": ("healthy", "covered_symbols", "armed_symbols",
+                           "coverage_roles", "unhealthy_symbols", "ingress"),
+        }
+        value = {
+            part: {field: value[part].get(field) for field in fields}
+            for part, fields in keys.items()
+        }
+        contents = json.dumps(value, sort_keys=True).encode("utf-8")
+        if not path.exists() and not path.is_symlink():
+            with os.fdopen(os.open(
+                path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+            ), "wb") as stream:
+                stream.write(contents)
+                stream.flush()
+                os.fsync(stream.fileno())
+            _sync_directory(transactions)
+        _demand(_trusted_file(path, uid) == contents,
+                "one_flat_snapshot_changed_before_signal")
+    else:
+        value = json.loads(_trusted_file(path, uid).decode("utf-8"))
+    _demand(isinstance(value, dict) and set(value) ==
+            {"backend", "scanner", "autopilot", "protection"}
+            and all(isinstance(item, dict) for item in value.values()),
+            "one_flat_snapshot_invalid")
+    return value
+
+
+def recover_one_flat_after_failed_stop(
+    *, target: str, stage: Path, prior_stop: str, expected_old_sha: str,
+    root: Path = ROOT, transactions: Path = TRANSACTIONS,
+    manifest: Path = MANIFEST, uid: int = 0,
+    inspect=None, backend_handoff=None, installer=None, resume=None,
+    backend_stopped=None, postproof=None,
+) -> str:
+    """At-most-once continuation of one failed canonical STOP, not a STOP retry.
+
+    Only after independent owner approval. The first intent freezes admissions
+    and is never replayed. Every later phase is recovered by protected receipt.
+    The existing one-orphan proof owns all immutable close and protection gates.
+    """
+    from tools.paper_maintenance import (
+        _complete_stop_intent, _proven_prior_exceptional_completion,
+        resume_installed_release,
+    )
+    from tools.flat_paper_recovery_gate import prove_one_flat_orphan
+    from tools.flat_paper_recovery_transition import (
+        execute_flat_handoff, get_snapshots, _service_pid,
+    )
+    from tools.vps_release_identity import ReleaseIdentityBlocked
+
+    _demand(
+        len(target) == len(prior_stop) == len(expected_old_sha) == 40
+        and all(ch in "0123456789abcdef"
+                for ch in target + prior_stop + expected_old_sha)
+        and len({target, prior_stop, expected_old_sha}) == 3,
+        "invalid_exact_recovery_target",
+    )
+    _demand(os.geteuid() == uid, "trusted_operator_required")
+    _demand(root.is_dir() and not root.is_symlink() and not (root / ".git").exists()
+            and stage.is_dir() and not stage.is_symlink(), "wrong_gitless_layout")
+    _trusted_journal(transactions, uid)
+    _demand(
+        _trusted_file(transactions / (".stop-invoked-" + prior_stop), uid)
+        == b"STOP_INVOKED; not install authorization\\n"
+        and not (transactions / prior_stop).exists()
+        and not (transactions / (".stop-confirmed-" + prior_stop)).exists(),
+        "original_STOP_not_a_proven_failed_attempt",
+    )
+    _demand(not (transactions / (".stop-invoked-" + target)).exists(),
+            "target_has_other_STOP_intent")
+    _demand(
+        all(marker.name == ".stop-invoked-" + prior_stop
+            or _proven_prior_exceptional_completion(
+                transactions, marker.name.removeprefix(".stop-invoked-"),
+                root=root, uid=uid,
+            ) for marker in transactions.glob(".stop-invoked-*")),
+        "another_unresolved_STOP_intent",
+    )
+    # A partially committed Gitless transaction cannot pass pre-install
+    # collision checks a second time. Only the existing installer may resume it.
+    if not (transactions / target).is_dir():
+        (inspect or inspect_staged_release)(target, stage=stage, root=root,
+                                             manifest=manifest, uid=uid)
+    phases = ("handoff-attempt", "backend-exited", "telegram-attempt", "handoff-proven")
+    observed = {
+        name: _one_flat_receipt(transactions, prior_stop, name, target, uid=uid)
+        for name in phases
+    }
+    _demand(not observed["backend-exited"] or observed["handoff-attempt"],
+            "backend_receipt_without_signal_intent")
+    _demand(not observed["handoff-proven"] or observed["backend-exited"],
+            "completion_without_backend_exit")
+    if not observed["handoff-attempt"]:
+        _demand(not any(observed.values()), "partial_attempt_without_intent")
+    from tools.stop_robot_runtime import build_proven_one_flat_orphan_handoff
+    from tools.runtime_intent import expected_database_identity
+
+    env = _environment(ENV_FILE)
+    identity = expected_database_identity(root, env)
+    db = _database_path(root, env)
+    _demand(db.is_file() and not db.is_symlink() and len(identity) == 64,
+            "paper_database_identity_unproven")
+    try:
+        installed = verify_release(root, manifest)
+    except (ReleaseIdentityBlocked, OSError):
+        _demand(observed["handoff-proven"] and (transactions / target).is_dir(),
+                "unverified_old_release_without_install_transaction")
+        installed = None
+    if installed == target:
+        _demand(observed["handoff-proven"] and (transactions / target).is_dir(),
+                "target_installed_without_handoff_proof")
+    old = (installed if installed not in (None, target)
+           else _one_flat_snapshot(transactions, prior_stop, uid=uid)["backend"]["build_sha"])
+    _demand(old == expected_old_sha,
+            "old_release_identity_not_pinned_to_partial_STOP")
+    if not observed["handoff-attempt"]:
+        owner = RuntimeShutdown(root=root, env=env)
+        _demand(owner._probe_backend() == PRESENT, "backend_not_proven_active")
+        owner._probe_telegram()
+        owner._require_scanner_stopped()
+        owner._require_autopilot_off()
+        _demand(owner._robot_state() ==
+                ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+                "robot_not_frozen_required")
+        snapshots = get_snapshots()
+        _demand(execute_flat_handoff(
+            db_path=db, expected_identity=identity, expected_pid=_service_pid(),
+            expected_build_sha=old, execute=False, snapshots=snapshots,
+            proven_one_flat_orphan=True,
+        ).startswith("PRECHECK_ONLY:"), "pre_signal_flat_proof_unproven")
+        _one_flat_snapshot(transactions, prior_stop, uid=uid, value=snapshots)
+        _one_flat_record(transactions, prior_stop, "handoff-attempt", target, uid=uid)
+        try:
+            result = (
+                backend_handoff or build_proven_one_flat_orphan_handoff(env, old)
+            )()
+        except Exception as exc:
+            raise PartialStopBlocked(
+                "backend_handoff_outcome_unknown_no_retry:" + type(exc).__name__
+            ) from exc
+        _demand(result == "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed",
+                "backend_signal_exit_unproven_no_retry")
+        _one_flat_record(transactions, prior_stop, "backend-exited", target, uid=uid)
+    else:
+        _demand(observed["backend-exited"],
+                "backend_signal_outcome_unknown_no_retry")
+    _demand((backend_stopped or _backend_stopped)(),
+            "backend_absence_unproven_no_retry")
+
+    if not observed["handoff-proven"]:
+        owner = RuntimeShutdown(root=root, env=env)
+        state = owner._probe_telegram()
+        if state == PRESENT:
+            _demand(not observed["telegram-attempt"],
+                    "telegram_shutdown_outcome_unknown_no_retry")
+            _one_flat_record(transactions, prior_stop, "telegram-attempt", target, uid=uid)
+            from tools.stop_robot_runtime import TELEGRAM
+            owner._shutdown(
+                owner._telegram + "/shutdown", owner._telegram + "/health",
+                "Telegram monitoring", TELEGRAM, "telegram",
+            )
+        _demand(owner._probe_telegram() == ABSENT,
+                "telegram_absence_unproven_no_retry")
+        _one_flat_record(transactions, prior_stop, "handoff-proven", target, uid=uid)
+    else:
+        _demand(observed["backend-exited"], "hand_off_missing_exit_proof")
+
+    _demand((backend_stopped or _backend_stopped)(),
+            "backend_restarted_before_install")
+    _demand(RuntimeShutdown(root=root, env=env)._probe_telegram() == ABSENT,
+            "telegram_restarted_before_install")
+
+    if postproof is None:
+        snapshots = _one_flat_snapshot(transactions, prior_stop, uid=uid)
+        with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=5) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            _demand(
+                prove_one_flat_orphan(conn, expected_identity=identity,
+                                      expected_build_sha=snapshots["backend"]["build_sha"],
+                                      **snapshots)
+                == "ONE_FLAT_ORPHAN_IMMUTABLE_CLOSE_EVIDENCE_ONLY",
+                "post_handoff_flat_evidence_changed",
+            )
+    else:
+        postproof()
+
+    receipt = (installer or activate_staged_release)(
+        target, stage=stage, root=root, manifest=manifest,
+        transactions=transactions, uid=uid,
+        stopped_proof=ShutdownResult(
+            SCOPE_ALL, True, "One-shot previously frozen PAPER backend handoff proven",
+            runtime_stopped=True,
+        ),
+    )
+    _demand(isinstance(receipt, str) and receipt.startswith("INSTALLED_STOPPED:"),
+            "gitless_install_not_proven")
+    ready = (resume or resume_installed_release)(
+        target, root=root, env_file=ENV_FILE,
+    )
+    if isinstance(ready, str) and ready.startswith("READY:"):
+        _complete_stop_intent(transactions, target, uid=uid)
+    return ready
+
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="One-shot partial PAPER STOP recovery")
     parser.add_argument("--target", required=True)

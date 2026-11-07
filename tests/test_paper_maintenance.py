@@ -100,6 +100,80 @@ def test_proven_one_orphan_editor_cli_accepts_exact_arguments(
     assert capsys.readouterr().out == "BLOCKED: TEST_ONLY_NO_RUNTIME_ACTION\n"
 
 
+def test_one_flat_successor_requires_exact_sealed_receipts_before_unlock(
+    tmp_path, monkeypatch,
+):
+    import json
+    from tools import paper_maintenance as maintenance
+    from tools.paper_stopped_approved_recovery import (
+        _one_flat_record, _one_flat_snapshot,
+    )
+
+    uid = os.geteuid()
+    prior, old, target = "b" * 40, "a" * 40, "c" * 40
+    transactions = tmp_path / "journal"
+    transactions.mkdir(mode=0o700)
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    stop_marker = transactions / (".stop-invoked-" + prior)
+    stop_marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    stop_marker.chmod(0o600)
+    journal = transactions / target
+    journal.mkdir(mode=0o700)
+    files = {
+        "terminal/runtime/paper_http_server.py": "d" * 40,
+        "tools/vps_release_identity.py": "e" * 40,
+    }
+    for name, sha in (("old.json", old), ("target.json", target)):
+        metadata = journal / name
+        metadata.write_text(json.dumps({"build_sha": sha, "blobs": files}))
+        metadata.chmod(0o600)
+    units = journal / "units.json"
+    units.write_text("{}")
+    units.chmod(0o600)
+    _one_flat_snapshot(transactions, prior, uid=uid, value={
+        "backend": {"build_sha": old, "ok": True,
+                    "component": "paper_backend", "mode": "paper",
+                    "paper_live_safe": True, "database_identity": "x" * 64,
+                    "process_instance_id": "pinned"},
+        "scanner": {"mode": "SCANNER_STOPPED"},
+        "autopilot": {"mode": "OFF"},
+        "protection": {"healthy": True, "covered_symbols": [],
+                       "armed_symbols": [], "coverage_roles": {},
+                       "unhealthy_symbols": {}, "ingress": {"current_pending": 0}},
+    })
+    for phase in ("handoff-attempt", "backend-exited"):
+        _one_flat_record(transactions, prior, phase, target, uid=uid)
+    monkeypatch.setattr("tools.vps_release_identity.verify_release",
+                        lambda *_args, **_kwargs: target)
+    monkeypatch.setattr(maintenance, "REPO", installed)
+    assert not maintenance._proven_one_flat_successor(
+        transactions, prior, target, uid=uid,
+        root=installed, require_ready=False,
+    )
+    _one_flat_record(transactions, prior, "handoff-proven", target, uid=uid)
+    assert maintenance._proven_one_flat_successor(
+        transactions, prior, target, uid=uid,
+        root=installed, require_ready=False,
+    )
+    assert not maintenance._proven_prior_exceptional_completion(
+        transactions, prior, root=installed, uid=uid,
+    )
+    ready = journal / "editor-ready"
+    ready.write_bytes(target.encode("ascii"))
+    ready.chmod(0o600)
+    assert maintenance._proven_prior_exceptional_completion(
+        transactions, prior, root=installed, uid=uid,
+    )
+    assert maintenance._proven_stopped_backend_handoff_to(
+        transactions, target, uid=uid,
+    )
+    ready.write_bytes(b"corrupt-ready")
+    assert not maintenance._proven_prior_exceptional_completion(
+        transactions, prior, root=installed, uid=uid,
+    )
+
+
 def test_rejects_bad_sha_without_stop_or_mutation():
     calls = []
     assert run_maintenance("bad", stop=lambda _: calls.append("stop")) .startswith("BLOCKED:")
