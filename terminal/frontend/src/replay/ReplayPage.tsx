@@ -269,6 +269,8 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       let paintedM5OnH1 = 0;
       const h1MainWickSupports: { origin_ms: number; support_ms: number;
         price: number; adjusted: boolean }[] = [];
+      const activeM5RayEnds: { end_x: number; last_candle_x: number;
+        pane_width: number }[] = [];
       const m5H1Spans: { from_ms: number; until_ms: number; from_x: number; to_x: number }[] = [];
       for (const line of drawableLines) {
         // Line anchors can predate the requested playback window. Lightweight
@@ -356,6 +358,9 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         context.lineTo(end.x, end.y);
         context.stroke();
         context.globalAlpha = 1;
+        if (isActiveM5 && lastBarX !== null) activeM5RayEnds.push({
+          end_x: end.x, last_candle_x: lastBarX, pane_width: priceWidth,
+        });
         paintedGeometry += 1;
         if (isM5OnH1) {
           paintedM5OnH1 += 1;
@@ -471,6 +476,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       canvas.dataset.paintedPriors = String(paintedPriors);
       canvas.dataset.paintedGeometry = String(paintedGeometry);
       canvas.dataset.h1MainWickSupports = JSON.stringify(h1MainWickSupports);
+      canvas.dataset.activeM5RayEnds = JSON.stringify(activeM5RayEnds);
       canvas.dataset.paintedM5OnH1 = String(paintedM5OnH1);
       canvas.dataset.m5H1Spans = JSON.stringify(m5H1Spans);
       canvas.dataset.visibleObservations = String(paintedObservations);
