@@ -234,7 +234,9 @@ def prove_flat_recovery(
 
 
 
-def _prove_one_orphan_protection(protection: dict, symbol: str) -> None:
+def _prove_one_orphan_protection(
+    protection: dict, symbol: str, *, immutable_close_proven: bool = False,
+) -> None:
     """Only a stranded Flat/OPEN owner's isolated, drained monitor may remain.
 
     Called after the durable FLAT, order and ownership checks. A disconnected
@@ -248,6 +250,17 @@ def _prove_one_orphan_protection(protection: dict, symbol: str) -> None:
              and isinstance(unhealthy, dict) and not armed,
              "one_orphan_protection_shape_unknown")
     if protection.get("healthy") is True:
+        if immutable_close_proven and covered == [symbol] and roles == {symbol: "EXPOSURE"}:
+            # A single stranded OPEN candidate may retain an inert healthy
+            # coverage subscription after immutable evidence proves its lot
+            # was closed. Do not accept active arms, ingress or another symbol.
+            ingress = protection.get("ingress")
+            _require(
+                unhealthy == {} and isinstance(ingress, dict)
+                and ingress.get("current_pending") == 0,
+                "one_orphan_protection_not_quiescent",
+            )
+            return
         _require(unhealthy == {} and not covered and roles == {},
                  "one_orphan_protection_not_quiescent")
         return
@@ -431,8 +444,7 @@ def prove_one_flat_orphan(
             ).fetchone() is None, "one_orphan_unfinished_" + table,
         )
 
-    _prove_one_orphan_protection(protection, symbol)
-
+    # Never clear the coverage gate before proving the actual closing fill.
     # Use the SAME immutable ownership/fill predicate as canonical reconcile.
     # No SQL UPDATE, fake exit attribution, Market order or REST mutation.
     conn.row_factory = sqlite3.Row
@@ -473,6 +485,7 @@ def prove_one_flat_orphan(
         entry_fees=fees, unique_open_owner=True, has_competing_work=False,
     )
     _require(evidence is not None, "one_orphan_manual_close_proof_missing")
+    _prove_one_orphan_protection(protection, symbol, immutable_close_proven=True)
     return "ONE_FLAT_ORPHAN_IMMUTABLE_CLOSE_EVIDENCE_ONLY"
 
 
