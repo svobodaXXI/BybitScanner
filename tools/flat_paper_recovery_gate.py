@@ -256,7 +256,7 @@ def prove_one_flat_orphan(
     from terminal.runtime.paper_runtime import PaperRuntime
 
     account = TradingAccountId("paper")
-    _require(conn.in_transaction and conn.execute("PRAGMA query_only").fetchone() == (1,),
+    _require(conn.in_transaction and tuple(conn.execute("PRAGMA query_only").fetchone()) == (1,),
              "one_orphan_requires_readonly_snapshot")
     _require(
         backend.get("ok") is True
@@ -273,17 +273,22 @@ def prove_one_flat_orphan(
              and scanner.get("worker_quiescent") is not False,
              "one_orphan_scanner_not_quiescent")
     _require(autopilot.get("mode") == "OFF", "one_orphan_autopilot_not_off")
-    _require(conn.execute("PRAGMA quick_check").fetchone() == ("ok",),
+    _require(tuple(conn.execute("PRAGMA quick_check").fetchone()) == ("ok",),
              "one_orphan_database_not_integral")
     _require(
         conn.execute("SELECT mode FROM scanner_runtime_state "
                      "WHERE trading_account_id='paper'").fetchone()
-        == ("SCANNER_STOPPED",),
+        is not None and tuple(conn.execute(
+            "SELECT mode FROM scanner_runtime_state WHERE trading_account_id='paper'"
+        ).fetchone()) == ("SCANNER_STOPPED",),
         "one_orphan_durable_scanner_not_frozen",
     )
     _require(
         conn.execute("SELECT mode FROM robot_autopilot_state "
-                     "WHERE trading_account_id='paper'").fetchone() == ("OFF",),
+                     "WHERE trading_account_id='paper'").fetchone() is not None
+        and tuple(conn.execute(
+            "SELECT mode FROM robot_autopilot_state WHERE trading_account_id='paper'"
+        ).fetchone()) == ("OFF",),
         "one_orphan_durable_autopilot_not_off",
     )
     state = conn.execute(
