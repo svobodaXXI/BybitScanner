@@ -72,7 +72,15 @@ try {
   await page.goto(url, { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: "Машина времени" }).waitFor();
   await page.locator('input[type="file"]').setInputFiles(archivePath);
-  await page.getByText("GRASSUSDT", { exact: false }).first().waitFor();
+  await page.waitForFunction(() =>
+    document.querySelector('input[aria-label="Инструмент"]')?.value === "GRASSUSDT" ||
+    document.querySelector('[role="alert"]') !== null,
+  null, { timeout: 15000 });
+  const importError = page.getByRole("alert");
+  if (await importError.count()) {
+    throw new Error("Real Bybit MARKET_ONLY archive rejected by viewer: " +
+      await importError.first().innerText());
+  }
   assert.equal(await page.getByRole("textbox", { name: "Инструмент" }).inputValue(), "GRASSUSDT");
   assert.equal(await page.locator('input[type="date"]').nth(0).inputValue(),
     new Date(archive.from_ms).toISOString().slice(0, 10));
