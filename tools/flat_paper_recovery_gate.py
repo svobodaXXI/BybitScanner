@@ -234,6 +234,39 @@ def prove_flat_recovery(
 
 
 
+def _prove_one_orphan_protection(protection: dict, symbol: str) -> None:
+    """Only a stranded Flat/OPEN owner's isolated, drained monitor may remain.
+
+    Called after the durable FLAT, order and ownership checks. A disconnected
+    PAPER market-data monitor is not evidence of exposure, but cannot waive
+    any armed order, other symbol's fault or pending ingress.
+    """
+    covered, armed = protection.get("covered_symbols"), protection.get("armed_symbols")
+    roles, unhealthy = protection.get("coverage_roles"), protection.get("unhealthy_symbols")
+    _require(isinstance(covered, (list, tuple))
+             and isinstance(armed, (list, tuple)) and isinstance(roles, dict)
+             and isinstance(unhealthy, dict) and not armed,
+             "one_orphan_protection_shape_unknown")
+    if protection.get("healthy") is True:
+        _require(unhealthy == {} and not covered and roles == {},
+                 "one_orphan_protection_not_quiescent")
+        return
+    reason = unhealthy.get(symbol)
+    _require(
+        protection.get("healthy") is False
+        and covered == [symbol] and roles == {symbol: "EXPOSURE"}
+        and unhealthy == {symbol: reason}
+        and reason in ("ingress_overflow",
+                       "websocket_disconnect:WebSocketConnectionClosedException"),
+        "one_orphan_unrelated_protection_failure",
+    )
+    ingress = protection.get("ingress")
+    _require(
+        isinstance(ingress, dict) and ingress.get("current_pending") == 0,
+        "one_orphan_protection_ingress_not_drained",
+    )
+
+
 def prove_one_flat_orphan(
     conn: sqlite3.Connection, *, expected_identity: str, expected_build_sha: str,
     backend: dict, scanner: dict, autopilot: dict, protection: dict,
@@ -398,27 +431,7 @@ def prove_one_flat_orphan(
             ).fetchone() is None, "one_orphan_unfinished_" + table,
         )
 
-    covered, armed = protection.get("covered_symbols"), protection.get("armed_symbols")
-    roles, unhealthy = protection.get("coverage_roles"), protection.get("unhealthy_symbols")
-    _require(isinstance(covered, (list, tuple))
-             and isinstance(armed, (list, tuple)) and isinstance(roles, dict)
-             and isinstance(unhealthy, dict) and not armed,
-             "one_orphan_protection_shape_unknown")
-    if protection.get("healthy") is True:
-        _require(unhealthy == {} and not covered and roles == {},
-                 "one_orphan_protection_not_quiescent")
-    else:
-        _require(
-            protection.get("healthy") is False
-            and covered == [symbol] and roles == {symbol: "EXPOSURE"}
-            and unhealthy == {symbol: "ingress_overflow"},
-            "one_orphan_unrelated_protection_failure",
-        )
-        ingress = protection.get("ingress")
-        _require(
-            isinstance(ingress, dict) and ingress.get("current_pending") == 0,
-            "one_orphan_protection_ingress_not_drained",
-        )
+    _prove_one_orphan_protection(protection, symbol)
 
     # Use the SAME immutable ownership/fill predicate as canonical reconcile.
     # No SQL UPDATE, fake exit attribution, Market order or REST mutation.
