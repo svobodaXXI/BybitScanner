@@ -15,6 +15,32 @@ from workspace_ready_telegram import send_ready_workspace_checked
 from workspace_ready_link import workspace_link, write_workspace_qr
 
 
+def _telegram_identity() -> tuple[str, str]:
+    """Get one complete, owner-only Telegram identity; never log credentials.
+
+    A dedicated bot/owner pair wins. If either dedicated environment variable
+    is set, both must be set: never mix credentials from different identities.
+    Otherwise reuse only the existing Scanner owner's single chat from config,
+    not the broadcast TELEGRAM_CHAT_IDS list.
+    """
+    token = (os.environ.get("BYBITSCANNER_TELEGRAM_BOT_TOKEN") or "").strip()
+    owner = (os.environ.get("BYBITSCANNER_TELEGRAM_OWNER_ID") or "").strip()
+    if ("BYBITSCANNER_TELEGRAM_BOT_TOKEN" in os.environ
+            or "BYBITSCANNER_TELEGRAM_OWNER_ID" in os.environ):
+        return (token, owner) if token and owner else ("", "")
+    try:
+        import config
+        fallback_token = getattr(config, "TELEGRAM_TOKEN", None)
+        fallback_owner = getattr(config, "TELEGRAM_CHAT_ID", None)
+    except (ImportError, AttributeError, ValueError, TypeError):
+        return "", ""
+    if not isinstance(fallback_token, str):
+        return "", ""
+    if not isinstance(fallback_owner, (str, int)) or isinstance(fallback_owner, bool):
+        return "", ""
+    return fallback_token.strip(), str(fallback_owner).strip()
+
+
 def deliver_if_verified(mode: str, symbol: str, timeframe: str,
                         local_url: str = "http://127.0.0.1:4173/",
                         signal_id: str | None = None) -> bool:
@@ -22,10 +48,11 @@ def deliver_if_verified(mode: str, symbol: str, timeframe: str,
         "BYBITSCANNER_TERMINAL_HTTPS_URL",
         "BYBITSCANNER_ACCESS_CLIENT_ID",
         "BYBITSCANNER_ACCESS_CLIENT_SECRET",
-        "BYBITSCANNER_TELEGRAM_OWNER_ID",
-        "BYBITSCANNER_TELEGRAM_BOT_TOKEN",
     )
     if any(not os.environ.get(key) for key in required):
+        return False
+    bot_token, owner_chat_id = _telegram_identity()
+    if not bot_token or not owner_chat_id:
         return False
     # The already-running UI must respond locally, even if the tunnel is healthy.
     try:
@@ -46,8 +73,8 @@ def deliver_if_verified(mode: str, symbol: str, timeframe: str,
     except (OSError, ValueError):
         return False
     send_ready_workspace_checked(
-        os.environ["BYBITSCANNER_TELEGRAM_BOT_TOKEN"],
-        os.environ["BYBITSCANNER_TELEGRAM_OWNER_ID"],
+        bot_token,
+        owner_chat_id,
         access_client_id=os.environ["BYBITSCANNER_ACCESS_CLIENT_ID"],
         access_client_secret=os.environ["BYBITSCANNER_ACCESS_CLIENT_SECRET"],
         base_url=os.environ["BYBITSCANNER_TERMINAL_HTTPS_URL"],
