@@ -208,6 +208,13 @@ try {
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "3");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-priors"), "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-priors"), "1");
+  // The magnet is a real on/off control, independent of replay state.
+  const magnet = page.getByRole("button", { name: "Магнит", exact: true });
+  assert.equal(await magnet.getAttribute("aria-pressed"), "false");
+  await magnet.click();
+  assert.equal(await magnet.getAttribute("aria-pressed"), "true");
+  await magnet.click();
+  assert.equal(await magnet.getAttribute("aria-pressed"), "false");
   // Manual annotations use the same UTC anchor across real M5/H1 candles;
   // they survive replay rewind and can be deleted without altering geometry.
   await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
