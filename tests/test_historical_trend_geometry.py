@@ -232,24 +232,24 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual(line.first.price, Decimal(110))
         self.assertEqual(line.second.price, Decimal(108))
         self.assertGreater(line.available_at_ms, line.second.at_ms)
-        # The strongest wick protrusion becomes the updated second anchor,
-        # not a rejection and not a move of the original first point.
+        # An intermediate wick cannot replace the significant HIGH pivot 3.
+        # The line must be rejected, not tightened to a non-pivot candle.
+        self.assertEqual(line.second, feed.pivots[-1])
         pierced = list(bars)
         pierced[5] = make_bar(offset+5, 109, 100, FIVE_MINUTES_MS)
-        tightened = last_correction_reference(
+        self.assertIsNone(last_correction_reference(
             hourly=trend, five_minute_pivots=feed.pivots,
             five_minute_bars=tuple(pierced),
-        )
-        self.assertIsNotNone(tightened)
-        self.assertEqual(tightened.first, line.first)
-        self.assertEqual(tightened.second.at_ms, pierced[5].start_ms)
-        self.assertEqual(tightened.second.price, Decimal(109))
-        self.assertGreaterEqual(tightened.available_at_ms, pierced[5].end_ms)
-        for bar in pierced:
-            if tightened.first.at_ms < bar.start_ms <= line.second.at_ms:
-                self.assertGreaterEqual(tightened.value_at(bar.start_ms), bar.high)
+        ))
+        # A forged price at the actual pivot candle is not accepted either.
+        mismatched = list(bars)
+        mismatched[6] = make_bar(offset+6, 107, 103, FIVE_MINUTES_MS)
+        self.assertIsNone(last_correction_reference(
+            hourly=trend, five_minute_pivots=feed.pivots,
+            five_minute_bars=tuple(mismatched),
+        ))
 
-    def test_m5_lower_reference_uses_strongest_low_wick_symmetrically(self):
+    def test_m5_lower_reference_rejects_nonpivot_wick_symmetrically(self):
         stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
         for i, (high, low) in enumerate(BEAR):
             stream.observe_closed(make_bar(i, high, low))
@@ -267,15 +267,21 @@ class ConfirmedGeometryTests(unittest.TestCase):
         bars = tuple(make_bar(100 + i, 110 if i == 2 else 100,
                               91 if i == 4 else (90 if i == 0 else 96),
                               FIVE_MINUTES_MS) for i in range(7))
-        line = last_correction_reference(
+        # The hour-4 LOW=91 pierces the rising 1--3 boundary; it is not
+        # an additional confirmed LOW pivot and cannot become point 3.
+        self.assertIsNone(last_correction_reference(
             hourly=trend, five_minute_pivots=(p, middle, q),
             five_minute_bars=bars,
+        ))
+        compatible = list(bars)
+        compatible[4] = make_bar(104, 100, 95, FIVE_MINUTES_MS)
+        line = last_correction_reference(
+            hourly=trend, five_minute_pivots=(p, middle, q),
+            five_minute_bars=tuple(compatible),
         )
         self.assertIsNotNone(line)
-        self.assertEqual(line.first, p)
-        self.assertEqual(line.second.at_ms, bars[4].start_ms)
-        self.assertEqual(line.second.price, Decimal(91))
-        for bar in bars[1:]:
+        self.assertEqual((line.first, line.second), (p, q))
+        for bar in compatible[1:]:
             self.assertLessEqual(line.value_at(bar.start_ms), bar.low)
 
     def test_blue_publication_requires_four_confirmed_m5_pivots(self):
