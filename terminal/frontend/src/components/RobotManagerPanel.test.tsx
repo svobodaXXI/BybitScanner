@@ -36,13 +36,11 @@ function mockRobotApi(stopResponse: { ok: boolean; error?: string }, afterStop =
 afterEach(() => vi.unstubAllGlobals());
 
 describe("RobotManagerPanel", () => {
-  it("routes confirmed stop only through the canonical Robot endpoint and verifies its result", async () => {
+  it("runs one-tap stop only through the canonical Robot endpoint and verifies its result", async () => {
     const request = mockRobotApi({ ok: true, robot: "ROBOT_STOPPED" } as { ok: boolean });
     render(<RobotManagerPanel onClose={() => {}} />);
     await screen.findByText("ROBOT_RUNNING / READY");
     fireEvent.click(screen.getByRole("button", { name: "Остановить Robot" }));
-    expect(request.mock.calls.every((call) => call[1]?.method !== "POST")).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Подтвердить" }));
     expect(await screen.findByText("Robot STOPPED подтверждён. Backend не останавливался.")).toBeInTheDocument();
     await screen.findByText("ROBOT_STOPPED / ROBOT_STOPPED");
     const postCalls = request.mock.calls.filter((call) => call[1]?.method === "POST");
@@ -56,7 +54,6 @@ describe("RobotManagerPanel", () => {
     render(<RobotManagerPanel onClose={() => {}} />);
     await screen.findByText("ROBOT_RUNNING / READY");
     fireEvent.click(screen.getByRole("button", { name: "Остановить Robot" }));
-    fireEvent.click(screen.getByRole("button", { name: "Подтвердить" }));
     expect(await screen.findByText(/BLOCKED: stop_robot is rejected while OPEN Robot trades remain/)).toBeInTheDocument();
     expect(request.mock.calls.filter((call) => call[1]?.method === "POST").map((call) => call[0])).toEqual(["/api/robot/stop"]);
     expect(screen.getByText("ROBOT_RUNNING / READY")).toBeInTheDocument();
