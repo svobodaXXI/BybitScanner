@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReplayCandle } from "./replayModel";
 import {
-  automaticGeometryTimeframeCap, chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical,
+  automaticGeometryTimeframeCap, chartLogicalAtTime, chartXAtCandleTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical,
 } from "./replayDrawingCoordinates";
 
 const start = Date.UTC(2026, 10, 2);
@@ -56,6 +56,31 @@ describe("manual replay UTC drawing anchors", () => {
       .toBeCloseTo(1);
     // No future retirement may be painted beyond the last closed bar.
     expect(geometryLogicalSegment({ from_ms: firstMs, retired_at_ms: start + 5 * 3_600_000 }, hourly.slice(0, 1))!.to).toBeCloseTo(1);
+  });
+
+  it("projects M5 timestamps through REAL H1 bar x positions, without rounding", () => {
+    const bars = Array.from({ length: 8 }, (_, i) => mkBar(i, 60));
+    // The chart has already determined the absolute pixels for each H1 bar.
+    const nativeX = (timeMs: number) => {
+      const barIndex = bars.findIndex(bar => bar.start_ms === timeMs);
+      return barIndex >= 0 ? 110 + barIndex * 9 : null;
+    };
+    expect(chartXAtCandleTime(start + 2 * 3_600_000 + 30 * 60_000,
+      bars, nativeX)).toBeCloseTo(132.5);
+    expect(chartXAtCandleTime(start + 5 * 3_600_000, bars, nativeX)).toBe(155);
+    expect(chartXAtCandleTime(start + 8 * 3_600_000, bars, nativeX)).toBe(182);
+    expect(chartXAtCandleTime(start - 30 * 60_000, bars, nativeX)).toBeCloseTo(105.5);
+    expect(chartXAtCandleTime(start, bars.slice(0, 1), nativeX)).toBeNull();
+    expect(chartXAtCandleTime(start, bars, () => null)).toBeNull();
+    expect(chartXAtCandleTime(Number.NaN, bars, nativeX)).toBeNull();
+
+    // Actual H1 candles may have a gap. Interpolation is based on the
+    // underlying timestamps, not invented bars in that gap.
+    const withGap = [bars[0], bars[1], bars[4], bars[5]];
+    expect(chartXAtCandleTime(start + 2 * 3_600_000,
+      withGap, time => ({ [bars[0].start_ms]: 10,
+        [bars[1].start_ms]: 20, [bars[4].start_ms]: 50,
+        [bars[5].start_ms]: 60 } as Record<number,number>)[time] ?? null)).toBe(30);
   });
 
   it("caps M5 slopes on H1 at their real publication, never on native M5", () => {
