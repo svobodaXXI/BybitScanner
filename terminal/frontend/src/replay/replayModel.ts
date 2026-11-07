@@ -667,7 +667,12 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
         if (observation.touch_time_ms !== undefined) throw new Error("Касание содержит чужое время");
         if (bar.low > Math.min(atOpen, atClose) || bar.high < Math.max(atOpen, atClose) ||
             (side === "BULL" ? bar.close < atClose : bar.close > atClose)) {
-          throw new Error("Касание не подтверждается OHLC и часовой трендовой");
+          throw new Error("Касание не подтверждается OHLC и часовой трендовой: " +
+            JSON.stringify({ time_ms, side, bar_low: bar.low, bar_high: bar.high,
+              bar_close: bar.close, line_open: atOpen, line_close: atClose,
+              trend_version, from_ms: activeMain.from_ms,
+              from_price: activeMain.from_price, to_ms: activeMain.to_ms,
+              to_price: activeMain.to_price }));
         }
         touches.add(key(time_ms));
         return { kind, side, time_ms, price, line_price, trend_version,
