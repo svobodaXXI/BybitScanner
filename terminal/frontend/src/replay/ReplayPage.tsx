@@ -12,7 +12,7 @@ import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from
 import { rayEndPoint } from "../chart/drawingGeometry";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
-import { automaticGeometryTimeframeCap, chartLogicalAtTime, chartXAtCandleTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
+import { automaticGeometryTimeframeCap, chartLogicalAtTime, chartXAtCandleTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, shortActiveM5Ray, timeAtChartLogical, timeToDrawingLogical, wickTightH1MainProjection } from "./replayDrawingCoordinates";
 import { ReplayDrawingUndo } from "./replayDrawingUndo";
 import {
   automaticLineStyle, lastM5AccelerationTimeline, visibleLastM5Accelerations,
@@ -83,9 +83,9 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
   const renderExecutions = useRef<() => void>(() => {});
    const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
-  const displayCandles = useMemo(() => timeframe === "1h"
-    ? hourlyChartCandles(document, shown.candles) : shown.candles,
-  [shown.candles, timeframe, document]);
+  const hourlyEvidence = useMemo(() => hourlyChartCandles(document, shown.candles),
+    [shown.candles, document]);
+  const displayCandles = timeframe === "1h" ? hourlyEvidence : shown.candles;
   const replayStartMs = document.events.find(event =>
     event.kind === "CANDLE_CLOSED")?.candle?.start_ms ?? Infinity;
   // Build a frozen visual-only record once per archive. Each already
@@ -267,6 +267,8 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       const brokenByVersion = new Map(priorBreaks.map(item => [item.trend_version, item]));
       let paintedGeometry = 0;
       let paintedM5OnH1 = 0;
+      const h1MainWickSupports: { origin_ms: number; support_ms: number;
+        price: number; adjusted: boolean }[] = [];
       const m5H1Spans: { from_ms: number; until_ms: number; from_x: number; to_x: number }[] = [];
       for (const line of drawableLines) {
         // Line anchors can predate the requested playback window. Lightweight
@@ -292,8 +294,17 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
           { from_ms: line.from_ms, retired_at_ms: endingAtMs }, displayCandles,
         );
         if (!segment) continue;
-        const priceAt = (at_ms: number) => line.from_price +
-          (line.to_price - line.from_price) * (at_ms - line.from_ms) / (line.to_ms - line.from_ms);
+        const projectedMain = wickTightH1MainProjection(
+          line, hourlyEvidence, Math.min(stoppedAt, shown.lastTimeMs ?? -Infinity),
+        );
+        if (line.kind === "MAIN_1H") h1MainWickSupports.push({
+          origin_ms: line.from_ms, support_ms: projectedMain.to_ms,
+          price: projectedMain.to_price, adjusted: projectedMain.adjusted,
+        });
+        const priceAt = (at_ms: number) => projectedMain.from_price +
+          (projectedMain.to_price - projectedMain.from_price) *
+          (at_ms - projectedMain.from_ms) /
+          (projectedMain.to_ms - projectedMain.from_ms);
         // A fractional H1 logical index can be decoupled from the live
         // multi-pane time axis. Project the M5 UTC source via the NATIVE
         // displayed H1 candle coordinates instead of an assumed logical index.
@@ -317,12 +328,20 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         if (historical && isLeftEdgeHistoricalFragment(x1, x2, priceWidth)) continue;
         const tailPx = historical && !isM5OnH1
           ? Math.max(0, Math.min(8, priceWidth - x2)) : 0;
+        const lastBarX = api.timeScale().timeToCoordinate(
+          (displayCandles.at(-1)!.start_ms / 1000) as UTCTimestamp,
+        );
+        const isActiveM5 = !historical && !isM5OnH1 &&
+          (line.kind === "REFERENCE_5M" || line.kind === "ACCELERATION_5M");
         const end = historical || isM5OnH1
           ? { x: x2 + tailPx, y: y2 + (x2 > x1 ? (y2 - y1) * tailPx / (x2 - x1) : 0) }
-          : rayEndPoint(
-              { x: x1, y: y1 }, { x: x2, y: y2 },
-              { width: priceWidth, height: paneHeight },
-            );
+          : isActiveM5 && lastBarX !== null
+            ? shortActiveM5Ray({ x: x1, y: y1 }, { x: x2, y: y2 },
+                lastBarX, priceWidth)
+            : rayEndPoint(
+                { x: x1, y: y1 }, { x: x2, y: y2 },
+                { width: priceWidth, height: paneHeight },
+              );
         context.beginPath();
         // H1 main / M5 continuation: solid. H1 target: yellow dashed.
         // The separate counter-H1 last acceleration: BLUE dashed only.
@@ -451,6 +470,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       canvas.dataset.visiblePriors = String(knownPriors.length);
       canvas.dataset.paintedPriors = String(paintedPriors);
       canvas.dataset.paintedGeometry = String(paintedGeometry);
+      canvas.dataset.h1MainWickSupports = JSON.stringify(h1MainWickSupports);
       canvas.dataset.paintedM5OnH1 = String(paintedM5OnH1);
       canvas.dataset.m5H1Spans = JSON.stringify(m5H1Spans);
       canvas.dataset.visibleObservations = String(paintedObservations);
@@ -460,7 +480,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles, earlyGeometry, accelerationGeometry]);
+  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles, hourlyEvidence, earlyGeometry, accelerationGeometry]);
 
   // The editable layer reuses the terminal's drawing tools, but stores its X
   // anchors in absolute UTC M5 slots rather than indices of the selected TF.
