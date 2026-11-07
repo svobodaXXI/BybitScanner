@@ -215,3 +215,37 @@ def test_missing_id_without_permission_claim_is_counted_as_malformed(tmp_path):
     result = project(path)
     assert [row["seq"] for row in result["observations"]] == [1, 3]
     assert result["malformed_lines"] == 1
+
+
+def test_missing_whole_permission_envelope_is_violation_not_uncaught_keyerror(tmp_path):
+    # A recognisable observation MUST carry the whole OBSERVE_ONLY envelope.
+    # A record missing every field previously passed the conditional guard
+    # and _project accessed record["decision"], causing an unhandled KeyError.
+    incomplete = record(2)
+    for field in ("mode", "executable", "admission_allowed", "decision"):
+        incomplete.pop(field)
+    path = write(tmp_path / "j.jsonl", [record(1), incomplete, record(3)])
+    with pytest.raises(ProjectionViolation, match="OBSERVE_ONLY"):
+        project(path, limit=1)
+    with pytest.raises(ProjectionViolation, match="OBSERVE_ONLY"):
+        project(path, after=2)
+
+
+def test_foreign_account_duplicate_id_cannot_hide_owner_observation(tmp_path):
+    # Journal may contain other account scopes; dedup must not allow an
+    # earlier foreign row to eclipse a later valid local row of same ID.
+    path = write(tmp_path / "j.jsonl", [
+        record(1, observation_id="shared-id", account_id="other"),
+        record(2, observation_id="shared-id", account_id="paper"),
+        record(3, observation_id="shared-id", account_id="paper"),
+        record(4, observation_id="unique", account_id="paper"),
+    ])
+    page = project(path, account_scope="paper")
+    assert [row["seq"] for row in page["observations"]] == [2, 4]
+    assert page["foreign_account_lines"] == 1
+    assert page["duplicate_lines"] == 1
+    assert page["observations"][0]["observation_id"] == "shared-id"
+    second_page = project(path, after=2, account_scope="paper")
+    assert [row["seq"] for row in second_page["observations"]] == [4]
+    other = project(path, account_scope="other")
+    assert [row["seq"] for row in other["observations"]] == [1]
