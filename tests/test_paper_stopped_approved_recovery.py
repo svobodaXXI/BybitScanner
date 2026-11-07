@@ -357,8 +357,8 @@ class OneFlatPartialStopResumeTest(unittest.TestCase):
         owner = mock.Mock()
         owner._probe_backend.return_value = recovery.PRESENT
         owner._probe_telegram.side_effect = (
-            [recovery.PRESENT, recovery.ABSENT, recovery.ABSENT]
-            if telegram_active else [recovery.ABSENT, recovery.ABSENT]
+            [recovery.PRESENT, recovery.ABSENT, recovery.ABSENT, recovery.ABSENT]
+            if telegram_active else [recovery.ABSENT] * 4
         )
         owner._robot_state.return_value = (
             "ROBOT_RUNNING", "RECONCILIATION_REQUIRED"
