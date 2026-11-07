@@ -29,6 +29,7 @@ export function DomPanel({
   fastLimitActive = false,
   onFastLimitPriceSelect,
   onOwnOrderCancel = () => {},
+  ownOrdersReadOnly = false,
   onViewportGeometryChange,
 }: {
   book: NormalizedOrderBook;
@@ -40,6 +41,7 @@ export function DomPanel({
   fastLimitActive?: boolean;
   onFastLimitPriceSelect?: (price: string) => void;
   onOwnOrderCancel?: (orderId: string) => void;
+  ownOrdersReadOnly?: boolean;
   onViewportGeometryChange?: (geometry: DomViewportGeometry) => void;
 }) {
   const [viewportGeometry, setViewportGeometry] = useState<DomViewportGeometry>({
@@ -232,7 +234,14 @@ export function DomPanel({
               key={level.price}
             >
               <span className="order-dots">
-                {orders.map((order) => (
+                {orders.map((order) => ownOrdersReadOnly ? (
+                  <span
+                    aria-label={`PAPER Limit ${order.id}`}
+                    className={`order-dot ${order.side.toLowerCase()}`}
+                    key={order.id}
+                    title={`${order.notionalUsdt} USDT · только просмотр`}
+                  />
+                ) : (
                   <button
                     aria-label={`Cancel Limit ${order.id}`}
                     className={`order-dot ${order.side.toLowerCase()}`}
