@@ -56,7 +56,7 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual(plain.pivots, ())
 
     def test_first_h1_boundary_rejects_unconfirmed_or_ambiguous_extreme(self):
-        for second in ((115, 95), (109, 101)):
+        for second in ((115, 95), (109, 99)):
             stream = ConfirmedSwingStream(
                 timeframe_ms=ONE_HOUR_MS, wing=1, seed_first_pivot=True,
             )
