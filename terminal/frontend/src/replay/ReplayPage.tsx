@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, replayCursorAtUtc, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -858,8 +858,6 @@ export function ReplayPage() {
       <section className="replay-meta" aria-label="Состояние симулятора">
         <div><span>Источник</span><strong>{fileLabel}</strong></div>
         <div><span>Прогон / рынок</span><strong>{document.simulation_run_id}{document.symbol ? " · " + document.symbol + " · 5m" : ""}</strong></div>
-        <div><span>Время рынка</span><strong>{shown.lastTimeMs === null ? "До первого события" :
-          new Date(shown.lastTimeMs).toLocaleString("ru-RU", { timeZone: "UTC" }) + " UTC"}</strong></div>
         <div><span>Свечи / входы / выходы</span>
           <strong>{shown.candles.length} / {shown.fills.length} / {shown.exits.length}</strong></div>
       </section>
@@ -984,7 +982,28 @@ export function ReplayPage() {
                 commitManualDrawings(drawings.filter(d => d.id !== selectedDrawing));
                 setSelectedDrawing(null);
               }} title="Удалить выбранное" aria-label="Удалить выбранное"><ReplayToolIcon tool="delete" /></button>
-            <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
+            <label className="replay-market-time" title="Выбрать UTC-время последней закрытой свечи; после выбора воспроизведение продолжится отсюда">
+              Время рынка (UTC)
+              <input type="datetime-local" aria-label="Время рынка UTC — перейти к свече"
+                min={document.events.find(event => event.kind === "CANDLE_CLOSED")?.time_ms !== undefined
+                  ? new Date(document.events.find(event => event.kind === "CANDLE_CLOSED")!.time_ms).toISOString().slice(0, 16)
+                  : undefined}
+                max={document.events.length
+                  ? new Date(document.events[document.events.length - 1].time_ms).toISOString().slice(0, 16)
+                  : undefined}
+                step={timeframe === "1h" ? 3600 : 300}
+                value={shown.lastTimeMs === null ? "" : new Date(shown.lastTimeMs).toISOString().slice(0, 16)}
+                onFocus={() => setPlaying(false)}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  const utc = Date.parse(e.target.value + "Z");
+                  if (!Number.isFinite(utc)) return;
+                  setPlaying(false);
+                  setPendingStartMs(null);
+                  setCursor(replayCursorAtUtc(document.events, utc, timeframe));
+                }} />
+            </label>
+                        <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
           </div>
           <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
             drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
