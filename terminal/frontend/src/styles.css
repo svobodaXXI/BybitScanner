@@ -249,6 +249,16 @@ button {
   color: #d7e0e8;
   font-size: 0.72rem;
 }
+.editor-original-pattern {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: #b7c5d1;
+  font-size: 0.72rem;
+}
+.editor-original-pattern strong {
+  color: #f0d28a;
+  font-weight: 600;
+}
 .editor-review-topline {
   position: absolute;
   top: 0.4rem;
