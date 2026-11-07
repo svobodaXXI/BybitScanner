@@ -997,8 +997,8 @@ def test_next_update_auto_seals_only_proven_installed_successor(
         return bool(proven)
     monkeypatch.setattr(maintenance, "_proven_prior_exceptional_completion",
                         classified)
-    def seal(*_args, **_kwargs):
-        proven.append("sealed")
+    def seal(_journal, sha, **_kwargs):
+        proven.append(sha)
     monkeypatch.setattr(maintenance, "_complete_stop_intent", seal)
     calls = []
     def resume(sha, **_kw):
@@ -1018,7 +1018,9 @@ def test_next_update_auto_seals_only_proven_installed_successor(
     )
     if editor_ready:
         assert result == "READY: EDITOR_ONLY"
-        assert proven == ["sealed"]
+        # Seal the previously installed successor, then the newly installed
+        # target through the coordinator's existing normal completion path.
+        assert proven == [old, target]
         assert calls == [
             ("resume", old), ("preflight", target),
             ("new-stop", target), ("install", target), ("resume", target),
