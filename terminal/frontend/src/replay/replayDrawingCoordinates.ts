@@ -58,6 +58,16 @@ export function automaticGeometryTimeframeCap(
     ? line.available_at_ms : Infinity;
 }
 
+/** A forward-directed ray never starts in the grey prehistory.
+ * Keep the real pivot pair to calculate its slope; clip only the painted
+ * portion to the first replay candle, never refit or reverse the source.
+ */
+export function forwardLinePaintStartMs(
+  line: { from_ms: number }, replayStartMs: number,
+): number {
+  return Math.max(line.from_ms, replayStartMs);
+}
+
 export function geometryLogicalSegment(
   line: { from_ms: number; retired_at_ms?: number; superseded_at_ms?: number },
   displayedCandles: readonly ReplayCandle[],
