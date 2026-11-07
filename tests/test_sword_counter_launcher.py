@@ -292,13 +292,23 @@ class DesktopShortcutScriptTests(unittest.TestCase):
             capture_output=True, text=True, encoding="utf-8", timeout=60)
 
     def read_back(self, path):
+        # English Windows COM shortcut APIs may fail to open a Cyrillic .lnk
+        # filename even when the original Unicode file is present and valid.
+        # Copy exact bytes to an ASCII temp name solely for COM introspection.
+        # Never rename, modify or remove the original user-visible shortcut.
+        probe_path = self.desktop / "swordcounter-ci-readback.lnk"
+        probe_path.write_bytes(path.read_bytes())
         probe = ("[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
                  "$l=(New-Object -ComObject WScript.Shell).CreateShortcut($env:LNK_PATH);"
                  "@($l.TargetPath,$l.Arguments,$l.WorkingDirectory,$l.IconLocation) -join '|'")
-        out = subprocess.run(["powershell.exe", "-NoProfile", "-Command", probe],
-                             capture_output=True, text=True, encoding="utf-8", timeout=60,
-                             env={**os.environ, "LNK_PATH": str(path)})
-        return out.stdout.strip().split("|")
+        try:
+            out = subprocess.run(["powershell.exe", "-NoProfile", "-Command", probe],
+                                 capture_output=True, text=True, encoding="utf-8", timeout=60,
+                                 env={**os.environ, "LNK_PATH": str(probe_path)})
+            self.assertEqual(out.returncode, 0, out.stderr)
+            return out.stdout.strip().split("|")
+        finally:
+            probe_path.unlink(missing_ok=True)
 
     def test_dry_run_creates_nothing(self):
         result = self.invoke("-DryRun")
