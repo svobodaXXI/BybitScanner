@@ -889,3 +889,188 @@ class DualOrphanPreflightTests(TestCase):
         conn.execute("INSERT INTO paper_limit_orders VALUES ('paper','new','DOGEUSDT',100)")
         with self.assertRaisesRegex(FlatRecoveryBlocked, "active_or_unknown_paper_limit"):
             check(conn, payload, store)
+
+
+class OneProvenFlatOrphanPreflightTests(TestCase):
+    """No VPS I/O. Generic proof must reject every competing owner/side effect."""
+
+    @staticmethod
+    def make_case():
+        from terminal.domain.models import PositionSide
+        from tools.flat_paper_recovery_gate import prove_one_flat_orphan
+
+        conn = sqlite3.connect(":memory:")
+        conn.executescript("""
+            CREATE TABLE scanner_runtime_state (trading_account_id TEXT,mode TEXT);
+            CREATE TABLE robot_runtime_state (trading_account_id TEXT,mode TEXT,
+                                              recovery_status TEXT,reason TEXT);
+            CREATE TABLE robot_autopilot_state (trading_account_id TEXT,mode TEXT);
+            CREATE TABLE position_projections (trading_account_id TEXT,symbol TEXT,
+                side TEXT,quantity TEXT,sync_state TEXT);
+            CREATE TABLE robot_trades (trading_account_id TEXT,trade_id TEXT,
+                candidate_id TEXT,symbol TEXT,exit_time_ms INTEGER);
+            CREATE TABLE robot_candidates (trading_account_id TEXT,candidate_id TEXT,
+                symbol TEXT,status TEXT,approved_at_ms INTEGER);
+            CREATE TABLE paper_limit_orders (trading_account_id TEXT,symbol TEXT,
+                status TEXT,created_at_ms INTEGER);
+            CREATE TABLE trading_commands (trading_account_id TEXT,symbol TEXT,
+                current_state TEXT,created_at_ms INTEGER);
+            CREATE TABLE executions (trading_account_id TEXT,symbol TEXT,
+                exchange_timestamp_ms INTEGER);
+            CREATE TABLE paper_protection_obligations (trading_account_id TEXT,status TEXT);
+            CREATE TABLE reconciliation_checkpoints (trading_account_id TEXT,
+                                                     completed_at_ms INTEGER);
+            INSERT INTO scanner_runtime_state VALUES ('paper','SCANNER_STOPPED');
+            INSERT INTO robot_runtime_state VALUES
+                ('paper','ROBOT_RUNNING','RECONCILIATION_REQUIRED',
+                 'ROBOT_PROTECTION_COVERAGE_LOST symbol=CBRSUSDT reason=ingress_overflow');
+            INSERT INTO robot_autopilot_state VALUES ('paper','OFF');
+            INSERT INTO position_projections VALUES ('paper','BASEDUSDT','Flat','0','synced');
+            INSERT INTO position_projections VALUES ('paper','CBRSUSDT','Flat','0','synced');
+            INSERT INTO robot_trades VALUES
+                ('paper','robot-trade-based','candidate-based','BASEDUSDT',NULL);
+            INSERT INTO robot_candidates VALUES
+                ('paper','candidate-based','BASEDUSDT','OPEN',100);
+        """)
+        for index, symbol in enumerate((
+            "BCHUSDT","DKNGUSDT","DOTUSDT","DUOLUSDT",
+            "ERAUSDT","FILUSDT","INTCUSDT","NEARUSDT"
+        )):
+            conn.execute(
+                "INSERT INTO robot_candidates VALUES ('paper',?,?, 'APPROVED',?)",
+                ("approved-" + str(index),symbol,300 + index),
+            )
+        payload = {
+            "expected_identity":"synthetic-db",
+            "expected_build_sha":"a"*40,
+            "backend":{
+                "ok":True,"component":"paper_backend","mode":"paper",
+                "paper_live_safe":True,"database_identity":"synthetic-db",
+                "build_sha":"a"*40,"process_instance_id":"synthetic-old-pid"
+            },
+            "scanner":{"mode":"SCANNER_STOPPED"},
+            "autopilot":{"mode":"OFF"},
+            "protection":{
+                "healthy":False,
+                "covered_symbols":["BASEDUSDT"],"armed_symbols":[],
+                "coverage_roles":{"BASEDUSDT":"EXPOSURE"},
+                "unhealthy_symbols":{"BASEDUSDT":"ingress_overflow"},
+                "ingress":{"current_pending":0}
+            }
+        }
+        trade = SimpleNamespace(
+            trade_id="robot-trade-based",candidate_id="candidate-based",
+            symbol=Symbol("BASEDUSDT"),trading_account_id=ACCOUNT,entry_path="LIMIT",
+        )
+        candidate = SimpleNamespace(
+            candidate_id="candidate-based",symbol=Symbol("BASEDUSDT"),
+            trading_account_id=ACCOUNT,status="OPEN",
+            robot_state={"execution":{"limit_order_id":"paper-limit-entry"}},
+        )
+        position = SimpleNamespace(
+            side=PositionSide.FLAT,quantity=SimpleNamespace(value=Decimal("0")),
+        )
+        fill = SimpleNamespace(order_id=SimpleNamespace(value="paper-order-tw_"+"1"*33))
+        store=mock.Mock()
+        store.get_robot_trade.return_value=trade
+        store.get_robot_candidate.return_value=candidate
+        store.get_position_projection.return_value=position
+        store.load_executions_for_symbol.return_value=(fill,)
+        store.get_paper_command_by_order_link.return_value=object()
+        return conn,payload,store,prove_one_flat_orphan
+
+    @staticmethod
+    def run_case(conn, payload, store, proof, *, close_proved=True):
+        conn.commit()
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("BEGIN")
+        before=conn.total_changes
+        try:
+            with (
+                mock.patch("terminal.persistence.sqlite_store.SQLiteStore",return_value=store),
+                mock.patch("terminal.application.robot_breakout_monitor.robot_entry_order_ids",
+                           return_value=(SimpleNamespace(value="paper-limit-entry"),)),
+                mock.patch("terminal.runtime.paper_runtime.PaperRuntime._robot_entry_fees",
+                           return_value=Decimal("0.004898916")),
+                mock.patch("terminal.application.robot_nonrobot_close_proof.prove_nonrobot_robot_close",
+                           return_value=object() if close_proved else None),
+            ):
+                return proof(conn, **payload)
+        finally:
+            assert conn.total_changes == before  # No SQL mutations, even on failure
+            conn.rollback()
+            conn.execute("PRAGMA query_only=OFF")
+            conn.row_factory = None
+
+    def test_eight_inert_approvals_and_one_proven_flat_manual_close(self):
+        conn,payload,store,proof=self.make_case()
+        result=self.run_case(conn,payload,store,proof)
+        self.assertEqual(result,"ONE_FLAT_ORPHAN_IMMUTABLE_CLOSE_EVIDENCE_ONLY")
+        self.assertEqual(store.get_paper_command_by_order_link.call_count,1)
+
+    def test_unproven_manual_close_does_not_grant_handoff(self):
+        conn,payload,store,proof=self.make_case()
+        with self.assertRaisesRegex(FlatRecoveryBlocked,"one_orphan_manual_close_proof_missing"):
+            self.run_case(conn,payload,store,proof,close_proved=False)
+
+    def test_any_position_or_competing_trade_blocks_without_ledger_mutation(self):
+        for mutation, expected in (
+            ("UPDATE position_projections SET quantity='1' WHERE symbol='CBRSUSDT'",
+             "one_orphan_exposure_or_unsynced_position"),
+            ("INSERT INTO robot_trades VALUES ('paper','extra','extra','DOGEUSDT',NULL)",
+             "one_orphan_requires_exactly_one_trade"),
+            ("INSERT INTO robot_candidates VALUES ('paper','extra','DOGEUSDT','OPEN',100)",
+             "one_orphan_competing_open_candidate"),
+            ("INSERT INTO paper_limit_orders VALUES ('paper','DOGEUSDT','open',500)",
+             "one_orphan_unfinished_paper_limit_orders"),
+            ("INSERT INTO trading_commands VALUES ('paper','DOGEUSDT','submitting',500)",
+             "one_orphan_unfinished_trading_commands"),
+            ("INSERT INTO paper_protection_obligations VALUES ('paper','DISPATCHING')",
+             "one_orphan_unfinished_paper_protection_obligations"),
+            ("INSERT INTO reconciliation_checkpoints VALUES ('paper',NULL)",
+             "one_orphan_unfinished_reconciliation_checkpoints"),
+            ("INSERT INTO executions VALUES ('paper','FILUSDT',800)",
+             "one_orphan_approval_may_enter"),
+            ("INSERT INTO paper_limit_orders VALUES ('paper','FILUSDT','filled',800)",
+             "one_orphan_approval_may_enter"),
+            ("INSERT INTO trading_commands VALUES ('paper','FILUSDT','filled',800)",
+             "one_orphan_approval_may_enter"),
+        ):
+            with self.subTest(sql=mutation):
+                conn,payload,store,proof=self.make_case()
+                conn.execute(mutation)
+                with self.assertRaisesRegex(FlatRecoveryBlocked,expected):
+                    self.run_case(conn,payload,store,proof)
+
+    def test_wrong_protection_identity_or_unfrozen_ingress_blocks(self):
+        for changed,expected in (
+            ({"protection":{"healthy":False,
+                "covered_symbols":["BASEDUSDT","CBRSUSDT"],"armed_symbols":[],
+                "coverage_roles":{"BASEDUSDT":"EXPOSURE","CBRSUSDT":"EXPOSURE"},
+                "unhealthy_symbols":{"BASEDUSDT":"ingress_overflow"},
+                "ingress":{"current_pending":0}}},"one_orphan_unrelated_protection_failure"),
+            ({"protection":{"healthy":False,
+                "covered_symbols":["BASEDUSDT"],"armed_symbols":[],
+                "coverage_roles":{"BASEDUSDT":"EXPOSURE"},
+                "unhealthy_symbols":{"BASEDUSDT":"ingress_overflow"},
+                "ingress":{"current_pending":1}}},"one_orphan_protection_ingress_not_drained"),
+            ({"backend":{"build_sha":"b"*40}},"one_orphan_backend_identity_unproven"),
+            ({"scanner":{"mode":"SCANNER_RUNNING"}},"one_orphan_scanner_not_quiescent"),
+            ({"autopilot":{"mode":"PAPER_AUTO"}},"one_orphan_autopilot_not_off"),
+        ):
+            with self.subTest(changed=changed):
+                conn,payload,store,proof=self.make_case()
+                for key,value in changed.items():
+                    payload[key].update(value)
+                with self.assertRaisesRegex(FlatRecoveryBlocked,expected):
+                    self.run_case(conn,payload,store,proof)
+
+    def test_read_only_snapshot_and_reason_are_required(self):
+        conn,payload,store,proof=self.make_case()
+        with self.assertRaisesRegex(FlatRecoveryBlocked,"one_orphan_requires_readonly_snapshot"):
+            proof(conn, **payload)
+        conn.execute(
+            "UPDATE robot_runtime_state SET reason='UNKNOWN_FATAL_STATE'"
+        )
+        with self.assertRaisesRegex(FlatRecoveryBlocked,"one_orphan_unrecognized_recovery_reason"):
+            self.run_case(conn,payload,store,proof)
