@@ -99,7 +99,7 @@ class ConnectionController:
         try:
             self._store.save(self._confirmed)
         except BybitPositionsError as error:
-            return CheckResult(False, f"Не удалось сохранить ключ: {type(error).__name__}: {error}")
+            return CheckResult(False, f"Не удалось сохранить ключ: {type(error).__name__}")
         except Exception as error:
             return CheckResult(False, f"Не удалось сохранить ключ: {type(error).__name__}")
         return CheckResult(True, f"Ключ сохранён в Windows Credential Manager ({DEFAULT_TARGET}).")
