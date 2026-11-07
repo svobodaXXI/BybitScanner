@@ -368,10 +368,6 @@ class FlatRecoveryGateTests(unittest.TestCase):
         assert_blocked(self, conn, payload)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class OneFlatOrphanMonitorTests(unittest.TestCase):
     def test_isolated_disconnected_flat_owner_requires_drain_and_no_arms(self):
         protection = {
@@ -424,3 +420,7 @@ class OneFlatOrphanMonitorTests(unittest.TestCase):
             _prove_one_orphan_protection({
                 **healthy, "covered_symbols": ["BASEDUSDT"],
             }, "BASEDUSDT")
+
+
+if __name__ == "__main__":
+    unittest.main()
