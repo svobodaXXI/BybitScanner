@@ -89,7 +89,8 @@ def build_market_only_document(
     published_at: dict[str, int] = {}
 
     def collect_lines(view) -> None:
-        def collect(kind: str, line, side: str, trend_version: int, pivots) -> None:
+        def collect(kind: str, line, side: str, trend_version: int, pivots,
+                    envelope_status: str | None = None) -> None:
             if pivots is None or len(pivots) != 4:
                 raise ValueError("a published line must retain four source pivots")
             if any(point.confirmed_at_ms > view.five_minute.signal_time_ms for point in pivots):
@@ -116,14 +117,18 @@ def build_market_only_document(
                     for point in pivots
                 ],
                 "classification": "UNVALIDATED_GEOMETRY_ONLY",
+                **({"envelope_status": envelope_status}
+                   if envelope_status is not None else {}),
             })
 
         trend = view.hourly_trend
         if trend is not None:
             collect("MAIN_1H", trend.main, trend.side,
-                    trend.available_at_ms, trend.pivot_sequence)
+                    trend.available_at_ms, trend.pivot_sequence,
+                    trend.envelope_status)
             collect("TARGET_1H", trend.target, trend.side,
-                    trend.available_at_ms, trend.pivot_sequence)
+                    trend.available_at_ms, trend.pivot_sequence,
+                    trend.envelope_status)
             if view.reference_5m is not None:
                 collect("REFERENCE_5M", view.reference_5m, trend.side,
                         trend.available_at_ms, view.reference_5m_pivots)
