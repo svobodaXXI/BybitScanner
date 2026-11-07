@@ -74,30 +74,34 @@ try {
   assert.equal(await fibTool.locator('svg[data-tool-icon="fibonacci"] path').count(), 1);
   assert.equal(await drawingBar.locator('button[aria-label] svg.replay-tool-icon').count(), 13,
     "ten drawing tools plus magnet, undo and delete all have graphical icons");
-  assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
-  const progress = page.locator('[role="progressbar"]');
+  const progress = page.getByRole("slider", { name: "Перемотка графика по закрытым свечам" });
+  assert.equal(await progress.inputValue(), "0");
+  assert.equal(await progress.getAttribute("max"), "64");
   const forward = page.getByRole("button", { name: "Шаг вперёд ▶", exact: true });
   const backward = page.getByRole("button", { name: "◀ Шаг назад", exact: true });
   assert.equal(await backward.isDisabled(), true);
   await forward.click();
-  const firstStep = Number(await progress.getAttribute("aria-valuenow"));
+  const firstStep = Number(await progress.inputValue());
   assert.ok(firstStep > 0);
   await forward.click();
-  const secondStep = Number(await progress.getAttribute("aria-valuenow"));
+  const secondStep = Number(await progress.inputValue());
   assert.ok(secondStep > firstStep, "second closed candle advances the recording");
   await backward.click();
-  assert.equal(Number(await progress.getAttribute("aria-valuenow")), firstStep);
+  assert.equal(Number(await progress.inputValue()), firstStep);
   await forward.click();
-  assert.equal(Number(await progress.getAttribute("aria-valuenow")), secondStep);
+  assert.equal(Number(await progress.inputValue()), secondStep);
   await page.getByRole("button", { name: "В начало" }).click();
-  assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
+  assert.equal(await progress.inputValue(), "0");
 
   // The synthetic demo now contains enough true closed candles to show ADX
   // after its 14/14 warmup. Check TRUE-price markers, not shifted chart arrows.
   const demoIndicator = page.getByRole("group", { name: "Индикатор ADX DMI" });
   await page.locator(".replay-rate input").fill("60");
   await page.getByRole("button", { name: "Пуск", exact: false }).click();
-  await page.waitForFunction(() => document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow") === "100");
+  await page.waitForFunction(() => {
+    const slider = document.querySelector('input[aria-label="Перемотка графика по закрытым свечам"]');
+    return slider?.value === slider?.max;
+  });
   assert.match(await demoIndicator.innerText(), /\+DI [0-9]/);
   assert.match(await demoIndicator.innerText(), /−DI [0-9]/);
   assert.match(await demoIndicator.innerText(), /ADX [0-9]/);
@@ -184,14 +188,20 @@ try {
     });
   });
   await page.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
-  await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
+  await page.waitForFunction(() =>
+    document.querySelector('.replay-chart-shell')?.getAttribute('data-chart-timeframe') !== null);
+  assert.equal(await page.locator(".replay-note").count(), 0,
+    "owner removed yellow market-history banner");
   assert.match(await page.locator("body").innerText(), /browser_fixture/);
   const indicator = page.getByRole("group", { name: "Индикатор ADX DMI" });
   assert.match(await indicator.innerText(), /ADX\/DMI \(14, 14\)/);
   assert.match(await indicator.innerText(), /Уровень 20/);
   assert.match(await indicator.innerText(), /ADX —/);
   await page.getByRole("button", { name: "Пуск", exact: false }).click();
-  await page.waitForFunction(() => document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow") === "100");
+  await page.waitForFunction(() => {
+    const slider = document.querySelector('input[aria-label="Перемотка графика по закрытым свечам"]');
+    return slider?.value === slider?.max;
+  });
   assert.match(await page.locator("body").innerText(), /40 \/ 0 \/ 0/);
   assert.match(await indicator.innerText(), /\+DI 23\.9/);
   assert.match(await indicator.innerText(), /ADX 22\.8/);
@@ -200,7 +210,7 @@ try {
   await page.getByRole("button", { name: "H1", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"), "1h");
-  assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
+  assert.equal(await progress.inputValue(), "40");
   await page.getByRole("button", { name: "M5", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "40");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
