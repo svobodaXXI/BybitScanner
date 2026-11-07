@@ -126,27 +126,31 @@ describe("Autopilot compact first screen", () => {
     const onOpenPositions = vi.fn();
     const onStatistics = vi.fn();
     const onTerminal = vi.fn();
+    const onRobotControls = vi.fn();
     render(<AutopilotFirstScreen
       now={() => NOW}
       onTradeDetails={onTradeDetails}
       onOpenPositions={onOpenPositions}
       onStatistics={onStatistics}
       onTerminal={onTerminal}
+      onRobotControls={onRobotControls}
       accountControl={<button type="button" aria-label="Счёт">key</button>}
     />);
     await screen.findByText("+2.50 USDT");
     const nav = screen.getByRole("navigation", { name: "Панель управления Автопилотом" });
     const buttons = within(nav).getAllByRole("button");
     expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
-      "Подробности сделки", "Все открытые позиции", "Статистика", "Терминал", "Счёт",
+      "Подробности сделки", "Все открытые позиции", "Статистика", "Терминал", "Управление роботом", "Счёт",
     ]);
     expect(buttons[0]).toBeDisabled(); // Multiple open positions: no ambiguous trade selection.
     fireEvent.click(buttons[1]);
     fireEvent.click(buttons[2]);
     fireEvent.click(buttons[3]);
+    fireEvent.click(buttons[4]);
     expect(onOpenPositions).toHaveBeenCalledOnce();
     expect(onStatistics).toHaveBeenCalledOnce();
     expect(onTerminal).toHaveBeenCalledOnce();
+    expect(onRobotControls).toHaveBeenCalledOnce();
     expect(onTradeDetails).not.toHaveBeenCalled();
   });
 
