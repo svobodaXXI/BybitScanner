@@ -15,8 +15,8 @@ def request_owner_workspace_open(mode: str, symbol: str, timeframe: str,
         raise ValueError("Invalid workspace target")
     if not re.fullmatch(r"[A-Z0-9]{2,32}USDT", symbol):
         raise ValueError("Invalid workspace symbol")
-    if signal_id is not None and (mode != "EDITOR" or
-                                  not re.fullmatch(r"source-original:[0-9a-f]{24}", signal_id)):
+    if signal_id is not None and not re.fullmatch(
+            r"(source-original|mirror-origin):[0-9a-f]{24}", signal_id):
         raise ValueError("Invalid frozen signal identity")
     if os.name != "nt":
         raise RuntimeError("Windows owner workspace launcher only")
