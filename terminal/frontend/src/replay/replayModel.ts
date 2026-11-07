@@ -926,6 +926,26 @@ export function timeframeStepCursor(
   return index;
 }
 
+/** Seek to an explicitly selected UTC date/time without revealing a future candle.
+ * Choose the most recent FULLY CLOSED candle on the displayed timeframe.
+ * All same-timestamp events are included atomically; no source history,
+ * recorded actions, or manual drawings are mutated by this cursor operation.
+ */
+export function replayCursorAtUtc(
+  events: readonly ReplayEvent[], requestedMs: number, timeframe: "5m" | "1h",
+): number {
+  if (!Number.isFinite(requestedMs)) return 0;
+  const closed = events.filter(e => e.kind === "CANDLE_CLOSED" && e.candle);
+  const destination = timeframe === "1h"
+    ? completeHourlyCandles(closed.map(e => e.candle!))
+      .filter(bar => bar.end_ms <= requestedMs).at(-1)?.end_ms
+    : closed.filter(e => e.time_ms <= requestedMs).at(-1)?.time_ms;
+  if (destination === undefined) return 0;
+  let index = 0;
+  while (index < events.length && events[index].time_ms <= destination) index++;
+  return index;
+}
+
 /** The UI receives ONLY the prefix requested by the virtual-time playhead. */
 export function visibleReplay(events: readonly ReplayEvent[], cursor: number): VisibleReplay {
   const shown = events.slice(0, Math.max(0, Math.min(Math.floor(cursor), events.length)));
