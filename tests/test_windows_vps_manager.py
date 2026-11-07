@@ -101,6 +101,19 @@ class TestWindowsVpsManager(unittest.TestCase):
                     self.assertIn("git -c safe.directory=/opt/BybitScanner -C /opt/BybitScanner", remote)
                     self.assertNotIn("config --global", remote)
 
+    def test_gitless_installed_release_is_observable_without_false_clean_claim(self) -> None:
+        for name in ("Git / локальные изменения", "Предпроверка обновления"):
+            with self.subTest(name=name):
+                remote = ACTIONS[name]
+                self.assertTrue(remote.startswith("set -e; "))
+                self.assertIn("test -e /opt/BybitScanner/.git", remote)
+                self.assertIn("GIT_WORKTREE=ABSENT", remote)
+                self.assertIn("GIT_STATUS=UNKNOWN", remote)
+                self.assertIn("/api/health", remote)
+                self.assertNotIn("git pull", remote)
+                self.assertNotIn("git reset", remote)
+        self.assertIn("DEPLOY_PREFLIGHT=NOT_PROVEN", ACTIONS["Предпроверка обновления"])
+
     def test_explicit_key_is_offered_and_pinned(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             key = Path(folder) / "bybitscanner_laptop"
