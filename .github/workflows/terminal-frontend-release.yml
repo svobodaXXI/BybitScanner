@@ -1,0 +1,73 @@
+name: Terminal frontend exact-SHA bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Exact approved 40-character source commit"
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - "tools/vps_terminal_frontend_publish.py"
+      - "tests/test_vps_terminal_frontend_publish.py"
+      - ".github/workflows/terminal-frontend-release.yml"
+      - "terminal/frontend/**"
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Validate exact source SHA
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha }}
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: terminal/frontend/package-lock.json
+      - name: Build locked React workspace
+        working-directory: terminal/frontend
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+      - name: Seal only built static assets against checked-out source SHA
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os, re, subprocess
+          sha = os.environ["SOURCE_SHA"]
+          assert re.fullmatch(r"[0-9a-f]{40}", sha)
+          assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == sha
+          dist = Path("terminal/frontend/dist")
+          index = dist / "index.html"
+          assert index.is_file()
+          paths = [index, *sorted((dist / "assets").glob("*"))]
+          assert any(p.suffix == ".js" for p in paths)
+          assert all(p.is_file() and not p.is_symlink() for p in paths)
+          files = {p.relative_to(dist).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+          (dist / "frontend-release.json").write_text(
+              json.dumps({"source_sha": sha, "files": files}, sort_keys=True) + "\n",
+              encoding="utf-8")
+          print("FRONTEND_BUNDLE_SEALED", sha, len(paths))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminal-ui-${{ inputs.source_sha || github.event.pull_request.head.sha }}
+          path: terminal/frontend/dist/
+          retention-days: 14
+          if-no-files-found: error
+      - name: Validate publisher's focused regressions
+        run: python3 -m unittest -v tests.test_vps_terminal_frontend_publish
