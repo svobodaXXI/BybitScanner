@@ -103,7 +103,7 @@ def test_a_half_written_last_line_is_an_append_in_flight_not_an_error(tmp_path):
     assert [r["seq"] for r in project(path, after=2)["observations"]] == [3]
 
 
-@pytest.mark.parametrize("invalid", [[], {}, ["paper"], 0, False, ""])
+@pytest.mark.parametrize("invalid", [None, [], {}, ["paper"], 0, False, ""])
 def test_explicit_malformed_account_scope_cannot_be_treated_as_legacy(tmp_path, invalid):
     path = write(tmp_path / "j.jsonl", [
         record(1, account_id="paper"),
