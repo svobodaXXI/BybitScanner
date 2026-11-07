@@ -249,7 +249,7 @@ describe("Robot observation DOM", () => {
         ownOrdersReadOnly
         positionSummary={{
           symbol: "ONGUSDT", position_side: "Long", position_quantity: "2",
-          average_entry: "0.1689", engaged_notional_usdt: "50",
+          average_entry: "0.1689", engaged_notional_usdt: "50", engaged_wv: "1",
           current_price: "0.169", unrealized_pnl: "0.20", tick_size: "0.00001",
           robot_trade_id: "robot-trade-1",
         }}
