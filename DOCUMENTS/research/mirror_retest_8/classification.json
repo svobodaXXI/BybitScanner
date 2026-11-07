@@ -1,0 +1,308 @@
+[
+ {
+  "trade_id": "robot-trade-2845885bc267ff6b1428893b",
+  "symbol": "MINAUSDT",
+  "direction": "LONG",
+  "class": "HANDLING_DELAY",
+  "stop_vs_trigger_fraction": 1.8874598085452284e-05,
+  "trigger_to_exit_adverse_fraction": 0.21197274539868452,
+  "handling_delay_ms": 4947
+ },
+ {
+  "trade_id": "robot-trade-90bed38923c7166e49ea037c",
+  "symbol": "AAOIUSDT",
+  "direction": "LONG",
+  "class": "HANDLING_DELAY",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.00045473066122645866,
+  "handling_delay_ms": 4347
+ },
+ {
+  "trade_id": "robot-trade-b9ac623ce7ffe503090db77b",
+  "symbol": "BILLUSDT",
+  "direction": "LONG",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.000791765637371338,
+  "handling_delay_ms": 731
+ },
+ {
+  "trade_id": "robot-trade-6d1a03bea7bd44608bde3ac5",
+  "symbol": "BSBUSDT",
+  "direction": "LONG",
+  "class": "HANDLING_DELAY",
+  "stop_vs_trigger_fraction": 7.340352297232688e-05,
+  "trigger_to_exit_adverse_fraction": 0.04453481452092839,
+  "handling_delay_ms": 5138849
+ },
+ {
+  "trade_id": "robot-trade-da9ecfc788e68fc165369197",
+  "symbol": "BIRBUSDT",
+  "direction": "LONG",
+  "class": "HANDLING_DELAY",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.015055675765592148,
+  "handling_delay_ms": 23274
+ },
+ {
+  "trade_id": "robot-trade-e7f17f7244e73fab8b9e3a73",
+  "symbol": "AKTUSDT",
+  "direction": "LONG",
+  "class": "HANDLING_DELAY",
+  "stop_vs_trigger_fraction": 3.035580605989427e-05,
+  "trigger_to_exit_adverse_fraction": 0.041688675679272286,
+  "handling_delay_ms": 27801
+ },
+ {
+  "trade_id": "robot-trade-dcc50f2951cf56f9f5ef0b95",
+  "symbol": "CLUSDT",
+  "direction": "LONG",
+  "class": "HANDLING_DELAY",
+  "stop_vs_trigger_fraction": 6.2137917178441455e-06,
+  "trigger_to_exit_adverse_fraction": 0.0016570008285004142,
+  "handling_delay_ms": 44918
+ },
+ {
+  "trade_id": "robot-trade-507c993dd4c0b2c02f403e95",
+  "symbol": "FARTCOINUSDT",
+  "direction": "LONG",
+  "class": "HANDLING_DELAY",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": -0.011840739927763255,
+  "handling_delay_ms": 277108474
+ },
+ {
+  "trade_id": "robot-trade-f0e284a5b28624787f7586c6",
+  "symbol": "WUSDT",
+  "direction": "SHORT",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": -0.00014155795119245268,
+  "handling_delay_ms": 766
+ },
+ {
+  "trade_id": "robot-trade-761b8838451e58596bdb9304",
+  "symbol": "RIOTUSDT",
+  "direction": "SHORT",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.0008342747198792896,
+  "handling_delay_ms": 808
+ },
+ {
+  "trade_id": "robot-trade-03c63ce53b5ccc5c804dffa2",
+  "symbol": "SAGAUSDT",
+  "direction": "LONG",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 2.2881913757566628e-05,
+  "trigger_to_exit_adverse_fraction": 0.000753686989317134,
+  "handling_delay_ms": 733
+ },
+ {
+  "trade_id": "robot-trade-b952c30d35718dc68d63a187",
+  "symbol": "XTZUSDT",
+  "direction": "SHORT",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.00035236081747709656,
+  "handling_delay_ms": 664
+ },
+ {
+  "trade_id": "robot-trade-088d9dfd9074740ceb77681b",
+  "symbol": "AVAUSDT",
+  "direction": "LONG",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.0032543131465562966,
+  "handling_delay_ms": 747
+ },
+ {
+  "trade_id": "robot-trade-66886620dc9e7479fbb7e90c",
+  "symbol": "STGUSDT",
+  "direction": "LONG",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.12085797717362473,
+  "handling_delay_ms": 1219
+ },
+ {
+  "trade_id": "robot-trade-6211d14190286c98a1ed8df8",
+  "symbol": "DBRUSDT",
+  "direction": "SHORT",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.001148942664360874,
+  "handling_delay_ms": 611
+ },
+ {
+  "trade_id": "robot-trade-95710e133cbff170fb2b01bb",
+  "symbol": "FUSDT",
+  "direction": "SHORT",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.00022038410606967527,
+  "handling_delay_ms": 713
+ },
+ {
+  "trade_id": "robot-trade-d31c60b4abeda16305c062bf",
+  "symbol": "BLENDUSDT",
+  "direction": "SHORT",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.0020396270396270395,
+  "handling_delay_ms": 833
+ },
+ {
+  "trade_id": "robot-trade-6e00791127c911fc032513e8",
+  "symbol": "XNYUSDT",
+  "direction": "SHORT",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.0005812173888283824,
+  "handling_delay_ms": 1462
+ },
+ {
+  "trade_id": "robot-trade-35425ee7125266f2af263744",
+  "symbol": "MORPHOUSDT",
+  "direction": "LONG",
+  "class": "HANDLING_DELAY",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.010492040520984082,
+  "handling_delay_ms": 5351
+ },
+ {
+  "trade_id": "robot-trade-566a495b77e0248a3ef3503f",
+  "symbol": "CAPUSDT",
+  "direction": "SHORT",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.0003219255034137067,
+  "handling_delay_ms": 1268
+ },
+ {
+  "trade_id": "robot-trade-f31fecff3e328a98abd829b7",
+  "symbol": "ASRUSDT",
+  "direction": "LONG",
+  "class": "HANDLING_DELAY",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.00045410586955615256,
+  "handling_delay_ms": 2339
+ },
+ {
+  "trade_id": "robot-trade-b92dbc0c51ad01f5b23127f5",
+  "symbol": "ARKUSDT",
+  "direction": "SHORT",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.00033049888795153005,
+  "handling_delay_ms": 745
+ },
+ {
+  "trade_id": "robot-trade-acaf2952c5e65e260843124b",
+  "symbol": "ENJUSDT",
+  "direction": "LONG",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.0002742882713932106,
+  "handling_delay_ms": 339
+ },
+ {
+  "trade_id": "robot-trade-2af2ba9177aefba7ec889afc",
+  "symbol": "EIGENUSDT",
+  "direction": "LONG",
+  "class": "HANDLING_DELAY",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.011707323781419067,
+  "handling_delay_ms": 3673
+ },
+ {
+  "trade_id": "robot-trade-3da7198b9d34a523655ce188",
+  "symbol": "DUSKUSDT",
+  "direction": "LONG",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.0007064338027663729,
+  "handling_delay_ms": 321
+ },
+ {
+  "trade_id": "robot-trade-6365650fa9e79d46e3fad8ca",
+  "symbol": "AVAUSDT",
+  "direction": "SHORT",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.00010787217976483865,
+  "trigger_to_exit_adverse_fraction": 0.0008609308285673137,
+  "handling_delay_ms": 355
+ },
+ {
+  "trade_id": "robot-trade-2b32629998dc0bfbbe76d835",
+  "symbol": "FILUSDT",
+  "direction": "LONG",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 1.4097278749670902e-05,
+  "trigger_to_exit_adverse_fraction": 0.00021807456693084197,
+  "handling_delay_ms": 389
+ },
+ {
+  "trade_id": "robot-trade-6555849a9716b84cbd2be6e7",
+  "symbol": "EVAAUSDT",
+  "direction": "LONG",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0001267462441312444,
+  "trigger_to_exit_adverse_fraction": 0.010426029120977889,
+  "handling_delay_ms": 499
+ },
+ {
+  "trade_id": "robot-trade-8ab97bf62be409e2336a867b",
+  "symbol": "EDUUSDT",
+  "direction": "LONG",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.00011138869882087105,
+  "trigger_to_exit_adverse_fraction": 0.0006629541235746487,
+  "handling_delay_ms": 435
+ },
+ {
+  "trade_id": "robot-trade-ef2d3b3e927f9d609e779d36",
+  "symbol": "ENSOUSDT",
+  "direction": "LONG",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.00023645046616418795,
+  "handling_delay_ms": 351
+ },
+ {
+  "trade_id": "robot-trade-8bc1f997f7e818de3c5cbbff",
+  "symbol": "1000RATSUSDT",
+  "direction": "LONG",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.0024052916416115455,
+  "handling_delay_ms": 45
+ },
+ {
+  "trade_id": "robot-trade-62a0c9af8f053e9856269571",
+  "symbol": "ACTUSDT",
+  "direction": "LONG",
+  "class": "CLEAN_FAST",
+  "stop_vs_trigger_fraction": 7.008640065872497e-05,
+  "trigger_to_exit_adverse_fraction": 0.0009772875229368055,
+  "handling_delay_ms": 207
+ },
+ {
+  "trade_id": "robot-trade-4073dbe2792eeff2706c2cc8",
+  "symbol": "ARIAUSDT",
+  "direction": "SHORT",
+  "class": "HANDLING_DELAY",
+  "stop_vs_trigger_fraction": 0.0001465366409059733,
+  "trigger_to_exit_adverse_fraction": 0.0006126068031597614,
+  "handling_delay_ms": 2490
+ },
+ {
+  "trade_id": "robot-trade-92966e60ce12b325c561d027",
+  "symbol": "BATUSDT",
+  "direction": "LONG",
+  "class": "HANDLING_DELAY",
+  "stop_vs_trigger_fraction": 0.0,
+  "trigger_to_exit_adverse_fraction": 0.0011786282557598227,
+  "handling_delay_ms": 19887
+ }
+]
