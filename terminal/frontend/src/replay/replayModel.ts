@@ -39,6 +39,25 @@ export function completeHourlyCandles(fiveMinuteBars: ReplayCandle[]): ReplayCan
   return result;
 }
 
+/**
+ * Reuse the ORIGINAL closed H1 warmup candles for chart context. TradingView
+ * Lightweight Charts can then put a source-time H1 anchor on a real bar,
+ * rather than extrapolating it beyond the first visible candle. These bars
+ * are visual-only: replay cursor, H1 stepping, DMI and all events still use
+ * only the explicitly replayed CLOSED 5m events.
+ */
+export function hourlyChartCandles(
+  document: ReplayDocument, knownM5: readonly ReplayCandle[],
+): ReplayCandle[] {
+  const visibleHours = completeHourlyCandles([...knownM5]);
+  const firstReplayBar = document.events.find(e => e.kind === "CANDLE_CLOSED")?.candle;
+  if (document.mode !== "MARKET_ONLY" || !firstReplayBar || !document.context_1h?.length) {
+    return visibleHours;
+  }
+  const prior = document.context_1h.filter(bar => bar.end_ms <= firstReplayBar.start_ms);
+  return [...prior, ...visibleHours];
+}
+
 export type ReplayEvent = {
   source: "SIMULATION";
   simulation_run_id: string;
