@@ -21,6 +21,7 @@ export const marketApiRoutes = {
   robotAutopilot: "/api/robot/autopilot",
   robotState: "/api/robot/state",
   robotDaySummary: "/api/robot/day-summary",
+  robotJournal: (symbol: string) => `/api/robot/journal?symbol=${encodeURIComponent(symbol)}`,
   robotStop: "/api/robot/stop",
   runtimeIntent: "/api/runtime/intent",
   scannerStatus: "/api/scanner/status",
