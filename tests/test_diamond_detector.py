@@ -6,6 +6,7 @@ import pytest
 
 from geometry.diamond import detect_diamond_candidate
 from tests.test_broadening_detector import zigzag, FIVE
+from pivots import find_pivots
 
 # Confirmed alternating H72-L84-H96-L108-H120-L132; no trade direction.
 DIAMOND = [
@@ -81,3 +82,50 @@ def test_empty_or_invalid_cutoff_is_rejected():
     assert detect_diamond_candidate(bars, -1) is None
     assert detect_diamond_candidate(bars, len(bars)) is None
     assert detect_diamond_candidate(bars, True) is None
+
+
+def test_malformed_source_bars_inside_diamond_are_rejected_even_with_good_pivots():
+    bars = zigzag(DIAMOND, 170)
+    good_pivots = find_pivots(bars.iloc[:136].copy())
+    assert detect_diamond_candidate(bars, 135) is not None
+    for bad_row in (
+        {"open": float("nan")},
+        {"high": float("inf")},
+        {"high": 0.01},
+        {"low": -1.0},
+        {"open": 200.0},
+    ):
+        corrupt = bars.copy()
+        for key, value in bad_row.items():
+            corrupt.loc[80, key] = value
+        # Isolate the OHLC safety check from pivot-find filtering: an
+        # apparently valid six-pivot skeleton must never excuse bad candles.
+        with patch("geometry.diamond.find_pivots", return_value=good_pivots):
+            assert detect_diamond_candidate(corrupt, 135) is None
+
+
+def test_sustained_body_breach_in_expansion_invalidates_six_pivot_skeleton():
+    bars = zigzag(DIAMOND, 170)
+    good_pivots = find_pivots(bars.iloc[:136].copy())
+    assert detect_diamond_candidate(bars, 135) is not None
+
+    uncontained = bars.copy()
+    # The expanding upper line is 101 at H72, rising to 103 at H96.
+    # Eight successive *real bodies* above it are an incoherent episode,
+    # even if a separately supplied pivot list still looks diamond-shaped.
+    for index in range(74, 82):
+        uncontained.loc[index, ["open", "high", "low", "close"]] = [
+            102.50, 102.80, 100.80, 102.65,
+        ]
+    with patch("geometry.diamond.find_pivots", return_value=good_pivots):
+        assert detect_diamond_candidate(uncontained, 135) is None
+
+
+def test_unclosed_future_bad_data_outside_decision_prefix_cannot_affect_result():
+    bars = zigzag(DIAMOND, 170)
+    reference = detect_diamond_candidate(bars, 135)
+    assert reference is not None
+    later = bars.copy()
+    later.loc[136:, "open"] = float("nan")
+    later.loc[136:, "high"] = -100.0
+    assert detect_diamond_candidate(later, 135) == reference
