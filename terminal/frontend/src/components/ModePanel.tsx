@@ -49,7 +49,12 @@ export function ModePanel({
                 onStatistics={() => setStatisticsRequest((value) => value + 1)}
                 onTerminal={() => props.onModeChange("TERMINAL")}
                 onRobotControls={() => setRobotManagerOpen(true)}
-                accountControl={<AccountMenu open={props.accountOpen ?? false} onToggle={props.onAccountToggle ?? (() => {})} workspaceProjection={props.accountWorkspaceProjection ?? null} />}
+                accountControl={<AccountMenu open={props.accountOpen ?? false}
+                  onToggle={props.onAccountToggle ?? (() => {})}
+                  workspaceProjection={props.accountWorkspaceProjection ?? null}
+                  mode={props.onModeAccountSelect ? "AUTOPILOT" : undefined} selectedAccountId={props.modeAccountId}
+                  onSelectAccount={props.onModeAccountSelect}
+                  modeAccountError={props.modeAccountError} />}
               />
               <AutopilotDiaryControls
             accountKey={accountKey}

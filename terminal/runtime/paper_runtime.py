@@ -119,6 +119,7 @@ from terminal.persistence.sqlite_store import (
 )
 from terminal.persistence.credential_store import CredentialStore, StoredBybitAccount
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
+from terminal.persistence.mode_account_preference import ModeAccountPreferenceStore
 from terminal.persistence.active_account_preference import (
     ActiveAccountPreferenceError, ActiveAccountPreferenceStore,
 )
@@ -747,6 +748,7 @@ class PaperRuntime:
         account_validator: BybitAccountValidator | None = None,
         live_account_store: LiveAccountProjectionStore | None = None,
         active_account_preference_store: ActiveAccountPreferenceStore | None = None,
+        mode_account_preference_store: ModeAccountPreferenceStore | None = None,
         live_adapter_factory=None,
         live_mutation_adapter_factory=BybitV5MutationAdapter,
         live_market_mutations_enabled: bool = False,
@@ -778,6 +780,7 @@ class PaperRuntime:
         self._account_validator = account_validator
         self._live_account_store = live_account_store
         self._active_account_preference_store = active_account_preference_store
+        self._mode_account_preference_store = mode_account_preference_store
         self._live_market_mutations_enabled = live_market_mutations_enabled
         self._live_mainnet_authorized = live_mainnet_authorized
         self._live_parity_mutations_enabled = live_parity_mutations_enabled
@@ -1639,6 +1642,42 @@ class PaperRuntime:
 
     def account_catalog(self) -> dict[str, object]:
         return self._account_manager.catalog_projection()
+
+    def mode_account_preferences(self) -> dict[str, str | None]:
+        """Read independent display selections; never change trading authority."""
+        store = self._mode_account_preference_store
+        if store is None:
+            raise RuntimeError("mode_account_preferences_unavailable")
+        return {
+            mode: (selected.value if (selected := store.load(mode)) is not None else None)
+            for mode in ("TERMINAL", "AUTOPILOT")
+        }
+
+    def save_mode_account_preference(self, mode: str, account_id_text: str) -> dict[str, str]:
+        """Persist only a known eligible selection; Robot remains PAPER-owned."""
+        if mode not in ("TERMINAL", "AUTOPILOT"):
+            raise ValueError("unsupported_account_mode")
+        if mode == "AUTOPILOT" and account_id_text != self._paper_account_id.value:
+            raise RuntimeError("autopilot_account_not_supported")
+        account_id = TradingAccountId(account_id_text)
+        account = self._account_manager.account(account_id)
+        if not self._account_manager.is_activation_eligible(account_id):
+            raise RuntimeError("account_activation_not_ready")
+        if account.provider is TradingAccountProvider.BYBIT:
+            if self._live_account_store is None:
+                raise RuntimeError("live_account_snapshot_unavailable")
+            snapshot = self._live_account_store.get(account_id_text)
+            if (
+                snapshot is None
+                or snapshot.environment != account.environment.value
+                or snapshot.read_only != (account.status is TradingAccountStatus.READ_ONLY)
+            ):
+                raise RuntimeError("live_account_snapshot_unavailable")
+        store = self._mode_account_preference_store
+        if store is None:
+            raise RuntimeError("mode_account_preferences_unavailable")
+        store.save(mode, account_id)
+        return {"mode": mode, "account_id": account_id.value}
 
     def _stored_bybit_account(self, account_id: str) -> StoredBybitAccount:
         for stored in self._stored_bybit_accounts:

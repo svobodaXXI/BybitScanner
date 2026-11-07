@@ -62,6 +62,7 @@ on:
       - "tests/test_robot_recovery_coordinator.py"
       - "tests/test_terminal_paper_http.py"
       - "tests/test_terminal_persistence.py"
+      - "tests/test_terminal_mode_account_preference.py"
       - "tests/test_scanner_geometry_cursor.py"
       - "tests/test_robot_admission.py"
       - "tests/test_robot_autopilot.py"
@@ -292,7 +293,7 @@ jobs:
           tests.test_telegram_monitoring
 
       - name: Run account-and-controller scoped Diary HTTP acceptance
-        run: python -m pytest -q terminal/diary/test_scoped_statistics_http_route.py
+        run: python -m pytest -q terminal/diary/test_scoped_statistics_http_route.py tests/test_terminal_mode_account_preference.py
       - name: Run Robot scoped LIMIT amend acceptance
         run: >-
           python -m pytest -q

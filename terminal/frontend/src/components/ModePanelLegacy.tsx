@@ -34,6 +34,7 @@ import { LiveFullCloseSubmissionController } from "../orders/liveFullCloseSubmis
 import { OpenPositionsOverlay } from "./OpenPositionsOverlay";
 import { DiaryOverlay } from "./DiaryOverlay";
 import { AccountMenu } from "./AccountMenu";
+import type { AccountMode, ModeAccountDescriptor } from "../accountWorkspace/modeAccountSelection";
 import { LiveAccountInventory } from "./LiveAccountInventory";
 import {
   accountWorkspaceStore,
@@ -96,6 +97,9 @@ export function ModePanel({
   accountOpen = false,
   onAccountToggle = () => {},
   accountWorkspaceProjection = null,
+  modeAccountId = null,
+  onModeAccountSelect,
+  modeAccountError = null,
   mutationsAllowed = true,
   liveMarketAllowed = false,
   liveLimitAllowed = false,
@@ -147,6 +151,9 @@ export function ModePanel({
   accountOpen?: boolean;
   onAccountToggle?: () => void;
   accountWorkspaceProjection?: AccountWorkspaceProjection | null;
+  modeAccountId?: string | null;
+  onModeAccountSelect?: (mode: AccountMode, account: ModeAccountDescriptor) => Promise<void>;
+  modeAccountError?: string | null;
   mutationsAllowed?: boolean;
   liveMarketAllowed?: boolean;
   liveLimitAllowed?: boolean;
@@ -1309,6 +1316,10 @@ export function ModePanel({
                   open={accountOpen}
                   onToggle={onAccountToggle}
                   workspaceProjection={accountWorkspaceProjection}
+                  mode={onModeAccountSelect ? "TERMINAL" : undefined}
+                  selectedAccountId={modeAccountId}
+                  onSelectAccount={onModeAccountSelect}
+                  modeAccountError={modeAccountError}
                   onActiveAccountChange={setActiveAccountLabel}
                 />
               </div>
@@ -1344,7 +1355,7 @@ export function ModePanel({
               applyPaperState={applyPaperState}
             />
           ) : null}
-          {openPositionsVisible && mode !== "AUTOPILOT" && accountWorkspaceProjection?.provider !== "PAPER" ? (
+          {openPositionsVisible && mode !== "AUTOPILOT" && accountWorkspaceProjection && accountWorkspaceProjection.provider !== "PAPER" ? (
             <LiveAccountInventory
               activeAccountName={activeAccountLabel && activeAccountLabel.id === accountWorkspaceProjection?.account_id
                 ? activeAccountLabel.name : ""}
