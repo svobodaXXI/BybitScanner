@@ -35,6 +35,25 @@ def test_single_episode_expands_then_contracts_with_six_confirmed_anchors(reflec
     assert not hasattr(candidate, "take")
 
 
+
+def test_candidate_line_geometry_is_an_immutable_snapshot():
+    bars = zigzag(DIAMOND, 170)
+    candidate = detect_diamond_candidate(bars, 135)
+    assert candidate is not None
+    lines = (
+        candidate.expansion_upper, candidate.expansion_lower,
+        candidate.contraction_upper, candidate.contraction_lower,
+    )
+    original = tuple(dict(line) for line in lines)
+    for line in lines:
+        with pytest.raises(TypeError):
+            line["slope"] = 0.0
+        with pytest.raises(TypeError):
+            line["intercept"] = 999.0
+    assert tuple(dict(line) for line in lines) == original
+    assert detect_diamond_candidate(bars, 135) == candidate
+
+
 def test_requires_last_pivot_confirmation_and_ignores_future_bars():
     bars = zigzag(DIAMOND, 170)
     assert detect_diamond_candidate(bars, 134) is None
