@@ -25,7 +25,8 @@ def _telegram_identity() -> tuple[str, str]:
     """
     token = (os.environ.get("BYBITSCANNER_TELEGRAM_BOT_TOKEN") or "").strip()
     owner = (os.environ.get("BYBITSCANNER_TELEGRAM_OWNER_ID") or "").strip()
-    if token or owner:
+    if ("BYBITSCANNER_TELEGRAM_BOT_TOKEN" in os.environ
+            or "BYBITSCANNER_TELEGRAM_OWNER_ID" in os.environ):
         return (token, owner) if token and owner else ("", "")
     try:
         import config
