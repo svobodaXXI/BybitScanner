@@ -15,8 +15,8 @@ import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
 import { chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import { ReplayDrawingUndo } from "./replayDrawingUndo";
 import {
-  automaticLineStyle, accelerationGeometryTimeline, visibleAccelerationHistory,
-} from "./replayAcceleration";
+  automaticLineStyle, lastM5AccelerationTimeline, visibleLastM5Accelerations,
+} from "./lastM5Acceleration";
 import "./replay.css";
 
 function label(event: ReplayEvent): string {
@@ -93,9 +93,9 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
     [earlyTimeline, shown.lastTimeMs],
   );
   // Independent visual-only counter-H1 layer: no feeds, signals or orders.
-  const accelerationTimeline = useMemo(() => accelerationGeometryTimeline(document), [document]);
+  const accelerationTimeline = useMemo(() => lastM5AccelerationTimeline(document), [document]);
   const accelerationGeometry = useMemo(
-    () => visibleAccelerationHistory(accelerationTimeline, shown.lastTimeMs),
+    () => visibleLastM5Accelerations(accelerationTimeline, shown.lastTimeMs),
     [accelerationTimeline, shown.lastTimeMs],
   );
   const observedDmi = useMemo(() => visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
