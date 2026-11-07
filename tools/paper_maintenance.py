@@ -210,6 +210,59 @@ PREFIX = ("sudo", "-n")
 
 
 
+
+def _proven_one_flat_successor(
+    journal_root: Path, prior: str, target: str, *,
+    uid: int, root: Path, require_ready: bool,
+) -> bool:
+    """Bind a failed STOP to one independently attested successor release."""
+    from tools.paper_stopped_approved_recovery import (
+        _one_flat_receipt, _one_flat_snapshot,
+    )
+    from tools.paper_interrupted_stop_recovery import _trusted_journal
+    from tools.vps_gitless_release_activate import _manifest, _trusted_file
+    from tools.vps_release_identity import verify_release
+
+    try:
+        _trusted_journal(journal_root, uid)
+        if (len(prior) != 40 or len(target) != 40
+                or any(ch not in "0123456789abcdef" for ch in prior + target)
+                or prior == target
+                or (journal_root / prior).exists()
+                or (journal_root / (".stop-confirmed-" + prior)).exists()
+                or _trusted_file(journal_root / (".stop-invoked-" + prior), uid)
+                != b"STOP_INVOKED; not install authorization\\n"):
+            return False
+        if not all(_one_flat_receipt(journal_root, prior, phase, target, uid=uid)
+                   for phase in ("handoff-attempt", "backend-exited", "handoff-proven")):
+            return False
+        snapshot = _one_flat_snapshot(journal_root, prior, uid=uid)
+        old_sha = snapshot["backend"].get("build_sha")
+        if (not isinstance(old_sha, str) or len(old_sha) != 40
+                or any(ch not in "0123456789abcdef" for ch in old_sha)
+                or old_sha == target):
+            return False
+        journal = journal_root / target
+        if (not journal.is_dir() or journal.is_symlink()
+                or journal.stat().st_uid != uid or journal.stat().st_mode & 0o077):
+            return False
+        old = _manifest(_trusted_file(journal / "old.json", uid))
+        new = _manifest(_trusted_file(journal / "target.json", uid))
+        _trusted_file(journal / "units.json", uid)
+        if old["build_sha"] != old_sha or new["build_sha"] != target:
+            return False
+        if require_ready:
+            done = journal / "editor-ready"
+            return done.is_file() and not done.is_symlink() and (
+                _trusted_file(done, uid) == target.encode("ascii")
+            )
+        return verify_release(root) == target
+    except (OSError, ValueError, TypeError, KeyError, IndexError,
+            sqlite3.Error, UnicodeError):
+        return False
+
+
+
 def _proven_stopped_backend_handoff_to(
     journal_root: Path, target: str, *, uid: int,
 ) -> bool:
@@ -227,6 +280,14 @@ def _proven_stopped_backend_handoff_to(
         ActivationBlocked, _manifest, _trusted_file,
     )
     from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
+    # The same protected installer can be reached by the generic Flat/OPEN
+    # one-shot continuation, but never by a second canonical STOP.
+    for marker in journal_root.glob(".one-flat-handoff-handoff-proven-*"):
+        prior = marker.name.removeprefix(".one-flat-handoff-handoff-proven-")
+        if _proven_one_flat_successor(
+            journal_root, prior, target, uid=uid, root=REPO, require_ready=False,
+        ):
+            return True
     try:
         _trusted_journal(journal_root, uid)
         if (verify_release(REPO) != target
@@ -464,7 +525,17 @@ def _proven_prior_exceptional_completion(
     elif prior == NEW_TARGET:
         old_backend, prefix, receipt = NEW_BACKEND, NEW_PREFIX, new_receipt
     else:
-        return False
+        receipt_path = journal_root / (".one-flat-handoff-handoff-proven-" + prior)
+        if not receipt_path.exists() and not receipt_path.is_symlink():
+            return False
+        from tools.vps_gitless_release_activate import _trusted_file
+        try:
+            successor = _trusted_file(receipt_path, uid).decode("ascii").removesuffix("\n")
+        except (OSError, ValueError, UnicodeError):
+            return False
+        return _proven_one_flat_successor(
+            journal_root, prior, successor, uid=uid, root=root, require_ready=True,
+        )
     try:
         _trusted_journal(journal_root, uid)
         if ((journal_root / prior).exists()
@@ -1623,6 +1694,8 @@ def main(argv=None) -> int:
                         help="separate explicit opt-in to exact JASMY/FLOW protected handoff")
     parser.add_argument("--proven-one-flat-orphan-handoff", action="store_true",
                         help="explicit owner opt-in: one immutable manual Flat/OPEN close, no trade replay")
+    parser.add_argument("--resume-one-flat-from-prior-stop", metavar="SHA",
+                        help="separately authorized continuation of a proven failed STOP; never replay STOP")
     args = parser.parse_args(argv)
     if args.resume_installed_editor_only and args.staged_gitless_editor_only:
         parser.error("choose exactly one Gitless operation")
@@ -1636,6 +1709,14 @@ def main(argv=None) -> int:
         parser.error("one orphan handoff requires staged Gitless operation")
     if args.proven_one_flat_orphan_handoff and args.dual_orphan_handoff_20261103:
         parser.error("choose exactly one exceptional handoff policy")
+    if args.resume_one_flat_from_prior_stop and (
+        not args.staged_gitless_editor_only
+        or args.proven_one_flat_orphan_handoff
+        or args.dual_orphan_handoff_20261103
+        or args.resume_installed_editor_only
+        or args.start_paper_after_editor
+    ):
+        parser.error("partial one-flat continuation requires Editor staging alone")
     if args.start_paper_after_editor and (
         args.staged_gitless_editor_only or args.resume_installed_editor_only
     ):
@@ -1679,7 +1760,21 @@ def main(argv=None) -> int:
                         )
                     print(blocked)
                     return 0 if blocked.startswith("READY:") else 2
-    if args.staged_gitless_editor_only:
+    if args.resume_one_flat_from_prior_stop:
+        from tools.paper_stopped_approved_recovery import (
+            recover_one_flat_after_failed_stop,
+        )
+        try:
+            status = recover_one_flat_after_failed_stop(
+                target=args.sha, stage=args.staged_gitless_editor_only,
+                prior_stop=args.resume_one_flat_from_prior_stop,
+            )
+        except Exception as exc:
+            status = ("BLOCKED: one_flat_partial_STOP_recovery:"
+                      + type(exc).__name__ + ":"
+                      + str(exc).replace(chr(10), " ")[:280]
+                      + "; no STOP replay or deployment on unknown outcome")
+    elif args.staged_gitless_editor_only:
         status = deploy_staged_editor_only(
             args.sha, stage=args.staged_gitless_editor_only,
             env_file=args.env_file,
