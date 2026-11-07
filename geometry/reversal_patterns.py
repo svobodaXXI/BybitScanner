@@ -525,7 +525,9 @@ def observe_nison_reversals(
             x = formation[0]
             if ratio(x) <= _NISON_DOJI_BODY:
                 record("DOJI", "NEUTRAL")  # Indecision, never directional entry.
-            if body(x) == 0 or ratio(x) > _NISON_SMALL_BODY:
+            # A near-zero real body is a DOJI, not also a directional
+            # Hammer/Hanging-Man or inverted-wick signal.
+            if ratio(x) <= _NISON_DOJI_BODY or ratio(x) > _NISON_SMALL_BODY:
                 continue
             lower = min(x[0], x[3]) - x[2]
             upper = x[1] - max(x[0], x[3])
