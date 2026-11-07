@@ -11,6 +11,8 @@ export type OwnerSignalDraft = {
   proposed_boundaries: TimestampDrawing[];
   note: string;
   idempotency_key: string;
+  context_as_of_ms?: number;
+  context_bars_sha256?: string;
 };
 
 /** New geometry is separate from the Scanner correction. Never reuse the
@@ -25,6 +27,8 @@ export function buildOwnerSignalDraft(input: {
   frozenCandles: readonly Candle[];
   note: string;
   idempotencyKey: string;
+  contextAsOfMs?: number | null;
+  contextBarsSha256?: string | null;
 }): OwnerSignalDraft {
   if (!input.signalId || !/^[0-9a-f]{64}$/i.test(input.snapshotRevision) ||
       !/^[0-9a-f]{64}$/i.test(input.barsSha256))
@@ -52,7 +56,17 @@ export function buildOwnerSignalDraft(input: {
       projected[0].price <= projected[1].price)
     throw new Error("Верхняя и нижняя линии неразличимы");
   if (input.note.length > 1024) throw new Error("Комментарий слишком длинный");
+  if ((input.contextAsOfMs == null) !== (input.contextBarsSha256 == null))
+    throw new Error("Неполный контекст поздних свечей");
+  if (input.contextAsOfMs != null &&
+      (!Number.isSafeInteger(input.contextAsOfMs) ||
+       !/^[0-9a-f]{64}$/i.test(input.contextBarsSha256 ?? "")))
+    throw new Error("Неверный контекст поздних свечей");
   return {
+    ...(input.contextAsOfMs != null ? {
+      context_as_of_ms: input.contextAsOfMs,
+      context_bars_sha256: input.contextBarsSha256!,
+    } : {}),
     schema_version: 1,
     signal_id: input.signalId,
     snapshot_revision: input.snapshotRevision,
