@@ -20,7 +20,7 @@ import sqlite3
 import subprocess
 import time
 
-from tools.flat_paper_recovery_gate import FlatRecoveryBlocked, prove_flat_recovery
+from tools.flat_paper_recovery_gate import (FlatRecoveryBlocked, prove_flat_recovery, prove_one_flat_orphan)
 from tools.jasmy_flat_handoff_proof import (
     OLD_SHA as JASMY_OLD_SHA, PROOF_LABEL as JASMY_PROOF_LABEL,
     prove_jasmy_legacy_flat,
@@ -182,6 +182,7 @@ def execute_flat_handoff(
     legacy_unversioned: bool = False, legacy_attestor=_attest_legacy_unversioned,
     jasmy_incident_20261102: bool = False,
     dual_orphan_incident_20261103: bool = False,
+    proven_one_flat_orphan: bool = False,
     service_pid=_service_pid, start_token=_process_start_token,
     send_interrupt=None, is_alive=None, writer_guard=_frozen_snapshot,
     listener_owner=_has_exact_local_listener,
@@ -189,9 +190,12 @@ def execute_flat_handoff(
 ) -> str:
     """One-shot SIGINT, not a systemd override and never a SIGKILL fallback."""
     _assert(expected_pid > 1, "expected_pid_invalid")
+    _assert(
+        sum((bool(jasmy_incident_20261102), bool(dual_orphan_incident_20261103),
+             bool(proven_one_flat_orphan), bool(legacy_unversioned))) <= 1,
+        "mutually_exclusive_flat_incident_proofs",
+    )
     if jasmy_incident_20261102 or dual_orphan_incident_20261103:
-        _assert(not (jasmy_incident_20261102 and dual_orphan_incident_20261103),
-                "mutually_exclusive_flat_incident_proofs")
         _assert(not legacy_unversioned and expected_build_sha == JASMY_OLD_SHA,
                 "incident_old_sha_mismatch")
     if dual_orphan_incident_20261103:
@@ -275,6 +279,26 @@ def execute_flat_handoff(
             )
             _assert(proof == TWO_ORPHAN_PROOF_LABEL,
                     "dual_orphan_flat_evidence_missing")
+        elif proven_one_flat_orphan:
+            # The generic policy verifies the exact running build, one fully
+            # attributed manual close and all other candidate/position ledgers.
+            # A DB path substitution cannot smuggle a different owner's rows
+            # under the already-checked HTTP identity.
+            databases = conn.execute("PRAGMA database_list").fetchall()
+            main_paths = [str(row[2]) for row in databases if row[1] == "main"]
+            _assert(len(main_paths) == 1 and bool(main_paths[0])
+                    and Path(main_paths[0]).resolve() == db_path.resolve()
+                    and expected_database_identity(
+                        ROOT, {"BYBITSCANNER_PAPER_DB": str(Path(main_paths[0]).resolve())}
+                    ) == expected_identity,
+                    "one_orphan_open_database_identity_mismatch")
+            conn.row_factory = sqlite3.Row
+            proof = prove_one_flat_orphan(
+                conn, expected_identity=expected_identity,
+                expected_build_sha=expected_build_sha, **snapshots,
+            )
+            _assert(proof == "ONE_FLAT_ORPHAN_IMMUTABLE_CLOSE_EVIDENCE_ONLY",
+                    "one_orphan_proof_missing")
         else:
             proof = prove_flat_recovery(
                 conn, expected_identity=expected_identity, **snapshots,
@@ -336,6 +360,10 @@ def main(argv=None) -> int:
         "--dual-orphan-incident-20261103", action="store_true",
         help="Only verified JASMY+FLOW Flat/OPEN ownership on exact f100ef3 backend",
     )
+    parser.add_argument(
+        "--proven-one-flat-orphan", action="store_true",
+        help="Only a frozen, fully verified manual Flat/OPEN Robot lot; no generic STOP bypass",
+    )
     parser.add_argument("--execute", action="store_true",
                         help="One exceptional SIGINT; needs separate owner authorization")
     args = parser.parse_args(argv)
@@ -350,6 +378,7 @@ def main(argv=None) -> int:
             legacy_unversioned=args.legacy_unversioned_20261031,
             jasmy_incident_20261102=args.jasmy_incident_20261102,
             dual_orphan_incident_20261103=args.dual_orphan_incident_20261103,
+            proven_one_flat_orphan=args.proven_one_flat_orphan,
         )
     except (FlatRecoveryBlocked, OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(f"BLOCKED: {exc}; no new signal is authorized")
