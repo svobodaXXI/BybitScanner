@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReplayCandle } from "./replayModel";
 import {
-  chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical,
+  chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical,
 } from "./replayDrawingCoordinates";
 
 const start = Date.UTC(2026, 10, 2);
@@ -56,6 +56,16 @@ describe("manual replay UTC drawing anchors", () => {
       .toBeCloseTo(1);
     // No future retirement may be painted beyond the last closed bar.
     expect(geometryLogicalSegment({ from_ms: firstMs, retired_at_ms: start + 5 * 3_600_000 }, hourly.slice(0, 1))!.to).toBeCloseTo(1);
+  });
+
+  it("culls only small retired-line fragments clipped by the left viewport edge", () => {
+    expect(isLeftEdgeHistoricalFragment(-250, 25, 1000)).toBe(true);
+    expect(isLeftEdgeHistoricalFragment(-250, 119, 1000)).toBe(true);
+    expect(isLeftEdgeHistoricalFragment(-250, 160, 1000)).toBe(false);
+    expect(isLeftEdgeHistoricalFragment(5, 25, 1000)).toBe(false);
+    expect(isLeftEdgeHistoricalFragment(-250, -5, 1000)).toBe(false);
+    expect(isLeftEdgeHistoricalFragment(-15, 20, 200)).toBe(true);
+    expect(isLeftEdgeHistoricalFragment(-15, 35, 200)).toBe(false);
   });
 
   it("magnet snaps to selected TF's visible High/Low without changing future data", () => {
