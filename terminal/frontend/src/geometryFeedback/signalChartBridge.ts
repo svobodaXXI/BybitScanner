@@ -61,6 +61,38 @@ export function projectSignalGeometry(
 }
 
 
+/** Reuse the immutable Editor source lines on the live Autopilot chart.
+ * A line is shown only when every original pivot timestamp exists in the
+ * current timeframe's real candle window; no price/time interpolation or
+ * symbol-only approximation is permitted.
+ */
+export function projectSourceReferenceOnLiveCandles(
+  sourceReferences: readonly DrawingObject[],
+  sourceCandles: readonly Candle[],
+  liveCandles: readonly Candle[],
+): DrawingObject[] | null {
+  if (!sourceReferences.length || !liveCandles.length) return null;
+  try {
+    const anchored: TimestampDrawing[] = sourceReferences.map((drawing) => ({
+      id: drawing.id,
+      type: drawing.type,
+      anchors: drawing.anchors.map((anchor) => {
+        if (!Number.isInteger(anchor.logical) || anchor.logical < 0 ||
+            anchor.logical >= sourceCandles.length)
+          throw new Error("Source pivot missing from immutable snapshot");
+        const bar_open_time_ms = Date.parse(sourceCandles[anchor.logical].time);
+        if (!Number.isSafeInteger(bar_open_time_ms))
+          throw new Error("Invalid immutable source candle timestamp");
+        return { bar_open_time_ms, price: anchor.price };
+      }),
+    }));
+    return projectSignalGeometry(anchored, liveCandles).referenceDrawings;
+  } catch {
+    return null;
+  }
+}
+
+
 /** Frame the original detector anchors when opening a historical Editor snapshot.
  * The ordinary trading chart continues following the latest candle.
  */
