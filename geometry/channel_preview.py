@@ -129,3 +129,58 @@ def observe_four_pivot_channel(candles, as_of_index: int | None = None) -> Chann
         slope_upper=upper["slope"],
         slope_lower=lower["slope"],
     )
+
+
+@dataclass(frozen=True)
+class ChannelFollowup:
+    """Source-time diagnostic only; never confirmation, an entry or a stop."""
+    as_of_index: int
+    original_identity: tuple[tuple[int, str, float], ...]
+    current_identity: tuple[tuple[int, str, float], ...] | None
+    status: str
+    body_breach_indices: tuple[int, ...]
+
+
+def compare_channel_preview(
+    original: ChannelPreview, candles, as_of_index: int,
+) -> ChannelFollowup | None:
+    """Compare an immutable four-pivot snapshot with NEW closed candles.
+
+    A new pivot set is explicitly flagged for review rather than silently
+    replacing the original lines. Missing/invalid evidence is NOT a valid
+    continuation. Wicks alone do not count as body breaches. This does not
+    validate maturity or use a candle's outcome to authorize trading.
+    """
+    if (not isinstance(original, ChannelPreview) or type(as_of_index) is not int
+            or as_of_index <= original.as_of_index):
+        return None
+    current = observe_four_pivot_channel(candles, as_of_index)
+    if current is None:
+        return ChannelFollowup(
+            as_of_index, original.anchor_identity, None, "NOT_PROVEN", (),
+        )
+    if current.anchor_identity != original.anchor_identity:
+        return ChannelFollowup(
+            as_of_index, original.anchor_identity, current.anchor_identity,
+            "NEW_ANCHORS_REVIEW_REQUIRED", (),
+        )
+    breaches = []
+    for index in range(original.as_of_index + 1, as_of_index + 1):
+        row = candles.iloc[index]
+        body_top = max(float(row["open"]), float(row["close"]))
+        body_bottom = min(float(row["open"]), float(row["close"]))
+        upper, lower = original.project(index)
+        # The original projection cannot legitimately trade through a zero
+        # or crossed width. Do not silently continue an expired channel.
+        if not all(math.isfinite(x) for x in (upper, lower)) or upper <= lower:
+            return ChannelFollowup(
+                as_of_index, original.anchor_identity, current.anchor_identity,
+                "NOT_PROVEN", (),
+            )
+        if body_top > upper or body_bottom < lower:
+            breaches.append(index)
+    return ChannelFollowup(
+        as_of_index, original.anchor_identity, current.anchor_identity,
+        "BODY_BREACH_OBSERVED" if breaches else "SAME_ANCHORS_PROVISIONAL",
+        tuple(breaches),
+    )
