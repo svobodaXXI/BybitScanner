@@ -196,3 +196,13 @@
   color: #cbd7df;
 }
 .dom-robot-position-status strong { color: #e1e8ef; }
+
+/* Journal shares the existing chart footer; no extra full-height mode panel. */
+.autopilot-below-chart { display: flex; flex-direction: column; min-width: 0; }
+.autopilot-robot-journal { padding: 0.25rem 0.55rem 0.45rem; border-top: 1px solid #27313b; background: #10151b; font-size: 0.73rem; }
+.autopilot-robot-journal header { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+.autopilot-robot-journal header button { padding: 0.2rem 0.45rem; border: 1px solid #36424e; background: #171d24; color: #d5dde5; border-radius: 0.25rem; }
+.autopilot-robot-journal p { margin: 0.25rem 0; color: #81909e; }
+.autopilot-robot-journal ol { display: grid; gap: 0.25rem; max-height: 7.5rem; overflow-y: auto; margin: 0.35rem 0 0; padding: 0; list-style: none; }
+.autopilot-robot-journal li { display: flex; flex-wrap: wrap; column-gap: 0.65rem; }
+.autopilot-robot-journal time { color: #91a1af; white-space: nowrap; }
