@@ -21,6 +21,17 @@ VENV = f"{PROJECT}/venv/bin/python"
 # The repo belongs to the service account; a per-command safe.directory lets
 # the read-only manager user run git without any persistent config change.
 GIT = f"git -c safe.directory={PROJECT} -C {PROJECT}"
+# Installed immutable releases have no .git. This is not evidence of a clean
+# worktree or authorization to deploy; report that status as UNKNOWN.
+GIT_PROBE = (
+    f"if test -e {PROJECT}/.git; then "
+    "printf 'GIT_WORKTREE=PRESENT\\n'; "
+    f"{GIT} status --porcelain=v1; "
+    f"{GIT} branch --show-current; "
+    f"{GIT} rev-parse HEAD; "
+    "else printf 'GIT_WORKTREE=ABSENT\\nGIT_STATUS=UNKNOWN (release without .git)\\n'; "
+    "fi"
+)
 HEALTH = "curl -fsS --connect-timeout 3 --max-time 6 http://127.0.0.1:8765/api/health"
 HOST_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
@@ -47,16 +58,17 @@ ACTIONS = {
         f"{HEALTH} | python3 -m json.tool"
     ),
     "Git / локальные изменения": (
-        f"{GIT} status --short && "
-        f"{GIT} branch --show-current && "
-        f"{GIT} rev-parse --short HEAD"
+        "set -e; "
+        "printf '=== INSTALLED SOURCE ===\\n'; "
+        f"{GIT_PROBE}; "
+        "printf '=== BACKEND BUILD ===\\n'; "
+        f"{HEALTH}"
     ),
     "Предпроверка обновления": (
         "set -e; "
-        "printf '=== GIT ===\\n'; "
-        f"{GIT} status --porcelain=v1; "
-        f"{GIT} branch --show-current; "
-        f"{GIT} rev-parse HEAD; "
+        "printf '=== INSTALLED SOURCE ===\\n'; "
+        f"{GIT_PROBE}; "
+        "printf 'DEPLOY_PREFLIGHT=NOT_PROVEN (informational only)\\n'; "
         "printf '=== BACKEND ===\\n'; "
         "systemctl show bybitscanner-paper-backend.service "
         "-p ActiveState -p SubState -p MainPID; "
