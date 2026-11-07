@@ -106,6 +106,7 @@ export function App() {
     referenceDrawings: DrawingObject[];
     editableDrawings: DrawingObject[];
     signalId: string;
+    originalPattern: string | null;
     snapshotRevision: string;
     barsSha256: string;
     savedReviewId: string | null;
@@ -201,6 +202,8 @@ export function App() {
           setFrozenSignal({
             candles: reviewCandles, sourceCandles: candles, context: savedContext,
             ...projected, editableDrawings, signalId: link.signalId!,
+            originalPattern: typeof payload.original_pattern === "string" && payload.original_pattern.trim()
+              ? payload.original_pattern.trim() : null,
             snapshotRevision: payload.snapshot_revision, barsSha256: payload.bars_sha256,
             savedReviewId: typeof savedReview?.review_id === "string" ? savedReview.review_id : null,
             savedReviewLabel,
@@ -1352,6 +1355,7 @@ export function App() {
           referenceDrawings={mode === "EDITOR" ? frozenSignal?.referenceDrawings ?? [] : []}
           editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
           signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
+          originalPattern={mode === "EDITOR" ? frozenSignal?.originalPattern ?? null : null}
           snapshotRevision={mode === "EDITOR" ? frozenSignal?.snapshotRevision ?? null : null}
           barsSha256={mode === "EDITOR" ? frozenSignal?.barsSha256 ?? null : null}
           savedReviewId={mode === "EDITOR" ? frozenSignal?.savedReviewId ?? null : null}
