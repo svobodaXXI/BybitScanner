@@ -83,68 +83,49 @@ describe("manual replay UTC drawing anchors", () => {
         [bars[5].start_ms]: 60 } as Record<number,number>)[time] ?? null)).toBe(30);
   });
 
-  it("tightens only the H1 main ray onto an already-closed protruding wick", () => {
+  it("keeps confirmed H1 structural anchors despite later protruding wicks", () => {
     const hour = 3_600_000;
-    const hours = [
-      mkBar(0, 60), mkBar(1, 60), mkBar(2, 60),
-      mkBar(3, 60), mkBar(4, 60), mkBar(5, 60),
-    ];
-    // Published BULL 1-3: 100 -> 110 by hour 3. A later green H1
-    // wick at hour 4 drops below the extrapolated boundary.
-    const line = {
-      kind: "MAIN_1H", side: "BULL" as const,
-      from_ms: start, to_ms: start + 3 * hour,
-      from_price: 100, to_price: 110,
-    };
+    const hours = Array.from({ length: 6 }, (_, i) => mkBar(i, 60));
+    const line = { kind: "MAIN_1H", side: "BULL" as const,
+      from_ms: start, to_ms: start + 3 * hour, from_price: 100,
+      to_price: 110, available_at_ms: start + 4 * hour };
     const bars = hours.map((bar, i) => ({
-      ...bar,
-      low: [100, 103.5, 107, 110, 112, 117][i],
+      ...bar, low: [100, 103.5, 107, 110, 102, 103][i],
       high: [104, 108, 112, 115, 119, 122][i],
     }));
-    const before = wickTightH1MainProjection(line, bars.slice(0, 4),
-      start + 4 * hour);
-    expect(before.adjusted).toBe(false);
-    const after = wickTightH1MainProjection(line, bars.slice(0, 5),
-      start + 5 * hour);
-    expect(after.adjusted).toBe(true);
-    expect(after.to_ms).toBe(start + 4 * hour);
-    expect(after.to_price).toBe(112);
-    const slope = (after.to_price - after.from_price) /
-      (after.to_ms - after.from_ms);
-    for (const bar of bars.slice(1, 5))
-      expect(after.from_price + slope * (bar.start_ms - start)).toBeLessThanOrEqual(bar.low);
-    expect(wickTightH1MainProjection(line, bars, start + 4 * hour))
-      .toEqual(before); // A future wick cannot affect the older replay cursor.
-    expect(line.to_ms).toBe(start + 3 * hour);
-    expect(line.to_price).toBe(110); // Structural pivot 3 is immutable.
-    // A real version published at hour 4 cannot be re-fitted by an hour-4
-    // wick closing at hour 5. This is the owner's "no new lower low / higher
-    // high = no new slope" scenario, even when the candle crosses the line.
-    const published = { ...line, available_at_ms: start + 4 * hour };
-    const frozen = wickTightH1MainProjection(published, bars.slice(0, 4),
-      start + 4 * hour);
-    expect(frozen.adjusted).toBe(false);
-    expect(wickTightH1MainProjection(published, bars, start + 6 * hour))
-      .toEqual(frozen);
-    // When the detector actually publishes a NEW four-pivot version, it
-    // may incorporate the then-closed protruding wick. No retroactive move.
-    const revised = { ...published, available_at_ms: start + 5 * hour };
-    expect(wickTightH1MainProjection(revised, bars, start + 5 * hour))
-      .toEqual(after);
-    const target = { ...line, kind: "TARGET_1H" };
-    expect(wickTightH1MainProjection(target, bars, start + 6 * hour).adjusted)
-      .toBe(false);
-    // Symmetric bearish upper resistance is tightened upward by a wick.
-    const bearish = { ...line, side: "BEAR" as const,
-      from_price: 120, to_price: 108 };
-    const highs = bars.map((bar, i) => ({
-      ...bar, high: [120, 117, 114, 108, 109, 104][i],
-    }));
-    const bear = wickTightH1MainProjection(bearish, highs.slice(0, 5),
-      start + 5 * hour);
-    expect(bear.adjusted).toBe(true);
-    expect(bear.to_ms).toBe(start + 4 * hour);
-    expect(bear.to_price).toBe(109);
+    const original = { from_ms: line.from_ms, to_ms: line.to_ms,
+      from_price: 100, to_price: 110, adjusted: false };
+    expect(wickTightH1MainProjection(line, bars.slice(0, 4),
+      start + 4 * hour)).toEqual(original);
+    expect(wickTightH1MainProjection(line, bars,
+      start + 6 * hour)).toEqual(original);
+    expect(wickTightH1MainProjection({ ...line, side: "BEAR" }, bars,
+      start + 6 * hour)).toEqual(original);
+    expect(wickTightH1MainProjection({ ...line, kind: "TARGET_1H" }, bars,
+      start + 6 * hour)).toEqual(original);
+  });
+
+  it("preserves real GRASS H1 III higher-low structural support", () => {
+    const origin = Date.UTC(2026, 7, 29, 8);
+    const higherLow = Date.UTC(2026, 7, 30, 15);
+    const laterWick = Date.UTC(2026, 7, 30, 23);
+    const line = { kind: "MAIN_1H", side: "BULL" as const,
+      from_ms: origin, to_ms: higherLow, from_price: 0.3437,
+      to_price: 0.3589, available_at_ms: Date.UTC(2026, 7, 31, 1) };
+    const known = [
+      { ...mkBar(0, 60), start_ms: origin,
+        end_ms: origin + 3_600_000, low: 0.3437 },
+      { ...mkBar(0, 60), start_ms: higherLow,
+        end_ms: higherLow + 3_600_000, low: 0.3589 },
+      { ...mkBar(0, 60), start_ms: laterWick,
+        end_ms: laterWick + 3_600_000, low: 0.3489 },
+    ];
+    // The intermediate 0.34890 is a genuine later wick, NOT the
+    // higher-low swing pivot III. It may pierce the already-known support.
+    const result = wickTightH1MainProjection(line, known,
+      Date.UTC(2026, 7, 31, 5));
+    expect(result).toEqual({ from_ms: origin, to_ms: higherLow,
+      from_price: 0.3437, to_price: 0.3589, adjusted: false });
   });
 
   it("ends active M5 ray slightly beyond the last price candle, not chart edge", () => {
