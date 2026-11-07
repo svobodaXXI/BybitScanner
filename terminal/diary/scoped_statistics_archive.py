@@ -118,7 +118,10 @@ class ScopedStatisticsArchive:
         }
         payload = json.dumps(report, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        with self._db:
+        # Check-and-append under one SQLite writer reservation. Concurrent
+        # publishers cannot pass the revision gate on an old snapshot.
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
             latest = self._db.execute(
                 """SELECT source_revision, report_sha256 FROM scoped_statistics
                    WHERE account_id=? AND owner=?
@@ -138,6 +141,10 @@ class ScopedStatisticsArchive:
                    VALUES (?, ?, ?, ?, ?)""",
                 (account_id, owner, source_revision, payload, digest),
             )
+            self._db.commit()
+        except BaseException:
+            self._db.rollback()
+            raise
         return report
 
     def latest(self, *, account_id: str, owner: str) -> dict[str, object] | None:
