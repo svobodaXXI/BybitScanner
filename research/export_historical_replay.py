@@ -175,10 +175,14 @@ def build_market_only_document(
     def collect_context(view) -> None:
         nonlocal previous_trend, previous_blue, last_prior_identity
         # Only geometry known at the PRIOR close may qualify this bar OPEN.
-        preview = blue_open_risk_preview(
+        # An unfitted four-pivot corridor is shown for visual review only.
+        # Its target is not a verified strict-wick boundary and must not be
+        # silently promoted into H-017 risk/entry research previews.
+        preview = (blue_open_risk_preview(
             bar=view.five_minute.bar, known_trend=previous_trend,
             known_blue=previous_blue, policy=risk_policy,
-        )
+        ) if previous_trend is not None and
+          previous_trend.envelope_status == "WICK_TIGHT" else None)
         if preview is not None:
             blue_risk_previews.append(preview)
         snapshot = view.dmi_5m
