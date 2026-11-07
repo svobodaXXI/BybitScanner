@@ -207,6 +207,7 @@ export function AutopilotFirstScreen({
   onTerminal,
   accountControl,
   onRobotControls,
+  onPositionsLoaded,
 }: {
   now?: () => number;
   onOpenPositions?: () => void;
@@ -216,6 +217,8 @@ export function AutopilotFirstScreen({
   onTerminal?: () => void;
   accountControl?: ReactNode;
   onRobotControls?: () => void;
+  /** Share the already-loaded inventory; do not introduce a second API poller. */
+  onPositionsLoaded?: (positions: PaperOpenPosition[] | null) => void;
 }) {
   const [autopilot, setAutopilot] = useState<Loadable<AutopilotModeState>>({
     status: "loading",
@@ -250,16 +253,21 @@ export function AutopilotFirstScreen({
       settle(loadRuntimeHealth).then(apply(setHealth)),
       settle(() => loadDiaryTrades(accountKey)).then(apply(setTrades)),
       settle(loadRobotDaySummary).then(apply(setRobotDay)),
-      settle(loadOpenPositions).then(apply(setPositions)),
+      settle(loadOpenPositions).then((result) => {
+        apply(setPositions)(result);
+        if (current === generation.current)
+          onPositionsLoaded?.(result.status === "ready" ? result.value : null);
+      }),
     ]);
-  }, [accountKey]);
+  }, [accountKey, onPositionsLoaded]);
 
   useEffect(() => {
     void refresh();
     return () => {
       generation.current += 1;
+      onPositionsLoaded?.(null);
     };
-  }, [refresh]);
+  }, [refresh, onPositionsLoaded]);
 
   const backendOffline =
     health.status === "error" &&
