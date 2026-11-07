@@ -266,6 +266,65 @@ try {
       "forward step must reproduce identical real H1 geometry");
     position = firstYellowIndex + 1;
   }
+  // Owner's marked I-IV GRASS case on the actual official-trades archive:
+  // I = retired descending MAIN, II = its purple prior, III = new BULL
+  // 1--3 line from the 29 Aug low, IV = 30 Aug low 0.35890. A red M5
+  // opens 31 Aug 05:00 BELOW IV, then a green candle closes back above it.
+  // That recovery does not undo the already-confirmed trend break.
+  const ownerBullMain = yellow.find(line =>
+    line.side === "BULL" &&
+    line.from_ms === Date.UTC(2026, 7, 29, 8) &&
+    line.to_ms === Date.UTC(2026, 7, 30, 15) &&
+    Number(line.to_price) === 0.3589);
+  const ownerPrior = archive.hourly_prior_updates.find(level =>
+    level.side === "BULL" && level.at_ms === ownerBullMain?.to_ms &&
+    Number(level.price) === 0.3589);
+  const ownerBreak = breaks.find(event =>
+    event.previous_side === "BULL" && Number(event.prior_price) === 0.3589 &&
+    event.next_hour_open_ms === Date.UTC(2026, 7, 31, 5));
+  assert.ok(ownerBullMain && ownerPrior && ownerBreak,
+    "GRASS I-IV must contain the independently confirmed H1 main/prior/break");
+  assert.equal(ownerBullMain.from_price, "0.34370");
+  assert.equal(ownerBreak.prior_at_ms, ownerBullMain.to_ms);
+  assert.ok(ownerBullMain.available_at_ms < ownerBreak.confirmed_at_ms);
+  assert.ok(ownerPrior.available_at_ms < ownerBreak.confirmed_at_ms);
+  const openingCandle = archive.events.find(event =>
+    event.candle?.start_ms === ownerBreak.next_hour_open_ms)?.candle;
+  assert.ok(openingCandle && Number(openingCandle.open) < 0.3589,
+    "the next H1 must actually OPEN beyond IV prior");
+  const reclaimIndex = archive.events.findIndex(event =>
+    event.time_ms > ownerBreak.confirmed_at_ms &&
+    Number(event.candle?.close) > 0.3589);
+  assert.ok(reclaimIndex > byEventTime.get(ownerBreak.confirmed_at_ms),
+    "real price must return above IV later in the same H1");
+  const breakIndex = byEventTime.get(ownerBreak.confirmed_at_ms);
+  assert.ok(breakIndex >= position);
+  await advanceTo(breakIndex);
+  assert.doesNotMatch(await page.getByRole("status", { name: "Приор H1" }).innerText(),
+    /Исторический \\(сломанный\\)/, "BULL prior must remain active before the next OPEN");
+  await advanceTo(breakIndex + 1);
+  assert.match(await page.getByRole("status", { name: "Приор H1" }).innerText(),
+    /Исторический \\(сломанный\\)/,
+    "opening behind IV must retire the BULL prior");
+  assert.equal(await overlay.getAttribute("data-visible-geometry"), "0",
+    "no opposite confirmed H1 may be fabricated at the exact opening");
+  await advanceTo(reclaimIndex + 1);
+  assert.match(await page.getByRole("status", { name: "Приор H1" }).innerText(),
+    /Исторический \\(сломанный\\)/,
+    "return above III/IV must not retroactively restore the BULL prior");
+  assert.equal(await overlay.getAttribute("data-visible-geometry"), "0",
+    "price reclaim without four new confirmed pivots is not a fresh trend");
+  await page.getByRole("button", { name: "H1", exact: true }).click();
+  await page.screenshot({
+    path: join(screenshotDir, "real-h1-owner-IV-reclaim.png"), fullPage: true,
+  });
+  await page.getByRole("button", { name: "M5", exact: true }).click();
+  console.log("REAL_GRASS_OWNER_I_IV_RECLAIM_OK " + JSON.stringify({
+    main_from_ms: ownerBullMain.from_ms, main_to_ms: ownerBullMain.to_ms,
+    prior_at_ms: ownerPrior.at_ms, prior_price: ownerPrior.price,
+    break_at_ms: ownerBreak.confirmed_at_ms,
+    reclaim_at_ms: archive.events[reclaimIndex].time_ms,
+  }));
   assert.deepEqual(errors, [], "browser runtime errors");
   assert.ok(requests.every(uri => {
     const host = new URL(uri).hostname;
