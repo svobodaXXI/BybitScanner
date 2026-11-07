@@ -23,7 +23,7 @@ from bybit_api import get_symbols
 from config import MODE, MIN_SCORE, MAX_SYMBOLS
 
 from signal_adapter import prepare_signal
-from signal_memory import update_signal
+from signal_memory import update_signal, record_telegram_delivery
 from scanner_diary import record_scanner_diary_observation
 from scanner_diary_factors import record_scanner_p0_factors
 from telegram_labels import SCANNER_EMOJI
@@ -171,10 +171,22 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
     mirror_enabled = mirror_observation_enabled()
     mirror_candidate_count = 0
 
-    def report_progress(position, symbol, timeframe):
+    # #449: a symbol is complete only after BOTH timeframes and the shared
+    # MIRROR processing finish. Previously 5m and 1m each reported
+    # symbols_done=position, which could claim 100% while MIRROR was running.
+    completed_symbols = 0
+    completed_timeframes = 0
+    scan_pass_id = f"{os.getpid()}:{time.time_ns()}"
+
+    def report_progress(position, symbol, timeframe, *, status="RUNNING",
+                        log=True, notify=True):
         progress = {
-            "symbols_done": position,
+            "scan_pass_id": scan_pass_id,
+            "status": status,
+            "symbols_done": completed_symbols,
             "symbols_total": len(symbols),
+            "timeframes_done": completed_timeframes,
+            "timeframes_total": len(symbols) * 2,
             "symbol": symbol,
             "timeframe": timeframe,
             "horn_found": horn_found_count,
@@ -183,18 +195,24 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
             "sent_to_telegram": sent_to_telegram_count,
             "errors": error_count,
         }
-        print(
-            f"[SCAN PROGRESS] {position}/{len(symbols)} {symbol} {timeframe}m "
-            f"horn_found={horn_found_count} horn_sent={horn_sent_count} "
-            f"telegram_sent={sent_to_telegram_count} errors={error_count}",
-            flush=True,
-        )
+        if log:
+            print(
+                f"[SCAN PROGRESS] {position}/{len(symbols)} {symbol} {timeframe}m "
+                f"horn_found={horn_found_count} horn_sent={horn_sent_count} "
+                f"telegram_sent={sent_to_telegram_count} errors={error_count}",
+                flush=True,
+            )
         try:
             write_progress(progress)
         except Exception as progress_error:
             print(f"[SCAN PROGRESS WRITE ERROR] {progress_error}", flush=True)
-        if progress_observer is not None:
+        if notify and progress_observer is not None:
             progress_observer(progress)
+
+    # Reset a prior COMPLETE file before the new pass. Do not send this
+    # administrative snapshot to the parent: its first-progress heartbeat
+    # must still mean an actual symbol/timeframe has been attempted.
+    report_progress(0, "", "", log=False, notify=False)
 
     print("=" * 60)
     print("BybitScanner")
@@ -231,6 +249,8 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
         mirror_inputs = {}
         for timeframe in ("5", "1"):
             if control_checkpoint is not None and not control_checkpoint():
+                report_progress(position, symbol, timeframe, status="INTERRUPTED",
+                                log=False, notify=False)
                 print("[SCANNER] current pass stopped by owner")
                 return
             horn = l_shape = None
@@ -262,6 +282,51 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
                     except Exception as observation_error:
                         error_count += 1
                         print(f"{symbol:<15} {timeframe}m L-SHAPE ERROR: {observation_error}")
+
+                # #592: independently confirmed double TOP/BOTTOM after STOP.
+                # Reuse this pass's already fetched 1m/5m closed bars and
+                # the existing Scanner→Robot candidate observer/Admission.
+                # OFF unless the owner's STOP-reentry feature is opted in.
+                if (
+                    os.environ.get("BYBITSCANNER_STOP_REENTRY_AUTO") == "1"
+                    and analysis_result.get("data") is not None
+                    and timeframe in ("1", "5")
+                ):
+                    try:
+                        from geometry.double_extremum import frozen_neckline_snapshot
+                        from pattern_robot_integration import prepare_robot_handoff
+                        from signal_memory import load_memory, save_memory
+
+                        frame = analysis_result["data"]
+                        if len(frame) >= 8:
+                            closed_rows = frame.iloc[:-1].to_dict("records")
+                            candidate = frozen_neckline_snapshot(
+                                symbol, timeframe, closed_rows,
+                            )
+                            if candidate is not None:
+                                identity = (
+                                    f"neckline:{symbol}:{timeframe}:"
+                                    f"{candidate['pattern']}:"
+                                    f"{candidate['neckline_entry']['breakout_time_ms']}"
+                                )
+                                memory = load_memory()
+                                if identity not in memory:
+                                    result = prepare_robot_handoff(
+                                        candidate, timeframe=timeframe, enabled=True,
+                                    )
+                                    if result.candidate_id:
+                                        memory[identity] = {
+                                            "robot_candidate_id": result.candidate_id,
+                                            "pattern": candidate["pattern"],
+                                        }
+                                        save_memory(memory)
+                    except Exception as neckline_error:
+                        error_count += 1
+                        print(
+                            f"{symbol:<15} {timeframe}m NECKLINE ERROR: "
+                            f"{type(neckline_error).__name__}",
+                            flush=True,
+                        )
 
                 # Broadening («Рупор») is observation only: chart + evidence,
                 # no Robot/admission/orders. It runs next to Wedge and never
@@ -438,6 +503,7 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
 
                 telegram_payload = {
                     **analysis,
+                    "_frozen_geometry_candles": analysis_result.get("data"),
                     "symbol": symbol,
                     "final_score": signal["score"]
                 }
@@ -455,6 +521,10 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
                     telegram_sent = send_signal(
                         telegram_payload
                     )
+                    # The old update_signal() persisted NEW before Telegram
+                    # delivery; if Gateway failed, unchanged scores became
+                    # STABLE and the missed chart was never retried.
+                    record_telegram_delivery(signal, telegram_sent)
 
                 if telegram_sent:
                     sent_to_telegram_count += 1
@@ -481,13 +551,24 @@ def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, progress_
                 )
 
             finally:
-                report_progress(position, symbol, timeframe)
+                completed_timeframes += 1
+                if timeframe == "5":
+                    report_progress(position, symbol, timeframe)
 
         if mirror_inputs:
             found, sent, failed = observe_mirror_symbol(symbol, mirror_inputs)
             mirror_candidate_count += found
             sent_to_telegram_count += sent
             error_count += failed
+
+        # The 1m progress event is DELAYED until MIRROR completes, but not
+        # duplicated: exactly two progress IPC callbacks per symbol as before.
+        completed_symbols = position
+        report_progress(position, symbol, "1",
+                        status="COMPLETE" if position == len(symbols) else "RUNNING")
+
+    if not symbols:
+        report_progress(0, "", "", status="COMPLETE", log=False, notify=False)
 
     print(f"Найдено паттернов: {approved_pattern_count}")
     if box_observation_count:

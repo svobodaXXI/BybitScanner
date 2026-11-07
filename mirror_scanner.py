@@ -42,7 +42,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+from decimal import Decimal
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -52,10 +54,11 @@ from typing import Any, Mapping, Sequence
 from geometry.naked_retest import NakedRetestError, PHASE_CAMPAIGN_ACTIVE
 from mirror_levels.imbalance import detect_fvgs, replay as replay_fvg
 from mirror_levels.levels import (
-    LevelRegistry, MirrorLevel, MirrorLevelError, levels_from_geometry, levels_from_horn_event,
+    LevelRegistry, MirrorLevel, MirrorLevelError, SOURCE_SWING_ZONE, horizontal_level,
+    levels_from_geometry, levels_from_horn_event,
     levels_from_ikigai_box, levels_from_l_shape, timeframe_ms,
 )
-from mirror_levels.swing import swing_levels
+from mirror_levels.swing import confirmed_pivots, swing_levels
 from mirror_levels.tracker import (
     STATUS_DATA_BLOCKED, STATUS_RETESTED, STATUS_UNPROVEN, STATUS_UNTESTED, STATUS_WAITING,
     new_record, track,
@@ -74,6 +77,7 @@ ATR_PERIOD = 14
 MERGE_TOLERANCE_ATR = 0.25          # same real level: within 0.25 ATR (the swing-zone tolerance)
 FRESH_BREAKOUT_CANDLES = 2          # a live breakout closed at most 2 closed candles ago
 MIN_BREAKOUT_BODY_ATR = 0.5         # provisional observation threshold; not a trading rule
+MIN_MIRROR_RETEST_POTENTIAL_PERCENT = Decimal("0.7")  # owner: minimum gross distance to first retest
 WAITING_EXPIRY_CANDLES = 400        # an unbroken level whose last anchor left two Scanner windows
 RETENTION_MS = 3 * 86_400_000       # finished records are kept 3 days for the Terminal
 
@@ -274,7 +278,20 @@ def _robot_handoff(level: MirrorLevel, record: Mapping[str, Any]) -> dict[str, A
             "paper_admission": "NOT_AUTHORIZED", "paper_blockers": list(PAPER_BLOCKERS)}
 
 
-def _judge_breakout(record: Mapping[str, Any], latest_close_ms: int, step: int) -> str | None:
+def _retest_potential_percent(target: float | Decimal, reference: float | Decimal) -> Decimal:
+    """Gross retest distance relative to the confirmed close, in percent.
+
+    The target is the frozen boundary at the relevant candle CLOSE. This
+    measures geometry only; Robot net RR / fees / slippage still gate entries.
+    """
+    price = Decimal(str(reference))
+    level = Decimal(str(target))
+    if not price.is_finite() or not level.is_finite() or price <= 0 or level <= 0:
+        return Decimal("0")
+    return abs(level - price) * Decimal("100") / price
+
+
+def _judge_breakout(level: MirrorLevel, record: Mapping[str, Any], latest_close_ms: int, step: int) -> str | None:
     """Rejection reason of a naked breakout as a live MIRROR candidate, or None (candidate)."""
 
     breakout = record["naked_retest"]["breakout"]
@@ -287,6 +304,16 @@ def _judge_breakout(record: Mapping[str, Any], latest_close_ms: int, step: int) 
         return "breakout_atr_unavailable"
     if body_atr < MIN_BREAKOUT_BODY_ATR:
         return f"weak_breakout_body:{body_atr:.2f}_atr"
+    # The first MIRROR retest is the target, not the wick excursion.
+    # Compare the CLOSED breakout candle with the frozen level at its close.
+    # Keep rejected breakouts in durable history, but do not publish a weak
+    # campaign as a candidate or hand it to PAPER.
+    potential = _retest_potential_percent(
+        level.boundary.price_at(int(breakout["close_time_ms"])),
+        breakout["close"],
+    )
+    if potential < MIN_MIRROR_RETEST_POTENTIAL_PERCENT:
+        return "retest_potential_below_0_7_percent"
     return None
 
 
@@ -305,100 +332,22 @@ def _duplicate_breakout(level_id, level, record, records, registry) -> str | Non
     return None
 
 
-def _engulfing(previous: Mapping[str, Any], current: Mapping[str, Any], direction: str) -> bool:
-    """The repository's Engulfing rule; SHORT is the same rule on price-negated candles."""
-
-    import pandas as pd
-    from geometry.reversal_patterns import is_bullish_engulfing
-
-    def view(row):
-        if direction == "LONG":
-            return {"open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]}
-        return {"open": -row["open"], "high": -row["low"], "low": -row["high"], "close": -row["close"]}
-
-    return bool(is_bullish_engulfing(pd.DataFrame([view(previous), view(current)]), 1))
-
-
-def _candle_numbers(row: Mapping[str, Any]):
-    """Positive finite OHLC of an explicitly closed, physically valid candle."""
-    from decimal import Decimal, InvalidOperation
-
-    if row.get("closed") is not True:
-        return None
-    try:
-        o, h, lo, c = (Decimal(str(row[k])) for k in ("open", "high", "low", "close"))
-    except (KeyError, TypeError, ValueError, InvalidOperation):
-        return None
-    if (not all(x.is_finite() and x > 0 for x in (o, h, lo, c))
-            or lo > min(o, c) or h < max(o, c) or h <= lo):
-        return None
-    return o, h, lo, c
+# Compatibility aliases keep existing MIRROR callers and focused regressions
+# stable; all candle recognition is shared, while confirmation/application
+# remains owned by the MIRROR campaign policy below.
+from geometry.reversal_patterns import (
+    directional_engulfing as _engulfing,
+    closed_candle_numbers as _candle_numbers,
+    confirms_next_body_close as _next_close_confirms,
+    is_nison_lower_wick,
+)
 
 
 def _nison_hammer(candle: Mapping[str, Any], direction: str,
                   preceding: Sequence[Mapping[str, Any]]) -> bool:
-    """Hammer LONG or Hanging Man SHORT: identical lower-wick shape, different context.
-
-    Nison: small real body at upper end, lower wick at least 2x the body,
-    very little/no upper wick. For the otherwise qualitative upper-wick phrase
-    we use an explicit <= 1/2-body implementation tolerance. Previous two
-    consecutive closes must fall (LONG) or rise (SHORT), a causal conservative
-    proxy for the prior trend rather than a number ascribed to Nison.
-    Doji remains observational, not an entry trigger.
-    """
-    from decimal import Decimal
-
-    if direction not in ("LONG", "SHORT") or len(preceding) < 2:
-        return False
-    values = _candle_numbers(candle)
-    before = [_candle_numbers(x) for x in preceding[-2:]]
-    if values is None or any(x is None for x in before):
-        return False
-    older, newer = before
-    try:
-        duration = int(candle["close_time_ms"]) - int(candle["open_time_ms"])
-        if (duration <= 0
-                or any(int(row["close_time_ms"]) - int(row["open_time_ms"]) != duration
-                       for row in preceding[-2:])
-                or int(preceding[-2]["close_time_ms"]) != int(preceding[-1]["open_time_ms"])
-                or int(preceding[-1]["close_time_ms"]) != int(candle["open_time_ms"])):
-            return False
-    except (KeyError, TypeError, ValueError):
-        return False
-    if direction == "LONG" and not older[3] > newer[3]:
-        return False
-    if direction == "SHORT" and not older[3] < newer[3]:
-        return False
-    o, h, lo, c = values
-    body = abs(c - o)
-    if body == 0:  # doji requires its own independently reviewed context/rule
-        return False
-    lower_wick = min(o, c) - lo
-    upper_wick = h - max(o, c)
-    return (lower_wick >= 2 * body
-            and upper_wick <= Decimal(HAMMER_MAX_UPPER_TO_BODY) * body)
-
-
-def _next_close_confirms(formation: Sequence[Mapping[str, Any]],
-                         following: Mapping[str, Any], direction: str, step: int) -> bool:
-    """The *next* closed same-TF candle confirms beyond the pattern BODY, not wick."""
-    candles = [*formation, following]
-    values = [_candle_numbers(x) for x in candles]
-    if direction not in ("LONG", "SHORT") or not formation or any(x is None for x in values):
-        return False
-    try:
-        if any(int(right["open_time_ms"]) != int(left["close_time_ms"])
-               or int(left["close_time_ms"]) - int(left["open_time_ms"]) != step
-               for left, right in zip(candles, candles[1:])):
-            return False
-        if int(following["close_time_ms"]) - int(following["open_time_ms"]) != step:
-            return False
-    except (KeyError, ValueError, TypeError):
-        return False
-    real_body_top = max(max(o, c) for o, _, _, c in values[:-1])
-    real_body_bottom = min(min(o, c) for o, _, _, c in values[:-1])
-    return (values[-1][3] > real_body_top if direction == "LONG"
-            else values[-1][3] < real_body_bottom)
+    return is_nison_lower_wick(
+        candle, direction, preceding, upper_to_body=HAMMER_MAX_UPPER_TO_BODY,
+    )
 
 
 def _entry_terms(level: MirrorLevel, record: Mapping[str, Any], candle: Mapping[str, Any],
@@ -417,6 +366,10 @@ def _entry_terms(level: MirrorLevel, record: Mapping[str, Any], candle: Mapping[
     sign = 1 if direction == "LONG" else -1
     if not ((reference - stop) * sign > 0 and (target - reference) * sign > 0):
         return None, "entry_geometry_invalid"
+    # Price may approach the retest boundary after the breakout; recheck
+    # the actual confirmation close, not only the campaign's original signal.
+    if _retest_potential_percent(target, reference) < MIN_MIRROR_RETEST_POTENTIAL_PERCENT:
+        return None, "entry_retest_potential_below_0_7_percent"
     try:
         rr = robot_l_shape.net_reward_risk(direction, entry_price=reference, stop_price=stop,
                                            target_price=target, fee_rate=PAPER_FEE_RATE,
@@ -534,7 +487,7 @@ def _imbalance_quality(record: Mapping[str, Any], gaps, rows) -> list[dict[str, 
 
 
 def _advance(level: MirrorLevel, record: dict[str, Any], rows, *, atr_at, gaps, tolerance,
-             fine_candles) -> tuple[dict[str, Any], list[str]]:
+             fine_candles, confirmed_extrema=()) -> tuple[dict[str, Any], list[str]]:
     """Feed unconsumed closed candles one at a time; returns the record and its status transitions."""
 
     cursor = record["naked_retest"].get("cursor_close_time_ms")
@@ -542,6 +495,28 @@ def _advance(level: MirrorLevel, record: dict[str, Any], rows, *, atr_at, gaps, 
     for row in rows:
         if cursor is not None and row["close_time_ms"] <= cursor:
             continue
+        # A subsequently CONFIRMED higher high / lower low invalidates an
+        # unbroken horizontal mirror ray, even when only its wick crosses.
+        # Wait until the right-hand pivot candles CLOSE: never look ahead.
+        # A breakout already proven before confirmation remains historical;
+        # it must not be rewritten using future pivot evidence.
+        if level.is_horizontal and record["status"] == STATUS_WAITING:
+            for pivot in confirmed_extrema:
+                if (int(pivot["confirmed_at_ms"]) != int(row["close_time_ms"])
+                        or int(pivot["pivot_at_ms"]) < level.confirmed_at_ms):
+                    continue
+                new_price = float(pivot["price"])
+                old_price = level.price_at(int(pivot["pivot_at_ms"]))
+                superseded = ((level.side == "upper" and new_price > old_price)
+                              or (level.side == "lower" and new_price < old_price))
+                if superseded:
+                    record.update(lifecycle=LIFECYCLE_REJECTED,
+                                  rejection="superseded_by_confirmed_extremum",
+                                  superseding_extremum={"pivot_at_ms": int(pivot["pivot_at_ms"]),
+                                                        "confirmed_at_ms": int(pivot["confirmed_at_ms"]),
+                                                        "price": new_price})
+                    transitions.append("SUPERSEDED_EXTREMUM")
+                    return record, transitions
         resolver = None
         state = record["naked_retest"]
         if fine_candles and state["phase"] == PHASE_CAMPAIGN_ACTIVE:
@@ -586,6 +561,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
     atr_series = causal_atr_series(rows, ATR_PERIOD)
     atr_by_close = {row["close_time_ms"]: value for row, value in zip(rows, atr_series)}
     tolerance = MERGE_TOLERANCE_ATR * (atr_series[-1] or 0.0)
+    highs, lows = confirmed_pivots(rows)
     registry = LevelRegistry.from_dict(state["registry"])
     records: dict[str, dict[str, Any]] = state["records"]
     journal: list[dict[str, Any]] = []
@@ -596,7 +572,19 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                                        l_shape_observation=l_shape_observation,
                                        box_source=box_source),
                         key=lambda x: (x.confirmed_at_ms, x.level_id)):
-        primary = registry.add(level, merge_tolerance=tolerance, prefer_existing=True)
+        # Do not alias a newly confirmed replacement to an invalidated
+        # historical ray merely because both prices fit the ATR merge zone.
+        excluded = any(
+            previous.get("rejection") == "superseded_by_confirmed_extremum"
+            and registered.side == level.side
+            and registered.is_horizontal and level.is_horizontal
+            and abs(registered.boundary.anchor_price - level.boundary.anchor_price) <= tolerance
+            for old_id, previous in records.items()
+            for registered in (registry.levels.get(old_id),)
+            if registered is not None
+        )
+        primary = registry.add(level, merge_tolerance=0.0 if excluded else tolerance,
+                               prefer_existing=True)
         record = records.get(primary.level_id)
         if record is None:
             records[primary.level_id] = {
@@ -624,7 +612,8 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
             continue
         try:
             record, transitions = _advance(level, record, rows, atr_at=atr_by_close.get, gaps=gaps,
-                                           tolerance=tolerance, fine_candles=fine_candles)
+                                           tolerance=tolerance, fine_candles=fine_candles,
+                                           confirmed_extrema=(highs if level.side == "upper" else lows))
         except (NakedRetestError, ValueError) as error:
             record.update(lifecycle=LIFECYCLE_REJECTED, rejection=f"invalid_history:{error}"[:200],
                           last_event_ms=latest_close)
@@ -635,15 +624,56 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
         record["imbalance"] = _imbalance_quality(record, gaps, rows)
         for status in transitions:
             record["last_event_ms"] = latest_close
-            if status == STATUS_UNTESTED:
-                rejection = _judge_breakout(record, latest_close, step) \
+            if status == "SUPERSEDED_EXTREMUM":
+                # Candidate/Telegram/Robot eligibility is never granted to
+                # the superseded, still-unbroken level. Keep its evidence.
+                record["candidate"] = False
+                pending[:] = [item for item in pending if item["level_id"] != level_id]
+                pivot = record["superseding_extremum"]
+                # This is a NEW confirmed swing-extremum ray, not a retroactive
+                # mutation of the pattern boundary or its campaign. Preserve
+                # the historical source and derive a new independent identity
+                # from the exact price/time of the wick extremum.
+                replacement = horizontal_level(
+                    symbol=symbol, timeframe=timeframe, source=SOURCE_SWING_ZONE,
+                    pattern=None, side=level.side, price=float(pivot["price"]),
+                    anchor_time_ms=int(pivot["pivot_at_ms"]),
+                    confirmed_at_ms=int(pivot["confirmed_at_ms"]), touches=1,
+                    provenance={"supersedes_level_id": level_id,
+                                "source": "confirmed_wick_extremum"},
+                )
+                registry.add(replacement, merge_tolerance=0.0)
+                if replacement.level_id not in records:
+                    records[replacement.level_id] = {
+                        **new_record(replacement), "registered_at_ms": latest_close,
+                        "sources": [_source_entry(replacement)],
+                        "lifecycle": LIFECYCLE_TRACKING, "candidate": None,
+                        "rejection": None, "freshness": None, "robot": None,
+                        "last_event_ms": latest_close, "notified": [],
+                    }
+                    journal.append({"event": "mirror_level_registered", **base,
+                                    "level_id": replacement.level_id,
+                                    "source": replacement.source, "pattern": replacement.pattern,
+                                    "side": replacement.side,
+                                    "anchors": [list(a) for a in replacement.anchors],
+                                    "confirmed_at_ms": replacement.confirmed_at_ms,
+                                    "supersedes_level_id": level_id})
+                record["superseded_by_level_id"] = replacement.level_id
+                journal.append({"event": "mirror_level_rejected", **base, "level_id": level_id,
+                                "reason": record["rejection"],
+                                "superseded_by_level_id": replacement.level_id,
+                                "superseding_extremum": pivot})
+            elif status == STATUS_UNTESTED:
+                rejection = _judge_breakout(level, record, latest_close, step) \
                     or _duplicate_breakout(level_id, level, record, records, registry)
                 record["candidate"] = rejection is None
                 record["rejection"] = rejection
                 record["freshness"] = "STALE" if rejection and rejection.startswith("stale") else "FRESH"
                 if record["candidate"]:
                     record["robot"] = _robot_handoff(level, record)
-                    pending.append({"level_id": level_id, "kind": "breakout"})
+                    pending.append({"level_id": level_id, "kind": "breakout",
+                                    "chart": _frozen_event_chart(symbol, timeframe, rows, registry,
+                                                                 level_id, record, "breakout")})
                 journal.append({"event": "mirror_breakout", **base, "level_id": level_id,
                                 "breakout": record["naked_retest"]["breakout"],
                                 "evidence": record["breakout_evidence"], "candidate": record["candidate"],
@@ -652,7 +682,8 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                 record["lifecycle"] = LIFECYCLE_DONE
                 if record.get("candidate"):
                     record["robot"] = _robot_handoff(level, record)
-                    pending.append({"level_id": level_id, "kind": "first_retest"})
+                    # Retest is durable for Robot/Terminal, but never a second
+                    # Telegram observation for the same MIRROR level campaign.
                 journal.append({"event": "mirror_first_retest", **base, "level_id": level_id,
                                 "status": status, "retest": record["naked_retest"]["retest"],
                                 "candidate": record.get("candidate")})
@@ -742,6 +773,97 @@ def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) 
     return handed
 
 
+def mirror_source_token(symbol: str, timeframe: str, level_id: str,
+                        kind: str, event_open_time_ms: int) -> str:
+    """Opaque callback for the exact breakout/retest event, not just the level."""
+    key = f"{symbol}|{timeframe}|{level_id}|{kind}|{int(event_open_time_ms)}"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+
+
+def mirror_first_card_archive_id(symbol: str, timeframe: str, level_id: str) -> str:
+    """Stable first-card key for this exact level campaign, never its ticker."""
+    key = f"{symbol}|{timeframe}|{level_id}"
+    return "mirror-first:" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+
+
+def _frozen_event_chart(symbol: str, timeframe: str, rows: Sequence[Mapping[str, Any]],
+                        registry: LevelRegistry, level_id: str,
+                        record: Mapping[str, Any], kind: str) -> dict[str, Any]:
+    """Freeze the event OHLC and provably related boundaries before Telegram delivery."""
+    event = ((record.get("naked_retest") or {}).get("retest") if kind == "first_retest"
+             else (record.get("naked_retest") or {}).get("breakout")) or {}
+    event_open_ms = int(event["open_time_ms"])
+    event_close_ms = event_open_ms + timeframe_ms(timeframe)
+    # A delayed delivery must never show bars that closed after this event.
+    event_rows = [row for row in rows if int(row["close_time_ms"]) <= event_close_ms]
+    selected = registry.levels[level_id]
+    origin_ids = {s.get("parent_formation_id") for s in record.get("sources", ())
+                  if s.get("parent_formation_id")}
+    levels = []
+    # Some older pattern snapshots lack a formation ID. A paired boundary
+    # still belongs to the same frozen geometry only when its engine decision
+    # index, confirmation time, pattern and source all agree. Never pair levels
+    # merely because they share a symbol or pattern name.
+    selected_decision = selected.provenance.get("decision_index")
+    for level in registry.levels.values():
+        is_selected = level.level_id == level_id
+        same_origin = bool(origin_ids and level.provenance.get("parent_formation_id") in origin_ids)
+        same_frozen_geometry = bool(
+            not origin_ids and selected_decision is not None
+            and level.provenance.get("decision_index") == selected_decision
+            and level.confirmed_at_ms == selected.confirmed_at_ms
+            and level.source == selected.source and level.pattern == selected.pattern
+        )
+        if not (is_selected or same_origin or same_frozen_geometry):
+            continue
+        # Never draw a later pattern boundary on a historical MIRROR event.
+        if int(level.confirmed_at_ms) > event_close_ms:
+            continue
+        item = level.to_dict()
+        item["selected"] = is_selected
+        levels.append(item)
+    source_start_ms = min(
+        (int(anchor[0]) for level in levels
+         for anchor in level.get("anchors", ())
+         if int(anchor[0]) <= event_close_ms),
+        default=int(event_rows[max(0, len(event_rows) - 120)]["open_time_ms"]),
+    )
+    geometry_candles = [
+        {k: row[k] for k in ("open_time_ms", "open", "high", "low", "close")}
+        for row in event_rows
+        if int(row["open_time_ms"]) >= source_start_ms
+    ][-2000:]
+    return {
+        "symbol": symbol, "timeframe": timeframe, "level_id": level_id,
+        # Source identity is frozen from the selected detector level, never
+        # inferred from the shape of a plotted line or merged source aliases.
+        "source": selected.source, "pattern": selected.pattern,
+        "retest_confirmed": record.get("status") == STATUS_RETESTED,
+        "event_kind": kind,
+        "source_formation_ids": sorted({
+            f"origin:{symbol}:{timeframe}:{source['parent_formation_id']}"
+            for source in record.get("sources", ())
+            if source.get("parent_formation_id")
+            and int(source.get("confirmed_at_ms") or 0) <= event_close_ms
+        }),
+        "candles": [{k: row[k] for k in ("open_time_ms", "open", "high", "low", "close")}
+                    for row in event_rows[-120:]],
+        # The Telegram PNG keeps its 120-candle framing. The Editor evidence
+        # separately preserves available bars from the detector's earliest
+        # original source anchor, without reconstructing older OHLC or shifting
+        # the anchor to the beginning of the chart.
+        "geometry_candles": geometry_candles,
+        "levels": levels,
+        "event_open_time_ms": event.get("open_time_ms"),
+        # The breakout OHLC and level are frozen at event time: do not infer
+        # the visual label from current market data during delayed delivery.
+        "breakout_close": event.get("close") if kind == "breakout" else None,
+        "breakout_boundary_at_close": (
+            event.get("boundary_at_close") if kind == "breakout" else None
+        ),
+    }
+
+
 # --- Telegram -----------------------------------------------------------------------------------
 
 def _utc(ms) -> str:
@@ -760,39 +882,99 @@ def level_geometry_text(level: Mapping[str, Any]) -> str:
     return f"наклонная A1 {_utc(t1)} {_price(p1)} → A2 {_utc(t2)} {_price(p2)}"
 
 
-def mirror_caption(row: Mapping[str, Any], kind: str) -> str:
-    """Owner card for one MIRROR event, from the Terminal projection row."""
+def mirror_subtype(source: str | None, pattern: str | None, kind: str,
+                   *, retest_confirmed: bool = False) -> str:
+    """Name only the selected detector's proven source, not its visual slope."""
+    from mirror_levels.levels import SOURCE_PATTERN_BOUNDARY, SOURCE_SWING_ZONE
 
-    breakout = row.get("breakout") or {}
-    evidence = row.get("breakout_evidence") or {}
-    direction = {"UP": "вверх", "DOWN": "вниз"}.get(breakout.get("direction"), "—")
-    lines = [
-        f"🪞 MIRROR · {row['symbol']} {row['timeframe']}m"
-        + (" · первый ретест" if kind == "first_retest" else " · пробой"),
-        f"Пробой {direction} (ретест-кампания {breakout.get('campaign_direction', '—')}), "
-        f"{evidence.get('kind', '—')}"
-        + (f", тело {evidence['body_atr']:.2f} ATR" if evidence.get("body_atr") is not None else ""),
-        f"Уровень: {row['level_label']} — {level_geometry_text(row['level'])}",
-        f"Свеча пробоя: {_utc(breakout['open_time_ms'])} O {_price(breakout['open'])} "
-        f"C {_price(breakout['close'])}" if breakout else "Свеча пробоя: —",
-        f"Ретест: {row['first_retest_text']}",
-        f"FVG: {row['imbalance_text']}",
-        f"Источники: {row['sources_text']}",
-        "Робот: только наблюдение — PAPER-допуск MIRROR не авторизован",
-    ]
-    return "\n".join(lines)
+    if source == SOURCE_PATTERN_BOUNDARY:
+        return "Граница паттерна · " + (str(pattern) if pattern else "тип не установлен")
+    if source == SOURCE_SWING_ZONE:
+        # A breakout is not yet proof that support/resistance switched roles.
+        return ("Зеркальный уровень" if kind == "first_retest" and retest_confirmed
+                else "Горизонтальный уровень · смена роли не подтверждена")
+    return "Источник уровня не подтверждён"
+
+
+def mirror_caption(row: Mapping[str, Any], kind: str) -> str:
+    """Owner card from selected level provenance; no guessed MIRROR subtype."""
+
+    level = row.get("level") or {}
+    return "\n".join((
+        f"🪞 MIRROR · {row['symbol']} · {row['timeframe']}m",
+        mirror_subtype(level.get("source"), level.get("pattern"), kind,
+                       retest_confirmed=row.get("status") == STATUS_RETESTED),
+    ))
+
+
+def frozen_mirror_card_caption(symbol: str, timeframe: str, item: Mapping[str, Any],
+                               frozen: Mapping[str, Any]) -> str:
+    """Use the same immutable event identity for chart, text and source link.
+
+    Delayed delivery must not read a newer projected level/status to caption
+    a historical breakout. Mismatched evidence cannot be sent as this event.
+    """
+    if not isinstance(frozen, Mapping) or (
+        frozen.get("symbol") != symbol
+        or str(frozen.get("timeframe")) != str(timeframe)
+        or frozen.get("level_id") != item.get("level_id")
+        or frozen.get("event_kind") != item.get("kind")
+        or type(frozen.get("event_open_time_ms")) is not int
+        or frozen["event_open_time_ms"] < 0
+    ):
+        raise ValueError("MIRROR frozen event identity mismatch")
+    levels = frozen.get("levels")
+    selected = (
+        [level for level in levels if isinstance(level, Mapping) and level.get("selected") is True]
+        if isinstance(levels, list) else []
+    )
+    if (len(selected) != 1
+        or selected[0].get("level_id") != item["level_id"]
+        or selected[0].get("source") != frozen.get("source")
+        or selected[0].get("pattern") != frozen.get("pattern")):
+        raise ValueError("MIRROR frozen selected level mismatch")
+    candles = frozen.get("candles")
+    if not isinstance(candles, list) or not any(
+        isinstance(bar, Mapping) and bar.get("open_time_ms") == frozen["event_open_time_ms"]
+        for bar in candles
+    ):
+        raise ValueError("MIRROR frozen event candle absent")
+    return mirror_caption({
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "level": {"source": frozen.get("source"), "pattern": frozen.get("pattern")},
+        "status": STATUS_RETESTED if frozen.get("retest_confirmed") is True else STATUS_UNTESTED,
+    }, item["kind"])
+
+
+# Observation-delivery backpressure: Scanner coverage takes precedence over
+# retrying a Telegram Gateway outage. Pending events remain durable.
+_MIRROR_SEND_NEXT_AT = 0.0
+_MIRROR_SEND_MIN_GAP_SEC = 10.0
+_MIRROR_SEND_FAILURE_COOLDOWN_SEC = 300.0
 
 
 def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = False, root=None) -> int:
-    """Deliver pending MIRROR cards through the Scanner's Telegram interface; returns cards sent.
+    """Deliver immutable event charts; never substitute a newer symbol chart.
 
-    A card leaves the pending list only after delivery to every recipient (or when
-    Telegram is disabled), and the state is saved after each one.
+    Legacy cards without frozen evidence are retired without text-only spam.
+    Only image-backed cards count as delivered; failed uploads stay pending.
     """
 
     import config
-    from notification import build_tradingview_keyboard, send_message_to_recipients
+    from notification import (
+        build_tradingview_keyboard, get_telegram_chat_ids,
+        get_telegram_owner_chat_id, send_message_to_recipients,
+    )
+    from telegram_bot import send_photo
+    from signal_archive import record_original_signal, load_frozen_signal_geometry
+    from signal_mirror_geometry_producer import build_mirror_geometry_snapshot
+    from mirror_event_chart import render_mirror_chart
+    import tempfile
 
+    global _MIRROR_SEND_NEXT_AT
+    if not test_mode and time.monotonic() < _MIRROR_SEND_NEXT_AT:
+        return 0
     try:
         state = load_state(symbol, timeframe, root)
     except MirrorStateError:
@@ -802,6 +984,16 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
     rows = {row["level_id"]: row for row in project_state(state)}
     sent = 0
     for item in list(state["pending_notifications"]):
+        if item.get("kind") == "first_retest":
+            # Retire old pending retest observations without sending or
+            # reclassifying a historical event. No retroactive Telegram spam.
+            state["pending_notifications"].remove(item)
+            save_state(state, root)
+            continue
+        # At most one network delivery per (symbol, timeframe) call; an outage
+        # must not hold the Scanner behind thousands of old MIRROR cards.
+        if not test_mode:
+            _MIRROR_SEND_NEXT_AT = time.monotonic() + _MIRROR_SEND_MIN_GAP_SEC
         row = rows.get(item["level_id"])
         delivered: bool | str
         if row is None:
@@ -809,21 +1001,92 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
         elif not getattr(config, "TELEGRAM_ENABLED", False):
             delivered = "telegram_disabled"
         else:
-            text = mirror_caption(row, item["kind"]) + ("\n🧪 TEST MODE" if test_mode else "")
-            markup = build_tradingview_keyboard(symbol, timeframe, include_review_actions=False)
-            delivered = bool(send_message_to_recipients(text, reply_markup=markup))
-        append_event({"event": "mirror_delivery", "symbol": symbol, "timeframe": timeframe, **item,
+            frozen = item.get("chart")
+            if frozen:
+                try:
+                    text = frozen_mirror_card_caption(symbol, timeframe, item, frozen)
+                    if test_mode:
+                        text += "\n🧪 TEST MODE"
+                    with tempfile.TemporaryDirectory(prefix="mirror_event_") as directory:
+                        chart_path = Path(directory) / "event.png"
+                        render_mirror_chart(frozen, chart_path)
+                        owner_id = get_telegram_owner_chat_id()
+                        source_token = mirror_source_token(
+                            symbol, timeframe, item["level_id"], item["kind"],
+                            frozen["event_open_time_ms"])
+                        source_ids = frozen.get("source_formation_ids") or []
+                        if len(source_ids) != 1:
+                            # Ambiguous or absent parent: show the exact level
+                            # chart, never attribute it to an arbitrary pattern.
+                            source_ids = []
+                        source_id = f"mirror-origin:{source_token}"
+                        first_id = mirror_first_card_archive_id(symbol, timeframe, item["level_id"])
+                        image_bytes = chart_path.read_bytes()
+                        if not test_mode and item["kind"] == "breakout":
+                            # Preserve the immutable first campaign card; retries
+                            # never overwrite it with a retest or later chart.
+                            record_original_signal(
+                                first_id, symbol=symbol, timeframe=timeframe,
+                                pattern=frozen.get("pattern") or "MIRROR", text=text,
+                                image_bytes=image_bytes,
+                                geometry_snapshot=build_mirror_geometry_snapshot(first_id, frozen))
+                        source_ready = False if test_mode else record_original_signal(
+                            source_id, symbol=symbol, timeframe=timeframe,
+                            pattern=frozen.get("pattern") or "MIRROR", text=text,
+                            image_bytes=image_bytes, source_formation_ids=source_ids,
+                            source_campaign_first_id=first_id,
+                            geometry_snapshot=build_mirror_geometry_snapshot(source_id, frozen))
+                        # PNG archival alone does not establish readable Editor
+                        # geometry. Keep image-only source navigation intact.
+                        editor_source_ready = bool(
+                            source_ready and load_frozen_signal_geometry(source_id) is not None
+                        )
+                        delivered = True
+                        for chat_id in get_telegram_chat_ids():
+                            is_owner = bool(owner_id and chat_id == owner_id)
+                            markup = build_tradingview_keyboard(
+                                symbol, timeframe, include_review_actions=is_owner,
+                                signal_id=source_id if is_owner and editor_source_ready else None)
+                            if is_owner and source_ready:
+                                markup["inline_keyboard"].insert(0, [{
+                                    "text": "↩️ К сигналу",
+                                    "callback_data": f"mirror:source:{source_token}",
+                                }])
+                            response = send_photo(config.TELEGRAM_TOKEN, chat_id, chart_path,
+                                                  caption=text[:1024], reply_markup=markup)
+                            if not (isinstance(response, dict) and response.get("ok")):
+                                delivered = False
+                except (ValueError, KeyError, TypeError) as exc:
+                    # Invalid frozen evidence cannot be repaired with current
+                    # candles; never disguise a text message as a delivered card.
+                    print(f"[MIRROR CHART EVIDENCE ERROR] {symbol} {timeframe}m {type(exc).__name__}: {exc}",
+                          flush=True)
+                    delivered = "invalid_frozen_chart"
+                except Exception as exc:
+                    print(f"[MIRROR CHART DELIVERY ERROR] {symbol} {timeframe}m {type(exc).__name__}: {exc}",
+                          flush=True)
+                    delivered = False
+            else:
+                # Old pending records predate frozen chart snapshots. Retire
+                # them without sending misleading text-only notifications.
+                delivered = "legacy_chart_unavailable"
+        append_event({"event": "mirror_delivery", "symbol": symbol, "timeframe": timeframe,
+                      "level_id": item["level_id"], "kind": item["kind"],
+                      "chart_frozen": bool(item.get("chart")),
                       "delivered": delivered, "test_mode": bool(test_mode)}, root)
         if delivered is False:
-            continue                              # stays pending; retried on the next pass
+            if not test_mode:
+                _MIRROR_SEND_NEXT_AT = time.monotonic() + _MIRROR_SEND_FAILURE_COOLDOWN_SEC
+            break
         sent += delivered is True
         state["pending_notifications"].remove(item)
         record = state["records"].get(item["level_id"])
         if record is not None:
             record["notified"] = [*record.get("notified", []), {"kind": item["kind"], "result": delivered}]
         save_state(state, root)
+        if not test_mode:
+            break
     return sent
-
 
 # --- Terminal projection (read-only) ------------------------------------------------------------
 

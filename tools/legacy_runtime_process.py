@@ -256,7 +256,13 @@ def terminate_exact_pids(pids: Iterable[int]) -> None:
     if not legacy_fallback_supported():
         raise LegacyOwnerUnproven("forced termination is unavailable off Windows (systemd owns the processes)")
     for pid in pids:
-        subprocess.run(
+        completed = subprocess.run(
             ["taskkill", "/PID", str(int(pid)), "/F"],
             capture_output=True, text=True, timeout=15, creationflags=_NO_WINDOW,
         )
+        if completed.returncode != 0:
+            # An unconfirmed exact-PID termination must not be followed by
+            # killing more owner processes or stopping Telegram control.
+            raise LegacyOwnerUnproven(
+                f"exact legacy PID {int(pid)} termination was not confirmed"
+            )

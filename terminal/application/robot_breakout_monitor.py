@@ -132,6 +132,7 @@ class _EntryEvidence:
     quantity: Decimal
     average_entry: Decimal
     position_version: int
+    first_execution_at_ms: int
 
 
 def _cancel_partial_remainder_action_id(candidate_id: str) -> ClientActionId:
@@ -1241,6 +1242,12 @@ class RobotBreakoutMonitor:
         trade = self._store().get_open_robot_trade_for_symbol(
             self._account_id, record.symbol,
         )
+        # STOP/EMERGENCY_CLOSE evidence must win over Box's generic TAKE
+        # finalizer when its own market execution has just made the lot FLAT.
+        if trade is not None:
+            obligation = self._store().get_paper_protection_obligation_for_trade(trade.trade_id)
+            if obligation is not None and obligation.status != "RESOLVED":
+                return False
         if trade is None or trade.candidate_id != record.candidate_id:
             self._escalate_reconciliation(
                 "ROBOT_BOX_TAKE_TRADE_MISSING "
@@ -1332,6 +1339,14 @@ class RobotBreakoutMonitor:
                     return True
                 decision = self._mirror_standalone_attachment(record, plan)
                 if decision.get("decision") == mirror.DEFERRED:
+                    # Keep transient failures retryable, but do not discard the only
+                    # diagnostic explaining why an APPROVED MIRROR has no order.
+                    # Persist only on reason changes to avoid a write per monitor tick.
+                    reason = str(decision.get("reason") or "unknown")
+                    if execution.get("mirror_deferred_reason") != reason:
+                        execution["mirror_deferred_reason"] = reason
+                        execution["mirror_deferred_at_ms"] = self._now_ms()
+                        self._persist_execution(record, execution)
                     return False
                 if decision.get("decision") != mirror.ATTACHED:
                     execution["mirror"] = decision
@@ -1930,6 +1945,37 @@ class RobotBreakoutMonitor:
             )
             return False
 
+        # The admitted LIMIT price is not the actual fill price. Keep the
+        # confirmed STOP/TAKE live while validating actual fee-aware RR.
+        # Reuse idempotent emergency-close recovery until authoritative FLAT.
+        try:
+            fills = tuple(
+                fill
+                for order_id in confirmed_evidence.order_ids
+                for fill in self._store().load_executions_for_order(
+                    self._account_id, order_id,
+                )
+            )
+            if not fills or any(fill.fee < 0 for fill in fills):
+                raise robot_protection.RobotProtectionError(
+                    "post-fill fee evidence is unavailable"
+                )
+            actual_rr = robot_protection.post_fill_net_rr(
+                direction,
+                average_entry=average_entry,
+                quantity=entry_quantity,
+                entry_fee=sum((fill.fee for fill in fills), Decimal("0")),
+                stop_price=plan.stop_price,
+                take_price=plan.take_price,
+            )
+            if actual_rr < Decimal("2"):
+                raise robot_protection.RobotProtectionError(
+                    f"POST_FILL_NET_RR_BELOW_2 rr={actual_rr}"
+                )
+        except Exception as error:
+            self._fail_closed_unprotected_fill(record, error)
+            return False
+
         now_ms = self._now_ms()
         self._store().create_robot_trade(
             trade_id=f"robot-trade-{record.candidate_id}",
@@ -1945,7 +1991,9 @@ class RobotBreakoutMonitor:
                 )
             ).strip() or "1",
             signal_time_ms=record.approved_at_ms,
-            entry_time_ms=now_ms,
+            # Freeze the actual owned first fill, not the later local monitor
+            # clock. Reconciliation must use the immutable execution timestamp.
+            entry_time_ms=entry_evidence.first_execution_at_ms,
             entry_path=entry_path,
             actual_wv=actual_wv,
             average_entry=average_entry,
@@ -1953,7 +2001,7 @@ class RobotBreakoutMonitor:
             take_price=plan.take_price,
             entry_quantity=entry_quantity,
             entry_position_version=entry_position_version,
-            created_at_ms=now_ms,
+            created_at_ms=max(now_ms, entry_evidence.first_execution_at_ms),
         )
         return True
 
@@ -2227,6 +2275,7 @@ class RobotBreakoutMonitor:
             quantity=quantity,
             average_entry=average_entry,
             position_version=position.version,
+            first_execution_at_ms=first_at,
         )
 
     @staticmethod
@@ -2338,7 +2387,7 @@ class RobotBreakoutMonitor:
         meets the threshold. Existing filled positions continue through their
         independent post-fill protection and emergency-close lifecycle.
         """
-        threshold = robot_protection.min_entry_rr()
+        threshold = robot_protection.wedge_min_entry_rr()
         details: dict[str, object] = {
             "entry_price": str(plan.request.limit_price), "min_rr": str(threshold),
         }

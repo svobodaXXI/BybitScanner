@@ -9,6 +9,8 @@ cancels, or closes an order.
 from __future__ import annotations
 
 from contextlib import nullcontext
+from dataclasses import dataclass
+from decimal import Decimal
 import hashlib
 import json
 import os
@@ -71,11 +73,66 @@ def _box_plan_source_prefix(handle: str) -> str | None:
     return _BOX_PLAN_SOURCE_PREFIX + digest
 
 
+@dataclass(frozen=True, slots=True)
+class RobotReentryAdmissionRequest:
+    """Trusted strategy's verified linkage proposal, NOT a public JSON signal.
+
+    Admission owns durable creation and the STOP proof recheck. Constructed
+    only by canonical strategy adapters after closed-candle validation.
+    The normal Robot candidate path is unchanged when this is omitted.
+    """
+
+    campaign_id: str
+    direction: str
+    frozen_thesis_sha256: str
+    reserved_risk_usdt: Decimal
+    original_risk_budget_usdt: Decimal | None = None
+    previous_stop_exec_id: str | None = None
+    confirmed_at_ms: int | None = None
+    strategy_confirmation_proven: bool = False
+
+
+def _reserve_reentry_with_canonical_candidate(
+    store: SQLiteStore, record: RobotCandidateRecord,
+    proposal: RobotReentryAdmissionRequest, *, now: int,
+) -> None:
+    """Participate in the caller's Robot Admission BEGIN IMMEDIATE; no orders."""
+    if not isinstance(proposal, RobotReentryAdmissionRequest):
+        raise RobotAdmissionRejected("reentry contract must originate from a trusted adapter")
+    if proposal.previous_stop_exec_id is None:
+        if proposal.original_risk_budget_usdt is None:
+            raise RobotAdmissionRejected("original campaign risk budget missing")
+        store.create_robot_reentry_campaign(
+            account=PAPER_ACCOUNT_ID, campaign_id=proposal.campaign_id,
+            first_candidate_id=record.candidate_id,
+            frozen_thesis_sha256=proposal.frozen_thesis_sha256,
+            direction=proposal.direction,
+            original_risk_budget_usdt=proposal.original_risk_budget_usdt,
+            reserved_risk_usdt=proposal.reserved_risk_usdt,
+            reserved_at_ms=now,
+        )
+    else:
+        if proposal.confirmed_at_ms is None:
+            raise RobotAdmissionRejected("post-STOP confirmation timestamp missing")
+        store.reserve_robot_stop_reentry(
+            account=PAPER_ACCOUNT_ID, campaign_id=proposal.campaign_id,
+            candidate_id=record.candidate_id,
+            frozen_thesis_sha256=proposal.frozen_thesis_sha256,
+            direction=proposal.direction,
+            previous_stop_exec_id=proposal.previous_stop_exec_id,
+            confirmed_at_ms=proposal.confirmed_at_ms,
+            reserved_risk_usdt=proposal.reserved_risk_usdt,
+            reserved_at_ms=now,
+            strategy_confirmation_proven=proposal.strategy_confirmation_proven,
+        )
+
+
 def _admit_box_plan_candidate(
     handle: str, *, database_path: Path | str | None, clock_ms,
     transaction_store: SQLiteStore | None = None,
     expected_snapshot_sha256: str | None = None,
     linked_mirror_parent_candidate_id: str | None = None,
+    reentry: RobotReentryAdmissionRequest | None = None,
 ) -> tuple[RobotCandidateRecord, bool]:
     """Owner admission of one frozen Box plan through the existing atomic handoff.
 
@@ -121,6 +178,10 @@ def _admit_box_plan_candidate(
             if len(linked) > 1:
                 raise RobotAdmissionRejected("Robot candidate identity conflicts with durable state")
             if linked:
+                if reentry is not None:
+                    _reserve_reentry_with_canonical_candidate(
+                        store, linked[0], reentry, now=now,
+                    )
                 return linked[0], False
 
             runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
@@ -157,7 +218,7 @@ def _admit_box_plan_candidate(
                     + ",".join(sorted(set(owners) | set(active_conflicts)))
                 )
             try:
-                return store.handoff_box_plan_to_robot(
+                record, created = store.handoff_box_plan_to_robot(
                     source.candidate_id,
                     symbol=source.symbol,
                     expected_snapshot_sha256=source.snapshot_sha256,
@@ -169,6 +230,11 @@ def _admit_box_plan_candidate(
                         parent.snapshot_sha256 if allowed_parent else None
                     ),
                 )
+                if reentry is not None:
+                    _reserve_reentry_with_canonical_candidate(
+                        store, record, reentry, now=now,
+                    )
+                return record, created
             except (PersistenceError, ValueError) as exc:
                 raise RobotAdmissionRejected(
                     "Robot candidate identity conflicts with durable state"
@@ -370,6 +436,7 @@ def admit_robot_candidate(
     expected_snapshot_sha256: str | None = None,
     mark_legacy_approved: bool = True,
     linked_mirror_parent_candidate_id: str | None = None,
+    reentry: RobotReentryAdmissionRequest | None = None,
 ) -> tuple[RobotCandidateRecord, bool]:
     """Admit one approved Scanner candidate into authoritative SQLite state.
 
@@ -384,6 +451,7 @@ def admit_robot_candidate(
             transaction_store=transaction_store,
             expected_snapshot_sha256=expected_snapshot_sha256,
             linked_mirror_parent_candidate_id=linked_mirror_parent_candidate_id,
+            reentry=reentry,
         )
 
     candidate = load_candidate(candidate_id, store_dir=store_dir)
@@ -466,6 +534,8 @@ def admit_robot_candidate(
                         expected_revision=record.state_revision,
                         updated_at_ms=now,
                     )
+            if reentry is not None:
+                _reserve_reentry_with_canonical_candidate(store, record, reentry, now=now)
     finally:
         if owns_store:
             store.close()

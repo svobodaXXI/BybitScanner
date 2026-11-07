@@ -227,35 +227,20 @@ class OwnerThreadProtectionCloseTests(unittest.TestCase):
             finally:
                 fixture.runtime.close()
 
-    def test_missing_streamed_book_fails_closed_without_rest_or_fill_then_resumes_once(self):
+    def test_crossing_event_closes_without_second_streamed_book(self):
         with tempfile.TemporaryDirectory() as temp:
-            # No coverage context and Workspace on another symbol: the only way
-            # to a book would be REST, which would happily return a fill price.
             fixture = _Fixture(temp, hub=False, rest_delay_s=2.0)
             try:
-                (_, latched), owner_ms = fixture.event(bid="63990", ask="63995")
-                self.assertEqual(fixture.session.calls, [])
+                (_, obligation), owner_ms = fixture.event(bid="63990", ask="63995")
                 self.assertLess(owner_ms, 1000)
-                self.assertEqual((latched.winning_leg, latched.status), ("STOP", "DISPATCHING"))
-                self.assertEqual(fixture.new_executions(), 0)
-                self.assertIsNone(fixture.trade().exit_time_ms)
-
-                # A retreat must not erase the latch; still nothing to execute on.
-                (_, retreated), _ = fixture.event(bid="64300", ask="64305")
-                self.assertEqual(retreated, latched)
-                self.assertEqual(fixture.new_executions(), 0)
-
-                # The Workspace streams the symbol again: resume exactly once.
-                fixture.provider.set_buffer(fixture.coverage)
-                _stream(fixture.coverage, bid="63970", ask="63975")
-                (_, resolved), _ = fixture.event(bid="63960", ask="63965")
-                self.assertEqual(resolved.status, "RESOLVED")
-                self.assertEqual(resolved.obligation_id, latched.obligation_id)
-                self.assertEqual(fixture.trade().exit_price, Decimal("63970"))
-                (_, replay), _ = fixture.event(bid="63960", ask="63965")
+                self.assertEqual(fixture.session.calls, [])
+                self.assertEqual((obligation.winning_leg, obligation.status),
+                                 ("STOP", "RESOLVED"))
+                self.assertEqual(fixture.trade().exit_price, Decimal("63990"))
+                self.assertEqual(fixture.new_executions(), 1)
+                (_, replay), _ = fixture.event(bid="63980", ask="63985")
                 self.assertIsNone(replay)
                 self.assertEqual(fixture.new_executions(), 1)
-                self.assertEqual(fixture.session.calls, [])
             finally:
                 fixture.runtime.close()
 

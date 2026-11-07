@@ -103,9 +103,15 @@ class TerminalCommandApi:
                 return _result(action_id, CommandResultStatus.COMPLETED, "already_flat",
                                "position is already flat")
             side = OrderSide.SELL if pretrade.position_side.value == "Long" else OrderSide.BUY
+            # A caller-capped chunk never exceeds the authoritative confirmed
+            # quantity; PreTradeGuard's own instrument-maximum check still
+            # runs on whatever quantity reaches it, unchanged.
+            close_quantity = pretrade.confirmed_position_quantity
+            if request.quantity is not None and request.quantity < close_quantity:
+                close_quantity = request.quantity
             intent = PreTradeIntent(
                 symbol, side, OrderKind.MARKET,
-                ExactQuantityIntent(pretrade.confirmed_position_quantity),
+                ExactQuantityIntent(close_quantity),
                 _close_reference_price(context), None,
                 SlippageMetadata(SlippageToleranceType.PERCENT, Decimal("0.5")),
             )

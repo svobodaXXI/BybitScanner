@@ -83,7 +83,166 @@ def breakout_bars(n_before=30, level=101.0, body=3.0):
     return bars
 
 
+def test_mirror_retest_potential_threshold_uses_closed_breakout_price():
+    from types import SimpleNamespace
+
+    record = {
+        "naked_retest": {"breakout": {"close_time_ms": 60000, "close": 100.0}},
+        "breakout_evidence": {"body_atr": 1.0},
+    }
+    for level_price, rejected in ((100.2, True), (100.6999, True), (100.7, False),
+                                  (100.8, False)):
+        level = SimpleNamespace(boundary=SimpleNamespace(price_at=lambda _t, p=level_price: p))
+        result = ms._judge_breakout(level, record, 60000, 60000)
+        assert (result == "retest_potential_below_0_7_percent") if rejected else result is None
+
+
+def test_weak_mirror_potential_does_not_become_telegram_or_robot_candidate(root, fixed_levels):
+    # A genuine full-body breakout can have too little distance left to the
+    # frozen mirror line to justify an actionable return-to-level campaign.
+    boundary = level_at(100.8, 5 * M)
+    fixed_levels["levels"] = [boundary]
+    bars = flat_bars(30) + [(100.0, 101.1, 99.9, 101.0)]
+    summary = observe(frame(bars), root)
+    row = ms.load_state("TESTUSDT", "1", root)
+    record = row["records"][boundary.level_id]
+    assert summary["new_candidates"] == 0
+    assert record["status"] == STATUS_UNTESTED
+    assert record["candidate"] is False
+    assert record["rejection"] == "retest_potential_below_0_7_percent"
+    assert row["pending_notifications"] == []
+
+
+def test_mirror_entry_rechecks_potential_on_confirmation_close(monkeypatch):
+    from types import SimpleNamespace
+    import robot_l_shape
+
+    monkeypatch.setattr(robot_l_shape, "net_reward_risk", lambda *a, **kw: 3)
+    record = {"naked_retest": {"breakout": {
+        "campaign_direction": "LONG", "close_time_ms": 60000,
+    }}}
+    confirmation = {
+        "open_time_ms": 120000, "close_time_ms": 180000,
+        "open": 100.0, "high": 100.1, "low": 99.8, "close": 100.0,
+    }
+    formation = [{
+        "open_time_ms": 60000, "close_time_ms": 120000,
+        "open": 99.5, "high": 100.0, "low": 99.0, "close": 99.7,
+    }]
+    def terms_for(price):
+        level = SimpleNamespace(
+            boundary=SimpleNamespace(price_at=lambda _: price),
+            level_id="frozen-level", timeframe="5", source="SWING_ZONE", pattern=None,
+        )
+        return ms._entry_terms(level, record, confirmation, "1",
+                               confirmation_kind="ENGULFING", formation=formation)
+
+    terms, rejection = terms_for(100.2)
+    assert terms is None and rejection == "entry_retest_potential_below_0_7_percent"
+    terms, rejection = terms_for(100.7)
+    assert rejection is None
+    assert terms["potential_percent"] == "0.700"
+    assert terms["target"] == "100.7"
+
+
 # --- lifecycle --------------------------------------------------------------------------------------
+
+def test_confirmed_wick_extremum_annuls_unbroken_mirror_ray(root, fixed_levels):
+    # A newer pivot HIGH pierces the old horizontal resistance by wick only.
+    # The right-three confirmation is necessary: no future information is
+    # used to withdraw the level at the pivot candle.
+    level = level_at(100.0, 5 * M)
+    fixed_levels["levels"] = [level]
+    bars = [(99.5, 99.7, 99.2, 99.5)] * 25
+    bars += [(99.5, 100.2, 99.3, 99.6)]
+    for _ in range(2):
+        bars.append((99.6, 99.8, 99.3, 99.6))
+    observe(frame(bars), root)
+    before = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert before["lifecycle"] == ms.LIFECYCLE_TRACKING
+    # A pivot needs THREE closed bars to its right; confirmation is causal.
+    bars.append((99.6, 99.8, 99.3, 99.6))
+    observe(frame(bars), root)
+    record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert record["lifecycle"] == ms.LIFECYCLE_REJECTED
+    assert record["rejection"] == "superseded_by_confirmed_extremum"
+    assert record["superseding_extremum"]["price"] == 100.2
+    assert record["candidate"] is False
+    state = ms.load_state("TESTUSDT", "1", root)
+    assert state["pending_notifications"] == []
+    successor = record["superseded_by_level_id"]
+    assert successor != level.level_id
+    new_ray = ms.LevelRegistry.from_dict(state["registry"]).levels[successor]
+    assert new_ray.boundary.anchor_price == 100.2
+    assert new_ray.boundary.anchor_time_ms == 25 * M
+    assert new_ray.confirmed_at_ms == 29 * M
+    assert new_ray.provenance["supersedes_level_id"] == level.level_id
+    assert state["records"][successor]["candidate"] is None
+
+    # Restart / re-scan must not create another successor or re-arm old ray.
+    observe(frame(bars), root)
+    repeated = ms.load_state("TESTUSDT", "1", root)
+    assert repeated["records"][level.level_id]["lifecycle"] == ms.LIFECYCLE_REJECTED
+    assert repeated["records"][level.level_id]["superseded_by_level_id"] == successor
+
+
+def test_confirmed_lower_wick_extremum_replaces_support_ray(root, fixed_levels):
+    # Mirror semantics must be symmetric: a lower LOW wick without a
+    # candle close below support invalidates the old, still-unbroken ray.
+    level = level_at(100.0, 5 * M, side="lower")
+    fixed_levels["levels"] = [level]
+    bars = [(100.5, 100.8, 100.3, 100.5)] * 25
+    bars.append((100.5, 100.7, 99.8, 100.4))
+    bars += [(100.4, 100.8, 100.3, 100.5)] * 2
+    observe(frame(bars), root)
+    before = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert before["lifecycle"] == ms.LIFECYCLE_TRACKING
+    bars.append((100.4, 100.8, 100.3, 100.5))
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    old = state["records"][level.level_id]
+    assert old["lifecycle"] == ms.LIFECYCLE_REJECTED
+    assert old["rejection"] == "superseded_by_confirmed_extremum"
+    assert old["candidate"] is False
+    assert state["pending_notifications"] == []
+    successor = old["superseded_by_level_id"]
+    ray = ms.LevelRegistry.from_dict(state["registry"]).levels[successor]
+    assert ray.side == "lower"
+    assert ray.boundary.anchor_price == 99.8
+    assert ray.boundary.anchor_time_ms == 25 * M
+    assert ray.provenance["supersedes_level_id"] == level.level_id
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)
+    assert state["records"][level.level_id]["superseded_by_level_id"] == successor
+
+
+def test_wick_sweep_before_confirmation_does_not_cancel_existing_level(root, fixed_levels):
+    # An unconfirmed spike can be revised by later bars. Never anticipate
+    # the new pivot at the moment of the wick.
+    level = level_at(100.0, 5 * M)
+    fixed_levels["levels"] = [level]
+    bars = [(99.5, 99.7, 99.2, 99.5)] * 25
+    bars += [(99.5, 100.2, 99.3, 99.6), (99.6, 99.8, 99.3, 99.6)]
+    observe(frame(bars), root)
+    record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert record["lifecycle"] == ms.LIFECYCLE_TRACKING
+    assert record["status"] == STATUS_WAITING
+
+
+def test_completed_naked_breakout_is_not_retroactively_revoked_by_later_pivot(root, fixed_levels):
+    level = level_at(101.0, 5 * M)
+    fixed_levels["levels"] = [level]
+    bars = breakout_bars()
+    observe(frame(bars), root)
+    initial = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert initial["candidate"] is True
+    # A later spike cannot use future pivot evidence to retroactively erase
+    # a breakout that was already confirmed on its own candle.
+    bars += [(103.0, 105.0, 102.9, 103.1)] + [(103.1, 104.0, 102.9, 103.2)] * 3
+    observe(frame(bars), root)
+    state = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
+    assert state["rejection"] != "superseded_by_confirmed_extremum"
+
 
 def test_level_without_parent_fresh_breakout_becomes_candidate_and_first_retest_is_terminal(root, fixed_levels):
     level = level_at(101.0, 5 * M)
@@ -103,7 +262,7 @@ def test_level_without_parent_fresh_breakout_becomes_candidate_and_first_retest_
     record = ms.load_state("TESTUSDT", "1", root)["records"][level.level_id]
     assert record["status"] == STATUS_RETESTED and record["lifecycle"] == ms.LIFECYCLE_DONE
     assert record["naked_retest"]["retest"]["open_time_ms"] == (len(bars) - 1) * M
-    assert [p["kind"] for p in summary["pending"]] == ["breakout", "first_retest"]
+    assert [p["kind"] for p in summary["pending"]] == ["breakout"]  # retest remains durable, not Telegram spam
 
     # Repeated retests never re-arm the level or produce new events.
     bars += [(101.5, 102.0, 100.5, 101.0), (101.0, 104.0, 100.8, 103.5), (103.5, 103.6, 100.7, 101.2)]

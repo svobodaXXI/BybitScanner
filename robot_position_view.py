@@ -78,6 +78,14 @@ class PositionView:
     # Sum of fee over the executions drawn as filled markers (entry + exit legs);
     # None when no execution evidence was found.
     fees_usdt: Decimal | None = None
+    # Metadata for a PROVEN Robot trade; never derived from ticker proximity.
+    mirror_campaign: bool = False
+    mirror_timeframe: str | None = None
+    mirror_level_source: str | None = None
+    mirror_pattern: str | None = None
+    mirror_retest_confirmed: bool = False
+    mirror_boundary: Mapping[str, Any] | None = None
+    reentry_attempt_index: int | None = None
 
     @property
     def is_robot(self) -> bool:
@@ -270,12 +278,47 @@ def load_position_view(
     markers: tuple[TradeMarker, ...] = ()
     fees = None
     pattern = None
+    mirror = None
+    reentry_index = None
     if trade is not None:
         direction = trade.direction
         pattern = trade.pattern
         candidate = store.get_robot_candidate(trade.candidate_id)
         snapshot = candidate.signal_snapshot if candidate is not None else None
+        state = candidate.robot_state if candidate is not None else None
+        execution = state.get("execution") if isinstance(state, Mapping) else None
+        mirror_meta = execution.get("mirror") if isinstance(execution, Mapping) else None
+        # MIRROR metadata can also record a rejected/non-attached decision.
+        # Only the exact ATTACHED attestation identifies a MIRROR trade.
+        mirror = (mirror_meta if isinstance(mirror_meta, Mapping)
+                  and mirror_meta.get("decision") == "ATTACHED" else None)
+        # Canonical reentry genealogy, not a guessed same-symbol/send counter.
+        lookup = getattr(store, "get_robot_reentry_attempt_index", None)
+        if callable(lookup):
+            reentry_index = lookup(account, trade.candidate_id)
         markers, fees = _trade_markers(store, account, trade, candidate, now_ms=now_ms)
+        # Draw past filled executions only when both candidate IDs belong to
+        # the same persisted STOP-reentry campaign. No ticker-based joins.
+        if isinstance(mirror, Mapping) and reentry_index is not None:
+            siblings = store.load_robot_reentry_campaign_trades(account, trade.candidate_id)
+            prior_markers = []
+            for earlier in siblings:
+                if (earlier.trade_id == trade.trade_id
+                        or earlier.symbol != trade.symbol
+                        or earlier.entry_time_ms >= trade.entry_time_ms
+                        or earlier.exit_time_ms is None
+                        or earlier.exit_time_ms > trade.entry_time_ms):
+                    continue
+                previous_candidate = store.get_robot_candidate(earlier.candidate_id)
+                previous_markers, _ = _trade_markers(
+                    store, account, earlier, previous_candidate, now_ms=earlier.exit_time_ms)
+                prior_markers.extend(item for item in previous_markers if item.filled)
+            if prior_markers:
+                # Exact duplicate fill evidence can be returned by overlapping
+                # windows; retain a single visible triangle for that fact.
+                unique = {(m.time_ms, m.price, m.side, m.filled): m
+                          for m in (*prior_markers, *markers)}
+                markers = tuple(sorted(unique.values(), key=lambda m: (m.time_ms, m.side)))
 
     return PositionView(
         symbol=sym.value,
@@ -291,6 +334,18 @@ def load_position_view(
         signal_snapshot=snapshot,
         markers=markers,
         fees_usdt=fees,
+        mirror_campaign=isinstance(mirror, Mapping),
+        mirror_timeframe=str(mirror["mirror_timeframe"]) if isinstance(mirror, Mapping)
+                         and mirror.get("mirror_timeframe") else None,
+        mirror_level_source=str(mirror["mirror_level_source"]) if isinstance(mirror, Mapping)
+                            and mirror.get("mirror_level_source") else None,
+        mirror_pattern=str(mirror["mirror_pattern"]) if isinstance(mirror, Mapping)
+                       and mirror.get("mirror_pattern") else None,
+        mirror_retest_confirmed=isinstance(mirror, Mapping)
+                                and mirror.get("retest_confirmed") is True,
+        mirror_boundary=mirror.get("boundary") if isinstance(mirror, Mapping)
+                        and isinstance(mirror.get("boundary"), Mapping) else None,
+        reentry_attempt_index=reentry_index,
         chart_candle_minutes=signal_chart_candle_minutes(snapshot),
     )
 

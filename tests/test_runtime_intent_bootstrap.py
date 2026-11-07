@@ -84,6 +84,7 @@ class FakeWorld:
             root=ROOT, env=env or {}, get=self.get, post=self.post, spawn=self.spawn,
             python="python.exe", sleep=self.sleep, monotonic=lambda: self.now,
             out=self.lines.append, require_telegram=require_telegram,
+            listener_probe=lambda host, port: (),
         )
 
 
@@ -196,6 +197,41 @@ class RuntimeIntentBootstrapTests(unittest.TestCase):
         self.assertEqual(self.run_intent(), 0)
         self.assertEqual([name for name, _ in self.world.spawns], ["Telegram monitoring"])
         self.assertEqual(len(self.world.posts), 1)
+
+    def test_unreachable_telegram_with_live_listener_never_spawns(self):
+        self.world.telegram = None
+        spawned = self.world.spawns
+        bootstrap = RuntimeIntentBootstrap(
+            root=ROOT, env={}, get=self.world.get, post=self.world.post,
+            spawn=self.world.spawn, python="python.exe",
+            sleep=self.world.sleep, monotonic=lambda: self.world.now,
+            listener_probe=lambda host, port: (1001,) if port == 8766 else (),
+        )
+        result = bootstrap.execute("ALL")
+        self.assertFalse(result.ok)
+        self.assertIn("Telegram listener is alive", result.message)
+        self.assertEqual(spawned, [])
+        self.assertEqual(self.world.posts, [])
+
+    def test_unreachable_telegram_with_unknown_listener_never_spawns(self):
+        from tools.legacy_runtime_process import LegacyOwnerUnproven
+
+        self.world.telegram = None
+
+        def listener_probe(host, port):
+            raise LegacyOwnerUnproven("listener table unreadable")
+
+        bootstrap = RuntimeIntentBootstrap(
+            root=ROOT, env={}, get=self.world.get, post=self.world.post,
+            spawn=self.world.spawn, python="python.exe",
+            sleep=self.world.sleep, monotonic=lambda: self.world.now,
+            listener_probe=listener_probe,
+        )
+        result = bootstrap.execute("ALL")
+        self.assertFalse(result.ok)
+        self.assertIn("Telegram listener state cannot be proven", result.message)
+        self.assertEqual(self.world.spawns, [])
+        self.assertEqual(self.world.posts, [])
 
     def test_not_ready_telegram_on_its_port_is_waited_for_without_duplicate_spawn(self):
         self.world.telegram = [
@@ -341,13 +377,52 @@ class PaperSafeBackendSpawnTests(unittest.TestCase):
             self.assertEqual(child[key], self.parent[key], key)
         self.assertEqual(len(self.world.posts), 1)
 
-    def test_telegram_child_keeps_default_inheritance(self):
-        self.world.bootstrap(env=self.parent).run("ALL")
+    def test_telegram_child_excludes_live_operator_token_preserving_bot_configuration(self):
+        parent = dict(self.parent)
+        parent.update({
+            "BYBITSCANNER_TELEGRAM_BOT_TOKEN": "synthetic-bot-credential",
+            "BYBITSCANNER_WORKSPACE_URL": "https://workspace.example.invalid",
+            "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN": "synthetic-autopilot-secret",
+            "BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN": "synthetic-geometry-secret",
+        })
+        self.world.bootstrap(env=parent).run("ALL")
         self.assertEqual(
             [name for name, _ in self.world.spawn_envs],
             ["PAPER backend", "Telegram monitoring"],
         )
-        self.assertIsNone(dict(self.world.spawn_envs)["Telegram monitoring"])
+        child = dict(self.world.spawn_envs)["Telegram monitoring"]
+        self.assertIsNotNone(child)
+        for key in runtime_intent.TELEGRAM_EXCLUDED_CREDENTIALS:
+            self.assertNotIn(key, child)
+        self.assertEqual(
+            child,
+            {key: value for key, value in parent.items()
+             if key.upper() not in runtime_intent.TELEGRAM_EXCLUDED_CREDENTIALS},
+        )
+        self.assertEqual(parent["BYBITSCANNER_OPERATOR_TOKEN"], "t" * 64)
+        self.assertEqual(child["BYBITSCANNER_TELEGRAM_BOT_TOKEN"],
+                         "synthetic-bot-credential")
+        self.assertEqual(child["BYBITSCANNER_WORKSPACE_URL"],
+                         "https://workspace.example.invalid")
+
+    def test_telegram_environment_excludes_all_sensitive_token_case_variants(self):
+        parent = {
+            "bybitscanner_operator_token": "synthetic-lowercase",
+            "BYBITSCANNER_OPERATOR_TOKEN": "synthetic-uppercase",
+            "bybitscanner_autopilot_owner_token": "synthetic-autopilot-lower",
+            "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN": "synthetic-autopilot-upper",
+            "bybitscanner_signal_geometry_token": "synthetic-geometry-lower",
+            "BYBITSCANNER_SIGNAL_GEOMETRY_TOKEN": "synthetic-geometry-upper",
+            "BYBITSCANNER_PAPER_DB": "paper_runtime.sqlite3",
+            "HTTPS_PROXY": "http://proxy.example.invalid",
+        }
+        before = dict(parent)
+        child = runtime_intent.telegram_safe_env(parent)
+        self.assertEqual(parent, before)
+        self.assertFalse(any(key.upper() in runtime_intent.TELEGRAM_EXCLUDED_CREDENTIALS
+                             for key in child))
+        self.assertEqual(child["BYBITSCANNER_PAPER_DB"], parent["BYBITSCANNER_PAPER_DB"])
+        self.assertEqual(child["HTTPS_PROXY"], parent["HTTPS_PROXY"])
 
     def test_forced_keys_replace_case_variants_without_duplicates(self):
         parent = {"bybitscanner_operator_token": "x" * 64, "Live_Limit_Mutations_Enabled": "true",
@@ -455,3 +530,45 @@ class ProductionPrimitivesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BackendSystemdReadinessGateTests(unittest.TestCase):
+    """Telegram ExecStartPre waits only for an existing owner; never creates one."""
+
+    def _gate(self, world, listeners):
+        return RuntimeIntentBootstrap(
+            root=ROOT, env={}, get=world.get, post=world.post,
+            systemd_managed=True, sleep=world.sleep,
+            monotonic=lambda: world.now, out=world.lines.append,
+            listener_probe=lambda host, port: listeners,
+            require_telegram=False,
+        )
+
+    def test_existing_listener_becomes_ready_within_bounded_window(self):
+        world = FakeWorld(expected_database_identity(ROOT, {}))
+        world.backend = [None, None, world.backend_health()]
+        gate = self._gate(world, (1234,))
+        self.assertEqual(gate.wait_backend(), runtime_intent.EXIT_OK)
+        self.assertLess(world.now, runtime_intent.READY_TIMEOUT_S)
+        self.assertEqual(world.spawns, [])
+        self.assertEqual(world.posts, [])
+
+    def test_existing_listener_never_ready_times_out_without_restart(self):
+        world = FakeWorld(expected_database_identity(ROOT, {}))
+        world.backend = None
+        gate = self._gate(world, (1234,))
+        self.assertEqual(gate.wait_backend(), runtime_intent.EXIT_BOOTSTRAP_FAILED)
+        self.assertGreaterEqual(world.now, runtime_intent.READY_TIMEOUT_S)
+        self.assertEqual(world.spawns, [])
+        self.assertEqual(world.posts, [])
+
+    def test_wrong_backend_identity_fails_immediately_without_waiting(self):
+        world = FakeWorld(expected_database_identity(ROOT, {}))
+        world.backend = world.backend_health(database_identity="0" * 64)
+        gate = self._gate(world, (1234,))
+        self.assertEqual(gate.wait_backend(), runtime_intent.EXIT_BOOTSTRAP_FAILED)
+        self.assertEqual(world.now, 0)
+        self.assertEqual(world.spawns, [])
+        self.assertEqual(world.posts, [])
+
+

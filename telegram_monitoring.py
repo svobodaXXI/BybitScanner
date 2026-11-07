@@ -49,13 +49,14 @@ from robot_position_view import (
 from robot_telegram_feed import (
     VIEW_POSITIONS, build_robot_control_keyboard,
     format_paper_positions_view,
-    format_robot_status_text, parse_robot_view_callback,
+    format_robot_status_text, robot_control_status_note, parse_robot_view_callback,
 )
 from terminal.application.robot_admission import box_plan_admission_handle
 from terminal.application.robot_control import get_robot_runtime_status
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import RobotCandidateRecord, SQLiteStore
 from tradingview_bridge import create_tradingview_url
+from notification import build_tradingview_keyboard
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -166,7 +167,8 @@ def _send_robot_status(chat_id):
             chat_id,
             f"{ROBOT_EMOJI} Робот: {_robot_status_text(runtime)}\n"
             f"Статус робота: Наблюдение: {watching} кандидатов\n"
-            f"Открытых позиций: {opened}",
+            f"Открытых позиций: {opened}"
+            f"{robot_control_status_note(mode, recovery_status)}",
             reply_markup=build_robot_control_keyboard(mode, recovery_status),
         )
     except Exception:
@@ -337,7 +339,15 @@ def _with_candles(view, now_ms: int | None = None):
 
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
     minutes = view.chart_candle_minutes
-    limit, entry_before_chart = chart_candle_limit(view.entry_time_ms, now_ms, minutes)
+    # Include older same-campaign filled executions when the exchange candle
+    # window can reach them; never fetch future or unrelated-symbol history.
+    earliest = view.entry_time_ms
+    if view.mirror_campaign:
+        historical = [m.time_ms for m in view.markers
+                      if m.filled and (earliest is None or m.time_ms < earliest)]
+        if historical:
+            earliest = min(historical)
+    limit, entry_before_chart = chart_candle_limit(earliest, now_ms, minutes)
     candles = None
     try:
         import bybit_api
@@ -357,8 +367,8 @@ def _delivered(response) -> bool:
     return isinstance(response, Mapping) and bool(response.get("ok"))
 
 
-def _send_chart_card(chat_id, view, candles, caption, reply_markup) -> bool:
-    """Photo card; a chart or sendPhoto failure falls back to text. True if delivered."""
+def _send_chart_card(chat_id, view, candles, caption, reply_markup, *, require_chart=False) -> bool:
+    """For MIRROR lifecycle, an absent PNG is NOT successful delivery."""
 
     # pyplot is not thread-safe and the chart path is per symbol: one render+send at a time.
     with _CHART_LOCK:
@@ -366,6 +376,8 @@ def _send_chart_card(chat_id, view, candles, caption, reply_markup) -> bool:
             chart_path = render_position_chart(view, candles)
         except Exception as exc:
             print("[POSITION CHART ERROR]", view.symbol, exc)
+            if require_chart:
+                return False
             return _delivered(
                 _send_text(chat_id, caption + "\nГрафик недоступен", reply_markup=reply_markup)
             )
@@ -379,6 +391,8 @@ def _send_chart_card(chat_id, view, candles, caption, reply_markup) -> bool:
             raise RuntimeError(f"sendPhoto failed: {response}")
         except Exception as exc:
             print("[POSITION CARD PHOTO ERROR]", view.symbol, exc)
+    if require_chart:
+        return False
     return _delivered(_send_text(chat_id, caption, reply_markup=reply_markup))
 
 
@@ -388,6 +402,7 @@ def _send_lifecycle_post(chat_id, event, view) -> bool:
     return _send_chart_card(
         chat_id, view, candles, caption,
         _with_signal_button(build_lifecycle_keyboard(), getattr(getattr(view, "trade", None), "candidate_id", None)),
+        require_chart=view.mirror_campaign,
     )
 
 
@@ -461,6 +476,11 @@ PHASE_LABELS = {
 
 
 def _telegram_request(method: str, **params):
+    import telegram_gateway_client
+    if telegram_gateway_client.configured():
+        if method == "getUpdates":
+            return telegram_gateway_client.get_updates(**params)
+        return telegram_gateway_client.bot_method(method, **params)
     url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/{method}"
     response = requests.get(url, params=params, timeout=40)
     return response.json()
@@ -690,14 +710,17 @@ def _format_signal_time(ms) -> str:
     return datetime.fromtimestamp(int(ms) / 1000, timezone.utc).strftime("%d.%m.%Y %H:%M:%S UTC")
 
 
-def _repost_keyboard(symbol: str, timeframe: str) -> dict:
-    """Neutral keyboard: no Robot admission, review or MetaScalp actions on a repost."""
-    rows = []
+def _repost_keyboard(symbol: str, timeframe: str, signal_id: str | None = None) -> dict:
+    """Restore normal navigation without reactivating Robot admission."""
     try:
-        rows.append([{"text": "📈 Open TradingView",
-                      "url": create_tradingview_url(symbol, timeframe)}])
+        rows = build_tradingview_keyboard(
+            symbol, timeframe, include_review_actions=True,
+            robot_candidate_id=None, robot_status_button=False,
+            signal_id=signal_id,
+        )["inline_keyboard"]
     except Exception as exc:
-        print("[SIGNAL REPOST TV ERROR]", symbol, exc)
+        print("[SIGNAL REPOST NAV ERROR]", symbol, exc)
+        rows = []
     rows.append([{"text": "⬅️ К кандидатам", "callback_data": "monitor:list"}])
     return {"inline_keyboard": rows}
 
@@ -718,7 +741,7 @@ def _repost_original_signal(chat_id, original: Mapping) -> bool:
     The original message is never edited or deleted.
     """
     caption = _repost_caption(original)
-    markup = _repost_keyboard(str(original.get("symbol", "")), str(original.get("timeframe", "")))
+    markup = _repost_keyboard(str(original.get("symbol", "")), str(original.get("timeframe", "")), str(original.get("candidate_id") or "") or None)
     file_id = original.get("photo_file_id")
     if file_id:
         try:
@@ -757,7 +780,7 @@ def _send_source_signal_card(chat_id, token: str) -> None:
             f"{SIGNAL_REPOST_MARK}\nОригинал отправлен: {_format_signal_time(original['sent_at_ms'])}\n\n"
             f"{original.get('text', '')}\n\n"
             "⚠️ Изображение оригинала не удалось отправить повторно.",
-            reply_markup=_repost_keyboard(symbol, str(original.get("timeframe", ""))),
+            reply_markup=_repost_keyboard(symbol, str(original.get("timeframe", "")), str(original.get("candidate_id") or "") or None),
         )
         return
     # No archived original (a candidate created before the archive existed, or it was
@@ -784,6 +807,74 @@ def _send_source_signal_card(chat_id, token: str) -> None:
         chat_id, view, candles, caption,
         {"inline_keyboard": [[{"text": "⬅️ К кандидатам", "callback_data": "monitor:list"}]]},
     )
+
+
+def _process_mirror_source_callback(callback_query) -> bool:
+    """Repost the exact source-pattern archive or the frozen MIRROR origin.
+
+    Never reconstruct a historic pattern from current candles. The fallback is
+    explicitly labelled as a MIRROR level chart, not the missing original.
+    """
+    data = str(callback_query.get("data") or "")
+    mirror_prefix, signal_prefix = "mirror:source:", "signal:source:"
+    is_mirror = data.startswith(mirror_prefix)
+    if not (is_mirror or data.startswith(signal_prefix)):
+        return False
+    token = data[len(mirror_prefix if is_mirror else signal_prefix):]
+    if len(token) != 24 or any(char not in "0123456789abcdef" for char in token):
+        return False
+    callback_id = callback_query.get("id")
+    if not _is_owner((callback_query.get("from") or {}).get("id")):
+        _answer_callback(callback_id, "Недостаточно прав")
+        return True
+    chat_id = (((callback_query.get("message") or {}).get("chat") or {}).get("id"))
+    if chat_id is None or str(chat_id) != _owner_id():
+        _answer_callback(callback_id, "Только личный чат владельца")
+        return True
+    _answer_callback(callback_id)
+    if not is_mirror:
+        original = signal_archive.load_original_signal([f"source-original:{token}"])
+        if original is None:
+            _send_text(chat_id, "Исходная карточка сигнала недоступна: архив не найден.")
+        elif not _repost_original_signal(chat_id, original):
+            _send_text(chat_id, "Не удалось отправить сохранённый график исходного сигнала.")
+        return True
+    mirror = signal_archive.load_original_signal([f"mirror-origin:{token}"])
+    if mirror is None:
+        _send_text(chat_id, "Исходная MIRROR-карточка недоступна: архив не найден.")
+        return True
+    parent_ids = mirror.get("source_formation_ids") or []
+    original = signal_archive.load_original_signal(parent_ids)
+    if original is not None:
+        if _repost_original_signal(chat_id, original):
+            return True
+        _send_text(chat_id, "Исходный паттерн найден, но его график не удалось отправить.")
+        return True
+    if parent_ids:
+        # An established parent lineage is not an archived parent signal.
+        # Never silently present the MIRROR campaign as that missing pattern.
+        _send_text(
+            chat_id,
+            "⚠️ Исходная карточка паттерна не сохранена. "
+            "Ниже доступна только архивная MIRROR-карточка этой кампании, "
+            "не оригинал паттерна.",
+        )
+    # A bare level has no source pattern. With an unavailable parent,
+    # the following first-card fallback is explicitly disclosed above.
+    # Never substitute a newer same-ticker observation.
+    first_id = mirror.get("source_campaign_first_id")
+    first = signal_archive.load_original_signal([first_id]) if first_id else None
+    if first is not None:
+        if _repost_original_signal(chat_id, first):
+            return True
+        _send_text(chat_id, "Первую карточку MIRROR-кампании не удалось отправить.")
+        return True
+    if not parent_ids:
+        _send_text(chat_id, "Первая карточка MIRROR-кампании не сохранена. "
+                            "Показываю архивный график этого события без подмены источника.")
+    if not _repost_original_signal(chat_id, mirror):
+        _send_text(chat_id, "Не удалось отправить архивный MIRROR-график.")
+    return True
 
 
 def parse_monitor_callback(data: str):
@@ -1172,8 +1263,18 @@ def poll_updates_once(offset):
 
         callback_query = update.get("callback_query")
         if callback_query:
+            # Private metadata for a non-sensitive PAPER close audit trail.
+            # The immutable callback id is used only for backend idempotence;
+            # never print it, chat/user IDs or the full update payload.
+            if str(callback_query.get("data") or "") in (
+                "robot:cmd:paper_close_all",
+                "robot:cmd:paper_close_all_confirm",
+            ):
+                callback_query = dict(callback_query)
+                callback_query["_paper_monitor_update_id"] = update_id
             if not (_process_metascalp_callback(callback_query)
                     or _process_positions_callback(callback_query)
+                    or _process_mirror_source_callback(callback_query)
                     or _process_monitor_callback(callback_query)):
                 import telegram_review
 

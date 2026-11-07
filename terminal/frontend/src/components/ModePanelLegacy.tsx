@@ -727,7 +727,7 @@ export function ModePanel({
   };
 
   return (
-    <section className="mode-panel" aria-label={`${mode} controls`}>
+    <section className={`mode-panel${mode === "AUTOPILOT" ? " autopilot-legacy-navigation" : ""}`} aria-label={`${mode} controls`}>
       <div>
         <p className="eyebrow">Active mode</p>
         <h2>{mode}</h2>
@@ -738,10 +738,13 @@ export function ModePanel({
         {alternatives.map((candidate) => (
           <button
             key={candidate}
+            className="workspace-nav-button"
+            aria-label={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Автопилот" : "Редактор"}
+            title={candidate === "TERMINAL" ? "Терминал" : candidate === "AUTOPILOT" ? "Автопилот" : "Редактор"}
             onClick={() => onModeChange(candidate)}
             type="button"
           >
-            {candidate}
+            <span aria-hidden="true" className="workspace-nav-icon">{candidate === "TERMINAL" ? "$" : candidate === "AUTOPILOT" ? "◉" : "✎"}</span>
           </button>
         ))}
       </nav>
@@ -1163,32 +1166,6 @@ export function ModePanel({
             </div>
           ) : null}
 
-          {openPositionsVisible && accountWorkspaceProjection?.provider === "PAPER" ? (
-            <OpenPositionsOverlay
-              activeSymbol={symbol}
-              onClose={() => setOpenPositionsVisible(false)}
-              onNavigate={(nextSymbol) => {
-                setOpenPositionsVisible(false);
-                onWorkspaceSymbolSelect?.(nextSymbol);
-              }}
-              runPaperMutation={runPaperMutation}
-              applyPaperState={applyPaperState}
-            />
-          ) : null}
-          {openPositionsVisible && accountWorkspaceProjection?.provider !== "PAPER" ? (
-            <LiveAccountInventory
-              activeAccountName={activeAccountLabel && activeAccountLabel.id === accountWorkspaceProjection?.account_id
-                ? activeAccountLabel.name : ""}
-              activeSymbol={symbol}
-              onClose={() => setOpenPositionsVisible(false)}
-              onNavigate={(nextSymbol) => {
-                setOpenPositionsVisible(false);
-                onWorkspaceSymbolSelect?.(nextSymbol);
-              }}
-              projection={accountWorkspaceProjection}
-            />
-          ) : null}
-
           {diaryVisible ? (
             <DiaryOverlay
               accountKey={`${accountWorkspaceProjection?.account_id ?? "unknown"}:${accountWorkspaceProjection?.session_generation ?? 0}`}
@@ -1351,6 +1328,32 @@ export function ModePanel({
         </div>
         </>
       ) : null}
+          {openPositionsVisible && accountWorkspaceProjection?.provider === "PAPER" ? (
+            <OpenPositionsOverlay
+              activeSymbol={symbol}
+              onClose={() => setOpenPositionsVisible(false)}
+              onNavigate={(nextSymbol) => {
+                setOpenPositionsVisible(false);
+                onWorkspaceSymbolSelect?.(nextSymbol);
+              }}
+              runPaperMutation={runPaperMutation}
+              applyPaperState={applyPaperState}
+            />
+          ) : null}
+          {openPositionsVisible && accountWorkspaceProjection?.provider !== "PAPER" ? (
+            <LiveAccountInventory
+              activeAccountName={activeAccountLabel && activeAccountLabel.id === accountWorkspaceProjection?.account_id
+                ? activeAccountLabel.name : ""}
+              activeSymbol={symbol}
+              onClose={() => setOpenPositionsVisible(false)}
+              onNavigate={(nextSymbol) => {
+                setOpenPositionsVisible(false);
+                onWorkspaceSymbolSelect?.(nextSymbol);
+              }}
+              projection={accountWorkspaceProjection}
+            />
+          ) : null}
+
     </section>
   );
 }

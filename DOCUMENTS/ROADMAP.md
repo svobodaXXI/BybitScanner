@@ -2,11 +2,11 @@
 
 Version:
 
-4.61
+4.62
 
 Date:
 
-2026-09-11
+2026-11-02
 
 Document Type:
 
@@ -1571,6 +1571,27 @@ RULE-008:
 
 ---
 
+# AI_FIRST_RESULT_ROADMAP_20261102
+
+**Owner decision (02.11.2026):** fastest safe path to a *working* result.
+This is a priority overlay, not a new pipeline stage or approval.
+
+- **P0 now:** complete protected PAPER stop/FLAT/JASMY handoff, authorized
+  release and verified Robot/Telegram/Editor operation. On exposure or
+  uncertain identity, keep protection and report BLOCKED. CI ≠ acceptance.
+- **P1 after P0:** on real tasks, apply existing AI-FIRST RESULT DELIVERY
+  (ASSISTANT_PROTOCOL) and validation tiers (DEVELOPMENT_VALIDATION_LOOP_PLAN §14);
+  reduce unnecessary owner actions, repeated context and checks. Track only
+  verified savings in [#766](https://github.com/svobodaXXI/BybitScanner/issues/766).
+- **Later, only if proven useful:** remove duplicated helpers/docs/CI or reduce
+  coupling with minimal scoped patches. Monthly #766 review stays subordinate
+  to the active owner priority; no new quest or process.
+
+PAPER/LIVE isolation, STOP/TAKE, fail-closed and owner-only merge/trading/VPS
+approvals remain unchanged.
+
+---
+
 # VERSION_UPDATE_REASON
 
 Full per-version reasons through v4.45 used to retell, checkpoint by
@@ -1579,6 +1600,7 @@ own revision history and by Git commit history. Per DECISION-007 ("Git owns
 detailed implementation history"), that retelling is not duplicated here;
 only a compact milestone index is kept, newest first.
 
+* v4.61→v4.62 — owner 02.11.2026: inserted one AI-first outcome-delivery priority overlay, with P0 protected PAPER acceptance before P1 measured toil cleanup (#766); no new runtime authority, stages or gates. Algorithms remain in the existing ASSISTANT_PROTOCOL and DEVELOPMENT_VALIDATION_LOOP_PLAN.
 * v4.59→v4.60 — implemented `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`
   (`Implementation authorization` NONE→APPROVED, 2026-09-11): ATR-normalized wedge containment
   replacing the old hard reject; see that document's own `IMPLEMENTATION_RECORD` (including the

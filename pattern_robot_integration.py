@@ -84,6 +84,12 @@ def is_robot_executable_signal(
     normalized_timeframe = str(timeframe).strip()
     pattern = str(signal_snapshot.get("pattern", "")).strip()
 
+    if pattern in {"Double Top", "Double Bottom"}:
+        return (
+            normalized_timeframe in L_SHAPE_SOURCE_TIMEFRAMES
+            and signal_snapshot.get("robot_handoff_ready") is True
+        )
+
     if pattern == L_SHAPE_PATTERN:
         return (
             normalized_timeframe in L_SHAPE_SOURCE_TIMEFRAMES

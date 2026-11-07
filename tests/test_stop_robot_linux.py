@@ -32,6 +32,7 @@ class FakeHost:
     def __init__(self, *, robot=READY, backend=True, telegram=True, health_up=True):
         self.robot, self.backend, self.telegram, self.health_up = robot, backend, telegram, health_up
         self.calls, self.shutdown_status = [], {}
+        self.scanner_mode = "SCANNER_RUNNING"
         self.terminated = []
 
     def get(self, url, timeout):
@@ -43,13 +44,20 @@ class FakeHost:
             if not self.telegram:
                 raise shutdown.Unreachable("down")
             return 200, {"component": "telegram_monitoring", "database_identity": IDENTITY}
+        if url == BACKEND + "/api/scanner/status":
+            return 200, {"ok": True, "mode": self.scanner_mode}
+        if url == BACKEND + "/api/robot/autopilot":
+            return 200, {"ok": True, "mode": "OFF",
+                         "trading_account_id": {"value": "paper"}}
         if url == BACKEND + "/api/robot/protection-health":
-            return 200, {"healthy": True, "covered_symbols": [], "unhealthy_symbols": {}, "armed_symbols": []}
+            return 200, {"ok": True, "healthy": True, "covered_symbols": [],
+                         "coverage_roles": {}, "unhealthy_symbols": {}, "armed_symbols": []}
         raise AssertionError(f"unexpected GET {url}")
 
     def post(self, url, payload, timeout):
         self.calls.append(url.replace(BACKEND, "").replace(TELEGRAM, "tg"))
         if url.endswith("/api/scanner/stop"):
+            self.scanner_mode = "SCANNER_STOPPED"
             return 200, {"ok": True}
         if url.endswith("/shutdown"):
             status = self.shutdown_status.get("telegram" if url.startswith(TELEGRAM) else "backend", 200)
@@ -65,12 +73,18 @@ class FakeHost:
         self.calls.append("robot:stop")
         self.robot = STOPPED
 
-    def orchestrator(self, *, listener=lambda host, port: (legacy.LISTENER_PID_UNRESOLVED,),
-                     resolver=None):
+    def listener(self, host, port):
+        assert host == "127.0.0.1"
+        alive = self.backend if port == 8765 else self.telegram if port == 8766 else None
+        if alive is None:
+            raise AssertionError(f"unexpected listener port {port}")
+        return (legacy.LISTENER_PID_UNRESOLVED,) if alive else ()
+
+    def orchestrator(self, *, listener=None, resolver=None):
         return shutdown.RuntimeShutdown(
             root=ROOT, env={}, get=self.get, post=self.post, robot_state=lambda: self.robot,
             stop_robot_fn=self.stop_robot, sleep=lambda s: None, monotonic=iter(range(0, 10_000)).__next__,
-            listener_probe=listener, legacy_resolver=resolver or legacy.resolve_legacy_chain,
+            listener_probe=listener or self.listener, legacy_resolver=resolver or legacy.resolve_legacy_chain,
             legacy_terminator=self.terminated.extend, legacy_supported=False,
             legacy_paper_quiescence=lambda: self.calls.append("QUIESCENCE_PROOF"),
             legacy_paper_guard=lambda: (self.calls.append("SQLITE_BARRIER"), nullcontext())[1],
@@ -78,11 +92,13 @@ class FakeHost:
 
 
 class LinuxShutdownTests(unittest.TestCase):
-    def test_graceful_path_is_unchanged_and_ordered(self):
+    def test_graceful_path_verifies_backend_exit_before_telegram_shutdown(self):
         host = FakeHost()
         result = host.orchestrator().run("all")
         self.assertTrue(result.ok, result.message)
-        self.assertEqual(host.calls, ["/api/scanner/stop", "robot:stop", "tg/shutdown", "/api/runtime/shutdown"])
+        self.assertEqual(host.calls, [
+            "/api/scanner/stop", "robot:stop", "/api/runtime/shutdown", "tg/shutdown",
+        ])
         self.assertEqual(host.terminated, [])
 
     def test_missing_shutdown_endpoint_fails_closed_without_termination(self):
@@ -95,6 +111,9 @@ class LinuxShutdownTests(unittest.TestCase):
                 self.assertIn("unavailable on this platform", result.message)
                 self.assertEqual(host.terminated, [])
                 self.assertNotIn("SQLITE_BARRIER", host.calls)
+                if which == "backend":
+                    self.assertTrue(host.backend and host.telegram)
+                    self.assertNotIn("tg/shutdown", host.calls)
 
     def test_unreachable_health_with_a_live_listener_keeps_the_runtime_alive(self):
         host = FakeHost(health_up=False)

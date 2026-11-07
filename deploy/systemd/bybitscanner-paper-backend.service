@@ -42,7 +42,10 @@ EnvironmentFile=-/etc/bybitscanner/owner.env
 StateDirectory=bybitscanner
 StateDirectoryMode=0750
 ExecStartPre=/opt/BybitScanner/venv/bin/python -m tools.vps_check --pre-start
-ExecStart=/opt/BybitScanner/venv/bin/python -m terminal.runtime.paper_http_server
+# Validate every tracked release blob against the protected staging manifest and
+# set BYBITSCANNER_BUILD_SHA in the same PID at exec (no separate untrusted marker).
+# The manifest is installed only after verified immutable release staging.
+ExecStart=/opt/BybitScanner/venv/bin/python -m tools.vps_release_identity exec-backend
 ExecStop=/opt/BybitScanner/venv/bin/python -m tools.stop_robot_runtime all
 Restart=no
 KillSignal=SIGCONT

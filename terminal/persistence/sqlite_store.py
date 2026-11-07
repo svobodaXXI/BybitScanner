@@ -60,6 +60,7 @@ from .schema import (
     SCHEMA_V23_MIGRATION_STATEMENTS,
     SCHEMA_V24_MIGRATION_STATEMENTS,
     SCHEMA_V25_MIGRATION_STATEMENTS,
+    SCHEMA_V26_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -1321,6 +1322,10 @@ class SQLiteStore:
         if version == SCHEMA_VERSION:
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
+        if version == 25:
+            SQLiteStore._validate_required_tables(connection, version=25)
+            SQLiteStore._migrate_v25_to_v26(connection)
+            return
         if version == 24:
             SQLiteStore._validate_required_tables(connection, version=24)
             SQLiteStore._migrate_v24_to_v25(connection)
@@ -1790,6 +1795,20 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+        SQLiteStore._migrate_v25_to_v26(connection)
+
+    @staticmethod
+    def _migrate_v25_to_v26(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V26_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 26")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        SQLiteStore._validate_required_tables(connection, version=26)
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -1842,6 +1861,8 @@ class SQLiteStore:
             required.update({"box_attempt_ownership", "box_order_ownership"})
         if version >= 24:
             required.update({"robot_autopilot_state", "robot_auto_decisions"})
+        if version >= 26:
+            required.update({"robot_reentry_campaigns", "robot_reentry_attempts"})
         actual = {
             row[0]
             for row in connection.execute(
@@ -3854,6 +3875,18 @@ class SQLiteStore:
         ).fetchone()
         return _command_from_row(row) if row is not None else None
 
+    def get_paper_command_by_order_link(
+        self, trading_account_id: TradingAccountId, order_link_id: str,
+    ) -> CommandRecord | None:
+        """Read only the exact immutable command behind a PAPER execution link."""
+        self._assert_owner()
+        row = self._connection.execute(
+            """SELECT * FROM trading_commands
+               WHERE trading_account_id=? AND order_link_id=?""",
+            (trading_account_id.value, order_link_id),
+        ).fetchone()
+        return _command_from_row(row) if row is not None else None
+
     def load_unfinished_commands(self) -> tuple[CommandRecord, ...]:
         self._assert_owner()
         final_states = (
@@ -4981,12 +5014,19 @@ class SQLiteStore:
             "ORDER BY CASE role WHEN 'ENTRY' THEN 0 ELSE 1 END, slot, order_id",
             (candidate_id,),
         ).fetchall()
-        return tuple(
+        result = [
             BoxOrderOwnershipRecord(
                 OrderId(row["order_id"]), row["candidate_id"], row["role"], row["slot"],
             )
             for row in rows
-        )
+        ]
+        successor = self._box_latched_stop_shadow_owner(candidate_id)
+        if successor is not None:
+            result.append(BoxOrderOwnershipRecord(
+                OrderId(successor["order_id"]), successor["candidate_id"],
+                successor["role"], successor["slot"],
+            ))
+        return tuple(result)
 
     def reserve_box_order_identity(
         self, candidate_id: str, *, order_id: OrderId, role: str, slot: int,
@@ -5004,10 +5044,147 @@ class SQLiteStore:
                 candidate_id, order_id=order_id, role=role, slot=slot,
             )
 
+    def prove_box_never_started_flat(self, candidate_id: str) -> bool:
+        """Strict read-only evidence for a Box attempt never admitted to execution.
+
+        Absence of a baseline alone is insufficient: refuse if any ownership,
+        active order, fill or actual exposure exists. Never synthesize ownership.
+        """
+        self._assert_owner()
+        with self._transaction():
+            candidate = self._box_ownership_candidate(candidate_id)
+            baseline = self._connection.execute(
+                "SELECT 1 FROM box_attempt_ownership WHERE candidate_id=?",
+                (candidate_id,),
+            ).fetchone()
+            if baseline is not None:
+                return False
+            if self.load_box_order_ownership(candidate_id):
+                return False
+            if self.load_active_paper_limits(
+                candidate.trading_account_id, candidate.symbol,
+            ):
+                return False
+            if any(
+                command.trading_account_id == candidate.trading_account_id
+                and command.symbol == candidate.symbol
+                for command in self.load_unfinished_commands()
+            ):
+                return False
+            # Symbol history from before this immutable plan existed cannot
+            # belong to this attempt. Any fill at or after plan creation is
+            # ambiguous without ownership and therefore still fails closed.
+            if any(
+                execution.exchange_timestamp_ms >= candidate.updated_at_ms
+                for execution in self.load_executions_for_symbol(
+                    candidate.trading_account_id, candidate.symbol,
+                )
+            ):
+                return False
+            position = self.get_position_projection(PositionKey(
+                candidate.trading_account_id, Category.LINEAR, candidate.symbol, 0,
+            ))
+            return position is None or (
+                position.side is PositionSide.FLAT
+                and position.quantity.value == 0
+            )
+
     def prove_box_owned_position(self, candidate_id: str):
         """Read one consistent journal/ownership/position view; no runtime action."""
         with self._transaction():
             return self._prove_box_owned_position(candidate_id)
+
+    def _box_latched_stop_shadow_owner(
+        self, source_candidate_id: str,
+    ) -> dict[str, object] | None:
+        """Read-only attribution for a latched STOP superseding unused EXIT-0.
+
+        Immutable Box ownership and the original abandoned reservation remain
+        untouched. A second EXIT-0 *execution identity* is accepted only when
+        it is already the durable STOP obligation of this Box's sole open Robot
+        trade, and the earlier reserved manual close demonstrably never made
+        it into any order, command or execution journal. The STOP obligation
+        is the durable, unique successor record (not mutable runtime state).
+        """
+        original = self._connection.execute(
+            """SELECT order_id FROM box_order_ownership
+               WHERE candidate_id=? AND role='EXIT' AND slot=0""",
+            (source_candidate_id,),
+        ).fetchone()
+        if original is None:
+            return None
+        trade_row = self._connection.execute(
+            """SELECT t.trade_id, t.candidate_id, t.trading_account_id, t.symbol
+               FROM robot_trades t JOIN robot_candidates c
+                 ON c.candidate_id=t.candidate_id
+               WHERE t.pattern='IKIGAI_BOX'
+                 AND c.status IN ('OPEN', 'CLOSED')
+                 AND json_extract(c.signal_snapshot_json,
+                                  '$.source_box_candidate_id')=?""",
+            (source_candidate_id,),
+        ).fetchall()
+        if len(trade_row) != 1:
+            return None
+        trade = trade_row[0]
+        obligation = self._connection.execute(
+            """SELECT obligation_id, order_id, status, winning_leg FROM
+               paper_protection_obligations
+               WHERE trade_id=? AND trading_account_id=? AND symbol=?""",
+            (trade["trade_id"], trade["trading_account_id"], trade["symbol"]),
+        ).fetchone()
+        if (
+            obligation is None or obligation["status"] not in
+            ("TRIGGERED", "DISPATCHING", "RESOLVED")
+            or obligation["winning_leg"] not in
+            ("STOP", "TAKE", "EMERGENCY_CLOSE")
+            or obligation["order_id"] == original["order_id"]
+        ):
+            return None
+        candidate = self.get_robot_candidate(trade["candidate_id"])
+        execution = (candidate.robot_state or {}).get("execution") or {}
+        intent = execution.get("box_manual_close_intent")
+        if (
+            not isinstance(intent, dict)
+            or intent.get("order_id") != original["order_id"]
+            or intent.get("slot") != 0
+            or not isinstance(intent.get("command_id"), str)
+            or not isinstance(intent.get("order_link_id"), str)
+            or not intent["command_id"] or not intent["order_link_id"]
+        ):
+            return None
+        old_order_id = original["order_id"]
+        if (
+            self._connection.execute(
+                """SELECT 1 FROM trading_commands
+                   WHERE command_id=? OR exchange_order_id=? OR order_link_id=?""",
+                (intent["command_id"], old_order_id, intent["order_link_id"]),
+            ).fetchone()
+            or self._connection.execute(
+                "SELECT 1 FROM executions WHERE order_id=?", (old_order_id,),
+            ).fetchone()
+            or self._connection.execute(
+                "SELECT 1 FROM paper_limit_orders WHERE order_id=?", (old_order_id,),
+            ).fetchone()
+            or self._connection.execute(
+                "SELECT 1 FROM box_order_ownership WHERE order_id=?",
+                (obligation["order_id"],),
+            ).fetchone()
+        ):
+            return None
+        return {
+            "order_id": obligation["order_id"],
+            "candidate_id": source_candidate_id,
+            "role": "EXIT",
+            "slot": 0,
+        }
+
+    def prove_box_latched_stop_successor(
+        self, source_candidate_id: str, order_id: OrderId,
+    ) -> bool:
+        """Proof only: do not modify/delete an immutable EXIT-0 reservation."""
+        self._assert_owner()
+        successor = self._box_latched_stop_shadow_owner(source_candidate_id)
+        return bool(successor and successor["order_id"] == order_id.value)
 
     def _prove_box_owned_position(self, candidate_id: str):
         from terminal.paper.box_ownership import BoxOwnershipError, prove_box_exposure
@@ -5019,9 +5196,12 @@ class SQLiteStore:
         if (baseline is None or baseline["symbol"] != candidate.symbol.value
                 or baseline["trading_account_id"] != candidate.trading_account_id.value):
             raise BoxOwnershipError("Box ownership baseline is missing or conflicts with plan")
-        ownership = self._connection.execute(
+        ownership = list(self._connection.execute(
             "SELECT * FROM box_order_ownership WHERE candidate_id=?", (candidate_id,),
-        ).fetchall()
+        ).fetchall())
+        successor = self._box_latched_stop_shadow_owner(candidate_id)
+        if successor is not None:
+            ownership.append(successor)
         for owner in ownership:
             if any(fill.symbol != candidate.symbol or fill.dedup_key.category is not Category.LINEAR
                    for fill in self.load_executions_for_order(
@@ -5161,6 +5341,260 @@ class SQLiteStore:
             except sqlite3.IntegrityError as exc:
                 raise DuplicateIdentity("Robot signal snapshot is already admitted") from exc
         return self.get_robot_candidate(candidate_id), True  # type: ignore[return-value]
+
+    def _require_reentry_admission_writer(self, account: TradingAccountId) -> None:
+        """All reentry reservations belong to the *existing* Robot transaction."""
+        self._assert_owner()
+        if not self.in_robot_admission_transaction() or not self._connection.in_transaction:
+            raise PersistenceError("reentry requires canonical Robot admission transaction")
+        runtime = self.get_robot_runtime_state(account)
+        if runtime is None or runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":
+            raise PersistenceError("Robot is not READY for a reentry reservation")
+
+    def create_robot_reentry_campaign(
+        self, *, account: TradingAccountId, campaign_id: str,
+        first_candidate_id: str, frozen_thesis_sha256: str, direction: str,
+        original_risk_budget_usdt: Decimal, reserved_risk_usdt: Decimal,
+        reserved_at_ms: int,
+    ) -> bool:
+        """Register original admission as attempt 1, atomically with its candidate.
+
+        The strategy supplies validated immutable thesis/risk from normal
+        Admission; this function never authorizes a trade on its own.
+        """
+        self._require_reentry_admission_writer(account)
+        if not isinstance(campaign_id, str) or not campaign_id.strip():
+            raise PersistenceError("reentry campaign identity missing")
+        if (not isinstance(frozen_thesis_sha256, str)
+                or len(frozen_thesis_sha256) != 64
+                or any(c not in "0123456789abcdef" for c in frozen_thesis_sha256)):
+            raise PersistenceError("frozen thesis fingerprint is invalid")
+        if direction not in ROBOT_DIRECTIONS:
+            raise PersistenceError("reentry direction is invalid")
+        if type(reserved_at_ms) is not int or reserved_at_ms < 0:
+            raise PersistenceError("reentry reservation timestamp invalid")
+        for value in (original_risk_budget_usdt, reserved_risk_usdt):
+            if not isinstance(value, Decimal) or not value.is_finite() or value <= 0:
+                raise PersistenceError("reentry risk amount is invalid")
+        if reserved_risk_usdt > original_risk_budget_usdt:
+            raise PersistenceError("initial attempt exceeds frozen risk budget")
+        candidate = self.get_robot_candidate(first_candidate_id)
+        if (candidate is None or candidate.trading_account_id != account
+                or candidate.status != "APPROVED" or candidate.approved_at_ms > reserved_at_ms):
+            raise PersistenceError("first admitted Robot candidate not proven")
+        existing = self._connection.execute(
+            "SELECT * FROM robot_reentry_campaigns WHERE trading_account_id=? AND campaign_id=?",
+            (account.value, campaign_id),
+        ).fetchone()
+        if existing is not None:
+            attempt = self._connection.execute(
+                """SELECT * FROM robot_reentry_attempts
+                   WHERE trading_account_id=? AND campaign_id=? AND attempt_index=1""",
+                (account.value, campaign_id),
+            ).fetchone()
+            if (existing["first_candidate_id"] != first_candidate_id
+                    or existing["symbol"] != candidate.symbol.value
+                    or existing["direction"] != direction
+                    or existing["frozen_thesis_sha256"] != frozen_thesis_sha256
+                    or Decimal(existing["original_risk_budget_usdt"]) != original_risk_budget_usdt
+                    or attempt is None or attempt["candidate_id"] != first_candidate_id
+                    or Decimal(attempt["reserved_risk_usdt"]) != reserved_risk_usdt):
+                raise PersistenceError("immutable reentry campaign identity conflicts")
+            return False
+        try:
+            self._connection.execute(
+                """INSERT INTO robot_reentry_campaigns
+                   (trading_account_id,campaign_id,symbol,direction,first_candidate_id,
+                    frozen_thesis_sha256,original_risk_budget_usdt,created_at_ms)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (account.value, campaign_id, candidate.symbol.value, direction,
+                 first_candidate_id, frozen_thesis_sha256,
+                 _decimal_text(original_risk_budget_usdt), reserved_at_ms),
+            )
+            self._connection.execute(
+                """INSERT INTO robot_reentry_attempts
+                   (trading_account_id,campaign_id,attempt_index,candidate_id,
+                    reserved_risk_usdt,previous_stop_exec_id,reserved_at_ms)
+                   VALUES (?,?,1,?,?,NULL,?)""",
+                (account.value, campaign_id, first_candidate_id,
+                 _decimal_text(reserved_risk_usdt), reserved_at_ms),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise PersistenceError("reentry campaign slot or candidate already reserved") from exc
+        return True
+
+    def reserve_robot_stop_reentry(
+        self, *, account: TradingAccountId, campaign_id: str,
+        candidate_id: str, frozen_thesis_sha256: str, direction: str,
+        previous_stop_exec_id: str, confirmed_at_ms: int,
+        reserved_risk_usdt: Decimal, reserved_at_ms: int,
+        strategy_confirmation_proven: bool,
+    ) -> bool:
+        """Reserve a *new* logical entry, never execute it.
+
+        This must run in the same BEGIN IMMEDIATE transaction as Robot
+        candidate admission. Canonical execution/STOP/financial rows are the
+        evidence; the Diary reads them, never re-writes them.
+        """
+        self._require_reentry_admission_writer(account)
+        if (type(confirmed_at_ms) is not int or type(reserved_at_ms) is not int
+                or confirmed_at_ms < 0 or reserved_at_ms < confirmed_at_ms):
+            raise PersistenceError("closed-candle confirmation time unverified")
+        if strategy_confirmation_proven is not True:
+            raise PersistenceError("new pattern confirmation not proven")
+        if (not isinstance(reserved_risk_usdt, Decimal)
+                or not reserved_risk_usdt.is_finite() or reserved_risk_usdt <= 0):
+            raise PersistenceError("retry risk not proven")
+        campaign = self._connection.execute(
+            "SELECT * FROM robot_reentry_campaigns WHERE trading_account_id=? AND campaign_id=?",
+            (account.value, campaign_id),
+        ).fetchone()
+        if (campaign is None or campaign["direction"] != direction
+                or campaign["frozen_thesis_sha256"] != frozen_thesis_sha256):
+            raise PersistenceError("reentry campaign thesis/direction unverified")
+        candidate = self.get_robot_candidate(candidate_id)
+        if (candidate is None or candidate.trading_account_id != account
+                or candidate.symbol.value != campaign["symbol"]
+                or candidate.status != "APPROVED"
+                or candidate.approved_at_ms < confirmed_at_ms):
+            raise PersistenceError("new admitted candidate ownership unverified")
+        rows = self._connection.execute(
+            """SELECT * FROM robot_reentry_attempts
+               WHERE trading_account_id=? AND campaign_id=?
+               ORDER BY attempt_index""",
+            (account.value, campaign_id),
+        ).fetchall()
+        if not rows or any(int(row["attempt_index"]) != i + 1 for i, row in enumerate(rows)):
+            raise PersistenceError("reentry attempt genealogy unverified")
+        for row in rows:
+            if row["candidate_id"] == candidate_id:
+                if (row["previous_stop_exec_id"] == previous_stop_exec_id
+                        and Decimal(row["reserved_risk_usdt"]) == reserved_risk_usdt):
+                    return False
+                raise PersistenceError("candidate already reserved with different evidence")
+        if len(rows) >= 3:
+            raise PersistenceError("maximum of two STOP retries reached")
+        if not isinstance(previous_stop_exec_id, str) or not previous_stop_exec_id:
+            raise PersistenceError("previous STOP execution id missing")
+        spent = Decimal("0")
+        previous_exit_ms: int | None = None
+        for row in rows:
+            parent = self.get_robot_candidate(row["candidate_id"])
+            trade = self._connection.execute(
+                """SELECT * FROM robot_trades WHERE trading_account_id=? AND candidate_id=?""",
+                (account.value, row["candidate_id"]),
+            ).fetchone()
+            if (parent is None or parent.status != "CLOSED" or trade is None
+                    or trade["exit_reason"] != "STOP" or trade["exit_time_ms"] is None
+                    or trade["realized_pnl_usdt"] is None or trade["fees_costs_usdt"] is None
+                    or trade["symbol"] != campaign["symbol"]
+                    or trade["direction"] != direction):
+                raise PersistenceError("prior attempt has no confirmed closed STOP")
+            obligation = self._connection.execute(
+                """SELECT * FROM paper_protection_obligations
+                   WHERE trading_account_id=? AND trade_id=? AND winning_leg='STOP'
+                     AND status='RESOLVED'""",
+                (account.value, trade["trade_id"]),
+            ).fetchone()
+            if obligation is None:
+                raise PersistenceError("authoritative STOP protection resolution missing")
+            execution = self._connection.execute(
+                """SELECT 1 FROM executions WHERE trading_account_id=?
+                   AND category='linear' AND exec_id=? AND order_id=? AND symbol=?""",
+                (account.value, obligation["exec_id"], obligation["order_id"],
+                 campaign["symbol"]),
+            ).fetchone()
+            if execution is None:
+                raise PersistenceError("STOP execution was not durably reconciled")
+            realized = _load_decimal(trade["realized_pnl_usdt"])
+            fees = _load_decimal(trade["fees_costs_usdt"])
+            if not realized.is_finite() or not fees.is_finite() or fees < 0:
+                raise PersistenceError("STOP financial facts incomplete")
+            spent += max(Decimal("0"), fees - realized)
+            previous_exit_ms = int(trade["exit_time_ms"])
+            if row is rows[-1] and obligation["exec_id"] != previous_stop_exec_id:
+                raise PersistenceError("previous STOP execution mismatches last attempt")
+        if previous_exit_ms is None or confirmed_at_ms <= previous_exit_ms:
+            raise PersistenceError("no newly confirmed closed candle after STOP")
+        budget = _load_decimal(campaign["original_risk_budget_usdt"])
+        if not budget.is_finite() or budget <= 0 or spent + reserved_risk_usdt > budget:
+            raise PersistenceError("frozen cumulative reentry risk budget exhausted")
+        symbol = campaign["symbol"]
+        position = self._connection.execute(
+            """SELECT side, quantity, sync_state FROM position_projections
+               WHERE trading_account_id=? AND category='linear'
+                 AND symbol=? AND position_idx=0""",
+            (account.value, symbol),
+        ).fetchone()
+        if (position is None or position["side"] != PositionSide.FLAT.value
+                or _load_decimal(position["quantity"]) != 0
+                or str(position["sync_state"]).lower() != "synced"):
+            raise PersistenceError("reentry symbol is not proven synchronized FLAT")
+        if self._connection.execute(
+            """SELECT 1 FROM protection_projections
+               WHERE trading_account_id=? AND category='linear'
+                 AND symbol=? AND pending_command_id IS NOT NULL LIMIT 1""",
+            (account.value, symbol),
+        ).fetchone():
+            raise PersistenceError("pending STOP/TAKE protection command blocks reentry")
+        for table, predicate in (
+            ("robot_trades", "exit_time_ms IS NULL"),
+            ("robot_candidates", "status IN ('APPROVED','OPEN') AND candidate_id<>?"),
+            ("paper_limit_orders", "status IN ('open','partially_filled')"),
+            ("paper_protection_obligations", "status<>'RESOLVED'"),
+        ):
+            params = (account.value, symbol, candidate_id) if table == "robot_candidates" else (
+                account.value, symbol)
+            if self._connection.execute(
+                f"SELECT 1 FROM {table} WHERE trading_account_id=? AND symbol=? AND {predicate} LIMIT 1",
+                params,
+            ).fetchone():
+                raise PersistenceError("existing or unresolved symbol exposure blocks reentry")
+        try:
+            self._connection.execute(
+                """INSERT INTO robot_reentry_attempts
+                   (trading_account_id,campaign_id,attempt_index,candidate_id,
+                    reserved_risk_usdt,previous_stop_exec_id,reserved_at_ms)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (account.value, campaign_id, len(rows) + 1, candidate_id,
+                 _decimal_text(reserved_risk_usdt), previous_stop_exec_id,
+                 reserved_at_ms),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise PersistenceError("concurrent or duplicate reentry reservation") from exc
+        return True
+
+    def get_robot_reentry_attempt_index(
+        self, account: TradingAccountId, candidate_id: str,
+    ) -> int | None:
+        """Read only exact durable STOP-reentry attempt, never infer from symbol."""
+        self._assert_owner()
+        row = self._connection.execute(
+            """SELECT attempt_index FROM robot_reentry_attempts
+               WHERE trading_account_id=? AND candidate_id=?""",
+            (account.value, candidate_id),
+        ).fetchone()
+        return int(row["attempt_index"]) if row is not None else None
+
+    def load_robot_reentry_campaign_trades(
+        self, account: TradingAccountId, candidate_id: str,
+    ) -> tuple[RobotTradeRecord, ...]:
+        """Read only trades with the exact candidate's durable reentry campaign id."""
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT t.* FROM robot_trades t
+               JOIN robot_reentry_attempts a
+                 ON a.trading_account_id=t.trading_account_id
+                AND a.candidate_id=t.candidate_id
+               WHERE a.trading_account_id=?
+                 AND a.campaign_id=(
+                   SELECT campaign_id FROM robot_reentry_attempts
+                   WHERE trading_account_id=? AND candidate_id=?
+                 )
+               ORDER BY t.entry_time_ms, t.trade_id""",
+            (account.value, account.value, candidate_id),
+        ).fetchall()
+        return tuple(_robot_trade_from_row(row) for row in rows)
 
     def get_robot_candidate(self, candidate_id: str) -> RobotCandidateRecord | None:
         self._assert_owner()
@@ -5323,6 +5757,81 @@ class SQLiteStore:
             (trading_account_id.value, symbol.value),
         )
         return tuple(_robot_candidate_from_row(row) for row in rows)
+
+    def prove_approved_candidate_never_traded(
+        self, candidate: RobotCandidateRecord,
+    ) -> bool:
+        """Owner-side, read-only proof for a frozen legacy APPROVED idea.
+
+        Missing order identity is not nonexecution evidence. Check every
+        durable command/limit/fill ledger since approval and all current
+        symbol owners before an incident-scoped caller may invalidate it.
+        A missing position row is permissible for a truly never-traded idea.
+        """
+        self._assert_owner()
+        if (candidate.status != "APPROVED"
+                or type(candidate.approved_at_ms) is not int
+                or candidate.approved_at_ms <= 0):
+            return False
+        account = candidate.trading_account_id.value
+        symbol = candidate.symbol.value
+        approved_at = candidate.approved_at_ms
+        row = self._connection.execute(
+            "SELECT COUNT(*) FROM robot_candidates WHERE trading_account_id=? "
+            "AND symbol=? AND (status IS NULL OR status IN ('APPROVED','OPEN'))",
+            (account, symbol),
+        ).fetchone()
+        if row is None or row[0] != 1:
+            return False
+        for side, quantity, sync in self._connection.execute(
+            "SELECT side, quantity, sync_state FROM position_projections "
+            "WHERE trading_account_id=? AND symbol=?", (account, symbol),
+        ):
+            try:
+                value = Decimal(str(quantity))
+            except (InvalidOperation, ValueError, TypeError):
+                return False
+            if (side != "Flat" or not value.is_finite() or value != 0
+                    or sync not in ("synced", "synchronized")):
+                return False
+        # Cancelled is terminal, but a cancelled partially-filled LIMIT
+        # is NOT a never-traded candidate. Fail closed on malformed quantities.
+        for (raw_filled,) in self._connection.execute(
+            "SELECT filled_quantity FROM paper_limit_orders "
+            "WHERE trading_account_id=? AND symbol=? AND status='cancelled'",
+            (account, symbol),
+        ):
+            try:
+                filled = Decimal(str(raw_filled))
+            except (InvalidOperation, ValueError, TypeError):
+                return False
+            if not filled.is_finite() or filled != 0:
+                return False
+        for table, predicate, params in (
+            ("robot_trades", "candidate_id=?", (candidate.candidate_id,)),
+            ("executions", "symbol=? AND exchange_timestamp_ms>=?",
+             (symbol, approved_at)),
+            ("paper_limit_orders", "symbol=? AND "
+             "(status IS NULL OR status NOT IN ('filled','cancelled') "
+             "OR (created_at_ms>=? AND status!='cancelled'))",
+             (symbol, approved_at)),
+            ("trading_commands", "symbol=? AND "
+             "(current_state IS NULL OR current_state NOT IN "
+             "('filled','cancelled','amended','rejected','failed','owner_attested_closed') "
+             "OR (created_at_ms>=? AND current_state NOT IN "
+             "('cancelled','amended','rejected','failed')))",
+             (symbol, approved_at)),
+            ("paper_protection_obligations", "symbol=? AND "
+             "(status IS NULL OR status!='RESOLVED')", (symbol,)),
+            ("reconciliation_checkpoints", "symbol=? AND completed_at_ms IS NULL",
+             (symbol,)),
+        ):
+            if self._connection.execute(
+                f"SELECT 1 FROM {table} WHERE trading_account_id=? "
+                f"AND ({predicate}) LIMIT 1", (account, *params),
+            ).fetchone() is not None:
+                return False
+        return True
 
     def save_robot_candidate_state(
         self, candidate_id: str, *, status: str, robot_state: dict[str, object],
@@ -5615,6 +6124,70 @@ class SQLiteStore:
                 raise ConcurrentUpdate("Robot candidate changed before trade close")
         return self.get_robot_trade(trade_id), True  # type: ignore[return-value]
 
+    def correct_box_take_race_from_proven_stop(
+        self, *, trade_id: str, obligation_id: str,
+        exit_time_ms: int, exit_price: Decimal, realized_pnl_usdt: Decimal,
+        realized_pnl_pct: Decimal, fees_costs_usdt: Decimal,
+        updated_at_ms: int,
+    ) -> bool:
+        """One narrowly proven Box STOP/TAKE race correction, never a general rewrite.
+
+        Only the misclassified reason may change. All persisted economics and
+        timestamps must EXACTLY agree with the independently reconstructed Box
+        journal. The durable STOP obligation's own execution must exist and
+        match the last exit. FLAT/zero is mandatory. All other conflicts fail.
+        The obligation stays DISPATCHING until the caller separately finalizes.
+        """
+        self._assert_owner()
+        with self._transaction():
+            trade = self.get_robot_trade(trade_id)
+            obligation = self.get_paper_protection_obligation(obligation_id)
+            if (
+                trade is None or obligation is None
+                or trade.pattern != "IKIGAI_BOX"
+                or trade.exit_reason != "TAKE"
+                or trade.exit_time_ms != exit_time_ms
+                or trade.exit_price != exit_price
+                or trade.realized_pnl_usdt != realized_pnl_usdt
+                or trade.realized_pnl_pct != realized_pnl_pct
+                or trade.fees_costs_usdt != fees_costs_usdt
+                or obligation.trade_id != trade_id
+                or obligation.trading_account_id != trade.trading_account_id
+                or obligation.symbol != trade.symbol
+                or obligation.winning_leg != "STOP"
+                or obligation.status != "DISPATCHING"
+                or updated_at_ms < trade.updated_at_ms
+                or updated_at_ms < obligation.updated_at_ms
+            ):
+                return False
+            execution = self.get_execution(ExecutionDedupKey(
+                trade.trading_account_id, Category.LINEAR, obligation.exec_id,
+            ))
+            if (
+                execution is None or execution.symbol != trade.symbol
+                or execution.order_id != obligation.order_id
+                or execution.exchange_timestamp_ms != exit_time_ms
+            ):
+                return False
+            position = self.get_position_projection(PositionKey(
+                trade.trading_account_id, Category.LINEAR, trade.symbol, 0,
+            ))
+            if (
+                position is None or position.side is not PositionSide.FLAT
+                or position.quantity.value != Decimal("0")
+            ):
+                return False
+            cursor = self._connection.execute(
+                """UPDATE robot_trades
+                   SET exit_reason='STOP', version=version+1, updated_at_ms=?
+                   WHERE trade_id=? AND version=? AND exit_reason='TAKE'
+                     AND exit_time_ms=? AND updated_at_ms<=?""",
+                (updated_at_ms, trade_id, trade.version, exit_time_ms, updated_at_ms),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("Box STOP/TAKE race correction revision changed")
+            return True
+
     def load_open_robot_trades(
         self, trading_account_id: TradingAccountId,
     ) -> tuple[RobotTradeRecord, ...]:
@@ -5860,6 +6433,95 @@ class SQLiteStore:
             """
         )
         return tuple(_checkpoint_from_row(row) for row in rows)
+
+    def paper_shutdown_blocker(self, account: TradingAccountId) -> str | None:
+        """One owner-thread, read-only durable quiescence proof for full PAPER stop.
+
+        A healthy subscription is not proof of FLAT or no pending dispatch.
+        BEGIN IMMEDIATE prevents another SQLite writer from changing the
+        attestations *within* this check. No HTTP or external work under the
+        reservation. Unknown rows or schema failures abort the caller's stop.
+        This is not the exceptional, identity-bound JASMY handoff path.
+        """
+        self._assert_owner()
+        with self._transaction():
+            modes = self._connection.execute(
+                "SELECT mode FROM robot_autopilot_state WHERE trading_account_id=?",
+                (account.value,),
+            ).fetchall()
+            if len(modes) != 1 or modes[0][0] != "OFF":
+                return "autopilot_not_durably_off"
+
+            rows = self._connection.execute(
+                "SELECT side, quantity, sync_state FROM position_projections "
+                "WHERE trading_account_id=?",
+                (account.value,),
+            ).fetchall()
+            try:
+                if any(
+                    side is None or side != "Flat" or not Decimal(str(quantity)).is_finite()
+                    or Decimal(str(quantity)) != Decimal("0")
+                    or sync_state not in {"synced", "synchronized"}
+                    for side, quantity, sync_state in rows
+                ):
+                    return "paper_position_not_flat_and_synced"
+            except (ArithmeticError, TypeError, ValueError):
+                return "paper_position_evidence_invalid"
+
+            # Every condition is account-scoped and fails closed for unknown
+            # statuses; no terminal-state inference from coverage alone.
+            checks = (
+                ("robot_trades", "exit_time_ms IS NULL", "open_robot_trade"),
+                ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')", "active_or_unknown_paper_limit"),
+                ("trading_commands",
+                 "current_state IS NULL OR current_state NOT IN ('filled','cancelled','amended','rejected','failed','owner_attested_closed')",
+                 "unfinished_or_unknown_command"),
+                ("paper_protection_obligations", "status IS NULL OR status!='RESOLVED'", "unresolved_protection_obligation"),
+                ("reconciliation_checkpoints", "completed_at_ms IS NULL", "unfinished_reconciliation"),
+            )
+            for table, predicate, reason in checks:
+                # Names/predicates are fixed source literals, never user data.
+                row = self._connection.execute(
+                    f"SELECT 1 FROM {table} WHERE trading_account_id=? "
+                    f"AND ({predicate}) LIMIT 1",
+                    (account.value,),
+                ).fetchone()
+                if row is not None:
+                    return reason
+
+            # A frozen APPROVED candidate without any post-approval fill or
+            # Robot trade is not live exposure. Do not let historical inert
+            # approvals permanently block maintenance, but require the same
+            # strict identity and execution proof as the protected FLAT gate.
+            # The owner HTTP shutdown gate separately re-proves Robot STOPPED,
+            # Scanner STOPPED and empty in-process protection coverage.
+            candidates = self._connection.execute(
+                "SELECT candidate_id, symbol, status, approved_at_ms "
+                "FROM robot_candidates WHERE trading_account_id=? "
+                "AND (status IS NULL OR status NOT IN "
+                "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))",
+                (account.value,),
+            ).fetchall()
+            for candidate_id, symbol, status, approved_at in candidates:
+                if (status != "APPROVED"
+                        or not isinstance(candidate_id, str) or not candidate_id.strip()
+                        or not isinstance(symbol, str) or not symbol.strip()
+                        or type(approved_at) is not int or approved_at <= 0):
+                    return "active_robot_candidate"
+                if self._connection.execute(
+                    "SELECT 1 FROM robot_trades "
+                    "WHERE trading_account_id=? AND candidate_id=? LIMIT 1",
+                    (account.value, candidate_id),
+                ).fetchone() is not None:
+                    return "active_robot_candidate"
+                if self._connection.execute(
+                    "SELECT 1 FROM executions WHERE trading_account_id=? "
+                    "AND symbol=? AND (exchange_timestamp_ms IS NULL "
+                    "OR exchange_timestamp_ms>=?) LIMIT 1",
+                    (account.value, symbol, approved_at),
+                ).fetchone() is not None:
+                    return "active_robot_candidate"
+        return None
 
     def create_cleanup_run(self, record: CleanupRunRecord) -> CleanupRunRecord:
         key = record.position_key

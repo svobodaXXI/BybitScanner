@@ -291,7 +291,8 @@ class RuntimeIntentLinuxTests(unittest.TestCase):
             clock = iter(range(0, 1_000_000)).__next__
             bootstrap = runtime_intent.RuntimeIntentBootstrap(
                 root=ROOT, env={}, get=lambda url, timeout: (_ for _ in ()).throw(runtime_intent.Unreachable()),
-                post=lambda url, payload, timeout: posts.append(url), sleep=lambda s: None, monotonic=clock)
+                post=lambda url, payload, timeout: posts.append(url), sleep=lambda s: None, monotonic=clock,
+                listener_probe=lambda host, port: ())
             result = bootstrap.execute("ALL")
         self.assertEqual(result.outcome, runtime_intent.OUTCOME_FAILED)
         self.assertIn("started by its systemd unit; nothing was spawned", result.message)

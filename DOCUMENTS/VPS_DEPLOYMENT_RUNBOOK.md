@@ -2,6 +2,123 @@
 
 > **Актуальная приёмка 27.10.2026 после PR #638:** Telegram optional для запуска PAPER-ядра; доказанный SSH reverse tunnel, ошибки запуска и требования будущей кнопки описаны в [VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md](VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md). Начальные разделы этого runbook ниже описывают прежнее подготовительное состояние и не являются текущим runtime-статусом.
 
+## Resuming a partially completed Gitless PAPER deployment — no repeated stop (2026-11-01)
+
+**Scope:** backend was **already safely stopped**, approved target files and root-owned
+release manifest are **already installed**, and an auxiliary systemd command
+failed before the authorized restart. This is not a general rollout installer,
+a stop authorization, a SQL repair, or permission to change live/protected PAPER
+positions. Use this path only after checking the operator's actual host result,
+not merely a prior script exit code.
+
+**Read-only stage checkpoint** from the installed target:
+
+```sh
+/opt/BybitScanner/venv/bin/python -m tools.vps_release_resume --expected-sha <approved-40-char-SHA>
+```
+
+The checkpoint independently proves: the root-protected tracked-blob manifest
+matches **every** installed tracked file and the requested exact SHA; all three
+installed systemd unit files match the tracked release bytes; backend,
+Telegram and PAPER-start units have stopped states (`inactive|failed` and
+`MainPID=0`), without alternate unit origins/drop-ins; and neither PAPER
+TCP port 8765 nor Telegram port 8766 has any listener (including IPv6). It
+does **not** trust a previous transition success message or require a repeat
+of SIGINT. It never starts, stops, resets systemd, writes DB or installs code.
+
+- `RESUME_READY`: the **already-installed** exact release is stopped. The
+  **next separately authorized** operator action is the existing
+  `tools.vps_systemd_unit_prepare` (daemon-reload / verify loaded /
+  conditional reset-failed) followed by canonical PAPER backend startup,
+  reconciliation and admission checks. Do **not** repeat safe-stop, exceptional
+  transition, staging or the release copy.
+- `BLOCKED`: preserve current state and report the exact missing evidence;
+  do not restart, repeat a prior signal, rebuild manifest to match unexpected
+  bytes, or remove unrelated user files. If target was *not yet installed*,
+  this checkpoint cannot authorize copying it: first follow the separate
+  immutable-release staging/safe-switch procedure.
+- If any service is **still active** or a listener remains, classify the
+  runtime as active/ambiguous, not a stopped-deployment checkpoint. Existing
+  protected positions require canonical protection and owner-safe-stop
+  authority. No automatic restart or LIVE escalation.
+
+For this incident the erroneous `Unit not loaded` after a successful target
+copy did **not** require another transition. Read-only proof of the installed
+release plus correct systemd unit order is the fast path. Note that adding the
+checkpoint does not prove an end-to-end unattended deploy: the actual
+Gitless release switch remains a separate guarded, operator-owned procedure.
+
+## PAPER runtime SHA provenance on Gitless VPS (2026-11-01)
+
+**Deployment contract — not an authorization to restart the live PAPER runtime.**
+The backend previously reported empty `build_sha` because its systemd
+environment did not supply `BYBITSCANNER_BUILD_SHA`. A release-marker file
+without checking the tracked source is not proof of the loaded build.
+
+For **future authorized releases only**, stage an approved exact Git commit
+outside the installed tree. In that checkout, `python -m
+tools.vps_release_identity generate --expected-sha <approved-40-char-SHA>`
+requires `HEAD` to match exactly and verifies the complete regular-file Git
+tree against bytes on disk (Git object hashes). Save its JSON output as the
+root-owned, non-symlink `/etc/bybitscanner/paper-release-manifest.json`, mode
+0644, **only as part of the same validated release activation**. Verify that
+the approved target is an authorized stable commit independently at staging;
+the manifest generator does not perform a remote signature or approval check.
+Preserve the manifest, source, DB/WAL, venv and user files as a matched
+deployment set, with a safe rollback/resume plan; do not modify the manifest
+of the currently running release or claim a hot-swap is safe.
+
+At the **separately authorized** backend start, the systemd `ExecStart`
+runs `python -m tools.vps_release_identity exec-backend`: it verifies each
+tracked installed file byte-for-byte against the protected staging manifest
+and then performs `os.execve` within the **same systemd PID**, replacing
+any inherited `BYBITSCANNER_BUILD_SHA` with the verified manifest SHA.
+Absent/mismatched manifests, changed source, unexpected symlinks or unreadable
+tracked files make start fail-closed. The backend then exposes the exact
+verified SHA via `/api/health.build_sha`; deployment acceptance must also
+compare it with the approved release and the actual systemd MainPID/listener.
+Do not treat metadata copied from an untrusted source or a manifest edited
+after process start as proof of already loaded Python modules. This is
+**startup content attestation** under root-owned deployment provenance, not
+a cryptographic proof of in-memory execution or a substitute for process
+identity, DB continuity, STOP/TAKE protection or canonical safe-stop.
+
+This new unit requires a generated manifest at the *next* approved start:
+never deploy the unit alone and then restart a working protected backend.
+The 2026-11-01 recovered VPS continues running its installed release until
+a separate safe-stop/deploy authorization; this document does not imply
+the new wrapper was executed on VPS.
+
+## systemd unit preparation after an approved PAPER release switch (2026-11-01)
+
+On a host with an already safely stopped backend, **after** all three approved
+`deploy/systemd/bybitscanner-*.service` unit files have been installed, but
+**before** any PAPER backend/start-unit invocation, run the tracked command:
+
+```sh
+/opt/BybitScanner/venv/bin/python -m tools.vps_systemd_unit_prepare
+```
+
+The command performs only `systemctl daemon-reload`, then verifies
+`LoadState=loaded` and `ActiveState=inactive|failed` **for all three**
+backend/Telegram/PAPER-start units, then calls `reset-failed` on failed units
+only. A reset error is followed by **one read-only state recheck**: it is
+nonblocking only if the unit is now loaded/inactive. It never starts/stops any
+runtime, modifies a DB, bypasses admission, or installs systemd files.
+Exit 0/`READY` allows the **separately authorized** PAPER backend start;
+exit 2/`BLOCKED` forbids start until the exact missing state is known.
+Never run it as permission to stop a running/protected backend. Use root or
+a systemd-authorized operator account; do not change secrets/permissions.
+The existing `tools.paper_maintenance` path now invokes this gate after its
+canonical safe-stop and fast-forward, before PAPER core start. For the proven
+gitless VPS release switch, invoke this same helper after immutable content
+verification/staging activation; do not attempt `git merge` in `/opt`.
+
+Historical note: the 2026-11-01 `reset-failed` `Unit not loaded` was a
+partial-deploy ordering failure, *not* proof of a trading protection defect.
+See [PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md](PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md).
+This helper does not retroactively prove newer code is installed on the VPS.
+
 ## Linux contour integration (stacked on #628; no runtime acceptance)
 
 The start chain is now prepared as three static units:

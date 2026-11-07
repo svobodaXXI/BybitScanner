@@ -6,18 +6,27 @@ Run: py -3 tools/windows_vps_manager.py
 """
 from __future__ import annotations
 
+import argparse
 import os
 import queue
 import re
 import subprocess
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, ttk
 
 PROJECT = "/opt/BybitScanner"
 VENV = f"{PROJECT}/venv/bin/python"
+# The repo belongs to the service account; a per-command safe.directory lets
+# the read-only manager user run git without any persistent config change.
+GIT = f"git -c safe.directory={PROJECT} -C {PROJECT}"
+HEALTH = "curl -fsS --connect-timeout 3 --max-time 6 http://127.0.0.1:8765/api/health"
 HOST_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
+# Without an explicit -i, OpenSSH only tries the default id_* names, so a
+# purpose-built key such as ~/.ssh/bybitscanner_laptop is never offered.
+DEFAULT_KEY = Path.home() / ".ssh" / "bybitscanner_laptop"
 # Fixed, audited commands: no free-form shell and no trading mutations.
 ACTIONS = {
     "Состояние": (
@@ -26,25 +35,35 @@ ACTIONS = {
         "systemctl show bybitscanner-telegram.service -p ActiveState -p SubState; "
         "systemctl show bybitscanner-paper-start.service -p ActiveState -p SubState"
     ),
-    "Диагностика PAPER": f"cd {PROJECT} && {VENV} -m tools.vps_check --no-systemd",
+    # tools.vps_check is a pre-start gate (ports must be free, secret env file
+    # readable), so on a running VPS it can only fail; read live health instead.
+    "Диагностика PAPER": (
+        "systemctl show bybitscanner-paper-backend.service "
+        "-p ActiveState -p SubState -p MainPID -p NRestarts -p ActiveEnterTimestamp; "
+        f"{HEALTH} | python3 -m json.tool"
+    ),
     "Git / локальные изменения": (
-        f"git -C {PROJECT} status --short && "
-        f"git -C {PROJECT} branch --show-current && "
-        f"git -C {PROJECT} rev-parse --short HEAD"
+        f"{GIT} status --short && "
+        f"{GIT} branch --show-current && "
+        f"{GIT} rev-parse --short HEAD"
     ),
     "Предпроверка обновления": (
         "printf '=== GIT ===\\n'; "
-        f"git -C {PROJECT} status --porcelain=v1; "
-        f"git -C {PROJECT} branch --show-current; "
-        f"git -C {PROJECT} rev-parse HEAD; "
+        f"{GIT} status --porcelain=v1; "
+        f"{GIT} branch --show-current; "
+        f"{GIT} rev-parse HEAD; "
         "printf '=== BACKEND ===\\n'; "
         "systemctl show bybitscanner-paper-backend.service "
         "-p ActiveState -p SubState -p MainPID; "
         "printf '=== PAPER HEALTH ===\\n'; "
-        "curl -fsS --connect-timeout 3 --max-time 6 "
-        "http://127.0.0.1:8765/api/health"
+        f"{HEALTH}"
     ),
+    # Without journal read access journalctl prints "-- No entries --" and exits 0,
+    # which looks like a healthy empty log; fail loudly instead.
     "Последние журналы": (
+        "id -nG | grep -qwE 'systemd-journal|adm' || "
+        "{ echo 'NO ACCESS: this SSH user cannot read the systemd journal "
+        "(needs group systemd-journal or adm)'; exit 13; }; "
         "journalctl -u bybitscanner-paper-backend.service "
         "--no-pager -n 35 --output=short-iso"
     ),
@@ -52,31 +71,42 @@ ACTIONS = {
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
-def ssh_command(host: str, user: str, action: str) -> list[str]:
+def ssh_command(host: str, user: str, action: str, key: str = "") -> list[str]:
     host = host.strip()
     user = user.strip()
+    key = key.strip()
     if not HOST_PATTERN.fullmatch(host) or host.startswith("-"):
         raise ValueError("Недопустимое имя или адрес VPS")
     if not USER_PATTERN.fullmatch(user):
         raise ValueError("Недопустимое имя пользователя")
     if action not in ACTIONS:
         raise ValueError("Неизвестная операция")
+    identity: list[str] = []
+    if key:
+        path = Path(key).expanduser()
+        if not path.is_file():
+            raise ValueError(f"Файл ключа SSH не найден: {path}")
+        # IdentitiesOnly keeps the agent from racing ahead with other keys.
+        identity = ["-o", "IdentitiesOnly=yes", "-i", str(path)]
     return [
         "ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
         "-o", "ConnectTimeout=8", "-o", "NumberOfPasswordPrompts=0",
         "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
-        f"{user}@{host}", ACTIONS[action],
+        *identity, f"{user}@{host}", ACTIONS[action],
     ]
 
 
 class VPSManager(tk.Tk):
-    def __init__(self) -> None:
+    def __init__(self, host: str = "", user: str = "bybitscanner", key: str | None = None) -> None:
         super().__init__()
         self.title("BybitScanner VPS Manager — PAPER")
         self.geometry("880x510")
         self.minsize(780, 380)
-        self.host = tk.StringVar(value="")
-        self.user = tk.StringVar(value="bybitscanner")
+        self.host = tk.StringVar(value=host)
+        self.user = tk.StringVar(value=user)
+        if key is None:
+            key = str(DEFAULT_KEY) if DEFAULT_KEY.is_file() else ""
+        self.key = tk.StringVar(value=key)
         self.status = tk.StringVar(value="Не подключено · PAPER only")
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
         self.busy = False
@@ -86,7 +116,11 @@ class VPSManager(tk.Tk):
         ttk.Entry(top, textvariable=self.host, width=30).grid(row=0, column=1, padx=6)
         ttk.Label(top, text="SSH пользователь:").grid(row=0, column=2)
         ttk.Entry(top, textvariable=self.user, width=18).grid(row=0, column=3, padx=6)
-        ttk.Label(top, textvariable=self.status).grid(row=1, column=0, columnspan=4, sticky="w", pady=9)
+        ttk.Label(top, text="SSH ключ:").grid(row=1, column=0, sticky="w", pady=(7, 0))
+        ttk.Entry(top, textvariable=self.key, width=60).grid(
+            row=1, column=1, columnspan=3, padx=6, pady=(7, 0), sticky="we"
+        )
+        ttk.Label(top, textvariable=self.status).grid(row=2, column=0, columnspan=4, sticky="w", pady=9)
         buttons = ttk.Frame(self, padding=(12, 0, 12, 9))
         buttons.pack(fill="x")
         self.buttons = []
@@ -116,7 +150,7 @@ class VPSManager(tk.Tk):
         if self.busy:
             return
         try:
-            command = ssh_command(self.host.get(), self.user.get(), name)
+            command = ssh_command(self.host.get(), self.user.get(), name, self.key.get())
         except ValueError as exc:
             messagebox.showerror("VPS Manager", str(exc))
             return
@@ -153,5 +187,17 @@ class VPSManager(tk.Tk):
         self.after(100, self.drain)
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    # Lets a local desktop shortcut prefill the fields, so the VPS address
+    # lives on the owner's machine and never in the repository.
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--host", default="")
+    parser.add_argument("--user", default="bybitscanner")
+    parser.add_argument("--key", default=None)
+    args, _unknown = parser.parse_known_args(argv)
+    return args
+
+
 if __name__ == "__main__":
-    VPSManager().mainloop()
+    options = parse_args()
+    VPSManager(options.host, options.user, options.key).mainloop()

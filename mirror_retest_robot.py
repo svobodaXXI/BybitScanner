@@ -47,6 +47,7 @@ from retest_calibration import fine_resolver
 from retest_account_risk import AccountRiskLimit, DECISION_DENY as RISK_DENY, DECISION_OK as RISK_OK, DECISION_WAIT as RISK_WAIT
 from retest_campaign import (
     DECISION_ALLOW,
+    GateResult,
     PARTIAL_TAKE_FRACTION,
     STOP_NET_BREAK_EVEN,
     entry_gate,
@@ -62,6 +63,8 @@ from terminal.market_data.models import BookHealth, NormalizedOrderBook
 from terminal.persistence.sqlite_store import BoxOwnedPaperLimitSpec
 
 ENV_FLAG = "BYBITSCANNER_MIRROR_RETEST_ROBOT"
+PAPER_TEST_ENV = "BYBITSCANNER_PAPER_TEST"
+PAPER_TEST_BUDGET_ENV = "BYBITSCANNER_PAPER_TEST_R0_USDT"
 STRATEGY_ID = "MIRROR_RETEST"
 WEDGE_PATTERNS = frozenset({"Rising Wedge", "Falling Wedge"})
 COARSE_MS = 300_000
@@ -81,6 +84,7 @@ PLAIN_BOX_REASONS = frozenset({"no_active_campaign", "direction_mismatch", "boun
 EXIT_REASON_RETEST = "MIRROR_RETEST"
 PAPER_FEE_RATE = Decimal("0.0006")    # documented PAPER per-side fee (robot_l_shape.PAPER_ROBOT_FEE_RATE)
 STOP_SLIPPAGE_FRACTION = Decimal("0.005")   # documented 0.5 % adverse-move ceiling (robot_late_admission)
+MIN_MIRROR_RETEST_POTENTIAL_PERCENT = Decimal("0.7")  # owner: gross target distance at each entry
 
 
 class MirrorRobotError(RuntimeError):
@@ -110,6 +114,7 @@ class MirrorRobotPolicy:
     scanner_root: Any = None
     # USDT value of 1 working volume (standalone MIRROR entries are 1-WV LIMITs); None = unknown -> DEFERRED.
     one_wv_usdt: Callable[[], Decimal | None] | None = None
+    paper_test: bool = False
     # In-process replay cache: boundary_id -> (state proven so far, data_blocked). Closed candles never change, so a
     # cached state is only extended by newer closed candles; a restart simply replays again.
     boundary_states: dict = field(default_factory=dict)
@@ -375,6 +380,16 @@ def _campaign_budget(policy: MirrorRobotPolicy, campaign: Mapping[str, Any],
             realized_losses += max(Decimal(0), -Decimal(str(net)))
         else:
             live_worst += Decimal(str(attempt["mirror"]["worst_case_usdt"]))
+    if policy.paper_test:
+        # PAPER-only test policy: preserve active campaign and proven data,
+        # but do not reject test attempts because of campaign financial loss.
+        state = campaign["state"]
+        if state.get("phase") != PHASE_CAMPAIGN_ACTIVE:
+            return no("campaign_not_active")
+        if state.get("data_blocked"):
+            return defer("campaign_data_unreliable")
+        gate = GateResult(DECISION_ALLOW, "paper_test_financial_policy", open_campaign_budget(r0))
+        return {"decision": ATTACHED, "reason": gate.reason, "r0": r0, "gate": gate}
     gate = entry_gate(open_campaign_budget(r0), campaign_phase=campaign["state"]["phase"], data_reliable=True,
                       realized_loss_costs_usdt=realized_losses, live_pending_worst_case_usdt=live_worst,
                       new_attempt_worst_case_usdt=worst_case, remaining_net_reward_usdt=potential)
@@ -426,13 +441,17 @@ def plan_attachment(policy: MirrorRobotPolicy, *, box_snapshot: Mapping[str, Any
         step = _decimal(policy.quantity_step(symbol), "quantity step")
     except (KeyError, TypeError, MirrorRobotError):
         return no("box_terms_unavailable")
-    if len(quantities) != 4 or step <= 0 or worst_case < 0:
+    if len(quantities) != 4 or step <= 0 or worst_case < 0 or average <= 0:
         return no("box_terms_unavailable")
     boundary: Boundary = campaign["boundary"]
     target = Decimal(str(boundary.price_at(now_ms)))
     beyond = target > take if direction == CAMPAIGN_LONG else target < take
     if not beyond:
         return no("boundary_not_beyond_box_take")
+    # A Box attaching to a MIRROR retest must still have sufficient distance
+    # from its own frozen planned average entry to the current boundary.
+    if abs(target - average) * Decimal("100") / average < MIN_MIRROR_RETEST_POTENTIAL_PERCENT:
+        return no("retest_potential_below_0_7_percent")
 
     partial = [_floor(q * Decimal(str(PARTIAL_TAKE_FRACTION)), step) for q in quantities]
     if not any(p > 0 for p in partial):
@@ -505,6 +524,10 @@ def plan_standalone_attachment(policy: MirrorRobotPolicy, *, direction: str, ent
     sign = Decimal(1) if direction == CAMPAIGN_LONG else Decimal(-1)
     if entry <= 0 or (entry - stop) * sign <= 0 or (target - entry) * sign <= 0:
         return no("entry_terms_invalid")
+    # Robot independently revalidates the actual proposed entry terms. The
+    # earlier Scanner candle is not a substitute for entry-time potential.
+    if abs(target - entry) * Decimal("100") / entry < MIN_MIRROR_RETEST_POTENTIAL_PERCENT:
+        return no("retest_potential_below_0_7_percent")
     one_wv = policy.one_wv_usdt() if policy.one_wv_usdt is not None else None
     if one_wv is None:
         return defer("one_wv_unavailable")
@@ -627,6 +650,9 @@ def build_runtime_policy(*, database_path: Any, account_id: Any,
 
     if not mirror_robot_enabled(environ):
         return None
+    env = os.environ if environ is None else environ
+    paper_test = env.get(PAPER_TEST_ENV, "").strip() == "1"
+    paper_test_budget = env.get(PAPER_TEST_BUDGET_ENV) if paper_test else None
     from mirror_retest_live_sources import BybitClosedKlineSource
 
     def risk_limit(now_ms: int) -> AccountRiskLimit:
@@ -641,7 +667,9 @@ def build_runtime_policy(*, database_path: Any, account_id: Any,
         finally:
             reader.close()
         limit = account_risk_limit(daily_gate=facts.daily_gate,
-                                   committed_worst_case_usdt=facts.committed_worst_case_usdt)
+                                   committed_worst_case_usdt=facts.committed_worst_case_usdt,
+                                   paper_test=paper_test,
+                                   paper_test_budget_usdt=paper_test_budget)
         return limit   # Preserve WAIT vs DENY and source reason for attachment decision.
 
     def one_wv_usdt() -> Decimal | None:
@@ -660,4 +688,5 @@ def build_runtime_policy(*, database_path: Any, account_id: Any,
 
     return MirrorRobotPolicy(candles=BybitClosedKlineSource(strict_availability=True),
                              account_risk_limit_usdt=risk_limit,
-                             quantity_step=quantity_step, one_wv_usdt=one_wv_usdt)
+                             quantity_step=quantity_step, one_wv_usdt=one_wv_usdt,
+                             paper_test=paper_test)

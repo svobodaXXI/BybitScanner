@@ -1,3 +1,73 @@
+## 🏆 Победа «Восстановление PAPER» — 2026-11-01 (по отчёту Codex)
+
+Итог: **RECOVERED**. Stable/installed SHA `86fda079cebb1139c2dd3b1e48990d5c8212f79a`; неизменная PAPER DB identity `e0cbafb1…ff0ad`, integrity OK; BUSDT STOP obligation **RESOLVED**, 6 executions и fingerprint неизменны; 0 незавершённых obligations, LIMIT, Market. Backend/Telegram active и ready; Robot `ROBOT_RUNNING / READY`; Scanner RUNNING; Autopilot PAPER_AUTO; Admission READY; protection HEALTHY. Появилась **новая** PAPER LONG AIOUSDT qty 8100 с coverage EXPOSURE — НЕ FLAT, НЕ завершённый цикл и не доказанный net PnL. LIVE не затронут. Не останавливать работающий PAPER runtime ради документации. Фактическая история ошибок, recovery runbook и остаточные defect-задачи: [PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md](PAPER_VPS_RECOVERY_POSTMORTEM_20261101.md). Этот раздел имеет приоритет над устаревшими BLOCKED-снимками ниже.
+
+## 🏰 Босс «HTTP при захваченном SQLite writer barrier» — 2026-11-01
+
+Последний разрешённый VPS recovery: target `7be65c806f2b3fbe0416ee438af4fd9f2cea77c1`; официальный FLAT gate подтвердил `FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY`, согласованная резервная копия PAPER DB создана, integrity OK. Исключительный переход **BLOCKED до сигнала**: повторный API snapshot внутри `BEGIN IMMEDIATE` завис на `tools.runtime_intent.Unreachable: timed out`. Старый backend жив PID=500879/starttime=52729568, port=8765; installed marker `d345411c`; DB identity `e0cbafb1…ff0ad`; все позиции FLAT/0; BUSDT единственная STOP obligation DISPATCHING, executions 6 и fingerprint неизменен; Scanner STOPPED; Autopilot OFF; Robot RECONCILIATION_REQUIRED; Telegram active; Admission false; защита healthy с прежними BUSDT/AUSDT/KMNOUSDT ролями. **Сигнал не отправлен; release не переключён; reconcile/торговые команды/SQL-изменения не выполнялись.**
+
+Узкий дефект: `get_snapshots()` под SQLite writer reservation вызывает HTTP backend, который для обработки запроса может ждать writer slot. Исправление в PR #739: повторный HTTP снимок перед `BEGIN IMMEDIATE`, затем внутри барьера исключительно проверка durable DB и фиксированной идентичности процесса; при изменениях, несоответствии или неизвестности — BLOCKED, без сигналов. Тесты проверяют отсутствие HTTP внутри барьера и запрет сигнала при изменении coverage. Это не подтверждает реальный переход; новый merge и runtime approval потребуются по контракту. LIVE запрещён; XP нет.
+
+---
+
+## 🏰 Босс «Неверифицированный SHA старого PAPER backend» — 2026-11-01
+
+Последний READ-ONLY отчёт Codex VPS: официальный `FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY` PASS, все позиции FLAT/0; BUSDT единственная `DISPATCHING` obligation; armed AUSDT/KMNOUSDT без APPROVED/OPEN кандидатов. Но `BYBITSCANNER_BUILD_SHA` у реально работающего PID `500879` UNSET, `/api/health.build_sha=""`; исполняемый Git SHA строго не подтверждён. Независимо доказаны PID=listener `127.0.0.1:8765`, systemd unit/cgroup, Python module, /proc start tick `52729568` (31 Oct 15:50:21.680 MSK), process_instance_id `367ef560-cd92-4dc2-8029-0b56a3540428`, PAPER DB identity `e0cbafb1…ff0ad`, integrity OK, marker `d345411c` датируется раньше старта; .git отсутствует, исходный tree digest `777f36628b737e42d9a7de042c5ccf366083bea309c1b423d5ea3656677ca1f8`. Marker и mtime **не** считаются доказательством SHA. Никаких сигналов, deploy, SQL-изменений или запуска торговли.
+
+PR #738 предлагает отдельную крайне узкую аттестацию только **этого единственного unversioned процесса** по строго известным PID/start tick/process_instance_id, UNSET окружению SHA, точному локальному LISTEN fd и systemd provenance, при сохранении всех FLAT/DB/cover gates и однократного pidfd SIGINT. Обычная аттестация SHA остаётся строгой; legacy режим **не доказывает commit** и требует явной owner runtime authority после merge + нового preflight. Не подменять неизвестное доказанным. LIVE запрещён; XP нет.
+
+---
+
+## 🏰 Босс защиты ENTRY_PENDING — 2026-11-01
+
+Новый фактический VPS отчёт Codex: официальный FLAT Recovery Gate на неизменённом backend `d345411c` ответил `BLOCKED: protection_not_quiescent`. Причина: `BUSDT: OBLIGATION`, `AUSDT: ENTRY_PENDING`, `KMNOUSDT: ENTRY_PENDING`; armed `AUSDT,KMNOUSDT`. При этом позиции FLAT/0, Scanner STOPPED, Autopilot OFF, Robot RECONCILIATION_REQUIRED, BUSDT obligation DISPATCHING; backend PID 500879 и Telegram активны, DB identity та же, integrity OK. **SIGINT не отправлялся, release не переключён, DB не менялась.**
+
+PR #737 вводит узкую проверку именно этих трёх ролей при обязательном отсутствии open exposure, LIMIT, unfinished commands и незавершённого/APPROVED кандидата на вооружённых символах; BUSDT STOP должен совпасть с immutable execution. При неизвестном символе, другой роли или двусмысленных доказательствах переход BLOCKED. Перед сигналом повторно считывается protection под SQLite writer barrier. Это не доказывает безопасность конкретного VPS и **не разрешает** повторить исключительное завершение по старому разрешению: нужна CI и отдельная санкция на изменённый контракт после проверки фактов. LIVE запрещён; XP не начислять.
+
+---
+
+## 🏰 CURRENT VPS BLOCKER — 2026-11-01 — FLAT proven, old backend cannot safe-stop
+
+Owner-supplied bounded Codex VPS outcome (later than earlier Close-All HTTP 503): **all PAPER positions FLAT/0 including VIRTUALUSDT**; active LIMIT 0, unfinished Market 0. BUSDT historical STOP execution exists but obligation stays `DISPATCHING`; Robot `ROBOT_RUNNING/RECONCILIATION_REQUIRED`, Scanner `SCANNER_STOPPED`, Autopilot `OFF`, Telegram/backend active, protection `healthy=true`, PAPER DB identity `e0cbafb1c172b65f2db3a2c7cef2636b4164a4b1a229bd183bd907e7984ff0ad`, integrity OK, installed `d345411c`. Canonical safe-stop stopped Scanner then rejected at mandatory reconcile (no retry); target stable not deployed. **VIRTUAL exit fill/fee/reason/realized economics were not provided, so do not invent them.**
+
+In GitHub, PR #736 develops a strict READ-ONLY FLAT/BUSDT evidence gate plus a separate exceptional, exact-systemd-PID, pidfd-pinned one-SIGINT Linux lifecycle handoff protected by SQLite writer reservation. It **does not** alter the canonical stop, repair obligations, deploy a release or authorize a signal. This is not deployed and must not run without passing exact-head CI plus separate owner authority, fresh VPS FLAT/identity re-proof, and a bounded release/rollback plan. After a safe release switch, resolve BUSDT only via canonical corrected reconciliation, then prove Robot, protection and accounting. No LIVE, raw Market, manual SQLite mutation, broad kill, or automatic retry. No XP for PR/CI.
+
+---
+
+## 🏰 Подтверждённый отказ Close-All — 2026-11-01
+
+**FACT (Codex VPS execution report):** выполнен ровно один авторизованный `POST /api/close-all` с `client_action_id=owner-close-all-c5f147d827cc43b79af139246b3e58bc`: HTTP **503** `{"ok":false,"error":"paper_close_all_unavailable"}`. Traceback: `ImmutableExecutionConflict: Robot trade already closed with different evidence` при попытке обработать BUSDT STOP obligation. Повторного вызова или Market для VIRTUAL не было. На итоговом срезе VIRTUALUSDT SHORT 422 @ 0.5924 **OPEN**, STOP/TAKE coverage `healthy/EXPOSURE`; BUSDT **FLAT/0** с исполненным STOP и `DISPATCHING` obligation; Robot `RECONCILIATION_REQUIRED`, Admission закрыт; Autopilot **OFF**, reason=`paper_close_all` (реальный побочный эффект preflight); active LIMIT и unfinished Market — 0, backend/Telegram действуют, PAPER DB identity `e0cbafb1c172b65f2db3a2c7cef2636b4164a4b1a229bd183bd907e7984ff0ad`, integrity OK, LIVE не использовался. Realized Net до VIRTUAL exit: −19.583020335 USDT.
+
+**Safety boundary:** известный Close-All на старом VPS повторять бесполезно; нельзя подменять его `/api/full-close`, сырым Market, ручным SQL или перезапуском backend под экспозицией. Исправление #731 уже в stable, но его установка при открытой локально защищаемой позиции не имеет подтверждённого безопасного механизма непрерывности защиты. Ближайший реальный переход: штатный STOP/TAKE VIRTUAL и подтверждённый FLAT → безопасная установка release → один reconcile BUSDT; либо отдельно доказанный, специально авторизованный защищённый exit-only/upgrade mechanism, не отключающий STOP/TAKE. **Ни один не выполнен.** Исходная команда владельца закрыть все позиции остаётся невыполненной. Без XP/достижений.
+
+---
+
+## 🏰 Активный квест — 2026-11-01 — PAPER Close-All и восстановление BUSDT
+
+**Последняя команда владельца:** закрыть все PAPER-позиции, затем зафиксировать новые блокеры и причины убыточности. **Закрытие НЕ ПОДТВЕРЖДЕНО:** результат выполнения Codex после команды отсутствует. Последний read-only срез 2026-11-01 00:00:33 MSK: VIRTUALUSDT SHORT 422 protected, BUSDT STOP execution подтверждён / Flat, obligation DISPATCHING, Robot RECONCILIATION_REQUIRED, Admission false; старый VPS release `d345411c`. #730/#731 объединены в stable `a95a847f`, но VPS не обновлялся. Основной новый босс: штатный `/api/close-all` на установленном коде сначала спотыкается о BUSDT STOP/TAKE immutable conflict; Robot close-all запрещён из REQUIRED. Не обходить Market/SQL и не останавливать защиту. Следующий результат: **фактически доказанный FLAT/0 либо точный отказ** по разрешённой Close-All операции, затем разрешённый безопасный деплой/reconcile. Loss review: 26 циклов, 2 wins/24 losses, realized net −19.583020335 USDT (до окончательного закрытия VIRTUAL). Подробности и приоритеты — `DOCUMENTS/PAPER_VPS_BLOCKERS_LOSS_REVIEW_20261101.md`, текущий индекс — верх `DOCUMENTS/BACKLOG.md`. Старую очередь сохранять, XP не начислять без проверенного исхода.
+
+---
+
+## 🏰 Пауза активного квеста — 2026-10-31 — все незавершённые задачи в очереди
+
+Последняя команда владельца: **«все, незавершенные задачи поставь в очередь»**. Разработка и развёртывание приостановлены; список задач, доказательства, зависимости и очередность сохранены **в самом верху `DOCUMENTS/BACKLOG.md`**, раздел `OWNER QUEUE — 2026-10-31 — CURRENT UNFINISHED WORK`. В первую очередь: единая Telegram-карточка #726 (OPEN, CI PASS), аннулирование старого MIRROR-луча новым подтверждённым заколом #728 (OPEN, проверка последнего head была в процессе), вертикальная читаемость графиков #727 (OPEN, позиционная CI FAIL), проверка источников реальных входов ALCH/RAYDIUM/KMNO, автоматическая доставка графиков, полный цикл реальных перезаходов и guarded VPS acceptance. #724 и #725 уже merged, VPS-acceptance не доказана. ChatGPT отвечает за GitHub-разработку; Codex только VPS-операции. Не объединять PR и не менять VPS без отдельного разрешения; LIVE запрещён. XP не начислять.
+
+---
+
+## Проверенное достижение сети — 2026-10-30 — Telegram Gateway
+
+PAPER VPS на `d1329214`: БД integrity OK, все позиции FLAT/synced, pending/obligations 0, торговые сервисы остановлены. Вручную установлен Cloudflare Worker `bybitscanner-gateway` → существующий Vercel Gateway; на VPS `paper.env` переведён на `https://bybitscanner-gateway.svoboda21vekaru.workers.dev`. VPS GET `/health` через Cloudflare успешен; владелец реально получил текст «Gateway test» и PNG «Gateway PNG test». **Сетевой путь текста и PNG доказан**, inline-кнопки/callback и полный Scanner/PAPER E2E пока нет. Пароль/секрет Gateway попал на скриншот и не был ротирован по решению владельца: риск открыт. Каноническая документация: `DOCUMENTS/TELEGRAM_CLOUDFLARE_VPS_PROVEN_ROUTE_20261030.md`. XP не начислять за сеть/документы.
+
+---
+
+## 🏰 Очередь текущего квеста — 2026-10-30 — обратная связь владельца
+
+Приоритет по текущей команде владельца: **P0 восстановить полноценную доставку обычных сигналов Scanner с графиками на VPS**, затем завершить **короткие MIRROR-карточки (одна первая на кампанию), карточки фактических открытий/закрытий и повторных входов с графиками и маркерами, нумерацию перезаходов №1/№2 для всех паттернов, точную кнопку «К сигналу»**. Подробные задачи, критерии и границы — в начале `DOCUMENTS/BACKLOG.md`, раздел `CURRENT OWNER FEEDBACK QUEUE — 2026-10-30`. Не путать текстовые MIRROR-наблюдения с реальными заполненными сделками.
+
+#695 и #696 merged, #697 — незавершённая GitHub-разработка без VPS-приёмки. Активный PAPER runtime не менять без разрешения; LIVE запрещён. XP за документацию, CI и PR нет.
+
+---
+
 ## 🏰 Активный квест — 2026-10-27 — «Единый PAPER-контур»
 
 Команда владельца: задокументировать план автономного согласованного контура и начать

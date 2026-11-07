@@ -732,6 +732,34 @@ class HandoverOwnerTests(Fixture):
         self.assertEqual([c.kwargs["candidate_ref"] for c in admit.call_args_list], ["x", "y"])
         self.assertEqual(runtime.autopilot_shadow_deferred_metrics()["dropped"], 0)
 
+    def test_paper_auto_overload_skips_optional_work_before_owner_queue(self):
+        self.set_mode("PAPER_AUTO")
+        runtime = self.runtime(self.observer())
+        runtime._autopilot_protection_health = lambda: False
+        calls = []
+        runtime._prepare_autopilot_evidence = lambda *_: calls.append("candles")
+        runtime._prepare_autopilot_daily_marks = lambda: calls.append("marks")
+        runtime._robot_command_dispatcher = lambda operation: calls.append("owner")
+        before = self.db.store.count_robot_auto_decisions(ACCOUNT)
+
+        runtime._observe_autopilot_with_prepared_evidence(shadow.SOURCE_SCANNER, "x")
+
+        self.assertEqual(calls, [])
+        self.assertEqual(self.db.store.count_robot_auto_decisions(ACCOUNT), before)
+        self.assertEqual(runtime.autopilot_shadow_deferred_metrics()["dropped"], 0)
+
+    def test_paper_auto_healthy_prepares_before_owner_admission(self):
+        self.set_mode("PAPER_AUTO")
+        runtime = self.runtime(self.observer())
+        calls = []
+        runtime._prepare_autopilot_evidence = lambda *_: calls.append("candles")
+        runtime._prepare_autopilot_daily_marks = lambda: calls.append("marks") or ({}, 5000)
+        runtime._robot_command_dispatcher = lambda operation: calls.append("owner")
+
+        runtime._observe_autopilot_with_prepared_evidence(shadow.SOURCE_SCANNER, "x")
+
+        self.assertEqual(calls, ["candles", "marks", "owner"])
+
     def test_protection_health_payload_carries_the_counters_off_the_owner(self):
         from terminal.runtime.paper_http_server import (
             RobotProtectionCoverageManager, SerializedPaperRuntime,

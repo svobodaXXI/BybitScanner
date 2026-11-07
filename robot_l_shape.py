@@ -40,8 +40,10 @@ from terminal.domain.models import OrderSide
 
 PATTERN = "L-shape"
 MIRROR_PATTERN = "MIRROR"
+DOUBLE_PATTERNS = frozenset({"Double Top", "Double Bottom"})
 # Frozen-terms key per pattern of this single-LIMIT frozen-level adapter.
-TERMS_KEYS = {PATTERN: "l_shape", MIRROR_PATTERN: "mirror_entry"}
+TERMS_KEYS = {PATTERN: "l_shape", MIRROR_PATTERN: "mirror_entry",
+              "Double Top": "neckline_entry", "Double Bottom": "neckline_entry"}
 STATE_VERSION = "1.0"
 # Standalone MIRROR entries are OFF unless the owner sets exactly "1" (separate authorization).
 MIRROR_STANDALONE_ENV = "BYBITSCANNER_MIRROR_STANDALONE_ROBOT"
@@ -264,6 +266,38 @@ def initialize_state(candidate: Mapping[str, Any]) -> tuple[dict[str, Any], str]
     if not isinstance(snapshot, Mapping):
         raise RobotLShapeError("signal snapshot is missing")
     terms = frozen_terms(snapshot)
+    if snapshot_pattern(snapshot) in DOUBLE_PATTERNS:
+        # The Scanner independently proved a neckline BODY CLOSE on the last
+        # closed 1m/5m candle. Exactly as in confirmed MIRROR, the entry is
+        # immediately eligible; waiting for another retest would be a new
+        # strategy rule and could miss the owner's neckline-close entry.
+        neck = snapshot.get("neckline_entry")
+        confirmation = neck.get("confirmation") if isinstance(neck, Mapping) else None
+        if not isinstance(confirmation, Mapping):
+            raise RobotLShapeError("double extremum neckline confirmation missing")
+        close_ms = _timestamp(confirmation.get("close_time_ms"), "neckline close_time_ms")
+        interval = int(terms.source_timeframe) * 60_000
+        neckline = _decimal(neck.get("neckline"), "neckline")
+        confirmed_close = _decimal(confirmation.get("close"), "confirmed close")
+        kind = "Double Top" if terms.direction == DIRECTION_SHORT else "Double Bottom"
+        if (
+            snapshot_pattern(snapshot) != kind
+            or close_ms != terms.breakout_time_ms + interval
+            or confirmation.get("timeframe") != terms.source_timeframe
+            or confirmation.get("kind") != "NECKLINE_BODY_CLOSE"
+            or confirmed_close != terms.reference
+            or (terms.direction == DIRECTION_SHORT and confirmed_close >= neckline)
+            or (terms.direction == DIRECTION_LONG and confirmed_close <= neckline)
+        ):
+            raise RobotLShapeError("double extremum closed neckline identity mismatch")
+        return {
+            "state_version": STATE_VERSION, "phase": PHASE_RETEST_DETECTED,
+            "pattern": snapshot_pattern(snapshot), "direction": terms.direction,
+            "last_candle_time_ms": close_ms,
+            "breakout_time_ms": terms.breakout_time_ms,
+            "retest_time_ms": close_ms,
+            "last_event": "NECKLINE_CLOSE_CONFIRMATION_READY",
+        }, "NECKLINE_CLOSE_CONFIRMATION_READY"
     if is_mirror_snapshot(snapshot):
         # Scanner already proved an immediately following, CLOSED confirming
         # candle. Requiring another reference retest delays a trade contrary

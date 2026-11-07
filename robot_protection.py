@@ -30,7 +30,8 @@ MAX_STOP_DISTANCE = Decimal("0.015")
 TAKE_REALIZATION = Decimal("0.90")
 PROTECTION_DEADLINE_MS = 5_000
 # Minimum planned take/stop ratio for a new entry (retest LIMIT and late Market entry).
-MIN_ENTRY_RR = Decimal("1.5")
+MIN_ENTRY_RR = Decimal("1.5")  # Legacy non-Wedge default.
+WEDGE_MIN_ENTRY_RR = Decimal("2")  # Owner #419 hard Wedge entry floor
 MIN_ENTRY_RR_ENV = "ROBOT_MIN_ENTRY_RR"
 MIN_ENTRY_RR_BOUNDS = (Decimal("0"), Decimal("10"))
 
@@ -62,6 +63,14 @@ def min_entry_rr() -> Decimal:
         return MIN_ENTRY_RR
     low, high = MIN_ENTRY_RR_BOUNDS
     return value if value.is_finite() and low <= value <= high else MIN_ENTRY_RR
+
+
+def wedge_min_entry_rr() -> Decimal:
+    """Keep the 2R Wedge owner floor even if the optional env value is lower.
+
+    A stricter valid operator setting still applies. L-shape/Box unchanged.
+    """
+    return max(WEDGE_MIN_ENTRY_RR, min_entry_rr())
 
 
 class ProtectionSubmitter(Protocol):
@@ -283,6 +292,38 @@ def build_protection_plan(
     )
 
 
+def post_fill_net_rr(
+    direction: str, *, average_entry: Decimal, quantity: Decimal,
+    entry_fee: Decimal, stop_price: Decimal, take_price: Decimal,
+    exit_fee_rate: Decimal = Decimal("0.0006"),
+) -> Decimal:
+    """Fee-aware RR on durable entry fills and final executable protection.
+
+    Conservative PAPER exit fees use the taker rate; negative/unknown entry
+    costs and invalid geometry fail closed rather than admitting a trade.
+    """
+    entry = _decimal(average_entry, "actual average entry")
+    size = _decimal(quantity, "actual filled quantity")
+    stop = _decimal(stop_price, "final STOP")
+    take = _decimal(take_price, "final TAKE")
+    if not entry_fee.is_finite() or entry_fee < 0:
+        raise RobotProtectionError("actual entry fee is invalid")
+    if not exit_fee_rate.is_finite() or not Decimal(0) <= exit_fee_rate < 1:
+        raise RobotProtectionError("PAPER exit fee rate is invalid")
+    if direction == DIRECTION_LONG and not (stop < entry < take):
+        raise RobotProtectionError("actual LONG protection geometry is invalid")
+    if direction == DIRECTION_SHORT and not (take < entry < stop):
+        raise RobotProtectionError("actual SHORT protection geometry is invalid")
+    if direction not in (DIRECTION_LONG, DIRECTION_SHORT):
+        raise RobotProtectionError("actual entry direction is invalid")
+    sign = Decimal(1 if direction == DIRECTION_LONG else -1)
+    reward = sign * (take - entry) * size - entry_fee - take * size * exit_fee_rate
+    risk = sign * (entry - stop) * size + entry_fee + stop * size * exit_fee_rate
+    if risk <= 0:
+        raise RobotProtectionError("actual STOP carries no positive risk")
+    return reward / risk
+
+
 @dataclass(frozen=True, slots=True)
 class BoxStopTerms:
     """Pure terms only; not an order, a fill proof, or execution approval."""
@@ -394,6 +435,14 @@ def box_stop_for_actual_entry(
             raise RobotProtectionError("SHORT Box STOP/P4/entry geometry is invalid")
         if existing_stop is not None and current > frozen_stop:
             raise RobotProtectionError("existing SHORT Box STOP widens frozen risk")
+
+    # Price of an armed Box STOP is frozen for the whole attempt. Top-ups
+    # change quantity/VWAP, never STOP price (AAVE incident). Actual-fill
+    # net RR remains recorded separately and may be below the full-grid RR.
+    if existing_stop is not None:
+        if current % tick != 0:
+            raise RobotProtectionError("existing Box STOP is not tick-aligned")
+        return current
 
     reward = sign * (take - entry) - entry * entry_fee - take * target_fee
     if reward <= 0:
@@ -580,6 +629,12 @@ def build_box_stop_only_plan(
             raise RobotProtectionError(
                 "frozen Box STOP is not tick-aligned strictly beyond P4"
             ) from shortfall
+        basis = "FROZEN_FIRST_FILL"
+    # Preserving an armed STOP can leave a partial/top-up position below net
+    # 2:1. Record the truthful basis; do not represent it as RR-compliant.
+    if (existing_stop is not None and box_actual_fill_net_rr(
+        snapshot, average_entry=entry, stop=stop,
+    ) < Decimal("2")):
         basis = "FROZEN_FIRST_FILL"
     take = _decimal(snapshot["plan"].get("take_price"), "frozen Box TAKE")
     if direction == DIRECTION_LONG and not (stop < entry < take):

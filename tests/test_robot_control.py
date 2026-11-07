@@ -417,6 +417,22 @@ class RobotControlCommandTests(unittest.TestCase):
         self.assertEqual(state.mode, "ROBOT_RUNNING")
         self.assertEqual(state.recovery_status, "PAUSED")
 
+    def test_stop_robot_rejects_flat_orphan_trade_without_mutating_runtime(self):
+        # APPROVED is not OPEN candidate ownership, but the durable Robot
+        # trade remains OPEN; net Flat must not allow monolithic safe-stop.
+        for mode in ("READY", "PAUSED"):
+            with self.subTest(mode=mode):
+                self._set_state(mode="ROBOT_RUNNING", recovery_status=mode)
+                if mode == "READY":
+                    self._open_candidate(candidate_id="stale-flat-trade")
+                with self.assertRaisesRegex(RobotControlRejected, "OPEN Robot trades remain"):
+                    stop_robot(
+                        database_path=self.db_path, clock_ms=lambda: 2000,
+                        http_post=lambda url, payload: self.fail("must not reach backend"),
+                    )
+                state = self._read_state()
+                self.assertEqual((state.mode, state.recovery_status), ("ROBOT_RUNNING", mode))
+
     def test_stop_robot_rejected_from_reconciliation_required(self):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
         with self.assertRaises(RobotControlRejected):

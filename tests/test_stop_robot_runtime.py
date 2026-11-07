@@ -1,6 +1,6 @@
 """Unified owner runtime shutdown with fake HTTP, Robot state and clock; no real process."""
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import io
 import json
@@ -47,6 +47,12 @@ class FakeRuntime:
         self.telegram_health = {"component": "telegram_monitoring", "status": "ready",
                                 "database_identity": IDENTITY}
         self.scanner_mode = "SCANNER_RUNNING"
+        self.scanner_worker_quiescent = True
+        self.robot_ownership_open = True
+        self.autopilot_mode = "OFF"
+        self.autopilot_off_reply = (200, {
+            "ok": True, "mode": "OFF", "trading_account_id": {"value": "paper"},
+        })
         self.protection = {
             "ok": True, "healthy": True, "covered_symbols": [], "coverage_roles": {},
             "armed_symbols": [], "unhealthy_symbols": {},
@@ -69,7 +75,15 @@ class FakeRuntime:
         if url == BACKEND + "/api/robot/protection-health":
             return 200, dict(self.protection)
         if url == BACKEND + "/api/scanner/status":
-            return 200, {"ok": True, "mode": self.scanner_mode}
+            return 200, {
+                "ok": True, "mode": self.scanner_mode,
+                "worker_quiescent": self.scanner_worker_quiescent,
+            }
+        if url == BACKEND + "/api/robot/autopilot":
+            return 200, {
+                "ok": True, "mode": self.autopilot_mode,
+                "trading_account_id": {"value": "paper"},
+            }
         if url == TELEGRAM + "/health":
             if not self.telegram_alive:
                 raise shutdown.Unreachable("refused")
@@ -77,6 +91,15 @@ class FakeRuntime:
         raise AssertionError(f"unexpected GET {url}")
 
     def post(self, url, payload, timeout):
+        if url == BACKEND + "/api/robot/autopilot":
+            self.calls.append("autopilot:off")
+            assert payload == {"mode": "OFF"}
+            if isinstance(self.autopilot_off_reply, Exception):
+                raise self.autopilot_off_reply
+            status, body = self.autopilot_off_reply
+            if status == 200 and body.get("ok") is True:
+                self.autopilot_mode = body.get("mode", self.autopilot_mode)
+            return status, body
         if url == BACKEND + "/api/robot/reconcile":
             self.calls.append("robot:reconcile")
             assert payload == {}
@@ -120,6 +143,12 @@ class FakeRuntime:
             raise RobotControlRejected("stop_robot is illegal")
         self.robot = STOPPED
 
+    def pause_robot(self):
+        self.calls.append("robot:pause")
+        if self.robot != READY:
+            raise RobotControlRejected("pause_robot is illegal")
+        self.robot = PAUSED
+
     def sleep(self, seconds):
         self.now += seconds
 
@@ -153,19 +182,355 @@ class FakeRuntime:
         if self.legacy_paper_blocker is not None:
             raise shutdown.SafeStopError(self.legacy_paper_blocker)
 
-    def orchestrator(self):
+    def orchestrator(self, *, dual_orphan_handoff=None):
         return shutdown.RuntimeShutdown(
             root=ROOT, env={}, get=self.get, post=self.post,
-            robot_state=lambda: self.robot, stop_robot_fn=self.stop_robot,
+            robot_state=lambda: self.robot,
+            open_robot_ownership=lambda: self.robot_ownership_open,
+            stop_robot_fn=self.stop_robot,
+            pause_robot_fn=self.pause_robot,
             sleep=self.sleep, monotonic=lambda: self.now,
             legacy_resolver=self.resolve_legacy, listener_probe=self.probe_listener,
             legacy_terminator=self.terminate_legacy,
             legacy_paper_quiescence=self.prove_legacy_paper_quiescence,
             legacy_paper_guard=lambda: nullcontext(), legacy_supported=True,
+            dual_orphan_handoff=dual_orphan_handoff,
         )
 
 
 class FullShutdownTests(unittest.TestCase):
+    def test_all_freezes_autopilot_before_scanner_and_robot(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(runtime.autopilot_mode, "OFF")
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertIn("autopilot:off", result.steps)
+
+    def test_unproven_autopilot_account_blocks_stop_before_any_mutation(self):
+        for account in ({"value": "live"}, None, {"value": "PAPER"}):
+            with self.subTest(account=account):
+                runtime = FakeRuntime(robot=READY)
+                runtime.autopilot_mode = "OFF"
+                get = runtime.get
+
+                def foreign_account(url, timeout):
+                    status, body = get(url, timeout)
+                    if url == BACKEND + "/api/robot/autopilot":
+                        body["trading_account_id"] = account
+                    return status, body
+
+                runtime.get = foreign_account
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertIn("Autopilot state unproven", result.message)
+                self.assertEqual(runtime.calls, [])
+                self.assertEqual(runtime.scanner_mode, "SCANNER_RUNNING")
+                self.assertEqual(runtime.robot, READY)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_autopilot_off_ack_requires_paper_owner_before_scanner_stop(self):
+        for account in ({"value": "live"}, None):
+            with self.subTest(account=account):
+                runtime = FakeRuntime(robot=READY)
+                runtime.autopilot_mode = "PAPER_AUTO"
+                runtime.autopilot_off_reply = (200, {
+                    "ok": True, "mode": "OFF", "trading_account_id": account,
+                })
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertIn("Autopilot OFF rejected or unconfirmed", result.message)
+                self.assertEqual(runtime.calls, ["autopilot:off"])
+                self.assertEqual(runtime.scanner_mode, "SCANNER_RUNNING")
+                self.assertEqual(runtime.robot, READY)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_autopilot_account_drift_after_scanner_blocks_robot_shutdown(self):
+        runtime = FakeRuntime(robot=READY)
+        get = runtime.get
+
+        def changed_account(url, timeout):
+            status, body = get(url, timeout)
+            if (url == BACKEND + "/api/robot/autopilot"
+                    and runtime.scanner_mode == "SCANNER_STOPPED"):
+                body["trading_account_id"] = {"value": "live"}
+            return status, body
+
+        runtime.get = changed_account
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Autopilot OFF post-Scanner state unproven", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.robot, READY)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_all_does_not_stop_scanner_or_protection_on_rejected_autopilot_off(self):
+        for reply in ((409, {"ok": False, "error": "rejected"}),
+                      RuntimeError("unknown dispatch outcome")):
+            with self.subTest(reply=reply):
+                runtime = FakeRuntime(robot=READY)
+                runtime.autopilot_mode = "PAPER_AUTO"
+                runtime.autopilot_off_reply = reply
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertEqual(runtime.calls, ["autopilot:off"])
+                self.assertTrue(runtime.backend_alive)
+                self.assertEqual(runtime.scanner_mode, "SCANNER_RUNNING")
+                self.assertEqual(runtime.robot, READY)
+
+    def test_full_stop_waits_for_scanner_child_before_robot_or_backend(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_worker_quiescent = False
+        original_sleep = runtime.sleep
+        observed_robot = []
+
+        def finish_child_after_two_polls(seconds):
+            observed_robot.append(runtime.robot)
+            original_sleep(seconds)
+            if runtime.now >= 1.0:
+                runtime.scanner_worker_quiescent = True
+
+        runtime.sleep = finish_child_after_two_polls
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertGreaterEqual(len(observed_robot), 2)
+        self.assertTrue(all(state == READY for state in observed_robot))
+        self.assertEqual(runtime.calls, [
+            "scanner:stop", "robot:stop", "backend:shutdown",
+            "telegram:shutdown",
+        ])
+
+    def test_unsettled_scanner_child_blocks_robot_and_backend_shutdown(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_worker_quiescent = False
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertFalse(result.ok)
+        self.assertIn("child is still active", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.robot, READY)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_malformed_scanner_worker_evidence_blocks_shutdown(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_worker_quiescent = None
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertFalse(result.ok)
+        self.assertIn("worker quiescence evidence is malformed", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.robot, READY)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_scanner_ack_without_stopped_postcondition_keeps_robot_and_backend(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        original_post = runtime.post
+
+        def premature_ack(url, payload, timeout):
+            if url == BACKEND + "/api/scanner/stop":
+                runtime.calls.append("scanner:stop")
+                # Backend acknowledged a request, but the Scanner is still
+                # running: no Robot, protection, backend or Telegram shutdown.
+                return 200, {"ok": True, "mode": "SCANNER_STOPPED"}
+            return original_post(url, payload, timeout)
+
+        runtime.post = premature_ack
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Scanner is not proven STOPPED", result.message)
+        self.assertEqual(runtime.calls, ["autopilot:off", "scanner:stop"])
+        self.assertEqual(runtime.scanner_mode, "SCANNER_RUNNING")
+        self.assertEqual(runtime.robot, READY)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_autopilot_reenabled_during_scanner_stop_blocks_robot_shutdown(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        original_post = runtime.post
+
+        def reenable_after_scanner_stop(url, payload, timeout):
+            result = original_post(url, payload, timeout)
+            if url == BACKEND + "/api/scanner/stop":
+                runtime.autopilot_mode = "PAPER_AUTO"
+            return result
+
+        runtime.post = reenable_after_scanner_stop
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Autopilot OFF post-Scanner state unproven", result.message)
+        self.assertEqual(runtime.calls, ["autopilot:off", "scanner:stop"])
+        self.assertEqual(runtime.robot, READY)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_scanner_reactivated_after_stop_blocks_before_robot_mutation(self):
+        runtime = FakeRuntime(robot=READY)
+        original_get = runtime.get
+
+        def scanner_restarted_during_autopilot_reproof(url, timeout):
+            if (url == BACKEND + "/api/robot/autopilot"
+                    and runtime.scanner_mode == "SCANNER_STOPPED"):
+                # Scanner STOP has already been acknowledged; an independent
+                # owner starts it again before the Robot boundary.
+                runtime.scanner_mode = "SCANNER_RUNNING"
+            return original_get(url, timeout)
+
+        runtime.get = scanner_restarted_during_autopilot_reproof
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Scanner is not proven STOPPED", result.message)
+        self.assertEqual(runtime.robot, READY)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_ingress_reactivation_after_robot_stop_blocks_backend_shutdown(self):
+        for changed in ("scanner", "autopilot"):
+            with self.subTest(changed=changed):
+                runtime = FakeRuntime(robot=READY)
+                original_get = runtime.get
+                seen_protection = False
+
+                def drift_after_robot_stop(url, timeout):
+                    nonlocal seen_protection
+                    if url == BACKEND + "/api/robot/protection-health" and not seen_protection:
+                        seen_protection = True
+                        if changed == "scanner":
+                            runtime.scanner_mode = "SCANNER_RUNNING"
+                        else:
+                            runtime.autopilot_mode = "PAPER_AUTO"
+                    return original_get(url, timeout)
+
+                runtime.get = drift_after_robot_stop
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertTrue(seen_protection)
+                self.assertEqual(runtime.robot, STOPPED)
+                self.assertEqual(runtime.calls, ["scanner:stop", "robot:stop"])
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+                self.assertNotIn("backend:shutdown", runtime.calls)
+                self.assertNotIn("telegram:shutdown", runtime.calls)
+
+    def test_scanner_only_does_not_change_autopilot(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        result = runtime.orchestrator().run("scanner")
+        self.assertTrue(result.ok)
+        self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+
+    def test_full_stop_accepts_canonically_paused_scanner(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_mode = "SCANNER_PAUSED"
+        runtime.autopilot_mode = "PAPER_AUTO"
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertEqual(runtime.scanner_mode, "SCANNER_STOPPED")
+        self.assertEqual(runtime.autopilot_mode, "OFF")
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_scanner_scope_accepts_canonically_paused_scanner(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_mode = "SCANNER_PAUSED"
+        runtime.autopilot_mode = "PAPER_AUTO"
+
+        result = runtime.orchestrator().run("scanner")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.scanner_mode, "SCANNER_STOPPED")
+        self.assertEqual(runtime.robot, READY)
+        self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_partial_stop_skips_already_stopped_scanner(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_mode = "SCANNER_STOPPED"
+        runtime.autopilot_mode = "PAPER_AUTO"
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "robot:stop", "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertNotIn("scanner:stop", result.steps)
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_scanner_only_is_noop_when_already_stopped(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.scanner_mode = "SCANNER_STOPPED"
+        runtime.autopilot_mode = "PAPER_AUTO"
+
+        result = runtime.orchestrator().run("scanner")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(runtime.calls, [])
+        self.assertEqual(runtime.robot, READY)
+        self.assertEqual(runtime.autopilot_mode, "PAPER_AUTO")
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_unproven_scanner_phase_blocks_before_stop_or_robot_mutation(self):
+        for value in ("SCANNER_STARTING", "", None):
+            with self.subTest(mode=value):
+                runtime = FakeRuntime(robot=READY)
+                runtime.scanner_mode = value
+
+                result = runtime.orchestrator().run("all")
+
+                self.assertFalse(result.ok)
+                self.assertIn("Scanner is not in a legal stoppable state", result.message)
+                self.assertEqual(runtime.calls, [])
+                self.assertEqual(runtime.robot, READY)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_scanner_only_reactivation_blocks_false_stopped_success(self):
+        runtime = FakeRuntime(robot=READY)
+        owner = runtime.orchestrator()
+
+        def concurrent_restart():
+            # Scanner STOP has already returned when the Robot state is read.
+            runtime.scanner_mode = "SCANNER_RUNNING"
+            return READY
+
+        owner._robot_state = concurrent_restart
+        result = owner.run("scanner")
+        self.assertFalse(result.ok)
+        self.assertIn("Scanner is not proven STOPPED", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_scanner_only_protected_runtime_rechecks_before_success(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.protection["covered_symbols"] = ["BTCUSDT"]
+        original_get = runtime.get
+
+        def concurrent_restart_during_protection_read(url, timeout):
+            if url == BACKEND + "/api/robot/protection-health":
+                runtime.scanner_mode = "SCANNER_RUNNING"
+            return original_get(url, timeout)
+
+        runtime.get = concurrent_restart_during_protection_read
+        result = runtime.orchestrator().run("scanner")
+        self.assertFalse(result.ok)
+        self.assertIn("Scanner is not proven STOPPED", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_full_stop_orders_scanner_robot_telegram_backend(self):
         for robot in (READY, PAUSED):
             with self.subTest(robot=robot):
@@ -174,7 +539,7 @@ class FullShutdownTests(unittest.TestCase):
                 self.assertTrue(result.ok, result.message)
                 self.assertTrue(result.runtime_stopped)
                 self.assertEqual(runtime.calls, [
-                    "scanner:stop", "robot:stop", "telegram:shutdown", "backend:shutdown",
+                    "scanner:stop", "robot:stop", "backend:shutdown", "telegram:shutdown",
                 ])
                 self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
 
@@ -182,7 +547,7 @@ class FullShutdownTests(unittest.TestCase):
         runtime = FakeRuntime(robot=STOPPED)
         result = runtime.orchestrator().run("all")
         self.assertTrue(result.ok)
-        self.assertEqual(runtime.calls, ["scanner:stop", "telegram:shutdown", "backend:shutdown"])
+        self.assertEqual(runtime.calls, ["scanner:stop", "backend:shutdown", "telegram:shutdown"])
 
     def test_absent_processes_with_stopped_robot_are_idempotent_success(self):
         for robot in (STOPPED, None):
@@ -251,14 +616,366 @@ class FullShutdownTests(unittest.TestCase):
                 self.assertEqual(runtime.calls, ["scanner:stop"])
                 self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
-    def test_rejected_robot_stop_keeps_runtime_alive(self):
+    def test_open_trade_stop_refusal_pauses_admission_and_keeps_protection(self):
         runtime = FakeRuntime(robot=READY)
-        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected("open Robot position"))
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
+            "stop_robot is rejected while OPEN Robot trades remain: jasmy-orphan"
+        ))
+        runtime.protection["covered_symbols"] = ["JASMYUSDT"]
         result = runtime.orchestrator().run("all")
         self.assertFalse(result.ok)
-        self.assertIn("open Robot position", result.message)
+        self.assertIn("Robot PAUSED with OPEN trade", result.message)
+        self.assertEqual(runtime.robot, PAUSED)
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:pause"])
+        self.assertEqual(result.steps, ("scanner:stop", "robot:pause"))
+        self.assertEqual(runtime.protection["covered_symbols"], ["JASMYUSDT"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_ready_orphans_can_reach_only_explicit_handoff_after_paused_drain(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
+            "stop_robot is rejected while OPEN Robot trades remain: JASMY,FLOW"
+        ))
+        observed = []
+
+        def guarded_handoff():
+            observed.append("one-proven-handoff")
+            self.assertEqual(runtime.robot, PAUSED)
+            self.assertEqual(runtime.scanner_mode, "SCANNER_STOPPED")
+            self.assertEqual(runtime.autopilot_mode, "OFF")
+            self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+            runtime.backend_alive = False
+            return "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
+
+        result = runtime.orchestrator(
+            dual_orphan_handoff=guarded_handoff,
+        ).run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(observed, ["one-proven-handoff"])
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:pause", "telegram:shutdown",
+        ])
+        self.assertEqual(result.steps, (
+            "autopilot:off", "scanner:stop", "robot:pause",
+            "backend:dual-orphan-handoff", "telegram:shutdown",
+        ))
+
+    def test_ready_orphans_failed_proof_never_stop_backend_or_telegram(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
+            "stop_robot is rejected while OPEN Robot trades remain: JASMY,FLOW"
+        ))
+        attempts = []
+
+        def blocked_proof():
+            attempts.append("proof")
+            raise RuntimeError("unexpected_active_robot_candidate")
+
+        result = runtime.orchestrator(
+            dual_orphan_handoff=blocked_proof,
+        ).run("all")
+        self.assertFalse(result.ok)
+        self.assertFalse(result.runtime_stopped)
+        self.assertIn("unexpected_active_robot_candidate", result.message)
+        self.assertEqual(attempts, ["proof"])
+        self.assertEqual(runtime.robot, PAUSED)
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:pause"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_open_trade_natural_drain_resumes_same_full_stop_without_market(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        original_stop = runtime.stop_robot
+        original_sleep = runtime.sleep
+        rejected_once = False
+
+        def stop_after_proven_drain():
+            nonlocal rejected_once
+            if not rejected_once:
+                rejected_once = True
+                raise RobotControlRejected(
+                    "stop_robot is rejected while OPEN Robot trades remain: trade-1"
+                )
+            self.assertFalse(runtime.robot_ownership_open)
+            original_stop()
+
+        def natural_stop_take_drain(seconds):
+            original_sleep(seconds)
+            runtime.robot_ownership_open = False
+
+        runtime.stop_robot = stop_after_proven_drain
+        runtime.sleep = natural_stop_take_drain
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:pause", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+
+    def test_mixed_robot_and_nonrobot_exposure_drain_before_single_shutdown(self):
+        """One P0 freeze drains both owners while protection stays available."""
+        runtime = FakeRuntime(robot=READY)
+        runtime.autopilot_mode = "PAPER_AUTO"
+        runtime.protection.update({
+            "covered_symbols": ["ROBOTUSDT", "MANUALUSDT"],
+            "coverage_roles": {"ROBOTUSDT": "EXPOSURE", "MANUALUSDT": "EXPOSURE"},
+        })
+        canonical_stop = runtime.stop_robot
+        canonical_sleep = runtime.sleep
+        phases = []
+
+        def stop_after_robot_drain():
+            if runtime.robot_ownership_open:
+                raise RobotControlRejected(
+                    "stop_robot is rejected while OPEN Robot trades remain: robot-1"
+                )
+            self.assertEqual(runtime.autopilot_mode, "OFF")
+            self.assertEqual(runtime.scanner_mode, "SCANNER_STOPPED")
+            canonical_stop()
+
+        def settle_protected_exposure(seconds):
+            canonical_sleep(seconds)
+            self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+            self.assertNotIn("backend:shutdown", runtime.calls)
+            self.assertEqual(runtime.autopilot_mode, "OFF")
+            if runtime.robot_ownership_open:
+                phases.append("robot-stop-take")
+                runtime.robot_ownership_open = False
+                runtime.protection.update({
+                    "covered_symbols": ["MANUALUSDT"],
+                    "coverage_roles": {"MANUALUSDT": "EXPOSURE"},
+                })
+            else:
+                phases.append("manual-stop-take")
+                self.assertEqual(runtime.robot, STOPPED)
+                runtime.protection.update({
+                    "covered_symbols": [], "coverage_roles": {},
+                })
+
+        runtime.stop_robot = stop_after_robot_drain
+        runtime.sleep = settle_protected_exposure
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(phases, ["robot-stop-take", "manual-stop-take"])
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:pause", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_partial_stop_retries_natural_drain_from_paused_without_repausing(self):
+        runtime = FakeRuntime(robot=READY)
+        canonical_stop = runtime.stop_robot
+        canonical_sleep = runtime.sleep
+
+        def reject_until_natural_exit():
+            if runtime.robot_ownership_open:
+                raise RobotControlRejected(
+                    "stop_robot is rejected while OPEN Robot trades remain: trade-1"
+                )
+            canonical_stop()
+
+        runtime.stop_robot = reject_until_natural_exit
+        first = runtime.orchestrator().run("all")
+        self.assertFalse(first.ok)
+        self.assertIn("natural drain incomplete", first.message)
+        self.assertEqual(runtime.robot, PAUSED)
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:pause"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+        def natural_take_exit(seconds):
+            canonical_sleep(seconds)
+            runtime.robot_ownership_open = False
+
+        runtime.sleep = natural_take_exit
+        second = runtime.orchestrator().run("all")
+        self.assertTrue(second.ok, second.message)
+        self.assertTrue(second.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "scanner:stop", "robot:pause", "robot:stop",
+            "backend:shutdown", "telegram:shutdown",
+        ])
+
+    def test_paused_open_trade_timeout_never_repauses_or_stops_backend(self):
+        runtime = FakeRuntime(robot=PAUSED)
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
+            "stop_robot is rejected while OPEN Robot trades remain: trade-1"
+        ))
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("natural drain incomplete", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.robot, PAUSED)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_durable_robot_ownership_read_is_account_scoped_and_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "paper.sqlite3"
+            db = sqlite3.connect(path)
+            try:
+                db.executescript("""
+                    CREATE TABLE robot_trades (
+                        trading_account_id TEXT, exit_time_ms INTEGER);
+                    CREATE TABLE robot_candidates (
+                        trading_account_id TEXT, status TEXT);
+                    INSERT INTO robot_candidates VALUES ('other', 'OPEN');
+                """)
+                self.assertFalse(shutdown.read_open_robot_ownership(path))
+                db.execute(
+                    "INSERT INTO robot_candidates VALUES ('paper', 'UNEXPECTED')"
+                )
+                db.commit()
+                self.assertTrue(shutdown.read_open_robot_ownership(path))
+                db.execute("DELETE FROM robot_candidates WHERE trading_account_id='paper'")
+                db.execute("INSERT INTO robot_trades VALUES ('paper', NULL)")
+                db.commit()
+                self.assertTrue(shutdown.read_open_robot_ownership(path))
+                db.execute("UPDATE robot_trades SET exit_time_ms=10")
+                db.commit()
+                self.assertFalse(shutdown.read_open_robot_ownership(path))
+            finally:
+                db.close()
+
+    def test_open_trade_natural_drain_still_blocks_if_ingress_reactivates(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
+            "stop_robot is rejected while OPEN Robot trades remain: trade-1"
+        ))
+        original_sleep = runtime.sleep
+
+        def reenable_during_drain(seconds):
+            original_sleep(seconds)
+            runtime.autopilot_mode = "PAPER_AUTO"
+
+        runtime.sleep = reenable_during_drain
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Autopilot OFF", result.message)
+        self.assertEqual(runtime.robot, PAUSED)
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:pause"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_open_trade_pause_sync_failure_keeps_backend_alive(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
+            "stop_robot is rejected while a Robot-owned position is open; call pause_robot()"
+        ))
+        runtime.pause_robot = mock.Mock(side_effect=RobotControlRejected(
+            "pending entries unresolved; escalated to RECONCILIATION_REQUIRED"
+        ))
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("pending entries unresolved", result.message)
         self.assertEqual(runtime.calls, ["scanner:stop"])
         self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_unrelated_stop_refusal_cannot_trigger_pause(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected("owner mismatch"))
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("owner mismatch", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertEqual(runtime.robot, READY)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_nonrobot_protected_exposure_naturally_drains_in_same_stop(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.protection.update({
+            "covered_symbols": ["MANUALUSDT"],
+            "coverage_roles": {"MANUALUSDT": "EXPOSURE"},
+        })
+        original_sleep = runtime.sleep
+
+        def natural_take(seconds):
+            original_sleep(seconds)
+            runtime.protection.update({
+                "covered_symbols": [], "coverage_roles": {},
+            })
+
+        runtime.sleep = natural_take
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "scanner:stop", "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertGreater(runtime.now, 0)
+
+    def test_nonrobot_protected_exposure_timeout_never_retires_or_stops(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.protection.update({
+            "covered_symbols": ["MANUALUSDT"],
+            "coverage_roles": {"MANUALUSDT": "EXPOSURE"},
+        })
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("backend retained for STOP/TAKE", result.message)
+        self.assertGreaterEqual(runtime.now, shutdown.NATURAL_ROBOT_DRAIN_WAIT_S)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_nonrobot_drain_reactivation_blocks_backend_shutdown(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.protection.update({
+            "covered_symbols": ["MANUALUSDT"],
+            "coverage_roles": {"MANUALUSDT": "EXPOSURE"},
+        })
+        original_sleep = runtime.sleep
+
+        def competing_admission(seconds):
+            original_sleep(seconds)
+            runtime.autopilot_mode = "PAPER_AUTO"
+
+        runtime.sleep = competing_admission
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("Autopilot OFF", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_missing_or_malformed_armed_symbols_cannot_prove_quiescence(self):
+        # A missing field must never be interpreted as an empty protection
+        # list before the owner-side shutdown proof is reached.
+        for value in ("missing", None, {}, "", False):
+            with self.subTest(value=value):
+                runtime = FakeRuntime(robot=STOPPED)
+                if value == "missing":
+                    del runtime.protection["armed_symbols"]
+                else:
+                    runtime.protection["armed_symbols"] = value
+                self.assertFalse(runtime.orchestrator()._protection_quiescent())
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertNotIn("backend:shutdown", runtime.calls)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_contradictory_protection_roles_or_failed_health_never_shutdown(self):
+        # A malformed/untrusted health reply must not certify quiescence just
+        # because its two summary lists are empty. The role map is independent
+        # protection ownership evidence.
+        for field, value in (
+            ("coverage_roles", {"JASMYUSDT": "EXPOSURE"}),
+            ("coverage_roles", {"BBUSDT": "ENTRY_PENDING"}),
+            ("coverage_roles", None),
+            ("coverage_roles", []),
+            ("ok", False),
+            ("ok", None),
+        ):
+            with self.subTest(field=field, value=value):
+                runtime = FakeRuntime(robot=STOPPED)
+                runtime.protection[field] = value
+                self.assertFalse(runtime.orchestrator()._protection_quiescent())
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.runtime_stopped)
+                self.assertNotIn("backend:shutdown", runtime.calls)
+                self.assertNotIn("telegram:shutdown", runtime.calls)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
 
     def test_active_protection_coverage_keeps_runtime_alive(self):
         runtime = FakeRuntime(robot=READY)
@@ -267,6 +984,25 @@ class FullShutdownTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(runtime.calls, ["scanner:stop", "robot:stop", "protection:retire-entry-arms"])
         self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_missing_armed_symbols_never_proves_protection_quiescent(self):
+        # An incomplete healthy snapshot is not evidence that no ENTRY arms
+        # remain. Check both full shutdown and Scanner-only behavior.
+        for scope in ("all", "scanner"):
+            with self.subTest(scope=scope):
+                runtime = FakeRuntime(robot=STOPPED)
+                runtime.protection.pop("armed_symbols")
+                result = runtime.orchestrator().run(scope)
+                self.assertFalse(result.runtime_stopped)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+                self.assertNotIn("backend:shutdown", runtime.calls)
+                self.assertNotIn("telegram:shutdown", runtime.calls)
+                if scope == "all":
+                    self.assertFalse(result.ok)
+                    self.assertIn("protection:retire-entry-arms", runtime.calls)
+                else:
+                    self.assertTrue(result.ok)
+                    self.assertIn("protection coverage keeps the runtime alive", result.message)
 
     def test_robot_running_with_absent_backend_is_blocked_without_shutdown(self):
         runtime = FakeRuntime(robot=READY, backend=False)
@@ -293,9 +1029,87 @@ class ReconciliationShutdownTests(unittest.TestCase):
         self.assertTrue(result.runtime_stopped)
         self.assertEqual(runtime.calls, [
             "scanner:stop", "robot:reconcile", "robot:stop", "protection:quiescent",
-            "telegram:shutdown", "backend:shutdown",
+            "backend:shutdown", "telegram:shutdown",
         ])
         self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_confirmed_required_rejection_uses_single_explicit_protected_handoff(self):
+        runtime = FakeRuntime(robot=RECON)
+        runtime.reconcile_state = RECON
+        runtime.autopilot_mode = "PAPER_AUTO"
+        runtime.reconcile_reply = (
+            409, {"ok": False, "success": False,
+                  "recovery_status": "RECONCILIATION_REQUIRED"},
+        )
+        called = []
+
+        def protected_handoff():
+            self.assertEqual(runtime.scanner_mode, "SCANNER_STOPPED")
+            self.assertEqual(runtime.autopilot_mode, "OFF")
+            self.assertEqual(runtime.robot, RECON)
+            self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+            called.append("handoff")
+            runtime.backend_alive = False
+            return "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
+
+        result = runtime.orchestrator(dual_orphan_handoff=protected_handoff).run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(called, ["handoff"])
+        self.assertEqual(runtime.calls, [
+            "autopilot:off", "scanner:stop", "robot:reconcile", "telegram:shutdown",
+        ])
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_unapproved_reconcile_rejection_never_uses_exceptional_handoff(self):
+        runtime = FakeRuntime(robot=RECON)
+        runtime.reconcile_reply = (
+            409, {"ok": False, "success": False,
+                  "recovery_status": "RECONCILIATION_REQUIRED"},
+        )
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:reconcile"])
+
+    def test_unknown_reconcile_outcome_never_triggers_dual_handoff(self):
+        for reply in (
+            TimeoutError("unknown"),
+            (503, {"ok": False, "error": "robot_reconcile_unavailable"}),
+            (409, {"ok": False, "error": "illegal_transition"}),
+        ):
+            with self.subTest(reply=reply):
+                runtime = FakeRuntime(robot=RECON)
+                runtime.reconcile_reply = reply
+                called = []
+                result = runtime.orchestrator(
+                    dual_orphan_handoff=lambda: called.append("unsafe"),
+                ).run("all")
+                self.assertFalse(result.ok)
+                self.assertEqual(called, [])
+                self.assertEqual(runtime.calls, ["scanner:stop", "robot:reconcile"])
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_dual_handoff_unknown_exit_or_robot_state_drift_remains_blocked(self):
+        for result_text, changed_state in (
+            ("OUTCOME_UNKNOWN: single SIGINT sent, do not retry or deploy", RECON),
+            ("INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed", READY),
+        ):
+            with self.subTest(result_text=result_text, state=changed_state):
+                runtime = FakeRuntime(robot=RECON)
+                runtime.reconcile_reply = (
+                    409, {"ok": False, "success": False,
+                          "recovery_status": "RECONCILIATION_REQUIRED"},
+                )
+                runtime.reconcile_state = changed_state
+                called = []
+                result = runtime.orchestrator(
+                    dual_orphan_handoff=lambda: called.append("handoff") or result_text,
+                ).run("all")
+                self.assertFalse(result.ok)
+                self.assertFalse(result.runtime_stopped)
+                self.assertEqual(called, [] if changed_state != RECON else ["handoff"])
+                self.assertNotIn("telegram:shutdown", runtime.calls)
 
     def test_unresolved_or_failed_reconcile_keeps_runtime_alive(self):
         for reply, state in (
@@ -355,6 +1169,7 @@ class ShutdownArmFixture:
         self.runtime = FakeRuntime(robot=robot)
         self.durable = {}
         self.store = mock.Mock()
+        self.store.get_robot_autopilot_state.return_value = SimpleNamespace(mode="OFF")
         self.store.load_active_robot_candidate_states.return_value = ()
         self.store.load_active_paper_limits.return_value = ()
         self.store.load_open_position_projections.return_value = ()
@@ -383,7 +1198,9 @@ class ShutdownArmFixture:
 
         def get(url, timeout):
             if url == BACKEND + "/api/robot/protection-health":
-                return 200, json.loads(json.dumps(self.manager.health()))
+                # The public HTTP handler supplies ok; manager.health()
+                # alone is an internal fragment, not an API response.
+                return 200, json.loads(json.dumps({"ok": True, **self.manager.health()}))
             return original_get(url, timeout)
 
         def post(url, payload, timeout):
@@ -408,6 +1225,93 @@ class ShutdownArmFixture:
         return replies[0]
 
 
+class BackendShutdownRefusalReasonTests(unittest.TestCase):
+    def test_empty_internal_tuple_coverage_allows_shutdown(self):
+        # health() returns tuples; only the public JSON projection uses lists.
+        for covered, armed, expected_status in (
+            ((), (), 200), ([], [], 200), (("BTCUSDT",), (), 409),
+        ):
+            with self.subTest(covered=covered, armed=armed):
+                owner = SimpleNamespace(
+                    live_limit_acceptance_diagnostics=lambda: {"database_identity": IDENTITY},
+                    robot_runtime_state=lambda: SimpleNamespace(
+                        mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED",
+                    ),
+                    scanner_status=lambda: SimpleNamespace(mode="SCANNER_STOPPED"),
+                    scanner_worker_quiescent=lambda: True,
+                    paper_shutdown_blocker=lambda: None,
+                )
+                runtime = SimpleNamespace(
+                    call=lambda operation: operation(owner), seal_shutdown=mock.Mock(),
+                )
+                coverage = SimpleNamespace(
+                    health=lambda: {
+                        "healthy": True, "covered_symbols": covered,
+                        "armed_symbols": armed,
+                        "coverage_roles": {} if not covered else {"BTCUSDT": "EXPOSURE"},
+                        "unhealthy_symbols": {},
+                    },
+                    shutdown_idle_guard=lambda: nullcontext(),
+                )
+                handler = object.__new__(PaperHttpHandler)
+                handler.path = "/api/runtime/shutdown"
+                handler.server = SimpleNamespace(
+                    runtime=runtime, robot_protection_coverage=coverage,
+                    shutdown=lambda: None,
+                )
+                handler._payload = lambda *_args: {"database_identity": IDENTITY}
+                replies = []
+                handler._json_response = lambda status, body: replies.append((status, body))
+                with mock.patch("terminal.runtime.paper_http_server.threading.Thread") as thread:
+                    handler.do_POST()
+                self.assertEqual([status for status, _ in replies], [expected_status])
+                if expected_status == 200:
+                    runtime.seal_shutdown.assert_called_once_with()
+                    thread.return_value.start.assert_called_once_with()
+                else:
+                    runtime.seal_shutdown.assert_not_called()
+                    thread.assert_not_called()
+
+    def test_preserves_durable_blocker_without_sealing_backend(self):
+        for reason in ("active_robot_candidate", "unfinished_or_unknown_command"):
+            with self.subTest(reason=reason):
+                owner = SimpleNamespace(
+                    live_limit_acceptance_diagnostics=lambda: {"database_identity": IDENTITY},
+                    robot_runtime_state=lambda: SimpleNamespace(
+                        mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED",
+                    ),
+                    scanner_status=lambda: SimpleNamespace(mode="SCANNER_STOPPED"),
+                    scanner_worker_quiescent=lambda: True,
+                    paper_shutdown_blocker=lambda: reason,
+                )
+                runtime = SimpleNamespace(
+                    call=lambda operation: operation(owner),
+                    seal_shutdown=mock.Mock(),
+                )
+                coverage = SimpleNamespace(
+                    health=lambda: {
+                        "healthy": True, "covered_symbols": [],
+                        "armed_symbols": [], "coverage_roles": {},
+                        "unhealthy_symbols": {},
+                    },
+                    shutdown_idle_guard=lambda: nullcontext(),
+                )
+                handler = object.__new__(PaperHttpHandler)
+                handler.path = "/api/runtime/shutdown"
+                handler.server = SimpleNamespace(
+                    runtime=runtime, robot_protection_coverage=coverage,
+                )
+                handler._payload = lambda *_args: {"database_identity": IDENTITY}
+                responses = []
+                handler._json_response = lambda status, body: responses.append((status, body))
+                handler.do_POST()
+                self.assertEqual(
+                    responses,
+                    [(409, {"ok": False, "error": "runtime_still_required:" + reason})],
+                )
+                runtime.seal_shutdown.assert_not_called()
+
+
 class ShutdownArmRetirementTests(unittest.TestCase):
     def test_orphan_arms_retire_after_stop_and_full_shutdown_completes(self):
         for state in (STOPPED, READY, PAUSED, RECON):
@@ -420,7 +1324,7 @@ class ShutdownArmRetirementTests(unittest.TestCase):
                     expected.append("robot:reconcile")
                 if state != STOPPED:
                     expected.append("robot:stop")
-                expected += ["protection:retire-entry-arms", "telegram:shutdown", "backend:shutdown"]
+                expected += ["protection:retire-entry-arms", "backend:shutdown", "telegram:shutdown"]
                 self.assertEqual(f.runtime.calls, expected)
                 self.assertEqual(f.manager.health()["armed_symbols"], ())
                 self.assertEqual(f.manager.health()["covered_symbols"], ())
@@ -580,17 +1484,132 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 self.assertTrue(result.runtime_stopped)
                 self.assertEqual(result.steps, (
                     "scanner:stop", "protection:legacy-entry-proof",
-                    "telegram:shutdown", "backend:legacy-terminate",
+                    "backend:legacy-terminate", "telegram:shutdown",
                 ))
                 self.assertEqual(runtime.calls, [
                     "scanner:stop", "protection:retire-entry-arms",
-                    "resolve:backend:127.0.0.1:8765", "telegram:shutdown",
                     "resolve:backend:127.0.0.1:8765",
-                    "terminate:[130, 120, 110, 105]",
+                    "resolve:backend:127.0.0.1:8765",
+                    "terminate:[130, 120, 110, 105]", "telegram:shutdown",
                 ])
                 self.assertEqual(runtime.legacy_evidence_checks, 1)
                 self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
                 self.assertNotIn("backend:shutdown", runtime.calls)
+
+    def test_legacy_paths_never_call_http_under_sqlite_writer_barrier(self):
+        for starved in (False, True):
+            with self.subTest(starved=starved):
+                runtime = self.stale_arm_runtime()
+                if starved:
+                    runtime.protection.update({
+                        "healthy": False,
+                        "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+                        "ingress": {
+                            "capacity": 64, "current_pending": 63,
+                            "high_watermark": 64,
+                        },
+                    })
+                coordinator = runtime.orchestrator()
+                barrier_held = [False]
+                original_get = coordinator._get
+                original_post = coordinator._post
+
+                def get(url, timeout):
+                    self.assertFalse(barrier_held[0], f"HTTP under writer barrier: {url}")
+                    return original_get(url, timeout)
+
+                def post(url, payload, timeout):
+                    self.assertFalse(barrier_held[0], f"HTTP mutation under writer barrier: {url}")
+                    return original_post(url, payload, timeout)
+
+                @contextmanager
+                def guard():
+                    barrier_held[0] = True
+                    try:
+                        yield
+                    finally:
+                        barrier_held[0] = False
+
+                coordinator._get = get
+                coordinator._post = post
+                coordinator._legacy_paper_guard = guard
+                result = coordinator.run("all")
+                self.assertTrue(result.ok, result.message)
+                self.assertTrue(result.runtime_stopped)
+                self.assertFalse(barrier_held[0])
+                self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_legacy_exit_wait_releases_sqlite_writer_first(self):
+        # Both exact-PID paths must finish the single termination inside the
+        # barrier, but not keep the writer reserved while polling for exit.
+        for starved in (False, True):
+            with self.subTest(starved=starved):
+                runtime = self.stale_arm_runtime()
+                if starved:
+                    runtime.protection.update({
+                        "healthy": False,
+                        "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+                        "ingress": {
+                            "capacity": 64, "current_pending": 63,
+                            "high_watermark": 64,
+                        },
+                    })
+                coordinator = runtime.orchestrator()
+                held = [False]
+                original_terminate = coordinator._legacy_terminator
+                original_wait = coordinator._wait_legacy_listener_gone
+
+                @contextmanager
+                def guard():
+                    held[0] = True
+                    try:
+                        yield
+                    finally:
+                        held[0] = False
+
+                def terminate(chain):
+                    self.assertTrue(held[0], "termination must retain durable proof")
+                    original_terminate(chain)
+
+                def wait():
+                    self.assertFalse(held[0], "exit must not wait under SQLite writer")
+                    return original_wait()
+
+                coordinator._legacy_paper_guard = guard
+                coordinator._legacy_terminator = terminate
+                coordinator._wait_legacy_listener_gone = wait
+                result = coordinator.run("all")
+                self.assertTrue(result.ok, result.message)
+                self.assertTrue(result.runtime_stopped)
+                self.assertFalse(held[0])
+                self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_failed_legacy_backend_termination_retains_telegram_control(self):
+        for starved in (False, True):
+            with self.subTest(starved=starved):
+                runtime = self.stale_arm_runtime()
+                if starved:
+                    runtime.protection.update({
+                        "healthy": False,
+                        "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+                        "ingress": {
+                            "capacity": 64, "current_pending": 63,
+                            "high_watermark": 64,
+                        },
+                    })
+                attempts = []
+
+                def reject_backend_termination(chain):
+                    attempts.append(tuple(chain))
+                    raise RuntimeError("backend still alive")
+
+                runtime.terminate_legacy = reject_backend_termination
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertIn("legacy termination failed", result.message)
+                self.assertEqual(attempts, [(130, 120, 110, 105)])
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+                self.assertNotIn("telegram:shutdown", runtime.calls)
 
     def test_durable_live_ownership_blocks_legacy_termination(self):
         for blocker in (
@@ -644,8 +1663,8 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
         self.assertTrue(result.runtime_stopped)
         self.assertEqual(result.steps, (
             "runtime:legacy-starvation-proof",
-            "telegram:shutdown",
             "backend:legacy-starvation-terminate",
+            "telegram:shutdown",
         ))
         self.assertNotIn("scanner:stop", runtime.calls)
         self.assertEqual(runtime.legacy_evidence_checks, 1)
@@ -662,11 +1681,14 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 "high_watermark": 64,
             },
         })
-        original_post = runtime.post
+        original_resolve = runtime.resolve_legacy
+        first = True
 
-        def post(url, payload, timeout):
-            reply = original_post(url, payload, timeout)
-            if url == TELEGRAM + "/shutdown" and reply[0] == 200:
+        def recover_after_preflight(*args):
+            nonlocal first
+            chain = original_resolve(*args)
+            if first:
+                first = False
                 runtime.protection.update({
                     "healthy": True,
                     "unhealthy_symbols": {},
@@ -676,17 +1698,17 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                         "high_watermark": 64,
                     },
                 })
-            return reply
+            return chain
 
-        runtime.post = post
+        runtime.resolve_legacy = recover_after_preflight
         result = runtime.orchestrator().run("all")
 
         self.assertTrue(result.ok, result.message)
         self.assertTrue(result.runtime_stopped)
         self.assertEqual(result.steps, (
             "runtime:legacy-starvation-proof",
-            "telegram:shutdown",
             "backend:legacy-starvation-terminate",
+            "telegram:shutdown",
         ))
         self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
 
@@ -701,11 +1723,14 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 "high_watermark": 64,
             },
         })
-        original_post = runtime.post
+        original_resolve = runtime.resolve_legacy
+        first = True
 
-        def post(url, payload, timeout):
-            reply = original_post(url, payload, timeout)
-            if url == TELEGRAM + "/shutdown" and reply[0] == 200:
+        def change_shape_after_preflight(*args):
+            nonlocal first
+            chain = original_resolve(*args)
+            if first:
+                first = False
                 runtime.protection.update({
                     "healthy": True,
                     "unhealthy_symbols": {},
@@ -714,9 +1739,9 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                         "BLASTUSDT": "POSITION",
                     },
                 })
-            return reply
+            return chain
 
-        runtime.post = post
+        runtime.resolve_legacy = change_shape_after_preflight
         result = runtime.orchestrator().run("all")
 
         self.assertFalse(result.ok)
@@ -909,22 +1934,33 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
             connection.executescript(
                 """
                 CREATE TABLE robot_candidates (
-                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT NOT NULL
+                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT
                 );
                 CREATE TABLE robot_trades (
                     trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, exit_time_ms INTEGER
                 );
                 CREATE TABLE paper_limit_orders (
-                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT NOT NULL
+                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT
                 );
                 CREATE TABLE position_projections (
                     trading_account_id TEXT NOT NULL, category TEXT NOT NULL,
                     symbol TEXT NOT NULL, position_idx INTEGER NOT NULL,
-                    side TEXT NOT NULL, quantity TEXT NOT NULL
+                    side TEXT NOT NULL, quantity TEXT NOT NULL,
+                    sync_state TEXT
                 );
                 CREATE TABLE paper_protection_obligations (
-                    trading_account_id TEXT NOT NULL, status TEXT NOT NULL
+                    trading_account_id TEXT NOT NULL, status TEXT
                 );
+                CREATE TABLE trading_commands (
+                    trading_account_id TEXT NOT NULL, current_state TEXT
+                );
+                CREATE TABLE reconciliation_checkpoints (
+                    trading_account_id TEXT NOT NULL, completed_at_ms INTEGER
+                );
+                CREATE TABLE robot_autopilot_state (
+                    trading_account_id TEXT NOT NULL, mode TEXT
+                );
+                INSERT INTO robot_autopilot_state VALUES ('paper', 'OFF');
                 """
             )
             if blocker == "approved_candidate":
@@ -946,7 +1982,7 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
             elif blocker == "manual_exposure":
                 connection.execute(
                     "INSERT INTO position_projections VALUES "
-                    "('paper', 'linear', 'MANUALUSDT', 0, 'Long', '1')"
+                    "('paper', 'linear', 'MANUALUSDT', 0, 'Long', '1','synced')"
                 )
             elif blocker == "approved_exposure":
                 connection.execute(
@@ -954,7 +1990,7 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                 )
                 connection.execute(
                     "INSERT INTO position_projections VALUES "
-                    "('paper', 'linear', 'ROBOTUSDT', 0, 'Long', '1')"
+                    "('paper', 'linear', 'ROBOTUSDT', 0, 'Long', '1','synced')"
                 )
             elif blocker == "obligation":
                 connection.execute(
@@ -964,13 +2000,26 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_read_only_durable_proof_accepts_inert_approved_and_manual_exposure(self):
+    def test_read_only_durable_proof_accepts_only_inert_approved(self):
         with tempfile.TemporaryDirectory() as directory:
-            for state in ("approved_candidate", "manual_exposure"):
-                with self.subTest(state=state):
-                    path = Path(directory) / f"{state}.sqlite3"
-                    self.make_db(path, state)
-                    shutdown.prove_legacy_paper_quiescence(path)
+            path = Path(directory) / "approved.sqlite3"
+            self.make_db(path, "approved_candidate")
+            shutdown.prove_legacy_paper_quiescence(path)
+
+    def test_nonrobot_exposure_keeps_legacy_backend_protecting_stop_take(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manual.sqlite3"
+            self.make_db(path, "manual_exposure")
+            before = path.read_bytes()
+            for proof in (
+                lambda: shutdown.prove_legacy_paper_quiescence(path),
+                lambda: shutdown.hold_legacy_paper_quiescence(path).__enter__(),
+            ):
+                with self.assertRaisesRegex(
+                    shutdown.SafeStopError, "protected PAPER exposure: MANUALUSDT",
+                ):
+                    proof()
+            self.assertEqual(path.read_bytes(), before)
 
     def test_read_only_durable_proof_rejects_live_or_ambiguous_robot_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -990,6 +2039,183 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                     with self.assertRaisesRegex(shutdown.SafeStopError, phrase):
                         shutdown.prove_legacy_paper_quiescence(path)
 
+
+    def test_legacy_shutdown_requires_durable_autopilot_off_in_same_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "paper.sqlite3"
+            self.make_db(path)
+            for mode in ("PAPER_AUTO", "SHADOW", None):
+                with self.subTest(mode=mode):
+                    with sqlite3.connect(path) as db:
+                        db.execute(
+                            "UPDATE robot_autopilot_state SET mode=? "
+                            "WHERE trading_account_id='paper'", (mode,),
+                        )
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "Autopilot OFF unproven",
+                    ):
+                        shutdown.prove_legacy_paper_quiescence(path)
+            with sqlite3.connect(path) as db:
+                db.execute("DELETE FROM robot_autopilot_state")
+            with self.assertRaisesRegex(
+                shutdown.SafeStopError, "Autopilot OFF unproven",
+            ):
+                shutdown.prove_legacy_paper_quiescence(path)
+            with sqlite3.connect(path) as db:
+                db.execute("INSERT INTO robot_autopilot_state VALUES ('paper','OFF')")
+                db.execute("INSERT INTO robot_autopilot_state VALUES ('paper','OFF')")
+            with self.assertRaisesRegex(
+                shutdown.SafeStopError, "Autopilot OFF unproven",
+            ):
+                shutdown.prove_legacy_paper_quiescence(path)
+            with sqlite3.connect(path) as db:
+                db.execute("DELETE FROM robot_autopilot_state")
+                db.execute("INSERT INTO robot_autopilot_state VALUES ('paper','OFF')")
+            shutdown.prove_legacy_paper_quiescence(path)
+            with shutdown.hold_legacy_paper_quiescence(path):
+                pass
+
+    def test_legacy_quiescence_checks_all_paper_categories_and_hedge_indices(self):
+        # Backend protection must not be stopped based only on linear/idx0:
+        # a hedge leg or a non-linear PAPER projection remains exposure.
+        cases = (
+            ("linear", 1, "Long", "1"),
+            ("linear", 2, "Short", "3"),
+            ("inverse", 0, "Long", "2"),
+            ("linear", 1, "Flat", "1"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for i, (category, idx, side, qty) in enumerate(cases):
+                with self.subTest(category=category, idx=idx, side=side):
+                    path = Path(directory) / f"projection-{i}.sqlite3"
+                    self.make_db(path)
+                    with sqlite3.connect(path) as db:
+                        db.execute(
+                            "INSERT INTO position_projections VALUES "
+                            "('paper',?,?,?, ?, ?,'synced')",
+                            (category, "HEDGEUSDT", idx, side, qty),
+                        )
+                    with self.assertRaises(shutdown.SafeStopError):
+                        shutdown.prove_legacy_paper_quiescence(path)
+                    with self.assertRaises(shutdown.SafeStopError):
+                        with shutdown.hold_legacy_paper_quiescence(path):
+                            pass
+            # Unrelated account remains outside the PAPER gate.
+            path = Path(directory) / "other.sqlite3"
+            self.make_db(path)
+            with sqlite3.connect(path) as db:
+                db.execute(
+                    "INSERT INTO position_projections VALUES "
+                    "('other','linear','OTHERUSDT',1,'Long','1','synced')"
+                )
+            shutdown.prove_legacy_paper_quiescence(path)
+
+    def test_legacy_quiescence_requires_position_sync_for_every_paper_projection(self):
+        for status in (None, "", "stale", "unknown", "pending"):
+            with self.subTest(sync_state=status):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "paper.sqlite3"
+                    self.make_db(path)
+                    with sqlite3.connect(path) as db:
+                        db.execute(
+                            "INSERT INTO position_projections VALUES "
+                            "('paper','linear','BUSDT',0,'Flat','0',?)",
+                            (status,),
+                        )
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "inconsistent position projection",
+                    ):
+                        shutdown.prove_legacy_paper_quiescence(path)
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "inconsistent position projection",
+                    ):
+                        with shutdown.hold_legacy_paper_quiescence(path):
+                            pass
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "paper.sqlite3"
+            self.make_db(path)
+            with sqlite3.connect(path) as db:
+                db.execute(
+                    "INSERT INTO position_projections VALUES "
+                    "('paper','linear','BUSDT',0,'Flat','0','synchronized')"
+                )
+            shutdown.prove_legacy_paper_quiescence(path)
+
+    def test_legacy_quiescence_rejects_inconsistent_paper_position_shapes(self):
+        # Contradictory projection economics must be rejected before even
+        # considering a protected non-Robot position for shutdown.
+        cases = (
+            ("Flat", "1"),
+            ("Long", "0"),
+            ("Short", "0"),
+            ("UNKNOWN", "1"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for i, (side, qty) in enumerate(cases):
+                with self.subTest(side=side, qty=qty):
+                    path = Path(directory) / f"position-{i}.sqlite3"
+                    self.make_db(path)
+                    with sqlite3.connect(path) as db:
+                        db.execute(
+                            "INSERT INTO position_projections VALUES "
+                            "('paper','linear','MANUALUSDT',0,?,?,'synced')",
+                            (side, qty),
+                        )
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "inconsistent position projection",
+                    ):
+                        shutdown.prove_legacy_paper_quiescence(path)
+                    with self.assertRaisesRegex(
+                        shutdown.SafeStopError, "inconsistent position projection",
+                    ):
+                        with shutdown.hold_legacy_paper_quiescence(path):
+                            pass
+
+    def test_legacy_quiescence_rejects_unknown_and_inflight_ledgers(self):
+        # Legacy exact-process fallback must not accept work the canonical
+        # PAPER owner would reject. All fixtures are isolated from live DB.
+        cases = (
+            ("INSERT INTO robot_candidates VALUES ('paper','RISKUSDT','UNEXPECTED')",
+             "unknown Robot candidate status"),
+            ("INSERT INTO robot_candidates VALUES ('paper','RISKUSDT',NULL)",
+             "unknown Robot candidate status"),
+            ("INSERT INTO paper_limit_orders VALUES ('paper','RISKUSDT','unknown')",
+             "working PAPER limits"),
+            ("INSERT INTO paper_limit_orders VALUES ('paper','RISKUSDT',NULL)",
+             "working PAPER limits"),
+            ("INSERT INTO trading_commands VALUES ('paper','dispatching')",
+             "unfinished PAPER commands"),
+            ("INSERT INTO trading_commands VALUES ('paper',NULL)",
+             "unfinished PAPER commands"),
+            ("INSERT INTO paper_protection_obligations VALUES ('paper',NULL)",
+             "unresolved protection obligations"),
+            ("INSERT INTO reconciliation_checkpoints VALUES ('paper',NULL)",
+             "unfinished reconciliation checkpoints"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for i, (mutation, reason) in enumerate(cases):
+                with self.subTest(mutation=mutation):
+                    path = Path(directory) / f"blocked-{i}.sqlite3"
+                    self.make_db(path)
+                    with sqlite3.connect(path) as db:
+                        db.execute(mutation)
+                    with self.assertRaisesRegex(shutdown.SafeStopError, reason):
+                        shutdown.prove_legacy_paper_quiescence(path)
+
+    def test_legacy_quiescence_ignores_other_account_and_terminal_ledgers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "terminal.sqlite3"
+            self.make_db(path)
+            with sqlite3.connect(path) as db:
+                db.executescript("""
+                    INSERT INTO paper_limit_orders VALUES ('paper','DONEUSDT','filled');
+                    INSERT INTO paper_protection_obligations VALUES ('paper','RESOLVED');
+                    INSERT INTO trading_commands VALUES ('paper','filled');
+                    INSERT INTO reconciliation_checkpoints VALUES ('paper',1234);
+                    INSERT INTO trading_commands VALUES ('another','dispatching');
+                    INSERT INTO paper_limit_orders VALUES ('another','OTHERUSDT','unknown');
+                """)
+            shutdown.prove_legacy_paper_quiescence(path)
 
     def test_final_guard_blocks_competing_writes_without_editing_database(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1061,11 +2287,12 @@ class OwnershipTests(unittest.TestCase):
                 runtime.shutdown_replies["telegram"] = (status, None)
                 result = runtime.orchestrator().run("all")
                 self.assertFalse(result.ok)
-                self.assertIn("nothing was terminated", result.message)
+                self.assertIn("that legacy process was not terminated", result.message)
                 self.assertNotIn("close its window", result.message)
                 self.assertFalse(any(c.startswith("terminate") for c in runtime.calls))
-                self.assertNotIn("backend:shutdown", runtime.calls)
-                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+                self.assertEqual(runtime.calls.count("backend:shutdown"), 1)
+                self.assertFalse(runtime.backend_alive)
+                self.assertTrue(runtime.telegram_alive)
 
     def test_refused_backend_shutdown_is_not_retried(self):
         runtime = FakeRuntime(robot=STOPPED)
@@ -1073,6 +2300,8 @@ class OwnershipTests(unittest.TestCase):
         result = runtime.orchestrator().run("all")
         self.assertFalse(result.ok)
         self.assertEqual(runtime.calls.count("backend:shutdown"), 1)
+        self.assertNotIn("telegram:shutdown", runtime.calls)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
     def test_waits_boundedly_for_health_to_disappear(self):
         runtime = FakeRuntime(robot=STOPPED)
@@ -1090,7 +2319,67 @@ class OwnershipTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("did not exit", result.message)
         self.assertGreaterEqual(runtime.now, shutdown.EXIT_WAIT_S)
-        self.assertNotIn("backend:shutdown", runtime.calls)
+        self.assertEqual(runtime.calls.count("backend:shutdown"), 1)
+        self.assertFalse(runtime.backend_alive)
+        self.assertTrue(runtime.telegram_alive)
+
+    def test_unreachable_health_with_live_listener_cannot_confirm_shutdown(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        original_post = runtime.post
+        original_get = runtime.get
+
+        def post(url, payload, timeout):
+            reply = original_post(url, payload, timeout)
+            if url == TELEGRAM + "/shutdown":
+                runtime.telegram_alive = True  # shutdown ACK but listener remains
+            return reply
+
+        def get(url, timeout):
+            if url == TELEGRAM + "/health" and "telegram:shutdown" in runtime.calls:
+                raise shutdown.Unreachable("health request timed out")
+            return original_get(url, timeout)
+
+        runtime.post = post
+        runtime.get = get
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertFalse(result.runtime_stopped)
+        self.assertIn("did not exit", result.message)
+        self.assertEqual(runtime.calls.count("telegram:shutdown"), 1)
+        self.assertEqual(runtime.calls.count("backend:shutdown"), 1)
+        self.assertGreaterEqual(runtime.now, shutdown.EXIT_WAIT_S)
+        self.assertTrue(runtime.telegram_alive)
+
+    def test_unreachable_health_confirms_shutdown_only_after_listener_exits(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        original_post = runtime.post
+        original_get = runtime.get
+        original_sleep = runtime.sleep
+
+        def post(url, payload, timeout):
+            reply = original_post(url, payload, timeout)
+            if url == TELEGRAM + "/shutdown":
+                runtime.telegram_alive = True
+            return reply
+
+        def get(url, timeout):
+            if url == TELEGRAM + "/health" and "telegram:shutdown" in runtime.calls:
+                raise shutdown.Unreachable("transient health timeout")
+            return original_get(url, timeout)
+
+        def sleep(seconds):
+            original_sleep(seconds)
+            if runtime.now >= shutdown.POLL_INTERVAL_S * 2:
+                runtime.telegram_alive = False
+
+        runtime.post = post
+        runtime.get = get
+        runtime.sleep = sleep
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertGreaterEqual(runtime.now, shutdown.POLL_INTERVAL_S * 2)
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
 
     def test_no_broad_process_kill_exists(self):
         source = Path(shutdown.__file__).read_text(encoding="utf-8").lower()
@@ -1106,6 +2395,7 @@ class OwnershipTests(unittest.TestCase):
     def test_exact_pid_termination_uses_one_pid_per_call_without_tree_or_name(self):
         # The exact-PID taskkill fallback is Windows-only (refusal off Windows: test_stop_robot_linux).
         with mock.patch.object(legacy.os, "name", "nt"), mock.patch.object(legacy.subprocess, "run") as run:
+            run.return_value.returncode = 0
             legacy.terminate_exact_pids((4321, 1234))
         self.assertEqual(
             [c.args[0] for c in run.call_args_list],
@@ -1113,6 +2403,67 @@ class OwnershipTests(unittest.TestCase):
         )
         for c in run.call_args_list:
             self.assertNotIn("shell", c.kwargs)
+
+
+    def test_unconfirmed_exact_pid_termination_fails_closed_without_next_kill(self):
+        with mock.patch.object(legacy.os, "name", "nt"), mock.patch.object(
+            legacy.subprocess, "run", return_value=SimpleNamespace(returncode=1),
+        ) as run:
+            with self.assertRaisesRegex(
+                LegacyOwnerUnproven, "exact legacy PID 4321 termination was not confirmed",
+            ):
+                legacy.terminate_exact_pids((4321, 1234))
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "4321", "/F"])
+
+
+class BootstrapSinglePaperOwnerTests(unittest.TestCase):
+    def test_unreachable_backend_with_live_listener_never_spawns(self):
+        from tools.runtime_intent import RuntimeIntentBootstrap, Unreachable
+        spawned = []
+        def unreachable(url, timeout):
+            raise Unreachable("owner queue delayed health")
+        bootstrap = RuntimeIntentBootstrap(
+            root=ROOT, env={}, get=unreachable, require_telegram=False,
+            spawn=lambda *args: spawned.append(args),
+        )
+        with mock.patch.object(legacy, "probe_listener_pids", return_value=(0,)):
+            result = bootstrap.execute("ALL")
+        self.assertFalse(result.ok)
+        self.assertIn("listener is alive", result.message)
+        self.assertEqual(spawned, [])
+
+    def test_unreadable_backend_listener_state_never_spawns(self):
+        from tools.runtime_intent import RuntimeIntentBootstrap, Unreachable
+        spawned = []
+        bootstrap = RuntimeIntentBootstrap(
+            root=ROOT, env={},
+            get=lambda url, timeout: (_ for _ in ()).throw(Unreachable("timeout")),
+            require_telegram=False, spawn=lambda *args: spawned.append(args),
+        )
+        with mock.patch.object(
+            legacy, "probe_listener_pids",
+            side_effect=LegacyOwnerUnproven("no socket table"),
+        ):
+            result = bootstrap.execute("ALL")
+        self.assertFalse(result.ok)
+        self.assertIn("listener state cannot be proven", result.message)
+        self.assertEqual(spawned, [])
+
+    def test_unreachable_backend_without_listener_allows_existing_bootstrap(self):
+        from tools.runtime_intent import RuntimeIntentBootstrap, Unreachable
+        spawned = []
+        bootstrap = RuntimeIntentBootstrap(
+            root=ROOT, env={},
+            get=lambda url, timeout: (_ for _ in ()).throw(Unreachable("refused")),
+            require_telegram=False, spawn=lambda *args: spawned.append(args),
+            monotonic=iter([0.0, 61.0]).__next__,
+        )
+        with mock.patch.object(legacy, "probe_listener_pids", return_value=()):
+            result = bootstrap.execute("ALL")
+        self.assertFalse(result.ok)
+        self.assertIn("did not prove READY", result.message)
+        self.assertEqual(len(spawned), 1)
 
 
 def _p(pid, ppid, name, command_line, executable="", created=None):
@@ -1260,7 +2611,7 @@ class LegacyOwnershipProofTests(unittest.TestCase):
 
 
 class LegacyFallbackOrchestrationTests(unittest.TestCase):
-    def test_legacy_telegram_then_backend_exact_chains_are_terminated_in_order(self):
+    def test_legacy_backend_then_telegram_exact_chains_are_terminated_in_order(self):
         for telegram_status, backend_status in ((501, 404), (501, 501)):
             with self.subTest(telegram=telegram_status, backend=backend_status):
                 runtime = FakeRuntime(robot=READY)
@@ -1271,10 +2622,10 @@ class LegacyFallbackOrchestrationTests(unittest.TestCase):
                 self.assertTrue(result.ok, result.message)
                 self.assertEqual(runtime.calls, [
                     "scanner:stop", "robot:stop",
-                    "telegram:shutdown", "resolve:telegram:127.0.0.1:8766", "terminate:[30, 20, 10]",
                     "backend:shutdown", "resolve:backend:127.0.0.1:8765", "terminate:[130, 120, 110, 105]",
+                    "telegram:shutdown", "resolve:telegram:127.0.0.1:8766", "terminate:[30, 20, 10]",
                 ])
-                self.assertEqual(result.steps[-2:], ("telegram:legacy-terminate", "backend:legacy-terminate"))
+                self.assertEqual(result.steps[-2:], ("backend:legacy-terminate", "telegram:legacy-terminate"))
                 self.assertFalse(runtime.telegram_alive or runtime.backend_alive)
 
     def test_legacy_telegram_with_graceful_backend(self):
@@ -1283,7 +2634,8 @@ class LegacyFallbackOrchestrationTests(unittest.TestCase):
         runtime.legacy_chains = {"telegram": (30, 20, 10)}
         result = runtime.orchestrator().run("all")
         self.assertTrue(result.ok, result.message)
-        self.assertEqual(runtime.calls[-2:], ["terminate:[30, 20, 10]", "backend:shutdown"])
+        self.assertEqual(runtime.calls[-2:], ["resolve:telegram:127.0.0.1:8766", "terminate:[30, 20, 10]"])
+        self.assertIn("backend:shutdown", runtime.calls)
 
     def test_non_legacy_refusals_never_reach_the_fallback(self):
         for reply in ((409, {"ok": False, "error": "database_identity_mismatch"}),
@@ -1305,7 +2657,8 @@ class LegacyFallbackOrchestrationTests(unittest.TestCase):
                 result = runtime.orchestrator().run("all")
                 self.assertFalse(result.ok)
                 self.assertFalse(any(c.startswith(("resolve", "terminate")) for c in runtime.calls))
-                self.assertTrue(runtime.telegram_alive and runtime.backend_alive)
+                self.assertTrue(runtime.telegram_alive)
+                self.assertFalse(runtime.backend_alive)
 
     def test_identity_mismatch_never_reaches_resolver_or_terminator(self):
         for target in ("backend", "telegram"):
@@ -1324,7 +2677,7 @@ class LegacyFallbackOrchestrationTests(unittest.TestCase):
         result = runtime.orchestrator().run("all")
         self.assertTrue(result.ok)
         self.assertFalse(any(c.startswith(("resolve", "terminate")) for c in runtime.calls))
-        self.assertEqual(result.steps[-2:], ("telegram:shutdown", "backend:shutdown"))
+        self.assertEqual(result.steps[-2:], ("backend:shutdown", "telegram:shutdown"))
 
     def test_legacy_process_that_survives_termination_is_reported(self):
         runtime = FakeRuntime(robot=STOPPED)
@@ -1334,16 +2687,18 @@ class LegacyFallbackOrchestrationTests(unittest.TestCase):
         result = runtime.orchestrator().run("all")
         self.assertFalse(result.ok)
         self.assertIn("did not exit", result.message)
-        self.assertNotIn("backend:shutdown", runtime.calls)
+        self.assertEqual(runtime.calls.count("backend:shutdown"), 1)
+        self.assertFalse(runtime.backend_alive)
+        self.assertTrue(runtime.telegram_alive)
 
 
 class ScannerScopeTests(unittest.TestCase):
-    def test_scanner_stop_with_stopped_robot_shuts_telegram_then_backend(self):
+    def test_scanner_stop_with_stopped_robot_shuts_backend_then_telegram(self):
         runtime = FakeRuntime(robot=STOPPED)
         result = runtime.orchestrator().run("scanner")
         self.assertTrue(result.ok)
         self.assertTrue(result.runtime_stopped)
-        self.assertEqual(runtime.calls, ["scanner:stop", "telegram:shutdown", "backend:shutdown"])
+        self.assertEqual(runtime.calls, ["scanner:stop", "backend:shutdown", "telegram:shutdown"])
 
     def test_scanner_stop_keeps_runtime_for_a_live_robot_and_never_stops_it(self):
         for robot in (READY, PAUSED, RECON):
@@ -1384,6 +2739,39 @@ class HandoffAndCliTests(unittest.TestCase):
             self.assertIs(kwargs[stream], subprocess.DEVNULL)
         with self.assertRaises(ValueError):
             shutdown.launch_detached("robot", root=ROOT)
+
+    def test_one_opt_in_cli_routes_through_existing_all_shutdown(self):
+        flag = "--dual-orphan-handoff-20261103"
+        self.assertEqual(shutdown.main(["scanner", flag]), 64)
+        blocked = shutdown.ShutdownResult("all", False, "STOP BLOCKED: no runtime proof")
+        with (
+            mock.patch.object(shutdown, "_environment", return_value={}),
+            mock.patch.object(shutdown, "RuntimeShutdown") as runtime,
+            mock.patch(
+                "tools.flat_paper_recovery_transition._service_pid",
+                return_value=7654,
+            ),
+            mock.patch(
+                "tools.flat_paper_recovery_transition.execute_flat_handoff",
+                return_value="PRECHECK_ONLY: no signal",
+            ) as transition,
+        ):
+            runtime.return_value.run.return_value = blocked
+            self.assertEqual(shutdown.main(["all", flag]), 1)
+            runtime.return_value.run.assert_called_once_with("all")
+            callback = runtime.call_args.kwargs["dual_orphan_handoff"]
+            self.assertTrue(callable(callback))
+            callback()
+            kwargs = transition.call_args.kwargs
+            self.assertEqual(kwargs["expected_pid"], 7654)
+            self.assertTrue(kwargs["execute"])
+            self.assertTrue(kwargs["dual_orphan_incident_20261103"])
+            self.assertEqual(kwargs["expected_build_sha"],
+                             "f100ef369a1105443332b5729b558464c27be48f")
+        with mock.patch.object(shutdown, "RuntimeShutdown") as ordinary:
+            ordinary.return_value.run.return_value = blocked
+            self.assertEqual(shutdown.main([]), 1)
+            self.assertIsNone(ordinary.call_args.kwargs["dual_orphan_handoff"])
 
     def test_main_defaults_to_full_scope_and_notifies_result(self):
         result = shutdown.ShutdownResult("all", True, "Runtime STOPPED.", runtime_stopped=True)

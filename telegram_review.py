@@ -7,6 +7,7 @@ import time
 
 import requests
 
+import telegram_gateway_client
 import config
 import telegram_bot
 import telegram_runtime_intent
@@ -17,6 +18,7 @@ from robot_telegram_feed import (
     build_paper_close_all_confirmation_keyboard,
     build_robot_control_keyboard,
     format_robot_status_text,
+    robot_control_status_note,
     parse_robot_control_callback,
 )
 from terminal.application.robot_admission import (
@@ -33,7 +35,7 @@ from terminal.application.robot_control import (
 from tools import stop_robot_runtime
 
 
-PROJECT_ROOT = Path(r"C:\BybitScanner")
+PROJECT_ROOT = Path(__file__).resolve().parent
 REVIEW_QUEUE = PROJECT_ROOT / "review_queue"
 OFFSET_FILE = REVIEW_QUEUE / ".telegram_offset"
 
@@ -98,40 +100,36 @@ def _save_offset(offset):
     )
 
 
-def _telegram_request(
-    method,
-    **params
-):
+def _telegram_request(method, **params):
+    # On VPS the Telegram API is not directly reachable. Route callback
+    # acknowledgement through the same authorized Gateway as the worker.
+    # A configured Gateway must never silently fall back to SOCKS/direct
+    # Telegram on error (which would hide transport failures).
+    if method == "answerCallbackQuery" and telegram_gateway_client.configured():
+        return telegram_gateway_client.bot_method(method, **params)
     url = (
         "https://api.telegram.org/"
         f"bot{config.TELEGRAM_TOKEN}/"
         f"{method}"
     )
-
-    response = requests.get(
-        url,
-        params=params,
-        timeout=40
-    )
-
+    response = requests.get(url, params=params, timeout=40)
     return response.json()
 
 
-def _answer_callback(
-    callback_id,
-    text
-):
+def _answer_callback(callback_id, text):
     try:
-        _telegram_request(
+        result = _telegram_request(
             "answerCallbackQuery",
             callback_query_id=callback_id,
-            text=text
+            text=text,
         )
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            raise RuntimeError("Telegram callback acknowledgement not accepted")
+        print("[TELEGRAM CALLBACK ACK] status=accepted", flush=True)
+        return True
     except Exception as exc:
-        print(
-            "[REVIEW] answer callback error:",
-            exc
-        )
+        print("[PAPER CALLBACK ACK] status=failed reason=" + type(exc).__name__, flush=True)
+        return False
 
 
 def _download_telegram_photo(
@@ -195,6 +193,10 @@ def _parse_workspace_callback(data):
     """Only a verified owner callback may request local UI opening."""
     import re
     parts = str(data).split(":")
+    if len(parts) == 4 and parts[:2] == ["workspace", "EDITOR"] and parts[2] in ("S", "M"):
+        return ({"kind": "workspace", "mode": "EDITOR", "source_token": parts[3],
+                 "source_kind": parts[2]}
+                if re.fullmatch(r"[0-9a-f]{24}", parts[3]) else None)
     if len(parts) != 4 or parts[0] != "workspace":
         return None
     _, mode, symbol, timeframe = parts
@@ -208,15 +210,56 @@ def _parse_workspace_callback(data):
 
 
 def _run_workspace_callback(callback_query, parsed):
-    """Queue-only boundary: no shell execution or robot startup in listener."""
+    """Owner-only view handoff: Windows local launcher OR verified VPS HTTPS link."""
+    import os
+    callback_id = callback_query.get("id")
+    if parsed.get("source_token"):
+        from signal_archive import load_frozen_signal_geometry
+        import re
+        source_prefix = "mirror-origin:" if parsed.get("source_kind") == "M" else "source-original:"
+        source_id = source_prefix + parsed["source_token"]
+        source = load_frozen_signal_geometry(source_id)
+        timeframe = {
+            "1": "1m", "5": "5m", "15": "15m", "60": "1h", "D": "1d",
+            "15s": "15s", "1m": "1m", "5m": "5m", "15m": "15m",
+            "1h": "1h", "1d": "1d",
+        }.get(str((source or {}).get("timeframe")))
+        symbol = (source or {}).get("symbol")
+        if (not isinstance(symbol, str)
+                or not re.fullmatch(r"[A-Z0-9]{2,32}USDT", symbol)
+                or timeframe is None
+                or (source or {}).get("signal_id") != source_id):
+            _answer_callback(callback_id, "Исходная геометрия сигнала недоступна")
+            return
+        parsed = {"kind": "workspace", "mode": "EDITOR", "symbol": symbol,
+                  "timeframe": timeframe, "signal_id": source_id}
+    context = {"signal_id": parsed["signal_id"]} if parsed.get("signal_id") else {}
+    if os.name != "nt":
+        from workspace_telegram_handoff import (
+            WorkspaceHandoffUnavailable, deliver_workspace_link,
+        )
+        chat_id = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
+        try:
+            deliver_workspace_link(
+                str(chat_id), mode=parsed["mode"],
+                symbol=parsed["symbol"], timeframe=parsed["timeframe"],
+                **context,
+            )
+        except WorkspaceHandoffUnavailable as exc:
+            print("[WORKSPACE HANDOFF BLOCKED]", type(exc).__name__)
+            _answer_callback(callback_id, "Редактор: защищённое HTTPS-соединение недоступно")
+            return
+        _answer_callback(callback_id, "Ссылка на редактор/терминал отправлена в чат")
+        return
     from workspace_owner_launcher import request_owner_workspace_open
     try:
-        request_owner_workspace_open(parsed["mode"], parsed["symbol"], parsed["timeframe"])
+        request_owner_workspace_open(
+            parsed["mode"], parsed["symbol"], parsed["timeframe"], **context)
     except Exception as exc:
         print("[WORKSPACE OPEN FAILED]", type(exc).__name__)
-        _answer_callback(callback_query.get("id"), "Редактор/Терминал недоступен на ПК")
+        _answer_callback(callback_id, "Редактор/Терминал недоступен на ПК")
         return
-    _answer_callback(callback_query.get("id"), "Команда открытия передана на ПК")
+    _answer_callback(callback_id, "Команда открытия передана на ПК")
 
 
 def _parse_robot_callback(data):
@@ -388,6 +431,13 @@ def _post_robot_backend_command(url, payload, *, command):
     """Shared Telegram transport: preserve each Robot command's wire contract."""
     response = requests.post(url, json=payload, timeout=15)
     body = response.json()
+    if command == "paper_close_all":
+        # Do not log payload, callback id, token, position data or PnL.
+        print(
+            f"[PAPER CLOSE ALL HTTP] status={response.status_code} "
+            f"accepted={response.status_code == 200 and isinstance(body, dict) and body.get('ok') is True}",
+            flush=True,
+        )
     if response.status_code != 200 or not body.get("ok", False):
         raise RobotControlRejected(f"PAPER backend rejected {command}: {body}")
     return body
@@ -499,6 +549,11 @@ def _paper_close_all_report_messages(result):
 
 
 def _confirm_paper_close_all(callback_query):
+    # Correlate this callback with the monitor's update number, never the
+    # raw Telegram user/chat/callback identifiers.
+    update_id = callback_query.get("_paper_monitor_update_id")
+    if isinstance(update_id, int) and update_id >= 0:
+        print(f"[PAPER CLOSE ALL CALLBACK] update_id={update_id} phase=received", flush=True)
     try:
         action_id = _paper_close_all_callback_action_id(callback_query)
         result = _post_paper_close_all({"client_action_id": action_id})
@@ -600,8 +655,10 @@ def _run_robot_control_command(
     # AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.2 Rationale and
     # CR-ROBOT-CONTROL-001's approved_scope for the one-tap confirmation.
     if command == "paper_close_all":
-        _request_paper_close_all_confirmation(callback_query)
-        return None
+        # Owner-only private-chat authorization is enforced by the callback
+        # dispatcher. The explicitly labelled emergency PAPER button is a
+        # direct one-tap close, never a Robot admission command.
+        return _confirm_paper_close_all(callback_query)
     if command == "paper_close_all_confirm":
         return _confirm_paper_close_all(callback_query)
     if command == "paper_close_all_cancel":
@@ -756,7 +813,8 @@ def _send_robot_status_panel(
         telegram_bot.send_message(
             config.TELEGRAM_TOKEN,
             chat_id,
-            f"{prefix}\n\nСтатус робота: {format_robot_status_text(mode, recovery_status)}",
+            f"{prefix}\n\nСтатус робота: {format_robot_status_text(mode, recovery_status)}"
+            f"{robot_control_status_note(mode, recovery_status)}",
             reply_markup=build_robot_control_keyboard(mode, recovery_status),
         )
     except Exception as exc:

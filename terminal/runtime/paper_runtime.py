@@ -70,7 +70,9 @@ from terminal.application.live_account_reconciliation import (
     LiveAccountReconciliationError,
 )
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
-from terminal.application.robot_manual_close_proof import prove_robot_manual_close
+from terminal.application.robot_manual_close_proof import (
+    manual_close_intent_links, prove_robot_manual_close,
+)
 from terminal.application.paper_close_all_report import (
     paper_close_all_market_link, unproven, verified_manual_close,
     verified_robot_close,
@@ -90,6 +92,7 @@ from terminal.application.robot_recovery import (
     RobotRecoveryCoordinator,
 )
 from robot_flat_closure import CandidateOwnership, prove_flat_closure
+from terminal.application.robot_nonrobot_close_proof import prove_nonrobot_robot_close
 from robot_failure_diagnostics import record_robot_incident
 import pattern_freshness
 from scanner_geometry_cursor import (
@@ -488,8 +491,10 @@ class ScannerControlRuntime:
                     break
                 if not self._start_requested.is_set():
                     continue
-                self._start_requested.clear()
+                # Publish in-flight ownership before consuming START:
+                # no observer may see both flags clear in the handoff gap.
                 self._start_inflight.set()
+                self._start_requested.clear()
                 failure_reason = None
                 try:
                     # One owner START retains RUNNING across successful passes.
@@ -640,6 +645,18 @@ class ScannerControlRuntime:
                 return True
             self._stop.wait(0.2)
         return False
+
+    def worker_quiescent(self) -> bool:
+        """True only once the Scanner worker has reaped its current pass.
+
+        A durable SCANNER_STOPPED row can precede child-supervisor teardown.
+        The proof is a non-blocking Event read: never wait for the worker on
+        the serialized PAPER owner thread (the child may need that owner).
+        """
+        return (
+            not self._start_inflight.is_set()
+            and not self._start_requested.is_set()
+        )
 
     def status(self) -> ScannerRuntimeStateRecord:
         store = self._store()
@@ -1173,12 +1190,24 @@ class PaperRuntime:
         self._observe_autopilot_with_prepared_evidence(SOURCE_SCANNER, candidate_id)
 
     def _observe_autopilot_with_prepared_evidence(self, source: str, candidate_ref: str) -> None:
-        """A8: closed-candle evidence is fetched here, off the owner, then observed.
+        """Keep blocked PAPER_AUTO callbacks off the serialized protection owner.
 
-        Runs on the Scanner/handler thread. The owner only reads the prepared
-        result; a failed preparation leaves no evidence, so the freshness proof
-        is unknown and the Autopilot WAITs. It never reaches the Scanner pass.
+        SHADOW still evaluates and commits on its read-only deferred path.
+        PAPER_AUTO starts expensive candle/mark preparation only after its
+        off-owner protection-load gate has proved there is room for entry work.
+        A saturated ingress is already a trading WAIT, not a reason to queue
+        heavyweight discretionary work ahead of STOP/TAKE. Scanner retains
+        the source candidate; no order or audit ALLOW is fabricated here.
         """
+        # No owner round trip is needed for the SHADOW->PAPER_AUTO handover
+        # decision. This also avoids fetching candles for SHADOW/OFF.
+        if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
+            return
+        if self._shadow_protection_health() is False:
+            # Proven unhealthy or overloaded: suppress this optional arrival
+            # rather than spend the owner's next slot on an impossible entry.
+            # No new entry is admitted, and no protection event is discarded.
+            return
         try:
             self._prepare_autopilot_evidence(source, candidate_ref)
         except Exception as error:
@@ -1187,13 +1216,8 @@ class PaperRuntime:
                 f"source={source} candidate_ref={candidate_ref} "
                 f"error_class={type(error).__name__}"
             )
-        # Fetch exchange mark prices on the Scanner/handler thread, never under
-        # the owner's serialized admission transaction. Capture immutable marks
-        # for this one decision; late arrivals remain fail-closed by age.
-        # SHADOW: evaluated here, off the owner; only a bounded commit reaches the owner.
-        # No ticker REST request unless a real PAPER_AUTO handover is due.
-        if self._shadow_deferred.observe(source, candidate_ref) != DEFERRED_HANDOVER:
-            return
+        # Marks are prepared off-owner only when PAPER_AUTO can evaluate.
+        # A late state change is rechecked at the canonical owner admission.
         prepared_marks = self._prepare_autopilot_daily_marks()
         try:
             self._dispatch_robot_command(
@@ -1585,6 +1609,9 @@ class PaperRuntime:
     def scanner_status(self) -> ScannerRuntimeStateRecord:
         return self._scanner_control.status()
 
+    def scanner_worker_quiescent(self) -> bool:
+        return self._scanner_control.worker_quiescent()
+
     def robot_admission_ready(self) -> bool:
         """Return durable Robot startup admission; never infer readiness locally."""
         return self._robot_recovery.admission_ready()
@@ -1595,6 +1622,10 @@ class PaperRuntime:
 
     def robot_runtime_state(self):
         return self.store.get_robot_runtime_state(self._paper_account_id)
+
+    def paper_shutdown_blocker(self) -> str | None:
+        # Called on the existing PAPER owner thread, with no external I/O.
+        return self.store.paper_shutdown_blocker(self._paper_account_id)
 
     def robot_start(self):
         return start_robot_in_store(
@@ -1815,14 +1846,53 @@ class PaperRuntime:
         ):
             raise RuntimeError("live_mutations_disabled")
 
+    def _fence_flat_robot_ledger_after_paper_execution(self, symbol: Symbol | str) -> None:
+        """Hold admission if a filled PAPER mutation left Robot trade ownership stale.
+
+        This is a common PAPER execution postcondition, not a Terminal/UI
+        lifecycle hook. It never closes a trade, guesses exit economics or
+        dispatches another order. Reconciliation must prove the exit separately.
+        """
+        normalized = symbol if isinstance(symbol, Symbol) else Symbol(symbol)
+        trade = self.store.get_open_robot_trade_for_symbol(self._paper_account_id, normalized)
+        if trade is None:
+            return
+        position = self.store.get_position_projection(PositionKey(
+            self._paper_account_id, Category.LINEAR, normalized, 0,
+        ))
+        if (
+            position is None or position.side is not PositionSide.FLAT
+            or position.quantity.value != 0
+        ):
+            return
+        state = self.store.get_robot_runtime_state(self._paper_account_id)
+        if state is None or state.mode != ROBOT_RUNNING:
+            return
+        if state.recovery_status in {RECONCILIATION_REQUIRED, RECONCILING}:
+            return
+        self.store.update_robot_runtime_state(
+            self._paper_account_id,
+            mode=ROBOT_RUNNING, recovery_status=RECONCILIATION_REQUIRED,
+            reason=(
+                "FLAT_ROBOT_TRADE_LEDGER_UNRESOLVED "
+                f"symbol={normalized.value} trade_id={trade.trade_id}"
+            ),
+            expected_version=state.version,
+            updated_at_ms=max(int(time.time() * 1000), state.updated_at_ms),
+        )
+
     def market(self, request, *, evidence: NormalizedOrderBook | None = None):
-        """Manual PAPER Market. ``evidence`` is the book the HTTP boundary read
-        off the owner thread; the owner uses the current streamed book first
-        and never the provider's REST fallback."""
+        """Manual PAPER Market; all outcomes use the canonical PAPER owner.
+
+        A confirmed net FLAT with an OPEN Robot trade holds admission, rather
+        than pretending that the Robot trade was finalized by this execution.
+        """
         self.require_paper_mutations()
-        return self.api.market(
+        result = self.api.market(
             request, market_book=self._robot_execution_book(request.symbol, evidence),
         )
+        self._fence_flat_robot_ledger_after_paper_execution(request.symbol)
+        return result
 
     def _robot_market(self, request, *, evidence: NormalizedOrderBook | None = None):
         return self._robot_api.market(
@@ -1879,9 +1949,11 @@ class PaperRuntime:
 
     def full_close(self, request, *, evidence: NormalizedOrderBook | None = None):
         self.require_paper_mutations()
-        return self.api.full_close(
+        result = self.api.full_close(
             request, market_book=self._robot_execution_book(request.symbol, evidence),
         )
+        self._fence_flat_robot_ledger_after_paper_execution(request.symbol)
+        return result
 
     def manual_open_symbols(self) -> tuple[str, ...]:
         """Symbols of open PAPER positions, in close_all's order (cheap owner read)."""
@@ -3031,7 +3103,9 @@ class PaperRuntime:
         if trade is not None:
             obligation = self.store.get_paper_protection_obligation_for_trade(trade.trade_id)
             if obligation is not None and obligation.status != "RESOLVED":
-                return self._dispatch_paper_protection_obligation(obligation, now_ms=received_at_ms)
+                return self._dispatch_paper_protection_obligation(
+                    obligation, now_ms=received_at_ms, recovery_book=book,
+                )
             return self._evaluate_fresh_protection_crossing(
                 trade, book, event_id=event_id, received_at_ms=received_at_ms,
             )
@@ -3044,7 +3118,9 @@ class PaperRuntime:
             self._paper_account_id,
         ):
             if obligation.symbol == normalized:
-                return self._dispatch_paper_protection_obligation(obligation, now_ms=received_at_ms)
+                return self._dispatch_paper_protection_obligation(
+                    obligation, now_ms=received_at_ms, recovery_book=book,
+                )
         return None
 
     def _evaluate_fresh_protection_crossing(
@@ -3105,7 +3181,12 @@ class PaperRuntime:
             observed_ask_price=observed_ask,
             latched_at_ms=received_at_ms,
         )
-        return self._dispatch_paper_protection_obligation(record, now_ms=received_at_ms)
+        # The authoritative crossing event is itself valid execution evidence.
+        # Do not wait for a separate streamed snapshot: it may be missing or
+        # stale while the STOP has already triggered (API3 PAPER incident).
+        return self._dispatch_paper_protection_obligation(
+            record, now_ms=received_at_ms, recovery_book=book,
+        )
 
     def _dispatch_paper_protection_obligation(
         self, obligation: PaperProtectionObligationRecord, *, now_ms: int,
@@ -3142,6 +3223,26 @@ class PaperRuntime:
         dedup_key = ExecutionDedupKey(trade.trading_account_id, Category.LINEAR, obligation.exec_id)
         execution = self.store.get_execution(dedup_key)
         if execution is None:
+            # A latched STOP/TAKE is retryable, but no Box EXIT cancellation or
+            # DISPATCHING transition may precede fresh execution evidence.
+            # Prefer the actual book delivered with this event to a potentially
+            # stale owner-thread snapshot; enforce the executor's same 1000ms
+            # clock/identity checks, with no network read on the owner thread.
+            execution_book = None
+            for candidate_book in (recovery_book, self._streamed_book(trade.symbol)):
+                try:
+                    self._market_executor.validate_book(trade.symbol, candidate_book)
+                except (RuntimeError, ValueError):
+                    continue
+                execution_book = candidate_book
+                break
+            if execution_book is None:
+                LOGGER.warning(
+                    "Robot protection close lacks fresh execution book; preserving "
+                    "obligation and Box EXIT work for retry; obligation=%s symbol=%s",
+                    obligation.obligation_id, trade.symbol.value,
+                )
+                return obligation
             if trade.exit_time_ms is not None:
                 # The lifecycle already ended without our stable exec -- a
                 # manual/replacement close won the race. Never attribute a
@@ -3185,7 +3286,20 @@ class PaperRuntime:
                         slot=0,
                     )
                 except Exception:
-                    return obligation
+                    # EXIT-0 may already be immutably reserved by a manual
+                    # Market close that never reached command persistence.
+                    # Accept only the STOP's own latched durable identity as
+                    # an additional virtual EXIT-0 owner, and only after the
+                    # store proves the old identity was NEVER submitted.
+                    # No ownership row is deleted, overwritten or adopted.
+                    if not self.store.prove_box_latched_stop_successor(
+                        source_id.strip(), obligation.order_id,
+                    ):
+                        LOGGER.exception(
+                            "Robot STOP EXIT-0 ownership cannot be proven; "
+                            "preserving obligation=%s", obligation.obligation_id,
+                        )
+                        return obligation
 
                 # STOP/EMERGENCY_CLOSE wins the lifecycle. No resting Box entry
                 # or paired TAKE may survive and later reverse the flat position.
@@ -3230,21 +3344,6 @@ class PaperRuntime:
                     updated_at_ms=now_ms,
                 )
             close_side = OrderSide.SELL if expected_side is PositionSide.LONG else OrderSide.BUY
-            execution_book = self._streamed_book(trade.symbol)
-            if (
-                execution_book is None
-                and recovery_book is not None
-                and recovery_book.symbol == trade.symbol
-            ):
-                execution_book = recovery_book
-            if execution_book is None:
-                LOGGER.error(
-                    "Robot protection close has no streamed execution book; "
-                    "not dispatching, will resume on the next quote/restart; "
-                    "obligation=%s symbol=%s",
-                    obligation.obligation_id, trade.symbol.value,
-                )
-                return obligation
             try:
                 self._market_executor.execute(
                     trading_account_id=trade.trading_account_id,
@@ -3349,16 +3448,41 @@ class PaperRuntime:
                 / proof.entry_notional
                 * Decimal("100")
             )
-            self.store.close_robot_trade(
-                trade.trade_id,
-                exit_time_ms=proof.last_execution_at_ms,
-                exit_price=proof.average_exit,
-                exit_reason=obligation.winning_leg,
-                realized_pnl_usdt=proof.realized_pnl,
-                realized_pnl_pct=realized_pct,
-                fees_costs_usdt=proof.accumulated_fee,
-                updated_at_ms=now_ms,
-            )
+            # A prior Box monitor may have labelled this already-executed
+            # STOP as TAKE before the obligation finalizer ran. Only the
+            # exact, zero-exposure, matching-economics race may be corrected.
+            if trade.exit_time_ms is not None and trade.exit_reason != obligation.winning_leg:
+                corrected = self.store.correct_box_take_race_from_proven_stop(
+                    trade_id=trade.trade_id,
+                    obligation_id=obligation.obligation_id,
+                    exit_time_ms=proof.last_execution_at_ms,
+                    exit_price=proof.average_exit,
+                    realized_pnl_usdt=proof.realized_pnl,
+                    realized_pnl_pct=realized_pct,
+                    fees_costs_usdt=proof.accumulated_fee,
+                    updated_at_ms=now_ms,
+                )
+                if not corrected:
+                    LOGGER.error(
+                        "Box STOP/TAKE race cannot be proved; reconciliation required: obligation=%s",
+                        obligation.obligation_id,
+                    )
+                    return obligation
+                LOGGER.warning(
+                    "Corrected proven Box STOP/TAKE reason race: obligation=%s trade=%s",
+                    obligation.obligation_id, trade.trade_id,
+                )
+            else:
+                self.store.close_robot_trade(
+                    trade.trade_id,
+                    exit_time_ms=proof.last_execution_at_ms,
+                    exit_price=proof.average_exit,
+                    exit_reason=obligation.winning_leg,
+                    realized_pnl_usdt=proof.realized_pnl,
+                    realized_pnl_pct=realized_pct,
+                    fees_costs_usdt=proof.accumulated_fee,
+                    updated_at_ms=now_ms,
+                )
             self.store.clear_paper_protection_for_flat(position_key)
             if obligation.status == "DISPATCHING":
                 obligation = self.store.transition_paper_protection_obligation(
@@ -3568,10 +3692,22 @@ class PaperRuntime:
     def close_all(
         self, request: CloseAllCommandRequest, *,
         evidence: Mapping[str, NormalizedOrderBook] | None = None,
+        operator_paper_exit: bool = False,
     ) -> CloseAllCommandResponse:
-        self.require_paper_mutations()
+        # Only the explicitly authorized account-wide PAPER emergency exit
+        # bypasses the Workspace-selected account. Opening/manual trading and
+        # ordinary close_all retain their existing active-account gate.
+        # The Robot context is hard-bound to the PAPER trading account;
+        # do not route this operation through any LIVE account/API.
+        if operator_paper_exit:
+            if self._paper_account_id != TradingAccountId("paper"):
+                raise PaperCloseAllRejected("operator_close_paper_account_unavailable")
+        else:
+            self.require_paper_mutations()
         evidence = evidence or {}
-        source_positions = self.store.load_open_position_projections(self._account_id)
+        account_id = self._paper_account_id if operator_paper_exit else self._account_id
+        command_api = self._robot_api if operator_paper_exit else self.api
+        source_positions = self.store.load_open_position_projections(account_id)
         results = []
         for position in source_positions:
             symbol = position.position_key.symbol.value
@@ -3591,7 +3727,7 @@ class PaperRuntime:
             order_link_id = (
                 f"tw_{market_digest}{sum(bytes.fromhex(market_digest)) & 0xF:x}"
             )
-            results.append(self.api.full_close(
+            results.append(command_api.full_close(
                 FullCloseCommandRequest(ClientActionId(f"paper-close-all-{digest}"), symbol),
                 market_book=self._robot_execution_book(symbol, evidence.get(symbol)),
                 identity=CommandIdentityCandidate(
@@ -3643,6 +3779,70 @@ class PaperRuntime:
             reports.append(report)
         return tuple(reports)
 
+    def _cancel_robot_entries_for_account_flatten(self, action_id: str) -> None:
+        """Retire proven Robot ENTRY work, including still-working OPEN Box slots.
+
+        Pending-entry synchronization handles APPROVED candidates only. An OPEN
+        Box can retain unfilled ENTRY slots alongside protected exposure; these
+        must be cancelled before reconciliation or Market flatten, without
+        touching its protective EXIT LIMITs or STOP.
+        """
+        account = self._paper_account_id
+        active_limits = {
+            order.order_id.value: order
+            for order in self.store.load_active_paper_limits_for_account(account)
+        }
+        entries = {
+            order_id: symbol
+            for order_id, (symbol, _epoch) in
+            self.store.load_active_robot_entry_orders(account).items()
+        }
+        for candidate in self.store.load_active_robot_candidate_states(account):
+            if candidate.status not in {"APPROVED", "OPEN"}:
+                continue
+            for order_id in self._robot_linked_entry_limits(candidate.symbol):
+                if order_id not in active_limits:
+                    continue
+                prior_symbol = entries.setdefault(order_id, candidate.symbol)
+                if prior_symbol != candidate.symbol:
+                    raise PaperCloseAllRejected("robot_entry_limit_ownership_conflict")
+
+        for order_id, symbol in sorted(entries.items()):
+            order = self.store.get_paper_limit(order_id, account)
+            if order is None or order.symbol != symbol:
+                raise PaperCloseAllRejected("robot_entry_limit_identity_unproven")
+            if order.status in INACTIVE_LIMIT_STATUSES:
+                continue
+            digest = hashlib.sha256(
+                f"{action_id}\\0robot-entry\\0{order_id}".encode("utf-8")
+            ).hexdigest()[:32]
+            try:
+                result = self._robot_cancel_limit(PaperLimitCancelRequest(
+                    ClientActionId(f"paper-flatten-robot-entry-{digest}"),
+                    symbol.value, order_id,
+                ))
+            except Exception as exc:
+                raise PaperCloseAllRejected("robot_entry_limit_cancel_failed") from exc
+            if result.status is not CommandResultStatus.COMPLETED:
+                raise PaperCloseAllRejected("robot_entry_limit_cancel_unconfirmed")
+            after = self.store.get_paper_limit(order_id, account)
+            if after is None or after.status not in INACTIVE_LIMIT_STATUSES:
+                raise PaperCloseAllRejected("robot_entry_limit_cancel_unconfirmed")
+
+        if self.store.load_active_robot_entry_orders(account):
+            raise PaperCloseAllRejected("robot_entry_limit_remaining_after_cancel")
+        # Legacy entries can be linked by candidate state without a registry
+        # row. Do not silently declare them safe on the second check.
+        remaining = {
+            order.order_id.value
+            for order in self.store.load_active_paper_limits_for_account(account)
+        }
+        for candidate in self.store.load_active_robot_candidate_states(account):
+            if candidate.status in {"APPROVED", "OPEN"} and (
+                remaining.intersection(self._robot_linked_entry_limits(candidate.symbol))
+            ):
+                raise PaperCloseAllRejected("robot_entry_limit_remaining_after_cancel")
+
     def coordinated_paper_close_all(
         self, request: CloseAllCommandRequest, *,
         evidence: Mapping[str, NormalizedOrderBook] | None = None,
@@ -3656,23 +3856,14 @@ class PaperRuntime:
         """
         from terminal.application.robot_trade_ledger import prove_robot_open_trade_ledger
 
-        self.require_paper_mutations()  # Explicit PAPER-only account gate.
+        # Explicit operator command targets the always-PAPER account; it
+        # must not be vetoed by a different Workspace-selected UI account.
+        if self._paper_account_id != TradingAccountId("paper"):
+            raise PaperCloseAllRejected("operator_close_paper_account_unavailable")
         account_id = self._paper_account_id
         runtime = self.store.get_robot_runtime_state(account_id)
         if runtime is None:
             raise PaperCloseAllRejected("robot_runtime_state_unavailable")
-        if runtime.mode == "ROBOT_RUNNING":
-            if runtime.recovery_status == "READY":
-                runtime = self.store.update_robot_runtime_state(
-                    account_id, mode="ROBOT_RUNNING", recovery_status="PAUSED",
-                    reason="paper_close_all", expected_version=runtime.version,
-                    updated_at_ms=max(int(time.time() * 1000), runtime.updated_at_ms),
-                )
-            elif runtime.recovery_status != "PAUSED":
-                raise PaperCloseAllRejected("robot_reconciliation_required")
-        elif (runtime.mode, runtime.recovery_status) != ("ROBOT_STOPPED", "ROBOT_STOPPED"):
-            raise PaperCloseAllRejected("robot_reconciliation_required")
-
         # PAPER_AUTO must not create fresh candidates when flatten is requested.
         autopilot = self.store.get_robot_autopilot_state(account_id)
         if autopilot is None:
@@ -3683,6 +3874,75 @@ class PaperRuntime:
                 expected_version=autopilot.version,
                 updated_at_ms=max(int(time.time() * 1000), autopilot.updated_at_ms),
             )
+
+        # Operator priority: a durable TRIGGERED STOP is already a closing
+        # instruction. Execute it before Robot reconciliation, which can
+        # otherwise deadlock while the obligation itself awaits a fresh book.
+        # Never issue a second competing Market identity: the existing
+        # obligation has the sole durable STOP execution identity.
+        pending_stops = tuple(self.store.load_unresolved_paper_protection_obligations(account_id))
+        if pending_stops:
+            for obligation in pending_stops:
+                if obligation.status not in {"TRIGGERED", "DISPATCHING"}:
+                    raise PaperCloseAllRejected("operator_close_protection_state_unproven")
+                current_book = (evidence or {}).get(obligation.symbol.value)
+                resumed = self._dispatch_paper_protection_obligation(
+                    obligation, now_ms=int(time.time() * 1000),
+                    recovery_book=current_book,
+                )
+                if resumed.status != "RESOLVED":
+                    raise PaperCloseAllRejected("operator_close_triggered_stop_unconfirmed")
+            # An already-triggered STOP may have closed the last open lot.
+            # Return success only after the authoritative account-wide proof.
+            if (
+                not self.store.load_open_position_projections(account_id)
+                and not self.store.load_active_paper_limits_for_account(account_id)
+                and not self.store.load_unresolved_paper_protection_obligations(account_id)
+                and not self.store.load_open_robot_trades(account_id)
+            ):
+                # A resolved STOP and net FLAT are not sufficient if a
+                # candidate can still enter, an ENTRY is in flight, or a
+                # command has not reached its durable terminal state. Do not
+                # bypass the canonical Close-All preflight or dispatch a
+                # competing Market close to "repair" unknown ownership.
+                if (
+                    self.store.load_active_robot_candidate_states(account_id)
+                    or self.store.load_active_robot_entry_orders(account_id)
+                    or any(
+                        item.trading_account_id == account_id
+                        for item in self.store.load_unfinished_commands()
+                    )
+                ):
+                    raise PaperCloseAllRejected(
+                        "operator_close_post_stop_work_unresolved"
+                    )
+                return CloseAllCommandResponse(
+                    request.client_action_id.value, (), (),
+                )
+            runtime = self.store.get_robot_runtime_state(account_id)
+
+        if runtime.mode == "ROBOT_RUNNING":
+            # Explicit owner Close-All is an exit-only PAPER authority, not a
+            # request to resume Robot trading. READY becomes PAUSED; an
+            # existing RECONCILIATION_REQUIRED fence already forbids entries
+            # and must not prevent cancelling entries or closing proven lots.
+            # Robot synchronization, owner/trade proof and Market execution
+            # validation below remain mandatory before any close is accepted.
+            if runtime.recovery_status == "READY":
+                runtime = self.store.update_robot_runtime_state(
+                    account_id, mode="ROBOT_RUNNING", recovery_status="PAUSED",
+                    reason="paper_close_all", expected_version=runtime.version,
+                    updated_at_ms=max(int(time.time() * 1000), runtime.updated_at_ms),
+                )
+            elif runtime.recovery_status not in (
+                "PAUSED", "RECONCILIATION_REQUIRED", "RECONCILING",
+            ):
+                raise PaperCloseAllRejected("robot_recovery_state_unknown")
+        elif runtime.mode != "ROBOT_STOPPED" or runtime.recovery_status not in (
+            "ROBOT_STOPPED", "RECONCILIATION_REQUIRED",
+        ):
+            raise PaperCloseAllRejected("robot_recovery_state_unknown")
+
 
         def fail(reason: str) -> None:
             # The durable PAUSED gate already prevents new Robot entries. If
@@ -3702,6 +3962,12 @@ class PaperRuntime:
             raise PaperCloseAllRejected(reason)
 
         if runtime.mode == "ROBOT_RUNNING":
+            try:
+                self._cancel_robot_entries_for_account_flatten(
+                    request.client_action_id.value,
+                )
+            except Exception:
+                fail("robot_entry_limit_cancel_unconfirmed")
             try:
                 sync = self.robot_synchronize_pending_entries()
             except Exception:
@@ -3731,8 +3997,9 @@ class PaperRuntime:
                 if item.symbol == symbol
             ):
                 fail("robot_owner_unproven")
-        if runtime.mode == "ROBOT_STOPPED" and robot_symbols:
-            raise PaperCloseAllRejected("stopped_robot_has_open_exposure")
+        # A STOPPED Robot has no entry authority, but the owner still retains
+        # PAPER exit authority for positively attested Robot-owned positions.
+        # Do not require Robot start/resume just to close its exposure.
         if self.store.load_unresolved_paper_protection_obligations(account_id):
             fail("robot_protection_obligation_unresolved")
 
@@ -3773,7 +4040,7 @@ class PaperRuntime:
         # ordinary PAPER manual path close the remaining (manual) symbols.
         robot_results: tuple[CommandResult, ...] = ()
         if candidates:
-            robot_close = self.robot_close_all(request)
+            robot_close = self.robot_close_all(request, evidence=evidence)
             robot_results = robot_close.results
             if any(item.status is not CommandResultStatus.COMPLETED for item in robot_results):
                 fail("robot_owned_close_unconfirmed")
@@ -3785,7 +4052,9 @@ class PaperRuntime:
             ):
                 fail("robot_position_close_unconfirmed")
 
-        manual = self.close_all(request, evidence=evidence)
+        manual = self.close_all(
+            request, evidence=evidence, operator_paper_exit=True,
+        )
         combined = robot_results + manual.results
 
         # A Market result alone is not enough: leave pending EXIT limits
@@ -3825,7 +4094,26 @@ class PaperRuntime:
             self._paper_close_all_symbol_reports(request, positions, initial_trades),
         )
 
-    def _robot_close_box_candidate(self, candidate) -> CommandResult:
+    def _fresh_box_close_book(
+        self, symbol: Symbol, evidence: NormalizedOrderBook | None = None,
+    ) -> NormalizedOrderBook | None:
+        """Prefer fresh handler-thread evidence over a stale local stream.
+
+        Validate with the SAME PAPER Market executor/clock before touching
+        protective EXIT LIMITs. Never issue a REST read on the owner thread.
+        """
+        streamed = self._streamed_book(symbol)
+        for book in (evidence, streamed):
+            try:
+                self._market_executor.validate_book(symbol, book)
+            except (RuntimeError, ValueError):
+                continue
+            return book
+        return None
+
+    def _robot_close_box_candidate(
+        self, candidate, *, evidence: NormalizedOrderBook | None = None,
+    ) -> CommandResult:
         """Close one OPEN Box through durable EXIT-slot-0 ownership."""
         trade = self.store.get_open_robot_trade_for_symbol(
             self._paper_account_id, candidate.symbol,
@@ -3842,14 +4130,23 @@ class PaperRuntime:
         if proof.remaining_quantity <= 0:
             raise RuntimeError("OPEN Box has no owned exposure to close")
 
+        # When evidence is missing/stale, keep all protective EXITs and STOP
+        # intact. The old path cancelled EXITs before discovering Market could
+        # not execute; the HTTP handler already supplies off-owner evidence.
+        book = self._fresh_box_close_book(candidate.symbol, evidence)
+        if book is None:
+            return CommandResult(
+                "box-close-book-" + candidate.candidate_id,
+                CommandResultStatus.UNAVAILABLE,
+                "box_close_fresh_book_unavailable",
+                "PAPER Box Market close needs a book within the execution freshness limit",
+                None, True,
+            )
         execution = dict((candidate.robot_state or {}).get("execution") or {})
         raw_intent = execution.get("box_manual_close_intent")
         if isinstance(raw_intent, Mapping):
             plan = restore_box_market_plan(raw_intent)
         else:
-            book = self._robot_execution_book(candidate.symbol.value)
-            if book is None:
-                raise RuntimeError("authoritative Box book is unavailable")
             plan = build_box_manual_close_market_plan(
                 source, book, quantity=proof.remaining_quantity,
             )
@@ -3914,8 +4211,7 @@ class PaperRuntime:
             )
 
         result = self._robot_api.market(
-            plan.request, identity=plan.identity,
-            market_book=self._robot_execution_book(candidate.symbol.value),
+            plan.request, identity=plan.identity, market_book=book,
         )
         if result.status is not CommandResultStatus.COMPLETED:
             return result
@@ -3959,12 +4255,25 @@ class PaperRuntime:
 
     def _robot_prepare_manual_close(
         self, candidate, request: FullCloseCommandRequest,
-        identity: CommandIdentityCandidate,
+        identity: CommandIdentityCandidate, *, chunk_index: int = 0,
     ) -> tuple[FullCloseCommandRequest, CommandIdentityCandidate]:
         """Latch the exact non-Box close identity before any Market dispatch.
 
-        A subsequent confirmation or restart reuses the first durable intent,
-        never a new execution identity while this candidate remains OPEN.
+        CR-ROBOT-CLOSE-ALL-MAX-QTY-001: a position whose confirmed quantity
+        exceeds the instrument's own maximum Market order quantity closes as
+        an ordered sequence of chunks instead of one order. ``chunk_index``
+        selects which chunk this call latches/reuses. Chunk 0 performs the
+        original one-time attestation against the trade's entry, unchanged
+        from before chunking existed. A later chunk only extends the
+        already-attested sequence -- it never re-attests entry_quantity or
+        entry_position_version, since the position has legitimately moved by
+        this same close's own prior chunks, not by anything else.
+
+        A subsequent confirmation or restart reuses each chunk's first
+        durable intent, never a new execution identity for the same chunk
+        while this candidate remains OPEN. A pre-chunking (single-link)
+        intent from an older build is read as an already-latched chunk 0 and
+        extended from there, never re-derived.
         """
         trade = self.store.get_open_robot_trade_for_symbol(
             self._paper_account_id, candidate.symbol,
@@ -3989,21 +4298,67 @@ class PaperRuntime:
                 or intent.get("symbol") != trade.symbol.value
                 or intent.get("entry_quantity") != str(trade.entry_quantity)
                 or intent.get("entry_position_version") != trade.entry_position_version
-                or not isinstance(intent.get("client_action_id"), str)
-                or not isinstance(intent.get("command_id"), str)
-                or not isinstance(intent.get("order_link_id"), str)
             ):
                 raise RuntimeError("durable Robot manual close intent conflicts with trade")
-            return (
-                FullCloseCommandRequest(
-                    ClientActionId(intent["client_action_id"]), trade.symbol.value,
-                ),
-                CommandIdentityCandidate(
-                    CommandId(intent["command_id"]), intent["order_link_id"],
-                ),
+            chunks = intent.get("chunks")
+            if chunks is None:
+                legacy_link = intent.get("order_link_id")
+                if (
+                    not isinstance(intent.get("client_action_id"), str)
+                    or not isinstance(intent.get("command_id"), str)
+                    or not isinstance(legacy_link, str)
+                ):
+                    raise RuntimeError("Robot manual close intent is corrupt")
+                chunks = [{
+                    "client_action_id": intent["client_action_id"],
+                    "command_id": intent["command_id"],
+                    "order_link_id": legacy_link,
+                }]
+            elif not isinstance(chunks, list):
+                raise RuntimeError("Robot manual close intent is corrupt")
+            if chunk_index < len(chunks):
+                existing = chunks[chunk_index]
+                if (
+                    not isinstance(existing, Mapping)
+                    or not isinstance(existing.get("client_action_id"), str)
+                    or not isinstance(existing.get("command_id"), str)
+                    or not isinstance(existing.get("order_link_id"), str)
+                ):
+                    raise RuntimeError("Robot manual close intent is corrupt")
+                return (
+                    FullCloseCommandRequest(
+                        ClientActionId(existing["client_action_id"]), trade.symbol.value,
+                        quantity=request.quantity,
+                    ),
+                    CommandIdentityCandidate(
+                        CommandId(existing["command_id"]), existing["order_link_id"],
+                    ),
+                )
+            if chunk_index != len(chunks):
+                raise RuntimeError("Robot manual close chunk sequence is out of order")
+            execution["robot_close_all_manual_intent"] = {
+                "trade_id": trade.trade_id,
+                "candidate_id": fresh.candidate_id,
+                "symbol": trade.symbol.value,
+                "entry_quantity": str(trade.entry_quantity),
+                "entry_position_version": trade.entry_position_version,
+                "chunks": [*chunks, {
+                    "client_action_id": request.client_action_id.value,
+                    "command_id": identity.command_id.value,
+                    "order_link_id": identity.order_link_id,
+                }],
+            }
+            state["execution"] = execution
+            self.store.save_robot_candidate_state(
+                fresh.candidate_id, status="OPEN", robot_state=state,
+                expected_revision=fresh.state_revision,
+                updated_at_ms=int(time.time() * 1000),
             )
+            return request, identity
         if intent is not None:
             raise RuntimeError("Robot manual close intent is corrupt")
+        if chunk_index != 0:
+            raise RuntimeError("Robot manual close chunk sequence must start at 0")
         position = self.store.get_position_projection(PositionKey(
             self._paper_account_id, Category.LINEAR, trade.symbol, 0,
         ))
@@ -4023,9 +4378,11 @@ class PaperRuntime:
             "symbol": trade.symbol.value,
             "entry_quantity": str(trade.entry_quantity),
             "entry_position_version": trade.entry_position_version,
-            "client_action_id": request.client_action_id.value,
-            "command_id": identity.command_id.value,
-            "order_link_id": identity.order_link_id,
+            "chunks": [{
+                "client_action_id": request.client_action_id.value,
+                "command_id": identity.command_id.value,
+                "order_link_id": identity.order_link_id,
+            }],
         }
         state["execution"] = execution
         self.store.save_robot_candidate_state(
@@ -4035,8 +4392,89 @@ class PaperRuntime:
         )
         return request, identity
 
+    def _robot_finalize_nonrobot_close(self, candidate, trade, position) -> bool:
+        """Resolve an already-filled PAPER close without inventing Robot intent.
+
+        The proof binds exactly one active Robot lot to one durable non-Robot
+        FILLED Market command, its immutable execution, and the final Flat.
+        Never sends an order, revises a fill, or infers closure from Flat alone.
+        """
+        account = self._paper_account_id
+        symbol = trade.symbol
+        active_owners = tuple(
+            item for item in self.store.load_robot_candidates_for_symbol(account, symbol)
+            if item.status in {"APPROVED", "OPEN"}
+        )
+        open_trades = tuple(
+            item for item in self.store.load_open_robot_trades(account)
+            if item.symbol == symbol
+        )
+        unique_open_owner = (
+            len(active_owners) == 1
+            and active_owners[0].candidate_id == candidate.candidate_id
+            and active_owners[0].status == "OPEN"
+            and len(open_trades) == 1
+            and open_trades[0].trade_id == trade.trade_id
+        )
+        has_competing_work = (
+            bool(self.store.load_active_paper_limits(account, symbol))
+            or any(
+                item.symbol == symbol
+                for item in self.store.load_unresolved_paper_protection_obligations(account)
+            )
+            or any(
+                item.symbol == symbol and item.trading_account_id == account
+                for item in self.store.load_unfinished_commands()
+            )
+        )
+        if not unique_open_owner or has_competing_work:
+            return False
+        try:
+            entry_order_ids = robot_entry_order_ids(
+                self.store, account, candidate,
+                (candidate.robot_state or {}).get("execution") or {},
+                entry_path=trade.entry_path,
+            )
+        except RobotBreakoutMonitorError:
+            return False
+        history = self.store.load_executions_for_symbol(account, symbol)
+        if not history:
+            return False
+        last_order_id = history[-1].order_id.value
+        if not last_order_id.startswith("paper-order-tw_"):
+            return False
+        command = self.store.get_paper_command_by_order_link(
+            account, last_order_id[len("paper-order-"):],
+        )
+        proof = prove_nonrobot_robot_close(
+            trade=trade, candidate=candidate, position=position,
+            executions=history, command=command,
+            entry_order_ids=tuple(item.value for item in entry_order_ids),
+            entry_fees=self._robot_entry_fees(trade),
+            unique_open_owner=unique_open_owner,
+            has_competing_work=has_competing_work,
+        )
+        if proof is None:
+            return False
+        self.store.close_robot_trade(
+            trade.trade_id,
+            exit_time_ms=proof.exit_time_ms,
+            exit_price=proof.exit_price, exit_reason="MANUAL",
+            realized_pnl_usdt=proof.realized_pnl_usdt,
+            realized_pnl_pct=proof.realized_pnl_pct,
+            fees_costs_usdt=proof.fees_costs_usdt,
+            updated_at_ms=max(
+                int(time.time() * 1000), proof.exit_time_ms,
+                trade.created_at_ms, candidate.updated_at_ms,
+            ),
+        )
+        self.store.clear_paper_protection_for_flat(PositionKey(
+            account, Category.LINEAR, symbol, 0,
+        ))
+        return True
+
     def _robot_finalize_manual_close(self, candidate) -> bool:
-        """Finalize one MANUAL Robot trade only from its persisted PAPER fill."""
+        """Finalize one MANUAL Robot trade only from its persisted PAPER fill(s)."""
         fresh = self.store.get_robot_candidate(candidate.candidate_id)
         if fresh is None or fresh.status != "OPEN":
             return False
@@ -4044,8 +4482,8 @@ class PaperRuntime:
         intent = execution_state.get("robot_close_all_manual_intent")
         if not isinstance(intent, Mapping):
             return False
-        link = intent.get("order_link_id")
-        if not isinstance(link, str) or not link.startswith("tw_") or len(link) != 36:
+        links = manual_close_intent_links(intent)
+        if links is None:
             return False
         trade = self.store.get_open_robot_trade_for_symbol(
             self._paper_account_id, fresh.symbol,
@@ -4056,14 +4494,20 @@ class PaperRuntime:
             self._paper_account_id, Category.LINEAR, fresh.symbol, 0,
         )
         position = self.store.get_position_projection(position_key)
-        fill = self.store.get_execution(ExecutionDedupKey(
-            self._paper_account_id, Category.LINEAR,
-            ExecutionId("paper-exec-" + link),
-        ))
-        entry_fees = self._robot_entry_fees(trade) if fill is not None else None
+        fills = tuple(
+            self.store.get_execution(ExecutionDedupKey(
+                self._paper_account_id, Category.LINEAR,
+                ExecutionId("paper-exec-" + link),
+            ))
+            for link in links
+        )
+        entry_fees = (
+            self._robot_entry_fees(trade)
+            if all(fill is not None for fill in fills) else None
+        )
         proof = prove_robot_manual_close(
             trade=trade, candidate=fresh, position=position,
-            fill=fill, entry_fees=entry_fees,
+            fills=fills, entry_fees=entry_fees,
         )
         if proof is None:
             return False
@@ -4080,7 +4524,10 @@ class PaperRuntime:
         self.store.clear_paper_protection_for_flat(position_key)
         return True
 
-    def robot_close_all(self, request: CloseAllCommandRequest) -> CloseAllCommandResponse:
+    def robot_close_all(
+        self, request: CloseAllCommandRequest, *,
+        evidence: Mapping[str, NormalizedOrderBook] | None = None,
+    ) -> CloseAllCommandResponse:
         """Market-close exclusively Robot-owned open positions (close_all_now()).
 
         Unlike close_all(), which is account-wide, this filters strictly to
@@ -4220,25 +4667,49 @@ class PaperRuntime:
                         reason, message, None, True,
                     )
                 elif is_box:
-                    result = self._robot_close_box_candidate(candidate)
+                    result = self._robot_close_box_candidate(
+                        candidate, evidence=(evidence or {}).get(symbol),
+                    )
                 else:
                     # The existing PAPER Market engine already guarantees
                     # stable order/exec identity replay. Bind it to the same
                     # operator action + symbol instead of generating a fresh
                     # order on ambiguous HTTP retry.
+                    client_action_id = ClientActionId(f"robot-close-all-{digest}")
+                    # Cap chunk ZERO before latching its durable identity or
+                    # dispatching the first Market order. Otherwise an oversized
+                    # position fails above_maximum_quantity before the chunk loop.
+                    instrument = self._instrument_provider(symbol)
+                    position_key = PositionKey(
+                        self._account_id, Category.LINEAR, candidate.symbol, 0,
+                    )
+                    position = self.store.get_position_projection(position_key)
+                    if position is None or position.quantity.value <= 0:
+                        raise RuntimeError("Robot close quantity cannot be confirmed")
+                    first_quantity = min(
+                        position.quantity.value, instrument.max_market_order_quantity,
+                    )
+                    step = instrument.quantity_step
+                    if step <= 0:
+                        raise RuntimeError("invalid instrument quantity step")
+                    first_quantity = (first_quantity // step) * step
+                    if first_quantity <= 0:
+                        raise RuntimeError("Robot close chunk below quantity step")
                     order_link_id = f"tw_{digest}{sum(bytes.fromhex(digest)) & 0xF:x}"
                     manual_request, manual_identity = self._robot_prepare_manual_close(
                         candidate,
                         FullCloseCommandRequest(
-                            ClientActionId(f"robot-close-all-{digest}"), symbol,
+                            client_action_id, symbol, quantity=first_quantity,
                         ),
                         CommandIdentityCandidate(
                             CommandId(f"cmd_{digest}"), order_link_id,
                         ),
+                        chunk_index=0,
                     )
                     if self._robot_finalize_manual_close(candidate):
-                        # A previous HTTP delivery filled this exact durable
-                        # intent; prove it without submitting another order.
+                        # A previous HTTP delivery filled every chunk of this
+                        # exact durable intent; prove it without submitting
+                        # another order.
                         result = CommandResult(
                             manual_request.client_action_id.value,
                             CommandResultStatus.COMPLETED,
@@ -4249,6 +4720,72 @@ class PaperRuntime:
                         result = self._robot_full_close(
                             manual_request, identity=manual_identity,
                         )
+                        # CR-ROBOT-CLOSE-ALL-MAX-QTY-001: full_close() caps a
+                        # chunk at the confirmed position quantity; PreTradeGuard
+                        # separately caps it at the instrument's own maximum
+                        # Market order quantity. A position larger than that
+                        # maximum is therefore never fully closed by the chunk
+                        # above alone -- keep submitting further bounded chunks
+                        # of this SAME close while the position stays open and
+                        # every chunk keeps completing; stop at the first chunk
+                        # that does not (existing fail-closed escalation below
+                        # is unchanged either way).
+                        if result.status == CommandResultStatus.COMPLETED:
+                            instrument = self._instrument_provider(symbol)
+                            position_key = PositionKey(
+                                self._account_id, Category.LINEAR, candidate.symbol, 0,
+                            )
+                            chunk_index = 1
+                            # Bounded defensively; a real sequence is a handful
+                            # of chunks at most (position / instrument maximum).
+                            while chunk_index < 1000:
+                                position = self.store.get_position_projection(position_key)
+                                remaining = (
+                                    position.quantity.value if position is not None
+                                    else Decimal(0)
+                                )
+                                if remaining <= 0:
+                                    break
+                                chunk_quantity = (
+                                    remaining if remaining <= instrument.max_market_order_quantity
+                                    else instrument.max_market_order_quantity
+                                )
+                                step = instrument.quantity_step
+                                if step > 0:
+                                    chunk_quantity = (chunk_quantity // step) * step
+                                if chunk_quantity <= 0:
+                                    result = CommandResult(
+                                        manual_request.client_action_id.value,
+                                        CommandResultStatus.UNAVAILABLE,
+                                        "close_chunk_below_quantity_step",
+                                        "remaining quantity does not reach one quantity-step chunk",
+                                        None, True,
+                                    )
+                                    break
+                                chunk_digest = hashlib.sha256(
+                                    f"{request.client_action_id.value}\0{symbol}"
+                                    f"\0chunk{chunk_index}".encode("utf-8")
+                                ).hexdigest()[:32]
+                                chunk_link = (
+                                    f"tw_{chunk_digest}"
+                                    f"{sum(bytes.fromhex(chunk_digest)) & 0xF:x}"
+                                )
+                                chunk_request, chunk_identity = self._robot_prepare_manual_close(
+                                    candidate,
+                                    FullCloseCommandRequest(
+                                        client_action_id, symbol, quantity=chunk_quantity,
+                                    ),
+                                    CommandIdentityCandidate(
+                                        CommandId(f"cmd_{digest}_{chunk_index}"), chunk_link,
+                                    ),
+                                    chunk_index=chunk_index,
+                                )
+                                result = self._robot_full_close(
+                                    chunk_request, identity=chunk_identity,
+                                )
+                                if result.status != CommandResultStatus.COMPLETED:
+                                    break
+                                chunk_index += 1
                         if (
                             result.status == CommandResultStatus.COMPLETED
                             and not self._robot_finalize_manual_close(candidate)
@@ -4461,7 +4998,38 @@ class PaperRuntime:
                 try:
                     proof = self.store.prove_box_owned_position(source_id.strip())
                 except Exception:
-                    unresolved_candidate_ids.append(record.candidate_id)
+                    # A linked, never-started Box can lack its immutable
+                    # baseline. Only retire after proving *no* owned orders,
+                    # symbol fills, working orders or exposure; otherwise
+                    # preserve fail-closed reconciliation.
+                    try:
+                        never_started = (
+                            record.robot_state.get("phase") == "BOX_ENTRY_READY"
+                            and self.store.prove_box_never_started_flat(source_id.strip())
+                        )
+                    except Exception:
+                        never_started = False
+                    if not never_started:
+                        unresolved_candidate_ids.append(record.candidate_id)
+                        continue
+                    state = dict(record.robot_state or {})
+                    box_execution = dict(state.get("execution") or {})
+                    box_execution["stopped_without_entry_reason"] = (
+                        "RECONCILED_NEVER_STARTED_BOX_NO_BASELINE_FLAT"
+                    )
+                    state["execution"] = box_execution
+                    try:
+                        self.store.save_robot_candidate_state(
+                            record.candidate_id,
+                            status="INVALIDATED",
+                            robot_state=state,
+                            expected_revision=record.state_revision,
+                            updated_at_ms=int(time.time() * 1000),
+                        )
+                    except Exception:
+                        unresolved_candidate_ids.append(record.candidate_id)
+                        continue
+                    terminalized_candidate_ids.append(record.candidate_id)
                     continue
                 if proof.remaining_quantity > 0:
                     still_pending_protection.append(record.candidate_id)
@@ -4512,7 +5080,8 @@ class PaperRuntime:
                 still_pending_protection.append(record.candidate_id)
                 continue
 
-            if self._terminalize_stopped_pre_entry_wedge(record, prior):
+            if (self._terminalize_stopped_pre_entry_wedge(record, prior)
+                    or self._terminalize_frozen_incident_never_traded(record)):
                 terminalized_candidate_ids.append(record.candidate_id)
 
         return RobotSynchronizePendingEntriesResponse(
@@ -4524,20 +5093,27 @@ class PaperRuntime:
     _PRE_ENTRY_WEDGE_PHASES = frozenset({"WAITING_BREAKOUT", "WAITING_RETEST", "RETEST_DETECTED"})
 
     def _terminalize_stopped_pre_entry_wedge(self, record, prior) -> bool:
-        """ROBOT_STOPPED only: end a Wedge idea proven never to have traded.
+        """End a never-traded Wedge only under proven frozen admission.
 
-        A missing ``limit_order_id`` is not proof: an entry submitted by a caller
-        that timed out may still have been executed by the owner later (2026-10-14
-        AAVEUSDT). This pass runs on the owner, so every earlier queued command has
-        already run, and ROBOT_STOPPED admits no new entry. Ownership is then
-        proven only from durable PAPER evidence on the symbol: no working LIMIT,
-        no fill since approval, no unfinished command, no open Robot trade or
-        unresolved protection obligation (an open position was handled above).
-        Anything unproven is left APPROVED for the caller to report.
+        Normal ROBOT_STOPPED is already entry-fenced. During the canonical
+        REQUIRED -> RECONCILING pass, allow the same terminalization only when
+        Scanner is durably STOPPED and Autopilot durably OFF. Both paths then
+        require symbol-scoped no-order, no-fill, no-command, no-trade, no-
+        obligation and Flat evidence below. A caller timeout is not proof.
         """
         runtime_state = self.store.get_robot_runtime_state(self._account_id)
-        if runtime_state is None or runtime_state.mode != "ROBOT_STOPPED":
+        if runtime_state is None:
             return False
+        if runtime_state.mode != "ROBOT_STOPPED":
+            if (runtime_state.mode, runtime_state.recovery_status) != (
+                "ROBOT_RUNNING", "RECONCILING",
+            ):
+                return False
+            scanner = self.store.get_scanner_runtime_state(self._account_id)
+            autopilot = self.store.get_robot_autopilot_state(self._account_id)
+            if (scanner is None or scanner.mode != "SCANNER_STOPPED"
+                    or autopilot is None or autopilot.mode != "OFF"):
+                return False
         state = record.robot_state or {}
         if (
             record.status != "APPROVED"
@@ -4564,6 +5140,8 @@ class PaperRuntime:
         now_ms = int(time.time() * 1000)
         execution["stopped_without_entry_at_ms"] = now_ms
         execution["stopped_without_entry_reason"] = (
+            "FROZEN_RECONCILING before Wedge entry (no order, fill or exposure)"
+            if runtime_state.mode == "ROBOT_RUNNING" else
             "ROBOT_STOPPED before Wedge entry (no order, fill or exposure)"
         )
         self.store.save_robot_candidate_state(
@@ -4572,6 +5150,50 @@ class PaperRuntime:
             robot_state={**state, "execution": execution},
             expected_revision=record.state_revision,
             updated_at_ms=now_ms,
+        )
+        return True
+
+    # Bounded 2026-11-03 flat-recovery incident, never a general cancel-all.
+    _FROZEN_INCIDENT_APPROVALS = frozenset({
+        "1000FLOKIUSDT", "BNCUSDT", "HEMIUSDT", "INUSDT",
+        "PLAYSOUTUSDT", "RUNEUSDT",
+    })
+    _FROZEN_INCIDENT_APPROVAL_CUTOFF_MS = 1793703654000  # 03 Nov 14:00:54 MSK snapshot
+
+    def _terminalize_frozen_incident_never_traded(self, record) -> bool:
+        """Retire only a pre-incident inert idea during canonical frozen reconcile.
+
+        This is not a generic APPROVED-candidate cancellation. The owner Store
+        independently proves no fill, non-cancelled new LIMIT, completed Market
+        command, other Robot ownership, unresolved obligation or real exposure.
+        """
+        if (record.status != "APPROVED"
+                or record.symbol.value not in self._FROZEN_INCIDENT_APPROVALS
+                or type(record.approved_at_ms) is not int
+                or not (0 < record.approved_at_ms <= self._FROZEN_INCIDENT_APPROVAL_CUTOFF_MS)):
+            return False
+        runtime = self.store.get_robot_runtime_state(self._account_id)
+        scanner = self.store.get_scanner_runtime_state(self._account_id)
+        autopilot = self.store.get_robot_autopilot_state(self._account_id)
+        if (runtime is None
+                or (runtime.mode, runtime.recovery_status)
+                   != ("ROBOT_RUNNING", "RECONCILING")
+                or scanner is None or scanner.mode != "SCANNER_STOPPED"
+                or autopilot is None or autopilot.mode != "OFF"):
+            return False
+        if not self.store.prove_approved_candidate_never_traded(record):
+            return False
+        state = dict(record.robot_state or {})
+        execution = dict(state.get("execution") or {})
+        execution["stopped_without_entry_at_ms"] = int(time.time() * 1000)
+        execution["stopped_without_entry_reason"] = (
+            "FROZEN_20261103_RECONCILING: proved no entry in immutable PAPER ledgers"
+        )
+        state["execution"] = execution
+        self.store.save_robot_candidate_state(
+            record.candidate_id, status="INVALIDATED", robot_state=state,
+            expected_revision=record.state_revision,
+            updated_at_ms=execution["stopped_without_entry_at_ms"],
         )
         return True
 
@@ -4723,6 +5345,25 @@ class PaperRuntime:
             # would be too late. Never dispatch any close until every active
             # symbol proves at most one Robot owner.
             candidates = self.store.load_active_robot_candidate_states(self._paper_account_id)
+            # A protection obligation can dispatch an irreversible PAPER close.
+            # Before dispatch, prove that every durable OPEN Robot trade still
+            # has a corresponding active owner with the same symbol. Include
+            # APPROVED for the attested legacy-entry recovery path: its
+            # triggered obligation must remain recoverable before the candidate
+            # is terminalized. Terminal/missing/mismatched owners never qualify.
+            active_by_id = {
+                item.candidate_id: item.symbol
+                for item in candidates if item.status in {"APPROVED", "OPEN"}
+            }
+            for trade in self.store.load_open_robot_trades(self._paper_account_id):
+                if active_by_id.get(trade.candidate_id) != trade.symbol:
+                    unresolved_trade_ids.add(trade.trade_id)
+            if unresolved_trade_ids:
+                return fail(
+                    "reconcile_robot found OPEN trade without matching active candidate "
+                    "before protection dispatch: "
+                    + ",".join(sorted(unresolved_trade_ids))
+                )
             symbols = sorted({
                 item.symbol for item in candidates if item.status in {"APPROVED", "OPEN"}
             }, key=lambda item: item.value)
@@ -4861,6 +5502,13 @@ class PaperRuntime:
                     # Resume only the exact proven execution; never dispatch
                     # a replacement close during operator reconciliation.
                     if self._robot_finalize_manual_close(candidate):
+                        closed_trade_ids.append(trade.trade_id)
+                        continue
+
+                    # Generic PAPER commands can flatten a Robot lot without
+                    # a previously committed Robot-specific manual intent.
+                    # Require independent command/fill/entry ownership proof.
+                    if self._robot_finalize_nonrobot_close(candidate, trade, position):
                         closed_trade_ids.append(trade.trade_id)
                         continue
 
