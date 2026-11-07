@@ -107,7 +107,7 @@ def detect_diamond_candidate(candles, as_of_index=None) -> DiamondCandidate | No
         and contracting_upper["slope"] < 0
         and contracting_lower["slope"] > 0
         and _positive_width(expanding_upper, expanding_lower, run[0][0], turn_end)
-        and _positive_width(contracting_upper, contracting_lower, turn_start, run[-1][0])
+        and _positive_width(contracting_upper, contracting_lower, turn_start, as_of_index)
     ):
         return None
 
