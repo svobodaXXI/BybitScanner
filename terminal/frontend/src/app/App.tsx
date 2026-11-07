@@ -98,7 +98,11 @@ const sameProtectionPrice = (left: string | null, right: string | null) => {
 
 export function App() {
   const launchLink = useMemo(() => parseSignalWorkspaceLink(window.location.search), []);
-  const [mode, setMode] = useState<WorkspaceMode>(launchLink?.mode ?? "TERMINAL");
+  // A signal-specific Telegram "Терминал" link opens Robot observation;
+  // a plain Terminal link without a source identity stays manual.
+  const [mode, setMode] = useState<WorkspaceMode>(
+    launchLink?.mode === "TERMINAL" && launchLink.signalId ? "AUTOPILOT" : launchLink?.mode ?? "TERMINAL",
+  );
   const [frozenSignal, setFrozenSignal] = useState<{
     candles: Candle[];
     sourceCandles: Candle[];
@@ -269,7 +273,7 @@ export function App() {
   // Only draw exact frozen anchors on matching *current* candles, never on
   // an unrelated symbol/interval or an approximate historical bar.
   const terminalSignalDrawings = useMemo(() => {
-    if (mode !== "TERMINAL" || launchLink?.mode !== "TERMINAL"
+    if ((mode !== "TERMINAL" && mode !== "AUTOPILOT") || launchLink?.mode !== "TERMINAL"
         || !launchLink.signalId || !frozenSignal
         || tradingSymbol !== launchLink.symbol || timeframe !== launchLink.timeframe)
       return null;
@@ -1315,7 +1319,7 @@ export function App() {
           Исходный сигнал не указан в ссылке. Показаны текущие свечи без сохранённых линий паттерна.
         </output>
       )}
-      {mode === "TERMINAL" && launchLink?.mode === "TERMINAL" && launchLink.signalId
+      {(mode === "TERMINAL" || mode === "AUTOPILOT") && launchLink?.mode === "TERMINAL" && launchLink.signalId
         && tradingSymbol === launchLink.symbol && timeframe === launchLink.timeframe && (
           <output role="status" aria-live="polite">
             {terminalSignalDrawings
@@ -1380,7 +1384,7 @@ export function App() {
           } : undefined}
           referenceDrawings={mode === "EDITOR"
             ? frozenSignal?.referenceDrawings ?? []
-            : mode === "TERMINAL" ? terminalSignalDrawings ?? [] : []}
+            : mode === "TERMINAL" || mode === "AUTOPILOT" ? terminalSignalDrawings ?? [] : []}
           editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
           signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
           originalPattern={mode === "EDITOR" ? frozenSignal?.originalPattern ?? null : null}
