@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReplayCandle } from "./replayModel";
 import {
-  automaticGeometryTimeframeCap, chartLogicalAtTime, chartXAtCandleTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical,
+  automaticGeometryTimeframeCap, chartLogicalAtTime, chartXAtCandleTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, shortActiveM5Ray, timeAtChartLogical, timeToDrawingLogical, wickTightH1MainProjection,
 } from "./replayDrawingCoordinates";
 
 const start = Date.UTC(2026, 10, 2);
@@ -81,6 +81,65 @@ describe("manual replay UTC drawing anchors", () => {
       withGap, time => ({ [bars[0].start_ms]: 10,
         [bars[1].start_ms]: 20, [bars[4].start_ms]: 50,
         [bars[5].start_ms]: 60 } as Record<number,number>)[time] ?? null)).toBe(30);
+  });
+
+  it("tightens only the H1 main ray onto an already-closed protruding wick", () => {
+    const hour = 3_600_000;
+    const hours = [
+      mkBar(0, 60), mkBar(1, 60), mkBar(2, 60),
+      mkBar(3, 60), mkBar(4, 60), mkBar(5, 60),
+    ];
+    // Published BULL 1-3: 100 -> 110 by hour 3. A later green H1
+    // wick at hour 4 drops below the extrapolated boundary.
+    const line = {
+      kind: "MAIN_1H", side: "BULL" as const,
+      from_ms: start, to_ms: start + 3 * hour,
+      from_price: 100, to_price: 110,
+    };
+    const bars = hours.map((bar, i) => ({
+      ...bar,
+      low: [100, 103.5, 107, 110, 112, 117][i],
+      high: [104, 108, 112, 115, 119, 122][i],
+    }));
+    const before = wickTightH1MainProjection(line, bars.slice(0, 4),
+      start + 4 * hour);
+    expect(before.adjusted).toBe(false);
+    const after = wickTightH1MainProjection(line, bars.slice(0, 5),
+      start + 5 * hour);
+    expect(after.adjusted).toBe(true);
+    expect(after.to_ms).toBe(start + 4 * hour);
+    expect(after.to_price).toBe(112);
+    const slope = (after.to_price - after.from_price) /
+      (after.to_ms - after.from_ms);
+    for (const bar of bars.slice(1, 5))
+      expect(after.from_price + slope * (bar.start_ms - start)).toBeLessThanOrEqual(bar.low);
+    expect(wickTightH1MainProjection(line, bars, start + 4 * hour))
+      .toEqual(before); // A future wick cannot affect the older replay cursor.
+    expect(line.to_ms).toBe(start + 3 * hour);
+    expect(line.to_price).toBe(110); // Structural pivot 3 is immutable.
+    const target = { ...line, kind: "TARGET_1H" };
+    expect(wickTightH1MainProjection(target, bars, start + 6 * hour).adjusted)
+      .toBe(false);
+    // Symmetric bearish upper resistance is tightened upward by a wick.
+    const bearish = { ...line, side: "BEAR" as const,
+      from_price: 120, to_price: 108 };
+    const highs = bars.map((bar, i) => ({
+      ...bar, high: [120, 117, 114, 108, 109, 104][i],
+    }));
+    const bear = wickTightH1MainProjection(bearish, highs.slice(0, 5),
+      start + 5 * hour);
+    expect(bear.adjusted).toBe(true);
+    expect(bear.to_ms).toBe(start + 4 * hour);
+    expect(bear.to_price).toBe(109);
+  });
+
+  it("ends active M5 ray slightly beyond the last price candle, not chart edge", () => {
+    expect(shortActiveM5Ray({ x: 120, y: 80 }, { x: 200, y: 120 },
+      300, 960)).toEqual({ x: 336, y: 188 });
+    expect(shortActiveM5Ray({ x: 120, y: 80 }, { x: 200, y: 120 },
+      900, 960)).toEqual({ x: 936, y: 488 });
+    expect(shortActiveM5Ray({ x: 120, y: 80 }, { x: 120, y: 120 },
+      300, 960)).toEqual({ x: 120, y: 120 });
   });
 
   it("caps M5 slopes on H1 at their real publication, never on native M5", () => {
