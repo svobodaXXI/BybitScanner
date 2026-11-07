@@ -267,6 +267,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       const brokenByVersion = new Map(priorBreaks.map(item => [item.trend_version, item]));
       let paintedGeometry = 0;
       let paintedM5OnH1 = 0;
+      const m5H1Spans: { from_ms: number; until_ms: number; from_x: number; to_x: number }[] = [];
       for (const line of drawableLines) {
         // Line anchors can predate the requested playback window. Lightweight
         // Charts returns null for timestamps not present in loaded candles.
@@ -328,7 +329,13 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         context.stroke();
         context.globalAlpha = 1;
         paintedGeometry += 1;
-        if (isM5OnH1) paintedM5OnH1 += 1;
+        if (isM5OnH1) {
+          paintedM5OnH1 += 1;
+          m5H1Spans.push({
+            from_ms: line.from_ms, until_ms: endingAtMs,
+            from_x: x1, to_x: end.x,
+          });
+        }
       }
       context.setLineDash([]);
       // Purple prior: second confirmed touch of the H1 main line, at its wick.
@@ -436,6 +443,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       canvas.dataset.paintedPriors = String(paintedPriors);
       canvas.dataset.paintedGeometry = String(paintedGeometry);
       canvas.dataset.paintedM5OnH1 = String(paintedM5OnH1);
+      canvas.dataset.m5H1Spans = JSON.stringify(m5H1Spans);
       canvas.dataset.visibleObservations = String(paintedObservations);
       canvas.dataset.visibleBlueRisk = String(paintedBlueRisk);
     };
