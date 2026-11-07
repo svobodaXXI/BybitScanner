@@ -78,6 +78,9 @@ def test_moving_boundary_reference_is_frozen_and_source_bound():
     (2, {"open": 98.5, "high": 101.5, "close": 100.5}),
     # Choppy impulse with a close no longer extending downside.
     (3, {"close": 96.0}),
+    # Candle reopens across the broken line and breaks it again: a body
+    # retest, even when the close and new low still extend the impulse.
+    (2, {"open": 101.0, "high": 102.0}),
     # No real-body bullish reversal confirmation.
     (4, {"close": 94.0}),
     # Wick-only upside without a bullish body reversal.
