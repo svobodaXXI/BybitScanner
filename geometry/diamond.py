@@ -130,7 +130,9 @@ def detect_diamond_candidate(candles, as_of_index=None) -> DiamondCandidate | No
 
     for upper, lower, end in (
         (expanding_upper, expanding_lower, turn_end),
-        (contracting_upper, contracting_lower, run[-1][0]),
+        # Include closed candles after the final confirmed pivot. An
+        # as-of candidate cannot ignore subsequent sustained body breaches.
+        (contracting_upper, contracting_lower, as_of_index),
     ):
         fit = evaluate_formation_body_fit(upper, lower, prefix, end)
         if fit is None or any(
