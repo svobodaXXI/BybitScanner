@@ -145,6 +145,23 @@ def test_sustained_body_breach_in_expansion_invalidates_six_pivot_skeleton():
         assert detect_diamond_candidate(uncontained, 135) is None
 
 
+def test_sustained_breaches_after_last_pivot_invalidate_observation():
+    bars = zigzag(DIAMOND, 170)
+    pivots = find_pivots(bars.iloc[:136].copy())
+    assert detect_diamond_candidate(bars, 135) is not None
+
+    # H/L at index 132 is confirmed by index 135. Subsequent CLOSED
+    # bars must not escape the contraction check simply because the
+    # original skeleton was established three candles earlier.
+    escaped = bars.copy()
+    for index in range(136, 144):
+        escaped.loc[index, ["open", "high", "low", "close"]] = [
+            110.0, 111.0, 109.0, 110.5,
+        ]
+    with patch("geometry.diamond.find_pivots", return_value=pivots):
+        assert detect_diamond_candidate(escaped, 143) is None
+
+
 def test_unclosed_future_bad_data_outside_decision_prefix_cannot_affect_result():
     bars = zigzag(DIAMOND, 170)
     reference = detect_diamond_candidate(bars, 135)
