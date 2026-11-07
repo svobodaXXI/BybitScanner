@@ -1423,7 +1423,7 @@ export function App() {
               failure = result.error || "Сервер не подтвердил точное сохранение отзыва";
               // Definitive client errors are not transport ambiguity.
               if (response.status >= 400 && response.status < 500)
-                throw new Error(failure);
+                throw new Error(failure ?? "Сервер отклонил сохранение");
             } catch (error) {
               failure = error instanceof Error ? error.message : "Нет ответа сервера";
               if (failure && failure !== "Failed to fetch" && failure !== "NetworkError when attempting to fetch resource."
