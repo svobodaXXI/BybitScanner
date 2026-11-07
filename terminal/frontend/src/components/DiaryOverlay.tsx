@@ -167,11 +167,16 @@ type DiarySetupsResponse = {
   setups: DiarySetup[];
 };
 
+export type DiaryStatisticsScope = {
+  accountId: string;
+  owner: "MANUAL" | "ROBOT";
+};
+
 type DiaryStatisticsResponse = {
   ok: boolean;
-  active_account_id: string;
-  session_generation: number;
-  environment: DiaryTrade["environment"];
+  account_id: string;
+  owner: "MANUAL" | "ROBOT";
+  source_revision: number;
   statistics: DiaryStatistics;
 };
 
@@ -462,11 +467,13 @@ export function DiaryOverlay({
   onClose,
   initialSection = "TRADES",
   initialTradeEpisodeId = null,
+  statisticsScope = null,
 }: {
   accountKey: string;
   onClose: () => void;
   initialSection?: DiarySection;
   initialTradeEpisodeId?: string | null;
+  statisticsScope?: DiaryStatisticsScope | null;
 }) {
   const [section, setSection] = useState<DiarySection>(
     initialTradeEpisodeId === null ? initialSection : "TRADES",
@@ -483,65 +490,88 @@ export function DiaryOverlay({
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   const [requestedTradeMissing, setRequestedTradeMissing] = useState(false);
   const initialTradeRequest = useRef<string | null>(initialTradeEpisodeId);
+  const requestSequence = useRef(0);
 
   const refresh = useCallback(async () => {
+    const token = ++requestSequence.current;
+    const current = () => token === requestSequence.current;
     setLoading(true);
     setLoadError(false);
+    if (section === "STATISTICS") setStatistics(null);
     try {
       if (section === "TRADES") {
         const response = await fetch(marketApiRoutes.diaryTrades);
         if (!response.ok) throw new Error("diary request failed");
         const result = (await response.json()) as DiaryTradesResponse;
+        if (!current()) return;
         if (!result.ok || !Array.isArray(result.trades)) throw new Error("diary response is invalid");
+        if (statisticsScope && result.active_account_id !== statisticsScope.accountId) {
+          throw new Error("diary account mismatch");
+        }
         setTrades(result.trades);
         setAccountId(result.active_account_id);
         const requestedTradeId = initialTradeRequest.current;
         if (requestedTradeId !== null) {
           initialTradeRequest.current = null;
-          const linkedTrade = result.trades.find(
-            (trade) => trade.trade_episode_id === requestedTradeId,
-          );
+          const linkedTrade = result.trades.find((trade) => trade.trade_episode_id === requestedTradeId);
           setSelectedTradeId(linkedTrade?.trade_episode_id ?? null);
           setRequestedTradeMissing(linkedTrade === undefined);
         } else {
           setRequestedTradeMissing(false);
-          setSelectedTradeId((current) => current && result.trades.some((trade) => trade.trade_episode_id === current) ? current : null);
+          setSelectedTradeId((value) => value && result.trades.some((trade) => trade.trade_episode_id === value) ? value : null);
         }
       } else if (section === "SETUPS") {
-        setRequestedTradeMissing(false);
         const response = await fetch(marketApiRoutes.diarySetups);
         if (!response.ok) throw new Error("diary setups request failed");
         const result = (await response.json()) as DiarySetupsResponse;
+        if (!current()) return;
         if (!result.ok || !Array.isArray(result.setups)) throw new Error("diary setups response is invalid");
+        setRequestedTradeMissing(false);
         setSetups(result.setups);
       } else if (section === "MIRROR") {
-        setRequestedTradeMissing(false);
         const response = await fetch(marketApiRoutes.scannerMirrorLevels);
         if (!response.ok) throw new Error("mirror levels request failed");
         const result = (await response.json()) as MirrorLevelsResponse;
+        if (!current()) return;
         if (!result.ok || !Array.isArray(result.levels)) throw new Error("mirror levels response is invalid");
+        setRequestedTradeMissing(false);
         setMirrorLevels(result.levels);
       } else {
-        setRequestedTradeMissing(false);
-        const response = await fetch(marketApiRoutes.diaryStatistics);
-        if (!response.ok) throw new Error("diary statistics request failed");
+        // No legacy global-statistics fallback: a missing account/owner is an
+        // unavailable report, not permission to display unrelated PnL.
+        if (!statisticsScope) throw new Error("diary scope required");
+        const response = await fetch(marketApiRoutes.diaryScopedStatistics(
+          statisticsScope.accountId, statisticsScope.owner,
+        ));
+        if (!response.ok) throw new Error("scoped statistics unavailable");
         const result = (await response.json()) as DiaryStatisticsResponse;
-        if (!result.ok || !result.statistics) throw new Error("diary statistics response is invalid");
+        if (!current()) return;
+        if (!result.ok || result.account_id !== statisticsScope.accountId
+          || result.owner !== statisticsScope.owner
+          || !Number.isSafeInteger(result.source_revision) || result.source_revision < 1
+          || !result.statistics) {
+          throw new Error("diary statistics scope mismatch");
+        }
+        setRequestedTradeMissing(false);
         setStatistics(result.statistics);
-        setAccountId(result.active_account_id);
+        setAccountId(result.account_id);
       }
     } catch {
-      setLoadError(true);
+      if (current()) setLoadError(true);
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, [section]);
+  }, [section, statisticsScope?.accountId, statisticsScope?.owner]);
 
   useEffect(() => {
+    setStatistics(null);
+    setTrades([]);
     setSelectedTradeId(null);
     setRequestedTradeMissing(false);
+    setAccountId(statisticsScope?.accountId ?? "");
     void refresh();
-  }, [accountKey, refresh]);
+    return () => { ++requestSequence.current; };
+  }, [accountKey, refresh, statisticsScope?.accountId, statisticsScope?.owner]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -565,7 +595,9 @@ export function DiaryOverlay({
           <div>
             <p className="eyebrow">Торговый терминал</p>
             <h2>Дневник</h2>
-            {accountId ? <small>{accountId}</small> : null}
+            {statisticsScope
+              ? <small>{statisticsScope.owner === "ROBOT" ? "Автопилот" : "Терминал"} · {statisticsScope.accountId} · раздельная статистика</small>
+              : accountId ? <small>{accountId}</small> : null}
           </div>
           <button aria-label="Закрыть дневник" onClick={onClose} type="button">×</button>
         </header>
