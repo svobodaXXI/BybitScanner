@@ -876,7 +876,7 @@ export function ReplayPage() {
               <ReplayToolIcon tool="magnet" />
             </button>
             <button type="button" disabled={undoDepth === 0}
-              onClick={undoManualDrawing}
+              data-undo-depth={undoDepth} onClick={undoManualDrawing}
               title="Отменить последнее действие" aria-label="Отменить последнее действие">
               <ReplayToolIcon tool="undo" />
             </button>
