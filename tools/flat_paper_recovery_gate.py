@@ -233,6 +233,219 @@ def prove_flat_recovery(
     return "FLAT_RECOVERY_EVIDENCE_PROVEN_ONLY"
 
 
+
+def prove_one_flat_orphan(
+    conn: sqlite3.Connection, *, expected_identity: str, expected_build_sha: str,
+    backend: dict, scanner: dict, autopilot: dict, protection: dict,
+) -> str:
+    """Fail-closed, read-only proof of ONE previously executed manual Robot close.
+
+    This is neither a Robot ledger mutation nor permission to stop a process.
+    The caller must freeze admission and independently pin its release, DB,
+    process identity and listener before an explicitly authorized handoff.
+    There are no symbol/clock/incident-specific exceptions.
+    """
+    from decimal import InvalidOperation
+    from types import SimpleNamespace
+    from terminal.application.robot_breakout_monitor import (
+        RobotBreakoutMonitorError, robot_entry_order_ids,
+    )
+    from terminal.application.robot_nonrobot_close_proof import prove_nonrobot_robot_close
+    from terminal.domain.models import Category, PositionKey, PositionSide, Symbol, TradingAccountId
+    from terminal.persistence.sqlite_store import SQLiteStore
+    from terminal.runtime.paper_runtime import PaperRuntime
+
+    account = TradingAccountId("paper")
+    _require(conn.in_transaction and conn.execute("PRAGMA query_only").fetchone() == (1,),
+             "one_orphan_requires_readonly_snapshot")
+    _require(
+        backend.get("ok") is True
+        and backend.get("component") == "paper_backend"
+        and backend.get("mode") == "paper"
+        and backend.get("paper_live_safe") is True
+        and backend.get("database_identity") == expected_identity
+        and backend.get("build_sha") == expected_build_sha
+        and isinstance(backend.get("process_instance_id"), str)
+        and bool(backend["process_instance_id"].strip()),
+        "one_orphan_backend_identity_unproven",
+    )
+    _require(scanner.get("mode") == "SCANNER_STOPPED"
+             and scanner.get("worker_quiescent") is not False,
+             "one_orphan_scanner_not_quiescent")
+    _require(autopilot.get("mode") == "OFF", "one_orphan_autopilot_not_off")
+    _require(conn.execute("PRAGMA quick_check").fetchone() == ("ok",),
+             "one_orphan_database_not_integral")
+    _require(
+        conn.execute("SELECT mode FROM robot_scanner_state "
+                     "WHERE trading_account_id='paper'").fetchone()
+        == ("SCANNER_STOPPED",),
+        "one_orphan_durable_scanner_not_frozen",
+    )
+    _require(
+        conn.execute("SELECT mode FROM robot_autopilot_state "
+                     "WHERE trading_account_id='paper'").fetchone() == ("OFF",),
+        "one_orphan_durable_autopilot_not_off",
+    )
+    state = conn.execute(
+        "SELECT mode,recovery_status,reason FROM robot_runtime_state "
+        "WHERE trading_account_id='paper'",
+    ).fetchall()
+    _require(len(state) == 1 and state[0][0] == "ROBOT_RUNNING",
+             "one_orphan_robot_mode_changed")
+    _, recovery, reason = state[0]
+    _require(
+        recovery == "PAUSED"
+        or (recovery == "RECONCILIATION_REQUIRED"
+            and isinstance(reason, str)
+            and reason.startswith("ROBOT_PROTECTION_COVERAGE_LOST symbol=")
+            and reason.endswith(" reason=ingress_overflow")),
+        "one_orphan_unrecognized_recovery_reason",
+    )
+
+    positions = conn.execute(
+        "SELECT symbol,side,quantity,sync_state FROM position_projections "
+        "WHERE trading_account_id='paper'",
+    ).fetchall()
+    _require(bool(positions), "one_orphan_positions_missing")
+    for symbol, side, raw, sync in positions:
+        try:
+            quantity = Decimal(str(raw))
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            raise FlatRecoveryBlocked("one_orphan_invalid_position_quantity") from exc
+        _require(isinstance(symbol, str) and bool(symbol)
+                 and side == "Flat" and quantity.is_finite() and quantity == 0
+                 and sync in ("synced", "synchronized"),
+                 "one_orphan_exposure_or_unsynced_position")
+
+    rows = conn.execute(
+        "SELECT trade_id,candidate_id,symbol FROM robot_trades "
+        "WHERE trading_account_id='paper' AND exit_time_ms IS NULL",
+    ).fetchall()
+    _require(len(rows) == 1, "one_orphan_requires_exactly_one_trade")
+    trade_id, candidate_id, symbol = rows[0]
+    _require(
+        sum(position_symbol == symbol for position_symbol, *_ in positions) == 1
+        and isinstance(trade_id, str) and bool(trade_id)
+        and isinstance(candidate_id, str) and bool(candidate_id),
+        "one_orphan_ownership_ambiguous",
+    )
+    active = conn.execute(
+        "SELECT candidate_id,symbol,status,approved_at_ms FROM robot_candidates "
+        "WHERE trading_account_id='paper' "
+        "AND (status IS NULL OR status NOT IN "
+        "('BOX_PLAN_ONLY','CLOSED','EXPIRED','INVALIDATED'))",
+    ).fetchall()
+    open_rows = [row for row in active if row[2] == "OPEN"]
+    _require(len(open_rows) == 1 and open_rows[0][:3] == (candidate_id,symbol,"OPEN"),
+             "one_orphan_competing_open_candidate")
+    for cid, approved_symbol, status, approved in active:
+        if status == "OPEN":
+            continue
+        _require(status == "APPROVED" and type(approved) is int and approved > 0
+                 and bool(cid) and bool(approved_symbol),
+                 "one_orphan_approval_identity_unproven")
+        for table, condition in (
+            ("executions", "exchange_timestamp_ms IS NULL OR exchange_timestamp_ms >= ?"),
+            ("paper_limit_orders", "created_at_ms IS NULL OR "
+             "(created_at_ms >= ? AND (status IS NULL OR status != 'cancelled'))"),
+            ("trading_commands", "created_at_ms IS NULL OR "
+             "(created_at_ms >= ? AND (current_state IS NULL OR "
+             "current_state NOT IN ('cancelled','rejected','failed','amended')))"),
+        ):
+            _require(
+                conn.execute(
+                    f"SELECT 1 FROM {table} WHERE trading_account_id='paper' "
+                    f"AND symbol=? AND ({condition}) LIMIT 1", (approved_symbol,approved),
+                ).fetchone() is None,
+                "one_orphan_approval_may_enter",
+            )
+        _require(
+            conn.execute(
+                "SELECT 1 FROM robot_trades WHERE trading_account_id='paper' "
+                "AND candidate_id=? LIMIT 1", (cid,),
+            ).fetchone() is None,
+            "one_orphan_approval_has_trade",
+        )
+
+    for table, condition in (
+        ("paper_limit_orders", "status IS NULL OR status NOT IN ('filled','cancelled')"),
+        ("trading_commands", "current_state IS NULL OR current_state NOT IN "
+         "('filled','cancelled','amended','rejected','failed','owner_attested_closed')"),
+        ("paper_protection_obligations", "status IS NULL OR status != 'RESOLVED'"),
+        ("reconciliation_checkpoints", "completed_at_ms IS NULL"),
+    ):
+        _require(
+            conn.execute(
+                f"SELECT 1 FROM {table} WHERE trading_account_id='paper' "
+                f"AND ({condition}) LIMIT 1",
+            ).fetchone() is None, "one_orphan_unfinished_" + table,
+        )
+
+    covered, armed = protection.get("covered_symbols"), protection.get("armed_symbols")
+    roles, unhealthy = protection.get("coverage_roles"), protection.get("unhealthy_symbols")
+    _require(isinstance(covered, (list, tuple))
+             and isinstance(armed, (list, tuple)) and isinstance(roles, dict)
+             and isinstance(unhealthy, dict) and not armed,
+             "one_orphan_protection_shape_unknown")
+    if protection.get("healthy") is True:
+        _require(unhealthy == {} and covered == [] and roles == {},
+                 "one_orphan_protection_not_quiescent")
+    else:
+        _require(
+            protection.get("healthy") is False
+            and covered == [symbol] and roles == {symbol: "EXPOSURE"}
+            and unhealthy == {symbol: "ingress_overflow"},
+            "one_orphan_unrelated_protection_failure",
+        )
+        ingress = protection.get("ingress")
+        _require(
+            isinstance(ingress, dict) and ingress.get("current_pending") == 0,
+            "one_orphan_protection_ingress_not_drained",
+        )
+
+    # Use the SAME immutable ownership/fill predicate as canonical reconcile.
+    # No SQL UPDATE, fake exit attribution, Market order or REST mutation.
+    conn.row_factory = sqlite3.Row
+    store = SQLiteStore(conn, Path("/read-only-snapshot"), 5000)
+    trade = store.get_robot_trade(trade_id)
+    candidate = store.get_robot_candidate(candidate_id)
+    position = store.get_position_projection(
+        PositionKey(account, Category.LINEAR, Symbol(symbol), 0),
+    )
+    _require(
+        trade is not None and candidate is not None and position is not None
+        and trade.trading_account_id == account and trade.trade_id == trade_id
+        and trade.candidate_id == candidate_id and trade.symbol == Symbol(symbol)
+        and candidate.trading_account_id == account and candidate.candidate_id == candidate_id
+        and candidate.status == "OPEN" and candidate.symbol == Symbol(symbol)
+        and position.side is PositionSide.FLAT and position.quantity.value == 0,
+        "one_orphan_immutable_owner_missing",
+    )
+    try:
+        entry_ids = robot_entry_order_ids(
+            store, account, candidate, (candidate.robot_state or {}).get("execution") or {},
+            entry_path=trade.entry_path,
+        )
+    except (RobotBreakoutMonitorError, ValueError) as exc:
+        raise FlatRecoveryBlocked("one_orphan_entry_identity_unproven") from exc
+    _require(bool(entry_ids), "one_orphan_entry_fill_missing")
+    fills = store.load_executions_for_symbol(account, Symbol(symbol))
+    _require(bool(fills) and fills[-1].order_id.value.startswith("paper-order-tw_"),
+             "one_orphan_close_execution_missing")
+    command = store.get_paper_command_by_order_link(
+        account, fills[-1].order_id.value.removeprefix("paper-order-"),
+    )
+    fees = PaperRuntime._robot_entry_fees(SimpleNamespace(store=store), trade)
+    evidence = prove_nonrobot_robot_close(
+        trade=trade, candidate=candidate, position=position,
+        executions=fills, command=command,
+        entry_order_ids=tuple(item.value for item in entry_ids),
+        entry_fees=fees, unique_open_owner=True, has_competing_work=False,
+    )
+    _require(evidence is not None, "one_orphan_manual_close_proof_missing")
+    return "ONE_FLAT_ORPHAN_IMMUTABLE_CLOSE_EVIDENCE_ONLY"
+
+
 def inspect_live(db_path: Path, *, root: Path, env: dict) -> str:
     """Read API and SQLite evidence. No mutation or process control."""
     base = "http://127.0.0.1:8765"
