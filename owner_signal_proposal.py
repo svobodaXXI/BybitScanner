@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import secrets
 import time
+from decimal import Decimal
 
 from geometry_feedback_store import bars_digest, source_revision
 from signal_archive import archive_dir
@@ -87,8 +88,8 @@ def _normalize(payload: dict, snapshot: dict) -> dict:
                 raise OwnerSignalProposalError("invalid_anchor_fields")
             at, price = anchor["bar_open_time_ms"], anchor["price"]
             if (type(at) is not int or at not in timestamps or
-                    type(price) not in (int, float) or not math.isfinite(price)
-                    or price <= 0):
+                    type(price) not in (int, float, Decimal) or not math.isfinite(float(price))
+                    or float(price) <= 0):
                 raise OwnerSignalProposalError("invalid_frozen_anchor")
             normalized.append({"bar_open_time_ms": at, "price": float(price)})
         if normalized[0]["bar_open_time_ms"] >= normalized[1]["bar_open_time_ms"]:
