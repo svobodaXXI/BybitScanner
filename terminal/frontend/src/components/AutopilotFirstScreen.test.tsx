@@ -129,6 +129,32 @@ describe("Autopilot compact first screen", () => {
     expect(screen.queryByText("Что робот сейчас делает")).not.toBeInTheDocument();
   });
 
+  it("reuses the Terminal's PAPER position visual fields without trading buttons", async () => {
+    mockFetch(healthyRoutes);
+    const verifiedPosition = { ...position("LSKUSDT", "Long", "1"), robot_trade_id: "robot-lsk" };
+    render(<AutopilotFirstScreen now={() => NOW}
+      verifiedPosition={verifiedPosition} oneWorkingVolumeUsdt="250" />);
+    const panel = screen.getByLabelText("Позиция робота на панели управления");
+    expect(within(panel).getByLabelText("Engaged working volume")).toHaveTextContent("⚔️ 0.1");
+    expect(within(panel).getByTitle("1 РО = 250 USDT")).toBeInTheDocument();
+    expect(within(panel).getByText("20")).toBeInTheDocument();
+    expect(within(panel).getByText("USDT")).toBeInTheDocument();
+    expect(within(panel).getByText("LSKUSDT")).toBeInTheDocument();
+    expect(within(panel).getByText("0.20000")).toBeInTheDocument();
+    expect(within(panel).getByText("+5.00%")).toBeInTheDocument();
+    expect(within(panel).getByText("+1.00 USDT")).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: /Закрыть|Market|Limit/ })).not.toBeInTheDocument();
+  });
+
+  it("does not attribute an unverified position to the Robot", async () => {
+    mockFetch(healthyRoutes);
+    render(<AutopilotFirstScreen now={() => NOW} />);
+    const panel = screen.getByLabelText("Позиция робота на панели управления");
+    expect(within(panel).getByText("⚔️ —")).toBeInTheDocument();
+    expect(within(panel).queryByText("LSKUSDT")).not.toBeInTheDocument();
+    expect(within(panel).queryByText(/PnL/)).not.toBeInTheDocument();
+  });
+
   it("uses accessible icon-only controls in the requested order", async () => {
     mockFetch(healthyRoutes);
     const onTradeDetails = vi.fn();
