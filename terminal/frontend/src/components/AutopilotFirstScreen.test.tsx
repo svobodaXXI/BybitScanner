@@ -152,6 +152,12 @@ describe("Autopilot compact first screen", () => {
       "Подробности сделки", "Все открытые позиции", "Статистика", "Терминал", "Управление роботом", "Счёт",
     ]);
     expect(buttons[0]).toBeDisabled(); // Multiple open positions: no ambiguous trade selection.
+    // Icons are three separate thin strokes/bars, not dense Unicode glyphs.
+    expect(buttons[0].querySelector("svg")).not.toBeNull();
+    expect(buttons[1].querySelectorAll("svg line")).toHaveLength(3);
+    expect(buttons[2].querySelectorAll("svg rect")).toHaveLength(3);
+    expect(buttons[2].textContent).toBe("");
+    expect(buttons[4].querySelector("svg")).not.toBeNull();
     fireEvent.click(buttons[1]);
     fireEvent.click(buttons[2]);
     fireEvent.click(buttons[3]);
