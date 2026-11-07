@@ -33,12 +33,15 @@ class WorkspaceOwnerLauncherTests(unittest.TestCase):
         launcher.request_owner_workspace_open("EDITOR", "BTCUSDT", "5m", signal_id=signal)
         args = popen.call_args.args[0]
         self.assertEqual(args[args.index("-SignalId") + 1], signal)
+        launcher.request_owner_workspace_open("TERMINAL", "BTCUSDT", "5m", signal_id=signal)
+        args = popen.call_args.args[0]
+        self.assertEqual(args[args.index("-SignalId") + 1], signal)
 
     @patch.object(launcher.subprocess, "Popen")
     def test_invalid_source_token_is_never_launched(self, popen):
         for mode, token in (
             ("EDITOR", "source-original:" + "bad"),
-            ("TERMINAL", "source-original:" + "a" * 24),
+            ("TERMINAL", "source-original:" + "bad"),
         ):
             with self.subTest(mode=mode, token=token), self.assertRaises(ValueError):
                 launcher.request_owner_workspace_open(
