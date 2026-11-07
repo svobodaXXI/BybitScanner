@@ -180,3 +180,5 @@
   font-size: 0.72rem;
 }
 .autopilot-position-readout strong { color: #e1e8ef; }
+
+.chart-panel.has-position-footer { grid-template-rows: minmax(0, 1fr) auto; }
