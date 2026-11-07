@@ -149,3 +149,12 @@ export function visibleAccelerationHistory(
     line.retired_at_ms !== undefined && line.retired_at_ms > time
       ? { ...line, retired_at_ms: undefined } : line);
 }
+
+/** One visual classification for each source; strategy geometry is unchanged. */
+export function automaticLineStyle(kind: ReplayGeometry["kind"] | ReplayAcceleration["kind"]) {
+  return {
+    stroke: kind === "REFERENCE_5M" || kind === "ACCELERATION_5M"
+      ? "#57aaff" : "#f6dc59",
+    dash: kind === "TARGET_1H" || kind === "ACCELERATION_5M" ? [6, 4] : [],
+  };
+}
