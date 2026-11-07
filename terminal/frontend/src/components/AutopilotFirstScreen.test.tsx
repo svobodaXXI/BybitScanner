@@ -64,6 +64,7 @@ const healthyRoutes: Routes = {
         symbol: "OLDUSDT",
         closed_at_ms: DAY_START + 10,
         pnl: "2.5",
+        controller_origin: "ROBOT",
         readiness: "CLOSED_READY",
       },
       {
@@ -156,11 +157,29 @@ describe("Autopilot compact first screen", () => {
         ok: true,
         active_account_id: "paper",
         session_generation: 1,
-        trades: [{ symbol: "X", closed_at_ms: DAY_START + 1, pnl: null, readiness: "CLOSED_INCOMPLETE" }],
+        trades: [{ symbol: "X", closed_at_ms: DAY_START + 1, pnl: null, controller_origin: "ROBOT", readiness: "CLOSED_INCOMPLETE" }],
       },
     });
     render(<AutopilotFirstScreen now={() => NOW} accountKey="paper:1" />);
     expect(await screen.findByText("Нет данных: 1 из 1 сделок без PnL")).toBeInTheDocument();
+  });
+
+  it("does not count mixed or unattributed Diary trades as Robot profit", async () => {
+    mockFetch({
+      ...healthyRoutes,
+      "/api/diary/trades": {
+        ok: true,
+        active_account_id: "paper",
+        session_generation: 1,
+        trades: [
+          { symbol: "UNKNOWN", closed_at_ms: DAY_START + 1, pnl: "100", controller_origin: null, readiness: "CLOSED_READY" },
+          { symbol: "MANUAL", closed_at_ms: DAY_START + 2, pnl: "200", controller_origin: "TERMINAL", readiness: "CLOSED_READY" },
+        ],
+      },
+    });
+    render(<AutopilotFirstScreen now={() => NOW} accountKey="paper:1" />);
+    expect(await screen.findByText("Нет подтверждённых данных робота")).toBeInTheDocument();
+    expect(screen.queryByText("+300.00 USDT")).not.toBeInTheDocument();
   });
 
   it("shows backend failures without a fabricated zero result", async () => {
