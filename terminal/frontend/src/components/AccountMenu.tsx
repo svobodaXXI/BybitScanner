@@ -177,6 +177,8 @@ export function AccountMenu({
           bybit_validation_failed: "Bybit rejected these credentials.",
           credential_storage_failed: "Secure credential storage is unavailable.",
           invalid_account_payload: "Complete all account fields.",
+          main_account_ineligible: "Only eligible Bybit MAINNET accounts can be connected.",
+          origin_required: "Open the authenticated HTTPS terminal before adding an account.",
         };
         setSubmitError(messages[payload.error ?? ""] ?? "Account could not be added.");
         return;
