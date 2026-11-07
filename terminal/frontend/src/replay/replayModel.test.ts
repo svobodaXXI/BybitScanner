@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeHourlyCandles, hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, replayCursorAtUtc, parseReplayDocument, replayContactWithinFloatPrecision, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, replayCursorAtUtc, parseReplayDocument, replayContactWithinFloatPrecision, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, displayGeometryVersions, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("exposes real H1 warmup candles on the chart but never advances the simulation clock", () => {
@@ -186,6 +186,36 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(visibleReplay(events, back).candles).toHaveLength(12);
     expect(timeframeStepCursor(events, back, "1h", "forward")).toBe(24);
     expect(JSON.stringify(events)).toBe(snap);
+  });
+
+  it("relocates only the visible H1 slope on a new published version; rewind restores earlier one", () => {
+    const base = Date.UTC(2026, 7, 28);
+    const first = {
+      kind: "MAIN_1H" as const, side: "BEAR" as const,
+      available_at_ms: base + 3_600_000,
+      from_ms: base - 2 * 3_600_000, to_ms: base,
+      from_price: 0.3966, to_price: 0.3748,
+      trend_version: base + 3_600_000,
+      classification: "UNVALIDATED_GEOMETRY_ONLY" as const,
+      superseded_at_ms: base + 5 * 3_600_000,
+    };
+    const moved = { ...first, available_at_ms: base + 5 * 3_600_000,
+      from_ms: base, to_ms: base + 2 * 3_600_000,
+      from_price: 0.3748, to_price: 0.3566,
+      trend_version: base + 5 * 3_600_000,
+      superseded_at_ms: undefined };
+    const versions = [first, moved];
+    const rewind = displayGeometryVersions(
+      versions.filter(line => line.available_at_ms <= base + 4 * 3_600_000),
+      base + 4 * 3_600_000,
+    );
+    expect(rewind).toHaveLength(1);
+    expect(rewind[0].from_price).toBe(0.3966);
+    const current = displayGeometryVersions(versions, base + 6 * 3_600_000);
+    expect(current).toHaveLength(1);
+    expect(current[0].from_price).toBe(0.3748);
+    expect(current[0].to_price).toBe(0.3566);
+    expect(versions).toHaveLength(2); // archives are intact for replay
   });
 
   it("retains distinct official trade-derived provenance for real archive replay", () => {
