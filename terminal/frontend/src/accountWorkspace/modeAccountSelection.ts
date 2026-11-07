@@ -108,9 +108,16 @@ export function useModeAccountSelection() {
   const mainId = ready && preferences.TERMINAL !== "paper" ? preferences.TERMINAL : null;
   useEffect(() => {
     let live = true;
+    if (!mainId) {
+      setMainProjection(null);
+      return () => { live = false; };
+    }
+    // A successful explicit selection already contains a verified snapshot.
+    if (mainProjection?.account_id === mainId) return () => { live = false; };
     setMainProjection(null);
-    if (!mainId) return () => { live = false; };
-    void mainProjectionFor(mainId, false).then((projection) => {
+    // After a gateway restart, its catalog is DISCONNECTED until a read-only
+    // refresh. Reconcile on restore rather than showing a stale saved snapshot.
+    void mainProjectionFor(mainId, true).then((projection) => {
       if (live) setMainProjection(projection);
     }).catch(() => {
       if (live) setError("Selected MAIN account unavailable; no fallback to PAPER.");
