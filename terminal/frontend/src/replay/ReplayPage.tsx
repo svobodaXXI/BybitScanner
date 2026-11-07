@@ -14,6 +14,9 @@ import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
 import { chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import { ReplayDrawingUndo } from "./replayDrawingUndo";
+import {
+  automaticLineStyle, lastM5AccelerationTimeline, visibleLastM5Accelerations,
+} from "./lastM5Acceleration";
 import "./replay.css";
 
 function label(event: ReplayEvent): string {
@@ -88,6 +91,12 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
   const earlyGeometry = useMemo(
     () => visibleEarlyGeometryTimeline(earlyTimeline, shown.lastTimeMs),
     [earlyTimeline, shown.lastTimeMs],
+  );
+  // Independent visual-only counter-H1 layer: no feeds, signals or orders.
+  const accelerationTimeline = useMemo(() => lastM5AccelerationTimeline(document), [document]);
+  const accelerationGeometry = useMemo(
+    () => visibleLastM5Accelerations(accelerationTimeline, shown.lastTimeMs),
+    [accelerationTimeline, shown.lastTimeMs],
   );
   const observedDmi = useMemo(() => visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
   // Only the final 5m DMI reading of each completed H1 is plotted on the H1 axis.
@@ -240,8 +249,12 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       // Avoid double-painting an early guide with identical confirmed anchors.
       const confirmedKeys = new Set(historicalLines.map(line =>
         [line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":")));
-      const drawableLines = [...historicalLines, ...earlyGeometry.filter(line =>
-        !confirmedKeys.has([line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":")))];
+      const drawableLines = [
+        ...historicalLines,
+        ...earlyGeometry.filter(line =>
+          !confirmedKeys.has([line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":"))),
+        ...accelerationGeometry,
+      ];
       const knownPriors = visiblePriorLevels(document, shown.lastTimeMs);
       const brokenByVersion = new Map(priorBreaks.map(item => [item.trend_version, item]));
       let paintedGeometry = 0;
@@ -274,11 +287,12 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
               { width: priceWidth, height: paneHeight },
             );
         context.beginPath();
-        // Main H1 and reference M5 stay solid and fully opaque in the archive.
-        // Dashed yellow exclusively identifies a TARGET_1H line.
-        context.strokeStyle = line.kind === "REFERENCE_5M" ? "#57aaff" : "#f6dc59";
+        // H1 main / M5 continuation: solid. H1 target: yellow dashed.
+        // The separate counter-H1 last acceleration: BLUE dashed only.
+        const style = automaticLineStyle(line.kind);
+        context.strokeStyle = style.stroke;
         context.lineWidth = 1;
-        context.setLineDash(line.kind === "TARGET_1H" ? [6, 4] : []);
+        context.setLineDash(style.dash);
         context.moveTo(x1, y1);
         context.lineTo(end.x, end.y);
         context.stroke();
@@ -385,6 +399,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       canvas.dataset.visibleFills = String(rendered);
       canvas.dataset.visibleGeometry = String(knownLines.length);
       canvas.dataset.visibleEarlyGeometry = String(earlyGeometry.length);
+      canvas.dataset.visibleAcceleration = String(accelerationGeometry.length);
       canvas.dataset.visiblePriors = String(knownPriors.length);
       canvas.dataset.paintedPriors = String(paintedPriors);
       canvas.dataset.paintedGeometry = String(paintedGeometry);
@@ -395,7 +410,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles, earlyGeometry]);
+  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles, earlyGeometry, accelerationGeometry]);
 
   // The editable layer reuses the terminal's drawing tools, but stores its X
   // anchors in absolute UTC M5 slots rather than indices of the selected TF.
