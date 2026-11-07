@@ -55,6 +55,15 @@ const healthyRoutes: Routes = {
     healthy: true,
     unhealthy_symbols: {},
   },
+  "/api/robot/day-summary": {
+    ok: true,
+    source: "robot_trades",
+    account_id: "paper",
+    day_start_ms: DAY_START,
+    closed_trades: 1,
+    trades_without_pnl: 0,
+    net_pnl_usdt: "2.50",
+  },
   "/api/diary/trades": {
     ok: true,
     active_account_id: "paper",
@@ -157,18 +166,21 @@ describe("Autopilot compact first screen", () => {
   it("never invents a financial result when a closed trade lacks PnL", async () => {
     mockFetch({
       ...healthyRoutes,
-      "/api/diary/trades": {
+      "/api/robot/day-summary": {
         ok: true,
-        active_account_id: "paper",
-        session_generation: 1,
-        trades: [{ symbol: "X", closed_at_ms: DAY_START + 1, pnl: null, controller_origin: "ROBOT", readiness: "CLOSED_INCOMPLETE" }],
+        source: "robot_trades",
+        account_id: "paper",
+        day_start_ms: DAY_START,
+        closed_trades: 1,
+        trades_without_pnl: 1,
+        net_pnl_usdt: null,
       },
     });
     render(<AutopilotFirstScreen now={() => NOW} accountKey="paper:1" />);
-    expect(await screen.findByText("Нет данных: 1 из 1 сделок без PnL")).toBeInTheDocument();
+    expect(await screen.findByText("Нет данных: 1 из 1 сделок без полного PnL")).toBeInTheDocument();
   });
 
-  it("does not count mixed or unattributed Diary trades as Robot profit", async () => {
+  it("takes Robot PnL from robot_trades, not unrelated manual Diary trades", async () => {
     mockFetch({
       ...healthyRoutes,
       "/api/diary/trades": {
@@ -182,8 +194,28 @@ describe("Autopilot compact first screen", () => {
       },
     });
     render(<AutopilotFirstScreen now={() => NOW} accountKey="paper:1" />);
-    expect(await screen.findByText("Нет подтверждённых данных робота")).toBeInTheDocument();
+    expect(await screen.findByText("+2.50 USDT")).toBeInTheDocument();
     expect(screen.queryByText("+300.00 USDT")).not.toBeInTheDocument();
+  });
+
+  it("rejects an untrusted Robot daily summary instead of showing a false zero", async () => {
+    mockFetch({
+      ...healthyRoutes,
+      "/api/robot/day-summary": {
+        ok: true,
+        source: "robot_trades",
+        account_id: "other-paper",
+        day_start_ms: DAY_START,
+        closed_trades: 0,
+        trades_without_pnl: 0,
+        net_pnl_usdt: "0",
+      },
+    });
+    render(<AutopilotFirstScreen now={() => NOW} />);
+    const summary = await screen.findByRole("definition", { name: "" }).catch(() => null);
+    expect(summary).toBeNull();
+    expect(await screen.findAllByText("Данные недоступны")).toHaveLength(2);
+    expect(screen.queryByText("+0.00 USDT")).not.toBeInTheDocument();
   });
 
   it("shows backend failures without a fabricated zero result", async () => {
