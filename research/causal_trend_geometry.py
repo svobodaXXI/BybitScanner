@@ -59,6 +59,10 @@ class TrendCandidate:
     pivot_sequence: tuple[ConfirmedPivot, ConfirmedPivot, ConfirmedPivot, ConfirmedPivot]
     available_at_ms: int
     classification: str = "UNVALIDATED_GEOMETRY_ONLY"
+    # Structural four-pivot geometry may be valid before the wick envelope
+    # itself can be fitted into a converging corridor. Never call that a
+    # validated wick envelope (or grant trade authority from this field).
+    envelope_status: Literal["STRUCTURAL_ONLY", "WICK_TIGHT"] = "STRUCTURAL_ONLY"
 
 
 class ConfirmedSwingStream:
@@ -255,6 +259,7 @@ def wick_tight_hourly_trend(
         # drawing endpoints are fitting anchors, not newly confirmed swings.
         side, main, target, (a, b, c, d),
         proposal.available_at_ms,
+        envelope_status="WICK_TIGHT",
     )
 
 
@@ -399,6 +404,12 @@ class CausalGeometryFeed:
         from research.historical_candle_feed import FIVE_MINUTES_MS, ONE_HOUR_MS
 
         self._hourly = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=wing_1h)
+        # Owner's real GRASS H1 example needs both a short nested 1-candle
+        # reversal (08-09-11-13) and the broad 2-wing turn (03-08-13-21).
+        # Same ConfirmedSwingStream engine, both exclusively CLOSED H1 bars.
+        self._hourly_nested = (ConfirmedSwingStream(
+            timeframe_ms=ONE_HOUR_MS, wing=1) if wing_1h > 1 else None)
+        self._hourly_source_wing: int | None = None
         self._five = ConfirmedSwingStream(timeframe_ms=FIVE_MINUTES_MS, wing=wing_5m)
         self._hourly_trend: TrendCandidate | None = None
         # Purple prior is confirmed from CLOSED H1 wicks; it is separate
@@ -514,30 +525,51 @@ class CausalGeometryFeed:
                 self._prior_touch_ms = touch
                 self._prior_trend_version = trend.available_at_ms
 
+    def _hourly_proposals(self) -> tuple[tuple[int, TrendCandidate], ...]:
+        """Confirmed local and broad four-pivot structures, same H1 stream only."""
+        candidates: list[tuple[int, TrendCandidate]] = []
+        for feed in (self._hourly_nested, self._hourly):
+            if feed is None:
+                continue
+            proposed = recent_hourly_trend(feed.recent_pivots)
+            if proposed is not None:
+                candidates.append((feed.wing, proposed))
+        # Earliest *confirmed* structure is eligible first. No backward
+        # publication when a different scale confirms later.
+        return tuple(sorted(candidates, key=lambda item: (
+            item[1].available_at_ms, item[0],
+        )))
+
+    def _first_hourly_shape(self, proposal: TrendCandidate) -> TrendCandidate:
+        # Structural 1-3 / 2-4 must not disappear merely because a wick
+        # envelope would widen. Preserve the strict fit status separately.
+        fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
+        return fitted if fitted is not None else proposal
+
     def _install_opposite_if_confirmed(self, at_ms: int) -> None:
         if self._waiting_for_side is None:
             return
-        proposal = recent_hourly_trend(self._hourly.recent_pivots)
-        if proposal is None or proposal.side != self._waiting_for_side:
+        for wing, proposal in self._hourly_proposals():
+            if proposal.side != self._waiting_for_side:
+                continue
+            if proposal.available_at_ms > at_ms:
+                raise AssertionError("future opposite hourly trend exposed")
+            # The opposite structural setup is not published before the
+            # separately established break of the old purple prior.
+            available = max(proposal.available_at_ms, self._reversal_known_at_ms or at_ms)
+            selected = self._first_hourly_shape(proposal)
+            self._hourly_trend = TrendCandidate(
+                selected.side,
+                CausalLine(selected.main.first, selected.main.second, available),
+                CausalLine(selected.target.first, selected.target.second, available),
+                selected.pivot_sequence,
+                available,
+                envelope_status=selected.envelope_status,
+            )
+            self._hourly_source_wing = wing
+            self._waiting_for_side = None
+            self._reversal_known_at_ms = None
             return
-        if proposal.available_at_ms > at_ms:
-            raise AssertionError("future opposite hourly trend exposed")
-        # An older candidate cannot acquire the status of the NEW trend
-        # before the prior broke. Preserve its frozen wick anchors, but
-        # make the new version known no earlier than confirmation.
-        available = max(proposal.available_at_ms, self._reversal_known_at_ms or at_ms)
-        fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
-        if fitted is None:
-            return  # Unproven candidate cannot terminate the waiting state.
-        self._hourly_trend = TrendCandidate(
-            fitted.side,
-            CausalLine(fitted.main.first, fitted.main.second, available),
-            CausalLine(fitted.target.first, fitted.target.second, available),
-            fitted.pivot_sequence,
-            available,
-        )
-        self._waiting_for_side = None
-        self._reversal_known_at_ms = None
 
     def observe_closed(
         self, five_minute: Candle, newly_closed_1h: Candle | None,
@@ -563,6 +595,7 @@ class CausalGeometryFeed:
                         "next_hour_open_ms": five_minute.start_ms,
                     }
                     self._hourly_trend = None
+                    self._hourly_source_wing = None
                     self._waiting_for_side = "BEAR" if old_side == "BULL" else "BULL"
                     self._reversal_known_at_ms = five_minute.end_ms
         if newly_closed_1h is not None:
@@ -583,19 +616,20 @@ class CausalGeometryFeed:
                         self._prior_touch_ms, self._prior_trend_version,
                     )
             self._hourly.observe_closed(newly_closed_1h)
+            if self._hourly_nested is not None:
+                self._hourly_nested.observe_closed(newly_closed_1h)
             if self._waiting_for_side is None:
-                proposal = recent_hourly_trend(self._hourly.recent_pivots)
-                if proposal is not None:
+                for wing, proposal in self._hourly_proposals():
                     if self._hourly_trend is None:
-                        fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
-                        if fitted is not None:
-                            self._hourly_trend = fitted
-                    elif (proposal.side == self._hourly_trend.side and
-                          proposal.pivot_sequence[3].at_ms >
-                          self._hourly_trend.pivot_sequence[3].at_ms):
-                        # The original 1/2 anchors belong to this movement.
-                        # New extrema may revise points 3/4, never shift the
-                        # first pair forward by taking the last four pivots.
+                        self._hourly_trend = self._first_hourly_shape(proposal)
+                        self._hourly_source_wing = wing
+                        break
+                    if (wing == self._hourly_source_wing and
+                        proposal.side == self._hourly_trend.side and
+                        proposal.pivot_sequence[3].at_ms >
+                        self._hourly_trend.pivot_sequence[3].at_ms):
+                        # Same movement & same pivot scale: preserve original
+                        # 1/2 pivots and attempt a new wick-tight 3/4 version.
                         previous = self._hourly_trend
                         fitted = wick_tight_hourly_trend(
                             proposal, self._hourly.bars,
@@ -604,6 +638,7 @@ class CausalGeometryFeed:
                         )
                         if fitted is not None:
                             self._hourly_trend = fitted
+                        break
         self._install_opposite_if_confirmed(five_minute.end_ms)
         trend = self._hourly_trend
         movement = ((trend.side, trend.main.first.at_ms, trend.main.first.price)
