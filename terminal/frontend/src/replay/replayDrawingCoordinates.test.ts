@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReplayCandle } from "./replayModel";
 import {
-  automaticGeometryTimeframeCap, chartLogicalAtTime, chartXAtCandleTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, shortActiveM5Ray, timeAtChartLogical, timeToDrawingLogical, wickTightH1MainProjection,
+  automaticGeometryTimeframeCap, chartLogicalAtTime, chartXAtCandleTime, drawingLogicalToTime, geometryLogicalSegment, forwardLinePaintStartMs, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, shortActiveM5Ray, timeAtChartLogical, timeToDrawingLogical, wickTightH1MainProjection,
 } from "./replayDrawingCoordinates";
 
 const start = Date.UTC(2026, 10, 2);
@@ -56,6 +56,28 @@ describe("manual replay UTC drawing anchors", () => {
       .toBeCloseTo(1);
     // No future retirement may be painted beyond the last closed bar.
     expect(geometryLogicalSegment({ from_ms: firstMs, retired_at_ms: start + 5 * 3_600_000 }, hourly.slice(0, 1))!.to).toBeCloseTo(1);
+  });
+
+  it("paints a true H1 slope forward from replay start, not backward in ghost prehistory", () => {
+    const hour = 3_600_000;
+    const confirmed = { from_ms: start - 5 * hour, to_ms: start - hour,
+      from_price: 0.395, to_price: 0.375 };
+    const replayStarts = start;
+    const visualFrom = forwardLinePaintStartMs(confirmed, replayStarts);
+    expect(visualFrom).toBe(replayStarts);
+    // Original source is immutable; projected value at the clipped display
+    // start is calculated from both original pivots, without a new anchor.
+    const slope = (confirmed.to_price - confirmed.from_price) /
+      (confirmed.to_ms - confirmed.from_ms);
+    const projected = confirmed.from_price + slope * (visualFrom - confirmed.from_ms);
+    expect(projected).toBeCloseTo(0.37);
+    expect(confirmed.from_ms).toBe(start - 5 * hour);
+    const displayed = Array.from({ length: 5 }, (_, i) => mkBar(i, 60));
+    const part = geometryLogicalSegment({ from_ms: visualFrom }, displayed);
+    expect(part?.from).toBe(0);
+    expect(part?.to).toBe(5);
+    expect(forwardLinePaintStartMs({ from_ms: start + hour }, start))
+      .toBe(start + hour);
   });
 
   it("projects M5 timestamps through REAL H1 bar x positions, without rounding", () => {
