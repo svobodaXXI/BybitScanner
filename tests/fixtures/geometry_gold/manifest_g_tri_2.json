@@ -115,6 +115,34 @@
      191
     ]
    }
+  },
+  {
+   "case_id": "KERNELUSDT-5m-triangle-split-first-wave-20261012",
+   "pattern_family": "TRIANGLE",
+   "symbol": "KERNELUSDT",
+   "timeframe": "5",
+   "evidence_class": "RECOVERED_PIVOT_EQUIVALENT",
+   "fixture_ref": "tests/fixtures/geometry_gold/KERNELUSDT_5m_triangle_split_first_wave_20261012.json",
+   "as_of_index": 199,
+   "provenance": "G-TRI-1 report window recovered 2026-10-14 (TRI-GEOMETRY-NEXT); pivot-equivalent, not source-time equivalent.",
+   "expectation": {
+    "kind": "NO_GEOMETRY",
+    "structural_constraint": "owner reject. Former triangle [164,194,108,186]: first wave LOW108 -> HIGH164 contains the confirmed LOW152, so A->B is not one swing (TRI-WAVE-1)."
+   }
+  },
+  {
+   "case_id": "JASMYUSDT-5m-triangle-no-geometry-20261012",
+   "pattern_family": "TRIANGLE",
+   "symbol": "JASMYUSDT",
+   "timeframe": "5",
+   "evidence_class": "RECOVERED_PIVOT_EQUIVALENT",
+   "fixture_ref": "tests/fixtures/geometry_gold/JASMYUSDT_5m_triangle_no_geometry_20261012.json",
+   "as_of_index": 199,
+   "provenance": "G-TRI-1 report window recovered 2026-10-14 (TRI-GEOMETRY-NEXT); pivot-equivalent, not source-time equivalent.",
+   "expectation": {
+    "kind": "NO_GEOMETRY",
+    "structural_constraint": "owner reject; already no geometry on stable df652788 (G-TRI-3/TRI-START-3). Control: TRI-WAVE-1 must keep it rejected."
+   }
   }
  ]
 }
