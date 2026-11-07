@@ -4,6 +4,8 @@ on:
     paths:
       - 'deploy/terminal_ingress/**'
       - 'tests/test_terminal_telegram_ingress_auth.py'
+      - 'terminal/application/manual_main_accounts.py'
+      - 'tests/test_manual_main_accounts.py'
       - '.github/workflows/terminal-telegram-ingress.yml'
   workflow_dispatch:
 jobs:
@@ -16,6 +18,8 @@ jobs:
           python-version: '3.12'
       - name: Offline Telegram HMAC/session tests
         run: python -m unittest discover -s tests -p 'test_terminal_telegram_ingress_auth.py' -v
+      - name: Isolated manual MAIN account boundary tests
+        run: python -m unittest -v tests.test_manual_main_accounts
       - name: Validate Nginx auth boundary statically
         run: |
           python - <<'PY'
