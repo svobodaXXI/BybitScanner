@@ -91,6 +91,30 @@ def test_explicit_closed_flags_reject_provisional_or_ambiguous_bars():
     assert observe_four_pivot_channel(future, 111) == original
 
 
+def test_duplicate_reversed_and_invalid_source_times_are_not_a_channel():
+    bars = zigzag(FOUR, 140)
+    baseline = observe_four_pivot_channel(bars, 111)
+    assert baseline is not None
+    for bad in ("duplicate", "reversed", "nonfinite", "not_timestamp"):
+        invalid = bars.copy()
+        if bad == "duplicate":
+            invalid.loc[85, "time"] = invalid.loc[84, "time"]
+        elif bad == "reversed":
+            invalid.loc[85, "time"] = invalid.loc[84, "time"] - 300000
+        elif bad == "nonfinite":
+            invalid.loc[85, "time"] = float("nan")
+        else:
+            invalid["time"] = invalid["time"].astype(object)
+            invalid.loc[85, "time"] = "not a timestamp"
+        assert observe_four_pivot_channel(invalid, 111) is None
+        followup = compare_channel_preview(baseline, invalid, 113)
+        assert followup is not None and followup.status == "NOT_PROVEN"
+    # A changed FUTURE timestamp must not contaminate the earlier result.
+    future = bars.copy()
+    future.loc[112, "time"] = future.loc[111, "time"]
+    assert observe_four_pivot_channel(future, 111) == baseline
+
+
 def test_non_alternating_or_split_wave_is_not_a_four_pivot_channel():
     bars = zigzag(FOUR, 140)
     highs = [{"index": 72, "price": 101.0}, {"index": 84, "price": 102.0}]
