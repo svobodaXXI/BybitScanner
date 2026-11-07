@@ -131,7 +131,7 @@ def _assess_geometry(payload: dict, snapshot: dict) -> dict:
     for side in ("upper", "lower"):
         line = next(line for line in payload["proposed_boundaries"] if line["id"] == side)
         values = pivots[side]
-        if len(values) > 125:
+        if len(values) > 40:
             return {"decision": "REJECTED", "reason": "pivot_evaluation_budget_exceeded"}
         pair = []
         for anchor in line["anchors"]:
