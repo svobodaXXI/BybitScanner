@@ -15,7 +15,7 @@ def send_ready_workspace(token: str, owner_chat_id: str, *,
                          timeframe: str, signal_id: str | None,
                          gateway_ready: bool, access_policy_verified: bool,
                          qr_directory: Path) -> dict:
-    if not gateway_ready or not access_policy_verified:
+    if gateway_ready is not True or access_policy_verified is not True:
         raise RuntimeError("Workspace HTTPS or authentication is not verified: no READY message")
     if not token or not owner_chat_id:
         raise ValueError("Owner Telegram identity and bot token are required")
