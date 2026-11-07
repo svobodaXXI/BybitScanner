@@ -149,11 +149,12 @@ try {
   const wickProjections = JSON.parse(await overlay.getAttribute("data-h1-main-wick-supports") ?? "[]");
   const startingMain = wickProjections.find(line => line.origin_ms === firstMain.from_ms);
   assert.ok(startingMain, "first H1 main must be drawn at its original source wick");
-  assert.equal(startingMain.adjusted, true,
-    "already-closed protruding GRASS H1 wick must tighten the visible support");
-  assert.ok(startingMain.support_ms > firstMain.to_ms,
-    "the tightened support must use a later REAL closed H1 candle");
-  console.log("REAL_FIRST_H1_WICK_SUPPORT_OK " + JSON.stringify(startingMain));
+  assert.equal(startingMain.adjusted, false,
+    "published H1 main must not substitute a later wick for its structural third pivot");
+  assert.equal(startingMain.support_ms, firstMain.to_ms,
+    "the frozen first H1 slope must retain its actual confirmed second LOW");
+  assert.equal(startingMain.price, Number(firstMain.to_price));
+  console.log("REAL_FIRST_H1_STRUCTURAL_ANCHORS_OK " + JSON.stringify(startingMain));
   // The real first frame previously showed a BLUE M5 continuation ray
   // crossing the entire H1 pane. Keep its history, but only through its
   // own M5 confirmation time on the coarser H1 chart.
@@ -242,6 +243,17 @@ try {
       /Исторический \(сломанный\)/);
     await page.getByRole("button", { name: "H1", exact: true }).click();
     assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"), "1h");
+    if (opposite.side === "BULL" &&
+        opposite.from_ms === Date.UTC(2026, 7, 29, 8)) {
+      const slopes = JSON.parse(await overlay.getAttribute("data-h1-main-wick-supports") ?? "[]");
+      const mainIII = slopes.find(x => x.origin_ms === opposite.from_ms);
+      assert.ok(mainIII, "owner's new BULL III must be visible in real H1");
+      assert.equal(mainIII.support_ms, Date.UTC(2026, 7, 30, 15));
+      assert.equal(mainIII.price, 0.3589,
+        "real H1 support III must NOT be flattened onto 30 Aug 23:00 LOW=0.3489");
+      assert.equal(mainIII.adjusted, false);
+      console.log("REAL_GRASS_H1_III_SUPPORT_UNCHANGED_OK " + JSON.stringify(mainIII));
+    }
     await page.screenshot({
       path: join(screenshotDir, `real-h1-opposite-${i + 1}.png`), fullPage: true,
     });
