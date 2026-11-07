@@ -1,0 +1,25 @@
+# MANUAL MAIN read-only service. Template only: never auto-enable or deploy
+# without separate explicit owner VPS approval and Telegram-authenticated ingress checks.
+# Unlike PaperRuntime this process has no Robot/PAPER DB/STOP/TAKE owner.
+[Unit]
+Description=BybitScanner manual MAIN read gateway (loopback, no trading)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bybitscanner
+Group=bybitscanner
+WorkingDirectory=/opt/BybitScanner
+Environment=BYBITSCANNER_MAIN_STATE_DIR=/var/lib/bybitscanner-manual-main
+StateDirectory=bybitscanner-manual-main
+StateDirectoryMode=0700
+ExecStart=/opt/BybitScanner/venv/bin/python -m terminal.runtime.manual_main_read_server
+Restart=no
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/bybitscanner-manual-main
+UMask=0077
+# The service has no Install section: cannot auto-enable itself.
