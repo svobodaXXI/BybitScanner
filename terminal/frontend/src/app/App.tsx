@@ -28,6 +28,7 @@ import type { OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
 import type { PaperOpenPosition } from "../contracts/trading";
+import type { RobotTradeMarker } from "../chart/robotTradeMarkers";
 import type { DrawingObject } from "../chart/drawingModel";
 import {
   createLimitDraft,
@@ -105,6 +106,9 @@ export function App() {
     launchLink?.mode === "TERMINAL" && launchLink.signalId ? "AUTOPILOT" : launchLink?.mode ?? "TERMINAL",
   );
   const [robotPositions, setRobotPositions] = useState<PaperOpenPosition[] | null>(null);
+  const [robotMarkers, setRobotMarkers] = useState<{
+    symbol: string; tradeId: string; markers: RobotTradeMarker[];
+  } | null>(null);
   const [frozenSignal, setFrozenSignal] = useState<{
     candles: Candle[];
     sourceCandles: Candle[];
@@ -381,6 +385,38 @@ export function App() {
         Number(p.position_quantity) === Number(currentPaperState.position_quantity),
       ) ?? null
     : null;
+  // Read-only snapshot of EXACTLY the same TradeMarkers used by Telegram
+  // position cards. Never infer Robot executions from OHLC or generic Diary.
+  const activeRobotTradeId = robotPosition?.robot_trade_id ?? null;
+  useEffect(() => {
+    setRobotMarkers(null);
+    if (mode !== "AUTOPILOT" || !activeRobotTradeId || !robotPosition) return;
+    const controller = new AbortController();
+    const symbol = robotPosition.symbol, tradeId = activeRobotTradeId;
+    void (async () => {
+      try {
+        const response = await fetch(
+          `/api/robot/position-markers?symbol=${encodeURIComponent(symbol)}&trade_id=${encodeURIComponent(tradeId)}`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) return;
+        const result = await response.json() as {
+          ok?: boolean; account_id?: string; source?: string; symbol?: string;
+          trade_id?: string; markers?: RobotTradeMarker[];
+        };
+        if (result.ok !== true || result.account_id !== "paper" ||
+            result.source !== "robot_position_view.TradeMarker" ||
+            result.symbol !== symbol || result.trade_id !== tradeId ||
+            !Array.isArray(result.markers)) return;
+        if (!controller.signal.aborted)
+          setRobotMarkers({ symbol, tradeId, markers: result.markers });
+      } catch {
+        // Read-only observation only: unavailable evidence means no markers.
+      }
+    })();
+    return () => controller.abort();
+  }, [mode, activeRobotTradeId, robotPosition?.symbol]);
+
   const liveProtectionPosition = liveProtectionAllowed
     ? projectLiveProtectionPosition(accountProjection, tradingSymbol)
     : null;
@@ -1553,6 +1589,10 @@ export function App() {
           onTakeDelete={() => deleteProtection("TAKE")}
           averageEntryPrice={mode === "TERMINAL" && protectionPositionSide !== "Flat" || mode === "AUTOPILOT" && robotPosition ? protectionAverageEntry : null}
           readOnly={mode === "AUTOPILOT"}
+          robotTradeMarkers={mode === "AUTOPILOT" && robotPosition &&
+            robotMarkers?.symbol === tradingSymbol &&
+            robotMarkers.tradeId === robotPosition.robot_trade_id
+              ? robotMarkers.markers : []}
           workspaceControls={(
             <WorkspaceHeader
               instruments={instruments}
