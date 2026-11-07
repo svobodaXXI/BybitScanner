@@ -27,6 +27,7 @@ import { appendRetrospectiveCandles, projectSignalGeometry, restoreSavedSignalCo
 import type { OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
+import type { PaperOpenPosition } from "../contracts/trading";
 import type { DrawingObject } from "../chart/drawingModel";
 import {
   createLimitDraft,
@@ -103,6 +104,7 @@ export function App() {
   const [mode, setMode] = useState<WorkspaceMode>(
     launchLink?.mode === "TERMINAL" && launchLink.signalId ? "AUTOPILOT" : launchLink?.mode ?? "TERMINAL",
   );
+  const [robotPositions, setRobotPositions] = useState<PaperOpenPosition[] | null>(null);
   const [frozenSignal, setFrozenSignal] = useState<{
     candles: Candle[];
     sourceCandles: Candle[];
@@ -368,6 +370,17 @@ export function App() {
   const applyPaperStateForSession = paperTradingStore.captureApplyPaperState();
   const currentPaperState =
     mutationsAllowed && paperState?.symbol === tradingSymbol ? paperState : null;
+  // A Robot trade association alone is not enough: verify the live PAPER
+  // projection agrees before labelling any position or its protection as Robot.
+  const robotPosition = mode === "AUTOPILOT" && accountProjection?.provider === "PAPER" &&
+    accountProjection.environment === "PAPER" && currentPaperState?.ok
+    ? robotPositions?.find((p) =>
+        p.symbol === tradingSymbol && typeof p.robot_trade_id === "string" && p.robot_trade_id.length > 0 &&
+        p.position_side === currentPaperState.position_side &&
+        Number.isFinite(Number(p.position_quantity)) && Number(p.position_quantity) > 0 &&
+        Number(p.position_quantity) === Number(currentPaperState.position_quantity),
+      ) ?? null
+    : null;
   const liveProtectionPosition = liveProtectionAllowed
     ? projectLiveProtectionPosition(accountProjection, tradingSymbol)
     : null;
@@ -469,11 +482,12 @@ export function App() {
   const refreshPaperState = paperTradingStore.refresh;
 
   useEffect(() => {
-    if (mode === "TERMINAL") void refreshPaperState();
-  }, [mode, refreshPaperState]);
+    if (mode === "TERMINAL" || (mode === "AUTOPILOT" && mutationsAllowed))
+      void refreshPaperState();
+  }, [mode, mutationsAllowed, refreshPaperState]);
 
   useEffect(() => {
-    if (mode !== "TERMINAL") return;
+    if (mode !== "TERMINAL" && (mode !== "AUTOPILOT" || !mutationsAllowed)) return;
 
     if (!paperStateNeedsPolling(paperState)) return;
     const timer = window.setInterval(() => {
@@ -481,7 +495,7 @@ export function App() {
     }, 2_000);
 
     return () => window.clearInterval(timer);
-  }, [mode, paperState, refreshPaperState]);
+  }, [mode, mutationsAllowed, paperState, refreshPaperState]);
 
   useEffect(() => {
     const protectionUnavailable = !mutationsAllowed && !liveProtectionAllowed;
@@ -1484,11 +1498,12 @@ export function App() {
           symbol={mode === "EDITOR" && frozenSignal ? launchLink?.symbol ?? market.book.symbol : market.book.symbol}
           timeframe={mode === "EDITOR" && frozenSignal ? launchLink?.timeframe ?? timeframe : timeframe}
           activeLimitOrders={
-            mode !== "EDITOR" && currentPaperState?.ok ? currentPaperState.active_limit_orders : []
+            mode === "TERMINAL" && currentPaperState?.ok ? currentPaperState.active_limit_orders :
+            mode === "AUTOPILOT" && robotPosition && currentPaperState?.ok ? currentPaperState.active_limit_orders : []
           }
-          pendingLimitDraft={mode === "EDITOR" ? null : limitDraftState.draft}
+          pendingLimitDraft={mode !== "TERMINAL" ? null : limitDraftState.draft}
           liveLimitDrafts={accountProjection?.provider === "BYBIT"}
-          pendingLimitDrafts={mode === "EDITOR" ? [] : visibleLimitDrafts}
+          pendingLimitDrafts={mode !== "TERMINAL" ? [] : visibleLimitDrafts}
           pendingLimitVolumeValid={{
             Buy: sideDraftVolumesValid(visibleLimitDrafts, "Buy", selectedVolumes.Buy),
             Sell: sideDraftVolumesValid(visibleLimitDrafts, "Sell", selectedVolumes.Sell),
@@ -1506,12 +1521,12 @@ export function App() {
             dispatchLimitDraft({ type: "update-price", price, draftId })
           }
           onPendingLimitConfirm={submitLimitDraft}
-          fastLimitActive={mode !== "EDITOR" && fastLimitIntent !== null}
+          fastLimitActive={mode === "TERMINAL" && fastLimitIntent !== null}
           onFastLimitPriceSelect={createFastLimitDraft}
-          onActiveLimitAmend={amendPaperLimit}
-          onActiveLimitCancel={cancelPaperLimit}
-          authoritativeStopPrice={mode === "EDITOR" ? null : activeStopPrice}
-          stopDraft={mode === "EDITOR" ? null : stopDraft}
+          onActiveLimitAmend={mode === "TERMINAL" ? amendPaperLimit : undefined}
+          onActiveLimitCancel={mode === "TERMINAL" ? cancelPaperLimit : undefined}
+          authoritativeStopPrice={mode === "TERMINAL" || (mode === "AUTOPILOT" && robotPosition) ? activeStopPrice : null}
+          stopDraft={mode !== "TERMINAL" ? null : stopDraft}
           onStopDraftPriceChange={updateStopDraftPrice}
           onStopConfirm={() => {
             setProtectionSettings(null);
@@ -1523,8 +1538,8 @@ export function App() {
           }}
           onStopEdit={beginStopEdit}
           onStopDelete={() => deleteProtection("STOP")}
-          authoritativeTakePrice={mode === "EDITOR" ? null : activeTakePrice}
-          takeDraft={mode === "EDITOR" ? null : takeDraft}
+          authoritativeTakePrice={mode === "TERMINAL" || (mode === "AUTOPILOT" && robotPosition) ? activeTakePrice : null}
+          takeDraft={mode !== "TERMINAL" ? null : takeDraft}
           onTakeDraftPriceChange={updateTakeDraftPrice}
           onTakeConfirm={() => {
             setProtectionSettings(null);
@@ -1536,7 +1551,23 @@ export function App() {
           }}
           onTakeEdit={beginTakeEdit}
           onTakeDelete={() => deleteProtection("TAKE")}
-          averageEntryPrice={mode !== "EDITOR" && protectionPositionSide !== "Flat" ? protectionAverageEntry : null}
+          averageEntryPrice={mode === "TERMINAL" && protectionPositionSide !== "Flat" || mode === "AUTOPILOT" && robotPosition ? protectionAverageEntry : null}
+          readOnly={mode === "AUTOPILOT"}
+          positionFooter={mode === "AUTOPILOT" && accountProjection?.provider === "PAPER" ? (
+            <div className="autopilot-position-readout" aria-label="Позиция робота под графиком">
+              {robotPosition ? (
+                <>
+                  <strong>{robotPosition.symbol} · {robotPosition.position_side === "Long" ? "LONG" : "SHORT"}</strong>
+                  <span>Объём {robotPosition.position_quantity} · {robotPosition.engaged_notional_usdt} USDT</span>
+                  <span>Вход {robotPosition.average_entry ?? "—"}</span>
+                  <span>Снимок PnL {robotPosition.unrealized_pnl ?? "—"} USDT</span>
+                </>
+              ) : (
+                <span>{robotPositions === null ? "Данные позиций робота загружаются или недоступны" :
+                  `Нет подтверждённой позиции робота по ${tradingSymbol}`}</span>
+              )}
+            </div>
+          ) : null}
           workspaceControls={(
             <WorkspaceHeader
               instruments={instruments}
@@ -1569,8 +1600,8 @@ export function App() {
                     book={market.book}
                     centerPrice={ladderCenterPrice}
                     trades={market.trades}
-                    positionSide={positionSide}
-                    averageEntryPrice={positionAverageEntry}
+                    positionSide={mode === "AUTOPILOT" ? robotPosition?.position_side ?? "Flat" : positionSide}
+                    averageEntryPrice={mode === "AUTOPILOT" ? (robotPosition?.average_entry === null || !robotPosition ? null : Number(robotPosition.average_entry)) : positionAverageEntry}
                     currentPrice={liveMidPrice}
                     compression={domCompression}
                     viewportGeometry={domViewportGeometry}
@@ -1579,7 +1610,8 @@ export function App() {
                     book={market.book}
                     centerPrice={ladderCenterPrice}
                     onCenterPriceChange={setLadderCenterPrice}
-                    ownOrders={domOwnOrders}
+                    ownOrders={mode === "AUTOPILOT" && !robotPosition ? [] : domOwnOrders}
+                    ownOrdersReadOnly={mode === "AUTOPILOT"}
                     onOwnOrderCancel={(orderId) => {
                       void cancelPaperLimit(orderId).catch(() => {});
                     }}
@@ -1596,6 +1628,7 @@ export function App() {
         <ModePanel
           mode={mode}
           onModeChange={setMode}
+          onRobotPositionsLoaded={setRobotPositions}
           symbol={tradingSymbol}
           paperState={currentPaperState}
           activeLimitOrders={
