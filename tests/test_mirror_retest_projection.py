@@ -103,6 +103,19 @@ def test_a_half_written_last_line_is_an_append_in_flight_not_an_error(tmp_path):
     assert [r["seq"] for r in project(path, after=2)["observations"]] == [3]
 
 
+@pytest.mark.parametrize("invalid", [[], {}, ["paper"], 0, False, ""])
+def test_explicit_malformed_account_scope_cannot_be_treated_as_legacy(tmp_path, invalid):
+    path = write(tmp_path / "j.jsonl", [
+        record(1, account_id="paper"),
+        record(2, account_id=invalid),
+        record(3),  # Legacy missing scope is still allowed.
+    ])
+    result = project(path, account_scope="paper")
+    assert [row["seq"] for row in result["observations"]] == [1, 3]
+    assert result["malformed_lines"] == 1
+    assert result["foreign_account_lines"] == 0
+
+
 def test_foreign_account_lines_are_skipped_and_counted(tmp_path):
     path = write(tmp_path / "j.jsonl", [record(1, account_id="paper"), record(2, account_id="live-x"), record(3)])
 
