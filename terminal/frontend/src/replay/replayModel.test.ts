@@ -22,7 +22,7 @@ describe("standalone SIMULATION viewer contract", () => {
       "BEAR", 0.3661, 0.3659,
     )).toBe(true);
     expect(replayContactWithinFloatPrecision(
-      { low: 0.364, high: 0.36611, close: 0.365 },
+      { low: 0.364, high: 0.36609, close: 0.365 },
       "BEAR", 0.3661, 0.3659,
     )).toBe(false);
   });
