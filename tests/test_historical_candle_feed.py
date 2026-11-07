@@ -155,9 +155,11 @@ class HistoricalCandleFeedTests(unittest.TestCase):
         h1_revised = t0 + 2 * FIVE_MINUTES_MS
         trends = [
             SimpleNamespace(side="BULL", main=main, target=target,
-                            pivot_sequence=h1_pivots, available_at_ms=h1_first),
+                            pivot_sequence=h1_pivots, available_at_ms=h1_first,
+                            envelope_status="WICK_TIGHT"),
             SimpleNamespace(side="BULL", main=main, target=target,
-                            pivot_sequence=h1_pivots, available_at_ms=h1_revised),
+                            pivot_sequence=h1_pivots, available_at_ms=h1_revised,
+                            envelope_status="WICK_TIGHT"),
         ]
 
         def replay_fixture(**kwargs):
