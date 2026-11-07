@@ -50,6 +50,7 @@ export function DrawingOverlay({
   onSelect,
   onDrawingGesture,
   onDrawingComplete,
+  onDrawingGestureEnd,
   priceFormatter = (price) => price.toFixed(4),
 }: {
   drawings: DrawingObject[];
@@ -68,6 +69,8 @@ export function DrawingOverlay({
   onSelect: (id: string | null) => void;
   onDrawingGesture: () => void;
   onDrawingComplete: () => void;
+  /** Optional end boundary for grouped undo in the local replay viewer. */
+  onDrawingGestureEnd?: () => void;
   priceFormatter?: (price: number) => string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -477,9 +480,10 @@ export function DrawingOverlay({
     } else {
       draft.anchors.push(anchor);
       draftRef.current = draft;
+      // Notify before the first draft commit so Undo includes the whole figure.
+      onDrawingGesture();
       onCommit(withDrawing(draft));
       onSelect(draft.id);
-      onDrawingGesture();
       event.currentTarget.setPointerCapture(event.pointerId);
       redraw();
     }
@@ -550,6 +554,7 @@ export function DrawingOverlay({
     }
   };
   const finish = () => {
+    const endedDrag = dragRef.current !== null;
     if (
       (draftRef.current?.type === "fibonacci" || draftRef.current?.type === "ruler") &&
       draftRef.current.anchors.length === 2
@@ -565,9 +570,11 @@ export function DrawingOverlay({
     rulerAnchorActiveRef.current = false;
     dragRef.current = null;
     guideAnchorRef.current = null;
+    if (endedDrag) onDrawingGestureEnd?.();
     redraw();
   };
   const cancel = () => {
+    const endedDrag = dragRef.current !== null;
     if (
       (draftRef.current?.type === "fibonacci" || draftRef.current?.type === "ruler") &&
       draftRef.current.anchors.length === 2
@@ -583,6 +590,7 @@ export function DrawingOverlay({
     rulerAnchorActiveRef.current = false;
     dragRef.current = null;
     guideAnchorRef.current = null;
+    if (endedDrag) onDrawingGestureEnd?.();
     redraw();
   };
   return (
