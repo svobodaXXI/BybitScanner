@@ -52,7 +52,7 @@ def fake_runner(calls, *, fail=None):
 
 
 @pytest.mark.parametrize("arguments,reason", [
-    (["--unexpected-switch"], "unrecognized arguments: --unexpected-switch"),
+    (["a" * 40, "--unexpected-switch"], "unrecognized arguments: --unexpected-switch"),
     (["a" * 40, "--staged-gitless-editor-only"], "expected one argument"),
     (["a" * 40, "--proven-one-flat-orphan-handoff"],
      "one orphan handoff requires staged Gitless operation"),
