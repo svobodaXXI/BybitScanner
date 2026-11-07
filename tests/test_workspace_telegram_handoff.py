@@ -264,7 +264,7 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
             )["inline_keyboard"][-1]
         self.assertEqual(editor["callback_data"], f"workspace:EDITOR:S:{token}")
         self.assertLessEqual(len(editor["callback_data"].encode("utf-8")), 64)
-        self.assertEqual(terminal["callback_data"], "workspace:TERMINAL:BTCUSDT:5m")
+        self.assertEqual(terminal["callback_data"], f"workspace:TERMINAL:S:{token}")
         parsed = telegram_review._parse_workspace_callback(editor["callback_data"])
         self.assertEqual(parsed["source_token"], token)
         self.assertIsNone(telegram_review._parse_workspace_callback(
