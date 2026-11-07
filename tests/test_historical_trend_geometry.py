@@ -52,7 +52,11 @@ class ConfirmedGeometryTests(unittest.TestCase):
     def test_same_direction_h1_revision_preserves_original_first_wick_anchors(self):
         feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
         versions = []
-        for hour, (high, low) in enumerate(BULL):
+        # The next HIGH must be a true confirmed pivot, AND the line must
+        # pass all intervening wicks. Hour 7 HIGH=123 satisfies both while
+        # preserving a narrowing H1 corridor; the old HIGH=121 did not.
+        compatible = BULL[:7] + [(123, 115)] + BULL[8:]
+        for hour, (high, low) in enumerate(compatible):
             for minute in range(12):
                 index = hour * 12 + minute
                 five = make_bar(index, high, low, FIVE_MINUTES_MS)
@@ -70,8 +74,8 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual(next_version.target.first.index, 3)
         self.assertGreater(next_version.main.second.index, first.main.second.index)
         self.assertGreaterEqual(next_version.target.second.index, first.target.second.index)
-        # An earlier higher wick may become the correct slope-tight second
-        # anchor even after a later, absolute high pivot is confirmed.
+        # Both second anchors are confirmed original H1 pivots, not wicks
+        # silently substituted to force a valid-looking envelope.
         for candidate_line, upper in (
             (next_version.main, False), (next_version.target, True),
         ):
@@ -86,7 +90,27 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual(next_version.main.first.price, Decimal(98))
         self.assertGreater(next_version.available_at_ms, first.available_at_ms)
 
-    def test_h1_wick_envelope_uses_worst_slope_not_absolute_wick(self):
+    def test_h1_rejects_later_wick_pierced_revision_without_moving_pivots(self):
+        feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
+        versions = []
+        priors = []
+        for hour, (high, low) in enumerate(BULL):
+            for minute in range(12):
+                five = make_bar(hour * 12 + minute, high, low, FIVE_MINUTES_MS)
+                closed_hour = make_bar(hour, high, low) if minute == 11 else None
+                trend, _ = feed.observe_closed(five, closed_hour)
+            versions.append(trend)
+            priors.append(feed.confirmed_hourly_prior)
+        first = versions[6]
+        self.assertIsNotNone(first)
+        self.assertEqual(first.main.second.index, 4)
+        self.assertEqual(first.target.second.index, 5)
+        # Later 4 valid structural pivots do not license substituting the
+        # intermediate H1 wick at 5: the original version stays immutable.
+        self.assertEqual(versions[8], first)
+        self.assertEqual(priors[8], Decimal(106))
+
+    def test_h1_upper_line_rejects_nonpivot_wick_piercing(self):
         bars = (
             make_bar(0, 120, 100),
             make_bar(1, 119, 106),
@@ -98,24 +122,28 @@ class ConfirmedGeometryTests(unittest.TestCase):
                                bars[1].end_ms, Decimal(120))
         candidate = ConfirmedPivot("HIGH", 4, bars[4].start_ms,
                                    bars[4].end_ms, Decimal(135))
-        line = wick_tight_hourly_line(
-            start, candidate, bars, boundary="UPPER",
-            available_at_ms=bars[-1].end_ms,
-        )
-        self.assertIsNotNone(line)
-        self.assertEqual(line.first, start)
-        # HIGH at hour 2 (130) gives a steeper upper envelope than
-        # the absolute maximum 135 at hour 4.
-        self.assertEqual(line.second.index, 2)
-        self.assertEqual(line.second.price, Decimal(130))
-        for bar in bars[1:]:
-            self.assertGreaterEqual(line.value_at(bar.start_ms), bar.high)
+        # Hour 2 HIGH=130 cuts through the confirmed 0→4 line.
+        # It is NOT a new significant 4-pivot anchor: reject, don't refit.
         self.assertIsNone(wick_tight_hourly_line(
             start, candidate, bars, boundary="UPPER",
-            available_at_ms=bars[3].end_ms,
+            available_at_ms=bars[-1].end_ms,
+        ))
+        compatible = list(bars)
+        compatible[2] = make_bar(2, 127, 108)
+        line = wick_tight_hourly_line(
+            start, candidate, tuple(compatible), boundary="UPPER",
+            available_at_ms=compatible[-1].end_ms,
+        )
+        self.assertIsNotNone(line)
+        self.assertEqual((line.first, line.second), (start, candidate))
+        for bar in compatible[1:]:
+            self.assertGreaterEqual(line.value_at(bar.start_ms), bar.high)
+        self.assertIsNone(wick_tight_hourly_line(
+            start, candidate, tuple(compatible), boundary="UPPER",
+            available_at_ms=compatible[3].end_ms,
         ))
 
-    def test_h1_lower_envelope_mirrors_upper_wick_constraint(self):
+    def test_h1_lower_line_rejects_nonpivot_wick_piercing(self):
         bars = (
             make_bar(0, 110, 100),
             make_bar(1, 113, 102),
@@ -127,15 +155,21 @@ class ConfirmedGeometryTests(unittest.TestCase):
                                bars[1].end_ms, Decimal(100))
         candidate = ConfirmedPivot("LOW", 4, bars[4].start_ms,
                                    bars[4].end_ms, Decimal(110))
-        line = wick_tight_hourly_line(
+        # Hour 2 LOW=103 is below the 0→4 confirmed pivot line.
+        self.assertIsNone(wick_tight_hourly_line(
             start, candidate, bars, boundary="LOWER",
             available_at_ms=bars[-1].end_ms,
+        ))
+        compatible = list(bars)
+        compatible[1] = make_bar(1, 113, 103)
+        compatible[2] = make_bar(2, 117, 105)
+        line = wick_tight_hourly_line(
+            start, candidate, tuple(compatible), boundary="LOWER",
+            available_at_ms=compatible[-1].end_ms,
         )
         self.assertIsNotNone(line)
-        self.assertEqual(line.first, start)
-        self.assertEqual(line.second.index, 2)
-        self.assertEqual(line.second.price, Decimal(103))
-        for bar in bars[1:]:
+        self.assertEqual((line.first, line.second), (start, candidate))
+        for bar in compatible[1:]:
             self.assertLessEqual(line.value_at(bar.start_ms), bar.low)
 
     def test_bear_main_is_through_highs_and_target_through_lows(self):
@@ -415,17 +449,22 @@ class ConfirmedGeometryTests(unittest.TestCase):
         ]
         feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
         observations = {}
+        priors = {}
         for hour, (high, low) in enumerate(hours):
             for minute in range(12):
                 m5 = make_bar(hour * 12 + minute, high, low, FIVE_MINUTES_MS)
                 newly_closed = make_bar(hour, high, low) if minute == 11 else None
                 trend, _ = feed.observe_closed(m5, newly_closed)
                 observations[hour, minute] = trend
+                priors[hour, minute] = feed.confirmed_hourly_prior
 
         original = observations[8, 11]
         self.assertIsNotNone(original)
         self.assertEqual(original.side, "BULL")
-        self.assertEqual(original.main.second.price, Decimal(106))
+        # Refit of the yellow 1–3 was rejected; true point 3 remains 102.
+        # Independently confirmed H1 contact at 106 still advances the prior.
+        self.assertEqual(original.main.second.price, Decimal(102))
+        self.assertEqual(priors[8, 11], Decimal(106))
         self.assertEqual(observations[9, 11].side, "BULL")
         # A first H1 OPEN outside the purple prior is observed only after the
         # first completed M5; until then the last H1 close alone isn't enough.
@@ -515,8 +554,8 @@ class ConfirmedGeometryTests(unittest.TestCase):
                 self.assertTrue(last is None or last.available_at_ms <= next_5m.end_ms)
                 self.assertTrue(blue is None or blue.available_at_ms <= next_5m.end_ms)
         self.assertEqual(first_times, [7*ONE_HOUR_MS])
-        # Latest pivot is at 7, but hour 5 provides the slope-tight
-        # upper wick anchor against all closed H1 candles through hour 7.
+        # A pierced later 2–4 proposal cannot replace the frozen
+        # structurally valid original target pivot at hour 5.
         self.assertEqual(last.pivot_sequence[3].index, 5)
         self.assertEqual(last.target.second.price, Decimal(119))
         for bar in geometry._hourly.bars[last.target.first.index + 1:8]:
