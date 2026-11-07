@@ -57,8 +57,9 @@ try {
   assert.equal(await page.locator('input[type="date"]').nth(1).inputValue(),
     new Date(archive.until_ms).toISOString().slice(0, 10));
   assert.match(await page.locator("body").innerText(), /2016/);
-  assert.match(await page.locator("body").innerText(), /официального публичного архива/);
-  assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "0");
+  assert.equal(await page.locator(".replay-note").count(), 0,
+    "owner removed the obsolete yellow market-history banner");
+  assert.equal(await page.getByRole("slider", { name: "Перемотка графика по закрытым свечам" }).inputValue(), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   assert.equal(await page.getByRole("group", { name: "Управление воспроизведением" }).count(), 1);
   assert.equal(await page.getByRole("group", { name: "Инструменты рисования" })
@@ -67,7 +68,7 @@ try {
   await page.getByRole("button", { name: "Пример", exact: true }).click();
   assert.match(await page.locator("body").innerText(), /Синтетический пример/);
   await page.getByRole("button", { name: "Шаг вперёд ▶" }).click();
-  assert.ok(Number(await page.getByRole("progressbar").getAttribute("aria-valuenow")) > 0);
+  assert.ok(Number(await page.getByRole("slider", { name: "Перемотка графика по закрытым свечам" }).inputValue()) > 0);
   assert.deepEqual(errors, [], "browser errors or rejected bundled fetch");
   assert.ok(requests.every(uri => ["localhost", "127.0.0.1"].includes(new URL(uri).hostname)),
     "no remote requests from the standalone owner viewer");
