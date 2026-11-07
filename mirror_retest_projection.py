@@ -60,7 +60,7 @@ def _check_permission(record: Mapping[str, Any], line_no: int) -> None:
         raise ProjectionViolation(f"line {line_no}: mode is not OBSERVE_ONLY")
     if record.get("executable") is not False or record.get("admission_allowed") is not False:
         raise ProjectionViolation(f"line {line_no}: record is executable or admission-allowed")
-    if record.get("decision") not in ALLOWED_DECISIONS:
+    if not isinstance(record.get("decision"), str) or record["decision"] not in ALLOWED_DECISIONS:
         raise ProjectionViolation(f"line {line_no}: decision is not WAIT or BLOCK")
 
 
@@ -72,7 +72,7 @@ def _project(record: Mapping[str, Any], seq: int) -> dict[str, Any] | None:
     if (not isinstance(record.get("observation_id"), str) or not record["observation_id"]
             or not isinstance(boundary_id, str) or ":" not in boundary_id
             or not isinstance(symbol, str) or not symbol
-            or record.get("event") not in ALLOWED_EVENTS
+            or not isinstance(record.get("event"), str) or record["event"] not in ALLOWED_EVENTS
             or not isinstance(record.get("phase"), str)
             or not _is_int(record.get("candle_close_time_ms")) or record["candle_close_time_ms"] <= 0
             or not isinstance(reasons, list) or not all(isinstance(item, str) for item in reasons)):
