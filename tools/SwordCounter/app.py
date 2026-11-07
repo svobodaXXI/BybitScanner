@@ -146,10 +146,25 @@ class SwordCounterApp:
         self._results: queue.Queue = queue.Queue()
         self._last = None
         self._last_at: float | None = None
+        self._result_epoch = 0
         self._closed = False
         self._build()
-        self.refresher = Refresher(counter_factory(lambda: self.settings),
-                                   lambda outcome: self._results.put((outcome, time.monotonic())),
+        counter = counter_factory(lambda: self.settings)
+
+        def count_with_epoch():
+            # Capture the identity BEFORE starting a potentially slow Bybit
+            # read. Responses from a previous key/settings generation cannot
+            # be displayed under a newer account, even when they arrive late.
+            epoch = self._result_epoch
+            try:
+                value = counter()
+            except Exception:
+                value = WORKER_FAILED
+            return epoch, value
+
+        self.refresher = Refresher(count_with_epoch,
+                                   lambda pair: self._results.put(
+                                       (pair[0], pair[1], time.monotonic())),
                                    interval_s=interval_s)
         if start_worker:
             self.refresher.start()
@@ -213,12 +228,22 @@ class SwordCounterApp:
             return
         while True:
             try:
-                outcome, at = self._results.get_nowait()
+                epoch, outcome, at = self._results.get_nowait()
             except queue.Empty:
                 break
-            self.apply_result(outcome, at)
+            if epoch == self._result_epoch:
+                self.apply_result(outcome, at)
         self.render()
         self._after_id = self.root.after(POLL_MS, self._tick)
+
+    def _invalidate_result(self) -> None:
+        # Called only on the GUI thread after persistent settings or
+        # verified credentials change. Pending old worker results are tagged
+        # and ignored, not accidentally shown as belonging to the new key.
+        self._result_epoch += 1
+        self._last = None
+        self._last_at = None
+        self.render()
 
     # ---- settings -------------------------------------------------------
     def save_settings_from_text(self, total_text: str) -> AppSettings:
@@ -227,7 +252,7 @@ class SwordCounterApp:
         save_settings(new, self.settings_path)
         self.settings = new
         self._settings_warning = None
-        self.render()
+        self._invalidate_result()
         self.refresher.request_now()
         return new
 
@@ -324,6 +349,7 @@ class SwordCounterApp:
             show(outcome.ok, outcome.message)
             if outcome.ok:
                 save_button.configure(state="disabled")
+                self._invalidate_result()
                 self.refresher.request_now()
 
         show_button.configure(command=toggle_secret)
