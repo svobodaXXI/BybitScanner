@@ -26,6 +26,89 @@ BEAR = [
 
 
 class ConfirmedGeometryTests(unittest.TestCase):
+    def test_owner_marked_grass_h1_nested_bear_then_broad_bull(self):
+        """20 Aug GRASSUSDT H1, observed in owner's annotated PR #898 chart.
+
+        Actual archived hourly OHLC (no invented price bars). M5 is only
+        a synthetic, closed time carrier; no M5 data enters H1 pivots.
+        Bear 1-2-3-4 at 08/09/11/13; broad bull at 03/08/13/21.
+        """
+        from datetime import datetime, timezone
+        base = int(datetime(2026, 8, 20, tzinfo=timezone.utc).timestamp() * 1000)
+        # (open, high, low, close), sourced from the August GRASSUSDT
+        # official-public-trade-derived local archive in PR #898.
+        h1 = [
+            ("0.2953","0.2977","0.2923","0.2967"),
+            ("0.2967","0.2975","0.2918","0.2947"),
+            ("0.2946","0.2950","0.2877","0.2883"),
+            ("0.2883","0.2885","0.2857","0.2870"),
+            ("0.2868","0.2950","0.2861","0.2946"),
+            ("0.2949","0.2965","0.2917","0.2929"),
+            ("0.2929","0.2971","0.2906","0.2949"),
+            ("0.2948","0.3186","0.2929","0.3177"),
+            ("0.3178","0.3208","0.3033","0.3063"),
+            ("0.3062","0.3083","0.3022","0.3030"),
+            ("0.3027","0.3080","0.3027","0.3048"),
+            ("0.3046","0.3115","0.3016","0.3083"),
+            ("0.3081","0.3088","0.3001","0.3036"),
+            ("0.3035","0.3050","0.2956","0.2972"),
+            ("0.2971","0.3011","0.2970","0.3009"),
+            ("0.3008","0.3064","0.3001","0.3033"),
+            ("0.3033","0.3066","0.3001","0.3066"),
+            ("0.3066","0.3112","0.3043","0.3059"),
+            ("0.3058","0.3074","0.3024","0.3040"),
+            ("0.3039","0.3100","0.3037","0.3044"),
+            ("0.3045","0.3166","0.3041","0.3141"),
+            ("0.3141","0.3325","0.3102","0.3261"),
+            ("0.3263","0.3304","0.3220","0.3255"),
+            ("0.3254","0.3275","0.3204","0.3217"),
+        ]
+        feed = CausalGeometryFeed(wing_1h=2, wing_5m=2)
+        observed = []
+        breaks = []
+        for hour, prices in enumerate(h1):
+            o, high, low, close = map(Decimal, prices)
+            h1_bar = Candle(base + hour * ONE_HOUR_MS, ONE_HOUR_MS,
+                            o, high, low, close, Decimal(12))
+            for minute in range(12):
+                start = h1_bar.start_ms + minute * FIVE_MINUTES_MS
+                bar = Candle(
+                    start, FIVE_MINUTES_MS,
+                    o if minute == 0 else (o + close) / 2,
+                    high, low,
+                    close if minute == 11 else (o + close) / 2,
+                    Decimal(1),
+                )
+                trend, _ = feed.observe_closed(
+                    bar, h1_bar if minute == 11 else None)
+                if feed.confirmed_hourly_prior_break is not None:
+                    breaks.append(feed.confirmed_hourly_prior_break)
+                if trend is not None and (
+                    not observed or observed[-1][0].available_at_ms != trend.available_at_ms
+                ):
+                    observed.append((trend, bar.end_ms))
+        self.assertGreaterEqual(len(observed), 2)
+        first, first_seen = observed[0]
+        self.assertEqual(first.side, "BEAR")
+        self.assertEqual([p.index for p in first.pivot_sequence], [8,9,11,13])
+        self.assertEqual([p.price for p in first.pivot_sequence],
+                         list(map(Decimal, ("0.3208","0.3022","0.3115","0.2956"))))
+        self.assertEqual(first_seen, base + 15 * ONE_HOUR_MS)
+        self.assertTrue(any(e["previous_side"] == "BEAR" and
+                            e["new_side"] == "BULL" and
+                            e["prior_price"] == Decimal("0.3115") and
+                            e["confirmed_at_ms"] == base + 21 * ONE_HOUR_MS +
+                            FIVE_MINUTES_MS for e in breaks))
+        bull = next((t for t, seen in observed if t.side == "BULL"), None)
+        self.assertIsNotNone(bull, "broad bullish H1 structure must survive strict wick fitting")
+        self.assertEqual([p.index for p in bull.pivot_sequence], [3,8,13,21])
+        self.assertEqual([p.price for p in bull.pivot_sequence],
+                         list(map(Decimal, ("0.2857","0.3208","0.2956","0.3325"))))
+        self.assertEqual(bull.available_at_ms, base + 24 * ONE_HOUR_MS)
+        self.assertEqual(bull.envelope_status, "STRUCTURAL_ONLY",
+                         "a minor early wick must not erase valid 4-point structure")
+        self.assertLess(first.available_at_ms, bull.available_at_ms)
+
     def test_bull_yellow_lines_require_last_confirming_hour_and_narrow(self):
         stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
         snapshots = []
