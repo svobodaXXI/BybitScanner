@@ -102,6 +102,122 @@ def _analyze_case(example: dict) -> dict:
     }
 
 
+
+def _pivot_provenance(example: dict) -> list[dict]:
+    """Trace owner-corrected rays through the *existing* 3x3 pivot pipeline.
+
+    Frozen candles are the only market input. Never supplement with later candles,
+    promote a hand-edited wick to a pivot, or change detector thresholds.
+    """
+    import pandas as pd
+    from geometry.candidate import build_candidate_lines
+    from geometry.filter import filter_candidates
+    from pivots import find_pivots
+
+    bars = example["frozen_bars"]
+    indexes = {bar["open_time_ms"]: i for i, bar in enumerate(bars)}
+    frame = pd.DataFrame(
+        [{"high": bar["high"], "low": bar["low"]} for bar in bars]
+    )
+    highs, lows = find_pivots(frame)
+    originals = {line["boundary_id"]: line for line in example["original_boundaries"]}
+    reports = []
+
+    for line in example["corrected_boundaries"]:
+        boundary_id = line["boundary_id"]
+        original = originals[boundary_id]
+        if original["anchors"] == line["anchors"]:
+            continue
+        # A generic sidecar may contain segments or pattern-specific levels.
+        # Their pivot semantics must not be guessed from their visual position.
+        if boundary_id not in ("upper", "lower") or len(line["anchors"]) != 2:
+            reports.append({
+                "boundary_id": boundary_id,
+                "diagnosis": "BOUNDARY_NOT_A_STANDARD_TWO_ANCHOR_RAY",
+            })
+            continue
+
+        upper = boundary_id == "upper"
+        side = "high" if upper else "low"
+        pivots = highs if upper else lows
+        report_anchors = []
+        for n, anchor in enumerate(line["anchors"], start=1):
+            index = indexes[anchor["bar_open_time_ms"]]
+            wick = bars[index][side]
+            on_wick = math.isclose(float(anchor["price"]), float(wick),
+                                   rel_tol=1e-8, abs_tol=1e-12)
+            confirmable = 3 <= index < len(bars) - 3
+            blockers = []
+            if confirmable:
+                for neighbor in range(index - 3, index + 4):
+                    if neighbor == index:
+                        continue
+                    competing = bars[neighbor][side]
+                    if (competing >= wick if upper else competing <= wick):
+                        blockers.append(neighbor - index)
+            strict_local = confirmable and not blockers
+            in_pivots = on_wick and any(
+                p["index"] == index
+                and math.isclose(float(p["price"]), float(anchor["price"]),
+                                 rel_tol=1e-8, abs_tol=1e-12)
+                for p in pivots
+            )
+            if not on_wick:
+                status = "NOT_ON_CANDLE_WICK"
+            elif not confirmable:
+                status = "NOT_YET_CONFIRMABLE_3X3_AT_SNAPSHOT"
+            elif not strict_local:
+                status = "NOT_STRICT_3X3_EXTREMUM"
+            elif not in_pivots:
+                status = "REMOVED_BY_MIN_CHANGE"
+            else:
+                status = "IN_SCANNER_PIVOT_SET"
+            report_anchors.append({
+                "anchor_number": n,
+                "candle_index": index,
+                "price_on_wick": on_wick,
+                "local_3x3": strict_local,
+                "in_scanner_pivots": in_pivots,
+                "blocking_neighbor_bar_offsets": blockers,
+                "status": status,
+            })
+
+        if not all(anchor["in_scanner_pivots"] for anchor in report_anchors):
+            stage = "PIVOT_IDENTIFICATION"
+            raw_pair = None
+            filtered_pair = None
+        elif len(pivots) > 125:
+            # Offline report should never produce unbounded quadratic work.
+            stage = "CANDIDATE_CHECK_BUDGET_EXCEEDED"
+            raw_pair = None
+            filtered_pair = None
+        else:
+            indices = tuple(a["candle_index"] for a in report_anchors)
+            candidates = build_candidate_lines(pivots)
+            raw_pair = any(
+                (c["anchor_index"], c["second_index"]) == indices
+                for c in candidates
+            )
+            if not raw_pair:
+                stage = "CANDIDATE_GENERATION"
+                filtered_pair = False
+            else:
+                filtered = filter_candidates(candidates)
+                filtered_pair = any(
+                    (c["anchor_index"], c["second_index"]) == indices
+                    for c in filtered
+                )
+                stage = ("CANDIDATE_FILTER" if not filtered_pair
+                         else "LATER_GEOMETRY_SELECTION_OR_VALIDATION")
+        reports.append({
+            "boundary_id": boundary_id,
+            "first_unmatched_stage": stage,
+            "generated_as_candidate": raw_pair,
+            "survived_candidate_filter": filtered_pair,
+            "anchors": report_anchors,
+        })
+    return reports
+
 def _overlapping_windows(cases: list[dict]) -> list[dict]:
     """Group overlapping same-market windows, not train/validation/test splits.
 
@@ -155,7 +271,9 @@ def build_geometry_learning_report(
             raise GeometryLearningReportError("unverified_source_or_review") from exc
         if example.get("split") != "UNASSIGNED_REQUIRES_GROUPED_HOLDOUT":
             raise GeometryLearningReportError("prepartitioned_evidence_not_allowed")
-        cases.append(_analyze_case(example))
+        case = _analyze_case(example)
+        case["pivot_provenance"] = _pivot_provenance(example) if case["label"] == "GEOMETRY_CORRECTED" else []
+        cases.append(case)
     by_pattern = defaultdict(Counter)
     labels = Counter()
     moved = 0
