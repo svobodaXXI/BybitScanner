@@ -155,6 +155,16 @@ try {
     await page.waitForFunction(() =>
       Number(document.querySelector(".replay-execution-overlay")
         ?.getAttribute("data-painted-m5-on-h1")) > 0);
+    const blueSpans = JSON.parse(await overlay.getAttribute("data-m5-h1-spans") ?? "[]");
+    assert.ok(blueSpans.length > 0, "expected actual M5 history on H1, not a hidden layer");
+    for (const span of blueSpans) {
+      assert.ok(span.to_x >= span.from_x && span.to_x - span.from_x < 150,
+        "the M5 source-local segment must not become an H1 pane-wide blue ray: " +
+        JSON.stringify(span));
+      assert.ok(span.until_ms <= firstMain.available_at_ms,
+        "H1 chart revealed a future M5 visual segment");
+    }
+    console.log("FIRST_H1_M5_PROJECTION_OK " + JSON.stringify(blueSpans));
   }
   await page.screenshot({
     path: join(screenshotDir, "real-h1-first-anchors.png"), fullPage: true,
@@ -164,6 +174,8 @@ try {
     document.querySelector(".replay-chart-shell")?.getAttribute("data-chart-timeframe") === "5m");
   assert.equal(await overlay.getAttribute("data-painted-m5-on-h1"), "0",
     "M5 native timeframe must never use the H1-only shortened projection");
+  assert.equal(await overlay.getAttribute("data-m5-h1-spans"), "[]",
+    "M5's own blue reference must never inherit the H1 visual cap");
 
   for (const { event, i, opposite } of proven) {
     const index = byEventTime.get(event.confirmed_at_ms);
