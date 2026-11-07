@@ -471,6 +471,36 @@ class OneFlatPartialStopResumeTest(unittest.TestCase):
             )
         self.assertEqual(signals, [])
 
+    def test_exit_receipt_resumes_without_sending_backend_signal(self):
+        root, stage, transactions, db, prior, target, old = self.prepare()
+        recovery._one_flat_snapshot(
+            transactions, prior, uid=os.geteuid(), value=self.snapshot(old),
+        )
+        for phase in ("handoff-attempt", "backend-exited"):
+            recovery._one_flat_record(
+                transactions, prior, phase, target, uid=os.geteuid(),
+            )
+        owner = self.owner(telegram_active=False)
+        owner._probe_telegram.side_effect = [recovery.ABSENT] * 3
+        proof, complete = self.patches(root, db, old, owner, self.snapshot(old))
+        signals = []
+        result = recovery.recover_one_flat_after_failed_stop(
+            target=target, stage=stage, prior_stop=prior,
+            expected_old_sha=old, root=root, transactions=transactions,
+            uid=os.geteuid(), inspect=lambda *a, **k: None,
+            backend_handoff=lambda: signals.append("unsafe-replay"),
+            backend_stopped=lambda: True, postproof=lambda: None,
+            installer=lambda *a, **k: "INSTALLED_STOPPED: resumed",
+            resume=lambda *a, **k: "READY: EDITOR_ONLY",
+        )
+        self.assertEqual(result, "READY: EDITOR_ONLY")
+        self.assertEqual(signals, [])
+        proof.assert_not_called()
+        self.assertTrue(recovery._one_flat_receipt(
+            transactions, prior, "handoff-proven", target, uid=os.geteuid(),
+        ))
+        complete.assert_called_once()
+
     def test_wrong_old_backend_rejected_before_signal(self):
         root, stage, transactions, db, prior, target, old = self.prepare()
         owner = self.owner()
