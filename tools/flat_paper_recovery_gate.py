@@ -275,20 +275,18 @@ def prove_one_flat_orphan(
     _require(autopilot.get("mode") == "OFF", "one_orphan_autopilot_not_off")
     _require(tuple(conn.execute("PRAGMA quick_check").fetchone()) == ("ok",),
              "one_orphan_database_not_integral")
+    scanner_rows = conn.execute(
+        "SELECT mode FROM scanner_runtime_state WHERE trading_account_id='paper'"
+    ).fetchall()
     _require(
-        conn.execute("SELECT mode FROM scanner_runtime_state "
-                     "WHERE trading_account_id='paper'").fetchone()
-        is not None and tuple(conn.execute(
-            "SELECT mode FROM scanner_runtime_state WHERE trading_account_id='paper'"
-        ).fetchone()) == ("SCANNER_STOPPED",),
+        len(scanner_rows) == 1 and tuple(scanner_rows[0]) == ("SCANNER_STOPPED",),
         "one_orphan_durable_scanner_not_frozen",
     )
+    autopilot_rows = conn.execute(
+        "SELECT mode FROM robot_autopilot_state WHERE trading_account_id='paper'"
+    ).fetchall()
     _require(
-        conn.execute("SELECT mode FROM robot_autopilot_state "
-                     "WHERE trading_account_id='paper'").fetchone() is not None
-        and tuple(conn.execute(
-            "SELECT mode FROM robot_autopilot_state WHERE trading_account_id='paper'"
-        ).fetchone()) == ("OFF",),
+        len(autopilot_rows) == 1 and tuple(autopilot_rows[0]) == ("OFF",),
         "one_orphan_durable_autopilot_not_off",
     )
     state = conn.execute(
