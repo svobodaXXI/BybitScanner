@@ -255,6 +255,50 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual(new.main.second, e)
         self.assertEqual(new.pivot_sequence[-1], f)
 
+    def test_bear_new_lower_low_transfers_purple_prior_to_preceding_lower_high(self):
+        # User acceptance: same movement origin, but a NEW validated
+        # HIGH--LOW--LOWER HIGH--LOWER LOW version. Both main support and
+        # purple prior must move to the just-confirmed lower HIGH, not wait
+        # for a later line contact and not react to a lone high wick.
+        from research.causal_trend_geometry import CausalLine, TrendCandidate
+        feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
+
+        def p(kind, i, price):
+            return ConfirmedPivot(kind, i, i * ONE_HOUR_MS,
+                                  (i + 2) * ONE_HOUR_MS, Decimal(price))
+
+        a = p("HIGH", 0, 130)
+        b = p("LOW", 2, 95)
+        c = p("HIGH", 4, 120)
+        d = p("LOW", 6, 85)
+        e = p("HIGH", 8, 110)
+        f = p("LOW", 10, 80)
+        original = TrendCandidate("BEAR",
+            CausalLine(a, c, d.confirmed_at_ms),
+            CausalLine(b, d, d.confirmed_at_ms),
+            (a, b, c, d), d.confirmed_at_ms)
+        replacement = TrendCandidate("BEAR",
+            CausalLine(a, e, f.confirmed_at_ms),
+            CausalLine(b, f, f.confirmed_at_ms),
+            (a, b, e, f), f.confirmed_at_ms)
+
+        feed._hourly_trend = original
+        feed._advance_hourly_prior(d.confirmed_at_ms)
+        self.assertEqual(feed.confirmed_hourly_prior, Decimal(120))
+        self.assertEqual(feed.confirmed_hourly_prior_touch_ms, c.at_ms)
+
+        # Mere confirmed lower HIGH does not publish a completed trend.
+        feed._advance_hourly_prior(e.confirmed_at_ms)
+        self.assertEqual(feed.confirmed_hourly_prior, Decimal(120))
+
+        feed._hourly_trend = replacement
+        feed._advance_hourly_prior(f.confirmed_at_ms)
+        self.assertEqual(feed.confirmed_hourly_prior, Decimal(110))
+        self.assertEqual(feed.confirmed_hourly_prior_touch_ms, e.at_ms)
+        self.assertEqual(feed._prior_trend_version, replacement.available_at_ms)
+        feed._advance_hourly_prior(f.confirmed_at_ms + ONE_HOUR_MS)
+        self.assertEqual(feed.confirmed_hourly_prior, Decimal(110))
+
     def test_real_grass_august_22_h1_upper_wick_rejects_pivot_substitution(self):
         # Public GRASSUSDT H1 evidence (2026-08-22, UTC): the wick at
         # 17:00 high=0.31490 exceeds the real H1 pivot 1--3 upper line.
