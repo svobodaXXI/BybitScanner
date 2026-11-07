@@ -151,6 +151,43 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual(result.target.first.price, Decimal(104))
         self.assertEqual(result.target.second.price, Decimal(102))
 
+    def test_equal_wick_plateaus_confirm_last_peak_and_trough_on_both_timeframes(self):
+        # On the strict >/< detector, neither 16 high and neither 7 low
+        # was ever recognized. They are real price extrema, not tiny swings.
+        # A plateau is only known after the right-hand wing has CLOSED.
+        prices = [
+            (10, 8), (14, 9), (16, 11), (16, 12), (13, 10),
+            (12, 9), (11, 7), (10, 7), (12, 9), (13, 10),
+        ]
+        for timeframe in (ONE_HOUR_MS, FIVE_MINUTES_MS):
+            with self.subTest(timeframe=timeframe):
+                stream = ConfirmedSwingStream(timeframe_ms=timeframe, wing=2)
+                discovered = []
+                for index, (high, low) in enumerate(prices):
+                    discovered.append(stream.observe_closed(
+                        make_bar(index, high, low, timeframe)))
+                    self.assertTrue(all(
+                        p.confirmed_at_ms <= (index + 1) * timeframe
+                        for p in stream.pivots))
+                self.assertTrue(all(item is None for item in discovered[:5]))
+                self.assertEqual(
+                    [(p.kind, p.index, p.price, p.confirmed_at_ms)
+                     for p in stream.pivots],
+                    [("HIGH", 3, Decimal(16), 6 * timeframe),
+                     ("LOW", 7, Decimal(7), 10 * timeframe)],
+                )
+                self.assertIsNone(recent_hourly_trend(stream.pivots),
+                                  "two plateaus cannot invent a four-point trend")
+
+    def test_ambiguous_outside_candle_cannot_assign_both_sides_without_intrabar_order(self):
+        prices = [(10, 7), (11, 8), (20, 0), (12, 9), (11, 8)]
+        for timeframe in (ONE_HOUR_MS, FIVE_MINUTES_MS):
+            stream = ConfirmedSwingStream(timeframe_ms=timeframe, wing=2)
+            for index, (high, low) in enumerate(prices):
+                self.assertIsNone(stream.observe_closed(
+                    make_bar(index, high, low, timeframe)))
+            self.assertEqual(stream.pivots, ())
+
     def test_cannot_confirm_pivot_or_line_using_future_candle(self):
         stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
         partial = [make_bar(i, high, low) for i, (high, low) in enumerate(BULL)]
