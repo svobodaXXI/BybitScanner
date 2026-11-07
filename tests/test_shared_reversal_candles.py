@@ -272,6 +272,22 @@ def test_nison_preserves_classical_gaps_and_never_uses_unclosed_future():
     assert observe(valid + [future]) == ()
 
 
+@pytest.mark.parametrize("prior,candidate", [
+    (_DOWN, candle(3, 10.5, 10.51, 9.0, 10.505)),
+    (_UP, candle(3, 13.5, 13.51, 12.0, 13.505)),
+    (_DOWN, candle(3, 10.1, 11.7, 10.095, 10.105)),
+    (_UP, candle(3, 13.1, 14.7, 13.095, 13.105)),
+])
+def test_nison_long_wick_doji_is_never_also_directional_hammer(prior, candidate):
+    from geometry.reversal_patterns import observe_nison_reversals
+    signals = observe_nison_reversals(prior + [candidate])
+    single_candle = [item for item in signals
+                     if item["formation_candle_ids"] == (3 * STEP,)]
+    assert [item["formation_type"] for item in single_candle] == ["DOJI"]
+    assert all(item["direction"] == "NEUTRAL" and not item["confirmed"]
+               for item in single_candle)
+
+
 def test_nison_doji_is_neutral_and_mirror_existing_contracts_remain_unchanged():
     from geometry.reversal_patterns import observe_nison_reversals as observe
     doji = candle(3, 10, 10.5, 9.5, 10.01)
