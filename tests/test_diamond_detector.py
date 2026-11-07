@@ -95,6 +95,11 @@ def test_extra_same_side_confirmed_pivot_splits_episode():
         assert detect_diamond_candidate(bars, 135) is None
 
 
+@pytest.mark.parametrize("invalid", [[], (), {}, {"open": [1]}, "invalid", 5, False])
+def test_non_tabular_input_is_rejected_without_exception(invalid):
+    assert detect_diamond_candidate(invalid) is None
+
+
 def test_empty_or_invalid_cutoff_is_rejected():
     bars = zigzag(DIAMOND, 170)
     assert detect_diamond_candidate(None) is None
