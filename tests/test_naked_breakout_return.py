@@ -103,6 +103,8 @@ def test_configured_excursion_required_not_invented_and_future_ignored():
     assert run(DOWN, minimum=.10) is None
     assert run(DOWN, count=4) is None
     assert run(DOWN, minimum=0) is None
+    for ambiguous in (True, False, "0.05", None, [0.05], {"value": 0.05}):
+        assert run(DOWN, minimum=ambiguous) is None
     assert run(DOWN, minimum=float("nan")) is None
     assert run(DOWN, count=True) is None
     assert run(DOWN, cutoff=True) is None
