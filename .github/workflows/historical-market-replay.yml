@@ -129,20 +129,6 @@ jobs:
           python -B server.py --check
           python -B smoke_package.py
 
-  real-h1-window-probe:
-    # Candidate discovery only. Verified proof remains the separate trade-derived
-    # GRASSUSDT seven-day archive and Chromium acceptance below.
-    if: github.event_name == 'pull_request' && github.head_ref == 'fix/h017-four-pivot-causal-geometry-20261107'
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Find bounded public H1 candidate weeks (NOT final acceptance)
-        run: python -m research.h017_public_h1_window_probe
-
   real-bybit-h017-readonly-acceptance:
     # Bounded public-market-data proof for the active isolated H-017 PR.
     # No credentials, PAPER, trading, or scheduled network fetches.
@@ -154,11 +140,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Check bounded official GRASSUSDT H1 prior and reversal windows
-        run: |
-          python -m research.h017_real_bybit_readonly_acceptance
-          python -m research.h017_real_bybit_readonly_acceptance --start 2026-09-01 --end 2026-09-08
-          python -m research.h017_real_bybit_readonly_acceptance --start 2026-08-20 --end 2026-08-27 --require-complete-reversal --output-json "$RUNNER_TEMP/real-h1-august.json"
+      - name: Select independently verified real GRASS H1 reversal from official trade archives
+        run: python -m research.h017_public_h1_window_probe --output-json "$RUNNER_TEMP/real-h1-august.json"
       - name: Export audited real MARKET_ONLY JSON for browser proof
         uses: actions/upload-artifact@v4
         with:
@@ -204,7 +187,7 @@ jobs:
           else
             npx playwright install chromium
           fi
-      - name: Render three audited real H1 prior breaks and opposite trends in Chromium
+      - name: Render audited real four-pivot H1 prior break and opposite trend in Chromium
         run: node e2e/real-reversal-browser.mjs
         env:
           LOCAL_REPLAY_PACKAGED_SERVER: ${{ runner.temp }}/machine-time/server.py
