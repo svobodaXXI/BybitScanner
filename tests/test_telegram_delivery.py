@@ -314,7 +314,7 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
                 signal_id="source-original:archive-abc",
             )["inline_keyboard"]
         self.assertIn("signal_id=source-original%3Aarchive-abc", owner[-1][0]["web_app"]["url"])
-        self.assertNotIn("signal_id=", owner[-1][1]["web_app"]["url"])
+        self.assertIn("signal_id=source-original%3Aarchive-abc", owner[-1][1]["web_app"]["url"])
         self.assertFalse(any("web_app" in button for row in public for button in row))
 
     def test_invalid_editor_origin_never_exposed(self):
