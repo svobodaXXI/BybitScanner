@@ -298,7 +298,7 @@ export function App() {
   // Never use the process-global active account as authority for another mode.
   // MAIN is a separate READ-ONLY projection; all manual trading flags stay false.
   const accountProjection = mode === "EDITOR" ? accountWorkspace.projection
-    : modeAccountSelection.ready && !modeAccountSelection.pending
+    : modeAccountSelection.ready && modeAccountSelection.pendingMode !== mode
       ? scopedProjection(mode, selectedModeAccountId,
           accountWorkspace.projection, modeAccountSelection.mainProjection)
       : null;

@@ -159,7 +159,7 @@ export function AccountMenu({
   }, []);
 
   useEffect(() => {
-    if (open || (mode === "TERMINAL" && selectedAccountId?.startsWith("bybit-")))
+    if ((open && mode !== "AUTOPILOT") || (mode === "TERMINAL" && selectedAccountId?.startsWith("bybit-")))
       void refreshManualMain();
   }, [open, mode, selectedAccountId]);
 

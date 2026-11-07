@@ -48,6 +48,9 @@ async function mainProjectionFor(accountId: string, refresh: boolean): Promise<A
     ? catalog.accounts.find((account) => account.id === accountId
       && account.provider === "BYBIT" && account.environment === "MAINNET") : null;
   if (!entry) throw new Error("main_account_not_found");
+  // A previous snapshot is not proof of a READY current MAIN session.
+  if (!refresh && !["READY", "READ_ONLY"].includes(entry.status))
+    throw new Error("main_account_not_ready");
   if (refresh) {
     const renewed = await fetch(marketApiRoutes.manualMainRefresh(accountId), { method: "POST" });
     if (!renewed.ok) throw new Error("main_refresh_unavailable");
@@ -65,6 +68,7 @@ export function useModeAccountSelection() {
   const [preferences, setPreferences] = useState<Preferences>({ TERMINAL: null, AUTOPILOT: null });
   const [ready, setReady] = useState(false);
   const [pending, setPending] = useState(false);
+  const [pendingMode, setPendingMode] = useState<AccountMode | null>(null);
   const [mainProjection, setMainProjection] = useState<AccountWorkspaceProjection | null>(null);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
@@ -120,6 +124,7 @@ export function useModeAccountSelection() {
       throw new Error("autopilot_paper_only");
     busy.current = true;
     setPending(true);
+    setPendingMode(mode);
     setError(null);
     try {
       if (account.id === "paper") {
@@ -150,8 +155,9 @@ export function useModeAccountSelection() {
     } finally {
       busy.current = false;
       setPending(false);
+      setPendingMode(null);
     }
   }, [ready]);
 
-  return { preferences, ready, pending, mainProjection, error, selectAccount };
+  return { preferences, ready, pending, pendingMode, mainProjection, error, selectAccount };
 }
