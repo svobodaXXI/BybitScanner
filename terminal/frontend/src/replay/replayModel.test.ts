@@ -1,7 +1,43 @@
 import { describe, expect, it } from "vitest";
-import { completeHourlyCandles, nextClosedCandleCursor, timeframeStepCursor, parseReplayDocument, replayContactWithinFloatPrecision, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, parseReplayDocument, replayContactWithinFloatPrecision, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
+  it("exposes real H1 warmup candles on the chart but never advances the simulation clock", () => {
+    const start = Date.UTC(2026, 7, 27);
+    const hour = 3_600_000, m5 = 300_000;
+    const context = [-2, -1].map(i => ({
+      start_ms: start + i * hour, end_ms: start + (i + 1) * hour,
+      open: 90, high: 95, low: 85, close: 92, volume: 120,
+    }));
+    const events = Array.from({ length: 12 }, (_, index) => {
+      const candle = {
+        start_ms: start + index * m5, end_ms: start + (index + 1) * m5,
+        open: 100, high: 102, low: 98, close: 101, volume: 10,
+      };
+      return {
+        source: "SIMULATION" as const, simulation_run_id: "context_h1",
+        kind: "CANDLE_CLOSED" as const, sequence: index + 1,
+        time_ms: candle.end_ms, candle,
+      };
+    });
+    const document: ReplayDocument = {
+      source: "SIMULATION", simulation_run_id: "context_h1",
+      mode: "MARKET_ONLY", context_1h: context, events,
+    };
+    expect(hourlyChartCandles(document, [])).toEqual(context);
+    expect(hourlyChartCandles(document, events.slice(0, 11).map(e => e.candle)))
+      .toEqual(context); // Forming H1 is not visible.
+    const complete = hourlyChartCandles(document, events.map(e => e.candle));
+    expect(complete.map(bar => bar.start_ms))
+      .toEqual([start - 2 * hour, start - hour, start]);
+    expect(complete.at(-1)?.end_ms).toBe(start + hour);
+    expect(timeframeStepCursor(events, 0, "1h", "forward")).toBe(12);
+    expect(visibleReplay(events, 0).candles).toHaveLength(0);
+    expect(visibleReplay(events, 11).candles).toHaveLength(11);
+    expect(hourlyChartCandles({ ...document, mode: "STRATEGY" }, []))
+      .toEqual([]); // Visual-only feature for audited market context.
+  });
+
   it("accepts real GRASS Decimal→JS H1 wick touch roundoff but never real pierces", () => {
     const bar = { low: 0.3661, high: 0.3681, close: 0.3663 };
     const atOpen = 0.3660999999999999;
