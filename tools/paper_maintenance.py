@@ -1768,6 +1768,12 @@ def main(argv=None) -> int:
     parser.add_argument("--expected-old-backend", metavar="SHA",
                         help="exact installed Backend observed at the failed STOP")
     args = parser.parse_args(argv)
+    # A sealed build staged with the Gitless release belongs to the same
+    # owner-approved monolith operation; it needs no second frontend command.
+    if args.staged_gitless_editor_only is not None and args.frontend_bundle is None:
+        staged_bundle = args.staged_gitless_editor_only / "terminal/frontend/dist"
+        if (staged_bundle / "frontend-release.json").is_file():
+            args.frontend_bundle = staged_bundle
     if args.resume_installed_editor_only and args.staged_gitless_editor_only:
         parser.error("choose exactly one Gitless operation")
     if args.frontend_bundle and not (args.publish_frontend_only
@@ -1782,8 +1788,6 @@ def main(argv=None) -> int:
         parser.error("frontend-only cannot replay STOP, resume, start or exceptional handoff")
     if args.frontend_current_index_sha256 and not args.frontend_bundle:
         parser.error("frontend index pin requires a frontend bundle")
-    if args.frontend_bundle and args.start_paper_after_editor:
-        parser.error("static frontend publication is EDITOR_ONLY, not trading START")
     if args.start_paper_after_editor and not (
         args.staged_gitless_editor_only or args.resume_installed_editor_only
     ):
