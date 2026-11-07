@@ -652,10 +652,12 @@ def deploy_staged_editor_only(
         return observed
 
     def finish_resume() -> str:
-        observed = resume_action(target, root=root, env_file=env_file)
+        observed = finish_frontend(
+            resume_action(target, root=root, env_file=env_file)
+        )
         if isinstance(observed, str) and observed.startswith("READY:"):
             _complete_stop_intent(journal_root, target, uid=trusted_uid)
-        return finish_frontend(observed)
+        return observed
 
     try:
         try:
