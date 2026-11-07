@@ -104,14 +104,18 @@ export function chartXAtCandleTime(
  * Keep the first H1 movement wick fixed, but pivot the VISIBLE main support/
  * resistance ray onto the most protruding already-closed H1 wick. The four
  * structural pivots and canonical publication remain unchanged. A later
- * candle can tighten the display only when its H1 close is in the replay.
+ * candle may tighten a published VERSION only if it was already closed
+ * when that four-pivot version was published. Later candles must not silently
+ * redraw it: only a NEW confirmed structure may publish a replacement.
  *
- * BULL main is below all lows (minimum slope); BEAR main above all highs
- * (maximum slope). No future H1 candle can influence a prior frame.
+ * BULL main is below lows (minimum slope); BEAR main above highs
+ * (maximum slope). Later price crossing the fixed line is observable
+ * evidence of a break, not permission to retrofit the past.
  */
 export function wickTightH1MainProjection(
   line: { kind: string; side: "BULL" | "BEAR";
-    from_ms: number; to_ms: number; from_price: number; to_price: number },
+    from_ms: number; to_ms: number; from_price: number; to_price: number;
+    available_at_ms?: number },
   closedHours: readonly ReplayCandle[],
   knownAtMs: number,
 ): { from_ms: number; to_ms: number; from_price: number; to_price: number;
@@ -122,10 +126,15 @@ export function wickTightH1MainProjection(
   };
   if (line.kind !== "MAIN_1H" || !Number.isFinite(knownAtMs) ||
       line.to_ms <= line.from_ms) return original;
+  // A visual version is immutable once published. The H1 source has already
+  // gated publication on four confirmed structural extrema (including lower
+  // low for BEAR or higher high for BULL). An unconfirmed later wick is NOT
+  // a new trend version and cannot trigger another revision.
+  const publishedCutoff = Math.min(knownAtMs, line.available_at_ms ?? knownAtMs);
   let slope = (line.to_price - line.from_price) / (line.to_ms - line.from_ms);
   let supporting: ReplayCandle | undefined;
   for (const bar of closedHours) {
-    if (bar.start_ms <= line.from_ms || bar.end_ms > knownAtMs) continue;
+    if (bar.start_ms <= line.from_ms || bar.end_ms > publishedCutoff) continue;
     const wick = line.side === "BULL" ? bar.low : bar.high;
     const candidateSlope = (wick - line.from_price) / (bar.start_ms - line.from_ms);
     if ((line.side === "BULL" && candidateSlope < slope - 1e-18) ||
