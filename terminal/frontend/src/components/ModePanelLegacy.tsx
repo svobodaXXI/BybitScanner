@@ -1331,6 +1331,7 @@ export function ModePanel({
           {openPositionsVisible && accountWorkspaceProjection?.provider === "PAPER" ? (
             <OpenPositionsOverlay
               activeSymbol={symbol}
+              robotOnly={mode === "AUTOPILOT"}
               onClose={() => setOpenPositionsVisible(false)}
               onNavigate={(nextSymbol) => {
                 setOpenPositionsVisible(false);
@@ -1340,7 +1341,7 @@ export function ModePanel({
               applyPaperState={applyPaperState}
             />
           ) : null}
-          {openPositionsVisible && accountWorkspaceProjection?.provider !== "PAPER" ? (
+          {openPositionsVisible && mode !== "AUTOPILOT" && accountWorkspaceProjection?.provider !== "PAPER" ? (
             <LiveAccountInventory
               activeAccountName={activeAccountLabel && activeAccountLabel.id === accountWorkspaceProjection?.account_id
                 ? activeAccountLabel.name : ""}
