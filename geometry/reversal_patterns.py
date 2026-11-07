@@ -372,7 +372,9 @@ def observe_closed_engulfing(
     directional_engulfing or any strategy's confirmation/admission policy.
     It rejects incomplete/invalid OHLC, missing timestamps and time gaps.
     """
-    if direction not in ("LONG", "SHORT"):
+    if (direction not in ("LONG", "SHORT")
+            or not isinstance(previous, Mapping)
+            or not isinstance(current, Mapping)):
         return None
     before = closed_candle_numbers(previous)
     now = closed_candle_numbers(current)
