@@ -690,6 +690,46 @@ class ConfirmedGeometryTests(unittest.TestCase):
                         self.assertIsNotNone(result)
                         self.assertEqual(result.side, "BULL")
 
+    def test_next_hour_open_beyond_prior_break_survives_immediate_reclaim(self):
+        # Owner GRASS I-IV: bearish old prior, higher-high-confirmed
+        # rising support and its own purple prior; then a new H1 OPEN
+        # beyond that prior, while price recovers during the SAME M5.
+        # The first M5 CLOSE is only the earliest *observability* point.
+        # It must not be misinterpreted as requiring the M5 close to stay
+        # outside or as a licence to revoke the already confirmed break.
+        feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
+        for hour, (high, low) in enumerate(BULL + [(113, 95)]):
+            for minute in range(12):
+                five = make_bar(hour * 12 + minute, high, low, FIVE_MINUTES_MS)
+                hourly = make_bar(hour, high, low) if minute == 11 else None
+                trend, _ = feed.observe_closed(five, hourly)
+        self.assertEqual(trend.side, "BULL")
+        self.assertEqual(feed.confirmed_hourly_prior, Decimal(106))
+        t = 10 * ONE_HOUR_MS
+        # Next H1 opens 104 < prior 106, but the very first five-minute
+        # candle recovers to 112 > 106 (a bullish body over the broken level).
+        reclaimed = Candle(t, FIVE_MINUTES_MS, 104, 113, 103, 112, 10)
+        after, _ = feed.observe_closed(reclaimed, None)
+        broken = feed.confirmed_hourly_prior_break
+        self.assertIsNone(after)
+        self.assertIsNotNone(broken)
+        self.assertEqual(broken["previous_side"], "BULL")
+        self.assertEqual(broken["new_side"], "BEAR")
+        self.assertEqual(broken["prior_price"], Decimal(106))
+        self.assertEqual(broken["next_hour_open_ms"], t)
+        self.assertEqual(broken["confirmed_at_ms"], t + FIVE_MINUTES_MS)
+        self.assertEqual(feed._waiting_for_side, "BEAR")
+        self.assertEqual(feed._reversal_source_start_ms,
+                         trend.main.first.at_ms)
+        # A later rebound cannot resurrect the retired BULL trend, create
+        # a second break, or prematurely draw a new BEAR four-pivot line.
+        recovered = Candle(t + FIVE_MINUTES_MS, FIVE_MINUTES_MS,
+                           112, 114, 109, 113, 10)
+        again, _ = feed.observe_closed(recovered, None)
+        self.assertIsNone(again)
+        self.assertIsNone(feed.confirmed_hourly_prior_break)
+        self.assertEqual(feed._waiting_for_side, "BEAR")
+
     def test_geometry_feed_does_not_emit_lines_before_confirmed_hourly(self):
         geometry = CausalGeometryFeed(wing_1h=1, wing_5m=1)
         first_times = []
