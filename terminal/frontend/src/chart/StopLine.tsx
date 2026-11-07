@@ -13,6 +13,7 @@ export function StopLine({
   onCancel,
   onEdit,
   onDelete,
+  readOnly = false,
 }: {
   leg?: "STOP" | "TAKE";
   price: string;
@@ -25,6 +26,7 @@ export function StopLine({
   onCancel?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  readOnly?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [activeSelected, setActiveSelected] = useState(false);
@@ -57,6 +59,7 @@ export function StopLine({
       aria-valuenow={draft ? Number(price) : undefined}
       style={{ top, right: rightOffset }}
       onPointerDown={(event) => {
+        if (readOnly) return;
         if (!draft) {
           if (!submitting && !targetsStopAction(event.target)) setActiveSelected(true);
           event.stopPropagation();
@@ -83,7 +86,7 @@ export function StopLine({
       }}
     >
       <span>{price}</span>
-      {draft || activeSelected ? (
+      {!readOnly && (draft || activeSelected) ? (
         <div className="stop-line-actions">
           {draft ? (
             <>
