@@ -188,7 +188,7 @@ export function DrawingOverlay({
           ctx.fillRect(left, Math.min(fromY, toY), width, Math.abs(toY - fromY));
         }
         ctx.fillStyle = drawing.style.color;
-        ctx.font = "600 10px Inter, ui-sans-serif, sans-serif";
+        ctx.font = "600 17.5px Inter, ui-sans-serif, sans-serif";
         for (const item of fibonacciPrices(
           firstPrice,
           secondPrice,
