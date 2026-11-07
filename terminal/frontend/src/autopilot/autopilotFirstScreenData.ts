@@ -44,6 +44,7 @@ export type DiaryTradeSummaryRow = {
   symbol: string;
   trade_episode_id?: string;
   readiness: string;
+  controller_origin?: string | null;
 };
 
 export type DaySummary = {
@@ -86,6 +87,22 @@ export function summarizeDay(
     netPnl: tradesWithoutPnl > 0 ? null : total,
     tradesWithoutPnl,
   };
+}
+
+/**
+ * Only proven Robot-attributed episodes may contribute to Autopilot's day PnL.
+ * The current Diary projection emits null provenance, so the UI must show
+ * unavailable rather than silently counting manual trades as Robot trades.
+ */
+export function summarizeRobotDay(trades: DiaryTradeSummaryRow[], nowMs: number): DaySummary | null {
+  const dayStartMs = mskDayStartMs(nowMs);
+  const today = trades.filter((trade) => trade.closed_at_ms !== null &&
+    Number.isFinite(trade.closed_at_ms) &&
+    trade.closed_at_ms >= dayStartMs && trade.closed_at_ms <= nowMs);
+  if (today.some((trade) => !trade.controller_origin)) return null;
+  // A future backend contract must certify this exact provenance before it
+  // becomes available; unknown non-Robot values are deliberately not counted.
+  return summarizeDay(today.filter((trade) => trade.controller_origin === "ROBOT"), nowMs);
 }
 
 async function getJson(url: string): Promise<Record<string, unknown>> {
