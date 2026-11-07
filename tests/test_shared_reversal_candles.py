@@ -177,10 +177,10 @@ _UP = [
 
 
 @pytest.mark.parametrize("prior,formation,pattern,direction", [
-    (_DOWN, [candle(3, 10.5, 10.61, 9, 10.6)], "HAMMER", "LONG"),
-    (_UP, [candle(3, 13.5, 13.61, 12, 13.6)], "HANGING_MAN", "SHORT"),
-    (_DOWN, [candle(3, 10.1, 11.7, 10.08, 10.2)], "INVERTED_HAMMER", "LONG"),
-    (_UP, [candle(3, 13.1, 14.7, 13.08, 13.2)], "SHOOTING_STAR", "SHORT"),
+    (_DOWN, [candle(3, 10.5, 10.72, 9.4, 10.7)], "HAMMER", "LONG"),
+    (_UP, [candle(3, 13.5, 13.72, 12.4, 13.7)], "HANGING_MAN", "SHORT"),
+    (_DOWN, [candle(3, 10.1, 11.2, 10.08, 10.3)], "INVERTED_HAMMER", "LONG"),
+    (_UP, [candle(3, 13.1, 14.2, 13.08, 13.3)], "SHOOTING_STAR", "SHORT"),
     (_DOWN, [candle(3, 11, 11.2, 9.6, 10),
              candle(4, 9.8, 11.3, 9.7, 11.1)], "ENGULFING", "LONG"),
     (_UP, [candle(3, 12, 13.3, 11.8, 13),
