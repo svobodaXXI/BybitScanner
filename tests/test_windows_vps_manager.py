@@ -73,7 +73,7 @@ class TestWindowsVpsManager(unittest.TestCase):
                 button = Mock()
                 fake = SimpleNamespace(
                     events=queue.Queue(), write=Mock(), status=status,
-                    buttons=[button], after=Mock(), busy=True,
+                    buttons=[button], after=Mock(), drain=Mock(), busy=True,
                 )
                 fake.events.put((kind, "diagnostic output"))
                 VPSManager.drain(fake)
