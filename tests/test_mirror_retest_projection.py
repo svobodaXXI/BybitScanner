@@ -148,6 +148,28 @@ def test_a_replaced_file_of_equal_or_greater_length_is_detected_by_journal_id(tm
     assert replaced["cursor_reset"] is True and replaced["observations"][0]["seq"] == 1 and replaced["journal_id"] != first["journal_id"]
 
 
+def test_atomic_replacement_with_same_first_line_resets_cursor(tmp_path):
+    path = write(tmp_path / "j.jsonl", [record(1), record(2), record(3)])
+    old = project(path)
+    # Both journals begin with the same byte-for-byte record and have
+    # the same line count. A first-line-only journal_id misses this swap.
+    replacement = write(tmp_path / "replacement.jsonl", [
+        record(1), record(20), record(30),
+    ])
+    replacement.replace(path)
+    changed = project(path, after=old["next_seq"], journal_id=old["journal_id"])
+    assert changed["journal_id"] != old["journal_id"]
+    assert changed["cursor_reset"] is True
+    assert [item["seq"] for item in changed["observations"]] == [1, 2, 3]
+    # Appends to the same file must NOT reset an existing cursor.
+    current = project(path)
+    with path.open("ab") as handle:
+        handle.write((json.dumps(record(40), sort_keys=True) + "\n").encode())
+    appended = project(path, after=current["next_seq"], journal_id=current["journal_id"])
+    assert appended["cursor_reset"] is False
+    assert [item["seq"] for item in appended["observations"]] == [4]
+
+
 def test_missing_journal_is_an_explicit_empty_source_and_unreadable_is_unavailable(tmp_path):
     missing = project(tmp_path / "nope.jsonl", after=3)
     assert missing["ok"] and missing["journal_present"] is False and missing["observations"] == [] and missing["next_seq"] == 3
