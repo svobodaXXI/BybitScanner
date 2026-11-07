@@ -225,9 +225,13 @@ def _deliver(event, send, key, stage, chat_id, test_mode, root):
               "chat_id": str(chat_id), "test_mode": bool(test_mode)}
     try:
         response = send()
-        ok = isinstance(response, dict) and bool(response.get("ok"))
-        result.update(ok=ok, message_id=((response or {}).get("result") or {}).get("message_id")
-                      if isinstance(response, dict) else None)
+        receipt = response.get("result") if isinstance(response, dict) else None
+        message_id = receipt.get("message_id") if isinstance(receipt, dict) else None
+        # Telegram delivery is durable only with a concrete message receipt.
+        # An ambiguous 'ok' alone must remain retryable, never enter dedup memory.
+        ok = (isinstance(response, dict) and response.get("ok") is True
+              and type(message_id) is int and message_id > 0)
+        result.update(ok=ok, message_id=message_id)
     except Exception as error:
         ok = False
         result.update(ok=False, error=str(error)[:200])
