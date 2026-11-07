@@ -87,7 +87,7 @@ try {
   assert.equal(await page.locator('input[type="date"]').nth(1).inputValue(),
     new Date(archive.until_ms).toISOString().slice(0, 10));
   assert.match(await page.locator("body").innerText(), /официального публичного архива/);
-  assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
+  assert.equal(await page.getByRole("slider", { name: "Перемотка графика по закрытым свечам" }).inputValue(), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   // Reference implementation: chart's H1 axis includes the ORIGINAL
   // already-closed warmup OHLC bars. The first frozen MAIN source anchor
