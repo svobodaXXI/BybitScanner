@@ -513,7 +513,8 @@ def _proven_prior_exceptional_completion(
 
 def deploy_staged_editor_only(
     target: str, *, stage: Path, root: Path = REPO, env_file: Path | None = None,
-    dual_orphan_handoff: bool = False, stop=None, preflight=None,
+    dual_orphan_handoff: bool = False, proven_one_flat_orphan_handoff: bool = False,
+    stop=None, preflight=None,
     installer=None, resume=None, manifest=None, unit_dir=None,
     transactions=None, trusted_uid: int = 0,
 ) -> str:
@@ -531,10 +532,14 @@ def deploy_staged_editor_only(
     from tools.vps_release_identity import (
         MANIFEST, ReleaseIdentityBlocked, verify_release,
     )
-    from tools.stop_robot_runtime import build_dual_orphan_handoff
+    from tools.stop_robot_runtime import (
+        build_dual_orphan_handoff, build_proven_one_flat_orphan_handoff,
+    )
 
     if len(target) != 40 or any(ch not in "0123456789abcdef" for ch in target):
         return "BLOCKED: invalid_approved_target"
+    if dual_orphan_handoff and proven_one_flat_orphan_handoff:
+        return "BLOCKED: competing_exceptional_handoff_options"
     if (not root.is_dir() or root.is_symlink() or (root / ".git").exists()
             or not stage.is_dir() or stage.is_symlink()):
         return "BLOCKED: incorrect_Gitless_release_layout"
@@ -616,9 +621,20 @@ def deploy_staged_editor_only(
                 # fallback requires its own explicit opt-in, never implied by update.
                 if stop is None:
                     env = _environment(env_file)
+                    if proven_one_flat_orphan_handoff and (
+                        not isinstance(current, str)
+                        or len(current) != 40
+                        or any(c not in "0123456789abcdef" for c in current)
+                    ):
+                        return "BLOCKED: old_release_not_pinned_for_one_orphan_handoff"
                     callback = build_dual_orphan_handoff(env) if dual_orphan_handoff else None
+                    one_orphan = (
+                        build_proven_one_flat_orphan_handoff(env, current)
+                        if proven_one_flat_orphan_handoff else None
+                    )
                     action = RuntimeShutdown(
                         root=root, env=env, dual_orphan_handoff=callback,
+                        proven_one_flat_orphan_handoff=one_orphan,
                     ).run
                 else:
                     action = stop
@@ -1596,6 +1612,8 @@ def main(argv=None) -> int:
                         help="after safe Gitless Editor recovery, start owner PAPER oneshot")
     parser.add_argument("--dual-orphan-handoff-20261103", action="store_true",
                         help="separate explicit opt-in to exact JASMY/FLOW protected handoff")
+    parser.add_argument("--proven-one-flat-orphan-handoff", action="store_true",
+                        help="explicit owner opt-in: one immutable manual Flat/OPEN close, no trade replay")
     args = parser.parse_args(argv)
     if args.resume_installed_editor_only and args.staged_gitless_editor_only:
         parser.error("choose exactly one Gitless operation")
@@ -1605,6 +1623,10 @@ def main(argv=None) -> int:
         parser.error("full PAPER start requires verified Gitless Editor recovery")
     if args.dual_orphan_handoff_20261103 and not args.staged_gitless_editor_only:
         parser.error("exceptional handoff requires staged Gitless operation")
+    if args.proven_one_flat_orphan_handoff and not args.staged_gitless_editor_only:
+        parser.error("one orphan handoff requires staged Gitless operation")
+    if args.proven_one_flat_orphan_handoff and args.dual_orphan_handoff_20261103:
+        parser.error("choose exactly one exceptional handoff policy")
     if args.start_paper_after_editor and (
         args.staged_gitless_editor_only or args.resume_installed_editor_only
     ):
@@ -1653,6 +1675,7 @@ def main(argv=None) -> int:
             args.sha, stage=args.staged_gitless_editor_only,
             env_file=args.env_file,
             dual_orphan_handoff=args.dual_orphan_handoff_20261103,
+            proven_one_flat_orphan_handoff=args.proven_one_flat_orphan_handoff,
         )
     elif args.resume_installed_editor_only:
         status = resume_installed_release(args.sha, root=REPO, env_file=args.env_file)

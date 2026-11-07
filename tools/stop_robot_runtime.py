@@ -392,6 +392,7 @@ class RuntimeShutdown:
         legacy_paper_guard: Callable[[], ContextManager[None]] | None = None,
         progress: Callable[[str], None] | None = None,
         dual_orphan_handoff: Callable[[], str] | None = None,
+        proven_one_flat_orphan_handoff: Callable[[], str] | None = None,
         legacy_supported: bool | None = None,
     ) -> None:
         env = dict(os.environ if env is None else env)
@@ -430,8 +431,14 @@ class RuntimeShutdown:
         self._sleep = sleep
         self._monotonic = monotonic
         self._progress = progress or (lambda _message: None)
-        # Explicit opt-in only. Normal stop cannot bypass Robot lifecycle.
-        self._dual_orphan_handoff = dual_orphan_handoff
+        # Preserve the existing one-shot exceptional callback slot. Normal
+        # STOP never gets one, and two competing handoffs cannot be selected.
+        if dual_orphan_handoff is not None and proven_one_flat_orphan_handoff is not None:
+            raise SafeStopError("ambiguous_protected_flat_handoff")
+        self._dual_orphan_handoff = (
+            dual_orphan_handoff if dual_orphan_handoff is not None
+            else proven_one_flat_orphan_handoff
+        )
 
     def _mark(self, message: str) -> None:
         try:
@@ -906,7 +913,7 @@ class RuntimeShutdown:
         self._require_autopilot_off()
         if self._robot_state() != expected_robot_state:
             raise SafeStopError("Robot state changed before dual orphan handoff")
-        self._mark("checking exact JASMY/FLOW evidence before one-shot handoff")
+        self._mark("checking immutable Flat/OPEN evidence before one-shot handoff")
         try:
             result = self._dual_orphan_handoff()
         except Exception as exc:
@@ -1498,6 +1505,32 @@ def build_dual_orphan_handoff(env: Mapping[str, str]) -> Callable[[], str]:
             expected_pid=_service_pid(),
             expected_build_sha=INCIDENT_BACKEND_SHA,
             execute=True, dual_orphan_incident_20261103=True,
+        )
+
+    return handoff
+
+
+def build_proven_one_flat_orphan_handoff(
+    env: Mapping[str, str], expected_old_sha: str,
+) -> Callable[[], str]:
+    """Reuse the incident handoff machinery, not a second STOP controller.
+
+    The callback is admitted only by an explicitly authorized one-action
+    EDITOR_ONLY update; fresh frozen ownership is proved inside the same
+    SQLite writer barrier as the one-shot PID-pinned signal.
+    """
+    from tools.flat_paper_recovery_transition import (
+        ROOT as VPS_ROOT, _service_pid, execute_flat_handoff,
+    )
+
+    def handoff() -> str:
+        return execute_flat_handoff(
+            db_path=_database_path(VPS_ROOT, env),
+            expected_identity=expected_database_identity(VPS_ROOT, env),
+            expected_pid=_service_pid(),
+            expected_build_sha=expected_old_sha,
+            execute=True,
+            proven_one_flat_orphan=True,
         )
 
     return handoff
