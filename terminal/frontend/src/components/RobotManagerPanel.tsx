@@ -107,8 +107,8 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="robot-manager-backdrop" role="presentation">
-      <section className="robot-manager-panel" role="dialog" aria-modal="true" aria-label="Управление роботом">
-        <header><strong>Управление роботом</strong><button type="button" onClick={onClose} aria-label="Закрыть">×</button></header>
+      <section className="robot-manager-panel" role="region" aria-label="Управление роботом">
+        <header><strong>Управление роботом</strong><button type="button" onClick={onClose} aria-label="К Автопилоту" title="К Автопилоту">←</button></header>
         <p className="robot-manager-note">Только PAPER Robot — независимо от выбранного счёта Terminal. Диагностика из действующего backend; VPS Manager используется как образец.</p>
         {snapshot ? <dl className="robot-manager-status">
           <dt>Robot</dt><dd>{snapshot.robot} / {snapshot.recovery}</dd>
