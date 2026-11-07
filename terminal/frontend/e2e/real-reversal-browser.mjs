@@ -301,16 +301,16 @@ try {
   assert.ok(breakIndex >= position);
   await advanceTo(breakIndex);
   assert.doesNotMatch(await page.getByRole("status", { name: "Приор H1" }).innerText(),
-    /Исторический \\(сломанный\\)/, "BULL prior must remain active before the next OPEN");
+    /Исторический \(сломанный\)/, "BULL prior must remain active before the next OPEN");
   await advanceTo(breakIndex + 1);
   assert.match(await page.getByRole("status", { name: "Приор H1" }).innerText(),
-    /Исторический \\(сломанный\\)/,
+    /Исторический \(сломанный\)/,
     "opening behind IV must retire the BULL prior");
   assert.equal(await overlay.getAttribute("data-visible-geometry"), "0",
     "no opposite confirmed H1 may be fabricated at the exact opening");
   await advanceTo(reclaimIndex + 1);
   assert.match(await page.getByRole("status", { name: "Приор H1" }).innerText(),
-    /Исторический \\(сломанный\\)/,
+    /Исторический \(сломанный\)/,
     "return above III/IV must not retroactively restore the BULL prior");
   assert.equal(await overlay.getAttribute("data-visible-geometry"), "0",
     "price reclaim without four new confirmed pivots is not a fresh trend");
