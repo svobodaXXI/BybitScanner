@@ -3658,6 +3658,45 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/workspace/owner-signal-proposal":
+            # Browser-authenticated owner proposal only; never Robot admission,
+            # candidate persistence, PAPER mutation, or strategy authority.
+            from owner_signal_proposal import (
+                MAX_REQUEST_BYTES, OwnerSignalProposalError,
+                OwnerSignalProposalConflict, record_owner_signal_proposal,
+            )
+            from signal_archive import load_frozen_signal_geometry
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if size <= 0 or size > MAX_REQUEST_BYTES:
+                    raise OwnerSignalProposalError("invalid_proposal_size")
+                payload = self._payload({
+                    "schema_version", "signal_id", "snapshot_revision",
+                    "bars_sha256", "pattern", "proposed_boundaries",
+                    "idempotency_key",
+                }, frozenset({"note"}))
+                source = payload.get("signal_id")
+                import re
+                if (not isinstance(source, str) or
+                        not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", source)):
+                    raise OwnerSignalProposalError("invalid_source_signal")
+                snapshot = load_frozen_signal_geometry(source)
+                if snapshot is None:
+                    self._json_response(404, {"ok": False, "error": "source_geometry_not_found"})
+                    return
+                proposal = record_owner_signal_proposal(payload, snapshot)
+            except OwnerSignalProposalConflict as exc:
+                self._json_response(409, {"ok": False, "error": str(exc)})
+                return
+            except (OwnerSignalProposalError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                self._json_response(400, {"ok": False, "error": str(exc)})
+                return
+            except Exception:
+                LOGGER.exception("Owner signal proposal validation failed")
+                self._json_response(503, {"ok": False, "error": "owner_proposal_unavailable"})
+                return
+            self._json_response(200, {"ok": True, "proposal": proposal})
+            return
         if path == "/api/workspace/geometry-feedback":
             # Isolated append-only owner annotations, never PAPER trading state.
             from geometry_feedback_store import (
