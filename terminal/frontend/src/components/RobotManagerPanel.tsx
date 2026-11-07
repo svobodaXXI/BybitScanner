@@ -27,7 +27,7 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState("");
   const [result, setResult] = useState("");
   const [busy, setBusy] = useState(false);
-  const [pending, setPending] = useState<"start" | "freeze" | null>(null);
+  const [pending, setPending] = useState<"start" | "freeze" | "stop" | null>(null);
 
   const refresh = useCallback(async () => {
     const [robot, scanner, autopilot, protection, health] = await Promise.all([
@@ -63,7 +63,7 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
     return () => { active = false; };
   }, [refresh]);
 
-  const execute = async (action: "start" | "freeze") => {
+  const execute = async (action: "start" | "freeze" | "stop") => {
     setPending(null);
     if (busy) return;
     setBusy(true);
@@ -71,8 +71,12 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
     try {
       // Reuse the existing canonical Robot reconciler and Autopilot admission fence.
       // Neither endpoint bypasses admission, STOP/TAKE, owner guards or LIVE restrictions.
-      const path = action === "start" ? "/api/runtime/intent" : marketApiRoutes.robotAutopilot;
-      const body = action === "start" ? { intent: "ROBOT" } : { mode: "OFF" };
+      const path = action === "start" ? marketApiRoutes.runtimeIntent
+        : action === "stop" ? marketApiRoutes.robotStop
+        : marketApiRoutes.robotAutopilot;
+      const body = action === "start" ? { intent: "ROBOT" }
+        : action === "stop" ? {}
+        : { mode: "OFF" };
       const response = await fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -82,7 +86,9 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
       if (!response.ok || result.ok !== true) {
         setResult("BLOCKED: " + (result.blocked_by?.join(", ") || result.error || "неизвестная причина"));
       } else {
-        setResult(action === "start" ? "Команда запуска Robot принята; проверяйте состояние ниже." : "Автоматические новые входы отключены. Robot и STOP/TAKE продолжают работать.");
+        setResult(action === "start" ? "Robot запущен через штатный reconciler."
+          : action === "stop" ? "Robot STOPPED подтверждён. Backend не останавливался."
+          : "Автоматические новые входы отключены. Robot и STOP/TAKE продолжают работать.");
       }
     } catch {
       setResult("Результат операции неизвестен; повтор не выполнялся.");
@@ -112,10 +118,12 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
           <button type="button" disabled={busy} onClick={() => void refresh().catch(() => setError("Диагностика недоступна."))}>Обновить</button>
           <button type="button" disabled={busy || !snapshot} onClick={() => setPending("start")}>Запустить Robot</button>
           <button type="button" disabled={busy || !snapshot || snapshot.autopilot === "OFF"} onClick={() => setPending("freeze")}>Отключить автовходы</button>
-          <button type="button" disabled title="Полная безопасная остановка выполняется каноническим менеджером VPS; прямого защищённого HTTP-метода пока нет">Остановить Robot — недоступно</button>
+          <button type="button" disabled={busy || !snapshot || snapshot.robot !== "ROBOT_RUNNING" || !["READY", "PAUSED"].includes(snapshot.recovery)} onClick={() => setPending("stop")}>Остановить Robot</button>
         </div>
         {pending ? <div className="robot-manager-confirm" role="group" aria-label="Подтверждение действия">
-          <p>{pending === "start" ? "Запустить Robot через штатный reconciler? PAPER_AUTO отдельно не включается." : "Отключить новые автоматические входы? Robot и защита открытых позиций останутся активными."}</p>
+          <p>{pending === "start" ? "Запустить Robot через штатный reconciler? PAPER_AUTO отдельно не включается."
+            : pending === "stop" ? "Остановить Robot штатной командой? При открытых Robot-сделках команда будет отклонена; защита позиций и Backend сохраняются."
+            : "Отключить новые автоматические входы? Robot и защита открытых позиций останутся активными."}</p>
           <button type="button" disabled={busy} onClick={() => void execute(pending)}>Подтвердить</button>
           <button type="button" onClick={() => setPending(null)}>Отмена</button>
         </div> : null}
