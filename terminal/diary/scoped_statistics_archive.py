@@ -134,6 +134,7 @@ class ScopedStatisticsArchive:
                 if source_revision == latest[0]:
                     if digest != latest[1]:
                         raise StatisticsScopeError("conflicting_statistics_replay")
+                    self._db.rollback()  # idempotent read; release the writer lock
                     return report
             self._db.execute(
                 """INSERT INTO scoped_statistics
