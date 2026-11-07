@@ -171,17 +171,19 @@ class VPSManager(tk.Tk):
                 env=os.environ.copy(), check=False,
             )
             output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
-            self.events.put(("done", f"{output or '(нет вывода)'}\nExit code: {result.returncode}"))
+            status = "success" if result.returncode == 0 else "failure"
+            self.events.put((status, f"{output or '(нет вывода)'}\nExit code: {result.returncode}"))
         except (OSError, subprocess.TimeoutExpired) as exc:
-            self.events.put(("done", f"Ошибка SSH: {exc}"))
+            self.events.put(("failure", f"Ошибка SSH: {type(exc).__name__}"))
 
     def drain(self) -> None:
         try:
             while True:
-                _kind, result = self.events.get_nowait()
+                kind, result = self.events.get_nowait()
                 self.write(result)
                 self.busy = False
-                self.status.set("Завершено · проверьте Exit code в журнале")
+                self.status.set("Успешно · Exit code 0" if kind == "success"
+                                else "Ошибка · диагностика не выполнена")
                 for button in self.buttons:
                     button.state(["!disabled"])
         except queue.Empty:
