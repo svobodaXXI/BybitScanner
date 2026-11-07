@@ -216,3 +216,27 @@ describe("Stored geometry review receipt", () => {
     })).toBe(false);
   });
 });
+
+
+describe("retrospective corrected Geometry Feedback", () => {
+  it("preserves independent source identity and later as-of during correction export", () => {
+    const later = {
+      time: "2026-10-19T00:10:00.000Z", open: 12, high: 14, low: 11, close: 13,
+    };
+    const original = { ...line, locked: true };
+    const moved = { ...line, id: "editable:upper", anchors: [
+      { logical: 0, price: 12 }, { logical: 2, price: 14 },
+    ] };
+    const draft = buildEditorGeometryReview({
+      signalId: "signal-retro", snapshotRevision: "r".repeat(64),
+      barsSha256: "a".repeat(64), label: "GEOMETRY_CORRECTED",
+      referenceDrawings: [original], editableDrawings: [moved],
+      frozenCandles: [...candles, later],
+      contextAsOfMs: Date.parse(later.time), contextBarsSha256: "b".repeat(64),
+    });
+    expect(draft.corrected_boundaries[0].anchors[1].bar_open_time_ms)
+      .toEqual(Date.parse(later.time));
+    expect(draft.context_as_of_ms).toEqual(Date.parse(later.time));
+    expect(draft.bars_sha256).toEqual("a".repeat(64));
+  });
+});

@@ -50,7 +50,7 @@ def discover_reviewed_signal_ids(*, feedback_dir=None) -> list[str]:
 
 
 def _analyze_case(example: dict) -> dict:
-    bars = example["frozen_bars"]
+    bars = example.get("review_bars", example["frozen_bars"])
     times = [bar["open_time_ms"] for bar in bars]
     index = {time: i for i, time in enumerate(times)}
     if not times or len(index) != len(times):
@@ -96,6 +96,8 @@ def _analyze_case(example: dict) -> dict:
         "label": label,
         "bars_sha256": example["bars_sha256"],
         "source_revision_sha256": example["source_revision_sha256"],
+        "review_context": example.get("review_context", "SOURCE_TIME_ONLY"),
+        "review_as_of_ms": example.get("review_as_of_ms", times[-1]),
         "window_start_ms": times[0],
         "window_end_ms": times[-1],
         "anchor_changes": moves,
@@ -114,7 +116,7 @@ def _pivot_provenance(example: dict) -> list[dict]:
     from geometry.filter import filter_candidates
     from pivots import find_pivots
 
-    bars = example["frozen_bars"]
+    bars = example.get("review_bars", example["frozen_bars"])
     indexes = {bar["open_time_ms"]: i for i, bar in enumerate(bars)}
     frame = pd.DataFrame(
         [{"high": bar["high"], "low": bar["low"]} for bar in bars]

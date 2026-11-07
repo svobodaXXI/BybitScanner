@@ -26,6 +26,38 @@ Work in the existing TERMINAL/AUTOPILOT chart, **no second chart or drawing engi
 5. Reject stale/inconsistent signal revisions, out-of-range pivot times, non-finite prices, partial geometry, duplicate submit tokens and account/environment mismatch. No changes to robot orders or active signal evaluation on submit.
 6. Read-only comparison: exact match/deviation by pivot and line, positive/false-positive grouping, replayable fixture export for the Geometry Engine with train/validation/test partition by **signal family and time window** to avoid leakage.
 
+## Retrospective corrections — OWNER AUTHORITY (2026-11-07)
+
+The owner may correct an existing Telegram signal **using candles that closed only
+after the Telegram signal was sent**, or use those later candles to propose a
+new pattern. This is a legitimate and potentially essential feedback example.
+
+Keep **both time boundaries**. The immutable signal snapshot and `source_revision`
+describe what Scanner knew at the original signal timestamp. An optional
+server-verified, contiguous, **closed-candle** continuation with `as_of_ms` and
+content SHA defines the owner's review-time evidence. Preserve the original
+source unchanged; revised anchors may refer to this verified continuation.
+A source-only review remains valid and backward compatible. Reopening a saved
+retrospective correction must restore its exact appended candles and UTC anchors.
+
+The offline export must distinguish `SOURCE_TIME_ONLY` from
+`RETROSPECTIVE_CLOSED_BARS`. Never train/test the original historical decision
+using candles that were unavailable then, and never label a future-confirmed
+pattern as an original-time detectable signal. Later bars can be used to
+generate *hypotheses* about earlier recognition, but acceptance requires a
+strict chronological replay / time-separated holdout with no look-ahead.
+
+Reuse the existing Editor chart, immutable source archive, feedback store, and
+Scanner geometry validators. A user-originated proposed signal is only
+non-executable evaluation evidence until the canonical trusted Scanner strategy
+adapter can establish full entry, STOP, TAKE, freshness and Robot admission.
+No direct browser-to-Robot trading, no automatic promotion, no LIVE.
+
+Current bounded continuation fetch is one REST page (up to 1000 closed bars,
+and total review window up to 2000). Incomplete or older unavailable history
+must **fail explicitly**, not interpolate or silently invent candles. This is a
+known scope limit, not permission to discard or mislabel old corrections.
+
 ## Hybrid learning / approvals (later)
 
 - **Parameter tuning:** generate candidate settings from owner-reviewed examples; compare against held-out history and Gold negative/positive fixtures.

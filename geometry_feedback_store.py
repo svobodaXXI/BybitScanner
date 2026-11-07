@@ -16,6 +16,7 @@ import time
 from decimal import Decimal
 
 from signal_geometry_snapshot import canonical_bytes, validate_snapshot
+from retrospective_signal_bars import extension_digest, validate_extension, RetrospectiveBarsError
 from signal_archive import archive_dir as signal_archive_dir
 
 FEEDBACK_DIR_ENV = "BYBITSCANNER_GEOMETRY_FEEDBACK_DIR"
@@ -68,8 +69,9 @@ def _valid_price(raw) -> float:
     return price
 
 
-def _normalize(payload: dict, snapshot: dict) -> dict:
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1 or set(payload) - {"note"} != {
+def _normalize(payload: dict, snapshot: dict, *, review_bars=None) -> dict:
+    optional_context = {"context_as_of_ms", "context_bars_sha256"}
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1 or set(payload) - {"note"} - optional_context != {
         "schema_version", "signal_id", "snapshot_revision", "bars_sha256",
         "label", "corrected_boundaries", "idempotency_key",
     }:
@@ -81,6 +83,20 @@ def _normalize(payload: dict, snapshot: dict) -> dict:
         raise GeometryFeedbackError("signal_identity_mismatch")
     if payload["snapshot_revision"] != source_revision(snapshot) or payload["bars_sha256"] != bars_digest(snapshot):
         raise GeometryFeedbackConflict("source_snapshot_revision_conflict")
+    has_context = any(field in payload for field in optional_context)
+    if has_context and not optional_context.issubset(payload):
+        raise GeometryFeedbackError("incomplete_retrospective_context")
+    extra = []
+    if has_context:
+        as_of_ms = payload["context_as_of_ms"]
+        try:
+            extra = validate_extension(snapshot, review_bars, as_of_ms)
+        except RetrospectiveBarsError as exc:
+            raise GeometryFeedbackError(str(exc)) from exc
+        if payload["context_bars_sha256"] != extension_digest(extra):
+            raise GeometryFeedbackConflict("retrospective_context_hash_conflict")
+    elif review_bars:
+        raise GeometryFeedbackError("unexpected_retrospective_context")
     token = payload.get("idempotency_key")
     if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
         raise GeometryFeedbackError("invalid_idempotency_key")
@@ -98,7 +114,7 @@ def _normalize(payload: dict, snapshot: dict) -> dict:
 
     ids = {boundary["boundary_id"] for boundary in snapshot["boundaries"]}
     supplied = {}
-    timestamps = {bar["open_time_ms"] for bar in snapshot["bars"]}
+    timestamps = {bar["open_time_ms"] for bar in [*snapshot["bars"], *extra]}
     if label == "GEOMETRY_CORRECTED":
         if len(corrected) != len(ids):
             raise GeometryFeedbackError("incomplete_corrected_geometry")
@@ -132,6 +148,8 @@ def _normalize(payload: dict, snapshot: dict) -> dict:
     else:
         normalized = []
     return {
+        **({"context_as_of_ms": payload["context_as_of_ms"],
+            "context_bars_sha256": payload["context_bars_sha256"]} if has_context else {}),
         "schema_version": 1,
         "signal_id": signal_id,
         "snapshot_revision": payload["snapshot_revision"],
@@ -182,18 +200,19 @@ def _verified_stored_review(record: dict, snapshot: dict, *, review_id: str) -> 
                 for boundary in submission["corrected_boundaries"]
             ],
         }
-        if _normalize(ingress, snapshot) != submission:
+        retrospective = record.get("retrospective_bars", [])
+        if _normalize(ingress, snapshot, review_bars=retrospective) != submission:
             raise GeometryFeedbackError("invalid_stored_review")
         return record
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise GeometryFeedbackError("invalid_stored_review") from exc
 
 
-def record_review(payload: dict, snapshot: dict, *, directory=None) -> dict:
+def record_review(payload: dict, snapshot: dict, *, directory=None, review_bars=None) -> dict:
     """Publish one immutable review; same submit token + same facts is replay-safe."""
     try:
         validate_snapshot(snapshot, candidate_id=snapshot["signal_id"], symbol=snapshot["symbol"], timeframe=snapshot["timeframe"])
-        normalized = _normalize(payload, snapshot)
+        normalized = _normalize(payload, snapshot, review_bars=review_bars)
     except (KeyError, TypeError, ValueError) as exc:
         if isinstance(exc, GeometryFeedbackError):
             raise
@@ -210,6 +229,8 @@ def record_review(payload: dict, snapshot: dict, *, directory=None) -> dict:
         "received_at_ns": received_at_ns,
         "reviewer_source": "workspace_owner_ingress",
         "source_boundaries": snapshot["boundaries"],
+        **({"retrospective_bars": validate_extension(snapshot, review_bars, normalized["context_as_of_ms"])}
+           if "context_as_of_ms" in normalized else {}),
         "submission": normalized,
     }
     directory_path.mkdir(parents=True, exist_ok=True)

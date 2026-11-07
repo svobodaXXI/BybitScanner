@@ -53,7 +53,10 @@ def reviewed_example(signal_id: str, *, archive_directory=None, feedback_directo
                 for boundary in submitted["corrected_boundaries"]
             ],
         }
-        validated = _normalize(ingress, snapshot)
+        verified_continuation = review.get("retrospective_bars", [])
+        validated = _normalize(
+            ingress, snapshot, review_bars=verified_continuation,
+        )
         if validated != submitted:
             raise GeometryExportError("review_source_mismatch")
         token = submitted["idempotency_key"]
@@ -72,6 +75,10 @@ def reviewed_example(signal_id: str, *, archive_directory=None, feedback_directo
             "source_revision_sha256": source_revision(snapshot),
             "bars_sha256": bars_digest(snapshot),
             "frozen_bars": snapshot["bars"],
+            "review_bars": [*snapshot["bars"], *verified_continuation],
+            "review_context": "RETROSPECTIVE_CLOSED_BARS" if verified_continuation else "SOURCE_TIME_ONLY",
+            "review_as_of_ms": (validated.get("context_as_of_ms")
+                                if verified_continuation else snapshot["bars"][-1]["open_time_ms"]),
             "original_boundaries": snapshot["boundaries"],
             "corrected_boundaries": validated["corrected_boundaries"],
             "label": validated["label"],
