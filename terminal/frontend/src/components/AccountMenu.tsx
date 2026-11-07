@@ -376,7 +376,7 @@ export function AccountMenu({
                 >{refreshingAccount === account.id ? "Refreshing…" : account.status === "DISCONNECTED" || account.status === "ERROR" ? "Reconnect" : "Refresh"}</button> : null}
               </article>
             ))}
-            {manualMain.map((account) => (
+            {mode !== "AUTOPILOT" && manualMain.map((account) => (
               <article className="account-card mainnet" key={account.id} aria-label="Manual MAIN account">
                 <strong>{account.display_name}</strong>
                 <small>BYBIT · MAINNET · {account.status} · Separate MAIN service</small>
@@ -406,8 +406,8 @@ export function AccountMenu({
             ))}
             {mainInventoryError ? <small role="alert">{mainInventoryError}</small> : null}
             {modeAccountError ? <small role="alert">{modeAccountError}</small> : null}
-            {manualMainUnavailable ? <small role="status">Separate MAIN service unavailable; PAPER unchanged.</small> : null}
-            <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add MAIN account</button>
+            {mode !== "AUTOPILOT" && manualMainUnavailable ? <small role="status">Separate MAIN service unavailable; PAPER unchanged.</small> : null}
+            {mode !== "AUTOPILOT" ? <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add MAIN account</button> : null}
           </section>
         </div>
       ) : null}

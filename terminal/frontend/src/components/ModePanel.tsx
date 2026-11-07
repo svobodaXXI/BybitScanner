@@ -52,7 +52,7 @@ export function ModePanel({
                 accountControl={<AccountMenu open={props.accountOpen ?? false}
                   onToggle={props.onAccountToggle ?? (() => {})}
                   workspaceProjection={props.accountWorkspaceProjection ?? null}
-                  mode="AUTOPILOT" selectedAccountId={props.modeAccountId}
+                  mode={props.onModeAccountSelect ? "AUTOPILOT" : undefined} selectedAccountId={props.modeAccountId}
                   onSelectAccount={props.onModeAccountSelect}
                   modeAccountError={props.modeAccountError} />}
               />

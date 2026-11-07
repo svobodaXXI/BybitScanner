@@ -1316,7 +1316,7 @@ export function ModePanel({
                   open={accountOpen}
                   onToggle={onAccountToggle}
                   workspaceProjection={accountWorkspaceProjection}
-                  mode="TERMINAL"
+                  mode={onModeAccountSelect ? "TERMINAL" : undefined}
                   selectedAccountId={modeAccountId}
                   onSelectAccount={onModeAccountSelect}
                   modeAccountError={modeAccountError}
