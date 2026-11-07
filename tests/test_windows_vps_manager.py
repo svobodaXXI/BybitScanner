@@ -34,6 +34,17 @@ class TestWindowsVpsManager(unittest.TestCase):
         with self.assertRaises(ValueError):
             ssh_command("vps.example.org", "bybitscanner", "rm -rf /")
 
+    def test_status_action_fails_on_first_unavailable_service(self) -> None:
+        # Even if the last service exists, a failure from an earlier
+        # systemctl call must propagate to SSH and the GUI status indicator.
+        command = ssh_command("vps.example.org", "bybitscanner", "Состояние")
+        remote = command[-1]
+        self.assertTrue(remote.startswith("set -e; "), remote)
+        self.assertEqual(remote, ACTIONS["Состояние"])
+        self.assertEqual(remote.count("systemctl show "), 3)
+        self.assertNotIn("systemctl start", remote)
+        self.assertNotIn("systemctl stop", remote)
+
     def test_paper_diagnostics_and_update_preflight_fail_on_early_errors(self) -> None:
         # A failed Git inspection or systemctl query must not be masked by
         # a later successful health response in the same SSH command.
