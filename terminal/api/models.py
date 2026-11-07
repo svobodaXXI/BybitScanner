@@ -176,6 +176,8 @@ class PaperOpenPositionProjection:
     current_price: Decimal | None
     unrealized_pnl: Decimal | None
     tick_size: Decimal
+    # Exact open Robot trade association; None means unproven, not manual ownership.
+    robot_trade_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
