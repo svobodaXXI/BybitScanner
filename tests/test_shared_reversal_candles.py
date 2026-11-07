@@ -121,6 +121,16 @@ def test_closed_engulfing_rejects_unfinished_gaps_bad_ohlc_and_wrong_direction()
         assert observe_closed_engulfing(first, {**second, **changed}, "LONG") is None
     assert observe_closed_engulfing({**first, "closed": False}, second, "LONG") is None
     assert observe_closed_engulfing({**first, "open_time_ms": -STEP}, second, "LONG") is None
+    # Float truncation, booleans and numeric strings must never be accepted
+    # as authoritative candle IDs, even when int(value) would appear adjacent.
+    for invalid in (0.5, True, "0", 0.0):
+        assert observe_closed_engulfing(
+            {**first, "open_time_ms": invalid}, second, "LONG",
+        ) is None
+    for invalid in (STEP + 0.5, str(STEP), float(STEP)):
+        assert observe_closed_engulfing(
+            first, {**second, "open_time_ms": invalid}, "LONG",
+        ) is None
 
 
 # Classical Nison-style patterns: tests are closed-only, observation-only.
