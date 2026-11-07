@@ -2657,3 +2657,72 @@ def test_new_handoff_ready_receipt_seals_original_stop_without_replay(
     )
     with pytest.raises(ActivationBlocked, match="exceptional_editor_receipt_proof_unproven"):
         m._complete_stop_intent(transactions, target, uid=uid)
+
+
+def test_frontend_only_command_requires_editor_proof_and_never_replays_stop(
+    tmp_path, monkeypatch, capsys,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_terminal_frontend_publish as frontend
+    from tools import vps_release_identity as identity
+
+    target = "a" * 40
+    calls = []
+    monkeypatch.setattr(identity, "verify_release", lambda root: target)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *args: "f" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *args: True)
+    monkeypatch.setattr(frontend, "inspect_bundle",
+                        lambda bundle, sha: calls.append(("inspect", bundle, sha)))
+    monkeypatch.setattr(frontend, "publish_frontend",
+                        lambda sha, **kw: calls.append(("publish", sha, kw))
+                        or "FRONTEND_READY: test")
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *args, **kw: pytest.fail("frontend-only must not resume services"))
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
+                        lambda *args, **kw: pytest.fail("frontend-only must not deploy"))
+    bundle = tmp_path / "dist"
+    assert maintenance.main([
+        target, "--publish-frontend-only", "--frontend-bundle", str(bundle),
+        "--frontend-current-index-sha256", "b" * 64,
+    ]) == 0
+    assert [row[0] for row in calls] == ["inspect", "publish"]
+    assert capsys.readouterr().out == "FRONTEND_READY: test\n"
+
+
+def test_frontend_only_refuses_unproven_editor_without_touching_assets(
+    tmp_path, monkeypatch, capsys,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_terminal_frontend_publish as frontend
+    from tools import vps_release_identity as identity
+
+    monkeypatch.setattr(identity, "verify_release", lambda root: "a" * 40)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze", lambda *args: "f" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready", lambda *args: False)
+    monkeypatch.setattr(frontend, "publish_frontend",
+                        lambda *args, **kw: pytest.fail("no UI mutation without editor proof"))
+    assert maintenance.main([
+        "a" * 40, "--publish-frontend-only", "--frontend-bundle", str(tmp_path),
+    ]) == 2
+    assert "BLOCKED: frontend_only_preflight_or_publication" in capsys.readouterr().out
+
+
+def test_staged_ui_preflight_blocks_before_stop_without_exact_bundle(
+    tmp_path, monkeypatch,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    root, stage, tx = (tmp_path / name for name in ("root", "stage", "transactions"))
+    for path in (root, stage, tx):
+        path.mkdir()
+    monkeypatch.setattr(identity, "verify_release", lambda *args: "b" * 40)
+    called = []
+    status = maintenance.deploy_staged_editor_only(
+        "a" * 40, stage=stage, root=root, transactions=tx,
+        frontend_bundle=tmp_path / "missing",
+        stop=lambda *_: called.append("stop"),
+        preflight=lambda *_args, **_kw: called.append("preflight"),
+    )
+    assert status.startswith("BLOCKED: frontend_preflight_unproven")
+    assert called == []
