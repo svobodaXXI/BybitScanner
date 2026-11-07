@@ -70,20 +70,34 @@ if ($DryRun) {
     return
 }
 
+# WScript.Shell still uses the machine ANSI code page for shortcut FILE NAMES
+# on some English Windows installations. Saving "Мечи.lnk" directly can fail
+# even though PowerShell and .NET handle the Cyrillic path correctly. Create and
+# verify a private ASCII temp link, then atomically rename it to the intended
+# Unicode filename through .NET (File.Move refuses to overwrite owner files).
+$TemporaryLink = Join-Path $Desktop ("SwordCounter-" + [Guid]::NewGuid().ToString('N') + ".lnk")
 $Shell = New-Object -ComObject WScript.Shell
-$Shortcut = $Shell.CreateShortcut($Link)
-$Shortcut.TargetPath = $PythonW
-$Shortcut.Arguments = $Arguments
-$Shortcut.WorkingDirectory = $RepoRoot
-$Shortcut.IconLocation = $Icon
-$Shortcut.WindowStyle = 7
-$Shortcut.Description = 'Starts MetaScalp and SwordCounter as two independent applications'
-$Shortcut.Save()
+try {
+    $Shortcut = $Shell.CreateShortcut($TemporaryLink)
+    $Shortcut.TargetPath = $PythonW
+    $Shortcut.Arguments = $Arguments
+    $Shortcut.WorkingDirectory = $RepoRoot
+    $Shortcut.IconLocation = $Icon
+    $Shortcut.WindowStyle = 7
+    $Shortcut.Description = 'Starts MetaScalp and SwordCounter as two independent applications'
+    $Shortcut.Save()
 
-# Verify what was written.
-$Check = $Shell.CreateShortcut($Link)
-if ($Check.TargetPath -ine $PythonW -or $Check.Arguments -ne $Arguments -or $Check.WorkingDirectory -ine $RepoRoot) {
-    Remove-Item -LiteralPath $Link -Force
-    throw 'The created shortcut did not read back as expected and was removed.'
+    $Check = $Shell.CreateShortcut($TemporaryLink)
+    if ($Check.TargetPath -ine $PythonW -or $Check.Arguments -ne $Arguments -or $Check.WorkingDirectory -ine $RepoRoot) {
+        throw 'The shortcut contents did not read back as expected.'
+    }
+    [IO.File]::Move($TemporaryLink, $Link)
+    if (-not (Test-Path -LiteralPath $Link -PathType Leaf)) {
+        throw 'The Unicode shortcut could not be verified on the Desktop.'
+    }
+} finally {
+    if (Test-Path -LiteralPath $TemporaryLink -PathType Leaf) {
+        Remove-Item -LiteralPath $TemporaryLink -Force
+    }
 }
 Write-Output 'Created and verified.'
