@@ -193,8 +193,9 @@ def _parse_workspace_callback(data):
     """Only a verified owner callback may request local UI opening."""
     import re
     parts = str(data).split(":")
-    if len(parts) == 4 and parts[:2] == ["workspace", "EDITOR"] and parts[2] in ("S", "M"):
-        return ({"kind": "workspace", "mode": "EDITOR", "source_token": parts[3],
+    if (len(parts) == 4 and parts[0] == "workspace"
+            and parts[1] in ("EDITOR", "TERMINAL") and parts[2] in ("S", "M")):
+        return ({"kind": "workspace", "mode": parts[1], "source_token": parts[3],
                  "source_kind": parts[2]}
                 if re.fullmatch(r"[0-9a-f]{24}", parts[3]) else None)
     if len(parts) != 4 or parts[0] != "workspace":
@@ -231,7 +232,7 @@ def _run_workspace_callback(callback_query, parsed):
                 or (source or {}).get("signal_id") != source_id):
             _answer_callback(callback_id, "Исходная геометрия сигнала недоступна")
             return
-        parsed = {"kind": "workspace", "mode": "EDITOR", "symbol": symbol,
+        parsed = {"kind": "workspace", "mode": parsed["mode"], "symbol": symbol,
                   "timeframe": timeframe, "signal_id": source_id}
     context = {"signal_id": parsed["signal_id"]} if parsed.get("signal_id") else {}
     if os.name != "nt":
