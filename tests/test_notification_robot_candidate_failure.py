@@ -132,5 +132,19 @@ class RobotCandidateFailureWarningTests(unittest.TestCase):
         self.assertEqual(len(self._warnings(messages)), 1)  # attempted once, no retry
 
 
+    def test_missing_chart_does_not_send_orphan_text_or_create_robot_handoff(self):
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            stack.enter_context(patch.object(notification.config, "TELEGRAM_ENABLED", True))
+            stack.enter_context(patch.object(notification, "CHARTS_DIR", directory))
+            message = stack.enter_context(patch.object(notification, "send_message_to_recipients"))
+            photo = stack.enter_context(patch.object(notification, "send_photo"))
+            handoff = stack.enter_context(patch.object(notification, "prepare_robot_handoff"))
+
+            self.assertFalse(notification.send_signal(_signal()))
+            message.assert_not_called()
+            photo.assert_not_called()
+            handoff.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

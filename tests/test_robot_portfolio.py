@@ -14,7 +14,10 @@ from terminal.application.robot_autopilot_shadow import observe_shadow_candidate
 from terminal.application.robot_portfolio import collect_portfolio_facts
 from terminal.domain.models import OrderId, OrderSide, Symbol
 from terminal.persistence.sqlite_store import SQLiteStore
-from terminal.persistence.schema import SCHEMA_STATEMENTS, SCHEMA_V25_MIGRATION_STATEMENTS
+from terminal.persistence.schema import (
+    SCHEMA_STATEMENTS, SCHEMA_V25_MIGRATION_STATEMENTS,
+    SCHEMA_V26_MIGRATION_STATEMENTS, SCHEMA_VERSION,
+)
 from tests.test_robot_autopilot_shadow import _Db, _wedge, _l_shape, ACCOUNT
 
 
@@ -298,6 +301,31 @@ class PortfolioTests(unittest.TestCase):
         }
         self.assertEqual(before, after)
 
+    def test_shadow_handoff_lookup_does_not_rescan_candidates_per_audit_row(self):
+        """Critical PAPER owner path: historical SHADOW rows cannot multiply candidate scans."""
+        for n in range(12):
+            self.assertEqual(self.observe(f"history-{n}", f"H{n}USDT").result.outcome, "ALLOW")
+        self.candidate("owned", "OWNUSDT")
+        row = self.store.get_robot_candidate("owned")
+        lookups = []
+
+        class TrackedSnapshot(dict):
+            def get(self, key, default=None):
+                if key == "source_box_candidate_id":
+                    lookups.append(key)
+                return super().get(key, default)
+
+        with patch.object(
+            self.store, "load_robot_candidates",
+            return_value=(replace(row, signal_snapshot=TrackedSnapshot(row.signal_snapshot)),),
+        ):
+            facts = self.facts()
+
+        self.assertTrue(facts["available"], facts.get("data_error"))
+        self.assertEqual(facts["occupied_ro"], 13)
+        self.assertLessEqual(len(lookups), 4,
+                             "SHADOW decisions must share an indexed handoff view")
+
     def test_real_handoff_replaces_virtual_and_terminal_flat_releases(self):
         self.observe("selected", "SELUSDT")
         self.candidate("selected", "SELUSDT")
@@ -353,7 +381,7 @@ class PortfolioTests(unittest.TestCase):
     def test_v24_additive_migration_preserves_rows_and_immutable_triggers(self):
         path = self.root / 'legacy.sqlite3'
         connection = sqlite3.connect(path)
-        for statement in SCHEMA_STATEMENTS[:-len(SCHEMA_V25_MIGRATION_STATEMENTS)]:
+        for statement in SCHEMA_STATEMENTS[:-(len(SCHEMA_V25_MIGRATION_STATEMENTS) + len(SCHEMA_V26_MIGRATION_STATEMENTS))]:
             connection.execute(statement)
         connection.execute("PRAGMA user_version=24")
         connection.execute("INSERT INTO robot_autopilot_state VALUES ('paper','SHADOW',NULL,1,1)")
@@ -363,7 +391,7 @@ class PortfolioTests(unittest.TestCase):
             record = migrated.get_robot_auto_decision('old')
             self.assertEqual(record.facts_json, '{}')
             self.assertEqual(record.reason_code, 'PORTFOLIO_POLICY_UNSET')
-            self.assertEqual(migrated.settings().schema_version, 25)
+            self.assertEqual(migrated.settings().schema_version, SCHEMA_VERSION)
             for sql in ("UPDATE robot_auto_decisions SET facts_json='{\"x\":1}'", "DELETE FROM robot_auto_decisions"):
                 with self.assertRaises(sqlite3.IntegrityError):
                     migrated._connection.execute(sql)

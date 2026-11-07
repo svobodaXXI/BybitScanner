@@ -60,3 +60,19 @@ honours the durable MIRROR exits/STOP, because all behaviour is read from `execu
    STOP; the owner has not defined this case.
 5. Partial TAKE per slot is floored to the quantity step; a slot whose 25 % is below one step is held whole to the retest.
 6. Exit at the retest is a MARKET after the closed 5m candle proves the touch, so the price can be worse than the line.
+
+## MIRROR → PAPER E2E (2026-10-25)
+
+- **Campaign sources extended:** besides Wedge Robot candidates, the Box attachment now reads live Scanner MIRROR
+  candidates (#619 `mirror_scanner` state: fresh ≤2 candles, FULL_BODY body ≥ 0.5 ATR, not duplicate, still `UNTESTED`)
+  via `mirror_retest_robot.scanner_level_sources`. Any level source (Wedge/Triangle, HORN, L-shape, Box, swing) qualifies.
+- **The Robot stays authoritative:** it replays the level itself on closed 5m candles; the Scanner breakout must agree
+  (direction; the same breakout candle for 5m levels). Retested / stale / weak / gap / unreadable state → never a source;
+  unreadable state defers the attempt without orders.
+- **Dedup:** one breakout seen through a Wedge line and a Scanner level is one campaign (Wedge wins ties, then the smallest
+  boundary id) → one `campaign_id`, one R0 budget.
+- Linked Box children of a Wedge parent keep using only that parent's campaign.
+- Entry/STOP/TAKE/RR/fees/R0/invalidation are unchanged owner rules above; no new strategy parameters.
+- Proof: `tests/test_mirror_scanner_paper_e2e.py` — real `observe_mirror_levels` signal → Box attempt ATTACHED →
+  P1 2 @ 93.5, STOP 90.65 → 25 % 0.5 @ 99.2 → BE STOP 92.25 → retest close 1.5 @ 109.9 → realized 27.45, fees 0.24087
+  (0.06 %/side), Net +27.20913 USDT on an isolated temp PAPER DB.

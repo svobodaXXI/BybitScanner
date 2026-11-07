@@ -280,6 +280,48 @@ def _evidence(owner, obligation_id: str):
 
 
 class LegacyProtectionReconciliationAcceptanceTests(unittest.TestCase):
+    def test_terminal_candidate_orphan_blocks_stop_obligation_before_dispatch(self):
+        # The durable OPEN trade has lost its active owner. No protection
+        # close may execute before this ownership ambiguity is detected.
+        with tempfile.TemporaryDirectory() as temp:
+            runtime = SerializedPaperRuntime(
+                lambda: _runtime_factory(Path(temp) / "paper.sqlite3")
+            )
+            try:
+                def seed(owner):
+                    obligation = _seed_legacy_trigger(owner)
+                    # This impossible OPEN -> INVALIDATED transition is
+                    # seeded only in the isolated test database, not through
+                    # the rightly guarded production lifecycle API.
+                    with owner.store._transaction():
+                        owner.store._connection.execute(
+                            "UPDATE robot_candidates SET status='INVALIDATED', "
+                            "updated_at_ms=? WHERE candidate_id=?",
+                            (int(time.time() * 1000) + 1000, CANDIDATE_ID),
+                        )
+                    return obligation.obligation_id
+
+                obligation_id = runtime.call(seed)
+                before = runtime.call(lambda owner: _evidence(owner, obligation_id))
+                self.assertEqual(before[2].status, "TRIGGERED")
+                self.assertEqual(len(before[4]), 1)
+
+                result = runtime.call(lambda owner: owner.robot_reconcile())
+                self.assertFalse(result.success)
+                self.assertEqual(result.recovery_status, "RECONCILIATION_REQUIRED")
+                self.assertEqual(result.unresolved_trade_ids, (TRADE_ID,))
+                self.assertIn("before protection dispatch", result.reason)
+
+                after = runtime.call(lambda owner: _evidence(owner, obligation_id))
+                self.assertEqual(after[2].status, "TRIGGERED")
+                self.assertIsNone(after[0].exit_time_ms)
+                self.assertEqual(after[3].side, PositionSide.LONG)
+                self.assertEqual(after[3].quantity.value, Decimal("2"))
+                self.assertEqual(after[4], before[4])
+                self.assertEqual(after[5], ())
+            finally:
+                runtime.close()
+
     def test_attested_legacy_obligation_reconciles_exactly_once_across_repeat_and_restart(self):
         with tempfile.TemporaryDirectory() as temp:
             database_path = Path(temp) / "paper.sqlite3"

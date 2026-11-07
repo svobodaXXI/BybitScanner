@@ -43,6 +43,7 @@ export function DrawingOverlay({
   tool,
   magnet,
   candles,
+  candleAligned = false,
   coordinates,
   onCommit,
   onSelect,
@@ -57,6 +58,8 @@ export function DrawingOverlay({
   tool: DrawingTool;
   magnet: boolean;
   candles: readonly Candle[];
+  /** Review-only: submitted pivot times must refer to exact frozen candles. */
+  candleAligned?: boolean;
   coordinates: DrawingCoordinates;
   onCommit: (drawings: DrawingObject[]) => void;
   onSelect: (id: string | null) => void;
@@ -90,17 +93,27 @@ export function DrawingOverlay({
       const logical = coordinates.xToLogical(event.clientX - rect.left),
         price = coordinates.yToPrice(event.clientY - rect.top);
       if (logical === null || price === null) return null;
-      const a = { logical, price };
-      return magnet
-        ? nearestOhlcAnchor(
-            a,
-            candles,
-            coordinates.logicalToX,
-            coordinates.priceToY,
-          )
-        : a;
+      // The chart library reports fractional logical coordinates. For an
+      // owner review, snap only the time to a real frozen candle; keep price
+      // freely editable unless the existing OHLC magnet catches a nearby bar.
+      // Never clamp a drag beyond the frozen window to its first/last bar.
+      if (candleAligned && (logical < 0 || logical > candles.length - 1))
+        return null;
+      // Search from the *actual pointer pixel*. Rounding before the magnet
+      // discards horizontal distance and can select the wrong bar on zoomed
+      // mobile charts. Only persisted Editor anchors must use integer candles.
+      const raw = { logical, price };
+      const aligned = { logical: candleAligned ? Math.round(logical) : logical, price };
+      if (!magnet) return aligned;
+      const snapped = nearestOhlcAnchor(
+        raw, candles, coordinates.logicalToX, coordinates.priceToY,
+        event.pointerType === "touch" ? 26 : 14,
+      );
+      return candleAligned
+        ? { logical: Math.round(snapped.logical), price: snapped.price }
+        : snapped;
     },
-    [candles, coordinates, magnet],
+    [candles, coordinates, magnet, candleAligned],
   );
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -296,6 +309,10 @@ export function DrawingOverlay({
       if (pts.length === 1) {
         if (
           (d.type === "horizontal" &&
+            Math.abs(point.y - pts[0].y) < HIT_RADIUS) ||
+          (d.type === "horizontal-ray" &&
+            point.x >= pts[0].x - HIT_RADIUS &&
+            point.x <= bounds.width + HIT_RADIUS &&
             Math.abs(point.y - pts[0].y) < HIT_RADIUS) ||
           (d.type === "vertical" && Math.abs(point.x - pts[0].x) < HIT_RADIUS)
         )

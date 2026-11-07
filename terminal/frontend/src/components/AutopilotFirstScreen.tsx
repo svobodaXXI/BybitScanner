@@ -8,18 +8,15 @@ import {
 import {
   type AutopilotModeState,
   type DiaryTradeSummaryRow,
-  entryBasisFor,
   type Loadable,
   loadAutopilotMode,
   loadDiaryTrades,
   loadOpenPositions,
-  loadPositionProtection,
-  loadProtectionHealth,
+  loadRobotDaySummary,
+  type RobotDaySummary,
   loadRuntimeHealth,
   type PositionProtection,
-  type ProtectionHealth,
   type RuntimeHealth,
-  summarizeDay,
   uniqueOpenEpisodeId,
 } from "../autopilot/autopilotFirstScreenData";
 import type { PaperOpenPosition } from "../contracts/trading";
@@ -90,7 +87,7 @@ function LoadState<T>({
   return <>{render(value.value)}</>;
 }
 
-function PositionCard({
+export function PositionCard({
   position,
   protection,
   entryBasis,
@@ -203,23 +200,27 @@ function PositionCard({
 }
 
 export function AutopilotFirstScreen({
-  now = () => Date.now(),
   onOpenPositions,
   accountKey,
   onTradeDetails,
+  onStatistics,
+  onTerminal,
+  accountControl,
+  onRobotControls,
 }: {
   now?: () => number;
   onOpenPositions?: () => void;
   accountKey?: string;
   onTradeDetails?: (episodeId: string) => void;
+  onStatistics?: () => void;
+  onTerminal?: () => void;
+  accountControl?: ReactNode;
+  onRobotControls?: () => void;
 }) {
   const [autopilot, setAutopilot] = useState<Loadable<AutopilotModeState>>({
     status: "loading",
   });
   const [health, setHealth] = useState<Loadable<RuntimeHealth>>({
-    status: "loading",
-  });
-  const [protection, setProtection] = useState<Loadable<ProtectionHealth>>({
     status: "loading",
   });
   const [positions, setPositions] = useState<Loadable<PaperOpenPosition[]>>({
@@ -228,9 +229,7 @@ export function AutopilotFirstScreen({
   const [trades, setTrades] = useState<Loadable<DiaryTradeSummaryRow[]>>({
     status: "loading",
   });
-  const [positionProtection, setPositionProtection] = useState<
-    Record<string, PositionProtection>
-  >({});
+  const [robotDay, setRobotDay] = useState<Loadable<RobotDaySummary>>({ status: "loading" });
   const generation = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -242,38 +241,16 @@ export function AutopilotFirstScreen({
       };
     setAutopilot({ status: "loading" });
     setHealth({ status: "loading" });
-    setProtection({ status: "loading" });
     setPositions({ status: "loading" });
     setTrades({ status: "loading" });
-    setPositionProtection({});
+    setRobotDay({ status: "loading" });
 
-    const positionsResult = settle(loadOpenPositions).then((result) => {
-      apply(setPositions)(result);
-      if (result.status !== "ready") return;
-      for (const position of result.value) {
-        apply(setPositionProtection)(
-          (prior: Record<string, PositionProtection>) => ({
-            ...prior,
-            [position.symbol]: { status: "loading" },
-          }),
-        );
-        void settle(() => loadPositionProtection(position.symbol)).then(
-          (value) =>
-            apply(setPositionProtection)(
-              (prior: Record<string, PositionProtection>) => ({
-                ...prior,
-                [position.symbol]: value,
-              }),
-            ),
-        );
-      }
-    });
     await Promise.all([
       settle(loadAutopilotMode).then(apply(setAutopilot)),
       settle(loadRuntimeHealth).then(apply(setHealth)),
-      settle(loadProtectionHealth).then(apply(setProtection)),
       settle(() => loadDiaryTrades(accountKey)).then(apply(setTrades)),
-      positionsResult,
+      settle(loadRobotDaySummary).then(apply(setRobotDay)),
+      settle(loadOpenPositions).then(apply(setPositions)),
     ]);
   }, [accountKey]);
 
@@ -288,23 +265,12 @@ export function AutopilotFirstScreen({
     health.status === "error" &&
     autopilot.status === "error" &&
     positions.status === "error";
-  const entryBasis = (symbol: string): Loadable<string | null> =>
-    trades.status === "ready"
-      ? { status: "ready", value: entryBasisFor(symbol, trades.value) }
-      : trades;
 
   return (
     <section
       className="autopilot-first-screen"
       aria-label="Автопилот: первый экран"
     >
-      <header className="autopilot-first-screen-header">
-        <h3>Что робот сейчас делает</h3>
-        <button type="button" onClick={() => void refresh()}>
-          Обновить
-        </button>
-      </header>
-
       {backendOffline ? (
         <p className="autopilot-error" role="alert">
           PAPER backend недоступен. Запустите runtime ярлыком «Запуск робота».
@@ -314,117 +280,49 @@ export function AutopilotFirstScreen({
       <dl className="autopilot-summary" aria-label="Сводка дня">
         <SummaryItem label="PnL за день">
           <LoadState
-            value={trades}
-            render={(value) => {
-              const day = summarizeDay(value, now());
-              return day.netPnl === null ? (
-                <span className="autopilot-missing">
-                  Нет данных: {day.tradesWithoutPnl} из {day.closedTrades}{" "}
-                  сделок без PnL
-                </span>
-              ) : (
-                formatUsdt(day.netPnl)
-              );
-            }}
+            value={robotDay}
+            render={(day) => day.netPnl === null ? (
+              <span className="autopilot-missing">
+                Нет данных: {day.tradesWithoutPnl} из {day.closedTrades} сделок без полного PnL
+              </span>
+            ) : (
+              <span title="PAPER Robot: закрытые сделки за день (МСК), результат за вычетом записанных комиссий">
+                {formatUsdt(day.netPnl)}
+              </span>
+            )}
           />
         </SummaryItem>
         <SummaryItem label="Сделок за день">
-          <LoadState
-            value={trades}
-            render={(value) => summarizeDay(value, now()).closedTrades}
-          />
-        </SummaryItem>
-        <SummaryItem label="Блок серии STOP">
-          <Missing source="Серия STOP не реализована в runtime" />
-        </SummaryItem>
-        <SummaryItem label="Блок дневной просадки">
-          <Missing source="Daily-loss gate есть только в решениях Autopilot, API нет" />
-        </SummaryItem>
-        <SummaryItem label="Уровень STOP-защиты">
-          <Missing source="Уровень STOP-защиты не реализован в runtime" />
-        </SummaryItem>
-        <SummaryItem label="Autopilot">
-          <LoadState value={autopilot} render={(value) => value.mode} />
-        </SummaryItem>
-        <SummaryItem label="Версия политики Autopilot">
-          <LoadState value={autopilot} render={(value) => value.version > 0 ? String(value.version) : <Missing source="Версия политики недоступна" />} />
-        </SummaryItem>
-        <SummaryItem label="Причина режима">
-          <LoadState value={autopilot} render={(value) => value.reason?.trim() || <Missing source="Причина режима не предоставлена" />} />
-        </SummaryItem>
-        <SummaryItem label="PAPER live-safe">
-          <LoadState value={health} render={(value) =>
-            value.paperLiveSafe === null ? <Missing source="Health: paper_live_safe" /> :
-              value.paperLiveSafe ? "Да" : "Нет"
-          } />
-        </SummaryItem>
-        <SummaryItem label="Допуск Robot">
-          <LoadState
-            value={health}
-            render={(value) =>
-              value.robotAdmissionReady === null
-                ? "—"
-                : value.robotAdmissionReady
-                  ? "Открыт"
-                  : "Закрыт"
-            }
-          />
-        </SummaryItem>
-        <SummaryItem label="Состояние Robot">
-          <Missing source="GET-статус Robot (mode / recovery_status) не публикуется API" />
-        </SummaryItem>
-        <SummaryItem label="Защита">
-          <LoadState
-            value={protection}
-            render={(value) =>
-              value.healthy === null
-                ? "—"
-                : value.healthy
-                  ? "HEALTHY"
-                  : `UNHEALTHY ${value.unhealthySymbols.join(", ")}`.trim()
-            }
-          />
+          <LoadState value={robotDay} render={(day) => day.closedTrades} />
         </SummaryItem>
       </dl>
 
-      <div className="autopilot-first-screen-header">
-        <strong>Открытые позиции</strong>
-        {onOpenPositions ? (
-          <button type="button" onClick={onOpenPositions}>
-            Все открытые позиции
-          </button>
-        ) : null}
-      </div>
-      <section className="autopilot-positions" aria-label="Открытые позиции">
-        <LoadState
-          value={positions}
-          render={(value) =>
-            value.length === 0 ? (
-              <p className="autopilot-empty">Нет открытых позиций</p>
-            ) : (
-              value.map((position) => (
-                <PositionCard
-                  key={position.symbol}
-                  position={position}
-                  protection={
-                    positionProtection[position.symbol] ?? { status: "loading" }
-                  }
-                  entryBasis={entryBasis(position.symbol)}
-                  episodeId={trades.status === "ready" ? uniqueOpenEpisodeId(position.symbol, trades.value) : null}
-                  onTradeDetails={onTradeDetails}
-                />
-              ))
-            )
-          }
-        />
-      </section>
+      <nav className="autopilot-utility-stack" aria-label="Панель управления Автопилотом">
+        <button className="workspace-nav-button" type="button" aria-label="Подробности сделки" title="Подробности сделки"
+          disabled={trades.status !== "ready" || positions.status !== "ready" ||
+            positions.value.length !== 1 ||
+            uniqueOpenEpisodeId(positions.value[0].symbol, trades.value) === null || !onTradeDetails}
+          onClick={() => {
+            if (trades.status !== "ready" || positions.status !== "ready" || positions.value.length !== 1) return;
+            const id = uniqueOpenEpisodeId(positions.value[0].symbol, trades.value);
+            if (id) onTradeDetails?.(id);
+          }}>
+          <span className="workspace-nav-icon" aria-hidden="true">◎</span>
+        </button>
+        <button className="workspace-nav-button" type="button" aria-label="Все открытые позиции" title="Все открытые позиции" disabled={!onOpenPositions} onClick={onOpenPositions}>
+          <span className="workspace-nav-icon" aria-hidden="true">☷</span>
+        </button>
+        <button className="workspace-nav-button" type="button" aria-label="Статистика" title="Статистика" disabled={!onStatistics} onClick={onStatistics}>
+          <span className="workspace-nav-icon" aria-hidden="true">▂▅▇</span>
+        </button>
+        <button className="workspace-nav-button" type="button" aria-label="Терминал" title="Терминал" disabled={!onTerminal} onClick={onTerminal}>
+          <span className="workspace-nav-icon" aria-hidden="true">$</span>
+        </button>
+        <button className="workspace-nav-button" type="button" aria-label="Управление роботом" title="Управление роботом" disabled={!onRobotControls} onClick={onRobotControls}><svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M14.7 6.3a5 5 0 0 0-6.4 6.4L3 18l3 3 5.3-5.3a5 5 0 0 0 6.4-6.4l-3.3 3.3-3-3z"/></svg></button>
+        {accountControl ? <div className="workspace-nav-account">{accountControl}</div> : null}
+      </nav>
 
-      <section
-        className="autopilot-control-slot"
-        aria-label="Управление и мониторинг"
-      >
-        <p>Управление и мониторинг будут добавлены на этапе UI-2.</p>
-      </section>
+
     </section>
   );
 }

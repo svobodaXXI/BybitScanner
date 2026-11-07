@@ -14,6 +14,7 @@ from typing import Callable, Protocol
 import websocket
 
 from terminal.market_data.instrument_registry import InstrumentRegistry
+from terminal.runtime.incident_telemetry import report_incident
 
 LOGGER = logging.getLogger(__name__)
 
@@ -336,8 +337,15 @@ class MarketDataHub:
                             context.reconnect_count,
                             context.last_error,
                         )
-                    # WS-DIAG-1: the only durable trace of why every covered symbol
-                    # lost continuity; diagnostics never alter the reconnect path.
+                    # Structured bounded evidence never contains raw WS exception
+                    # text or credentials; reconnect and continuity fencing unchanged.
+                    report_incident(
+                        "WS_DISCONNECT", error_class=type(exc).__name__,
+                        contexts=len(contexts),
+                        symbol=contexts[0].symbol if contexts else "",
+                        generation=max((c.reconnect_count for c in contexts), default=0),
+                    )
+                    # Existing console diagnostics, best-effort only.
                     try:
                         LOGGER.warning(
                             "Market-data WebSocket disconnected; utc=%s error_class=%s "

@@ -126,6 +126,44 @@ def test_network_failures_never_yield_candles(failure):
     assert source.unavailable == 1
 
 
+@pytest.mark.parametrize("failure", [
+    lambda params: (_ for _ in ()).throw(ConnectionError("proxy down")),
+    lambda params: Response({}, status=503),
+    lambda params: Response({"retCode": 10006, "time": T0}),
+])
+def test_strict_trading_source_raises_on_unavailable_history(failure):
+    now = T0 + 3 * FIVE
+    _, get = source_for({}, now, fail=failure)
+    trading = BybitClosedKlineSource(http_get=get, clock_ms=lambda: now, strict_availability=True)
+    with pytest.raises(CandleSourceUnavailable):
+        trading.closed_candles("c1", "BTCUSDT", T0)
+    assert trading.unavailable == 1
+
+
+def test_strict_trading_source_raises_on_stale_or_missing_expected_candles():
+    stale_now = T0 + 10 * FIVE
+    _, stale_get = source_for({"5": [row(T0), row(T0 + FIVE)]}, stale_now)
+    trading = BybitClosedKlineSource(http_get=stale_get, clock_ms=lambda: stale_now,
+                                    strict_availability=True)
+    with pytest.raises(CandleSourceUnavailable, match="stale"):
+        trading.closed_candles("c1", "BTCUSDT", T0)
+    assert trading.stale == 1
+
+    now = T0 + 2 * FIVE
+    _, missing_get = source_for({"5": []}, now)
+    missing = BybitClosedKlineSource(http_get=missing_get, clock_ms=lambda: now,
+                                    strict_availability=True)
+    with pytest.raises(CandleSourceUnavailable, match="expected"):
+        missing.closed_candles("c1", "BTCUSDT", T0)
+
+    before_next_close = T0 + 1_000
+    _, idle_get = source_for({"5": []}, before_next_close)
+    idle = BybitClosedKlineSource(http_get=idle_get, clock_ms=lambda: before_next_close,
+                                 strict_availability=True)
+    assert idle.closed_candles("c1", "BTCUSDT", T0) == []
+    assert not idle_get.calls                  # no missing candle while the next one is still forming
+
+
 def test_live_source_requires_a_cursor():
     source, _ = source_for({"5": []}, T0)
     with pytest.raises(CandleSourceUnavailable):

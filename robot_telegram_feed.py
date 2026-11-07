@@ -108,9 +108,13 @@ CONTROL_STOP = "stop"
 CONTROL_CLOSE_ALL = "close_all"
 CONTROL_CLOSE_ALL_CONFIRM = "close_all_confirm"
 CONTROL_CLOSE_ALL_CANCEL = "close_all_cancel"
+CONTROL_PAPER_CLOSE_ALL = "paper_close_all"
+CONTROL_PAPER_CLOSE_ALL_CONFIRM = "paper_close_all_confirm"
+CONTROL_PAPER_CLOSE_ALL_CANCEL = "paper_close_all_cancel"
 ROBOT_CONTROL_COMMANDS = {
     CONTROL_STATUS, CONTROL_START, CONTROL_PAUSE, CONTROL_RESUME, CONTROL_STOP,
     CONTROL_CLOSE_ALL, CONTROL_CLOSE_ALL_CONFIRM, CONTROL_CLOSE_ALL_CANCEL,
+    CONTROL_PAPER_CLOSE_ALL, CONTROL_PAPER_CLOSE_ALL_CONFIRM, CONTROL_PAPER_CLOSE_ALL_CANCEL,
 }
 
 
@@ -122,6 +126,17 @@ def parse_robot_control_callback(data: Any) -> str | None:
     return command if command in ROBOT_CONTROL_COMMANDS else None
 
 
+def robot_control_status_note(mode: str, recovery_status: str) -> str:
+    """Explain legal recovery choices without offering a mutating bypass."""
+    if recovery_status == "RECONCILIATION_REQUIRED":
+        return (
+            "\n⚠ Требуется штатная сверка Robot. "
+            "Старт, пауза и остановка сейчас заблокированы; "
+            "кнопка обновления только перечитывает статус."
+        )
+    return ""
+
+
 def build_robot_control_keyboard(
     mode: str, recovery_status: str,
 ) -> dict[str, list[list[dict[str, str]]]]:
@@ -131,15 +146,21 @@ def build_robot_control_keyboard(
     callback_data flip with current state, per
     AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.2 Rationale) so a
     rejected transition is structurally unreachable from this keyboard.
-    RECONCILIATION_REQUIRED offers no buttons: recovering out of it is a
-    separate, unresolved problem this control surface does not attempt.
+    Even during RECONCILIATION_REQUIRED the owner can still request
+    account-wide PAPER closure; ordinary Robot start/resume stays gated.
     """
     if recovery_status == "RECONCILIATION_REQUIRED":
-        return {"inline_keyboard": []}
+        return {"inline_keyboard": [
+            [{"text": "🔄 Обновить статус",
+              "callback_data": f"robot:cmd:{CONTROL_STATUS}"}],
+            [{"text": "🚨 Закрыть ВСЕ PAPER по рынку",
+              "callback_data": f"robot:cmd:{CONTROL_PAPER_CLOSE_ALL}"}],
+        ]}
     if mode == "ROBOT_STOPPED":
         return {
             "inline_keyboard": [
                 [{"text": "▶ Старт", "callback_data": f"robot:cmd:{CONTROL_START}"}],
+                [{"text": "🚨 Закрыть ВСЕ PAPER по рынку", "callback_data": f"robot:cmd:{CONTROL_PAPER_CLOSE_ALL}"}],
             ]
         }
     toggle = (
@@ -154,6 +175,7 @@ def build_robot_control_keyboard(
                 {"text": "❌ Закрыть всё", "callback_data": f"robot:cmd:{CONTROL_CLOSE_ALL}"},
                 {"text": "⏹ Стоп", "callback_data": f"robot:cmd:{CONTROL_STOP}"},
             ],
+            [{"text": "🚨 Закрыть ВСЕ PAPER по рынку", "callback_data": f"robot:cmd:{CONTROL_PAPER_CLOSE_ALL}"}],
         ]
     }
 
@@ -172,6 +194,20 @@ def build_robot_close_all_confirmation_keyboard() -> dict[str, list[list[dict[st
                 {"text": "Отмена", "callback_data": f"robot:cmd:{CONTROL_CLOSE_ALL_CANCEL}"},
             ],
         ]
+    }
+
+
+def build_paper_close_all_confirmation_keyboard() -> dict[str, list[list[dict[str, str]]]]:
+    """Separate explicit owner confirmation for EVERY PAPER position.
+
+    Not Robot-only close_all_now; the account-wide action also closes manual
+    positions, pauses Robot admission and turns PAPER_AUTO OFF.
+    """
+    return {
+        "inline_keyboard": [[
+            {"text": "✅ Закрыть все PAPER", "callback_data": f"robot:cmd:{CONTROL_PAPER_CLOSE_ALL_CONFIRM}"},
+            {"text": "Отмена", "callback_data": f"robot:cmd:{CONTROL_PAPER_CLOSE_ALL_CANCEL}"},
+        ]]
     }
 
 

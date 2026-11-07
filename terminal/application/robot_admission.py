@@ -9,6 +9,8 @@ cancels, or closes an order.
 from __future__ import annotations
 
 from contextlib import nullcontext
+from dataclasses import dataclass
+from decimal import Decimal
 import hashlib
 import json
 import os
@@ -19,7 +21,7 @@ import time
 from robot_candidate_store import approve_candidate, load_candidate
 import robot_l_shape
 from robot_state_machine import is_supported_pattern
-from terminal.domain.models import Symbol, TradingAccountId
+from terminal.domain.models import Category, PositionKey, PositionSide, Symbol, TradingAccountId
 from terminal.persistence.source_terminal_events import (
     SourceTerminalEventError, load_terminal_identities, source_terminal_events_path,
 )
@@ -71,10 +73,66 @@ def _box_plan_source_prefix(handle: str) -> str | None:
     return _BOX_PLAN_SOURCE_PREFIX + digest
 
 
+@dataclass(frozen=True, slots=True)
+class RobotReentryAdmissionRequest:
+    """Trusted strategy's verified linkage proposal, NOT a public JSON signal.
+
+    Admission owns durable creation and the STOP proof recheck. Constructed
+    only by canonical strategy adapters after closed-candle validation.
+    The normal Robot candidate path is unchanged when this is omitted.
+    """
+
+    campaign_id: str
+    direction: str
+    frozen_thesis_sha256: str
+    reserved_risk_usdt: Decimal
+    original_risk_budget_usdt: Decimal | None = None
+    previous_stop_exec_id: str | None = None
+    confirmed_at_ms: int | None = None
+    strategy_confirmation_proven: bool = False
+
+
+def _reserve_reentry_with_canonical_candidate(
+    store: SQLiteStore, record: RobotCandidateRecord,
+    proposal: RobotReentryAdmissionRequest, *, now: int,
+) -> None:
+    """Participate in the caller's Robot Admission BEGIN IMMEDIATE; no orders."""
+    if not isinstance(proposal, RobotReentryAdmissionRequest):
+        raise RobotAdmissionRejected("reentry contract must originate from a trusted adapter")
+    if proposal.previous_stop_exec_id is None:
+        if proposal.original_risk_budget_usdt is None:
+            raise RobotAdmissionRejected("original campaign risk budget missing")
+        store.create_robot_reentry_campaign(
+            account=PAPER_ACCOUNT_ID, campaign_id=proposal.campaign_id,
+            first_candidate_id=record.candidate_id,
+            frozen_thesis_sha256=proposal.frozen_thesis_sha256,
+            direction=proposal.direction,
+            original_risk_budget_usdt=proposal.original_risk_budget_usdt,
+            reserved_risk_usdt=proposal.reserved_risk_usdt,
+            reserved_at_ms=now,
+        )
+    else:
+        if proposal.confirmed_at_ms is None:
+            raise RobotAdmissionRejected("post-STOP confirmation timestamp missing")
+        store.reserve_robot_stop_reentry(
+            account=PAPER_ACCOUNT_ID, campaign_id=proposal.campaign_id,
+            candidate_id=record.candidate_id,
+            frozen_thesis_sha256=proposal.frozen_thesis_sha256,
+            direction=proposal.direction,
+            previous_stop_exec_id=proposal.previous_stop_exec_id,
+            confirmed_at_ms=proposal.confirmed_at_ms,
+            reserved_risk_usdt=proposal.reserved_risk_usdt,
+            reserved_at_ms=now,
+            strategy_confirmation_proven=proposal.strategy_confirmation_proven,
+        )
+
+
 def _admit_box_plan_candidate(
     handle: str, *, database_path: Path | str | None, clock_ms,
     transaction_store: SQLiteStore | None = None,
     expected_snapshot_sha256: str | None = None,
+    linked_mirror_parent_candidate_id: str | None = None,
+    reentry: RobotReentryAdmissionRequest | None = None,
 ) -> tuple[RobotCandidateRecord, bool]:
     """Owner admission of one frozen Box plan through the existing atomic handoff.
 
@@ -120,6 +178,10 @@ def _admit_box_plan_candidate(
             if len(linked) > 1:
                 raise RobotAdmissionRejected("Robot candidate identity conflicts with durable state")
             if linked:
+                if reentry is not None:
+                    _reserve_reentry_with_canonical_candidate(
+                        store, linked[0], reentry, now=now,
+                    )
                 return linked[0], False
 
             runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
@@ -127,18 +189,52 @@ def _admit_box_plan_candidate(
                 raise RobotAdmissionRejected("Robot runtime state is unavailable")
             if runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":
                 raise RobotAdmissionRejected("Robot admission is not ready")
+            direction = str((source.signal_snapshot.get("identity") or {}).get("direction", ""))
+            parent = linked_mirror_parent_candidate(
+                store,
+                PAPER_ACCOUNT_ID,
+                source.symbol,
+                direction,
+                excluded_candidate_ids={source.candidate_id},
+            )
+            allowed_parent = (
+                parent is not None
+                and parent.candidate_id == linked_mirror_parent_candidate_id
+            )
             owners = active_robot_owner_candidate_ids(store, PAPER_ACCOUNT_ID, source.symbol)
-            if owners:
+            active_conflicts = [
+                item.candidate_id
+                for item in store.load_active_robot_candidate_states(PAPER_ACCOUNT_ID)
+                if item.symbol == source.symbol
+                and item.candidate_id != source.candidate_id
+                and item.status in {"APPROVED", "OPEN"}
+            ]
+            if (
+                (owners or active_conflicts or linked_mirror_parent_candidate_id is not None)
+                and not allowed_parent
+            ):
                 raise RobotAdmissionRejected(
-                    "Robot symbol already has an active exposure owner: " + ",".join(owners)
+                    "Robot symbol already has an active owner: "
+                    + ",".join(sorted(set(owners) | set(active_conflicts)))
                 )
             try:
-                return store.handoff_box_plan_to_robot(
+                record, created = store.handoff_box_plan_to_robot(
                     source.candidate_id,
                     symbol=source.symbol,
                     expected_snapshot_sha256=source.snapshot_sha256,
                     approved_at_ms=now,
+                    linked_mirror_parent_candidate_id=(
+                        parent.candidate_id if allowed_parent else None
+                    ),
+                    linked_mirror_parent_snapshot_sha256=(
+                        parent.snapshot_sha256 if allowed_parent else None
+                    ),
                 )
+                if reentry is not None:
+                    _reserve_reentry_with_canonical_candidate(
+                        store, record, reentry, now=now,
+                    )
+                return record, created
             except (PersistenceError, ValueError) as exc:
                 raise RobotAdmissionRejected(
                     "Robot candidate identity conflicts with durable state"
@@ -184,6 +280,68 @@ def active_robot_owner_candidate_ids(
     return tuple(sorted(set(owners)))
 
 
+def linked_mirror_parent_candidate(
+    store: SQLiteStore,
+    trading_account_id: TradingAccountId,
+    symbol: Symbol,
+    direction: str,
+    *,
+    excluded_candidate_ids: set[str] | frozenset[str] = frozenset(),
+) -> RobotCandidateRecord | None:
+    """Return the sole compatible Wedge exposure owner for a linked Box.
+
+    This is deliberately narrower than ordinary symbol ownership.  A pending
+    Box can share the existing reservation only with one APPROVED Wedge
+    campaign owner in the same direction, before either candidate has opened
+    exposure, and only when no other active idea competes for the symbol.
+    Every other case stays on the normal SYMBOL_OWNED path.
+    """
+    normalized = str(direction).strip().upper()
+    if normalized not in {"LONG", "SHORT"}:
+        return None
+    if active_robot_owner_candidate_ids(store, trading_account_id, symbol):
+        return None
+    position = store.get_position_projection(
+        PositionKey(trading_account_id, Category.LINEAR, symbol, 0)
+    )
+    if (
+        position is not None
+        and position.side is not PositionSide.FLAT
+        and position.quantity.value > 0
+    ):
+        return None
+    active = [
+        item
+        for item in store.load_active_robot_candidate_states(trading_account_id)
+        if item.symbol == symbol
+        and item.candidate_id not in excluded_candidate_ids
+        and item.status in {"APPROVED", "OPEN"}
+    ]
+    if len(active) != 1:
+        return None
+    parent = store.get_robot_candidate(active[0].candidate_id)
+    if (
+        parent is None
+        or parent.trading_account_id != trading_account_id
+        or parent.symbol != symbol
+        or parent.status != "APPROVED"
+        or parent.signal_snapshot.get("pattern") not in {"Rising Wedge", "Falling Wedge"}
+        or not isinstance(parent.robot_state, Mapping)
+        or str(parent.robot_state.get("direction", "")).strip().upper() != normalized
+    ):
+        return None
+    execution = parent.robot_state.get("execution")
+    if isinstance(execution, Mapping):
+        order_id = execution.get("limit_order_id")
+        if isinstance(order_id, str) and order_id.strip():
+            order = store.get_paper_limit(order_id, trading_account_id)
+            if order is not None and order.status not in {"filled", "cancelled"}:
+                return None
+        if isinstance(execution.get("late_market_intent"), Mapping):
+            return None
+    return parent
+
+
 def scanner_candidate_admission_error(candidate: Mapping[str, Any]) -> str | None:
     """Pure Scanner-candidate admissibility checks of ``admit_robot_candidate``.
 
@@ -207,6 +365,8 @@ def scanner_candidate_admission_error(candidate: Mapping[str, Any]) -> str | Non
         return "Scanner candidate pattern is not supported by Robot"
 
     source_timeframe = str(candidate.get("timeframe", "")).strip()
+    if robot_l_shape.is_mirror_snapshot(snapshot) and not robot_l_shape.mirror_standalone_enabled():
+        return "MIRROR standalone Robot is not enabled"
     if is_l_shape:
         if source_timeframe not in {"1", "5"}:
             return "L-shape Robot supports only 1m or 5m source timeframe"
@@ -275,6 +435,8 @@ def admit_robot_candidate(
     transaction_store: SQLiteStore | None = None,
     expected_snapshot_sha256: str | None = None,
     mark_legacy_approved: bool = True,
+    linked_mirror_parent_candidate_id: str | None = None,
+    reentry: RobotReentryAdmissionRequest | None = None,
 ) -> tuple[RobotCandidateRecord, bool]:
     """Admit one approved Scanner candidate into authoritative SQLite state.
 
@@ -288,6 +450,8 @@ def admit_robot_candidate(
             str(candidate_id), database_path=database_path, clock_ms=clock_ms,
             transaction_store=transaction_store,
             expected_snapshot_sha256=expected_snapshot_sha256,
+            linked_mirror_parent_candidate_id=linked_mirror_parent_candidate_id,
+            reentry=reentry,
         )
 
     candidate = load_candidate(candidate_id, store_dir=store_dir)
@@ -370,6 +534,8 @@ def admit_robot_candidate(
                         expected_revision=record.state_revision,
                         updated_at_ms=now,
                     )
+            if reentry is not None:
+                _reserve_reentry_with_canonical_candidate(store, record, reentry, now=now)
     finally:
         if owns_store:
             store.close()

@@ -16,32 +16,33 @@ from workspace_ready_link import workspace_link, write_workspace_qr
 
 
 def _telegram_identity() -> tuple[str, str]:
-    """Owner bot token and chat id; never logged.
+    """Get one complete, owner-only Telegram identity; never log credentials.
 
-    The dedicated BYBITSCANNER_TELEGRAM_* variables win. Otherwise the already
-    configured Scanner/Robot Telegram identity is reused (config.TELEGRAM_TOKEN
-    and the single owner chat config.TELEGRAM_CHAT_ID, same as
-    notification.get_telegram_owner_chat_id); the broadcast list
-    TELEGRAM_CHAT_IDS is deliberately not used. Missing config means no
-    delivery, never a guess. Each value falls back independently.
+    A dedicated bot/owner pair wins. If either dedicated environment variable
+    is set, both must be set: never mix credentials from different identities.
+    Otherwise reuse only the existing Scanner owner's single chat from config,
+    not the broadcast TELEGRAM_CHAT_IDS list.
     """
     token = (os.environ.get("BYBITSCANNER_TELEGRAM_BOT_TOKEN") or "").strip()
     owner = (os.environ.get("BYBITSCANNER_TELEGRAM_OWNER_ID") or "").strip()
-    if token and owner:
-        return token, owner
+    if token or owner:
+        return (token, owner) if token and owner else ("", "")
     try:
         import config
-    except Exception:
-        return token, owner
-    if not token:
-        token = str(getattr(config, "TELEGRAM_TOKEN", "") or "").strip()
-    if not owner:
-        owner = str(getattr(config, "TELEGRAM_CHAT_ID", "") or "").strip()
-    return token, owner
+        fallback_token = getattr(config, "TELEGRAM_TOKEN", None)
+        fallback_owner = getattr(config, "TELEGRAM_CHAT_ID", None)
+    except (ImportError, AttributeError, ValueError, TypeError):
+        return "", ""
+    if not isinstance(fallback_token, str):
+        return "", ""
+    if not isinstance(fallback_owner, (str, int)) or isinstance(fallback_owner, bool):
+        return "", ""
+    return fallback_token.strip(), str(fallback_owner).strip()
 
 
 def deliver_if_verified(mode: str, symbol: str, timeframe: str,
-                        local_url: str = "http://127.0.0.1:4173/") -> bool:
+                        local_url: str = "http://127.0.0.1:4173/",
+                        signal_id: str | None = None) -> bool:
     required = (
         "BYBITSCANNER_TERMINAL_HTTPS_URL",
         "BYBITSCANNER_ACCESS_CLIENT_ID",
@@ -76,11 +77,12 @@ def deliver_if_verified(mode: str, symbol: str, timeframe: str,
         access_client_id=os.environ["BYBITSCANNER_ACCESS_CLIENT_ID"],
         access_client_secret=os.environ["BYBITSCANNER_ACCESS_CLIENT_SECRET"],
         base_url=os.environ["BYBITSCANNER_TERMINAL_HTTPS_URL"],
-        mode=mode, symbol=symbol, timeframe=timeframe, signal_id=None,
+        mode=mode, symbol=symbol, timeframe=timeframe, signal_id=signal_id,
         qr_directory=Path(os.environ.get("TEMP", ".")) / "BybitScanner-workspace-qr",
     )
     url = workspace_link(
-        os.environ["BYBITSCANNER_TERMINAL_HTTPS_URL"], mode, symbol, timeframe
+        os.environ["BYBITSCANNER_TERMINAL_HTTPS_URL"], mode, symbol, timeframe,
+        signal_id=signal_id,
     )
     qr_path = Path(os.environ.get("TEMP", ".")) / "BybitScanner-workspace-qr" / (
         f"owner-{mode}-{symbol}-{timeframe}.png"
@@ -95,8 +97,9 @@ def main():
     parser.add_argument("--mode", choices=("EDITOR", "TERMINAL"), required=True)
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--timeframe", required=True)
+    parser.add_argument("--signal-id", default=None)
     args = parser.parse_args()
-    if deliver_if_verified(args.mode, args.symbol, args.timeframe):
+    if deliver_if_verified(args.mode, args.symbol, args.timeframe, signal_id=args.signal_id):
         print("Mobile QR delivered to owner after authenticated HTTPS verification.")
     else:
         print("Mobile QR not sent: gateway configuration or local readiness unavailable.")

@@ -145,6 +145,19 @@ class LiveMarketCommandResult:
 class FullCloseCommandRequest:
     client_action_id: ClientActionId
     symbol: str
+    # Caller-supplied cap for one chunk of a close that exceeds the
+    # instrument's own maximum Market order quantity (CR-ROBOT-CLOSE-ALL-
+    # MAX-QTY-001). None (default) means "close the entire confirmed
+    # position", exactly as before this field existed.
+    quantity: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        if self.quantity is not None and (
+            not isinstance(self.quantity, Decimal)
+            or not self.quantity.is_finite()
+            or self.quantity <= 0
+        ):
+            raise ValueError("quantity, if given, must be a positive finite Decimal")
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,10 +185,27 @@ class PaperOpenPositionsResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class PaperCloseAllSymbolReport:
+    """Verified PAPER economics, or explicit unproven evidence per symbol."""
+
+    symbol: str
+    owner: str
+    evidence_status: str
+    entry_price: Decimal | None = None
+    exit_price: Decimal | None = None
+    quantity: Decimal | None = None
+    gross_pnl_usdt: Decimal | None = None
+    fees_costs_usdt: Decimal | None = None
+    net_pnl_usdt: Decimal | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CloseAllCommandResponse:
     client_action_id: str
     results: tuple[CommandResult, ...]
     positions: tuple[PaperOpenPositionProjection, ...]
+    symbol_reports: tuple[PaperCloseAllSymbolReport, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
