@@ -101,7 +101,7 @@ LOGIN_HTML = """<!doctype html><html lang="ru"><meta charset="utf-8">
   target.searchParams.set("symbol",symbol);
   target.searchParams.set("timeframe",timeframe);
   const signalId=params.get("signal_id");
-  if(mode==="EDITOR" && signalId!==null){
+  if(signalId!==null){
     if(!/^[A-Za-z0-9_.:-]{1,128}$/.test(signalId)){
       document.getElementById("status").textContent="Недопустимый идентификатор исходного сигнала.";return;
     }

@@ -102,9 +102,9 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
             )["inline_keyboard"][-1]
         editor_query = parse_qs(urlsplit(editor["web_app"]["url"]).query)
         self.assertEqual(editor_query["signal_id"], ["mirror-origin:abc"])
-        self.assertNotIn("signal_id", urlsplit(terminal["web_app"]["url"]).query)
+        self.assertEqual(parse_qs(urlsplit(terminal["web_app"]["url"]).query)["signal_id"], ["mirror-origin:abc"])
         self.assertIn('const signalId=params.get("signal_id")', LOGIN_HTML)
-        self.assertIn('mode==="EDITOR" && signalId!==null', LOGIN_HTML)
+        self.assertIn('if(signalId!==null)', LOGIN_HTML)
         self.assertIn('target.searchParams.set("signal_id",signalId)', LOGIN_HTML)
         self.assertIn("^[A-Za-z0-9_.:-]{1,128}$", LOGIN_HTML)
         # Reuse the canonical URL builder, never add a credential token.
@@ -112,6 +112,27 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
             workspace_link("https://83.217.213.181/", "EDITOR",
                            "BTCUSDT", "5m", signal_id="mirror-origin:abc"),
             "https://83.217.213.181/?mode=EDITOR&symbol=BTCUSDT&timeframe=5m&signal_id=mirror-origin%3Aabc",
+        )
+
+    def test_terminal_source_callback_preserves_signal_after_archive_lookup(self):
+        from notification import _owner_workspace_button
+        with patch.dict("os.environ", {"BYBITSCANNER_TERMINAL_HTTPS_URL": ""}, clear=True):
+            button = _owner_workspace_button(
+                "TERMINAL", "BTCUSDT", "5m", signal_id="source-original:" + "a" * 24,
+            )
+        self.assertEqual(button["callback_data"], "workspace:TERMINAL:S:" + "a" * 24)
+        parsed = telegram_review._parse_workspace_callback(button["callback_data"])
+        self.assertEqual(parsed["mode"], "TERMINAL")
+        source_id = "source-original:" + "a" * 24
+        with patch("signal_archive.load_frozen_signal_geometry", return_value={
+            "signal_id": source_id, "symbol": "BTCUSDT", "timeframe": "5",
+        }), patch.object(handoff, "deliver_workspace_link", return_value={"ok": True}) as deliver, \
+                patch.object(telegram_review, "_answer_callback"):
+            telegram_review._run_workspace_callback(
+                {"id": "cb", "message": {"chat": {"id": 42}}}, parsed,
+            )
+        deliver.assert_called_once_with(
+            "42", mode="TERMINAL", symbol="BTCUSDT", timeframe="5m", signal_id=source_id,
         )
 
     def test_signal_callback_reuses_configured_telegram_mini_app_url(self):
@@ -209,7 +230,7 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
                     )
                     self.assertEqual(
                         terminal["web_app"]["url"],
-                        f"https://83.217.213.181/login?mode=TERMINAL&symbol=BTCUSDT&timeframe={expected}",
+                        f"https://83.217.213.181/login?mode=TERMINAL&symbol=BTCUSDT&timeframe={expected}&signal_id=signal-123",
                     )
 
     def test_owner_keyboard_fallback_and_non_owner_do_not_leak_editor_link(self):
@@ -243,7 +264,7 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
             )["inline_keyboard"][-1]
         self.assertEqual(editor["callback_data"], f"workspace:EDITOR:S:{token}")
         self.assertLessEqual(len(editor["callback_data"].encode("utf-8")), 64)
-        self.assertEqual(terminal["callback_data"], "workspace:TERMINAL:BTCUSDT:5m")
+        self.assertEqual(terminal["callback_data"], f"workspace:TERMINAL:S:{token}")
         parsed = telegram_review._parse_workspace_callback(editor["callback_data"])
         self.assertEqual(parsed["source_token"], token)
         self.assertIsNone(telegram_review._parse_workspace_callback(
@@ -387,8 +408,8 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
                 self.assertIsNone(load_frozen_signal_geometry(
                     "source-original:" + "f" * 24))
 
-    def test_editor_source_id_not_advertised_for_image_only_or_old_incomplete_archive(self):
-        """Original PNG remains available, but unavailable frozen rays get no exact Editor link."""
+    def test_image_only_archive_unchanged_when_later_valid_geometry_gets_new_identity(self):
+        """No phantom link for the first image; a distinct validated source is independently reopenable."""
         import hashlib
         import notification
         import tempfile
@@ -418,8 +439,8 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
                 self.assertEqual(archived_image, image)
                 self.assertIsNotNone(load_original_signal([source_id]))
                 self.assertIsNone(load_frozen_signal_geometry(source_id))
-                # The first archived image is immutable, even if a later retry
-                # presents valid geometry. It must not create a phantom link.
+                # A later validated geometry is a DIFFERENT source identity.
+                # The immutable first image-only record must never gain phantom rays.
                 class Candles:
                     def itertuples(self, index=False):
                         return iter((
@@ -437,12 +458,16 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
                     text=caption, chart_path=chart,
                     geometry=good, frozen_candles=Candles(),
                 )
-                self.assertIsNone(handle2)
+                self.assertIsNotNone(handle2)
+                new_source_id = f"source-original:{handle2}"
+                self.assertNotEqual(new_source_id, source_id)
                 self.assertIsNone(load_frozen_signal_geometry(source_id))
-                editor = notification.build_tradingview_keyboard(
-                    "BTCUSDT", "5", signal_id=handle2,
-                )["inline_keyboard"][-1][0]
-                self.assertEqual(editor["callback_data"], "workspace:EDITOR:BTCUSDT:5m")
+                self.assertIsNotNone(load_frozen_signal_geometry(new_source_id))
+                editor, terminal = notification.build_tradingview_keyboard(
+                    "BTCUSDT", "5", signal_id=new_source_id,
+                )["inline_keyboard"][-1]
+                self.assertEqual(editor["callback_data"], f"workspace:EDITOR:S:{handle2}")
+                self.assertEqual(terminal["callback_data"], f"workspace:TERMINAL:S:{handle2}")
 
 
 if __name__ == "__main__":
