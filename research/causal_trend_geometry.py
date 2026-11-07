@@ -617,24 +617,22 @@ class CausalGeometryFeed:
             self._hourly.observe_closed(newly_closed_1h)
             if self._waiting_for_side is None:
                 previous = self._hourly_trend
-                proposal = (trend_from_frozen_first_pair(
-                    self._hourly.pivots, previous.main.first, previous.target.first,
-                ) if previous is not None else
-                    recent_hourly_trend(self._hourly.recent_pivots))
-                if proposal is not None:
-                    if previous is None:
+                if previous is None:
+                    proposal = recent_hourly_trend(self._hourly.recent_pivots)
+                    if proposal is not None:
                         fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
                         if fitted is not None:
                             self._hourly_trend = fitted
-                    elif proposal.side == previous.side:
-                        # A genuinely new LH+LL / HL+HH may need the next
-                        # confirmed pivot pair as its origin. A historical
-                        # frozen first anchor is reused whenever valid.
-                        fitted = confirmed_continuation_with_successive_origins(
-                            self._hourly.pivots, previous, self._hourly.bars,
-                        )
-                        if fitted is not None:
-                            self._hourly_trend = fitted
+                else:
+                    # The fixed-origin candidate can be geometrically
+                    # IMPOSSIBLE after a new true LH+LL / HL+HH. Still
+                    # evaluate the next confirmed pivot pair; do not gate
+                    # this fallback on a successful frozen-origin proposal.
+                    fitted = confirmed_continuation_with_successive_origins(
+                        self._hourly.pivots, previous, self._hourly.bars,
+                    )
+                    if fitted is not None:
+                        self._hourly_trend = fitted
         self._install_opposite_if_confirmed(five_minute.end_ms)
         trend = self._hourly_trend
         movement = ((trend.side, trend.main.first.at_ms, trend.main.first.price)
