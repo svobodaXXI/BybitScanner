@@ -48,6 +48,20 @@ class WorkspaceReadyTelegramTests(unittest.TestCase):
         qr.assert_not_called()
         send.assert_not_called()
 
+    @patch("workspace_ready_telegram.send_photo")
+    @patch("workspace_ready_telegram.write_workspace_qr")
+    def test_truthy_but_unverified_readiness_never_sends_ready(self, qr, send):
+        with tempfile.TemporaryDirectory() as tmp:
+            for key in ("gateway_ready", "access_policy_verified"):
+                for invalid in ("false", "true", 1, [], {"verified": True}):
+                    with self.subTest(key=key, invalid=invalid):
+                        kwargs = self.payload(tmp)
+                        kwargs[key] = invalid
+                        with self.assertRaises(RuntimeError):
+                            send_ready_workspace(**kwargs)
+        qr.assert_not_called()
+        send.assert_not_called()
+
     @patch("workspace_ready_telegram.send_photo", return_value={"ok": False})
     @patch("workspace_ready_telegram.write_workspace_qr")
     def test_telegram_failure_is_not_reported_as_success(self, qr, send):
