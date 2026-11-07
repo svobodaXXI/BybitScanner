@@ -90,6 +90,17 @@ describe("distinct visual-only last M5 acceleration at H1 target", () => {
     expect(lastM5AccelerationTimeline(missingH1)).toEqual([]);
   });
 
+  it("rejects wick-fit replacement of significant pivot 3 by an intermediate non-pivot", () => {
+    const doc = archive("BULL");
+    // All four significant pivots stay 2 LOW, 5 HIGH, 8 higher LOW,
+    // 11 higher HIGH. A wick at 5 violates the true 1-3 boundary,
+    // but candle 5 is NOT a significant low (candle 3 is lower).
+    doc.events[3].candle!.low = 91;
+    doc.events[5].candle!.low = 92;
+    const result = lastM5AccelerationTimeline(doc);
+    expect(result).toEqual([]); // no refitting anchor 3 to candle 5
+  });
+
   it("renders the acceleration blue DASHED while M5 reference stays solid", () => {
     expect(automaticLineStyle("ACCELERATION_5M")).toEqual({stroke:"#57aaff",dash:[6,4]});
     expect(automaticLineStyle("REFERENCE_5M")).toEqual({stroke:"#57aaff",dash:[]});
