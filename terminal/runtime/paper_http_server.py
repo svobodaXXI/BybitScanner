@@ -88,7 +88,7 @@ from terminal.persistence.live_account_store import LiveAccountProjectionStore
 from terminal.persistence.active_account_preference import ActiveAccountPreferenceStore
 from terminal.application.live_account_reconciliation import LiveAccountReconciliationError
 from terminal.application.runtime_intent import RuntimeIntent, RuntimeIntentReconciler
-from terminal.application.robot_control import ROBOT_CLOSE_ALL_ALLOWED_STATES
+from terminal.application.robot_control import ROBOT_CLOSE_ALL_ALLOWED_STATES, RobotControlRejected, stop_robot
 
 
 LOGGER = logging.getLogger(__name__)
@@ -3996,6 +3996,54 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 200 if success else 409,
                 {"ok": success, **to_primitive(result)},
             )
+            return
+
+        if self.path == "/api/robot/stop":
+            # Reuse the canonical stop_robot() command from Telegram/VPS Manager
+            # rather than introducing another durable transition. Execute on
+            # this HTTP handler thread, NEVER through runtime.call: the command
+            # synchronously POSTs back to this ThreadingHTTPServer so its
+            # pending-entry reconciliation can run on the PAPER owner thread.
+            try:
+                self._payload(set())
+                database_path = self.server.runtime.call(
+                    lambda runtime: runtime.store.normalized_path
+                )
+                if not isinstance(database_path, str) or not database_path:
+                    raise RuntimeError("canonical_paper_database_unavailable")
+                backend_url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+                def post_pending_reconcile(url, payload):
+                    response = requests.post(url, json=payload, timeout=15)
+                    body = response.json()
+                    if response.status_code != 200 or not isinstance(body, dict) or body.get("ok") is not True:
+                        raise RobotControlRejected("synchronize_pending_entries_rejected")
+                    return body
+
+                stop_robot(
+                    database_path=database_path,
+                    backend_url=backend_url,
+                    http_post=post_pending_reconcile,
+                )
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_robot_stop"})
+                return
+            except RobotControlRejected as exc:
+                self._json_response(409, {"ok": False, "error": str(exc)})
+                return
+            except Exception:
+                LOGGER.exception("Canonical Robot stop unavailable")
+                self._json_response(503, {"ok": False, "error": "robot_stop_unavailable"})
+                return
+            try:
+                state = self.server.runtime.call(lambda runtime: runtime.robot_runtime_state())
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "robot_stop_postcondition_unknown"})
+                return
+            if state is None or (state.mode, state.recovery_status) != ("ROBOT_STOPPED", "ROBOT_STOPPED"):
+                self._json_response(409, {"ok": False, "error": "robot_stop_not_converged"})
+                return
+            self._json_response(200, {"ok": True, "robot": "ROBOT_STOPPED"})
             return
 
         if self.path == "/api/robot/close-all-now":
