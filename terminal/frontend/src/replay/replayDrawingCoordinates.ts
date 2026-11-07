@@ -42,6 +42,22 @@ export function timeAtChartLogical(logical: number, candles: readonly ReplayCand
  * This projection uses only the displayed time axis and the already-known
  * retirement; the source line, prices and historical publication are unchanged.
  */
+/**
+ * An M5 correction remains on the H1 historical chart, but it must not
+ * acquire a multi-day H1 ray solely from the chart's coarse time scale.
+ * Show its actual two-pivot slope through the time it became publishable.
+ * The full open-ended research reference still renders on the M5 chart.
+ */
+export function automaticGeometryTimeframeCap(
+  line: { kind: "MAIN_1H" | "TARGET_1H" | "REFERENCE_5M" | "ACCELERATION_5M";
+    available_at_ms: number },
+  timeframe: "5m" | "1h",
+): number {
+  return timeframe === "1h" &&
+    (line.kind === "REFERENCE_5M" || line.kind === "ACCELERATION_5M")
+    ? line.available_at_ms : Infinity;
+}
+
 export function geometryLogicalSegment(
   line: { from_ms: number; retired_at_ms?: number; superseded_at_ms?: number },
   displayedCandles: readonly ReplayCandle[],
