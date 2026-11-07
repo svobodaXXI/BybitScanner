@@ -623,16 +623,28 @@ class CausalGeometryFeed:
                         fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
                         if fitted is not None:
                             self._hourly_trend = fitted
-                else:
-                    # The fixed-origin candidate can be geometrically
-                    # IMPOSSIBLE after a new true LH+LL / HL+HH. Still
-                    # evaluate the next confirmed pivot pair; do not gate
-                    # this fallback on a successful frozen-origin proposal.
+                elif previous.side == "BEAR":
+                    # Owner's GRASS descending correction: a new confirmed
+                    # LH+LL can be blocked by obsolete 27 Aug origin wicks.
                     fitted = confirmed_continuation_with_successive_origins(
                         self._hourly.pivots, previous, self._hourly.bars,
                     )
                     if fitted is not None:
                         self._hourly_trend = fitted
+                else:
+                    # Preserve the existing BULL lifecycle and independent
+                    # prior-confirmation semantics; today's owner regression
+                    # concerns only the BEAR lower-high/lower-low boundary.
+                    proposal = trend_from_frozen_first_pair(
+                        self._hourly.pivots,
+                        previous.main.first, previous.target.first,
+                    )
+                    if (proposal is not None and proposal.side == previous.side and
+                            proposal.pivot_sequence[3].at_ms >
+                            previous.pivot_sequence[3].at_ms):
+                        fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
+                        if fitted is not None:
+                            self._hourly_trend = fitted
         self._install_opposite_if_confirmed(five_minute.end_ms)
         trend = self._hourly_trend
         movement = ((trend.side, trend.main.first.at_ms, trend.main.first.price)
