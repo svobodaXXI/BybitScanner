@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialSourceGeometryRange, projectSignalGeometry, restoreSavedSignalCorrection } from "./signalChartBridge";
+import { initialSourceGeometryRange, projectSignalGeometry, projectSourceReferenceOnLiveCandles, restoreSavedSignalCorrection } from "./signalChartBridge";
 import { serializeReviewDrawings } from "./geometryReviewDraft";
 
 const candles = [
@@ -120,5 +120,27 @@ describe("retrospective Editor candles", () => {
       .toEqual([[0, 2], [0, 2]]);
     expect(() => appendRetrospectiveCandles(candles, [later[1]], "5m", asof)).toThrow();
     expect(() => appendRetrospectiveCandles(candles, later, "1h", asof)).toThrow();
+  });
+});
+
+describe("Autopilot immutable signal overlay on live candles", () => {
+  const original = projectSignalGeometry(source, candles).referenceDrawings;
+  it("reuses exact timestamps and immutable prices on an extended live chart", () => {
+    const live = [
+      { time: "2026-10-18T23:55:00.000Z", open: 10, high: 11, low: 9, close: 10 },
+      ...candles.map((bar) => ({ ...bar, close: bar.close + 0.5 })),
+      { time: "2026-10-19T00:15:00.000Z", open: 10, high: 12, low: 9, close: 11 },
+    ];
+    const aligned = projectSourceReferenceOnLiveCandles(original, candles, live);
+    expect(aligned?.map((line) => line.anchors.map((a) => a.logical))).toEqual([[1, 3], [1, 3]]);
+    expect(aligned?.map((line) => line.anchors.map((a) => a.price))).toEqual([[12, 14], [8, 9]]);
+    expect(aligned?.every((line) => line.locked)).toBe(true);
+    expect(original.map((line) => line.anchors[0].logical)).toEqual([0, 0]);
+  });
+  it("does not invent anchors for stale, missing, or disordered live candles", () => {
+    expect(projectSourceReferenceOnLiveCandles(original, candles, candles.slice(1))).toBeNull();
+    expect(projectSourceReferenceOnLiveCandles(original, candles, [])).toBeNull();
+    expect(projectSourceReferenceOnLiveCandles(original, candles, [...candles].reverse())).toBeNull();
+    expect(projectSourceReferenceOnLiveCandles([], candles, candles)).toBeNull();
   });
 });
