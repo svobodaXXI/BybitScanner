@@ -4,6 +4,13 @@ on:
   pull_request:
     paths:
       - "owner_signal_proposal.py"
+      - "retrospective_signal_bars.py"
+      - "geometry_feedback_store.py"
+      - "geometry_feedback_export.py"
+      - "geometry_feedback_learning_report.py"
+      - "terminal/frontend/src/geometryFeedback/geometryReviewDraft.ts"
+      - "terminal/frontend/src/geometryFeedback/signalChartBridge.ts"
+      - "tests/test_geometry_feedback_retrospective.py"
       - "terminal/runtime/paper_http_server.py"
       - "terminal/frontend/src/components/ChartPanel.tsx"
       - "terminal/frontend/src/app/App.tsx"
@@ -25,9 +32,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install only offline review dependencies
-        run: python -m pip install pytest==8.4.2 numpy==2.5.1 pandas==3.0.5
+        run: python -m pip install pytest==8.4.2 numpy==2.5.1 pandas==3.0.5 requests==2.34.2
       - name: Run isolated owner new-signal proposal tests
-        run: python -m pytest -q tests/test_owner_signal_proposal.py
+        run: python -m pytest -q tests/test_owner_signal_proposal.py tests/test_geometry_feedback_export.py tests/test_geometry_feedback_learning_report.py tests/test_geometry_feedback_retrospective.py
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -40,4 +47,4 @@ jobs:
         working-directory: terminal/frontend
         run: |
           npm run build
-          npx vitest run src/geometryFeedback/ownerSignalDraft.test.ts
+          npx vitest run src/geometryFeedback/ownerSignalDraft.test.ts src/geometryFeedback/geometryReviewDraft.test.ts src/geometryFeedback/signalChartBridge.test.ts
