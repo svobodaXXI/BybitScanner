@@ -57,6 +57,18 @@ def test_body_breakout_continuation_and_first_reversal_both_directions(reflected
     assert not {"order", "entry", "stop", "take", "predicted_exit_time"} & vars(result).keys()
 
 
+@pytest.mark.parametrize("reflected", [False, True])
+def test_prior_close_exactly_on_frozen_boundary_is_not_a_breakout(reflected):
+    bars = [dict(item) for item in DOWN]
+    bars[0]["close"] = 100.0  # Touch, not prior-side close.
+    if reflected:
+        bars = mirror(bars)
+    assert run(bars) is None
+    # A strictly old-side close remains a valid causal body breakout.
+    bars[0]["close"] = 99.9 if reflected else 100.1
+    assert run(bars) is not None
+
+
 def test_moving_boundary_reference_is_frozen_and_source_bound():
     frozen = {**SOURCE, "slope_per_bar": .1}
     result = run(DOWN, boundary=frozen)
