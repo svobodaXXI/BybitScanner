@@ -183,7 +183,9 @@ def detect_broadening(candles, as_of_index=None):
     if as_of_index is None:
         as_of_index = len(candles) - 1
 
-    if not 0 <= as_of_index < len(candles):
+    # Only a genuine integer candle index is an authoritative decision
+    # cutoff. bool aliases 0/1 and float indices can fail during iloc slicing.
+    if type(as_of_index) is not int or not 0 <= as_of_index < len(candles):
         return None
 
     prefix = candles.iloc[: as_of_index + 1].reset_index(drop=True)
