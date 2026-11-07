@@ -269,7 +269,10 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         const segment = geometryLogicalSegment(line, displayCandles);
         if (!segment) continue;
         const retiredAt = line.retired_at_ms;
-        const endingAtMs = Math.min(retiredAt ?? Infinity, displayCandles.at(-1)!.end_ms);
+        const supersededAt = "superseded_at_ms" in line
+          ? line.superseded_at_ms : undefined;
+        const stoppedAt = Math.min(retiredAt ?? Infinity, supersededAt ?? Infinity);
+        const endingAtMs = Math.min(stoppedAt, displayCandles.at(-1)!.end_ms);
         const priceAt = (at_ms: number) => line.from_price +
           (line.to_price - line.from_price) * (at_ms - line.from_ms) / (line.to_ms - line.from_ms);
         const x1 = api.timeScale().logicalToCoordinate(segment.from as Logical);
@@ -279,8 +282,9 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
         // Only a confirmed retirement ends the line. Add a short VISUAL
         // tail beyond that point; no arbitrary candle-based strategy rule.
-        const tailPx = retiredAt === undefined ? 0 : Math.max(0, Math.min(8, priceWidth - x2));
-        const end = retiredAt !== undefined
+        const historical = Number.isFinite(stoppedAt);
+        const tailPx = historical ? Math.max(0, Math.min(8, priceWidth - x2)) : 0;
+        const end = historical
           ? { x: x2 + tailPx, y: y2 + (x2 > x1 ? (y2 - y1) * tailPx / (x2 - x1) : 0) }
           : rayEndPoint(
               { x: x1, y: y1 }, { x: x2, y: y2 },
@@ -291,11 +295,15 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         // The separate counter-H1 last acceleration: BLUE dashed only.
         const style = automaticLineStyle(line.kind);
         context.strokeStyle = style.stroke;
+        // Superseded/retired versions stay in the replay history but must not
+        // visually dominate the current main/target geometry.
+        context.globalAlpha = historical ? 0.38 : 1;
         context.lineWidth = 1;
         context.setLineDash(style.dash);
         context.moveTo(x1, y1);
         context.lineTo(end.x, end.y);
         context.stroke();
+        context.globalAlpha = 1;
         paintedGeometry += 1;
       }
       context.setLineDash([]);
