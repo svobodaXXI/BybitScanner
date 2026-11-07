@@ -217,8 +217,9 @@ def _proven_one_flat_successor(
 ) -> bool:
     """Bind a failed STOP to one independently attested successor release."""
     from tools.paper_stopped_approved_recovery import (
-        _one_flat_receipt, _one_flat_snapshot,
+        PartialStopBlocked, _one_flat_receipt, _one_flat_snapshot,
     )
+    from tools.vps_gitless_release_activate import ActivationBlocked
     from tools.paper_interrupted_stop_recovery import _trusted_journal
     from tools.vps_gitless_release_activate import _manifest, _trusted_file
     from tools.vps_release_identity import verify_release
@@ -258,7 +259,7 @@ def _proven_one_flat_successor(
             )
         return verify_release(root) == target
     except (OSError, ValueError, TypeError, KeyError, IndexError,
-            sqlite3.Error, UnicodeError):
+            sqlite3.Error, UnicodeError, ActivationBlocked, PartialStopBlocked):
         return False
 
 
