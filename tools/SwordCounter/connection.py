@@ -35,6 +35,7 @@ class ConnectionController:
         self._run_async = run_async
         self._results: queue.Queue = queue.Queue()
         self._generation = 0
+        self._request_id = 0
         self._confirmed: Credentials | None = None
         self.checking = False
 
@@ -62,6 +63,8 @@ class ConnectionController:
             return credentials
         self._confirmed = None
         self.checking = True
+        self._request_id += 1
+        request_id = self._request_id
         generation = self._generation
 
         def work() -> None:
@@ -69,7 +72,7 @@ class ConnectionController:
                 result = self._verify(credentials)
             except Exception as error:  # class only: a message could embed request details
                 result = CheckResult(False, f"Проверка не выполнена: {type(error).__name__}")
-            self._results.put((generation, credentials, result))
+            self._results.put((generation, request_id, credentials, result))
 
         self._run_async(work)
         return CHECKING
@@ -77,9 +80,11 @@ class ConnectionController:
     def poll(self) -> CheckResult | None:
         """GUI thread: the finished check, if any. A check for edited values is dropped."""
         try:
-            generation, credentials, result = self._results.get_nowait()
+            generation, request_id, credentials, result = self._results.get_nowait()
         except queue.Empty:
             return None
+        if request_id != self._request_id:
+            return None  # Superseded check cannot end or confirm the latest one.
         self.checking = False
         if generation != self._generation:
             return CheckResult(False, "Значения изменены во время проверки. Проверьте ещё раз.")
