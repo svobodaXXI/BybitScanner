@@ -109,7 +109,11 @@ export function lastM5AccelerationTimeline(document: ReplayDocument): LastM5Acce
     const candidate = wickTightEarlySlope(
       bars, a, c, target.side, event.time_ms, "ACCELERATION_5M",
     );
-    if (!candidate) continue;
+    // The user's 1-3 anchor must be the THIRD significant pivot. A wick
+    // crossing that exact boundary invalidates this candidate: do NOT silently
+    // replace pivot 3 with an ordinary intermediate candle to fit the slope.
+    if (!candidate || candidate.to_ms !== c.at_ms ||
+        Math.abs(candidate.to_price - c.price) > 1e-9) continue;
     const key = [target.trend_version, a.at_ms, b.at_ms, c.at_ms, d.at_ms,
       a.price, b.price, c.price, d.price, candidate.to_ms, candidate.to_price].join(":");
     if (seenVersions.has(key)) continue;
