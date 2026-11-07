@@ -12,7 +12,7 @@ import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from
 import { rayEndPoint } from "../chart/drawingGeometry";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
-import { chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
+import { automaticGeometryTimeframeCap, chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import { ReplayDrawingUndo } from "./replayDrawingUndo";
 import {
   automaticLineStyle, lastM5AccelerationTimeline, visibleLastM5Accelerations,
@@ -266,6 +266,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       const knownPriors = visiblePriorLevels(document, shown.lastTimeMs);
       const brokenByVersion = new Map(priorBreaks.map(item => [item.trend_version, item]));
       let paintedGeometry = 0;
+      let paintedM5OnH1 = 0;
       for (const line of drawableLines) {
         // Line anchors can predate the requested playback window. Lightweight
         // Charts returns null for timestamps not present in loaded candles.
@@ -274,13 +275,22 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         // Project exact UTC anchors, not rounded positions on the selected
         // timeframe. A completed M5 correction may start AND retire inside a
         // single H1 candle; rounding both ends to H1 would erase its history.
-        const segment = geometryLogicalSegment(line, displayCandles);
-        if (!segment) continue;
         const retiredAt = line.retired_at_ms;
         const supersededAt = "superseded_at_ms" in line
           ? line.superseded_at_ms : undefined;
         const stoppedAt = Math.min(retiredAt ?? Infinity, supersededAt ?? Infinity);
-        const endingAtMs = Math.min(stoppedAt, displayCandles.at(-1)!.end_ms);
+        // On H1, keep each M5 slope as a compact historical annotation
+        // through its confirmation time. Its active M5 ray is NOT a new
+        // multi-day H1 trend. On M5 all source geometry remains unchanged.
+        const projectionCap = automaticGeometryTimeframeCap(line, timeframe);
+        const isM5OnH1 = Number.isFinite(projectionCap);
+        const endingAtMs = Math.min(
+          stoppedAt, projectionCap, displayCandles.at(-1)!.end_ms,
+        );
+        const segment = geometryLogicalSegment(
+          { from_ms: line.from_ms, retired_at_ms: endingAtMs }, displayCandles,
+        );
+        if (!segment) continue;
         const priceAt = (at_ms: number) => line.from_price +
           (line.to_price - line.from_price) * (at_ms - line.from_ms) / (line.to_ms - line.from_ms);
         const x1 = api.timeScale().logicalToCoordinate(segment.from as Logical);
@@ -295,8 +305,9 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         // edge is visual noise, not evidence of an active nearby structure.
         // Scroll left to reveal the entire archived segment again.
         if (historical && isLeftEdgeHistoricalFragment(x1, x2, priceWidth)) continue;
-        const tailPx = historical ? Math.max(0, Math.min(8, priceWidth - x2)) : 0;
-        const end = historical
+        const tailPx = historical && !isM5OnH1
+          ? Math.max(0, Math.min(8, priceWidth - x2)) : 0;
+        const end = historical || isM5OnH1
           ? { x: x2 + tailPx, y: y2 + (x2 > x1 ? (y2 - y1) * tailPx / (x2 - x1) : 0) }
           : rayEndPoint(
               { x: x1, y: y1 }, { x: x2, y: y2 },
@@ -317,6 +328,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         context.stroke();
         context.globalAlpha = 1;
         paintedGeometry += 1;
+        if (isM5OnH1) paintedM5OnH1 += 1;
       }
       context.setLineDash([]);
       // Purple prior: second confirmed touch of the H1 main line, at its wick.
@@ -423,6 +435,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       canvas.dataset.visiblePriors = String(knownPriors.length);
       canvas.dataset.paintedPriors = String(paintedPriors);
       canvas.dataset.paintedGeometry = String(paintedGeometry);
+      canvas.dataset.paintedM5OnH1 = String(paintedM5OnH1);
       canvas.dataset.visibleObservations = String(paintedObservations);
       canvas.dataset.visibleBlueRisk = String(paintedBlueRisk);
     };
