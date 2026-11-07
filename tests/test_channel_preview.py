@@ -55,6 +55,11 @@ def test_bad_cutoff_corrupt_ohlc_and_crossing_lines_rejected():
     bad = bars.copy()
     bad.loc[85, "high"] = bad.loc[85, "low"] - 1
     assert observe_four_pivot_channel(bad, 111) is None
+    # Conservative research preview rejects a zero-range historical bar,
+    # even when all four OHLC values agree and pivots still look plausible.
+    bad = bars.copy()
+    bad.loc[85, ["open", "high", "low", "close"]] = [100.0] * 4
+    assert observe_four_pivot_channel(bad, 111) is None
 
     # High/low lines cross at or before the decision cutoff: no channel.
     crossing = [
