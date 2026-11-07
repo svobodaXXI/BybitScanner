@@ -636,8 +636,7 @@ def deploy_staged_editor_only(
         except (FrontendPublishBlocked, OSError, ValueError, UnicodeError) as exc:
             return "BLOCKED: frontend_preflight_unproven:" + type(exc).__name__
 
-    def finish_resume() -> str:
-        observed = resume_action(target, root=root, env_file=env_file)
+    def finish_frontend(observed: str) -> str:
         if isinstance(observed, str) and observed.startswith("READY:"):
             if frontend_bundle is not None:
                 from tools.vps_terminal_frontend_publish import publish_frontend
@@ -650,8 +649,14 @@ def deploy_staged_editor_only(
                         return "BLOCKED: frontend_publisher_postcondition_unproven"
                 except (OSError, ValueError, UnicodeError) as exc:
                     return "BLOCKED: frontend_publication_unproven:" + type(exc).__name__
-            _complete_stop_intent(journal_root, target, uid=trusted_uid)
         return observed
+
+    def finish_resume() -> str:
+        observed = resume_action(target, root=root, env_file=env_file)
+        if isinstance(observed, str) and observed.startswith("READY:"):
+            _complete_stop_intent(journal_root, target, uid=trusted_uid)
+        return finish_frontend(observed)
+
     try:
         try:
             current = verify_release(root, manifest_path)
@@ -691,6 +696,37 @@ def deploy_staged_editor_only(
                 )
             ] if journal_root.is_dir() else []
             if pending:
+                if (len(pending) == 1
+                        and pending[0].name != ".stop-invoked-" + target
+                        and proven_one_flat_orphan_handoff
+                        and not dual_orphan_handoff and stop is None
+                        and isinstance(current, str) and len(current) == 40
+                        and all(ch in "0123456789abcdef" for ch in current)
+                        and pending[0].name.removeprefix(".stop-invoked-")
+                            not in (current, target)):
+                    # Existing owner opt-in covers one proven Flat/OPEN
+                    # exceptional continuation. Route by the sealed old STOP
+                    # intent, never by a guessed incident/date or a new STOP.
+                    # The existing recovery owns exact receipt, running release,
+                    # immutable lot, PID/listener, snapshot and at-most-once
+                    # handoff checks. An unknown outcome remains BLOCKED.
+                    from tools.paper_stopped_approved_recovery import (
+                        PartialStopBlocked, recover_one_flat_after_failed_stop,
+                    )
+                    try:
+                        status = recover_one_flat_after_failed_stop(
+                            target=target, stage=stage,
+                            prior_stop=pending[0].name.removeprefix(".stop-invoked-"),
+                            expected_old_sha=current, root=root,
+                            transactions=journal_root, manifest=manifest_path,
+                            uid=trusted_uid,
+                        )
+                    except (PartialStopBlocked, ActivationBlocked,
+                            ReleaseIdentityBlocked, OSError, ValueError) as exc:
+                        return ("BLOCKED: proven_one_flat_recovery_unproven:"
+                                + type(exc).__name__ + ":" + str(exc)
+                                + "; no STOP replay or deployment retry")
+                    return finish_frontend(status)
                 if (len(pending) != 1
                         or pending[0].name != ".stop-invoked-" + target
                         or not _confirmed_stop_receipt(
