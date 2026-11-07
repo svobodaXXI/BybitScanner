@@ -132,6 +132,9 @@ class TelegramIdentityFallbackTests(unittest.TestCase):
         for extra in (
             {"BYBITSCANNER_TELEGRAM_BOT_TOKEN": "different-bot"},
             {"BYBITSCANNER_TELEGRAM_OWNER_ID": "different-owner"},
+            {"BYBITSCANNER_TELEGRAM_BOT_TOKEN": ""},
+            {"BYBITSCANNER_TELEGRAM_OWNER_ID": ""},
+            {"BYBITSCANNER_TELEGRAM_BOT_TOKEN": "", "BYBITSCANNER_TELEGRAM_OWNER_ID": ""},
         ):
             with self.subTest(extra=extra), patch.dict(worker.os.environ, {**GATEWAY_ENV, **extra}, clear=True), patch.dict(sys.modules, {"config": cfg}):
                 self.assertFalse(worker.deliver_if_verified("EDITOR", "BTCUSDT", "5m"))
