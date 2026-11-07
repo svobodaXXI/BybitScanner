@@ -30,6 +30,9 @@ DEFAULT_KEY = Path.home() / ".ssh" / "bybitscanner_laptop"
 # Fixed, audited commands: no free-form shell and no trading mutations.
 ACTIONS = {
     "Состояние": (
+        # Abort on an unavailable service query; the last successful status
+        # must not hide an earlier systemctl failure as a successful check.
+        "set -e; "
         "systemctl show bybitscanner-paper-backend.service "
         "-p ActiveState -p SubState -p MainPID; "
         "systemctl show bybitscanner-telegram.service -p ActiveState -p SubState; "
