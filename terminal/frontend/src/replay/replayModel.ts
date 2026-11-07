@@ -207,6 +207,25 @@ const kinds = new Set<ReplayKind>([
   "CANDLE_CLOSED", "ENTRY_SIGNAL", "ENTRY_FILLED", "EXIT_FILLED",
 ]);
 
+/** Only absorb IEEE-754 arithmetic round-off after Decimal -> JS conversion.
+ * Eight ULPs around candle/line values are many orders smaller than a
+ * real tick or permitted geometric deviation. Python's Decimal OHLC proof
+ * remains authoritative and a genuine wick pierce still fails closed.
+ */
+export function replayContactWithinFloatPrecision(
+  bar: Pick<ReplayCandle, "low" | "high" | "close">,
+  side: "BULL" | "BEAR", atOpen: number, atClose: number,
+): boolean {
+  const epsilon = 8 * Number.EPSILON * (1 + Math.max(
+    Math.abs(bar.low), Math.abs(bar.high), Math.abs(bar.close),
+    Math.abs(atOpen), Math.abs(atClose),
+  ));
+  return bar.low <= Math.min(atOpen, atClose) + epsilon &&
+    bar.high + epsilon >= Math.max(atOpen, atClose) &&
+    (side === "BULL" ? bar.close + epsilon >= atClose
+      : bar.close - epsilon <= atClose);
+}
+
 /** Reject foreign account/report data or any chronology violation; never rewrite input. */
 export function parseReplayDocument(input: unknown): ReplayDocument {
   const object = record(input);
@@ -665,14 +684,8 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       const key = (stamp: number) => `${stamp}:${trend_version}:${side}`;
       if (kind === "MAIN_1H_TOUCH") {
         if (observation.touch_time_ms !== undefined) throw new Error("Касание содержит чужое время");
-        if (bar.low > Math.min(atOpen, atClose) || bar.high < Math.max(atOpen, atClose) ||
-            (side === "BULL" ? bar.close < atClose : bar.close > atClose)) {
-          throw new Error("Касание не подтверждается OHLC и часовой трендовой: " +
-            JSON.stringify({ time_ms, side, bar_low: bar.low, bar_high: bar.high,
-              bar_close: bar.close, line_open: atOpen, line_close: atClose,
-              trend_version, from_ms: activeMain.from_ms,
-              from_price: activeMain.from_price, to_ms: activeMain.to_ms,
-              to_price: activeMain.to_price }));
+        if (!replayContactWithinFloatPrecision(bar, side, atOpen, atClose)) {
+          throw new Error("Касание не подтверждается OHLC и часовой трендовой");
         }
         touches.add(key(time_ms));
         return { kind, side, time_ms, price, line_price, trend_version,
