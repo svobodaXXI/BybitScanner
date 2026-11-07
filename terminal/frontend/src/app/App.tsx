@@ -102,6 +102,7 @@ export function App() {
   const [frozenSignal, setFrozenSignal] = useState<{
     candles: Candle[];
     sourceCandles: Candle[];
+    sourceBoundaries: TimestampDrawing[];
     context: { asOfMs: number; barsSha256: string } | null;
     referenceDrawings: DrawingObject[];
     editableDrawings: DrawingObject[];
@@ -116,7 +117,7 @@ export function App() {
   const [frozenGeometryStatus, setFrozenGeometryStatus] = useState<"loading" | "unavailable" | "ready">("loading");
   useEffect(() => {
     const link = launchLink;
-    if (!link || link.mode !== "EDITOR" || !link.signalId) return;
+    if (!link || !link.signalId) return;
     const controller = new AbortController();
     const load = async () => {
       try {
@@ -200,7 +201,8 @@ export function App() {
         }
         if (!controller.signal.aborted) {
           setFrozenSignal({
-            candles: reviewCandles, sourceCandles: candles, context: savedContext,
+            candles: reviewCandles, sourceCandles: candles,
+            sourceBoundaries: boundaries, context: savedContext,
             ...projected, editableDrawings, signalId: link.signalId!,
             originalPattern: typeof payload.original_pattern === "string" && payload.original_pattern.trim()
               ? payload.original_pattern.trim() : null,
@@ -263,6 +265,20 @@ export function App() {
   );
   const market = useMarketData();
   const tradingSymbol = market.book.symbol;
+  // Telegram signal provenance is independent of the selected PAPER/MAIN account.
+  // Only draw exact frozen anchors on matching *current* candles, never on
+  // an unrelated symbol/interval or an approximate historical bar.
+  const terminalSignalDrawings = useMemo(() => {
+    if (mode !== "TERMINAL" || launchLink?.mode !== "TERMINAL"
+        || !launchLink.signalId || !frozenSignal
+        || tradingSymbol !== launchLink.symbol || timeframe !== launchLink.timeframe)
+      return null;
+    try {
+      return projectSignalGeometry(frozenSignal.sourceBoundaries, market.candles).referenceDrawings;
+    } catch {
+      return null; // Missing historical anchor: no fabricated live geometry.
+    }
+  }, [mode, launchLink, frozenSignal, tradingSymbol, timeframe, market.candles]);
   const { paperState, pendingActions } = usePaperTrading(tradingSymbol);
   const accountWorkspace = useAccountWorkspace(tradingSymbol);
   const accountProjection = accountWorkspace.projection;
@@ -1299,6 +1315,16 @@ export function App() {
           Исходный сигнал не указан в ссылке. Показаны текущие свечи без сохранённых линий паттерна.
         </output>
       )}
+      {mode === "TERMINAL" && launchLink?.mode === "TERMINAL" && launchLink.signalId
+        && tradingSymbol === launchLink.symbol && timeframe === launchLink.timeframe && (
+          <output role="status" aria-live="polite">
+            {terminalSignalDrawings
+              ? `Исходная геометрия сигнала: ${frozenSignal?.originalPattern ?? launchLink.signalId}`
+              : frozenGeometryStatus === "loading"
+                ? "Загрузка исходной геометрии сигнала…"
+                : "Линии исходного сигнала недоступны на текущих свечах; ордера не изменены."}
+          </output>
+        )}
       <section className="workspace-grid" aria-label="Trading workspace">
         <div
           className={`workspace-market-row ${mode !== "EDITOR" && marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
@@ -1352,7 +1378,9 @@ export function App() {
                 : previous,
             );
           } : undefined}
-          referenceDrawings={mode === "EDITOR" ? frozenSignal?.referenceDrawings ?? [] : []}
+          referenceDrawings={mode === "EDITOR"
+            ? frozenSignal?.referenceDrawings ?? []
+            : mode === "TERMINAL" ? terminalSignalDrawings ?? [] : []}
           editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
           signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
           originalPattern={mode === "EDITOR" ? frozenSignal?.originalPattern ?? null : null}
