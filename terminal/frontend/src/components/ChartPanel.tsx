@@ -143,6 +143,7 @@ export function ChartPanel({
   referenceDrawings = [],
   editableSeedDrawings = [],
   signalIdentity = null,
+  sourcePattern = null,
   snapshotRevision = null,
   barsSha256 = null,
   savedReviewId = null,
@@ -193,6 +194,8 @@ export function ChartPanel({
   referenceDrawings?: readonly DrawingObject[];
   editableSeedDrawings?: readonly DrawingObject[];
   signalIdentity?: string | null;
+  /** Exact pattern name from the immutable archived Telegram signal. */
+  sourcePattern?: string | null;
   snapshotRevision?: string | null;
   barsSha256?: string | null;
   savedReviewId?: string | null;
@@ -1115,6 +1118,9 @@ export function ChartPanel({
             {reviewStatus && <output role="status" aria-live="polite">{reviewStatus}</output>}
               </>
             )}
+            <div className="editor-original-pattern" aria-label="Исходный сигнал">
+              Исходный сигнал: <strong>{sourcePattern ?? "название не сохранено в архиве"}</strong>
+            </div>
           </div>
         )}
         <DrawingToolbar
