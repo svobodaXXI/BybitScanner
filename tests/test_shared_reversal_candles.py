@@ -170,6 +170,12 @@ _UP = [
     (_UP, [candle(3, 12, 13.4, 11.8, 13.2),
            candle(4, 13.6, 13.9, 13.5, 13.6),
            candle(5, 13.5, 13.6, 12.1, 12.3)], "EVENING_DOJI_STAR", "SHORT"),
+    (_DOWN, [candle(3, 10.5, 11.12, 10.44, 11.05),
+             candle(4, 10.91, 11.64, 10.88, 11.58),
+             candle(5, 11.45, 12.22, 11.4, 12.15)], "THREE_WHITE_SOLDIERS", "LONG"),
+    (_UP, [candle(3, 12.5, 12.56, 11.87, 11.95),
+           candle(4, 12.1, 12.15, 11.4, 11.46),
+           candle(5, 11.6, 11.63, 10.9, 10.96)], "THREE_BLACK_CROWS", "SHORT"),
     (_DOWN, [candle(3, 10, 10.5, 9.5, 10.01)], "DOJI", "NEUTRAL"),
 ])
 def test_nison_classic_formation(prior, formation, pattern, direction):
@@ -238,3 +244,51 @@ def test_nison_doji_is_neutral_and_mirror_existing_contracts_remain_unchanged():
     second = candle(1, 8.9, 10.4, 8.5, 10.1)
     assert mirror._engulfing(first, second, "LONG")
     assert directional_engulfing(first, second, "LONG")
+
+
+def test_nison_soldiers_crows_reject_outside_opens_weak_closes_and_fake_wicks():
+    from geometry.reversal_patterns import observe_nison_reversals as observe
+
+    soldiers = [
+        candle(3, 10.5, 11.12, 10.44, 11.05),
+        candle(4, 10.91, 11.64, 10.88, 11.58),
+        candle(5, 11.45, 12.22, 11.4, 12.15),
+    ]
+    crows = [
+        candle(3, 12.5, 12.56, 11.87, 11.95),
+        candle(4, 12.1, 12.15, 11.4, 11.46),
+        candle(5, 11.6, 11.63, 10.9, 10.96),
+    ]
+
+    def has_pattern(rows, name):
+        return any(item["formation_type"] == name for item in observe(rows))
+
+    assert has_pattern(_DOWN + soldiers, "THREE_WHITE_SOLDIERS")
+    assert has_pattern(_UP + crows, "THREE_BLACK_CROWS")
+
+    for modified in (
+        # Open above the previous real body, even though all bodies are long.
+        [soldiers[0], {**soldiers[1], "open": 11.10}, soldiers[2]],
+        # A long upper shadow means the second close is not near its high.
+        [soldiers[0], {**soldiers[1], "high": 12.50}, soldiers[2]],
+        # Third close fails to advance while still showing a large white body.
+        [soldiers[0], soldiers[1], {**soldiers[2],
+                                   "open": 11.05, "high": 11.57,
+                                   "low": 11.0, "close": 11.50}],
+        [soldiers[0], soldiers[1], {**soldiers[2], "closed": False}],
+    ):
+        assert not has_pattern(_DOWN + modified, "THREE_WHITE_SOLDIERS")
+    for modified in (
+        [crows[0], {**crows[1], "open": 11.93}, crows[2]],
+        [crows[0], crows[1], {**crows[2], "low": 9.50}],
+        [crows[0], crows[1], {**crows[2],
+                              "open": 12.0, "high": 12.04,
+                              "low": 11.50, "close": 11.55}],
+        [crows[0], crows[1], {**crows[2], "closed": False}],
+    ):
+        assert not has_pattern(_UP + modified, "THREE_BLACK_CROWS")
+
+    # A bullish rise during an established uptrend is not silently reported as
+    # a trend-reversal pattern; confirmation and position decisions remain out.
+    assert not has_pattern(_UP + soldiers, "THREE_WHITE_SOLDIERS")
+    assert not has_pattern(_DOWN + crows, "THREE_BLACK_CROWS")
