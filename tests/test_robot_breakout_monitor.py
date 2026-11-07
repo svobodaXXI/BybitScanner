@@ -1546,6 +1546,17 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         # any derived or re-guessed value.
         self.assertEqual(trade.entry_quantity, entry_projection.quantity.value)
         self.assertEqual(trade.entry_position_version, entry_projection.version)
+        # Trade entry time must be the exact first immutable Robot fill time;
+        # the monitor's later local clock is only the record creation time.
+        owned_fills = self.store.load_executions_for_order(
+            ACCOUNT_ID, OrderId(order_id),
+        )
+        self.assertTrue(owned_fills)
+        self.assertEqual(
+            trade.entry_time_ms,
+            min(fill.exchange_timestamp_ms for fill in owned_fills),
+        )
+        self.assertGreaterEqual(trade.created_at_ms, trade.entry_time_ms)
         # structural_extreme = min(counted lower_touch_points) = 96.0; tick=0.1
         # -> candidate stop = 95.9; distance (97-95.9)/97 = 0.0113 <= 1.5% -> structural, not fallback.
         self.assertEqual(trade.stop_price, Decimal("95.9"))
@@ -2140,6 +2151,14 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         )
         self.assertEqual(evidence.position_version, projection.version)
+        expected_first_fill_ms = min(
+            fill.exchange_timestamp_ms
+            for order_id in (first_order_id, second_order_id)
+            for fill in self.store.load_executions_for_order(
+                ACCOUNT_ID, OrderId(order_id),
+            )
+        )
+        self.assertEqual(evidence.first_execution_at_ms, expected_first_fill_ms)
 
     def test_owned_topup_refreshes_same_open_trade_attestation(self):
         self._create_candidate()
