@@ -89,6 +89,26 @@ try {
   assert.match(await page.locator("body").innerText(), /официального публичного архива/);
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
+  // Reference implementation: chart's H1 axis includes the ORIGINAL
+  // already-closed warmup OHLC bars. The first frozen MAIN source anchor
+  // must therefore exist as an actual chart candle, not an offscreen ray.
+  const firstMain = yellow[0];
+  assert.ok(archive.context_1h.some(bar => bar.start_ms === firstMain.from_ms),
+    "real first H1 line must have a genuine context source candle");
+  await page.getByRole("button", { name: "H1", exact: true }).click();
+  const chartShell = page.locator(".replay-chart-shell");
+  await page.waitForFunction(expected =>
+    document.querySelector(".replay-chart-shell")?.getAttribute("data-context-hourly-candles") === String(expected),
+  archive.context_1h.length);
+  assert.equal(Number(await chartShell.getAttribute("data-first-chart-candle-ms")),
+    archive.context_1h[0].start_ms,
+    "first actual context H1 candle must be on the chart time scale");
+  assert.equal(Number(await chartShell.getAttribute("data-displayed-candles")),
+    archive.context_1h.length, "the initial playhead must still contain zero replay candles");
+  assert.match(await page.locator(".replay-chart-watermark").innerText(),
+    /Серые свечи — предыстория H1/);
+  await page.getByRole("button", { name: "M5", exact: true }).click();
+  assert.equal(await chartShell.getAttribute("data-context-hourly-candles"), "0");
   // Semantic status nodes intentionally live inside a CLOSED diagnostics
   // disclosure. Open it just as the owner would before reading prior events.
   await page.getByText("Диагностика", { exact: true }).click();
