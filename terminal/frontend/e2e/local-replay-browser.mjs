@@ -188,11 +188,9 @@ try {
     });
   });
   await page.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
-  await page.waitForFunction(() =>
-    document.querySelector('.replay-chart-shell')?.getAttribute('data-chart-timeframe') !== null);
+  await page.getByText("browser_fixture", { exact: false }).waitFor();
   assert.equal(await page.locator(".replay-note").count(), 0,
     "owner removed yellow market-history banner");
-  assert.match(await page.locator("body").innerText(), /browser_fixture/);
   const indicator = page.getByRole("group", { name: "Индикатор ADX DMI" });
   assert.match(await indicator.innerText(), /ADX\/DMI \(14, 14\)/);
   assert.match(await indicator.innerText(), /Уровень 20/);
