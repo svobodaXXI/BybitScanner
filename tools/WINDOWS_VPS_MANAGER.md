@@ -16,9 +16,9 @@ The existing SSH configuration can specify the key and port under `%USERPROFILE%
 
 ## Scope
 
-Five **read-only** actions: systemd status, existing `tools.vps_check --no-systemd`, Git working-tree/branch/commit inspection, backend's last 35 journal entries, and a combined update preflight (Git status, systemd status, localhost PAPER health). The program intentionally has **no** general-purpose remote command field, trade operations, stop/start, service restart, deploy, database writes or LIVE operations. Remote commands are an allowlist executed with `ssh` and SSH host-key verification.
+Five **read-only** actions: systemd status, backend systemd state and localhost `/api/health` (instead of the pre-start-only `tools.vps_check`), Git working-tree/branch/commit inspection, backend's last 35 journal entries, and an informational update preflight (Git status, systemd status, localhost PAPER health). The program intentionally has **no** general-purpose remote command field, trade operations, stop/start, service restart, deploy, database writes or LIVE operations. Remote commands are an allowlist executed with `ssh` and SSH host-key verification.
 
-This MVP reuses the project's existing diagnostics, not the Terminal's UI. An extension for safe PAPER deployment requires explicit owner authorization, identity/preflight verification, backup/rollback design and a tested stop protocol. A direct ChatGPT-to-VPS control channel is **not** provided by this Windows GUI; it is a local operator utility.
+This MVP reads existing systemd, Git, journal and localhost backend health evidence through SSH, not the Terminal's UI. It does not run the pre-start `tools.vps_check` on an active server. An extension for safe PAPER deployment requires explicit owner authorization, identity/preflight verification, backup/rollback design and a tested stop protocol. A direct ChatGPT-to-VPS control channel is **not** provided by this Windows GUI; it is a local operator utility.
 
 ## Current limitations
 
