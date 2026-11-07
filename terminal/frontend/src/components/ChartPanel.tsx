@@ -230,7 +230,7 @@ export function ChartPanel({
     [confirmAllPendingOpen, setConfirmAllPendingOpen] = useState(false),
     [dismissAllPendingOpen, setDismissAllPendingOpen] = useState(false);
   const [newSignalMode, setNewSignalMode] = useState(false);
-  const storageKey = `bybitscanner:${newSignalMode ? "new-signal-drawings" : editorMode ? "editor-drawings" : "drawings"}:v1:${symbol}:${timeframe}${editorMode && signalIdentity ? `:${signalIdentity}${savedReviewId && !newSignalMode ? `:review-${savedReviewId}` : ""}` : ""}`;
+  const storageKey = `bybitscanner:${newSignalMode ? "new-signal-drawings" : editorMode ? "editor-drawings" : "drawings"}:v1:${symbol}:${timeframe}${editorMode && signalIdentity ? `:${signalIdentity}${savedReviewId && !newSignalMode ? `:review-${savedReviewId}` : ""}` : ""}${editorMode && retrospectiveContext ? `:review-asof-${retrospectiveContext.asOfMs}` : ""}`;
   const historyRef = useRef(
     new DrawingHistory(
       (() => {
