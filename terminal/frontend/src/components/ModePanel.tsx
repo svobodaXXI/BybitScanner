@@ -29,24 +29,29 @@ export function ModePanel({
       <LegacyModePanel {...props} openPositionsRequest={openPositionsRequest} />
       {props.mode === "AUTOPILOT" ? (
         <>
-          <AutopilotFirstScreen
-            accountKey={accountKey}
-            onOpenPositions={() => setOpenPositionsRequest((value) => value + 1)}
-            onTradeDetails={setRequestedTradeEpisodeId}
-            onStatistics={() => setStatisticsRequest((value) => value + 1)}
-            onTerminal={() => props.onModeChange("TERMINAL")}
-            onRobotControls={() => setRobotManagerOpen(true)}
-            accountControl={<AccountMenu open={props.accountOpen ?? false} onToggle={props.onAccountToggle ?? (() => {})} workspaceProjection={props.accountWorkspaceProjection ?? null} />}
-          />
-          {robotManagerOpen ? <RobotManagerPanel onClose={() => setRobotManagerOpen(false)} /> : null}
-          <AutopilotDiaryControls
+          {robotManagerOpen ? (
+            <RobotManagerPanel onClose={() => setRobotManagerOpen(false)} />
+          ) : (
+            <>
+              <AutopilotFirstScreen
+                accountKey={accountKey}
+                onOpenPositions={() => setOpenPositionsRequest((value) => value + 1)}
+                onTradeDetails={setRequestedTradeEpisodeId}
+                onStatistics={() => setStatisticsRequest((value) => value + 1)}
+                onTerminal={() => props.onModeChange("TERMINAL")}
+                onRobotControls={() => setRobotManagerOpen(true)}
+                accountControl={<AccountMenu open={props.accountOpen ?? false} onToggle={props.onAccountToggle ?? (() => {})} workspaceProjection={props.accountWorkspaceProjection ?? null} />}
+              />
+              <AutopilotDiaryControls
             accountKey={accountKey}
             tradeEpisodeId={autopilotTradeEpisodeId}
             requestedTradeEpisodeId={requestedTradeEpisodeId}
             requestedStatisticsCount={statisticsRequest}
             hideActions
-            onRequestConsumed={() => setRequestedTradeEpisodeId(null)}
-          />
+                onRequestConsumed={() => setRequestedTradeEpisodeId(null)}
+              />
+            </>
+          )}
         </>
       ) : null}
     </>
