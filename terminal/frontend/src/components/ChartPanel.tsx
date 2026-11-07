@@ -150,6 +150,8 @@ export function ChartPanel({
   savedReviewNote = null,
   onSaveGeometryReview,
   onSubmitOwnerSignal,
+  retrospectiveContext = null,
+  onExtendEditorHistory,
   onEditorNavigate,
 }: {
   candles: readonly Candle[];
@@ -199,6 +201,8 @@ export function ChartPanel({
   onSaveGeometryReview?: (review: GeometryReviewDraft & { note: string; idempotency_key: string }) =>
     Promise<{ reviewId: string; label: GeometryReviewDraft["label"] }>;
   onSubmitOwnerSignal?: (proposal: OwnerSignalDraft) => Promise<{ proposalId: string; decision: string; reason: string }>;
+  retrospectiveContext?: { asOfMs: number; barsSha256: string } | null;
+  onExtendEditorHistory?: () => Promise<void>;
   onEditorNavigate?: (mode: "TERMINAL" | "AUTOPILOT") => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
@@ -267,6 +271,8 @@ export function ChartPanel({
   const [proposalNote, setProposalNote] = useState("");
   const [proposalPending, setProposalPending] = useState(false);
   const [proposalStatus, setProposalStatus] = useState("");
+  const [extensionPending, setExtensionPending] = useState(false);
+  const [extensionStatus, setExtensionStatus] = useState("");
   const proposalToken = useRef<{ content: string; key: string } | null>(null);
   const rayComparison = useMemo(() => {
     if (!editorMode || !signalIdentity || !referenceDrawings.length) return null;
@@ -323,6 +329,8 @@ export function ChartPanel({
         signalId: signalIdentity, snapshotRevision, barsSha256,
         label: reviewLabel, frozenCandles: candles,
         referenceDrawings, editableDrawings: drawings,
+        contextAsOfMs: retrospectiveContext?.asOfMs,
+        contextBarsSha256: retrospectiveContext?.barsSha256,
       });
       const note = reviewNote.trim();
       const content = JSON.stringify({ ...draft, note });
@@ -410,6 +418,8 @@ export function ChartPanel({
         signalId: signalIdentity, snapshotRevision, barsSha256,
         pattern: proposalPattern, drawings, frozenCandles: candles,
         note: proposalNote.trim(), idempotencyKey: proposalToken.current.key,
+        contextAsOfMs: retrospectiveContext?.asOfMs,
+        contextBarsSha256: retrospectiveContext?.barsSha256,
       });
       setProposalPending(true);
       setProposalStatus("Проверка нового сигнала…");
@@ -1003,7 +1013,23 @@ export function ChartPanel({
                 </button>
               </nav>
             </div>
-            <button type="button" disabled={reviewPending || proposalPending}
+            <button type="button" disabled={extensionPending || reviewPending || proposalPending}
+              onClick={() => {
+                if (!onExtendEditorHistory) return;
+                setExtensionPending(true);
+                setExtensionStatus("Загружаются следующие закрытые свечи…");
+                void onExtendEditorHistory()
+                  .then(() => setExtensionStatus("Поздние свечи добавлены для ретроспективной разметки."))
+                  .catch((error) => setExtensionStatus(
+                    `Не удалось получить поздние свечи: ${error instanceof Error ? error.message : "ошибка"}`,
+                  ))
+                  .finally(() => setExtensionPending(false));
+              }}>
+              {extensionPending ? "Загрузка…" : "Добавить поздние свечи"}
+            </button>
+            {retrospectiveContext && <small>Ретроспективный обзор: до {new Date(retrospectiveContext.asOfMs).toLocaleString("ru-RU")}. Будущие свечи не считаются известными исходному Scanner.</small>}
+            {extensionStatus && <output role="status" aria-live="polite">{extensionStatus}</output>}
+            <button type="button" disabled={extensionPending || reviewPending || proposalPending}
               aria-pressed={newSignalMode} onClick={switchSignalDrawingMode}>
               {newSignalMode ? "Вернуться к исправлению" : "Создать новый сигнал"}
             </button>
