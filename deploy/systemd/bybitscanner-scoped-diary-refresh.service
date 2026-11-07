@@ -1,0 +1,26 @@
+# Template only. NEVER install/start/enable without separate owner VPS approval.
+# /etc/bybitscanner/scoped-diary.env (owner-controlled, no secrets):
+# BYBITSCANNER_DIARY_SOURCE_DB=/absolute/path/to/existing/paper.sqlite3
+# BYBITSCANNER_DIARY_ARCHIVE_DB=/var/lib/bybitscanner-scoped-diary/scoped_diary_statistics.sqlite3
+# Source is read-only, archive is separate. No Robot or PAPER lifecycle mutation.
+[Unit]
+Description=BybitScanner scoped Diary snapshot (read PAPER, write isolated reports)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=bybitscanner
+Group=bybitscanner
+WorkingDirectory=/opt/BybitScanner
+EnvironmentFile=/etc/bybitscanner/scoped-diary.env
+StateDirectory=bybitscanner-scoped-diary
+StateDirectoryMode=0700
+ExecStart=/opt/BybitScanner/venv/bin/python -m terminal.diary.scoped_statistics_reporter
+TimeoutStartSec=60
+Restart=no
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/bybitscanner-scoped-diary
+UMask=0077
