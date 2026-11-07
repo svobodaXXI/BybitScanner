@@ -180,7 +180,7 @@ class ConfirmedGeometryTests(unittest.TestCase):
                                   "two plateaus cannot invent a four-point trend")
 
     def test_ambiguous_outside_candle_cannot_assign_both_sides_without_intrabar_order(self):
-        prices = [(10, 7), (11, 8), (20, 0), (12, 9), (11, 8)]
+        prices = [(10, 7), (11, 8), (20, 1), (12, 9), (11, 8)]
         for timeframe in (ONE_HOUR_MS, FIVE_MINUTES_MS):
             stream = ConfirmedSwingStream(timeframe_ms=timeframe, wing=2)
             for index, (high, low) in enumerate(prices):
