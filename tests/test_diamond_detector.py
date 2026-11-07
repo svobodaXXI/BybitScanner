@@ -162,6 +162,22 @@ def test_sustained_breaches_after_last_pivot_invalidate_observation():
         assert detect_diamond_candidate(escaped, 143) is None
 
 
+def test_contraction_lines_crossing_after_final_pivot_reject_candidate():
+    bars = zigzag(DIAMOND, 170)
+    frozen_pivots = find_pivots(bars.iloc[:136].copy())
+    clean_fit = {
+        "upper": {"max_consecutive_breaches": 0},
+        "lower": {"max_consecutive_breaches": 0},
+    }
+    # Isolate geometry from later pivot/body-fit rejection. The same six
+    # source pivots still describe a real channel at 135, but the two
+    # contracting lines intersect before a later decision at 165.
+    with (patch("geometry.diamond.find_pivots", return_value=frozen_pivots),
+          patch("geometry.diamond.evaluate_formation_body_fit", return_value=clean_fit)):
+        assert detect_diamond_candidate(bars, 135) is not None
+        assert detect_diamond_candidate(bars, 165) is None
+
+
 def test_unclosed_future_bad_data_outside_decision_prefix_cannot_affect_result():
     bars = zigzag(DIAMOND, 170)
     reference = detect_diamond_candidate(bars, 135)
