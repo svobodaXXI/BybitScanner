@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from pivots import find_pivots
 
@@ -27,8 +28,8 @@ class ChannelPreview:
     as_of_index: int
     start_index: int
     anchor_identity: tuple[tuple[int, str, float], ...]
-    upper_line: dict
-    lower_line: dict
+    upper_line: MappingProxyType
+    lower_line: MappingProxyType
     geometry_relation: str
     slope_upper: float
     slope_lower: float
@@ -123,8 +124,10 @@ def observe_four_pivot_channel(candles, as_of_index: int | None = None) -> Chann
         as_of_index=as_of_index,
         start_index=anchors[0][0],
         anchor_identity=anchors,
-        upper_line=upper,
-        lower_line=lower,
+        # Freeze the *values* as well as the dataclass fields. The original
+        # lines must not drift if a caller changes its own copy of a line.
+        upper_line=MappingProxyType(dict(upper)),
+        lower_line=MappingProxyType(dict(lower)),
         geometry_relation=relation,
         slope_upper=upper["slope"],
         slope_lower=lower["slope"],
