@@ -151,10 +151,15 @@ def publish_frontend(
             _require(_content(target) == data, "frontend_asset_collision:" + name)
 
     backup = journal / "frontend-previous-index.html"
+    # The protected backup is the predecessor of this release, not the
+    # current index digest once the new UI has been activated.
+    backed_up_digest = (receipt["previous_index_sha256"]
+                        if receipt_path.exists() else prior_digest)
     if backup.exists() or backup.is_symlink():
-        _require(_digest(_content(backup)) == prior_digest,
+        _require(_digest(_content(backup)) == backed_up_digest,
                  "frontend_previous_index_backup_mismatch")
     else:
+        _require(not receipt_path.exists(), "frontend_previous_index_backup_missing")
         _require(old_digest == prior_digest, "frontend_initial_index_not_pinned")
         _atomic_new_file(backup, original, 0o600)
 
