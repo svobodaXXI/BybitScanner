@@ -46,6 +46,37 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(visibleGeometry(document, candle.end_ms)).toEqual([]);
   });
 
+  it("never invents browser H1/M5 lines when canonical Python geometry is present", () => {
+    const hour = 3_600_000, step = 300_000;
+    const start = Date.UTC(2026, 7, 20);
+    const highs = [110, 113, 111, 115, 118, 130, 126, 122, 121, 124, 128, 140, 135, 133];
+    const lows =  [102, 101,  90, 104, 108, 116, 112, 109, 100, 108, 113, 119, 115, 110];
+    const context_1h = highs.map((high, i) => ({
+      start_ms: start + i * hour, end_ms: start + (i + 1) * hour,
+      open: (high + lows[i]) / 2, close: (high + lows[i]) / 2,
+      high, low: lows[i], volume: 12,
+    }));
+    const candle = {
+      start_ms: start + 14 * hour, end_ms: start + 14 * hour + step,
+      open: 120, high: 121, low: 119, close: 120, volume: 1,
+    };
+    const archive: ReplayDocument = {
+      source: "SIMULATION", simulation_run_id: "canonical_guard", mode: "MARKET_ONLY",
+      symbol: "GRASSUSDT", timeframe: "5m", context_1h,
+      events: [{ source: "SIMULATION", simulation_run_id: "canonical_guard",
+        sequence: 1, kind: "CANDLE_CLOSED", time_ms: candle.end_ms, candle }],
+      geometry: [],
+    };
+    // The old browser heuristic can find a four-pivot candidate in a
+    // legacy archive. It may NOT override a newer authoritative Python
+    // export that explicitly says no confirmed lines exist.
+    const legacy = { ...archive, geometry: undefined };
+    expect(visibleEarlyGeometry(legacy, candle.end_ms).some(x => x.kind === "MAIN_1H")).toBe(true);
+    expect(visibleEarlyGeometry(archive, candle.end_ms)).toEqual([]);
+    expect(earlyGeometryTimeline(archive)).toEqual([]);
+    expect(visibleGeometryHistory(archive, candle.end_ms)).toEqual([]);
+  });
+
   it("steps exactly one selected H1 or M5 candle without revealing partial hours", () => {
     const t = Date.UTC(2026, 7, 20);
     const events = Array.from({ length: 25 }, (_, i) => {
