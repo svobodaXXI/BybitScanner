@@ -1696,6 +1696,8 @@ def main(argv=None) -> int:
                         help="explicit owner opt-in: one immutable manual Flat/OPEN close, no trade replay")
     parser.add_argument("--resume-one-flat-from-prior-stop", metavar="SHA",
                         help="separately authorized continuation of a proven failed STOP; never replay STOP")
+    parser.add_argument("--expected-old-backend", metavar="SHA",
+                        help="exact installed Backend observed at the failed STOP")
     args = parser.parse_args(argv)
     if args.resume_installed_editor_only and args.staged_gitless_editor_only:
         parser.error("choose exactly one Gitless operation")
@@ -1709,6 +1711,8 @@ def main(argv=None) -> int:
         parser.error("one orphan handoff requires staged Gitless operation")
     if args.proven_one_flat_orphan_handoff and args.dual_orphan_handoff_20261103:
         parser.error("choose exactly one exceptional handoff policy")
+    if bool(args.resume_one_flat_from_prior_stop) != bool(args.expected_old_backend):
+        parser.error("partial continuation requires both exact old Backend and STOP SHA")
     if args.resume_one_flat_from_prior_stop and (
         not args.staged_gitless_editor_only
         or args.proven_one_flat_orphan_handoff
@@ -1768,6 +1772,7 @@ def main(argv=None) -> int:
             status = recover_one_flat_after_failed_stop(
                 target=args.sha, stage=args.staged_gitless_editor_only,
                 prior_stop=args.resume_one_flat_from_prior_stop,
+                expected_old_sha=args.expected_old_backend,
             )
         except Exception as exc:
             status = ("BLOCKED: one_flat_partial_STOP_recovery:"
