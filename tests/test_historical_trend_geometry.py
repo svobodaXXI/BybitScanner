@@ -53,9 +53,10 @@ class ConfirmedGeometryTests(unittest.TestCase):
         feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
         versions = []
         # The next HIGH must be a true confirmed pivot, AND the line must
-        # pass all intervening wicks. Hour 7 HIGH=123 satisfies both while
-        # preserving a narrowing H1 corridor; the old HIGH=121 did not.
-        compatible = BULL[:7] + [(123, 115)] + BULL[8:]
+        # pass all intervening wicks. Hour 7 HIGH=122 preserves
+        # the narrowing H1 corridor and just clears hour 5's wick=119.
+        # HIGH=121 pierces the original H1 target boundary.
+        compatible = BULL[:7] + [(122, 115)] + BULL[8:]
         for hour, (high, low) in enumerate(compatible):
             for minute in range(12):
                 index = hour * 12 + minute
