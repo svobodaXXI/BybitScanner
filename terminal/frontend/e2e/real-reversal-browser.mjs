@@ -86,7 +86,10 @@ try {
     new Date(archive.from_ms).toISOString().slice(0, 10));
   assert.equal(await page.locator('input[type="date"]').nth(1).inputValue(),
     new Date(archive.until_ms).toISOString().slice(0, 10));
-  assert.match(await page.locator("body").innerText(), /официального публичного архива/);
+  assert.equal(await page.locator(".replay-note").count(), 0,
+    "obsolete yellow market archive banner must be absent");
+  assert.match(await page.locator("body").innerText(), /GRASSUSDT/,
+    "real official-archive instrument stays identified in metadata");
   assert.equal(await page.getByRole("slider", { name: "Перемотка графика по закрытым свечам" }).inputValue(), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   // Reference implementation: chart's H1 axis includes the ORIGINAL
