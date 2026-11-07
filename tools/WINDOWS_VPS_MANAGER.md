@@ -16,7 +16,7 @@ The existing SSH configuration can specify the key and port under `%USERPROFILE%
 
 ## Scope
 
-Five **read-only** actions: systemd status, backend systemd state and localhost `/api/health` (instead of the pre-start-only `tools.vps_check`), Git working-tree/branch/commit inspection, backend's last 35 journal entries, and an informational update preflight (Git status, systemd status, localhost PAPER health). The program intentionally has **no** general-purpose remote command field, trade operations, stop/start, service restart, deploy, database writes or LIVE operations. Remote commands are an allowlist executed with `ssh` and SSH host-key verification.
+Five **read-only** actions: systemd status, backend systemd state and localhost `/api/health` (instead of the pre-start-only `tools.vps_check`), installed source inspection (Git status when `.git` exists, otherwise explicit `GIT_STATUS=UNKNOWN` and backend `build_sha` from localhost health), backend's last 35 journal entries, and an informational update preflight (installed source status, systemd status, localhost PAPER health). The program intentionally has **no** general-purpose remote command field, trade operations, stop/start, service restart, deploy, database writes or LIVE operations. Remote commands are an allowlist executed with `ssh` and SSH host-key verification.
 
 This MVP reads existing systemd, Git, journal and localhost backend health evidence through SSH, not the Terminal's UI. It does not run the pre-start `tools.vps_check` on an active server. An extension for safe PAPER deployment requires explicit owner authorization, identity/preflight verification, backup/rollback design and a tested stop protocol. A direct ChatGPT-to-VPS control channel is **not** provided by this Windows GUI; it is a local operator utility.
 
@@ -27,7 +27,7 @@ This MVP reads existing systemd, Git, journal and localhost backend health evide
 - The VPS host/user are entered per launch. No secrets are requested or stored.
 - No SSH credentials or host fingerprints are provisioned by the application.
 
-The update preflight is **informational**, not approval to stop or deploy. It does not establish that the backend is attached to the expected PAPER DB, verify open-position protection, or prove shutdown safety. Any failure must block further owner-side decisions until diagnosed.
+Immutable `/opt/BybitScanner` releases may have no `.git`; that is expected, and the manager reports `GIT_WORKTREE=ABSENT` rather than a Git error. Missing `.git` means local changes cannot be determined, **not** that the release is clean. The update preflight always reports `DEPLOY_PREFLIGHT=NOT_PROVEN` and must never authorize deployment.\n\nThe update preflight is **informational**, not approval to stop or deploy. It does not establish that the backend is attached to the expected PAPER DB, verify open-position protection, or prove shutdown safety. Any failure must block further owner-side decisions until diagnosed.
 
 ## Portable Windows build
 
