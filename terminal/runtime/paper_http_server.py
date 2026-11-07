@@ -3047,6 +3047,18 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/api/robot/state":
+            try:
+                state = self.server.runtime.call(lambda runtime: runtime.robot_runtime_state())
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "robot_state_unavailable"})
+                return
+            if state is None:
+                self._json_response(503, {"ok": False, "error": "robot_state_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **to_primitive(state)})
+            return
+
         if parsed.path == "/api/robot/autopilot":
             try:
                 state = self.server.runtime.call(lambda runtime: runtime.autopilot_state())
