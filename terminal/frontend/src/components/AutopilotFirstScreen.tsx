@@ -92,9 +92,6 @@ export function PositionCard({
   entryBasis,
   episodeId,
   onTradeDetails,
-  onStatistics,
-  onTerminal,
-  accountControl,
 }: {
   position: PaperOpenPosition;
   protection: PositionProtection;
@@ -206,6 +203,9 @@ export function AutopilotFirstScreen({
   onOpenPositions,
   accountKey,
   onTradeDetails,
+  onStatistics,
+  onTerminal,
+  accountControl,
 }: {
   now?: () => number;
   onOpenPositions?: () => void;
