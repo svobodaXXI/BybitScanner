@@ -50,6 +50,7 @@ import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
 import { buildEditorGeometryReview, compareEditorRayChanges, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
 import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
+import { buildOwnerSignalDraft, type OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
 import { normalizedLimitDraftPrice } from "../orders/limitDraft";
@@ -148,6 +149,7 @@ export function ChartPanel({
   savedReviewLabel = null,
   savedReviewNote = null,
   onSaveGeometryReview,
+  onSubmitOwnerSignal,
   onEditorNavigate,
 }: {
   candles: readonly Candle[];
@@ -196,6 +198,7 @@ export function ChartPanel({
   savedReviewNote?: string | null;
   onSaveGeometryReview?: (review: GeometryReviewDraft & { note: string; idempotency_key: string }) =>
     Promise<{ reviewId: string; label: GeometryReviewDraft["label"] }>;
+  onSubmitOwnerSignal?: (proposal: OwnerSignalDraft) => Promise<{ proposalId: string; decision: string; reason: string }>;
   onEditorNavigate?: (mode: "TERMINAL" | "AUTOPILOT") => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
@@ -221,7 +224,8 @@ export function ChartPanel({
     [clearConfirmationOpen, setClearConfirmationOpen] = useState(false),
     [confirmAllPendingOpen, setConfirmAllPendingOpen] = useState(false),
     [dismissAllPendingOpen, setDismissAllPendingOpen] = useState(false);
-  const storageKey = `bybitscanner:${editorMode ? "editor-drawings" : "drawings"}:v1:${symbol}:${timeframe}${editorMode && signalIdentity ? `:${signalIdentity}${savedReviewId ? `:review-${savedReviewId}` : ""}` : ""}`;
+  const [newSignalMode, setNewSignalMode] = useState(false);
+  const storageKey = `bybitscanner:${newSignalMode ? "new-signal-drawings" : editorMode ? "editor-drawings" : "drawings"}:v1:${symbol}:${timeframe}${editorMode && signalIdentity ? `:${signalIdentity}${savedReviewId && !newSignalMode ? `:review-${savedReviewId}` : ""}` : ""}`;
   const historyRef = useRef(
     new DrawingHistory(
       (() => {
@@ -256,9 +260,14 @@ export function ChartPanel({
       })(),
     ),
   );
-  const [drawings, setDrawings] = useState<DrawingObject[]>(
-    historyRef.current.current,
-  );
+  const correctionHistoryRef = useRef(historyRef.current);
+  const proposalHistoryRef = useRef(new DrawingHistory([]));
+  const [drawings, setDrawings] = useState<DrawingObject[]>(historyRef.current.current);
+  const [proposalPattern, setProposalPattern] = useState<OwnerSignalDraft["pattern"]>("Falling Wedge");
+  const [proposalNote, setProposalNote] = useState("");
+  const [proposalPending, setProposalPending] = useState(false);
+  const [proposalStatus, setProposalStatus] = useState("");
+  const proposalToken = useRef<{ content: string; key: string } | null>(null);
   const rayComparison = useMemo(() => {
     if (!editorMode || !signalIdentity || !referenceDrawings.length) return null;
     try {
@@ -307,6 +316,7 @@ export function ChartPanel({
   };
   const submitToken = useRef<{ content: string; key: string } | null>(null);
   const saveCorrection = async () => {
+    if (newSignalMode) return;
     if (!editorMode || !signalIdentity || !snapshotRevision || !barsSha256 || !onSaveGeometryReview || reviewPending) return;
     try {
       const draft = buildEditorGeometryReview({
@@ -343,8 +353,58 @@ export function ChartPanel({
   const commit = useCallback((next: DrawingObject[]) => {
     historyRef.current.commit(next);
     setDrawings(next);
-    markReviewEdited();
-  }, [markReviewEdited]);
+    if (!newSignalMode) markReviewEdited();
+    else setProposalStatus("");
+  }, [newSignalMode, markReviewEdited]);
+
+  const switchSignalDrawingMode = () => {
+    if (reviewPending || proposalPending) return;
+    if (newSignalMode) {
+      proposalHistoryRef.current = historyRef.current;
+      historyRef.current = correctionHistoryRef.current;
+      setDrawings(historyRef.current.current);
+      setNewSignalMode(false);
+      setTool("select");
+    } else {
+      correctionHistoryRef.current = historyRef.current;
+      historyRef.current = proposalHistoryRef.current;
+      setDrawings(historyRef.current.current);
+      setNewSignalMode(true);
+      setTool("ray");
+    }
+    setSelectedId(null);
+    setClearConfirmationOpen(false);
+  };
+  const submitOwnerProposal = async () => {
+    if (!newSignalMode || !onSubmitOwnerSignal || !signalIdentity || !snapshotRevision ||
+        !barsSha256 || proposalPending || reviewPending) return;
+    try {
+      const content = JSON.stringify({ drawings, proposalPattern, proposalNote });
+      if (proposalToken.current?.content !== content) {
+        proposalToken.current = {
+          content,
+          key: globalThis.crypto?.randomUUID?.() ??
+            `owner-proposal-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        };
+      }
+      const draft = buildOwnerSignalDraft({
+        signalId: signalIdentity, snapshotRevision, barsSha256,
+        pattern: proposalPattern, drawings, frozenCandles: candles,
+        note: proposalNote.trim(), idempotencyKey: proposalToken.current.key,
+      });
+      setProposalPending(true);
+      setProposalStatus("Проверка нового сигнала…");
+      const receipt = await onSubmitOwnerSignal(draft);
+      setProposalStatus(
+        `Предложение ${receipt.proposalId.slice(0, 12)} сохранено. ${receipt.decision}: ${receipt.reason}. ` +
+        "Торговый кандидат не создан.",
+      );
+    } catch (error) {
+      setProposalStatus(`Не удалось передать: ${error instanceof Error ? error.message : "неизвестная ошибка"}`);
+    } finally {
+      setProposalPending(false);
+    }
+  };
   const applyFollowLatest = useCallback((next: boolean) => {
     followLatestRef.current = next;
   }, []);
@@ -913,6 +973,29 @@ export function ChartPanel({
                 </button>
               </nav>
             </div>
+            <button type="button" disabled={reviewPending || proposalPending}
+              aria-pressed={newSignalMode} onClick={switchSignalDrawingMode}>
+              {newSignalMode ? "Вернуться к исправлению" : "Создать новый сигнал"}
+            </button>
+            {newSignalMode ? (
+              <>
+                <select aria-label="Тип нового сигнала" value={proposalPattern}
+                  onChange={(event) => { setProposalPattern(event.target.value as OwnerSignalDraft["pattern"]); setProposalStatus(""); }}>
+                  <option value="Falling Wedge">Нисходящий клин</option>
+                  <option value="Rising Wedge">Восходящий клин</option>
+                </select>
+                <input aria-label="Комментарий к новому сигналу"
+                  placeholder="Комментарий (необязательно)" maxLength={1024}
+                  value={proposalNote} onChange={(event) => { setProposalNote(event.target.value); setProposalStatus(""); }} />
+                <button type="button" disabled={proposalPending || !onSubmitOwnerSignal}
+                  onClick={() => void submitOwnerProposal()}>
+                  {proposalPending ? "Проверка…" : "Передать на оценку Robot"}
+                </button>
+                <small>Исходные линии — пунктир. Нарисуй два новых луча; оценка не разрешает торговлю.</small>
+                {proposalStatus && <output role="status" aria-live="polite">{proposalStatus}</output>}
+              </>
+            ) : (
+              <>
             <select
               aria-label="Оценка сигнала"
               value={reviewLabel}
@@ -955,6 +1038,8 @@ export function ChartPanel({
               </output>
             )}
             {reviewStatus && <output role="status" aria-live="polite">{reviewStatus}</output>}
+              </>
+            )}
           </div>
         )}
         <DrawingToolbar
@@ -968,7 +1053,7 @@ export function ChartPanel({
             const undone = historyRef.current.undo();
             if (undone !== previous) {
               setDrawings(undone);
-              markReviewEdited();
+              if (!newSignalMode) markReviewEdited();
             }
           }}
           onDelete={deleteSelected}
@@ -1320,7 +1405,7 @@ export function ChartPanel({
             onCancel={() => setClearConfirmationOpen(false)}
             onConfirm={() => {
               setDrawings(clearDrawingHistory(historyRef.current));
-              markReviewEdited();
+              if (!newSignalMode) markReviewEdited();
               setSelectedId(null);
               setClearConfirmationOpen(false);
             }}
