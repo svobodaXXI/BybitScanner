@@ -24,6 +24,7 @@ import {
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
 import { projectSignalGeometry, restoreSavedSignalCorrection } from "../geometryFeedback/signalChartBridge";
+import type { OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
 import type { DrawingObject } from "../chart/drawingModel";
@@ -1297,6 +1298,38 @@ export function App() {
           savedReviewId={mode === "EDITOR" ? frozenSignal?.savedReviewId ?? null : null}
           savedReviewLabel={mode === "EDITOR" ? frozenSignal?.savedReviewLabel ?? null : null}
           savedReviewNote={mode === "EDITOR" ? frozenSignal?.savedReviewNote ?? null : null}
+          onSubmitOwnerSignal={mode === "EDITOR" && frozenSignal ? async (
+            proposal: OwnerSignalDraft,
+          ) => {
+            if (proposal.signal_id !== frozenSignal.signalId ||
+                proposal.snapshot_revision !== frozenSignal.snapshotRevision ||
+                proposal.bars_sha256 !== frozenSignal.barsSha256)
+              throw new Error("Исходный сигнал изменился");
+            const response = await fetch("/api/workspace/owner-signal-proposal", {
+              method: "POST", credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(proposal),
+            });
+            const result = await response.json();
+            const record = result.proposal;
+            if (!response.ok || result.ok !== true ||
+                typeof record?.proposal_id !== "string" ||
+                !/^[0-9a-f]{64}$/.test(record.proposal_id) ||
+                record?.submission?.signal_id !== proposal.signal_id ||
+                record?.submission?.snapshot_revision !== proposal.snapshot_revision ||
+                record?.submission?.bars_sha256 !== proposal.bars_sha256 ||
+                record?.submission?.pattern !== proposal.pattern ||
+                record?.submission?.idempotency_key !== proposal.idempotency_key ||
+                record?.candidate_created !== false || record?.robot_candidate_id !== null ||
+                typeof record?.assessment?.decision !== "string" ||
+                typeof record?.assessment?.reason !== "string")
+              throw new Error(result.error || "Нет подтверждённой оценки новой разметки");
+            return {
+              proposalId: record.proposal_id,
+              decision: record.assessment.decision,
+              reason: record.assessment.reason,
+            };
+          } : undefined}
           onSaveGeometryReview={mode === "EDITOR" && frozenSignal ? async (
             review: GeometryReviewDraft & { note: string; idempotency_key: string },
           ) => {
