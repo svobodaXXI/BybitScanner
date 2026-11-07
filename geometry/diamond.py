@@ -50,11 +50,17 @@ def detect_diamond_candidate(candles, as_of_index=None) -> DiamondCandidate | No
     wave lengths. Two crossed/zero-width regimes cannot form a diamond.
     This deliberately does not claim full chart fit or real Gold acceptance.
     """
-    if candles is None or len(candles) == 0:
+    if candles is None or not hasattr(candles, "iloc"):
+        return None
+    try:
+        total = len(candles)
+    except (TypeError, ValueError):
+        return None
+    if total == 0:
         return None
     if as_of_index is None:
-        as_of_index = len(candles) - 1
-    if type(as_of_index) is not int or not 0 <= as_of_index < len(candles):
+        as_of_index = total - 1
+    if type(as_of_index) is not int or not 0 <= as_of_index < total:
         return None
     prefix = candles.iloc[:as_of_index + 1].reset_index(drop=True)
     try:
