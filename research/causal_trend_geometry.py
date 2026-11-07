@@ -62,7 +62,7 @@ class TrendCandidate:
 
 
 class ConfirmedSwingStream:
-    """Strict, tie-free swing detection from closed candles, never future data."""
+    """Closed-candle swing detection with deterministic plateau tie resolution."""
 
     def __init__(self, *, timeframe_ms: int, wing: int = 2) -> None:
         if timeframe_ms <= 0 or wing < 1:
@@ -97,9 +97,17 @@ class ConfirmedSwingStream:
         if i < self.wing:
             return None
         center = self._bars[i]
-        neighbors = self._bars[i - self.wing:i] + self._bars[i + 1:i + self.wing + 1]
-        is_high = all(center.high > x.high for x in neighbors)
-        is_low = all(center.low < x.low for x in neighbors)
+        left = self._bars[i - self.wing:i]
+        right = self._bars[i + 1:i + self.wing + 1]
+        # Tick-equal extrema can persist over multiple CLOSED candles.
+        # Pick the LAST candle of a confirmed plateau, deterministically:
+        # left comparisons allow equality; right comparisons must be strict.
+        # This is the same timeframe-local rule for both H1 and M5, with
+        # no invented volatility/percentage significance threshold.
+        is_high = (all(center.high >= x.high for x in left) and
+                   all(center.high > x.high for x in right))
+        is_low = (all(center.low <= x.low for x in left) and
+                  all(center.low < x.low for x in right))
         if is_high == is_low:  # Neither, or an outside candle ambiguous on both axes.
             return None
         kind: PivotKind = "HIGH" if is_high else "LOW"
