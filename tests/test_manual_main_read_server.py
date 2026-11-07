@@ -31,6 +31,12 @@ class FakeMainAccounts:
             raise LookupError()
         return {"account_id": account_id, "positions": [{"symbol": "BTCUSDT"}], "orders": []}
 
+    def provision(self, display_name, api_key, api_secret):
+        if not display_name or not api_key or not api_secret:
+            raise ValueError("invalid")
+        self.provisioned = (display_name, api_key, api_secret)
+        return {"account_id": "bybit-abc", "created": True}
+
     def refresh(self, account_id):
         if account_id != "bybit-abc":
             raise LookupError()
@@ -74,7 +80,7 @@ class MainReadGatewayTests(unittest.TestCase):
         self.assertEqual((status, health["trading_enabled"]), (200, False))
 
     def test_no_trading_or_credential_post_and_no_paper_routes(self):
-        for path in ("/api/manual-main/accounts", "/api/manual-main/order",
+        for path in ("/api/manual-main/order",
                      "/api/live/market", "/api/market", "/api/manual-main/close-all"):
             status, result, _ = self.request(path, method="POST", body=b"{}")
             self.assertEqual(status, 405)
@@ -87,6 +93,32 @@ class MainReadGatewayTests(unittest.TestCase):
                      "/api/manual-main/accounts/bybit-%2Fetc/summary"):
             status, _, _ = self.request(path)
             self.assertEqual(status, 404)
+
+    def test_same_origin_provisioning_and_no_secret_echo(self):
+        payload = json.dumps({"display_name": "Main", "api_key": "private-key", "api_secret": "private-secret"}).encode()
+        # Without a matching HTTPS origin, credential parsing is never reached.
+        status, result, _ = self.request("/api/manual-main/accounts", method="POST", body=payload)
+        self.assertEqual((status, result["error"]), (403, "origin_required"))
+        self.assertFalse(hasattr(self.app, "provisioned"))
+        status, result, _ = self.request_with_origin(payload)
+        self.assertEqual((status, result["account_id"]), (201, "bybit-abc"))
+        self.assertNotIn("private-key", str(result))
+        self.assertNotIn("private-secret", str(result))
+        self.assertEqual(self.app.provisioned, ("Main", "private-key", "private-secret"))
+        for invalid in (b"{}", b"[]", b"{", b"{}" + b"x" * 9000):
+            status, result, _ = self.request_with_origin(invalid)
+            self.assertNotEqual(status, 201)
+            self.assertNotIn("private-secret", str(result))
+
+    def request_with_origin(self, body):
+        req = Request(self.url + "/api/manual-main/accounts", data=body, method="POST",
+                      headers={"Content-Type": "application/json",
+                               "Origin": "https://127.0.0.1:" + str(self.server.server_address[1])})
+        try:
+            with urlopen(req, timeout=2) as response:
+                return response.status, json.load(response), response.headers
+        except HTTPError as exc:
+            return exc.code, json.load(exc), exc.headers
 
     def test_private_main_state_directory_does_not_alias_paper_parent(self):
         with tempfile.TemporaryDirectory() as root:
