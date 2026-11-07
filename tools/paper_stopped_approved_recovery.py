@@ -571,12 +571,17 @@ def recover_one_flat_after_failed_stop(
     _demand(db.is_file() and not db.is_symlink() and len(identity) == 64,
             "paper_database_identity_unproven")
     try:
-        old = verify_release(root, manifest)
-    except (ReleaseIdentityBlocked, OSError) as exc:
+        installed = verify_release(root, manifest)
+    except (ReleaseIdentityBlocked, OSError):
         _demand(observed["handoff-proven"] and (transactions / target).is_dir(),
                 "unverified_old_release_without_install_transaction")
-        old = _one_flat_snapshot(transactions, prior_stop, uid=uid)["backend"]["build_sha"]
-    _demand(old == expected_old_sha and (old != target or observed["handoff-proven"]),
+        installed = None
+    if installed == target:
+        _demand(observed["handoff-proven"] and (transactions / target).is_dir(),
+                "target_installed_without_handoff_proof")
+    old = (installed if installed not in (None, target)
+           else _one_flat_snapshot(transactions, prior_stop, uid=uid)["backend"]["build_sha"])
+    _demand(old == expected_old_sha,
             "old_release_identity_not_pinned_to_partial_STOP")
     if not observed["handoff-attempt"]:
         owner = RuntimeShutdown(root=root, env=env)
