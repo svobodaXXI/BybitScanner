@@ -64,6 +64,114 @@ class TransitionCase(unittest.TestCase):
         )
         return result, events, conn
 
+    def test_one_proven_flat_orphan_attested_once_inside_writer_barrier(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db_path = Path(tmp.name) / "paper.sqlite3"
+        with sqlite3.connect(db_path) as destination:
+            conn.backup(destination)
+        conn.close()
+        conn = sqlite3.connect(db_path)
+        self.addCleanup(conn.close)
+        identity = expected_database_identity(
+            ROOT, {"BYBITSCANNER_PAPER_DB": str(db_path)},
+        )
+        snapshots["backend"].update(
+            build_sha=SHA, process_instance_id="old-paper-process",
+            database_identity=identity,
+        )
+        events = []
+        live = [True]
+
+        @contextmanager
+        def barrier(_):
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("PRAGMA query_only=ON")
+            events.append("barrier:enter")
+            try:
+                yield conn
+            finally:
+                conn.rollback()
+                events.append("barrier:exit")
+
+        def prove(held, **kwargs):
+            self.assertEqual(held.row_factory, sqlite3.Row)
+            self.assertTrue(held.in_transaction)
+            self.assertEqual(tuple(held.execute("PRAGMA query_only").fetchone()), (1,))
+            self.assertEqual(kwargs["expected_build_sha"], SHA)
+            events.append("proof")
+            return "ONE_FLAT_ORPHAN_IMMUTABLE_CLOSE_EVIDENCE_ONLY"
+
+        def signal_once(pid, sig):
+            self.assertEqual(pid, PID)
+            self.assertEqual(sig, signal.SIGINT)
+            events.append("signal")
+            live[0] = False
+
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_one_flat_orphan",
+            side_effect=prove,
+        ) as checker:
+            result = execute_flat_handoff(
+                db_path=db_path, expected_identity=identity, expected_pid=PID,
+                expected_build_sha=SHA, execute=True,
+                proven_one_flat_orphan=True, snapshots=snapshots,
+                service_pid=lambda: PID, start_token=lambda p: "start-77",
+                listener_owner=lambda p: True, writer_guard=barrier,
+                send_interrupt=signal_once, is_alive=lambda p: live[0],
+                monotonic=lambda: 0,
+            )
+        self.assertEqual(
+            result, "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
+        )
+        self.assertEqual(events, ["barrier:enter", "proof", "signal", "barrier:exit"])
+        checker.assert_called_once()
+
+    def test_one_orphan_missing_proof_never_signals(self):
+        conn, snapshots = fixture()
+        snapshots.pop("expected_identity")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db_path = Path(tmp.name) / "paper.sqlite3"
+        with sqlite3.connect(db_path) as destination:
+            conn.backup(destination)
+        conn.close()
+        conn = sqlite3.connect(db_path)
+        self.addCleanup(conn.close)
+        identity = expected_database_identity(
+            ROOT, {"BYBITSCANNER_PAPER_DB": str(db_path)},
+        )
+        snapshots["backend"].update(
+            build_sha=SHA, process_instance_id="old-paper-process",
+            database_identity=identity,
+        )
+        @contextmanager
+        def barrier(_):
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("PRAGMA query_only=ON")
+            try:
+                yield conn
+            finally:
+                conn.rollback()
+
+        with mock.patch(
+            "tools.flat_paper_recovery_transition.prove_one_flat_orphan",
+            side_effect=FlatRecoveryBlocked("one_orphan_manual_close_proof_missing"),
+        ):
+            with self.assertRaisesRegex(
+                FlatRecoveryBlocked, "one_orphan_manual_close_proof_missing"
+            ):
+                execute_flat_handoff(
+                    db_path=db_path, expected_identity=identity, expected_pid=PID,
+                    expected_build_sha=SHA, execute=True,
+                    proven_one_flat_orphan=True, snapshots=snapshots,
+                    service_pid=lambda: PID, start_token=lambda p: "start-77",
+                    listener_owner=lambda p: True, writer_guard=barrier,
+                    send_interrupt=lambda *_: self.fail("no signal without proof"),
+                )
+
     def test_dual_orphan_attested_once_under_writer_barrier(self):
         conn, snapshots = fixture()
         snapshots.pop("expected_identity")
