@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Mapping
@@ -135,9 +136,14 @@ def project_observations(
     total = malformed = duplicates = foreign = 0
     partial_tail = False
     first_line: bytes | None = None
+    file_identity: tuple[int, int] | None = None
     scanned = 0
     try:
         with path.open("rb") as handle:
+            # Get identity from the same opened descriptor, not a separate
+            # path stat that could race an atomic journal replacement.
+            info = os.fstat(handle.fileno())
+            file_identity = (info.st_dev, info.st_ino)
             for raw in handle:
                 scanned += len(raw)
                 if scanned > max_scan_bytes:
@@ -205,7 +211,12 @@ def project_observations(
     except OSError as exc:
         raise ProjectionUnavailable(f"journal is not readable: {type(exc).__name__}") from exc
 
-    current_id = hashlib.sha256(first_line).hexdigest()[:16] if first_line is not None else None
+    # The first line alone cannot detect atomic replacement with a journal
+    # sharing that line. On the same filesystem an inode stays fixed for
+    # append but changes on replace, so cursors reset safely.
+    current_id = (hashlib.sha256(
+        f"{file_identity[0]}:{file_identity[1]}:".encode() + first_line
+    ).hexdigest()[:16] if first_line is not None and file_identity is not None else None)
     reset = after > total or (journal_id is not None and current_id is not None and journal_id != current_id)
     rows, truncated = (head, more_head) if reset else (page, more_page)
     return {
