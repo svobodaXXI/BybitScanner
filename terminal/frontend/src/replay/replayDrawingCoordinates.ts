@@ -76,6 +76,31 @@ export function geometryLogicalSegment(
 }
 
 /**
+ * Project a timestamp onto the NATIVE candlestick coordinates. The chart
+ * may carry multiple series/panes whose logical indices need not match a
+ * caller-maintained H1 candle array. Use the chart's own H1 bar coordinates
+ * and interpolate between their actual UTC times, preserving M5 precision.
+ * Never round a five-minute anchor to an hourly open.
+ */
+export function chartXAtCandleTime(
+  atMs: number,
+  candles: readonly ReplayCandle[],
+  chartTimeToX: (candleStartMs: number) => number | null,
+): number | null {
+  if (!Number.isFinite(atMs) || candles.length < 2) return null;
+  let i = 0;
+  while (i + 2 < candles.length && candles[i + 1].start_ms <= atMs) i++;
+  // Before/after the loaded window: extrapolate only the axis spacing,
+  // not candle prices or a strategy decision. At least two REAL bars exist.
+  const a = candles[i], b = candles[i + 1];
+  if (b.start_ms <= a.start_ms) return null;
+  const ax = chartTimeToX(a.start_ms), bx = chartTimeToX(b.start_ms);
+  if (ax === null || bx === null || !Number.isFinite(ax) || !Number.isFinite(bx))
+    return null;
+  return ax + (bx - ax) * (atMs - a.start_ms) / (b.start_ms - a.start_ms);
+}
+
+/**
  * Hide tiny remnants of already-ended lines at the left viewport edge.
  * This affects canvas visibility only: source anchors and archived versions
  * remain untouched and reappear when the user scrolls back to their time.
