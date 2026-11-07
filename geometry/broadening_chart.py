@@ -20,6 +20,7 @@ matplotlib.use("Agg")           # headless: same choice as the other chart rende
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from telegram_labels import SCANNER_EMOJI
 from timeframe_format import format_timeframe_ru
 
 PATTERN_NAME = "Рупор"
@@ -36,6 +37,17 @@ START_COLOR = "#ef6c00"
 LEAD_BARS = 20
 PROJECTION_SHARE = 0.35
 MIN_PROJECTION_BARS = 10
+
+
+def broadening_signal_text(symbol, timeframe, formation):
+    """HORN-5: short Telegram text sent before the chart, in the canonical
+    Scanner layout (as the Ikigai Box text). No score, no direction."""
+    return (
+        f"{SCANNER_EMOJI} Сканер: {symbol}\n"
+        f"{PATTERN_NAME} · {STAGE_LABELS.get(formation.stage, formation.stage)}\n"
+        f"{format_timeframe_ru(timeframe)}\n"
+        "Наблюдение: без сделки"
+    )
 
 
 def broadening_caption(symbol, timeframe, formation):
