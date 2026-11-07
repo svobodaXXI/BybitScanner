@@ -160,3 +160,9 @@
   border-radius: 0.55rem;
 }
 .workspace-nav-account .account-switch-label { display: none; }
+
+/* Keep existing overlays mounted in Autopilot without the redundant legacy panel. */
+.autopilot-legacy-navigation { display: contents; }
+.autopilot-legacy-navigation > div:first-child,
+.autopilot-legacy-navigation > .mode-switcher { display: none; }
+.mode-switcher .workspace-nav-button { flex: 0 0 2.9rem; }
