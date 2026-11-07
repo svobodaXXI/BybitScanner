@@ -25,7 +25,7 @@ def test_single_episode_expands_then_contracts_with_six_confirmed_anchors(reflec
     assert candidate.stage == "OFFLINE_CANDIDATE"
     assert candidate.start_index == 72
     assert [p[0] for p in candidate.anchors] == [72, 84, 96, 108, 120, 132]
-    assert candidate.turn_indices == (96, 108) if not reflection else (108, 96)
+    assert candidate.turn_indices == ((96, 108) if not reflection else (108, 96))
     assert candidate.width_first < candidate.width_widest_anchor_pair
     assert candidate.width_last < candidate.width_widest_anchor_pair
     assert not hasattr(candidate, "direction")
