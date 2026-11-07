@@ -213,6 +213,21 @@ class EquityRoTests(unittest.TestCase):
             self.assertEqual((r.status, r.sword_size_usdt, r.used_swords, r.free_swords),
                              (STATUS_NO_CONNECTION, None, None, None))
 
+    def test_nonfinite_equity_is_unavailable_not_a_worker_crash(self):
+        for raw in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(equity=raw):
+                # Corrupt numeric values must not crash the GUI worker.
+                equity = Decimal(raw)
+                result = count_swords_with_equity(
+                    lambda: self.LIVE, lambda: equity, 20,
+                )
+                self.assertEqual(result.status, STATUS_UNAVAILABLE)
+                self.assertIsNone(result.sword_size_usdt)
+                self.assertIsNone(result.used_swords)
+                self.assertIsNone(result.free_swords)
+                self.assertIsNone(result.equity_usdt)
+                self.assertEqual(result.reason, "Account Equity is not finite")
+
     def test_non_positive_equity_or_an_ro_rounding_to_zero_is_unavailable_not_a_division_by_zero(self):
         for equity in ("0", "-5", "9.99", "0.01"):       # 9.99 / 20 = 0.4995 -> 0 USDT
             with self.subTest(equity=equity):
