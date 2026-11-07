@@ -373,6 +373,66 @@ def test_staged_gitless_editor_executes_one_stop_then_install_and_resume(monkeyp
     assert steps == ["preflight", "stop", ("install", True), "resume"]
 
 
+def test_one_proven_flat_orphan_uses_existing_stop_and_only_opted_callback(
+    monkeypatch, tmp_path,
+):
+    import tools.stop_robot_runtime as stop_runtime
+    import tools.vps_release_identity as release
+    from tools.paper_maintenance import deploy_staged_editor_only
+
+    target, old = "a" * 40, "b" * 40
+    root, stage = tmp_path / "installed", tmp_path / "stage"
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_args: old)
+    calls = []
+    sentinel = lambda: "INTERRUPT_EXIT_OBSERVED: backend exit; restart not performed"
+    def builder(env, previous_sha):
+        assert previous_sha == old
+        calls.append("build-one-proven-orphan")
+        return sentinel
+    class Runtime:
+        def __init__(self, **kw):
+            assert kw["dual_orphan_handoff"] is None
+            assert kw["proven_one_flat_orphan_handoff"] is sentinel
+            calls.append("existing-stop-controller")
+        def run(self, scope):
+            assert scope == "all"
+            calls.append("stop")
+            return SimpleNamespace(ok=True, runtime_stopped=True)
+
+    monkeypatch.setattr(stop_runtime, "build_proven_one_flat_orphan_handoff", builder)
+    monkeypatch.setattr(stop_runtime, "RuntimeShutdown", Runtime)
+    result = deploy_staged_editor_only(
+        target, stage=stage, root=root,
+        proven_one_flat_orphan_handoff=True,
+        preflight=lambda *_args, **kw: calls.append("preflight"),
+        installer=lambda *_args, **kw: (
+            calls.append("install"), "INSTALLED_STOPPED: exact"
+        )[1],
+        resume=lambda *_args, **kw: (
+            calls.append("resume"), "READY: EDITOR_ONLY"
+        )[1],
+        transactions=tmp_path/"journal", trusted_uid=os.geteuid(),
+    )
+    assert result == "READY: EDITOR_ONLY"
+    assert calls == [
+        "preflight","build-one-proven-orphan","existing-stop-controller",
+        "stop","install","resume",
+    ]
+
+
+def test_competing_one_orphan_and_legacy_opt_ins_do_not_attempt_stop(tmp_path):
+    from tools.paper_maintenance import deploy_staged_editor_only
+    root,stage = tmp_path / "installed",tmp_path / "stage"
+    root.mkdir()
+    stage.mkdir()
+    assert deploy_staged_editor_only(
+        "a"*40, stage=stage, root=root,
+        dual_orphan_handoff=True, proven_one_flat_orphan_handoff=True,
+    ) == "BLOCKED: competing_exceptional_handoff_options"
+
+
 def test_staged_gitless_editor_rejected_stop_never_installs(monkeypatch, tmp_path):
     from tools.paper_maintenance import deploy_staged_editor_only
     import tools.vps_release_identity as release
