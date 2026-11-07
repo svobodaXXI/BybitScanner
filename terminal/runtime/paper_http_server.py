@@ -256,6 +256,39 @@ def _diary_trade_list(runtime: PaperRuntime) -> dict[str, object]:
     }
 
 
+def _robot_position_markers(runtime: PaperRuntime, symbol: str, trade_id: str, now_ms: int) -> dict[str, object]:
+    """Reuse Telegram's exact execution/limit markers for one proven OPEN Robot trade.
+
+    An immutable trade ID must still be the single current Robot association
+    for the selected PAPER position. Never attribute by ticker proximity alone.
+    """
+    from robot_position_view import load_position_view
+
+    account = TradingAccountId("paper")
+    active_trade = runtime.store.get_open_robot_trade_for_symbol(account, Symbol(symbol))
+    if active_trade is None or active_trade.trade_id != trade_id:
+        return {"ok": False, "error": "unproven_robot_position"}
+    view = load_position_view(
+        runtime.store, symbol, trade_id=trade_id, account=account, now_ms=now_ms,
+    )
+    if (view is None or not view.is_open or not view.is_robot
+            or view.trade.trade_id != trade_id or view.quantity is None
+            or view.quantity <= 0):
+        return {"ok": False, "error": "unproven_robot_position"}
+    return {
+        "ok": True, "account_id": "paper",
+        "source": "robot_position_view.TradeMarker",
+        "symbol": symbol, "trade_id": trade_id,
+        "markers": [
+            {
+                "time_ms": marker.time_ms, "price": str(marker.price),
+                "side": marker.side, "filled": marker.filled,
+            }
+            for marker in view.markers
+        ],
+    }
+
+
 def _robot_day_summary(runtime: PaperRuntime, now_ms: int) -> dict[str, object]:
     """Read only the canonical PAPER Robot ledger; no Diary/manual attribution guesses."""
     day_ms = 24 * 60 * 60 * 1000
@@ -3080,6 +3113,30 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     "scanner_acceptance_ready": _scanner_acceptance_ready(),
                 },
             )
+            return
+
+        if parsed.path == "/api/robot/position-markers":
+            query = parse_qs(parsed.query)
+            symbols, trade_ids = query.get("symbol", []), query.get("trade_id", [])
+            symbol = symbols[0] if len(symbols) == 1 else ""
+            trade_id = trade_ids[0] if len(trade_ids) == 1 else ""
+            if not (6 <= len(symbol) <= 32 and symbol.endswith("USDT")
+                    and symbol.isascii() and symbol.isupper() and symbol.isalnum()
+                    and 1 <= len(trade_id) <= 128 and trade_id.isascii()
+                    and all(c.isalnum() or c in "-_" for c in trade_id)):
+                self._json_response(400, {"ok": False, "error": "invalid_marker_request"})
+                return
+            try:
+                result = self.server.runtime.call(
+                    lambda runtime: _robot_position_markers(
+                        runtime, symbol, trade_id, int(time.time() * 1000),
+                    )
+                )
+            except Exception:
+                LOGGER.exception("Robot position markers unavailable")
+                self._json_response(503, {"ok": False, "error": "robot_markers_unavailable"})
+                return
+            self._json_response(200 if result["ok"] else 404, result)
             return
 
         if parsed.path == "/api/robot/day-summary":
