@@ -192,6 +192,16 @@ try {
     "M5 native timeframe must never use the H1-only shortened projection");
   assert.equal(await overlay.getAttribute("data-m5-h1-spans"), "[]",
     "M5's own blue reference must never inherit the H1 visual cap");
+  const m5RayEnds = JSON.parse(await overlay.getAttribute("data-active-m5-ray-ends") ?? "[]");
+  assert.ok(m5RayEnds.length > 0,
+    "real GRASS first confirmed blue reference must render as an active M5 ray");
+  for (const ray of m5RayEnds) {
+    assert.ok(ray.end_x <= ray.pane_width &&
+      ray.end_x >= ray.last_candle_x &&
+      ray.end_x - ray.last_candle_x <= 36.01,
+    "active blue M5 ray must stop near last price candle: " + JSON.stringify(ray));
+  }
+  console.log("REAL_ACTIVE_M5_RAY_SHORT_OK " + JSON.stringify(m5RayEnds));
 
   for (const { event, i, opposite } of proven) {
     const index = byEventTime.get(event.confirmed_at_ms);
