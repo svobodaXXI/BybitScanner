@@ -161,6 +161,7 @@ describe("standalone SIMULATION viewer contract", () => {
     const base = Date.UTC(2026, 7, 31, 0);
     const m5 = 300_000;
     const events = Array.from({ length: 36 }, (_, index) => ({
+      source: "SIMULATION" as const,
       kind: "CANDLE_CLOSED" as const,
       time_ms: base + (index + 1) * m5,
       sequence: index + 1, simulation_run_id: "utc_seek",
