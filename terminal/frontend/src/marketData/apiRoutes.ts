@@ -20,6 +20,8 @@ export const marketApiRoutes = {
   health: "/api/health",
   robotAutopilot: "/api/robot/autopilot",
   robotState: "/api/robot/state",
+  robotStop: "/api/robot/stop",
+  runtimeIntent: "/api/runtime/intent",
   scannerStatus: "/api/scanner/status",
   robotProtectionHealth: "/api/robot/protection-health",
 };
