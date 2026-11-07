@@ -455,12 +455,14 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
                     text=caption, chart_path=chart,
                     geometry=good, frozen_candles=Candles(),
                 )
-                self.assertIsNone(handle2)
+                self.assertIsNotNone(handle2)
+                self.assertNotEqual(f"source-original:{handle2}", source_id)
                 self.assertIsNone(load_frozen_signal_geometry(source_id))
+                self.assertIsNotNone(load_frozen_signal_geometry(f"source-original:{handle2}"))
                 editor = notification.build_tradingview_keyboard(
-                    "BTCUSDT", "5", signal_id=handle2,
+                    "BTCUSDT", "5", signal_id=f"source-original:{handle2}",
                 )["inline_keyboard"][-1][0]
-                self.assertEqual(editor["callback_data"], "workspace:EDITOR:BTCUSDT:5m")
+                self.assertEqual(editor["callback_data"], f"workspace:EDITOR:S:{handle2}")
 
 
 if __name__ == "__main__":
