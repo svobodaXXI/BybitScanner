@@ -1402,7 +1402,7 @@ export function App() {
                 || review.snapshot_revision !== frozenSignal.snapshotRevision
                 || review.bars_sha256 !== frozenSignal.barsSha256)
               throw new Error("Несовпадение исходного сигнала");
-            const verifiedReceipt = (record: any) =>
+            const verifiedReceipt = (record: { review_id?: unknown; submission?: unknown } | null | undefined) =>
               typeof record?.review_id === "string"
               && /^[0-9a-f]{64}$/.test(record.review_id)
               && matchesStoredGeometryReview(review, record.submission)
