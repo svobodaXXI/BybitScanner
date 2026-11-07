@@ -70,6 +70,7 @@ export type ReplayGeometry = {
   trend_version: number;
   /** Original structural extrema; fitted wick anchors must not replace them. */
   source_pivots?: ReplayPivot[];
+  envelope_status?: "STRUCTURAL_ONLY" | "WICK_TIGHT";
   classification: "UNVALIDATED_GEOMETRY_ONLY";
 };
 /** A completed M5 whose OPEN crossed the previously known active blue reference. */
@@ -420,11 +421,20 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
         })();
       if (kind === "ACCELERATION_5M" && !source_pivots)
         throw new Error("Ускорение без четырёх подтверждённых M5-пивотов");
+      const envelope_status = item.envelope_status;
+      if (envelope_status !== undefined &&
+          (kind !== "MAIN_1H" && kind !== "TARGET_1H" ||
+           envelope_status !== "STRUCTURAL_ONLY" && envelope_status !== "WICK_TIGHT")) {
+        throw new Error("Неверный статус соответствия линии теням H1");
+      }
+      if (envelope_status === "STRUCTURAL_ONLY" && !source_pivots)
+        throw new Error("Структурная H1 линия без четырёх исходных пивотов");
       previousAvailable = available_at_ms;
       return {
         kind, side, available_at_ms, from_ms, to_ms, from_price, to_price,
         trend_version,
         ...(source_pivots ? { source_pivots } : {}),
+        ...(envelope_status ? { envelope_status } : {}),
         classification: "UNVALIDATED_GEOMETRY_ONLY" as const,
       };
     });
