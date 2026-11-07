@@ -220,7 +220,7 @@ try {
   await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
   await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 160 } });
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
-  const undo = page.getByRole("button", { name: "Отменить последнюю фигуру" });
+  const undo = page.getByRole("button", { name: "Отменить последнее действие" });
   assert.equal(await undo.isDisabled(), false);
   assert.equal(await undo.locator('svg[data-tool-icon="undo"] path').count(), 1);
   // One-shot drawing: completion must restore crosshair, not start the next line.
@@ -230,6 +230,21 @@ try {
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "2");
   await undo.click();
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
+  assert.equal(await undo.getAttribute("data-undo-depth"), "1");
+  // A whole drag is exactly ONE undo action (not one for every pointermove).
+  await page.getByRole("button", { name: "Редактировать", exact: true }).click();
+  const drawingCanvas = page.locator(".replay-drawing-layer canvas");
+  const bounds = await drawingCanvas.boundingBox();
+  assert.ok(bounds, "editing overlay must have a usable browser viewport");
+  await page.mouse.move(bounds.x + 280, bounds.y + 160);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + 280, bounds.y + 196, { steps: 8 });
+  await page.mouse.up();
+  assert.equal(await undo.getAttribute("data-undo-depth"), "2", "one drag = one history entry");
+  await undo.click();
+  assert.equal(await undo.getAttribute("data-undo-depth"), "1");
+  assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1",
+    "Undo restores the moved line rather than deleting it");
   await page.getByRole("button", { name: "H1", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
