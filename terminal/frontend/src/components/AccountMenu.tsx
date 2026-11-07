@@ -3,6 +3,7 @@ import { marketApiRoutes } from "../marketData/apiRoutes";
 import { accountWorkspaceStore } from "../accountWorkspace/accountWorkspaceStore";
 import type { AccountWorkspaceProjection } from "../accountWorkspace/accountWorkspaceStore";
 import { manualMainReadProjection } from "../accountWorkspace/manualMainReadProjection";
+import type { AccountMode, ModeAccountDescriptor } from "../accountWorkspace/modeAccountSelection";
 import { LiveAccountInventory } from "./LiveAccountInventory";
 import {
   dismissPopupFromBackdrop,
@@ -52,11 +53,16 @@ function validCatalog(value: unknown): value is AccountCatalog {
 
 export function AccountMenu({
   open, onToggle, workspaceProjection = null, onActiveAccountChange,
+  mode, selectedAccountId, onSelectAccount, modeAccountError,
 }: {
   open: boolean;
   onToggle: () => void;
   workspaceProjection?: AccountWorkspaceProjection | null;
   onActiveAccountChange?: (account: { id: string; name: string } | null) => void;
+  mode?: AccountMode;
+  selectedAccountId?: string | null;
+  onSelectAccount?: (mode: AccountMode, account: ModeAccountDescriptor) => Promise<void>;
+  modeAccountError?: string | null;
 }) {
   const [catalog, setCatalog] = useState<AccountCatalog | null>(null);
   const [catalogError, setCatalogError] = useState(false);
@@ -153,8 +159,9 @@ export function AccountMenu({
   }, []);
 
   useEffect(() => {
-    if (open) void refreshManualMain();
-  }, [open]);
+    if (open || (mode === "TERMINAL" && selectedAccountId?.startsWith("bybit-")))
+      void refreshManualMain();
+  }, [open, mode, selectedAccountId]);
 
   useEffect(() => {
     if (!open || (catalog && !catalogError)) return;
@@ -174,9 +181,14 @@ export function AccountMenu({
   }, [onToggle, open]);
 
   const active = catalog?.accounts.find((account) => account.id === catalog.active_account_id) ?? null;
+  const selected = mode
+    ? [...(catalog?.accounts ?? []), ...manualMain].find((account) => account.id === selectedAccountId) ?? null
+    : active;
+  const selectedVerified = !mode || Boolean(workspaceProjection &&
+    workspaceProjection.account_id === selectedAccountId);
   useEffect(() => {
-    onActiveAccountChange?.(active ? { id: active.id, name: active.display_name } : null);
-  }, [active?.display_name, active?.id, onActiveAccountChange]);
+    onActiveAccountChange?.(selected ? { id: selected.id, name: selected.display_name } : null);
+  }, [selected?.display_name, selected?.id, onActiveAccountChange]);
   const closeAdd = () => {
     setAddOpen(false);
     setName("");
@@ -239,6 +251,12 @@ export function AccountMenu({
     setSwitching(true);
     setSwitchError("");
     try {
+      if (mode) {
+        if (!onSelectAccount) throw new Error("mode_selection_unavailable");
+        await onSelectAccount(mode, confirmAccount);
+        setConfirmAccount(null);
+        return;
+      }
       if (confirmAccount.provider === "BYBIT"
         && !["READY", "READ_ONLY"].includes(confirmAccount.status)) {
         if (!["DISCONNECTED", "ERROR"].includes(confirmAccount.status)) {
@@ -290,10 +308,12 @@ export function AccountMenu({
           <span className="account-key-shaft" />
         </span> : null}
         <span className="account-switch-label">
-          <strong>{active
-            ? active.provider === "PAPER" ? "PAPER" : active.display_name
-            : catalogError ? "UNAVAILABLE" : "LOADING"}</strong>
-          <small>{active ? `${active.provider} · ${active.status}` : "ACCOUNT STATUS"}</small>
+          <strong>{selected && selectedVerified
+            ? selected.provider === "PAPER" ? "PAPER" : selected.display_name
+            : mode ? "UNAVAILABLE" : catalogError ? "UNAVAILABLE" : "LOADING"}</strong>
+          <small>{selected && selectedVerified
+            ? `${selected.provider} · ${selected.status}`
+            : mode ? "SELECTED ACCOUNT UNAVAILABLE" : "ACCOUNT STATUS"}</small>
         </span>
       </TradingControlButton>
       {balanceOpen ? (
@@ -328,22 +348,25 @@ export function AccountMenu({
               <strong>Accounts</strong>
               <button aria-label="Close Accounts" className="account-menu-close" onClick={onToggle} type="button">×</button>
             </header>
-            {catalogError || !catalog || !active ? <p role="alert">Account catalog unavailable</p> : catalog.accounts.map((account) => (
+            {catalogError || !catalog || !active ? <p role="alert">Account catalog unavailable</p> : catalog.accounts
+              .filter((account) => !mode || account.provider === "PAPER")
+              .map((account) => (
               <article
                 className={`account-card ${account.environment.toLowerCase()} status-${account.status.toLowerCase()}`}
                 key={account.id}
-                onClick={() => account.id !== catalog.active_account_id && !switching && setConfirmAccount(account)}
+                onClick={() => account.id !== (mode ? selectedAccountId : catalog.active_account_id)
+                  && !switching && setConfirmAccount(account)}
               >
                 <div className="account-card-title">
                   <strong>{account.display_name}</strong>
-                  {account.id === catalog.active_account_id ? <span
+                  {account.id === (mode ? selectedAccountId : catalog.active_account_id) ? <span
                     aria-label="Current account golden key"
                     className="account-switch-key account-current-key"
                     role="img"
                   ><span className="account-key-head" /><span className="account-key-shaft" /></span> : null}
                 </div>
                 <small>{account.provider} · {account.environment} · {account.status}</small>
-                {account.id === catalog.active_account_id ? <span>Current</span> : null}
+                {account.id === (mode ? selectedAccountId : catalog.active_account_id) ? <span>Current</span> : null}
                 {refreshError[account.id] ? <small className="account-refresh-error" role="alert">{refreshError[account.id]}</small> : null}
                 {account.provider === "BYBIT" ? <button
                   className="account-refresh-button"
@@ -357,7 +380,11 @@ export function AccountMenu({
               <article className="account-card mainnet" key={account.id} aria-label="Manual MAIN account">
                 <strong>{account.display_name}</strong>
                 <small>BYBIT · MAINNET · {account.status} · Separate MAIN service</small>
-                <small>Read-only in this terminal. Trading and account switching are not enabled yet.</small>
+                <small>Read-only MAIN. Real order execution remains disabled.</small>
+                {mode === "TERMINAL" && account.id !== selectedAccountId ? (
+                  <button type="button" disabled={switching}
+                    onClick={() => setConfirmAccount(account)}>Select MAIN (read-only)</button>
+                ) : null}
                 <button type="button" disabled={mainInventoryLoading === account.id}
                   onClick={() => void openMainInventory(account)}>
                   {mainInventoryLoading === account.id ? "Loading positions…" : "All MAIN positions"}
@@ -378,6 +405,7 @@ export function AccountMenu({
               </article>
             ))}
             {mainInventoryError ? <small role="alert">{mainInventoryError}</small> : null}
+            {modeAccountError ? <small role="alert">{modeAccountError}</small> : null}
             {manualMainUnavailable ? <small role="status">Separate MAIN service unavailable; PAPER unchanged.</small> : null}
             <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add MAIN account</button>
           </section>
@@ -396,7 +424,9 @@ export function AccountMenu({
             <header><strong>Switch workspace account?</strong></header>
             <p>{confirmAccount.display_name}</p>
             <small>{confirmAccount.provider} · {confirmAccount.environment} · {confirmAccount.status}</small>
-            <p>The entire account-scoped workspace will switch. LIVE trading remains disabled.</p>
+            <p>{mode
+              ? "Only this mode's account preference changes. MAIN is read-only; LIVE remains disabled."
+              : "The entire account-scoped workspace will switch. LIVE trading remains disabled."}</p>
             {switchError ? <p role="alert">{switchError}</p> : null}
             <div className="account-switch-confirm-actions">
               <button className="account-switch-confirm-accept" disabled={switching || confirmAccount.status === "RECONCILING"} onClick={() => void activateAccount()} type="button">

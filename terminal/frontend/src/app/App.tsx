@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { ChartPanel } from "../components/ChartPanel";
 import { DomPanel } from "../components/DomPanel";
 import { ModePanel, type WorkspaceMode } from "../components/ModePanel";
+import { scopedProjection, useModeAccountSelection } from "../accountWorkspace/modeAccountSelection";
 import { TapePanel } from "../components/TapePanel";
 import { WorkspaceHeader } from "../components/WorkspaceHeader";
 import {
@@ -291,7 +292,16 @@ export function App() {
   }, [mode, launchLink, frozenSignal, tradingSymbol, timeframe, market.candles]);
   const { paperState, pendingActions } = usePaperTrading(tradingSymbol);
   const accountWorkspace = useAccountWorkspace(tradingSymbol);
-  const accountProjection = accountWorkspace.projection;
+  const modeAccountSelection = useModeAccountSelection();
+  const selectedModeAccountId = mode === "AUTOPILOT"
+    ? modeAccountSelection.preferences.AUTOPILOT : modeAccountSelection.preferences.TERMINAL;
+  // Never use the process-global active account as authority for another mode.
+  // MAIN is a separate READ-ONLY projection; all manual trading flags stay false.
+  const accountProjection = mode === "EDITOR" ? accountWorkspace.projection
+    : modeAccountSelection.ready && !modeAccountSelection.pending
+      ? scopedProjection(mode, selectedModeAccountId,
+          accountWorkspace.projection, modeAccountSelection.mainProjection)
+      : null;
   const mutationsAllowed = !accountWorkspace.switching
     && accountProjection?.provider === "PAPER"
     && accountProjection.environment === "PAPER"
@@ -1735,6 +1745,9 @@ export function App() {
           accountOpen={accountOpen}
           onAccountToggle={() => setAccountOpen((open) => !open)}
           accountWorkspaceProjection={accountProjection}
+          modeAccountId={selectedModeAccountId}
+          onModeAccountSelect={modeAccountSelection.selectAccount}
+          modeAccountError={modeAccountSelection.error}
           mutationsAllowed={mutationsAllowed}
           liveMarketAllowed={liveMarketAllowed}
           liveLimitAllowed={liveLimitAllowed}

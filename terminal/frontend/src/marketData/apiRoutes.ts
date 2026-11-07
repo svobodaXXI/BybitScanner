@@ -1,5 +1,6 @@
 export const marketApiRoutes = {
   accounts: "/api/accounts",
+  modeAccountPreferences: "/api/accounts/mode-preferences",
   manualMainAccounts: "/api/manual-main/accounts",
   manualMainRefresh: (accountId: string) => `/api/manual-main/accounts/${encodeURIComponent(accountId)}/refresh`,
   manualMainSummary: (accountId: string) => `/api/manual-main/accounts/${encodeURIComponent(accountId)}/summary`,
