@@ -256,6 +256,58 @@ def _diary_trade_list(runtime: PaperRuntime) -> dict[str, object]:
     }
 
 
+
+def _robot_journal(runtime: PaperRuntime, symbol: str, now_ms: int) -> dict[str, object]:
+    """Bounded read-only timeline from the canonical PAPER Robot trade ledger.
+
+    Entries are recorded lifecycle facts, NOT per-fill executions. In particular
+    average_entry is not an execution marker price. Do not invent WAIT/RETEST,
+    ownership transfers or partial fill events that the ledger does not store.
+    """
+    since_ms = now_ms - 7 * 24 * 60 * 60 * 1000
+    rows = runtime.store.load_robot_trades_with_events_since(
+        TradingAccountId("paper"), since_ms,
+    )
+    matches = [trade for trade in rows if trade.symbol.value == symbol]
+    matches = sorted(matches, key=lambda trade: (trade.entry_time_ms, trade.trade_id))[-8:]
+    events: list[dict[str, object]] = []
+    for trade in matches:
+        if 0 < trade.signal_time_ms <= now_ms:
+            events.append({
+                "trade_id": trade.trade_id,
+                "time_ms": trade.signal_time_ms,
+                "kind": "SIGNAL_RECORDED",
+                "pattern": trade.pattern,
+            })
+        if (trade.entry_quantity is not None and trade.entry_quantity > 0
+                and 0 < trade.entry_time_ms <= now_ms and trade.average_entry > 0):
+            events.append({
+                "trade_id": trade.trade_id,
+                "time_ms": trade.entry_time_ms,
+                "kind": "POSITION_OPENED",
+                "price": str(trade.average_entry),
+                "quantity": str(trade.entry_quantity),
+                "direction": trade.direction,
+            })
+        if (trade.exit_time_ms is not None and trade.exit_price is not None
+                and 0 < trade.exit_time_ms <= now_ms and trade.exit_price > 0):
+            events.append({
+                "trade_id": trade.trade_id,
+                "time_ms": trade.exit_time_ms,
+                "kind": "POSITION_CLOSED",
+                "price": str(trade.exit_price),
+                "reason": trade.exit_reason,
+            })
+    events.sort(key=lambda event: (event["time_ms"], event["trade_id"], event["kind"]))
+    return {
+        "account_id": "paper",
+        "source": "robot_trades",
+        "symbol": symbol,
+        "events": events[-24:],
+    }
+
+
+
 def _robot_day_summary(runtime: PaperRuntime, now_ms: int) -> dict[str, object]:
     """Read only the canonical PAPER Robot ledger; no Diary/manual attribution guesses."""
     day_ms = 24 * 60 * 60 * 1000
@@ -3080,6 +3132,25 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     "scanner_acceptance_ready": _scanner_acceptance_ready(),
                 },
             )
+            return
+
+        if parsed.path == "/api/robot/journal":
+            symbols = parse_qs(parsed.query).get("symbol", [])
+            symbol = symbols[0] if len(symbols) == 1 else ""
+            if not (6 <= len(symbol) <= 32 and symbol.endswith("USDT")
+                    and symbol.isascii() and symbol.isupper() and symbol.isalnum()):
+                self._json_response(400, {"ok": False, "error": "invalid_symbol"})
+                return
+            try:
+                now_ms = int(time.time() * 1000)
+                projection = self.server.runtime.call(
+                    lambda runtime: _robot_journal(runtime, symbol, now_ms)
+                )
+            except Exception:
+                LOGGER.exception("Robot journal projection unavailable")
+                self._json_response(503, {"ok": False, "error": "robot_journal_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
             return
 
         if parsed.path == "/api/robot/day-summary":
