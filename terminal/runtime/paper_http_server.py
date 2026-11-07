@@ -89,6 +89,7 @@ from terminal.persistence.credential_store import (
 )
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
 from terminal.persistence.active_account_preference import ActiveAccountPreferenceStore
+from terminal.persistence.mode_account_preference import ModeAccountPreferenceStore, ModeAccountPreferenceError
 from terminal.application.live_account_reconciliation import LiveAccountReconciliationError
 from terminal.application.runtime_intent import RuntimeIntent, RuntimeIntentReconciler
 from terminal.application.robot_control import ROBOT_CLOSE_ALL_ALLOWED_STATES, RobotControlRejected, stop_robot
@@ -145,6 +146,7 @@ LIVE_PROTECTION_FIELDS = {
 LIVE_FULL_CLOSE_FIELDS = FULL_CLOSE_FIELDS | LIVE_AUTHORITY_FIELDS
 ACCOUNT_CREATE_FIELDS = {"display_name", "api_key", "api_secret"}
 ACCOUNT_ACTIVATE_FIELDS = {"expected_active_account_id", "expected_session_generation"}
+MODE_ACCOUNT_FIELDS = {"mode", "account_id"}
 PAPER_UNSAFE_LIVE_FLAGS = (
     "live_market_mutations_enabled", "live_mainnet_authorized",
     "live_market_acceptance_single_flight", "live_parity_mutations_enabled",
@@ -3247,6 +3249,17 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **catalog})
             return
 
+        if parsed.path == "/api/accounts/mode-preferences":
+            try:
+                preferences = self.server.runtime.call(
+                    lambda runtime: runtime.mode_account_preferences()
+                )
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "mode_account_preferences_unavailable"})
+                return
+            self._json_response(200, {"ok": True, "preferences": preferences})
+            return
+
         if parsed.path == "/api/diary/trades":
             try:
                 projection = self.server.runtime.call(_diary_trade_list)
@@ -3975,6 +3988,35 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 return
             self._json_response(200, {"ok": True, "session": to_primitive(result)})
             return
+        if path == "/api/accounts/mode-preferences":
+            try:
+                payload = self._payload(MODE_ACCOUNT_FIELDS)
+                result = self.server.runtime.call(
+                    lambda runtime: runtime.save_mode_account_preference(
+                        payload["mode"], payload["account_id"]
+                    )
+                )
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_mode_account_payload"})
+                return
+            except LookupError:
+                self._json_response(404, {"ok": False, "error": "account_not_found"})
+                return
+            except RuntimeError as exc:
+                error = str(exc)
+                if error not in {
+                    "autopilot_account_not_supported", "account_activation_not_ready",
+                    "live_account_snapshot_unavailable",
+                }:
+                    error = "mode_account_preference_rejected"
+                self._json_response(409, {"ok": False, "error": error})
+                return
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "mode_account_preferences_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **result})
+            return
+
         account_activate_id = _account_route_id(urlparse(self.path).path, "activate")
         if account_activate_id is not None:
             try:
@@ -4774,6 +4816,7 @@ def create_configured_paper_runtime(
     account_validator_factory=BybitAccountValidator,
     live_account_store_factory=LiveAccountProjectionStore,
     active_account_preference_store_factory=ActiveAccountPreferenceStore,
+    mode_account_preference_store_factory=ModeAccountPreferenceStore,
     live_adapter_factory=None,
     live_mutation_adapter_factory=BybitV5MutationAdapter,
     live_market_mutations_enabled: bool = False,
@@ -4802,6 +4845,9 @@ def create_configured_paper_runtime(
         ),
         active_account_preference_store=active_account_preference_store_factory(
             database_path.with_suffix(".active_account.json")
+        ),
+        mode_account_preference_store=mode_account_preference_store_factory(
+            database_path.with_suffix(".mode_account_preferences.json")
         ),
         live_adapter_factory=live_adapter_factory,
         live_mutation_adapter_factory=live_mutation_adapter_factory,
