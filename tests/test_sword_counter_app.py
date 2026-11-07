@@ -450,6 +450,23 @@ class ConnectionControllerTests(unittest.TestCase):
         self.assertNotIn(FAKE_SECRET, outcome.message)
         self.assertEqual(fake_store.saves, [])
 
+    def test_credential_store_error_never_displays_secret(self):
+        from tools.SwordCounter.bybit_positions import BybitPositionsError
+
+        controller, fake_store, _seen, jobs = self.make()
+        controller.start_check(FAKE_KEY, FAKE_SECRET)
+        jobs.pop()()
+        self.assertTrue(controller.poll().ok)
+
+        def fail_save(_credentials):
+            raise BybitPositionsError(f"Storage failed for {FAKE_SECRET}")
+        fake_store.save = fail_save
+        outcome = controller.save(FAKE_KEY, FAKE_SECRET)
+        self.assertFalse(outcome.ok)
+        self.assertIn("BybitPositionsError", outcome.message)
+        self.assertNotIn(FAKE_SECRET, outcome.message)
+        self.assertNotIn("Storage failed", outcome.message)
+
     def test_real_check_uses_only_the_two_read_only_endpoints(self):
         self.assertIs(ConnectionController(FakeCredentialStore())._verify, setup_keys.verify_key)
         source = Path(connection.__file__).read_text(encoding="utf-8")
