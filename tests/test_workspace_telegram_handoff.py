@@ -408,8 +408,8 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
                 self.assertIsNone(load_frozen_signal_geometry(
                     "source-original:" + "f" * 24))
 
-    def test_editor_source_id_not_advertised_for_image_only_or_old_incomplete_archive(self):
-        """Original PNG remains available, but unavailable frozen rays get no exact Editor link."""
+    def test_image_only_archive_unchanged_when_later_valid_geometry_gets_new_identity(self):
+        """No phantom link for the first image; a distinct validated source is independently reopenable."""
         import hashlib
         import notification
         import tempfile
@@ -439,8 +439,8 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
                 self.assertEqual(archived_image, image)
                 self.assertIsNotNone(load_original_signal([source_id]))
                 self.assertIsNone(load_frozen_signal_geometry(source_id))
-                # The first archived image is immutable, even if a later retry
-                # presents valid geometry. It must not create a phantom link.
+                # A later validated geometry is a DIFFERENT source identity.
+                # The immutable first image-only record must never gain phantom rays.
                 class Candles:
                     def itertuples(self, index=False):
                         return iter((
@@ -458,12 +458,16 @@ class WorkspaceTelegramHandoffTests(unittest.TestCase):
                     text=caption, chart_path=chart,
                     geometry=good, frozen_candles=Candles(),
                 )
-                self.assertIsNone(handle2)
+                self.assertIsNotNone(handle2)
+                new_source_id = f"source-original:{handle2}"
+                self.assertNotEqual(new_source_id, source_id)
                 self.assertIsNone(load_frozen_signal_geometry(source_id))
-                editor = notification.build_tradingview_keyboard(
-                    "BTCUSDT", "5", signal_id=handle2,
-                )["inline_keyboard"][-1][0]
-                self.assertEqual(editor["callback_data"], "workspace:EDITOR:BTCUSDT:5m")
+                self.assertIsNotNone(load_frozen_signal_geometry(new_source_id))
+                editor, terminal = notification.build_tradingview_keyboard(
+                    "BTCUSDT", "5", signal_id=new_source_id,
+                )["inline_keyboard"][-1]
+                self.assertEqual(editor["callback_data"], f"workspace:EDITOR:S:{handle2}")
+                self.assertEqual(terminal["callback_data"], f"workspace:TERMINAL:S:{handle2}")
 
 
 if __name__ == "__main__":
