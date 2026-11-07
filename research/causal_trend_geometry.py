@@ -481,6 +481,28 @@ class CausalGeometryFeed:
             self._last_prior_candidate_touch_ms = line.second.at_ms
             self._prior_candidates = []
             return
+        # Owner H1 BEAR rule: once a NEW fully confirmed LH+LL publishes a
+        # descending structural version, its confirmed lower HIGH becomes
+        # BOTH the yellow line's newer support and the purple prior. The
+        # same-origin case was previously missed because candidate scanning
+        # started strictly AFTER line.second; thus the new actual pivot was
+        # never considered. Do not publish from a mere HIGH wick / lone LH.
+        if (
+            trend.side == "BEAR"
+            and self._prior_touch_ms is not None
+            and line.second.at_ms > self._prior_touch_ms
+            and self._prior_price is not None
+            and line.second.price < self._prior_price
+            and trend.available_at_ms <= closed_at_ms
+            and trend.pivot_sequence[3].kind == "LOW"
+            and trend.pivot_sequence[3].confirmed_at_ms <= closed_at_ms
+        ):
+            self._prior_price = line.second.price
+            self._prior_touch_ms = line.second.at_ms
+            self._prior_trend_version = trend.available_at_ms
+            self._last_prior_candidate_touch_ms = line.second.at_ms
+            self._prior_candidates = []
+            return
         # The PURPLE prior follows new confirmed H1 touches of the already
         # frozen 1--3 line; it does not need a newly refitted yellow 1--3/2--4.
         # A wick-pierced H1 proposal must be rejected, but that rejection
