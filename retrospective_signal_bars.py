@@ -9,7 +9,6 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import time
 
-import requests
 
 from signal_geometry_snapshot import canonical_bytes, validate_snapshot
 
@@ -104,6 +103,10 @@ def fetch_closed_extension(
     count = (cutoff - last) // period
     if count > MAX_EXTENSION_BARS or len(snapshot["bars"]) + count > 2000:
         raise RetrospectiveBarsError("retrospective_range_too_large")
+    try:
+        import requests  # only during an explicit server-side market-data fetch
+    except ImportError as exc:
+        raise RetrospectiveBarsError("retrospective_history_unavailable") from exc
     try:
         http = session or requests
         response = http.get(
