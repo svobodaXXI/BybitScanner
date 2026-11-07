@@ -234,7 +234,8 @@ def _deliver(event, send, key, stage, chat_id, test_mode, root):
         result.update(ok=ok, message_id=message_id)
     except Exception as error:
         ok = False
-        result.update(ok=False, error=str(error)[:200])
+        # Error messages from transports may contain request URLs or secrets.
+        result.update(ok=False, error=type(error).__name__)
     append_event(result, root)
     return ok
 
