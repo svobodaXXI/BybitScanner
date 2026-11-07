@@ -117,6 +117,20 @@ describe("manual replay UTC drawing anchors", () => {
       .toEqual(before); // A future wick cannot affect the older replay cursor.
     expect(line.to_ms).toBe(start + 3 * hour);
     expect(line.to_price).toBe(110); // Structural pivot 3 is immutable.
+    // A real version published at hour 4 cannot be re-fitted by an hour-4
+    // wick closing at hour 5. This is the owner's "no new lower low / higher
+    // high = no new slope" scenario, even when the candle crosses the line.
+    const published = { ...line, available_at_ms: start + 4 * hour };
+    const frozen = wickTightH1MainProjection(published, bars.slice(0, 4),
+      start + 4 * hour);
+    expect(frozen.adjusted).toBe(false);
+    expect(wickTightH1MainProjection(published, bars, start + 6 * hour))
+      .toEqual(frozen);
+    // When the detector actually publishes a NEW four-pivot version, it
+    // may incorporate the then-closed protruding wick. No retroactive move.
+    const revised = { ...published, available_at_ms: start + 5 * hour };
+    expect(wickTightH1MainProjection(revised, bars, start + 5 * hour))
+      .toEqual(after);
     const target = { ...line, kind: "TARGET_1H" };
     expect(wickTightH1MainProjection(target, bars, start + 6 * hour).adjusted)
       .toBe(false);
