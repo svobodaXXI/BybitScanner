@@ -101,56 +101,28 @@ export function chartXAtCandleTime(
 }
 
 /**
- * Keep the first H1 movement wick fixed, but pivot the VISIBLE main support/
- * resistance ray onto the most protruding already-closed H1 wick. The four
- * structural pivots and canonical publication remain unchanged. A later
- * candle may tighten a published VERSION only if it was already closed
- * when that four-pivot version was published. Later candles must not silently
- * redraw it: only a NEW confirmed structure may publish a replacement.
+ * Draw a published H1 MAIN through its TWO genuinely confirmed swing wicks.
+ * The Python causal feed validated the full four-pivot structure including
+ * intervening candles. Later wicks cannot become retroactive structural
+ * anchors and must not silently rotate a published yellow line.
  *
- * BULL main is below lows (minimum slope); BEAR main above highs
- * (maximum slope). Later price crossing the fixed line is observable
- * evidence of a break, not permission to retrofit the past.
+ * In real GRASS, the old screen-space wick envelope silently replaced the
+ * 30 Aug 15:00 LOW=0.35890 with the unconfirmed 30 Aug 23:00 LOW=0.34890.
+ * That erased the owner's valid rising III support and disguised its break.
+ * A new slope requires a NEW separately published four-pivot version.
  */
 export function wickTightH1MainProjection(
   line: { kind: string; side: "BULL" | "BEAR";
     from_ms: number; to_ms: number; from_price: number; to_price: number;
     available_at_ms?: number },
-  closedHours: readonly ReplayCandle[],
-  knownAtMs: number,
+  _closedHours: readonly ReplayCandle[],
+  _knownAtMs: number,
 ): { from_ms: number; to_ms: number; from_price: number; to_price: number;
      adjusted: boolean } {
-  const original = {
+  return {
     from_ms: line.from_ms, to_ms: line.to_ms,
     from_price: line.from_price, to_price: line.to_price, adjusted: false,
   };
-  if (line.kind !== "MAIN_1H" || !Number.isFinite(knownAtMs) ||
-      line.to_ms <= line.from_ms) return original;
-  // A visual version is immutable once published. The H1 source has already
-  // gated publication on four confirmed structural extrema (including lower
-  // low for BEAR or higher high for BULL). An unconfirmed later wick is NOT
-  // a new trend version and cannot trigger another revision.
-  const publishedCutoff = Math.min(knownAtMs, line.available_at_ms ?? knownAtMs);
-  let slope = (line.to_price - line.from_price) / (line.to_ms - line.from_ms);
-  let supporting: ReplayCandle | undefined;
-  for (const bar of closedHours) {
-    if (bar.start_ms <= line.from_ms || bar.end_ms > publishedCutoff) continue;
-    const wick = line.side === "BULL" ? bar.low : bar.high;
-    const candidateSlope = (wick - line.from_price) / (bar.start_ms - line.from_ms);
-    if ((line.side === "BULL" && candidateSlope < slope - 1e-18) ||
-        (line.side === "BEAR" && candidateSlope > slope + 1e-18)) {
-      slope = candidateSlope;
-      supporting = bar;
-    }
-  }
-  // The original first anchor is immutable. A real closed candle, not an
-  // invented pivot or a backdated future candle, supplies the new second tip.
-  return supporting
-    ? { from_ms: line.from_ms, to_ms: supporting.start_ms,
-        from_price: line.from_price,
-        to_price: line.side === "BULL" ? supporting.low : supporting.high,
-        adjusted: true }
-    : original;
 }
 
 export function shortActiveM5Ray(
