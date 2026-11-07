@@ -978,9 +978,13 @@ def test_next_update_auto_seals_only_proven_installed_successor(
     for p in (root, stage, journal):
         p.mkdir()
     old, prior, target = "c" * 40, "b" * 40, "a" * 40
+    journal.chmod(0o700)
     marker = journal / (".stop-invoked-" + prior)
     marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
     marker.chmod(0o600)
+    handoff = journal / (".one-flat-handoff-handoff-proven-" + prior)
+    handoff.write_text(old + "\\n")
+    handoff.chmod(0o600)
     monkeypatch.setattr(release, "verify_release", lambda *_: old)
     monkeypatch.setattr(maintenance, "_proven_one_flat_successor",
                         lambda *_args, **_kw: True)
