@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, replayCursorAtUtc, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, replayCursorAtUtc, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, displayGeometryVersions, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -12,7 +12,7 @@ import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from
 import { rayEndPoint } from "../chart/drawingGeometry";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
-import { automaticGeometryTimeframeCap, chartLogicalAtTime, chartXAtCandleTime, drawingLogicalToTime, geometryLogicalSegment, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, shortActiveM5Ray, timeAtChartLogical, timeToDrawingLogical, wickTightH1MainProjection } from "./replayDrawingCoordinates";
+import { automaticGeometryTimeframeCap, chartLogicalAtTime, chartXAtCandleTime, drawingLogicalToTime, geometryLogicalSegment, forwardLinePaintStartMs, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, shortActiveM5Ray, timeAtChartLogical, timeToDrawingLogical, wickTightH1MainProjection } from "./replayDrawingCoordinates";
 import { ReplayDrawingUndo } from "./replayDrawingUndo";
 import {
   automaticLineStyle, lastM5AccelerationTimeline, visibleLastM5Accelerations,
@@ -243,7 +243,10 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       // DrawingOverlay's rayEndPoint extends the line to the price pane edge.
       // Never refit the line to the replayed price candles.
       const knownLines = visibleGeometry(document, shown.lastTimeMs);
-      const historicalLines = visibleGeometryHistory(document, shown.lastTimeMs);
+      const historicalLines = displayGeometryVersions(
+        visibleGeometryHistory(document, shown.lastTimeMs),
+        shown.lastTimeMs ?? -Infinity,
+      );
       // Both published and provisional history are immutable visual records:
       // a replaced slope cannot erase, relocate or backdate its predecessor.
       // Avoid double-painting an early guide with identical confirmed anchors.
@@ -284,8 +287,15 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         const endingAtMs = Math.min(
           stoppedAt, projectionCap, displayCandles.at(-1)!.end_ms,
         );
+        // Never paint towards grey prehistory; anchors remain original
+        // immutable structural pivots used to compute the precise slope.
+        const replayStartMs = document.events.find(event =>
+          event.kind === "CANDLE_CLOSED" && event.candle)?.candle?.start_ms ?? line.from_ms;
+        const paintFromMs = line.kind === "MAIN_1H" || line.kind === "TARGET_1H"
+          ? forwardLinePaintStartMs(line, replayStartMs)
+          : line.from_ms;
         const segment = geometryLogicalSegment(
-          { from_ms: line.from_ms, retired_at_ms: endingAtMs }, displayCandles,
+          { from_ms: paintFromMs, retired_at_ms: endingAtMs }, displayCandles,
         );
         if (!segment) continue;
         const projectedMain = wickTightH1MainProjection(
@@ -305,12 +315,12 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         const nativeBarX = (ms: number) =>
           api.timeScale().timeToCoordinate((ms / 1000) as UTCTimestamp);
         const x1 = isM5OnH1
-          ? chartXAtCandleTime(line.from_ms, displayCandles, nativeBarX)
+          ? chartXAtCandleTime(paintFromMs, displayCandles, nativeBarX)
           : api.timeScale().logicalToCoordinate(segment.from as Logical);
         const x2 = isM5OnH1
           ? chartXAtCandleTime(endingAtMs, displayCandles, nativeBarX)
           : api.timeScale().logicalToCoordinate(segment.to as Logical);
-        const y1 = candleSeries.priceToCoordinate(priceAt(line.from_ms));
+        const y1 = candleSeries.priceToCoordinate(priceAt(paintFromMs));
         const y2 = candleSeries.priceToCoordinate(priceAt(endingAtMs));
         if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
         // Only a confirmed retirement ends the line. Add a short VISUAL
