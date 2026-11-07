@@ -1599,8 +1599,17 @@ def _recover_active_ingress_overflow(
         return "BLOCKED: active_PAPER_recovery_preflight_or_transition_unproven; no_replay"
 
 
+class _MaintenanceParser(argparse.ArgumentParser):
+    """Keep CLI refusal visible even when PowerShell truncates stderr usage."""
+
+    def error(self, message: str) -> None:
+        # A parsing error is always before STOP intent, deployment and API calls.
+        # One bounded line survives SSH/PowerShell's native-command error surface.
+        self.exit(2, "BLOCKED: paper_maintenance_cli: " + message.replace("\n", " ")[:240] + "\n")
+
+
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Fail-closed one-action PAPER maintenance")
+    parser = _MaintenanceParser(description="Fail-closed one-action PAPER maintenance")
     parser.add_argument("sha")
     parser.add_argument("--env-file", type=Path, default=Path("/etc/bybitscanner/paper.env"))
     parser.add_argument("--wait-seconds", type=float, default=0)
