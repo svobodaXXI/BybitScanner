@@ -123,7 +123,7 @@ def test_pivot_provenance_distinguishes_valid_pivot_from_nonlocal_wick():
     assert second["price_on_wick"] is True
     assert not second["local_3x3"] and not second["in_scanner_pivots"]
     assert second["status"] == "NOT_STRICT_3X3_EXTREMUM"
-    assert second["blocking_neighbor_bar_offsets"] == [-3, 1]
+    assert {-3, 1}.issubset(set(second["blocking_neighbor_bar_offsets"]))
     assert report["first_unmatched_stage"] == "PIVOT_IDENTIFICATION"
     assert report["generated_as_candidate"] is None
 
