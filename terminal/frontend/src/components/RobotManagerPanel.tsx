@@ -28,7 +28,6 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState("");
   const [result, setResult] = useState("");
   const [busy, setBusy] = useState(false);
-  const [pending, setPending] = useState<"start" | "freeze" | "stop" | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -71,7 +70,6 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
   }, [refresh]);
 
   const execute = async (action: "start" | "freeze" | "stop") => {
-    setPending(null);
     if (busy) return;
     setBusy(true);
     setResult("");
@@ -123,17 +121,10 @@ export function RobotManagerPanel({ onClose }: { onClose: () => void }) {
         {result ? <p role="status">{result}</p> : null}
         <div className="robot-manager-actions">
           <button type="button" disabled={busy} onClick={() => void refresh().catch(() => setError("Диагностика недоступна."))}>Обновить</button>
-          <button type="button" disabled={busy || !snapshot} onClick={() => setPending("start")}>Запустить Robot</button>
-          <button type="button" disabled={busy || !snapshot || snapshot.autopilot === "OFF"} onClick={() => setPending("freeze")}>Отключить автовходы</button>
-          <button type="button" disabled={busy || !snapshot || snapshot.robot !== "ROBOT_RUNNING" || !["READY", "PAUSED"].includes(snapshot.recovery)} onClick={() => setPending("stop")}>Остановить Robot</button>
+          <button type="button" disabled={busy || !snapshot} onClick={() => void execute("start")}>Запустить Robot</button>
+          <button type="button" disabled={busy || !snapshot || snapshot.autopilot === "OFF"} onClick={() => void execute("freeze")}>Отключить автовходы</button>
+          <button type="button" disabled={busy || !snapshot || snapshot.robot !== "ROBOT_RUNNING" || !["READY", "PAUSED"].includes(snapshot.recovery)} onClick={() => void execute("stop")}>Остановить Robot</button>
         </div>
-        {pending ? <div className="robot-manager-confirm" role="group" aria-label="Подтверждение действия">
-          <p>{pending === "start" ? "Запустить Robot через штатный reconciler? PAPER_AUTO отдельно не включается."
-            : pending === "stop" ? "Остановить Robot штатной командой? При открытых Robot-сделках команда будет отклонена; защита позиций и Backend сохраняются."
-            : "Отключить новые автоматические входы? Robot и защита открытых позиций останутся активными."}</p>
-          <button type="button" disabled={busy} onClick={() => void execute(pending)}>Подтвердить</button>
-          <button type="button" onClick={() => setPending(null)}>Отмена</button>
-        </div> : null}
       </section>
     </div>
   );
