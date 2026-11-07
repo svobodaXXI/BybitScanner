@@ -200,7 +200,6 @@ export function PositionCard({
 }
 
 export function AutopilotFirstScreen({
-  now = () => Date.now(),
   onOpenPositions,
   accountKey,
   onTradeDetails,
