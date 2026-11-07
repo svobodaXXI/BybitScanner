@@ -1169,6 +1169,9 @@ export function ModePanel({
           {diaryVisible ? (
             <DiaryOverlay
               accountKey={`${accountWorkspaceProjection?.account_id ?? "unknown"}:${accountWorkspaceProjection?.session_generation ?? 0}`}
+              statisticsScope={mode === "TERMINAL" && accountWorkspaceProjection
+                ? { accountId: accountWorkspaceProjection.account_id, owner: "MANUAL" }
+                : null}
               onClose={() => setDiaryVisible(false)}
             />
           ) : null}
