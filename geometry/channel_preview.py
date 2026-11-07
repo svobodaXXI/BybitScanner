@@ -17,6 +17,7 @@ import math
 from dataclasses import dataclass
 from types import MappingProxyType
 
+import numpy as np
 from pivots import find_pivots
 
 from .broadening import HIGH, LOW, _line, _positive_width, _sequence, _value
@@ -65,6 +66,14 @@ def observe_four_pivot_channel(candles, as_of_index: int | None = None) -> Chann
 
     prefix = candles.iloc[:as_of_index + 1].reset_index(drop=True)
     if any(col not in prefix.columns for col in ("open", "high", "low", "close")):
+        return None
+    # Existing OHLC-only callers supply a closed decision-time prefix. If
+    # a source also provides explicit close-state evidence, never ignore an
+    # unfinished bar (including one before the last confirmed pivot).
+    if "closed" in prefix.columns and not all(
+        isinstance(value, (bool, np.bool_)) and bool(value)
+        for value in prefix["closed"]
+    ):
         return None
     # Invalid/unclosed historical data is not repaired or guessed. The caller
     # owns the decision-time closed-bar cutoff, as for the HORN detector.
