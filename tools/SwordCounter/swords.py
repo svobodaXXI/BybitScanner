@@ -133,10 +133,18 @@ def count_swords_with_equity(fetch_positions: Callable[[], Iterable[OpenPosition
                           positions_count=None, reason=failure)
     ro = ro_from_equity(equity, total_swords)
     if ro is None:
-        why = ("Account Equity is not positive" if equity <= 0 else
-               f"1 RO = {equity} / {total_swords} rounds to 0 USDT (minimum RO rule not agreed)")
+        # Comparing Decimal('NaN') with zero raises InvalidOperation. A
+        # non-finite value never authorizes numeric sword counts, nor should
+        # it crash the background worker while rendering "Недоступно".
+        if not equity.is_finite():
+            why = "Account Equity is not finite"
+        elif equity <= 0:
+            why = "Account Equity is not positive"
+        else:
+            why = (f"1 RO = {equity} / {total_swords} rounds to 0 USDT "
+                   "(minimum RO rule not agreed)")
         return SwordCount(STATUS_UNAVAILABLE, total_swords=total_swords, sword_size_usdt=None,
-                          positions_count=len(positions), reason=why, equity_usdt=equity)
+                          positions_count=len(positions), reason=why, equity_usdt=None if not equity.is_finite() else equity)
     result = count_swords(positions, SwordSettings(total_swords=total_swords, sword_size_usdt=ro))
     return replace(result, equity_usdt=equity)
 
