@@ -1,14 +1,17 @@
 """Loopback-only, read-only HTTP boundary for independently owned Bybit MAIN accounts.
 
 Access is intended exclusively through the existing Telegram-authenticated Nginx
-origin. No paper runtime, Robot, order execution, credential ingress or service
-start is added by importing this module. POST /refresh performs exchange READS
+origin. No paper runtime, Robot or order execution is added by importing this module.
+The only credential ingress is a same-origin MAIN provisioning POST. POST /refresh performs exchange READS
 and updates only the separate MAIN snapshot store.
 """
 from __future__ import annotations
 
 import json
 import os
+from terminal.exchange.bybit_account_validation import AccountValidationError
+from terminal.persistence.credential_store import CredentialStoreError
+from terminal.application.manual_main_accounts import ManualMainAccountError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -38,7 +41,7 @@ def checked_main_state_dir(value: str) -> Path:
 
 
 class MainReadHandler(BaseHTTPRequestHandler):
-    """Exact allowlisted paths only; no trading or account-key POST endpoints."""
+    """Only owner-authenticated MAIN provisioning and reads, no order execution."""
     accounts: ManualMainAccounts
 
     def _json(self, status: int, body: dict) -> None:
@@ -81,6 +84,9 @@ class MainReadHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
+        if path == PREFIX + "/accounts":
+            self._provision()
+            return
         if (account_id := self._account_path(path, "/refresh")) is None:
             self._json(405, {"ok": False, "error": "read_only_gateway"})
             return
@@ -97,6 +103,55 @@ class MainReadHandler(BaseHTTPRequestHandler):
             self._json(503, {"ok": False, "error": "main_account_refresh_unavailable"})
             return
         self._json(200, {"ok": True, "summary": summary})
+
+    def _provision(self) -> None:
+        # Existing authenticated ingress enforces Telegram owner session + Origin.
+        # Independently require same HTTPS origin for local callers.
+        origin = self.headers.get("Origin", "")
+        host = self.headers.get("Host", "")
+        if not host or origin != "https://" + host:
+            self._json(403, {"ok": False, "error": "origin_required"})
+            return
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            self._json(415, {"ok": False, "error": "json_required"})
+            return
+        if self.headers.get("Transfer-Encoding"):
+            self._json(400, {"ok": False, "error": "invalid_payload"})
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "-1"))
+        except ValueError:
+            size = -1
+        if not 0 < size <= 8192:
+            self._json(413, {"ok": False, "error": "invalid_payload"})
+            return
+        try:
+            payload = json.loads(self.rfile.read(size))
+            if not isinstance(payload, dict) or set(payload) != {
+                "display_name", "api_key", "api_secret",
+            }:
+                raise ValueError("invalid_main_account_payload")
+            result = self.accounts.provision(
+                payload["display_name"], payload["api_key"], payload["api_secret"],
+            )
+        except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
+            self._json(400, {"ok": False, "error": "invalid_account_payload"})
+            return
+        except AccountValidationError:
+            self._json(422, {"ok": False, "error": "bybit_validation_failed"})
+            return
+        except ManualMainAccountError:
+            self._json(422, {"ok": False, "error": "main_account_ineligible"})
+            return
+        except CredentialStoreError:
+            self._json(503, {"ok": False, "error": "credential_storage_failed"})
+            return
+        except Exception:
+            self._json(503, {"ok": False, "error": "account_provisioning_unavailable"})
+            return
+        self._json(201 if result["created"] else 200, {
+            "ok": True, "created": result["created"], "account_id": result["account_id"],
+        })
 
     def log_message(self, format: str, *args) -> None:
         # Never put account IDs, query strings or credentials into access logs.

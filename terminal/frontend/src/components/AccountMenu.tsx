@@ -58,6 +58,8 @@ export function AccountMenu({
 }) {
   const [catalog, setCatalog] = useState<AccountCatalog | null>(null);
   const [catalogError, setCatalogError] = useState(false);
+  const [manualMain, setManualMain] = useState<AccountDescriptor[]>([]);
+  const [manualMainUnavailable, setManualMainUnavailable] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [name, setName] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -90,6 +92,23 @@ export function AccountMenu({
     return request;
   };
 
+  const refreshManualMain = async () => {
+    try {
+      const response = await fetch(marketApiRoutes.manualMainAccounts, { cache: "no-store" });
+      if (!response.ok) throw new Error("manual_main_unavailable");
+      const result = await response.json() as { ok?: boolean; accounts?: AccountDescriptor[] };
+      if (result.ok !== true || !Array.isArray(result.accounts)
+        || result.accounts.some((a) => a.provider !== "BYBIT" || a.environment !== "MAINNET")) {
+        throw new Error("invalid_main_catalog");
+      }
+      setManualMain(result.accounts);
+      setManualMainUnavailable(false);
+    } catch {
+      setManualMain([]);
+      setManualMainUnavailable(true);
+    }
+  };
+
   const requestLiveAccountRefresh = async (accountId: string) => {
     const response = await fetch(marketApiRoutes.accountRefresh(accountId), { method: "POST" });
     const payload = await response.json() as { ok?: boolean; summary?: LiveAccountSummary };
@@ -105,6 +124,10 @@ export function AccountMenu({
       setCatalogError(true);
     });
   }, []);
+
+  useEffect(() => {
+    if (open) void refreshManualMain();
+  }, [open]);
 
   useEffect(() => {
     if (!open || (catalog && !catalogError)) return;
@@ -141,30 +164,27 @@ export function AccountMenu({
     setSubmitting(true);
     setSubmitError("");
     try {
-      const response = await fetch(marketApiRoutes.accounts, {
+      const response = await fetch(marketApiRoutes.manualMainAccounts, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ display_name: name.trim(), api_key: apiKey.trim(), api_secret: apiSecret }),
       });
       const payload = await response.json() as {
-        ok?: boolean; error?: string; account?: AccountDescriptor;
+        ok?: boolean; error?: string; account_id?: string;
       };
-      if (!response.ok || payload.ok !== true || !payload.account) {
+      if (!response.ok || payload.ok !== true || !payload.account_id) {
         const messages: Record<string, string> = {
           bybit_validation_failed: "Bybit rejected these credentials.",
           credential_storage_failed: "Secure credential storage is unavailable.",
           invalid_account_payload: "Complete all account fields.",
+          main_account_ineligible: "Only eligible Bybit MAINNET accounts can be connected.",
+          origin_required: "Open the authenticated HTTPS terminal before adding an account.",
         };
         setSubmitError(messages[payload.error ?? ""] ?? "Account could not be added.");
         return;
       }
       closeAdd();
-      try {
-        await refreshCatalog();
-      } catch {
-        setCatalog(null);
-        setCatalogError(true);
-      }
+      await refreshManualMain();
     } catch {
       setSubmitError("Account could not be added.");
     } finally {
@@ -306,7 +326,28 @@ export function AccountMenu({
                 >{refreshingAccount === account.id ? "Refreshing…" : account.status === "DISCONNECTED" || account.status === "ERROR" ? "Reconnect" : "Refresh"}</button> : null}
               </article>
             ))}
-            <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add account</button>
+            {manualMain.map((account) => (
+              <article className="account-card mainnet" key={account.id} aria-label="Manual MAIN account">
+                <strong>{account.display_name}</strong>
+                <small>BYBIT · MAINNET · {account.status} · Separate MAIN service</small>
+                <small>Read-only in this terminal. Trading and account switching are not enabled yet.</small>
+                {refreshError[account.id] ? <small role="alert">{refreshError[account.id]}</small> : null}
+                <button type="button" disabled={refreshingAccount === account.id}
+                  onClick={() => void (async () => {
+                    setRefreshingAccount(account.id);
+                    try {
+                      const response = await fetch(marketApiRoutes.manualMainRefresh(account.id), { method: "POST" });
+                      if (!response.ok) throw new Error("main_refresh_failed");
+                      await refreshManualMain();
+                      setRefreshError((current) => ({ ...current, [account.id]: "" }));
+                    } catch {
+                      setRefreshError((current) => ({ ...current, [account.id]: "MAIN refresh failed." }));
+                    } finally { setRefreshingAccount(null); }
+                  })()}>Refresh MAIN</button>
+              </article>
+            ))}
+            {manualMainUnavailable ? <small role="status">Separate MAIN service unavailable; PAPER unchanged.</small> : null}
+            <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add MAIN account</button>
           </section>
         </div>
       ) : null}
@@ -333,7 +374,8 @@ export function AccountMenu({
           if (event.target === event.currentTarget) closeAdd();
         }}>
           <section aria-label="Add account" aria-modal="true" className="account-dialog" role="dialog">
-            <header><strong>Add account</strong><button aria-label="Close add account" onClick={closeAdd} type="button">×</button></header>
+            <header><strong>Add Bybit MAIN account</strong><button aria-label="Close add account" onClick={closeAdd} type="button">×</button></header>
+            <small>Keys are sent only to the separate MAIN service. No real orders can be placed yet.</small>
             <label>Account name<input value={name} onChange={(event) => setName(event.target.value)} /></label>
             <label>API Key<input value={apiKey} onChange={(event) => setApiKey(event.target.value)} /></label>
             <label>API Secret<input autoComplete="new-password" type="password" value={apiSecret} onChange={(event) => setApiSecret(event.target.value)} /></label>
