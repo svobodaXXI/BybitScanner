@@ -1175,7 +1175,7 @@ export function ChartPanel({
         <div ref={hostRef} className="chart-engine" />
         <DrawingOverlay
           drawings={drawings}
-          referenceDrawings={editorMode ? referenceDrawings : []}
+          referenceDrawings={referenceDrawings}
           selectedId={selectedId}
           tool={tool}
           magnet={magnet}
