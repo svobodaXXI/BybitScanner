@@ -25,11 +25,11 @@ WINDOWS = (
 )
 
 
-def find_verified(output_json: Path) -> dict[str, object]:
+def find_verified(output_json: Path, *, windows=WINDOWS) -> dict[str, object]:
     if output_json.exists():
         raise ValueError("refuse to overwrite existing research evidence")
     negative = []
-    for start, end in WINDOWS:
+    for start, end in windows:
         print("REAL_H1_WINDOW_CHECK " + start + " " + end, flush=True)
         try:
             # The existing acceptance checks true H1 OHLC, frozen prior,
@@ -59,7 +59,7 @@ def find_verified(output_json: Path) -> dict[str, object]:
         return result
     print(json.dumps({
         "result": "BLOCKED_NO_REAL_COMPLETE_H1_WINDOW",
-        "checked": [start for start, _ in WINDOWS],
+        "checked": [start for start, _ in windows],
         "source": "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M",
         "verified": False,
     }, sort_keys=True), flush=True)
@@ -69,5 +69,12 @@ def find_verified(output_json: Path) -> dict[str, object]:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Bounded official trade-archive H1 reversal search")
     parser.add_argument("--output-json", required=True)
+    parser.add_argument("--exact-window-start", default=None,
+                        help="Require a previously accepted historical window, with no fallback")
     args = parser.parse_args()
-    find_verified(Path(args.output_json))
+    windows = (tuple((start, end) for start, end in WINDOWS
+                     if start == args.exact_window_start)
+               if args.exact_window_start else WINDOWS)
+    if not windows:
+        raise ValueError("unknown exact H-017 historical window")
+    find_verified(Path(args.output_json), windows=windows)
