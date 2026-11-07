@@ -162,31 +162,30 @@ def wick_tight_hourly_line(
     bars: tuple[Candle, ...], *, boundary: Literal["UPPER", "LOWER"],
     available_at_ms: int,
 ) -> CausalLine | None:
-    """Keep the first wick fixed; fit the worst known protrusion by slope.
+    """Validate the line between two ORIGINAL confirmed H1 swing pivots.
 
-    Only CLOSED bars between the two anchors count. This is a candidate
-    geometry revision, never a retroactive edit to an emitted version.
+    A wick through 1--3 or 2--4 invalidates this candidate. It must never
+    move point 3/4 to an arbitrary intermediate candle to make the envelope
+    fit: that used to publish spurious four-point H1 trends.
     """
     if first.index >= second.index or first.kind != second.kind:
         return None
-    chosen = second
-    slope = (second.price - first.price) / Decimal(second.at_ms - first.at_ms)
-    for index in range(first.index + 1, second.index + 1):
-        if index >= len(bars):
+    if first.kind != ("HIGH" if boundary == "UPPER" else "LOW"):
+        return None
+    if second.confirmed_at_ms > available_at_ms or first.confirmed_at_ms > available_at_ms:
+        return None
+    if first.index < 0 or second.index >= len(bars):
+        return None
+    for pivot in (first, second):
+        bar = bars[pivot.index]
+        extreme = bar.high if boundary == "UPPER" else bar.low
+        if bar.start_ms != pivot.at_ms or extreme != pivot.price:
             return None
+    line = CausalLine(first, second, available_at_ms)
+    for index in range(first.index + 1, second.index + 1):
         bar = bars[index]
         if bar.end_ms > available_at_ms:
             return None
-        price = bar.high if boundary == "UPPER" else bar.low
-        trial = (price - first.price) / Decimal(bar.start_ms - first.at_ms)
-        if (trial > slope if boundary == "UPPER" else trial < slope):
-            slope = trial
-            chosen = ConfirmedPivot(
-                first.kind, index, bar.start_ms, bar.end_ms, price,
-            )
-    line = CausalLine(first, chosen, available_at_ms)
-    for index in range(first.index + 1, second.index + 1):
-        bar = bars[index]
         level = line.value_at(bar.start_ms)
         if ((boundary == "UPPER" and bar.high > level) or
                 (boundary == "LOWER" and bar.low < level)):
@@ -199,7 +198,7 @@ def wick_tight_hourly_trend(
     *, first_main: ConfirmedPivot | None = None,
     first_target: ConfirmedPivot | None = None,
 ) -> TrendCandidate | None:
-    """Fit candidate H1 boundaries while retaining the movement's first pair."""
+    """Validate true 1--3 / 2--4 H1 pivot anchors; never substitute wicks."""
     a = first_main or proposal.main.first
     b = first_target or proposal.target.first
     c, d = proposal.main.second, proposal.target.second
@@ -231,7 +230,7 @@ def wick_tight_hourly_trend(
     if not (width2 > width4 > 0):
         return None
     return TrendCandidate(
-        side, main, target, (a, b, main.second, target.second),
+        side, main, target, (a, b, c, d),
         proposal.available_at_ms,
     )
 
