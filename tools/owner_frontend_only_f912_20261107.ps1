@@ -166,20 +166,20 @@ foreach ($file in $jsFiles) {
 }
 if (-not $screenMarker) { throw 'BLOCKED: Autopilot first-screen component missing from built JS' }
 
-# Compare FileSystemInfo paths, not string lengths: Windows TEMP can use an
-# 8.3 prefix (SVOBOD~1), while Get-ChildItem expands it to SVOBODA21.
-$builtIndex = (Get-Item -LiteralPath $index).FullName
-$builtAssets = (Get-Item -LiteralPath (Join-Path $dist 'assets')).FullName
+# Use only the two Vite output locations. No path prefix slicing, because
+# Windows TEMP may use 8.3 SVOBOD~1 while FileInfo uses SVOBODA21.
+$rootFiles = @(Get-ChildItem -LiteralPath $dist -File)
+$subdirs = @(Get-ChildItem -LiteralPath $dist -Directory -Recurse)
+if ($rootFiles.Count -ne 1 -or $rootFiles[0].Name -cne 'index.html' -or
+    $subdirs.Count -ne 1 -or $subdirs[0].Name -cne 'assets' -or
+    $subdirs[0].LinkType) {
+    throw 'BLOCKED: Unexpected Vite dist layout'
+}
 $files = @{}
-foreach ($file in (Get-ChildItem -LiteralPath $dist -File -Recurse)) {
-    if ($file.FullName -eq $builtIndex) {
-        $relative = 'index.html'
-    } elseif ($file.Directory.FullName -eq $builtAssets) {
-        $relative = 'assets/' + $file.Name
-    } else {
-        throw "BLOCKED: Unexpected generated file $($file.Name)"
-    }
-    $files[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+$files['index.html'] = (Get-FileHash -LiteralPath $index -Algorithm SHA256).Hash.ToLowerInvariant()
+foreach ($asset in (Get-ChildItem -LiteralPath (Join-Path $dist 'assets') -File)) {
+    if ($asset.LinkType) { throw 'BLOCKED: Symlink in Vite assets' }
+    $files['assets/' + $asset.Name] = (Get-FileHash -LiteralPath $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 $manifest = [ordered]@{ source_sha = $sourceSha; files = $files }
 $manifestPath = Join-Path $dist 'frontend-release.json'
