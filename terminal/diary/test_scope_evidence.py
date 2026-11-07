@@ -85,3 +85,73 @@ def test_no_source_database_is_created(tmp_path):
     with pytest.raises(StatisticsScopeError, match="unavailable"):
         load_order_origins_read_only(missing, account_id="paper")
     assert not missing.exists()
+
+
+def test_proven_robot_limit_entry_is_attributed_but_legacy_is_not(tmp_path):
+    db = tmp_path / "source.sqlite3"
+    con = make_source(db)
+    con.executescript("""
+        CREATE TABLE robot_entry_orders (
+            order_id TEXT, trading_account_id TEXT, admission_version INTEGER, origin TEXT
+        );
+        CREATE TABLE paper_limit_orders (order_id TEXT, trading_account_id TEXT);
+    """)
+    rows = [
+        ("e-robot", "o-robot", "ROBOT", 5),
+        ("e-legacy", "o-legacy", "LEGACY", None),
+        ("e-null", "o-null", "ROBOT", None),
+    ]
+    for eid, oid, origin, version in rows:
+        con.execute("INSERT INTO executions VALUES ('paper','linear',?,?)", (eid, oid))
+        con.execute("INSERT INTO paper_limit_orders VALUES (?, 'paper')", (oid,))
+        con.execute("INSERT INTO robot_entry_orders VALUES (?, 'paper', ?, ?)", (oid, version, origin))
+    con.commit()
+    con.close()
+    attributed = load_order_origins_read_only(db, account_id="paper")
+    assert {key.exec_id.value: origin for key, origin in attributed.items()} == {
+        "e-robot": Origin.ROBOT,
+    }
+
+
+def test_resolved_protection_obligation_requires_exact_order_and_exec_identity(tmp_path):
+    db = tmp_path / "source.sqlite3"
+    con = make_source(db)
+    con.executescript("""
+        CREATE TABLE robot_trades (trade_id TEXT, trading_account_id TEXT);
+        CREATE TABLE paper_protection_obligations (
+            trade_id TEXT, trading_account_id TEXT, order_id TEXT, exec_id TEXT, status TEXT
+        );
+        INSERT INTO robot_trades VALUES ('t1','paper');
+    """)
+    for eid, oid in [("e1", "o1"), ("e2", "o2"), ("e3", "o3")]:
+        con.execute("INSERT INTO executions VALUES ('paper','linear',?,?)", (eid, oid))
+    con.executemany("INSERT INTO paper_protection_obligations VALUES (?,?,?,?,?)", [
+        ("t1", "paper", "o1", "e1", "RESOLVED"),
+        ("t1", "paper", "o2", "e2", "DISPATCHING"),
+        ("t1", "paper", "o3", "wrong-exec", "RESOLVED"),
+    ])
+    con.commit()
+    con.close()
+    attributed = load_order_origins_read_only(db, account_id="paper")
+    assert {key.exec_id.value: origin for key, origin in attributed.items()} == {
+        "e1": Origin.ROBOT,
+    }
+
+
+def test_conflicting_manual_command_and_robot_attestation_blocks_origin(tmp_path):
+    db = tmp_path / "source.sqlite3"
+    con = make_source(db)
+    con.executescript("""
+        CREATE TABLE robot_entry_orders (
+            order_id TEXT, trading_account_id TEXT, admission_version INTEGER, origin TEXT
+        );
+        CREATE TABLE paper_limit_orders (order_id TEXT, trading_account_id TEXT);
+        INSERT INTO executions VALUES ('paper','linear','e1','o1');
+        INSERT INTO trading_commands VALUES ('cmd-1','paper','o1','terminal_manual','manual');
+        INSERT INTO robot_entry_orders VALUES ('o1','paper',3,'ROBOT');
+        INSERT INTO paper_limit_orders VALUES ('o1','paper');
+    """)
+    con.commit()
+    con.close()
+    with pytest.raises(StatisticsScopeError, match="conflicting"):
+        load_order_origins_read_only(db, account_id="paper")

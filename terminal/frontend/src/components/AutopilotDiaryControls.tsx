@@ -58,6 +58,7 @@ export function AutopilotDiaryControls({
         <DiaryOverlay
           key={`${accountKey}:${launch.section}:${launch.tradeEpisodeId ?? ""}`}
           accountKey={accountKey}
+          statisticsScope={{ accountId: "paper", owner: "ROBOT" }}
           initialSection={launch.section}
           initialTradeEpisodeId={launch.tradeEpisodeId}
           onClose={() => setLaunch(null)}

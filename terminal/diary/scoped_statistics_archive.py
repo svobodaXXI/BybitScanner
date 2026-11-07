@@ -165,3 +165,49 @@ class ScopedStatisticsArchive:
         if result.get("account_id") != account_id or result.get("owner") != owner:
             raise StatisticsScopeError("cross_scope_statistics_snapshot")
         return result
+
+
+
+def load_latest_scoped_statistics_read_only(
+    archive_path: str | Path, *, account_id: str, owner: str,
+) -> dict[str, object] | None:
+    """Serve one verified scope without creating, migrating or writing an archive.
+
+    An absent archive is UNAVAILABLE, not a fabricated report of zero trades.
+    """
+    account_id, owner = _scope(account_id, owner)
+    path = Path(archive_path)
+    if (not path.is_absolute() or path.name != "scoped_diary_statistics.sqlite3"
+            or path.is_symlink() or not path.is_file()):
+        raise StatisticsScopeError("scoped_statistics_archive_unavailable")
+    try:
+        connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+        try:
+            connection.execute("PRAGMA query_only=ON")
+            row = connection.execute(
+                """SELECT report_json, report_sha256 FROM scoped_statistics
+                   WHERE account_id=? AND owner=?
+                   ORDER BY source_revision DESC LIMIT 1""",
+                (account_id, owner),
+            ).fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise StatisticsScopeError("scoped_statistics_archive_unavailable") from exc
+    if row is None:
+        return None
+    raw, digest = row
+    if hashlib.sha256(raw.encode("utf-8")).hexdigest() != digest:
+        raise StatisticsScopeError("corrupt_statistics_snapshot")
+    try:
+        result = json.loads(raw)
+    except (ValueError, TypeError) as exc:
+        raise StatisticsScopeError("corrupt_statistics_snapshot") from exc
+    if (not isinstance(result, dict)
+            or result.get("account_id") != account_id
+            or result.get("owner") != owner
+            or type(result.get("source_revision")) is not int
+            or result["source_revision"] < 1
+            or not isinstance(result.get("statistics"), dict)):
+        raise StatisticsScopeError("cross_scope_statistics_snapshot")
+    return result

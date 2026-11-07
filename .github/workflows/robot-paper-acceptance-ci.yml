@@ -291,6 +291,8 @@ jobs:
           tests.test_runtime_launcher
           tests.test_telegram_monitoring
 
+      - name: Run account-and-controller scoped Diary HTTP acceptance
+        run: python -m pytest -q terminal/diary/test_scoped_statistics_http_route.py
       - name: Run Robot scoped LIMIT amend acceptance
         run: >-
           python -m pytest -q
