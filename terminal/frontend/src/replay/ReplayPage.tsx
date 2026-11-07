@@ -13,6 +13,7 @@ import { rayEndPoint } from "../chart/drawingGeometry";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
 import { chartLogicalAtTime, drawingLogicalToTime, geometryLogicalSegment, nearestReplayHighLowAnchor, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
+import { ReplayDrawingUndo } from "./replayDrawingUndo";
 import "./replay.css";
 
 function label(event: ReplayEvent): string {
@@ -59,11 +60,12 @@ function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" | "undo" | "mag
   </svg>;
 }
 function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selectedId,
-  drawingTool, magnet, onDrawingsChange, onSelectDrawing, onDrawingGesture, onDrawingComplete, onChooseStart }: {
+  drawingTool, magnet, onDrawingsChange, onSelectDrawing, onDrawingGesture, onDrawingComplete, onDrawingGestureEnd, onChooseStart }: {
   document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h";
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
   magnet: boolean;
   onDrawingComplete: () => void;
+  onDrawingGestureEnd: () => void;
   onChooseStart: (startMs: number) => void;
   onDrawingsChange: (next: DrawingObject[]) => void;
   onSelectDrawing: (id: string | null) => void;
@@ -445,7 +447,8 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
                 drawingCoordinates.priceToY, radius,
               )}
               onCommit={onDrawingsChange} onSelect={onSelectDrawing}
-              onDrawingGesture={onDrawingGesture} onDrawingComplete={onDrawingComplete} />
+              onDrawingGesture={onDrawingGesture} onDrawingComplete={onDrawingComplete}
+              onDrawingGestureEnd={onDrawingGestureEnd} />
           </div>}
       </div>
       <div className="replay-dmi-legend" role="group" aria-label="Индикатор ADX DMI">
@@ -486,6 +489,8 @@ export function ReplayPage() {
   const [drawingTool, setDrawingTool] = useState<DrawingTool>("crosshair");
   const [magnet, setMagnet] = useState(false);
   const [drawings, setDrawings] = useState<DrawingObject[]>([]);
+  const manualUndo = useRef(new ReplayDrawingUndo());
+  const [undoDepth, setUndoDepth] = useState(0);
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fileLabel, setFileLabel] = useState("Синтетический пример");
@@ -550,6 +555,27 @@ export function ReplayPage() {
     row.crossings_at_open !== null && (row.crossings_at_open.length > 0) === withCross);
   const countTouch = (rows: typeof visibleStudy, kind: typeof visibleStudy[number]["first_touch"]) =>
     rows.filter(row => row.first_touch === kind).length;
+  // Only owner-authored annotations enter this history. Automatic H1/M5
+  // geometry, observations and simulated executions remain untouched.
+  function commitManualDrawings(next: DrawingObject[]) {
+    if (!manualUndo.current.commit(next)) return;
+    setDrawings(manualUndo.current.drawings);
+    setUndoDepth(manualUndo.current.undoDepth);
+  }
+  function resetManualDrawings() {
+    manualUndo.current.reset();
+    setDrawings([]);
+    setUndoDepth(0);
+  }
+  function undoManualDrawing() {
+    const restored = manualUndo.current.undo();
+    if (restored === null) return;
+    setDrawings(restored);
+    setUndoDepth(manualUndo.current.undoDepth);
+    setSelectedDrawing(null);
+    setDrawingTool("crosshair");
+    setPlaying(false);
+  }
   const fileInput = useRef<HTMLInputElement>(null);
 
   function syncImportedMarketSelection(parsed: ReplayDocument) {
@@ -630,7 +656,7 @@ export function ReplayPage() {
       // Manual import also replaces the market selection, never leave stale
       // BTC/date controls beside an imported GRASSUSDT archive.
       if (parsed.mode === "MARKET_ONLY") syncImportedMarketSelection(parsed);
-      setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+      resetManualDrawings(); setSelectedDrawing(null); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel(file.name);
       setError(null);
@@ -666,7 +692,7 @@ export function ReplayPage() {
       if (imported.mode !== "MARKET_ONLY") throw new Error("История не соответствует режиму MARKET_ONLY");
       if (historyRequest.current !== controller) return;
       setDocument(imported);
-      setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+      resetManualDrawings(); setSelectedDrawing(null); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel("Bybit · публичные свечи · без сделок");
     } catch (e) {
@@ -711,7 +737,7 @@ export function ReplayPage() {
           historyRequest.current?.abort(); historyRequest.current = null;
           setHistoryLoading(false); setPlaying(false); setCursor(0); setError(null);
           setDocument(syntheticReplay()); setFileLabel("Синтетический пример");
-          setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+          resetManualDrawings(); setSelectedDrawing(null); setDrawingTool("crosshair");
         }}>Пример</button>
         <button type="button" aria-label="Скачать журнал SIMULATION JSON" onClick={() => {
           const report = simulationActionJournal(document);
@@ -849,17 +875,14 @@ export function ReplayPage() {
               aria-pressed={magnet} onClick={() => setMagnet(value => !value)}>
               <ReplayToolIcon tool="magnet" />
             </button>
-            <button type="button" disabled={drawings.length === 0}
-              onClick={() => {
-                setPlaying(false);
-                setDrawings(current => current.slice(0, -1));
-                setSelectedDrawing(null);
-              }} title="Отменить последнюю фигуру" aria-label="Отменить последнюю фигуру">
+            <button type="button" disabled={undoDepth === 0}
+              onClick={undoManualDrawing}
+              title="Отменить последнее действие" aria-label="Отменить последнее действие">
               <ReplayToolIcon tool="undo" />
             </button>
             <button type="button" disabled={!selectedDrawing}
               onClick={() => {
-                setDrawings(current => current.filter(d => d.id !== selectedDrawing));
+                commitManualDrawings(drawings.filter(d => d.id !== selectedDrawing));
                 setSelectedDrawing(null);
               }} title="Удалить выбранное" aria-label="Удалить выбранное"><ReplayToolIcon tool="delete" /></button>
             <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
@@ -867,9 +890,10 @@ export function ReplayPage() {
           <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
             drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
             magnet={magnet}
-            onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
-            onDrawingGesture={() => setPlaying(false)}
-            onDrawingComplete={() => setDrawingTool("crosshair")}
+            onDrawingsChange={commitManualDrawings} onSelectDrawing={setSelectedDrawing}
+            onDrawingGesture={() => { manualUndo.current.beginGesture(); setPlaying(false); }}
+            onDrawingComplete={() => { manualUndo.current.endGesture(); setDrawingTool("crosshair"); }}
+            onDrawingGestureEnd={() => manualUndo.current.endGesture()}
             onChooseStart={setPendingStartMs} />
         </section>
         {pendingStartMs !== null &&
