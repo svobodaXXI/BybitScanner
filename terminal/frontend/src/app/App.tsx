@@ -1612,6 +1612,7 @@ export function App() {
                     onCenterPriceChange={setLadderCenterPrice}
                     ownOrders={mode === "AUTOPILOT" && !robotPosition ? [] : domOwnOrders}
                     ownOrdersReadOnly={mode === "AUTOPILOT"}
+                    positionSummary={mode === "AUTOPILOT" ? robotPosition : null}
                     onOwnOrderCancel={(orderId) => {
                       void cancelPaperLimit(orderId).catch(() => {});
                     }}
