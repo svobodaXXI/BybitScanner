@@ -1,16 +1,25 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { setMarketSymbol } from "../marketData/useMarketData";
+
+const marketFixture = vi.hoisted(() => ({
+  candles: [] as Array<{ time: string; open: number; high: number; low: number; close: number }>,
+}));
+afterEach(() => {
+  window.history.replaceState({}, "", "/");
+  marketFixture.candles = [];
+  vi.unstubAllGlobals();
+});
 
 vi.mock("../components/AccountMenu", () => ({ AccountMenu: () => null }));
 vi.mock("../components/DomPanel", () => ({
   DomPanel: () => <div data-testid="dom-panel" />,
 }));
 vi.mock("../components/ModePanel", () => ({
-  ModePanel: ({ onModeChange }: { onModeChange: (mode: "TERMINAL" | "AUTOPILOT" | "EDITOR") => void }) => (
-    <div>
+  ModePanel: ({ mode, onModeChange }: { mode: "TERMINAL" | "AUTOPILOT" | "EDITOR"; onModeChange: (mode: "TERMINAL" | "AUTOPILOT" | "EDITOR") => void }) => (
+    <div><span data-testid="active-workspace-mode">{mode}</span>
       <button onClick={() => onModeChange("TERMINAL")} type="button">Open Terminal</button>
       <button onClick={() => onModeChange("AUTOPILOT")} type="button">Open Autopilot</button>
       <button onClick={() => onModeChange("EDITOR")} type="button">Open Editor</button>
@@ -31,10 +40,11 @@ vi.mock("../telegram/TelegramMiniAppBridge", () => ({
   TelegramMiniAppBridge: () => null,
 }));
 vi.mock("../components/ChartPanel", () => ({
-  ChartPanel: ({ activeLimitOrders, workspaceControls }: { activeLimitOrders: unknown[]; workspaceControls: unknown }) => (
+  ChartPanel: ({ activeLimitOrders, workspaceControls, referenceDrawings }: { activeLimitOrders: unknown[]; workspaceControls: unknown; referenceDrawings: readonly unknown[] }) => (
     <div data-testid="chart-region">
       {workspaceControls as ReactNode}
       <span data-testid="active-limit-count">{activeLimitOrders.length}</span>
+      <span data-testid="source-line-count">{referenceDrawings.length}</span>
     </div>
   ),
 }));
@@ -48,7 +58,7 @@ vi.mock("../marketData/useMarketData", () => ({
       bids: [{ price: 99, size: 1 }],
       asks: [{ price: 101, size: 1 }],
     },
-    candles: [],
+    candles: marketFixture.candles,
     trades: [],
     ownOrders: [],
     tickSize: 0.5,
@@ -208,4 +218,37 @@ it("changes the local symbol only after the backend authoritative switch succeed
   fireEvent.click(screen.getByRole("button", { name: "Select ETHUSDT" }));
   await waitFor(() => expect(setMarketSymbol).toHaveBeenCalledWith("ETHUSDT", 8));
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("opens a Telegram signal in read-only Autopilot with immutable lines and live candles", async () => {
+  window.history.replaceState({}, "", "/?mode=TERMINAL&symbol=BTCUSDT&timeframe=5m&signal_id=source-original%3Aabc");
+  marketFixture.candles = [
+    { time: "2026-10-19T00:00:00.000Z", open: 10, high: 12, low: 8, close: 11 },
+    { time: "2026-10-19T00:05:00.000Z", open: 11, high: 14, low: 9, close: 13 },
+  ];
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.startsWith("/api/workspace/signal-geometry?")) return { ok: true, json: async () => ({
+      ok: true, snapshot_revision: "a".repeat(64), bars_sha256: "b".repeat(64),
+      original_pattern: "Falling Wedge", latest_review: null,
+      snapshot: { signal_id: "source-original:abc", symbol: "BTCUSDT", timeframe: "5",
+        bars: marketFixture.candles.map((bar) => ({
+          open_time_ms: Date.parse(bar.time), open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+        })),
+        boundaries: [{ boundary_id: "lower-ray", kind: "ray", anchors: [
+          { bar_open_time_ms: Date.parse(marketFixture.candles[0].time), price: 9 },
+          { bar_open_time_ms: Date.parse(marketFixture.candles[1].time), price: 10 },
+        ] }],
+      },
+    }) };
+    if (url === "/api/workspace/symbol") return { ok: true, json: async () => ({
+      ok: true, symbol: "BTCUSDT", generation: 7,
+    }) };
+    return { ok: false, json: async () => ({}) };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  expect(screen.getByTestId("active-workspace-mode")).toHaveTextContent("AUTOPILOT");
+  await waitFor(() => expect(screen.getByTestId("source-line-count")).toHaveTextContent("1"));
+  expect(screen.getByText(/Исходная геометрия сигнала: Falling Wedge/)).toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([url]) => url === "/api/market" || url === "/api/close-all")).toBe(false);
 });
