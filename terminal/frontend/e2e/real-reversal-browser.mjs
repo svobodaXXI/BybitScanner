@@ -163,13 +163,14 @@ try {
     document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === "1");
   await page.getByRole("button", { name: "H1", exact: true }).click();
   await scrubber.press("ArrowRight");
-  await page.waitForFunction(() =>
-    document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === "0");
+  await page.waitForFunction(expected =>
+    document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
+  archive.context_1h.length);
   await scrubber.press("End");
   const hours = Math.floor(archive.events.filter(event => event.kind === "CANDLE_CLOSED").length / 12);
   await page.waitForFunction(expected =>
     document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
-  hours * 12);
+  archive.context_1h.length + hours);
   await page.getByRole("button", { name: "M5", exact: true }).click();
   await scrubber.press("Home");
   await page.waitForFunction(() =>
