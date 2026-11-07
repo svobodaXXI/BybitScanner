@@ -157,6 +157,44 @@ def recent_hourly_trend(pivots: tuple[ConfirmedPivot, ...]) -> TrendCandidate | 
     return TrendCandidate(side, primary, opposing, (a, b, c, d), confirmed)
 
 
+
+def trend_from_frozen_first_pair(
+    pivots: tuple[ConfirmedPivot, ...],
+    first: ConfirmedPivot, second: ConfirmedPivot,
+) -> TrendCandidate | None:
+    """Newest confirmed 3/4 against immutable movement origin 1/2."""
+    if len(pivots) < 4 or first.at_ms >= second.at_ms:
+        return None
+    c, d = pivots[-2:]
+    if c.at_ms <= second.at_ms or d.at_ms <= c.at_ms:
+        return None
+    return recent_hourly_trend((first, second, c, d))
+
+
+def original_reversal_trend(
+    pivots: tuple[ConfirmedPivot, ...],
+    *, side: TrendSide, source_start_ms: int, known_at_ms: int,
+) -> TrendCandidate | None:
+    """Start at preceding impulse's highest/lowest *confirmed* pivot.
+
+    The source window starts at the retired trend's first main anchor, not at
+    the latest four-pivot suffix. Never backdate a pivot or invent a wick.
+    """
+    known = tuple(p for p in pivots if p.at_ms >= source_start_ms
+                  and p.confirmed_at_ms <= known_at_ms)
+    main_kind: PivotKind = "HIGH" if side == "BEAR" else "LOW"
+    origins = [p for p in known if p.kind == main_kind]
+    if not origins:
+        return None
+    first = (max(origins, key=lambda p: (p.price, -p.at_ms)) if side == "BEAR"
+             else min(origins, key=lambda p: (p.price, p.at_ms)))
+    second = next((p for p in known if p.at_ms > first.at_ms
+                   and p.kind != main_kind), None)
+    if second is None:
+        return None
+    return trend_from_frozen_first_pair(known, first, second)
+
+
 def wick_tight_hourly_line(
     first: ConfirmedPivot, second: ConfirmedPivot,
     bars: tuple[Candle, ...], *, boundary: Literal["UPPER", "LOWER"],
@@ -336,6 +374,7 @@ class CausalGeometryFeed:
         self._pending_break: tuple[int, Decimal, TrendSide, int, int] | None = None
         self._waiting_for_side: TrendSide | None = None
         self._reversal_known_at_ms: int | None = None
+        self._reversal_source_start_ms: int | None = None
         # The M5 correction is its own stateful movement: new pivots must
         # never silently replace its first anchor or create parallel blues.
         self._active_blue: CausalLine | None = None
@@ -432,8 +471,14 @@ class CausalGeometryFeed:
     def _install_opposite_if_confirmed(self, at_ms: int) -> None:
         if self._waiting_for_side is None:
             return
-        proposal = recent_hourly_trend(self._hourly.recent_pivots)
-        if proposal is None or proposal.side != self._waiting_for_side:
+        if self._reversal_source_start_ms is None:
+            return
+        proposal = original_reversal_trend(
+            self._hourly.pivots, side=self._waiting_for_side,
+            source_start_ms=self._reversal_source_start_ms,
+            known_at_ms=at_ms,
+        )
+        if proposal is None:
             return
         if proposal.available_at_ms > at_ms:
             raise AssertionError("future opposite hourly trend exposed")
@@ -453,6 +498,7 @@ class CausalGeometryFeed:
         )
         self._waiting_for_side = None
         self._reversal_known_at_ms = None
+        self._reversal_source_start_ms = None
 
     def observe_closed(
         self, five_minute: Candle, newly_closed_1h: Candle | None,
@@ -477,6 +523,10 @@ class CausalGeometryFeed:
                         "hourly_close_ms": hourly_end,
                         "next_hour_open_ms": five_minute.start_ms,
                     }
+                    self._reversal_source_start_ms = (
+                        self._hourly_trend.main.first.at_ms
+                        if self._hourly_trend is not None else None
+                    )
                     self._hourly_trend = None
                     self._waiting_for_side = "BEAR" if old_side == "BULL" else "BULL"
                     self._reversal_known_at_ms = five_minute.end_ms
@@ -499,24 +549,21 @@ class CausalGeometryFeed:
                     )
             self._hourly.observe_closed(newly_closed_1h)
             if self._waiting_for_side is None:
-                proposal = recent_hourly_trend(self._hourly.recent_pivots)
+                previous = self._hourly_trend
+                proposal = (trend_from_frozen_first_pair(
+                    self._hourly.pivots, previous.main.first, previous.target.first,
+                ) if previous is not None else
+                    recent_hourly_trend(self._hourly.recent_pivots))
                 if proposal is not None:
-                    if self._hourly_trend is None:
+                    if previous is None:
                         fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
                         if fitted is not None:
                             self._hourly_trend = fitted
-                    elif (proposal.side == self._hourly_trend.side and
+                    elif (proposal.side == previous.side and
                           proposal.pivot_sequence[3].at_ms >
-                          self._hourly_trend.pivot_sequence[3].at_ms):
-                        # The original 1/2 anchors belong to this movement.
-                        # New extrema may revise points 3/4, never shift the
-                        # first pair forward by taking the last four pivots.
-                        previous = self._hourly_trend
-                        fitted = wick_tight_hourly_trend(
-                            proposal, self._hourly.bars,
-                            first_main=previous.main.first,
-                            first_target=previous.target.first,
-                        )
+                          previous.pivot_sequence[3].at_ms):
+                        # Both initial pivots stay frozen throughout the move.
+                        fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
                         if fitted is not None:
                             self._hourly_trend = fitted
         self._install_opposite_if_confirmed(five_minute.end_ms)
