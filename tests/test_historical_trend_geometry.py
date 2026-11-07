@@ -173,6 +173,50 @@ class ConfirmedGeometryTests(unittest.TestCase):
         for bar in compatible[1:]:
             self.assertLessEqual(line.value_at(bar.start_ms), bar.low)
 
+    def test_real_grass_august_22_h1_upper_wick_rejects_pivot_substitution(self):
+        # Public GRASSUSDT H1 evidence (2026-08-22, UTC): the wick at
+        # 17:00 high=0.31490 exceeds the real H1 pivot 1--3 upper line.
+        # Only the intervening candles unrelated to this boundary are
+        # controlled synthetic values; no real archive is reconstructed.
+        start = 1787414400000  # 2026-08-22 16:00 UTC, HIGH pivot 1
+        high1, high3 = Decimal("0.31580"), Decimal("0.30570")
+        bars = []
+        for i in range(10):
+            interpolated = high1 + (high3 - high1) * Decimal(i) / Decimal(9)
+            high = high1 if i == 0 else high3 if i == 9 else interpolated - Decimal("0.001")
+            if i == 1:
+                high = Decimal("0.31490")  # actual archived 17:00 H1 wick
+            bars.append(Candle(
+                start + i * ONE_HOUR_MS, ONE_HOUR_MS,
+                high - Decimal("0.001"), high, Decimal("0.28000"),
+                high - Decimal("0.001"), Decimal("10"),
+            ))
+        p1 = ConfirmedPivot("HIGH", 0, start,
+                            start + 3 * ONE_HOUR_MS, high1)
+        p3 = ConfirmedPivot("HIGH", 9, start + 9 * ONE_HOUR_MS,
+                            start + 12 * ONE_HOUR_MS, high3)
+        available = p3.confirmed_at_ms
+        self.assertIsNone(wick_tight_hourly_line(
+            p1, p3, tuple(bars), boundary="UPPER",
+            available_at_ms=available,
+        ))
+        line_price = high1 + (high3 - high1) / Decimal(9)
+        self.assertGreater(Decimal("0.31490"), line_price)
+        # Replacing the single violating HIGH with a sub-line wick makes
+        # the very same genuine confirmed-pivot anchors valid.
+        corrected = list(bars)
+        corrected[1] = Candle(
+            start + ONE_HOUR_MS, ONE_HOUR_MS,
+            Decimal("0.31360"), Decimal("0.31460"),
+            Decimal("0.28000"), Decimal("0.31360"), Decimal("10"),
+        )
+        fitted = wick_tight_hourly_line(
+            p1, p3, tuple(corrected), boundary="UPPER",
+            available_at_ms=available,
+        )
+        self.assertIsNotNone(fitted)
+        self.assertEqual((fitted.first, fitted.second), (p1, p3))
+
     def test_bear_main_is_through_highs_and_target_through_lows(self):
         stream = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=1)
         for i, (high, low) in enumerate(BEAR):
