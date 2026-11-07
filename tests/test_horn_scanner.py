@@ -264,7 +264,7 @@ class DeliveryTest(unittest.TestCase):
         self.assertFalse(result)
         failed = [e for e in read_events(self.root) if e["event"] == "horn_delivery" and not e["ok"]]
         self.assertEqual(failed[0]["chat_id"], "friend")
-        self.assertIn("timeout", failed[0]["error"])
+        self.assertEqual(failed[0]["error"], "RuntimeError")
         result, calls = self.send(observation, [], [self.OK])
         self.assertTrue(result)
         self.assertEqual(self.order(calls), [("photo", "friend")])
@@ -304,6 +304,22 @@ class DeliveryTest(unittest.TestCase):
         result, calls = self.send(upgraded, [], [self.OK])
         self.assertTrue(result)
         self.assertEqual(self.order(calls), [("photo", "owner")])
+
+    def test_telegram_exception_details_are_not_written_to_evidence(self):
+        observation = self.observation()
+        secret = "sensitive-token-in-http-error"
+        result, _ = self.send(
+            observation,
+            [RuntimeError(f"request failed: {secret}"), self.OK],
+            [self.OK],
+        )
+        self.assertFalse(result)
+        events = read_events(self.root)
+        self.assertTrue(any(
+            e["event"] == "horn_text_delivery" and e.get("error") == "RuntimeError"
+            for e in events
+        ))
+        self.assertNotIn(secret, str(events))
 
     def test_test_mode_does_not_persist_memory(self):
         _, calls = self.send(self.observation(), [self.OK] * 2, [self.OK] * 2, test_mode=True)
