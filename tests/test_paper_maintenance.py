@@ -100,6 +100,42 @@ def test_proven_one_orphan_editor_cli_accepts_exact_arguments(
     assert capsys.readouterr().out == "BLOCKED: TEST_ONLY_NO_RUNTIME_ACTION\n"
 
 
+def test_paper_module_cli_exact_ssh_arguments_never_reaches_stop(tmp_path):
+    """Real -m invocation, unlike monkeypatched main(); impossible stage blocks."""
+    import sys
+
+    stage = tmp_path / "absent-stage"
+    target = "a" * 40
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "tools.paper_maintenance", target,
+            "--staged-gitless-editor-only", str(stage),
+            "--proven-one-flat-orphan-handoff",
+        ],
+        capture_output=True, text=True, timeout=20,
+    )
+    assert result.returncode == 2
+    assert result.stdout.strip() == "BLOCKED: incorrect_Gitless_release_layout"
+    assert result.stderr == ""
+
+
+def test_paper_module_cli_parse_error_is_one_line_before_stop():
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "tools.paper_maintenance", "a" * 40,
+            "--unsupported-switch",
+        ],
+        capture_output=True, text=True, timeout=20,
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.strip() == (
+        "BLOCKED: paper_maintenance_cli: unrecognized arguments: --unsupported-switch"
+    )
+
+
 def test_rejects_bad_sha_without_stop_or_mutation():
     calls = []
     assert run_maintenance("bad", stop=lambda _: calls.append("stop")) .startswith("BLOCKED:")
