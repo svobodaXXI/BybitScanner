@@ -54,3 +54,18 @@ describe("owner new-signal draft", () => {
     })).toThrow(/по времени/);
   });
 });
+
+
+describe("retrospective owner new-signal proposal", () => {
+  it("carries review-as-of evidence without changing immutable signal identity", () => {
+    const asOf = Date.parse(candles.at(-1)!.time);
+    const result = buildOwnerSignalDraft({
+      ...input,
+      drawings: [ray("hi", [30, 108], [80, 102]), ray("lo", [30, 95], [80, 92])],
+      contextAsOfMs: asOf, contextBarsSha256: "c".repeat(64),
+    });
+    expect(result.context_as_of_ms).toBe(asOf);
+    expect(result.context_bars_sha256).toBe("c".repeat(64));
+    expect(result.snapshot_revision).toBe(input.snapshotRevision);
+  });
+});
