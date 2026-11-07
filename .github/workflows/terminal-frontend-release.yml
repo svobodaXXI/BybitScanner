@@ -70,4 +70,4 @@ jobs:
           retention-days: 14
           if-no-files-found: error
       - name: Validate publisher's focused regressions
-        run: python3 -m unittest -v tests.test_vps_terminal_frontend_publish
+        run: python3 -m unittest discover -s tests -p 'test_vps_terminal_frontend_publish.py' -v
