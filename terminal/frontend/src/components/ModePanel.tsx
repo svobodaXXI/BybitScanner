@@ -35,7 +35,9 @@ export function ModePanel({
             <>
               <AutopilotFirstScreen
                 accountKey={accountKey}
-                onOpenPositions={() => setOpenPositionsRequest((value) => value + 1)}
+                onOpenPositions={props.accountWorkspaceProjection?.provider === "PAPER"
+                  ? () => setOpenPositionsRequest((value) => value + 1)
+                  : undefined}
                 onTradeDetails={setRequestedTradeEpisodeId}
                 onStatistics={() => setStatisticsRequest((value) => value + 1)}
                 onTerminal={() => props.onModeChange("TERMINAL")}
