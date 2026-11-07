@@ -699,6 +699,10 @@ def deploy_staged_editor_only(
             ] if journal_root.is_dir() else []
             if (len(pending) == 1 and isinstance(current, str)
                     and pending[0].name != ".stop-invoked-" + target
+                    and (journal_root / (
+                        ".one-flat-handoff-handoff-proven-"
+                        + pending[0].name.removeprefix(".stop-invoked-")
+                    )).exists()
                     and _proven_one_flat_successor(
                         journal_root,
                         pending[0].name.removeprefix(".stop-invoked-"),
