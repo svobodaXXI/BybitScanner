@@ -396,11 +396,19 @@ def observe_closed_engulfing(
     if step <= 0 or start_before < 0 or end_before != start_now or end_now - start_now != step:
         return None
 
-    def numeric(values):
-        o, h, lo, c = values
-        return {"open": float(o), "high": float(h), "low": float(lo), "close": float(c)}
-
-    if not directional_engulfing(numeric(before), numeric(now), direction):
+    # Keep the validated Decimal prices exact. A Decimal -> float conversion
+    # can round near-equal body boundaries together or overflow to infinity,
+    # creating a false engulfing observation. This new API is observational;
+    # the legacy MIRROR directional_engulfing policy remains unchanged.
+    prior_open, _, _, prior_close = before
+    open_now, _, _, close_now = now
+    if direction == "LONG":
+        engulfed = (prior_close < prior_open and close_now > open_now
+                    and open_now <= prior_close and close_now >= prior_open)
+    else:
+        engulfed = (prior_close > prior_open and close_now < open_now
+                    and open_now >= prior_close and close_now <= prior_open)
+    if not engulfed:
         return None
     return {
         "formation_type": "ENGULFING",
