@@ -924,7 +924,13 @@ def test_auto_recovery_never_replays_ambiguous_or_unauthorized_stop(
         installer=lambda *_args, **_kw: pytest.fail("no installation"),
         resume=lambda *_args, **_kw: pytest.fail("no resume"),
     )
-    assert result.startswith("BLOCKED: prior_STOP_outcome_unproven")
+    assert result.startswith("BLOCKED:")
+    if same_target:
+        # Existing same-target STOP receipt validation retains its precise
+        # missing-receipt diagnosis. No automatic exceptional route.
+        assert "untrusted_stop_receipt_directory" in result
+    else:
+        assert "prior_STOP_outcome_unproven" in result
 
 
 def test_auto_route_preserves_unknown_handoff_result_without_stop_retry(
