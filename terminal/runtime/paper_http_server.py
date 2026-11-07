@@ -88,7 +88,7 @@ from terminal.persistence.live_account_store import LiveAccountProjectionStore
 from terminal.persistence.active_account_preference import ActiveAccountPreferenceStore
 from terminal.application.live_account_reconciliation import LiveAccountReconciliationError
 from terminal.application.runtime_intent import RuntimeIntent, RuntimeIntentReconciler
-from terminal.application.robot_control import ROBOT_CLOSE_ALL_ALLOWED_STATES
+from terminal.application.robot_control import ROBOT_CLOSE_ALL_ALLOWED_STATES, RobotControlRejected, stop_robot
 
 
 LOGGER = logging.getLogger(__name__)
@@ -253,6 +253,41 @@ def _diary_trade_list(runtime: PaperRuntime) -> dict[str, object]:
             episodes,
             now_ms=int(time.time() * 1000),
         ),
+    }
+
+
+def _robot_day_summary(runtime: PaperRuntime, now_ms: int) -> dict[str, object]:
+    """Read only the canonical PAPER Robot ledger; no Diary/manual attribution guesses."""
+    day_ms = 24 * 60 * 60 * 1000
+    msk_offset_ms = 3 * 60 * 60 * 1000
+    day_start_ms = ((now_ms + msk_offset_ms) // day_ms) * day_ms - msk_offset_ms
+    rows = runtime.store.load_robot_trades_with_events_since(
+        TradingAccountId("paper"), day_start_ms,
+    )
+    closed = [
+        trade for trade in rows
+        if trade.exit_time_ms is not None
+        and day_start_ms <= trade.exit_time_ms <= now_ms
+    ]
+    net = Decimal("0")
+    incomplete = 0
+    for trade in closed:
+        gross, fees = trade.realized_pnl_usdt, trade.fees_costs_usdt
+        if (
+            gross is None or fees is None
+            or not gross.is_finite() or not fees.is_finite() or fees < 0
+            or trade.entry_quantity is None
+        ):
+            incomplete += 1
+        else:
+            net += gross - fees
+    return {
+        "account_id": "paper",
+        "source": "robot_trades",
+        "day_start_ms": day_start_ms,
+        "closed_trades": len(closed),
+        "trades_without_pnl": incomplete,
+        "net_pnl_usdt": None if incomplete else str(net),
     }
 
 
@@ -3047,6 +3082,31 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/api/robot/day-summary":
+            try:
+                now_ms = int(time.time() * 1000)
+                projection = self.server.runtime.call(
+                    lambda runtime: _robot_day_summary(runtime, now_ms)
+                )
+            except Exception:
+                LOGGER.exception("Robot day summary projection unavailable")
+                self._json_response(503, {"ok": False, "error": "robot_day_summary_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
+        if parsed.path == "/api/robot/state":
+            try:
+                state = self.server.runtime.call(lambda runtime: runtime.robot_runtime_state())
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "robot_state_unavailable"})
+                return
+            if state is None:
+                self._json_response(503, {"ok": False, "error": "robot_state_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **to_primitive(state)})
+            return
+
         if parsed.path == "/api/robot/autopilot":
             try:
                 state = self.server.runtime.call(lambda runtime: runtime.autopilot_state())
@@ -4079,6 +4139,54 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 200 if success else 409,
                 {"ok": success, **to_primitive(result)},
             )
+            return
+
+        if self.path == "/api/robot/stop":
+            # Reuse the canonical stop_robot() command from Telegram/VPS Manager
+            # rather than introducing another durable transition. Execute on
+            # this HTTP handler thread, NEVER through runtime.call: the command
+            # synchronously POSTs back to this ThreadingHTTPServer so its
+            # pending-entry reconciliation can run on the PAPER owner thread.
+            try:
+                self._payload(set())
+                database_path = self.server.runtime.call(
+                    lambda runtime: runtime.store.normalized_path
+                )
+                if not isinstance(database_path, str) or not database_path:
+                    raise RuntimeError("canonical_paper_database_unavailable")
+                backend_url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+                def post_pending_reconcile(url, payload):
+                    response = requests.post(url, json=payload, timeout=15)
+                    body = response.json()
+                    if response.status_code != 200 or not isinstance(body, dict) or body.get("ok") is not True:
+                        raise RobotControlRejected("synchronize_pending_entries_rejected")
+                    return body
+
+                stop_robot(
+                    database_path=database_path,
+                    backend_url=backend_url,
+                    http_post=post_pending_reconcile,
+                )
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_robot_stop"})
+                return
+            except RobotControlRejected as exc:
+                self._json_response(409, {"ok": False, "error": str(exc)})
+                return
+            except Exception:
+                LOGGER.exception("Canonical Robot stop unavailable")
+                self._json_response(503, {"ok": False, "error": "robot_stop_unavailable"})
+                return
+            try:
+                state = self.server.runtime.call(lambda runtime: runtime.robot_runtime_state())
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "robot_stop_postcondition_unknown"})
+                return
+            if state is None or (state.mode, state.recovery_status) != ("ROBOT_STOPPED", "ROBOT_STOPPED"):
+                self._json_response(409, {"ok": False, "error": "robot_stop_not_converged"})
+                return
+            self._json_response(200, {"ok": True, "robot": "ROBOT_STOPPED"})
             return
 
         if self.path == "/api/robot/close-all-now":

@@ -55,6 +55,15 @@ const healthyRoutes: Routes = {
     healthy: true,
     unhealthy_symbols: {},
   },
+  "/api/robot/day-summary": {
+    ok: true,
+    source: "robot_trades",
+    account_id: "paper",
+    day_start_ms: DAY_START,
+    closed_trades: 1,
+    trades_without_pnl: 0,
+    net_pnl_usdt: "2.50",
+  },
   "/api/diary/trades": {
     ok: true,
     active_account_id: "paper",
@@ -64,6 +73,7 @@ const healthyRoutes: Routes = {
         symbol: "OLDUSDT",
         closed_at_ms: DAY_START + 10,
         pnl: "2.5",
+        controller_origin: "ROBOT",
         readiness: "CLOSED_READY",
       },
       {
@@ -106,143 +116,118 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("AutopilotFirstScreen (UI-1)", () => {
-  it("shows an explicit loading state before data arrives", () => {
-    mockFetch("pending");
-    render(<AutopilotFirstScreen now={() => NOW} />);
-
-    expect(screen.getAllByText("Загрузка…").length).toBeGreaterThan(0);
-  });
-
-  it("renders the summary and every open position with its own STOP and TAKE", async () => {
+describe("Autopilot compact first screen", () => {
+  it("shows only the day result and trade count, without unrelated status labels", async () => {
     mockFetch(healthyRoutes);
     render(<AutopilotFirstScreen now={() => NOW} />);
-
-    expect(await screen.findByText("PAPER_AUTO")).toBeInTheDocument();
-    expect(screen.getByText("+2.50 USDT")).toBeInTheDocument();
-    expect(screen.getByText("Открыт")).toBeInTheDocument();
-    expect(screen.getByText("HEALTHY")).toBeInTheDocument();
-
-    const lsk = await screen.findByRole("article", { name: "Сделка LSKUSDT" });
-    expect(within(lsk).getByText("LONG")).toBeInTheDocument();
-    expect(await within(lsk).findByText("0.1900")).toBeInTheDocument();
-    expect(within(lsk).getByText("0.2300")).toBeInTheDocument();
-    expect(within(lsk).getByText("Falling Wedge retest")).toBeInTheDocument();
-
-    const night = screen.getByRole("article", { name: "Сделка NIGHTUSDT" });
-    expect(within(night).getByText("SHORT")).toBeInTheDocument();
-    expect(await within(night).findByText("Не установлен")).toBeInTheDocument();
-    expect(within(night).getByText("Нет текущей цены")).toBeInTheDocument();
+    expect(await screen.findByText("+2.50 USDT")).toBeInTheDocument();
+    expect(screen.getByText("PnL за день")).toBeInTheDocument();
+    expect(screen.getByText("Сделок за день")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.queryByText("Блок серии STOP")).not.toBeInTheDocument();
+    expect(screen.queryByText("PAPER_AUTO")).not.toBeInTheDocument();
+    expect(screen.queryByText("Что робот сейчас делает")).not.toBeInTheDocument();
   });
 
-  it("marks sources the backend does not publish instead of inventing values", async () => {
+  it("uses accessible icon-only controls in the requested order", async () => {
     mockFetch(healthyRoutes);
-    render(<AutopilotFirstScreen now={() => NOW} />);
-
-    await screen.findByText("PAPER_AUTO");
-    // STOP series, daily drawdown, STOP level, Robot state + per-card holding reason.
-    expect(
-      screen.getAllByText("Нет источника данных").length,
-    ).toBeGreaterThanOrEqual(6);
+    const onTradeDetails = vi.fn();
+    const onOpenPositions = vi.fn();
+    const onStatistics = vi.fn();
+    const onTerminal = vi.fn();
+    const onRobotControls = vi.fn();
+    render(<AutopilotFirstScreen
+      now={() => NOW}
+      onTradeDetails={onTradeDetails}
+      onOpenPositions={onOpenPositions}
+      onStatistics={onStatistics}
+      onTerminal={onTerminal}
+      onRobotControls={onRobotControls}
+      accountControl={<button type="button" aria-label="Счёт">key</button>}
+    />);
+    await screen.findByText("+2.50 USDT");
+    const nav = screen.getByRole("navigation", { name: "Панель управления Автопилотом" });
+    const buttons = within(nav).getAllByRole("button");
+    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Подробности сделки", "Все открытые позиции", "Статистика", "Терминал", "Управление роботом", "Счёт",
+    ]);
+    expect(buttons[0]).toBeDisabled(); // Multiple open positions: no ambiguous trade selection.
+    fireEvent.click(buttons[1]);
+    fireEvent.click(buttons[2]);
+    fireEvent.click(buttons[3]);
+    fireEvent.click(buttons[4]);
+    expect(onOpenPositions).toHaveBeenCalledOnce();
+    expect(onStatistics).toHaveBeenCalledOnce();
+    expect(onTerminal).toHaveBeenCalledOnce();
+    expect(onRobotControls).toHaveBeenCalledOnce();
+    expect(onTradeDetails).not.toHaveBeenCalled();
   });
 
-  it("refuses a day PnL when a closed trade of the day has no PnL", async () => {
+  it("never invents a financial result when a closed trade lacks PnL", async () => {
+    mockFetch({
+      ...healthyRoutes,
+      "/api/robot/day-summary": {
+        ok: true,
+        source: "robot_trades",
+        account_id: "paper",
+        day_start_ms: DAY_START,
+        closed_trades: 1,
+        trades_without_pnl: 1,
+        net_pnl_usdt: null,
+      },
+    });
+    render(<AutopilotFirstScreen now={() => NOW} accountKey="paper:1" />);
+    expect(await screen.findByText("Нет данных: 1 из 1 сделок без полного PnL")).toBeInTheDocument();
+  });
+
+  it("takes Robot PnL from robot_trades, not unrelated manual Diary trades", async () => {
     mockFetch({
       ...healthyRoutes,
       "/api/diary/trades": {
         ok: true,
+        active_account_id: "paper",
+        session_generation: 1,
         trades: [
-          {
-            symbol: "X",
-            closed_at_ms: DAY_START + 1,
-            pnl: null,
-            readiness: "CLOSED_INCOMPLETE",
-          },
+          { symbol: "UNKNOWN", closed_at_ms: DAY_START + 1, pnl: "100", controller_origin: null, readiness: "CLOSED_READY" },
+          { symbol: "MANUAL", closed_at_ms: DAY_START + 2, pnl: "200", controller_origin: "TERMINAL", readiness: "CLOSED_READY" },
         ],
       },
     });
-    render(<AutopilotFirstScreen now={() => NOW} />);
-
-    expect(
-      await screen.findByText("Нет данных: 1 из 1 сделок без PnL"),
-    ).toBeInTheDocument();
+    render(<AutopilotFirstScreen now={() => NOW} accountKey="paper:1" />);
+    expect(await screen.findByText("+2.50 USDT")).toBeInTheDocument();
+    expect(screen.queryByText("+300.00 USDT")).not.toBeInTheDocument();
   });
 
-  it("distinguishes no positions from unavailable positions", async () => {
+  it("rejects an untrusted Robot daily summary instead of showing a false zero", async () => {
     mockFetch({
       ...healthyRoutes,
-      "/api/open-positions": { ok: true, account_id: "paper", positions: [] },
+      "/api/robot/day-summary": {
+        ok: true,
+        source: "robot_trades",
+        account_id: "other-paper",
+        day_start_ms: DAY_START,
+        closed_trades: 0,
+        trades_without_pnl: 0,
+        net_pnl_usdt: "0",
+      },
     });
-    const { unmount } = render(<AutopilotFirstScreen now={() => NOW} />);
-    expect(await screen.findByText("Нет открытых позиций")).toBeInTheDocument();
-    unmount();
-
-    const { "/api/open-positions": _omitted, ...withoutPositions } =
-      healthyRoutes;
-    mockFetch(withoutPositions);
     render(<AutopilotFirstScreen now={() => NOW} />);
-    const positions = screen.getByLabelText("Открытые позиции");
-    expect(
-      await within(positions).findByText("Данные недоступны"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Нет открытых позиций")).not.toBeInTheDocument();
+    expect(await screen.findAllByText("Данные недоступны")).toHaveLength(2);
+    expect(screen.queryByText("+0.00 USDT")).not.toBeInTheDocument();
   });
 
-  it("reports an offline backend without offering any control", async () => {
+  it("shows backend failures without a fabricated zero result", async () => {
     mockFetch("offline");
     render(<AutopilotFirstScreen now={() => NOW} />);
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "PAPER backend недоступен",
-    );
-    expect(
-      screen.getAllByRole("button").map((button) => button.textContent),
-    ).toEqual(["Обновить"]);
+    expect(await screen.findByRole("alert")).toHaveTextContent("PAPER backend недоступен");
+    expect(screen.queryByText("+0.00 USDT")).not.toBeInTheDocument();
   });
 
-  it("delegates details only with a uniquely identified open episode", async () => {
-    const onTradeDetails = vi.fn();
-    const fetchMock = mockFetch(healthyRoutes);
-    render(<AutopilotFirstScreen now={() => NOW} accountKey="paper:1" onTradeDetails={onTradeDetails} />);
-    const lsk = await screen.findByRole("article", { name: "Сделка LSKUSDT" });
-    fireEvent.click(within(lsk).getByRole("button", { name: "Подробности сделки" }));
-    expect(onTradeDetails).toHaveBeenCalledWith("episode-lsk");
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    const night = screen.getByRole("article", { name: "Сделка NIGHTUSDT" });
-    expect(within(night).getByRole("button", { name: "Подробности сделки" })).toBeDisabled();
-    for (const call of fetchMock.mock.calls as unknown as [string, RequestInit?][]) {
-      expect(call[1]?.method ?? "GET").toBe("GET");
-    }
-  });
-
-  it("refuses to link diary episodes across account identities", async () => {
-    const onTradeDetails = vi.fn();
-    mockFetch(healthyRoutes);
-    render(<AutopilotFirstScreen now={() => NOW} accountKey="other-account:1" onTradeDetails={onTradeDetails} />);
-    const lsk = await screen.findByRole("article", { name: "Сделка LSKUSDT" });
-    expect(within(lsk).getByRole("button", { name: "Подробности сделки" })).toBeDisabled();
-    expect(onTradeDetails).not.toHaveBeenCalled();
-  });
-
-  it("routes all-positions navigation through the parent rather than creating an overlay", async () => {
-    const onOpenPositions = vi.fn();
-    mockFetch(healthyRoutes);
-    render(<AutopilotFirstScreen now={() => NOW} onOpenPositions={onOpenPositions} />);
-    await screen.findByText("PAPER_AUTO");
-    fireEvent.click(screen.getByRole("button", { name: "Все открытые позиции" }));
-    expect(onOpenPositions).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("dialog", { name: /Открытые позиции/ })).not.toBeInTheDocument();
-  });
-
-  it("issues only GET requests", async () => {
+  it("uses read-only requests", async () => {
     const fetchMock = mockFetch(healthyRoutes);
     render(<AutopilotFirstScreen now={() => NOW} />);
-    await screen.findByRole("article", { name: "Сделка NIGHTUSDT" });
-
-    for (const call of fetchMock.mock.calls as unknown as [
-      string,
-      RequestInit?,
-    ][]) {
+    await screen.findByText("+2.50 USDT");
+    for (const call of fetchMock.mock.calls as unknown as [string, RequestInit?][]) {
       expect(call[1]?.method ?? "GET").toBe("GET");
     }
   });

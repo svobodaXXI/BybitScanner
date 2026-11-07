@@ -36,6 +36,8 @@ on:
       - "tests/test_incident_telemetry.py"
       - "terminal/persistence/**"
       - "terminal/api/**"
+      - "tests/test_robot_manager_http_stop.py"
+      - "tests/test_robot_day_summary.py"
       - "tests/test_robot_paper_acceptance.py"
       - "tests/test_robot_protection_overflow_recovery.py"
       - "tests/test_robot_sync_pending_wedge_stop.py"
@@ -129,6 +131,8 @@ jobs:
       - name: Compile acceptance surface
         run: >-
           python -m py_compile
+          tests/test_robot_manager_http_stop.py
+          tests/test_robot_day_summary.py
           tests/test_robot_paper_acceptance.py
           tests/test_robot_sync_pending_wedge_stop.py
           tests/test_paper_two_orphan_proof.py
@@ -240,6 +244,8 @@ jobs:
       - name: Run deterministic Robot PAPER acceptance
         run: >-
           python -m unittest -v
+          tests.test_robot_manager_http_stop
+          tests.test_robot_day_summary
           tests.test_robot_paper_acceptance
           tests.test_robot_sync_pending_wedge_stop
           tests.test_paper_flat_robot_execution_fence
