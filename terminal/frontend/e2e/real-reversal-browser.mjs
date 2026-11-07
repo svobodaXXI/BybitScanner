@@ -134,6 +134,23 @@ try {
     assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   }
   const overlay = page.locator(".replay-execution-overlay");
+  // The owner first reported an implausible upward H1 ray at the INITIAL
+  // GRASS publication. Capture that exact causal instant with original
+  // candle anchors loaded, not merely the later opposite trend.
+  const firstH1Index = byEventTime.get(firstMain.available_at_ms);
+  assert.ok(Number.isInteger(firstH1Index), "initial H1 main publication must be a real M5 close");
+  await advanceTo(firstH1Index + 1);
+  await page.getByRole("button", { name: "H1", exact: true }).click();
+  await page.waitForFunction(expected =>
+    document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
+  archive.context_1h.length + 11);
+  assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 2,
+    "initial H1 main and target must render against their real context OHLC");
+  await page.screenshot({
+    path: join(screenshotDir, "real-h1-first-anchors.png"), fullPage: true,
+  });
+  await page.getByRole("button", { name: "M5", exact: true }).click();
+
   for (const { event, i, opposite } of proven) {
     const index = byEventTime.get(event.confirmed_at_ms);
     assert.ok(Number.isInteger(index), "kernel break must be attached to an actual M5 close");
