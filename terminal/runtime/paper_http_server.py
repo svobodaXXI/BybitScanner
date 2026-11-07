@@ -256,6 +256,41 @@ def _diary_trade_list(runtime: PaperRuntime) -> dict[str, object]:
     }
 
 
+def _robot_day_summary(runtime: PaperRuntime, now_ms: int) -> dict[str, object]:
+    """Read only the canonical PAPER Robot ledger; no Diary/manual attribution guesses."""
+    day_ms = 24 * 60 * 60 * 1000
+    msk_offset_ms = 3 * 60 * 60 * 1000
+    day_start_ms = ((now_ms + msk_offset_ms) // day_ms) * day_ms - msk_offset_ms
+    rows = runtime.store.load_robot_trades_with_events_since(
+        TradingAccountId("paper"), day_start_ms,
+    )
+    closed = [
+        trade for trade in rows
+        if trade.exit_time_ms is not None
+        and day_start_ms <= trade.exit_time_ms <= now_ms
+    ]
+    net = Decimal("0")
+    incomplete = 0
+    for trade in closed:
+        gross, fees = trade.realized_pnl_usdt, trade.fees_costs_usdt
+        if (
+            gross is None or fees is None
+            or not gross.is_finite() or not fees.is_finite() or fees < 0
+            or trade.entry_quantity is None
+        ):
+            incomplete += 1
+        else:
+            net += gross - fees
+    return {
+        "account_id": "paper",
+        "source": "robot_trades",
+        "day_start_ms": day_start_ms,
+        "closed_trades": len(closed),
+        "trades_without_pnl": incomplete,
+        "net_pnl_usdt": None if incomplete else str(net),
+    }
+
+
 STOP_DELETE_FIELDS = {"client_action_id", "symbol"}
 WORKSPACE_SYMBOL_FIELDS = {"symbol"}
 NATIVE_KLINE_INTERVALS = ("1", "5", "15", "60", "D")
@@ -3045,6 +3080,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     "scanner_acceptance_ready": _scanner_acceptance_ready(),
                 },
             )
+            return
+
+        if parsed.path == "/api/robot/day-summary":
+            try:
+                now_ms = int(time.time() * 1000)
+                projection = self.server.runtime.call(
+                    lambda runtime: _robot_day_summary(runtime, now_ms)
+                )
+            except Exception:
+                LOGGER.exception("Robot day summary projection unavailable")
+                self._json_response(503, {"ok": False, "error": "robot_day_summary_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
             return
 
         if parsed.path == "/api/robot/state":
