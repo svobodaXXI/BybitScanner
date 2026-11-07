@@ -274,13 +274,6 @@ export function ChartPanel({
   const [proposalStatus, setProposalStatus] = useState("");
   const [extensionPending, setExtensionPending] = useState(false);
   const [extensionStatus, setExtensionStatus] = useState("");
-  const previousReviewAsOf = useRef(retrospectiveContext?.asOfMs ?? null);
-  useEffect(() => {
-    const current = retrospectiveContext?.asOfMs ?? null;
-    const previous = previousReviewAsOf.current;
-    previousReviewAsOf.current = current;
-    if (previous !== current && current !== null && !newSignalMode) markReviewEdited();
-  }, [retrospectiveContext?.asOfMs, newSignalMode, markReviewEdited]);
   const proposalToken = useRef<{ content: string; key: string } | null>(null);
   const rayComparison = useMemo(() => {
     if (!editorMode || !signalIdentity || !referenceDrawings.length) return null;
@@ -320,6 +313,13 @@ export function ChartPanel({
     setReviewDirty(true);
     setReviewStatus("");
   }, [editorMode, signalIdentity]);
+  const previousReviewAsOf = useRef(retrospectiveContext?.asOfMs ?? null);
+  useEffect(() => {
+    const current = retrospectiveContext?.asOfMs ?? null;
+    const previous = previousReviewAsOf.current;
+    previousReviewAsOf.current = current;
+    if (previous !== current && current !== null && !newSignalMode) markReviewEdited();
+  }, [retrospectiveContext?.asOfMs, newSignalMode, markReviewEdited]);
   const latestReceipt = savedReceipt ?? (savedReviewId && savedReviewLabel
     ? { reviewId: savedReviewId, label: savedReviewLabel } : null);
   const reviewVerdicts: Record<GeometryReviewDraft["label"], string> = {
