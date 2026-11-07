@@ -60,6 +60,9 @@ from terminal.diary.presentation import project_trade_episode_list
 from terminal.diary.service import TradeEpisodeReadService
 from terminal.diary.setup_runtime import decision_store_path, project_setup_store
 from terminal.diary.statistics_endpoint import project_active_account_statistics
+from terminal.diary.scoped_statistics_archive import (
+    StatisticsScopeError, load_latest_scoped_statistics_read_only,
+)
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.hub import MarketDataHub, SymbolContext
 from terminal.market_data.client_projection import ClientMarketProjection, StaleProjectionError
@@ -3266,6 +3269,36 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     503,
                     {"ok": False, "error": "diary_setups_unavailable"},
                 )
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
+        if parsed.path == "/api/diary/scoped-statistics":
+            # This endpoint never creates or fills the archive; the separate
+            # read-only source reporter owns materialization after owner approval.
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            if set(params) != {"account_id", "owner"} or any(len(v) != 1 for v in params.values()):
+                self._json_response(400, {"ok": False, "error": "statistics_scope_required"})
+                return
+            account_id, owner = params["account_id"][0], params["owner"][0]
+            # This PAPER backend is not an authority for independently hosted
+            # MAIN history. No account fallback, no cross-account reports.
+            if account_id != "paper" or owner not in {"MANUAL", "ROBOT"}:
+                self._json_response(404, {"ok": False, "error": "statistics_scope_unavailable"})
+                return
+            archive_path = os.environ.get("BYBITSCANNER_DIARY_ARCHIVE_DB", "").strip()
+            if not archive_path:
+                self._json_response(503, {"ok": False, "error": "statistics_archive_unavailable"})
+                return
+            try:
+                projection = load_latest_scoped_statistics_read_only(
+                    archive_path, account_id=account_id, owner=owner,
+                )
+            except StatisticsScopeError:
+                self._json_response(503, {"ok": False, "error": "statistics_archive_unavailable"})
+                return
+            if projection is None:
+                self._json_response(503, {"ok": False, "error": "statistics_scope_not_materialized"})
                 return
             self._json_response(200, {"ok": True, **projection})
             return
