@@ -166,12 +166,18 @@ foreach ($file in $jsFiles) {
 }
 if (-not $screenMarker) { throw 'BLOCKED: Autopilot first-screen component missing from built JS' }
 
+# Compare FileSystemInfo paths, not string lengths: Windows TEMP can use an
+# 8.3 prefix (SVOBOD~1), while Get-ChildItem expands it to SVOBODA21.
+$builtIndex = (Get-Item -LiteralPath $index).FullName
+$builtAssets = (Get-Item -LiteralPath (Join-Path $dist 'assets')).FullName
 $files = @{}
 foreach ($file in (Get-ChildItem -LiteralPath $dist -File -Recurse)) {
-    $relative = $file.FullName.Substring($dist.Length + 1).Replace('\', '/')
-    if ($relative -eq 'frontend-release.json') { continue }
-    if ($relative -ne 'index.html' -and $relative -notlike 'assets/*') {
-        throw "BLOCKED: Unexpected generated file $relative"
+    if ($file.FullName -eq $builtIndex) {
+        $relative = 'index.html'
+    } elseif ($file.Directory.FullName -eq $builtAssets) {
+        $relative = 'assets/' + $file.Name
+    } else {
+        throw "BLOCKED: Unexpected generated file $($file.Name)"
     }
     $files[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 }
