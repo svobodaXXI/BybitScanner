@@ -139,9 +139,9 @@ const setupsResponse = {
 
 const statisticsResponse = {
   ok: true,
-  active_account_id: "paper",
-  session_generation: 1,
-  environment: "PAPER" as const,
+  account_id: "paper",
+  owner: "MANUAL" as const,
+  source_revision: 2,
   statistics: {
     sample: {
       total: 2,
@@ -213,7 +213,7 @@ function installFetchMock() {
     ok: true,
     json: async () => {
       if (url.includes("/api/diary/setups")) return setupsResponse;
-      if (url.includes("/api/diary/statistics")) return statisticsResponse;
+      if (url.includes("/api/diary/scoped-statistics?")) return statisticsResponse;
       if (url.includes("/api/scanner/mirror-levels")) return mirrorResponse;
       return tradesResponse;
     },
@@ -274,7 +274,7 @@ describe("DiaryOverlay", () => {
 
   it("opens D6.4 statistics read-only and keeps unavailable metrics missing", async () => {
     const fetchMock = installFetchMock();
-    render(<DiaryOverlay accountKey="paper:1" onClose={() => {}} />);
+    render(<DiaryOverlay accountKey="paper:1" statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
 
     await screen.findByText("BTCUSDT");
     fireEvent.click(screen.getByRole("button", { name: "Статистика" }));
@@ -287,7 +287,7 @@ describe("DiaryOverlay", () => {
     expect(screen.getByText("Покрытие MAE")).toBeTruthy();
     expect(screen.getAllByText("1/1 (100%)")).toHaveLength(2);
     expect(screen.getByText("0/1 (0%)")).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledWith("/api/diary/statistics");
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/scoped-statistics?account_id=paper&owner=MANUAL");
   });
 
   it("shows Scanner MIRROR levels read-only with geometry, retest and PAPER status", async () => {
@@ -314,5 +314,55 @@ describe("DiaryOverlay", () => {
 
     rendered.rerender(<DiaryOverlay accountKey="bybit-1:2" onClose={() => {}} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+});
+
+
+describe("scoped statistics fail-closed UX", () => {
+  it("never uses global statistics when no authoritative account/owner scope exists", async () => {
+    const fetchMock = installFetchMock();
+    render(<DiaryOverlay accountKey="unknown:0" initialSection="STATISTICS" onClose={() => {}} />);
+    await screen.findByText("Не удалось загрузить дневник");
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/diary/statistics");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a report from another account or controller", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ ...statisticsResponse, owner: "ROBOT" }), { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:1" initialSection="STATISTICS"
+      statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
+    await screen.findByText("Не удалось загрузить дневник");
+    expect(screen.queryByText("Результативность")).not.toBeInTheDocument();
+  });
+
+  it("does not publish a stale report after switching the requested account", async () => {
+    let finishOld: ((response: Response) => void) | null = null;
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("account_id=paper")) {
+        return new Promise<Response>((resolve) => { finishOld = resolve; });
+      }
+      return Promise.resolve(new Response(JSON.stringify({
+        ...statisticsResponse, account_id: "bybit-main",
+      }), { status: 200 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const rerendered = render(<DiaryOverlay
+      accountKey="paper:1" initialSection="STATISTICS"
+      statisticsScope={{ accountId: "paper", owner: "MANUAL" }}
+      onClose={() => {}} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    rerendered.rerender(<DiaryOverlay
+      accountKey="bybit-main:2" initialSection="STATISTICS"
+      statisticsScope={{ accountId: "bybit-main", owner: "MANUAL" }}
+      onClose={() => {}} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await screen.findByText("Результативность");
+    if (!finishOld) throw new Error("old request missing");
+    finishOld(new Response(JSON.stringify(statisticsResponse), { status: 200 }));
+    await waitFor(() => expect(screen.getByText(/bybit-main · раздельная статистика/)).toBeInTheDocument());
+    expect(screen.queryByText("Не удалось загрузить дневник")).not.toBeInTheDocument();
   });
 });
