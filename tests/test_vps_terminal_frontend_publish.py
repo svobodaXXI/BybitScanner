@@ -63,6 +63,44 @@ class StaticFrontendPublishTests(unittest.TestCase):
         self.assertEqual((self.tx / self.sha / "frontend-previous-index.html").read_bytes(), self.old)
         self.assertTrue(self.publish(expected_index_sha256=None).startswith("FRONTEND_READY"))
 
+    def test_successor_release_uses_existing_receipt_without_a_new_owner_pin(self):
+        self.assertTrue(self.publish().startswith("FRONTEND_READY"))
+        successor = "b" * 40
+        (self.tx / successor).mkdir(mode=0o700)
+        second = self.base / "next-dist"
+        (second / "assets").mkdir(parents=True)
+        second_html = b'<script type="module" src="/assets/index-second.js"></script>'
+        second_js = b"successor frontend"
+        (second / "index.html").write_bytes(second_html)
+        (second / "assets" / "index-second.js").write_bytes(second_js)
+        (second / "frontend-release.json").write_text(json.dumps({
+            "source_sha": successor,
+            "files": {
+                "index.html": digest(second_html),
+                "assets/index-second.js": digest(second_js),
+            },
+        }), encoding="utf-8")
+        opts = dict(bundle=second, root=self.root, webroot=self.webroot,
+                    transactions=self.tx, uid=os.geteuid(),
+                    release_verifier=lambda _: successor)
+        self.assertTrue(ui.publish_frontend(successor, **opts).startswith("FRONTEND_READY"))
+        self.assertEqual((self.tx / successor / "frontend-previous-index.html").read_bytes(),
+                         self.html)
+        self.assertEqual((self.webroot / "index.html").read_bytes(), second_html)
+        self.assertEqual((self.webroot / "assets" / "index-new.js").read_bytes(), self.js)
+        receipt = json.loads((self.webroot / ui.RECEIPT).read_text())
+        self.assertEqual(receipt["source_sha"], successor)
+        self.assertEqual(receipt["previous_index_sha256"], digest(self.html))
+        self.assertTrue(ui.publish_frontend(successor, **opts).startswith("FRONTEND_READY"))
+
+    def test_same_release_missing_backup_still_blocks(self):
+        self.assertTrue(self.publish().startswith("FRONTEND_READY"))
+        (self.tx / self.sha / "frontend-previous-index.html").unlink()
+        with self.assertRaisesRegex(
+            ui.FrontendPublishBlocked, "frontend_previous_index_backup_missing"
+        ):
+            self.publish(expected_index_sha256=None)
+
     def test_unpinned_first_adoption_is_no_op(self):
         with self.assertRaisesRegex(ui.FrontendPublishBlocked, "first_frontend_adoption"):
             self.publish(expected_index_sha256=None)
