@@ -220,6 +220,7 @@ export function ChartPanel({
   }>({ state: { mode: "IDLE" }, pointerId: null, last: null, timer: null });
   const followLatestRef = useRef(true);
   const initialSourceFrameApplied = useRef(false);
+  const previousEditorBars = useRef<number | null>(null);
   const panBatcherRef = useRef<ReturnType<typeof createFrameBatcher> | null>(null);
   const [renderTick, setRenderTick] = useState(0),
     [tool, setTool] = useState<DrawingTool>("select"),
@@ -273,6 +274,13 @@ export function ChartPanel({
   const [proposalStatus, setProposalStatus] = useState("");
   const [extensionPending, setExtensionPending] = useState(false);
   const [extensionStatus, setExtensionStatus] = useState("");
+  const previousReviewAsOf = useRef(retrospectiveContext?.asOfMs ?? null);
+  useEffect(() => {
+    const current = retrospectiveContext?.asOfMs ?? null;
+    const previous = previousReviewAsOf.current;
+    previousReviewAsOf.current = current;
+    if (previous !== current && current !== null && !newSignalMode) markReviewEdited();
+  }, [retrospectiveContext?.asOfMs, newSignalMode, markReviewEdited]);
   const proposalToken = useRef<{ content: string; key: string } | null>(null);
   const rayComparison = useMemo(() => {
     if (!editorMode || !signalIdentity || !referenceDrawings.length) return null;
@@ -406,7 +414,7 @@ export function ChartPanel({
     if (!newSignalMode || !onSubmitOwnerSignal || !signalIdentity || !snapshotRevision ||
         !barsSha256 || proposalPending || reviewPending) return;
     try {
-      const content = JSON.stringify({ drawings, proposalPattern, proposalNote });
+      const content = JSON.stringify({ drawings, proposalPattern, proposalNote, retrospectiveContext });
       if (proposalToken.current?.content !== content) {
         proposalToken.current = {
           content,
@@ -562,6 +570,8 @@ export function ChartPanel({
       series,
       timeScale,
     );
+    const previousCount = previousEditorBars.current;
+    previousEditorBars.current = candles.length;
     if (editorMode && signalIdentity && !initialSourceFrameApplied.current) {
       const sourceRange = initialSourceGeometryRange(referenceDrawings);
       if (sourceRange) {
@@ -569,6 +579,15 @@ export function ChartPanel({
         followLatestRef.current = false;
         initialSourceFrameApplied.current = true;
       }
+    }
+    // An explicit "Add later candles" action should reveal the newly closed
+    // market context instead of silently leaving it far right off-screen.
+    if (editorMode && previousCount !== null && candles.length > previousCount &&
+        initialSourceFrameApplied.current) {
+      const range = timeScale.getVisibleLogicalRange();
+      const span = range ? Math.max(25, range.to - range.from) : 70;
+      const to = candles.length + 6;
+      timeScale.setVisibleLogicalRange({ from: to - span, to });
     }
     setRenderTick((v) => v + 1);
   }, [candles, editorMode, signalIdentity, referenceDrawings]);
