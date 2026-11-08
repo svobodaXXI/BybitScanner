@@ -932,8 +932,8 @@ export function timeframeStepCursor(
  */
 export function parseReplayUtcInput(value: string): number | null {
   const input = value.trim();
-  const ru = /^(\\d{2})\\.(\\d{2})\\.(\\d{4}),?\\s+(\\d{2}):(\\d{2})$/.exec(input);
-  const iso = /^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2})$/.exec(input);
+  const ru = /^(\d{2})\.(\d{2})\.(\d{4}),?\s+(\d{2}):(\d{2})$/.exec(input);
+  const iso = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(input);
   if (!ru && !iso) return null;
   const [year, month, day, hour, minute] = ru
     ? [Number(ru[3]), Number(ru[2]), Number(ru[1]), Number(ru[4]), Number(ru[5])]
