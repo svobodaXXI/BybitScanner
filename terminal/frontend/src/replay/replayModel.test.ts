@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeHourlyCandles, hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, replayCursorAtUtc, parseReplayDocument, replayContactWithinFloatPrecision, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, displayGeometryVersions, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, replayCursorAtUtc, parseReplayUtcInput, formatReplayUtcInput, parseReplayDocument, replayContactWithinFloatPrecision, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, displayGeometryVersions, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("standalone SIMULATION viewer contract", () => {
   it("exposes real H1 warmup candles on the chart but never advances the simulation clock", () => {
@@ -155,6 +155,18 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(timeframeStepCursor(events, 24, "5m", "back")).toBe(23);
     expect(timeframeStepCursor(events, 12, "5m", "forward")).toBe(13);
     expect(timeframeStepCursor(events, 25, "1h", "forward")).toBe(25);
+  });
+
+  it("parses copied DD.MM.YYYY, HH:MM as UTC and rejects invalid dates", () => {
+    const instant = Date.UTC(2026, 7, 29, 12, 0);
+    expect(parseReplayUtcInput("29.08.2026, 12:00")).toBe(instant);
+    expect(parseReplayUtcInput("29.08.2026 12:00")).toBe(instant);
+    expect(parseReplayUtcInput("2026-08-29T12:00")).toBe(instant);
+    expect(formatReplayUtcInput(instant)).toBe("29.08.2026, 12:00");
+    expect(formatReplayUtcInput(null)).toBe("");
+    for (const bad of ["31.02.2026, 12:00", "29.08.2026, 25:00",
+      "29.08.2026, 12:70", "foo", "29/08/2026 12:00", "", "00.08.2026, 12:00"])
+      expect(parseReplayUtcInput(bad)).toBeNull();
   });
 
   it("seeks UTC clock to last COMPLETE candle without revealing a partial H1", () => {
