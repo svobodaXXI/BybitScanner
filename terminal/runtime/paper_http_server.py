@@ -284,6 +284,17 @@ def _robot_position_markers(runtime: PaperRuntime, symbol: str, trade_id: str, n
         "ok": True, "account_id": "paper",
         "source": "robot_position_view.TradeMarker",
         "symbol": symbol, "trade_id": trade_id,
+        # Provenance comes from the SAME immutable open Robot trade as the markers.
+        # Never guess the originating signal from a symbol or manual Diary row.
+        "origin": {
+            "pattern": view.pattern,
+            "candidate_id": view.trade.candidate_id,
+            "signal_timeframe_minutes": view.chart_candle_minutes if view.signal_snapshot else None,
+            "mirror_campaign": view.mirror_campaign,
+            "mirror_level_source": view.mirror_level_source,
+            "mirror_pattern": view.mirror_pattern,
+            "reentry_attempt_index": view.reentry_attempt_index,
+        },
         "markers": [
             {
                 "time_ms": marker.time_ms, "price": str(marker.price),

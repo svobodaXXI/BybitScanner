@@ -146,6 +146,27 @@ describe("Autopilot compact first screen", () => {
     expect(within(panel).queryByRole("button", { name: /Закрыть|Market|Limit/ })).not.toBeInTheDocument();
   });
 
+  it("shows the exact verified signal context above the day totals", async () => {
+    mockFetch(healthyRoutes);
+    const verifiedPosition = { ...position("LSKUSDT", "Long", "1"), robot_trade_id: "robot-lsk" };
+    render(<AutopilotFirstScreen verifiedPosition={verifiedPosition} verifiedOrigin={{
+      pattern: "Falling Wedge", candidate_id: "candidate-lsk",
+      signal_timeframe_minutes: 5, mirror_campaign: false,
+      mirror_level_source: null, mirror_pattern: null, reentry_attempt_index: 2,
+    }} />);
+    const provenance = screen.getByLabelText("Происхождение выбранной сделки");
+    expect(provenance).toHaveTextContent("Falling Wedge");
+    expect(provenance).toHaveTextContent("Сигнал робота");
+    expect(provenance).toHaveTextContent("5м");
+    expect(provenance).toHaveTextContent("№2");
+    expect(provenance).toHaveTextContent("candidate-lsk");
+    const root = screen.getByRole("region", { name: "Автопилот: первый экран" });
+    const summary = screen.getByLabelText("Сводка дня");
+    expect(root.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_CONTAINED_BY).toBeTruthy();
+    expect(summary.compareDocumentPosition(provenance) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(await screen.findByText("+2.50 USDT")).toBeInTheDocument();
+  });
+
   it("does not attribute an unverified position to the Robot", async () => {
     mockFetch(healthyRoutes);
     render(<AutopilotFirstScreen now={() => NOW} />);

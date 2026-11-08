@@ -30,6 +30,7 @@ import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDr
 import type { Candle } from "../contracts/marketData";
 import type { PaperOpenPosition } from "../contracts/trading";
 import type { RobotTradeMarker } from "../chart/robotTradeMarkers";
+import { parseRobotPositionOrigin, type RobotPositionOrigin } from "../autopilot/robotPositionOrigin";
 import type { DrawingObject } from "../chart/drawingModel";
 import {
   createLimitDraft,
@@ -108,7 +109,7 @@ export function App() {
   );
   const [robotPositions, setRobotPositions] = useState<PaperOpenPosition[] | null>(null);
   const [robotMarkers, setRobotMarkers] = useState<{
-    symbol: string; tradeId: string; markers: RobotTradeMarker[];
+    symbol: string; tradeId: string; markers: RobotTradeMarker[]; origin: RobotPositionOrigin | null;
   } | null>(null);
   const [frozenSignal, setFrozenSignal] = useState<{
     candles: Candle[];
@@ -412,14 +413,14 @@ export function App() {
         if (!response.ok) return;
         const result = await response.json() as {
           ok?: boolean; account_id?: string; source?: string; symbol?: string;
-          trade_id?: string; markers?: RobotTradeMarker[];
+          trade_id?: string; markers?: RobotTradeMarker[]; origin?: unknown;
         };
         if (result.ok !== true || result.account_id !== "paper" ||
             result.source !== "robot_position_view.TradeMarker" ||
             result.symbol !== symbol || result.trade_id !== tradeId ||
             !Array.isArray(result.markers)) return;
         if (!controller.signal.aborted)
-          setRobotMarkers({ symbol, tradeId, markers: result.markers });
+          setRobotMarkers({ symbol, tradeId, markers: result.markers, origin: parseRobotPositionOrigin(result.origin) });
       } catch {
         // Read-only observation only: unavailable evidence means no markers.
       }
@@ -1666,6 +1667,9 @@ export function App() {
           onModeChange={setMode}
           onRobotPositionsLoaded={setRobotPositions}
           verifiedRobotPosition={robotPosition}
+          verifiedRobotOrigin={mode === "AUTOPILOT" && robotPosition &&
+            robotMarkers?.symbol === robotPosition.symbol && robotMarkers?.tradeId === robotPosition.robot_trade_id
+              ? robotMarkers.origin : null}
           symbol={tradingSymbol}
           paperState={currentPaperState}
           activeLimitOrders={
