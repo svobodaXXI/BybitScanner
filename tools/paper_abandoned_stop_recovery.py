@@ -94,7 +94,7 @@ def proven_abandoned_stop(
         return False
 
 
-def _host_preflight(old: str, identity: str, *, root: Path, env_file: Path | None) -> None:
+def _host_preflight(old: str, identity: str, *, root: Path, env_file: Path | None) -> bool:
     from tools.paper_maintenance import _durable_editor_freeze, _editor_telegram_ready
     from tools.paper_stopped_approved_recovery import _post_shutdown_durable_proof
     from tools.stop_robot_runtime import _database_path, _environment
@@ -121,8 +121,24 @@ def _host_preflight(old: str, identity: str, *, root: Path, env_file: Path | Non
     _demand(not any(probe_listener_pids(address, 8765)
                     for address in ("127.0.0.1", "0.0.0.0", "::1")),
             "backend_listener_not_absent")
-    _demand(_editor_telegram_ready(identity),
-            "existing_telegram_not_healthy_no_service_restart")
+    if _editor_telegram_ready(identity):
+        return False  # Preserve an already healthy Telegram owner.
+    # A stopped Telegram owner is eligible for exactly one start under the same
+    # recovery attempt fence. An active-but-unhealthy owner must never be reset.
+    telegram = "bybitscanner-telegram.service"
+    system_telegram = Path("/etc/systemd/system") / telegram
+    release_telegram = root / "deploy/systemd" / telegram
+    _demand(system_telegram.is_file() and not system_telegram.is_symlink()
+            and release_telegram.is_file() and not release_telegram.is_symlink()
+            and system_telegram.read_bytes() == release_telegram.read_bytes(),
+            "telegram_unit_not_exact_installed_release")
+    telegram_state = _systemd_state(telegram)
+    _demand(telegram_state.get("ActiveState") in ("inactive", "failed")
+            and telegram_state.get("MainPID") == "0", "telegram_owner_not_stopped")
+    _demand(not any(probe_listener_pids(address, 8766)
+                    for address in ("127.0.0.1", "0.0.0.0", "::1")),
+            "telegram_listener_not_absent")
+    return True
 
 
 def recover_abandoned_stop(
@@ -185,10 +201,24 @@ def recover_abandoned_stop(
         identity = (freeze or _durable_editor_freeze)(root, env_file)
         _demand(isinstance(identity, str) and len(identity) == 64,
                 "PAPER_database_identity_unproven")
-        (host_preflight or _host_preflight)(old, identity, root=root, env_file=env_file)
+        start_telegram = (host_preflight or _host_preflight)(
+            old, identity, root=root, env_file=env_file) is True
         _demand(verify_release(root) == old, "installed_release_changed_during_preflight")
         _write_once(attempt, payload, transactions)
-        # Once an attempt marker is durable, unknown start outcomes are terminal.
+        # One durable attempt fences BOTH services, including transport failure
+        # between starts. Never start Backend until Telegram identity is proven.
+        if start_telegram:
+            try:
+                telegram_result = runner(
+                    [*PREFIX, "systemctl", "start", "bybitscanner-telegram.service"],
+                    cwd=root, capture_output=True, text=True, timeout=180, check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise AbandonedStopBlocked("telegram_start_outcome_unknown_no_retry") from exc
+            _demand(telegram_result.returncode == 0, "telegram_start_failed_no_retry")
+            from tools.paper_maintenance import _editor_telegram_ready
+            _demand(_editor_telegram_ready(identity),
+                    "telegram_postcondition_unproven_no_retry")
         try:
             result = runner(
                 [*PREFIX, "systemctl", "start", BACKEND],
