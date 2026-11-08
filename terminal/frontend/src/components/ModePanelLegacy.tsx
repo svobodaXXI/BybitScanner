@@ -949,11 +949,15 @@ export function ModePanel({
             <button
               className="paper-diary-button"
               type="button"
-              aria-label="???????? ???????"
-              title="???????? ???????"
+              aria-label="Статистика"
+              title="Статистика"
               onClick={() => setDiaryVisible(true)}
             >
-              D
+              <svg className="workspace-nav-symbol" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true">
+                <rect x="4" y="15" width="2.5" height="5" rx="0.3" />
+                <rect x="10.75" y="10" width="2.5" height="10" rx="0.3" />
+                <rect x="17.5" y="5" width="2.5" height="15" rx="0.3" />
+              </svg>
             </button>
             <button
               className="paper-autopilot-button"
@@ -1175,6 +1179,7 @@ export function ModePanel({
 
           {diaryVisible ? (
             <DiaryOverlay
+              initialSection="STATISTICS"
               accountKey={`${accountWorkspaceProjection?.account_id ?? "unknown"}:${accountWorkspaceProjection?.session_generation ?? 0}`}
               statisticsScope={mode === "TERMINAL" && accountWorkspaceProjection
                 ? { accountId: accountWorkspaceProjection.account_id, owner: "MANUAL" }
