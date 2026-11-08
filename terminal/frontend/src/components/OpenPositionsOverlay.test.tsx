@@ -75,6 +75,29 @@ describe("Autopilot Robot positions use the existing inventory view safely", () 
     expect(fetchMock.mock.calls.every(([url, options]) => url === "/api/open-positions" && !options)).toBe(true);
   });
 
+  it("keeps multiple Robot positions available and synchronizes their current inventory before chart navigation", async () => {
+    const btc = { ...position, robot_trade_id: "robot-btc" };
+    const eth = { ...position, symbol: "ETHUSDT", robot_trade_id: "robot-eth" };
+    const onInventoryLoaded = vi.fn();
+    const onNavigate = vi.fn();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(inventory([btc, eth])));
+    render(<OpenPositionsOverlay
+      activeSymbol="BTCUSDT"
+      robotOnly
+      onClose={vi.fn()}
+      onNavigate={onNavigate}
+      onInventoryLoaded={onInventoryLoaded}
+      runPaperMutation={(_key, operation) => operation()}
+      applyPaperState={vi.fn(() => true)}
+    />);
+    const ethRow = await screen.findByRole("button", { name: "Показать позицию ETHUSDT на графике" });
+    expect(screen.getByRole("button", { name: "Показать позицию BTCUSDT на графике" })).toBeInTheDocument();
+    await waitFor(() => expect(onInventoryLoaded).toHaveBeenCalledWith([btc, eth]));
+    fireEvent.click(ethRow);
+    fireEvent.click(screen.getByRole("button", { name: "Показать" }));
+    expect(onNavigate).toHaveBeenCalledWith("ETHUSDT");
+  });
+
   it("does not misclassify an old backend inventory as a Robot inventory", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(inventory([position])));
     renderOverlay(vi.fn(), "BTCUSDT", true);
