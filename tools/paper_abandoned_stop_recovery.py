@@ -68,6 +68,7 @@ def _write_once(path: Path, payload: bytes, directory: Path) -> None:
 
 def proven_abandoned_stop(
     transactions: Path, target: str, *, root: Path, uid: int,
+    require_installed: bool = True,
 ) -> bool:
     """Only a sealed, exactly matched old-release recovery retires the STOP fence."""
     from tools.paper_maintenance import _confirmed_stop_receipt
@@ -88,7 +89,7 @@ def proven_abandoned_stop(
             return False
         if not _confirmed_stop_receipt(transactions, target, old, uid=uid):
             return False
-        return verify_release(root) == old
+        return not require_installed or verify_release(root) == old
     except (OSError, ValueError, UnicodeError, AbandonedStopBlocked):
         return False
 
@@ -114,7 +115,8 @@ def _host_preflight(old: str, identity: str, *, root: Path, env_file: Path | Non
     state = _systemd_state(BACKEND)
     _demand(state.get("ActiveState") in ("inactive", "failed")
             and state.get("MainPID") == "0", "backend_owner_not_stopped")
-    _demand(not probe_listener_pids("127.0.0.1", 8765),
+    _demand(not any(probe_listener_pids(address, 8765)
+                    for address in ("127.0.0.1", "0.0.0.0", "::1")),
             "backend_listener_not_absent")
     _demand(_editor_telegram_ready(identity),
             "existing_telegram_not_healthy_no_service_restart")
@@ -193,6 +195,8 @@ def recover_abandoned_stop(
             raise AbandonedStopBlocked("backend_start_outcome_unknown_no_retry") from exc
         _demand(result.returncode == 0, "backend_start_failed_no_retry")
         _demand(probe(old, identity), "EDITOR_ONLY_postcondition_unproven_no_retry")
+        _demand((freeze or _durable_editor_freeze)(root, env_file) == identity,
+                "editor_freeze_changed_after_start")
         _demand(verify_release(root) == old, "release_changed_after_start")
         _write_once(restored, payload, transactions)
         return "READY: previous EDITOR_ONLY restored; abandoned STOP sealed; no STOP replay"
