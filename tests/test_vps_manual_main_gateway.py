@@ -130,6 +130,68 @@ def test_protected_gateway_unit_requires_exact_installed_bytes(tmp_path):
     assert target.read_text() == "unrelated owner service"
 
 
+
+def test_quiesce_existing_main_only_after_proven_paper_stop(tmp_path):
+    root, ng, _site_path, _old = _site(tmp_path)
+    unit_dir = ng / "units"
+    unit_dir.mkdir()
+    installed = unit_dir / gateway.UNIT
+    installed.write_bytes((root / "deploy/systemd" / gateway.UNIT).read_bytes())
+    active = [True]
+    calls = []
+
+    def run(argv, **_kwargs):
+        calls.append(tuple(argv))
+        if argv[:2] == ["systemctl", "show"]:
+            return SimpleNamespace(returncode=0, stdout=(
+                "LoadState=loaded\n"
+                f"ActiveState={'active' if active[0] else 'inactive'}\n"
+                f"MainPID={'123' if active[0] else '0'}\n"
+                f"FragmentPath={installed}\nDropInPaths=\n"
+            ))
+        if argv == ["systemctl", "stop", gateway.UNIT]:
+            active[0] = False
+        return SimpleNamespace(returncode=0, stdout="")
+
+    result = gateway.quiesce_gateway_after_paper_stop(
+        root=root, unit_dir=unit_dir, run=run, uid=os.geteuid(),
+        port_listening=lambda: active[0],
+    )
+    assert result.startswith("READY:")
+    assert calls.count(("systemctl", "stop", gateway.UNIT)) == 1
+    assert active == [False]
+    gateway.quiesce_gateway_after_paper_stop(
+        root=root, unit_dir=unit_dir, run=run, uid=os.geteuid(),
+        port_listening=lambda: active[0],
+    )
+    assert calls.count(("systemctl", "stop", gateway.UNIT)) == 1
+
+
+def test_unproven_main_gateway_stop_is_not_retried(tmp_path):
+    root, ng, _site_path, _old = _site(tmp_path)
+    unit_dir = ng / "units"
+    unit_dir.mkdir()
+    installed = unit_dir / gateway.UNIT
+    installed.write_bytes((root / "deploy/systemd" / gateway.UNIT).read_bytes())
+    calls = []
+
+    def run(argv, **_kwargs):
+        calls.append(tuple(argv))
+        if argv[:2] == ["systemctl", "show"]:
+            return SimpleNamespace(returncode=0, stdout=(
+                "LoadState=loaded\nActiveState=active\nMainPID=123\n"
+                f"FragmentPath={installed}\nDropInPaths=\n"
+            ))
+        return SimpleNamespace(returncode=1, stdout="")
+
+    with pytest.raises(gateway.MainGatewayBlocked, match="gateway_command_failed"):
+        gateway.quiesce_gateway_after_paper_stop(
+            root=root, unit_dir=unit_dir, run=run, uid=os.geteuid(),
+            port_listening=lambda: True,
+        )
+    assert calls.count(("systemctl", "stop", gateway.UNIT)) == 1
+
+
 def test_anonymous_route_must_fail_with_401_or_403():
     def allow(*args, **kwargs):
         return SimpleNamespace(__enter__=lambda x: x)

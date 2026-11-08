@@ -197,6 +197,49 @@ def _verify_anonymous_denial(*, open_url: Callable) -> None:
         raise MainGatewayBlocked("main_gateway_auth_probe_unavailable") from exc
 
 
+
+def _main_port_listening(port: int = 8771) -> bool:
+    """Read-only socket snapshot; unknown state is a blocker, never 'empty'."""
+    try:
+        for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+            for record in Path(table).read_text().splitlines()[1:]:
+                fields = record.split()
+                if len(fields) < 4:
+                    raise MainGatewayBlocked("main_gateway_socket_snapshot_malformed")
+                if fields[3] == "0A" and int(fields[1].rsplit(":", 1)[1], 16) == port:
+                    return True
+    except (OSError, IndexError, ValueError) as exc:
+        if isinstance(exc, MainGatewayBlocked):
+            raise
+        raise MainGatewayBlocked("main_gateway_socket_snapshot_unavailable") from exc
+    return False
+
+
+def quiesce_gateway_after_paper_stop(
+    *, root: Path, run: Callable = subprocess.run,
+    unit_dir: Path = UNIT_DIR, uid: int = 0,
+    port_listening: Callable = _main_port_listening,
+) -> str:
+    """Only after the caller proved canonical PAPER shutdown success.
+
+    Stop just the independent read-only MAIN worker once. Never stop PAPER,
+    write SQL, signal an unknown PID or guess service shutdown on failure.
+    """
+    installed = unit_dir / UNIT
+    if not installed.exists():
+        _require(not installed.is_symlink() and not port_listening(),
+                 "unowned_main_gateway_port_or_unit")
+        return "READY: MAIN gateway not previously installed"
+    _unit_attested(root, unit_dir=unit_dir, uid=uid)
+    state = _service_state(run=run, installed=installed)
+    if state == "active":
+        _command(["systemctl", "stop", UNIT], run=run)
+        state = _service_state(run=run, installed=installed)
+    _require(state == "inactive" and not port_listening(),
+             "main_gateway_shutdown_not_proven")
+    return "READY: MAIN read-only gateway quiescent; PAPER stop was independently confirmed"
+
+
 def prepare_gateway(
     target: str, *, root: Path, run: Callable = subprocess.run,
     open_url: Callable = urlopen, nginx_dir: Path = NGINX_DIR,

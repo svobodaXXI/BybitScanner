@@ -833,6 +833,24 @@ def deploy_staged_editor_only(
                 )
         else:
             result = None  # Already recorded protected transaction; no STOP replay.
+        if gateway_scope and result is not None:
+            # This non-trading worker must be stopped before replacing tracked
+            # Python bytes. A confirmed canonical PAPER stop/receipt is mandatory;
+            # never use a failed or unknown STOP to authorize this action.
+            if not (getattr(result, "ok", False) is True
+                    and getattr(result, "runtime_stopped", False) is True):
+                return "BLOCKED: main_gateway_requires_confirmed_PAPER_stop"
+            from tools.vps_manual_main_gateway import (
+                MainGatewayBlocked, quiesce_gateway_after_paper_stop,
+            )
+            try:
+                quiesce_gateway_after_paper_stop(
+                    root=root, unit_dir=installed_units, uid=trusted_uid,
+                )
+            except (MainGatewayBlocked, OSError, ValueError) as exc:
+                return ("BLOCKED: main_gateway_safe_quiescence_unproven:"
+                        + type(exc).__name__ + ":" + str(exc)[:160]
+                        + "; canonical STOP not retried")
         receipt = install_action(
             target, stage=stage, stopped_proof=result, root=root,
             manifest=manifest_path, unit_dir=installed_units,
