@@ -241,7 +241,7 @@ def verify_archived_prior_timeline(doc):
             )
             if (at <= old_touch or known % hour_ms != 0 or not newer or
                     (side == "BULL" and price <= old_price) or
-                    (side == "BEAR" and price >= old_price)):
+                    (side == "BEAR" and price >= Decimal(line["from_price"]))):
                 raise AssertionError("prior moved without a later CLOSED H1 extreme")
             transfers += 1
         last = (known, movement, at, price)
