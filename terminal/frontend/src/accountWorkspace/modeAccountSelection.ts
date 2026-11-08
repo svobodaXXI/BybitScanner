@@ -97,8 +97,19 @@ export function useModeAccountSelection() {
         }
       } catch {
         if (sequence === request.current) {
-          setError("Saved account selection unavailable. Trading is disabled.");
-          setReady(false);
+          // MAIN read access is served by an independent authenticated gateway.
+          // A saved device ID is only a lookup hint: the separate MAIN catalog
+          // and fresh summary still have to prove identity before display.
+          let localMain: string | null = null;
+          try { localMain = readDeviceMainId(); } catch { /* fail closed */ }
+          if (localMain) {
+            setPreferences({ TERMINAL: localMain, AUTOPILOT: null });
+            setError("PAPER preferences unavailable; MAIN access is read-only.");
+            setReady(true);
+          } else {
+            setError("Saved account selection unavailable. Trading is disabled.");
+            setReady(false);
+          }
         }
       }
     })();
