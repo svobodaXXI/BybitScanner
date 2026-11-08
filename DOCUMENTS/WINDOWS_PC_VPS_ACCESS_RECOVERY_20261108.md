@@ -37,6 +37,17 @@ This is an **additional public IPv4 address, not an API endpoint or API key**:
 6. One live, non-restarting interface address addition `ip addr add 212.193.14.116/24 dev ens3` succeeded. PowerShell SSH using the existing PC key to `root@212.193.14.116` returned exit 0, before Netplan persistence.
 7. Netplan file was backed up; one addresses-list addition; `netplan generate` passed. No network restart; follow-up PowerShell via SSH alias returned exit 0. VPS Manager read-only action returned exit 0. Codex Desktop alias lookup remains the only outstanding local tool/access proof.
 
+## Codex Desktop → VPS acceptance (owner report, 2026-11-08)
+
+Following the initial `ssh bybitscanner-vps` failure (unknown hostname) and then `-F C:\\Users\\svobo\\.ssh\\config` denial (`Permission denied`), Codex Desktop re-used the older proven **explicit Windows OpenSSH identity** route, without the alias/config:
+
+- Target: `root@212.193.14.116`.
+- Existing PC private-key **path only**: `C:\\Users\\svobo\\.ssh\\bybitscanner_vdsina_gateway_20261030` (use `-i`; do not print, copy or relax ACL on the key).
+- SSH options: `IdentitiesOnly=yes`, `BatchMode=yes`, `PasswordAuthentication=no`, `StrictHostKeyChecking=yes`.
+- The owner's Codex Desktop execution report: `root`, `v3286418.hosted-by-vdsina.ru`, `SSH_OK`, **exit code 0**. Read-only probe; no server/runtime mutations.
+- **Preferred Codex Desktop route**: Windows OpenSSH with explicit `-i` and target IPv4, **not** the host alias and not the Windows user `config` (which the agent environment could not read). Codex Desktop remains a GUI app; **never tell owner to launch it by typing `codex` in PowerShell**.
+- This proves an SSH login from Codex Desktop at the time of that probe; it is **not** a trading-runtime readiness certificate or authorization for any mutating command.
+
 ## Routing and safety rules for future chats
 
 - **Default PC workflow:** Codex Desktop already open, BybitScanner project selected. Do **not** tell the owner to run `codex` in PowerShell or reinstall Codex. For GitHub tasks use the GitHub connector/PR workflow; for authorized VPS work use verified Codex bridge if proven, or existing PowerShell SSH alias on PC as fallback. No arbitrary VNC/manual juggling unless a specific SSH failure makes it necessary.
