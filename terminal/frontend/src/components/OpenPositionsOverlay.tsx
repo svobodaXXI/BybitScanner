@@ -23,6 +23,7 @@ export function OpenPositionsOverlay({
   runPaperMutation,
   applyPaperState,
   robotOnly = false,
+  onInventoryLoaded,
 }: {
   activeSymbol: string;
   onClose: () => void;
@@ -31,6 +32,7 @@ export function OpenPositionsOverlay({
   applyPaperState: (state: PaperState) => boolean;
   /** Autopilot reuses this inventory for Robot-linked positions, view-only. */
   robotOnly?: boolean;
+  onInventoryLoaded?: (positions: PaperOpenPosition[]) => void;
 }) {
   const [positions, setPositions] = useState<PaperOpenPosition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,6 +74,8 @@ export function OpenPositionsOverlay({
         throw new Error("inventory response is invalid");
       }
       setPositions(result.positions);
+      // Reuse this exact fresh inventory for the selected Robot chart; no second poll.
+      if (robotOnly) onInventoryLoaded?.(result.positions);
       const openSymbols = new Set(result.positions.map((item) => item.symbol));
       for (const symbol of [...ambiguousSymbols.current]) {
         if (!openSymbols.has(symbol)) ambiguousSymbols.current.delete(symbol);
@@ -101,7 +105,7 @@ export function OpenPositionsOverlay({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [robotOnly, onInventoryLoaded]);
 
   useEffect(() => {
     void refresh();

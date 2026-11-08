@@ -5,6 +5,7 @@ on:
     paths:
       - "robot_position_chart.py"
       - "tests/test_robot_chart_viewport.py"
+      - "tests/test_robot_position_origin_projection.py"
       - "robot_candidate_store.py"
       - "mirror_retest_robot.py"
       - "retest_account_risk.py"
@@ -220,6 +221,8 @@ jobs:
           tests.test_market_data_hub_disconnect_log
       - name: Run Robot chart viewport acceptance
         run: python -m pytest -q tests/test_robot_chart_viewport.py
+      - name: Run selected Robot trade origin projection acceptance
+        run: python -m pytest -q tests/test_robot_position_origin_projection.py
       - name: Run MIRROR PAPER attachment and candle-source acceptance
         run: >-
           python -m pytest -q

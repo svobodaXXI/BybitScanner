@@ -20,6 +20,7 @@ import {
   uniqueOpenEpisodeId,
 } from "../autopilot/autopilotFirstScreenData";
 import type { PaperOpenPosition } from "../contracts/trading";
+import type { RobotPositionOrigin } from "../autopilot/robotPositionOrigin";
 import {
   formatPositionPnlPercent,
   formatPositionPrice,
@@ -210,6 +211,7 @@ export function AutopilotFirstScreen({
   onRobotControls,
   onPositionsLoaded,
   verifiedPosition = null,
+  verifiedOrigin = null,
   oneWorkingVolumeUsdt = null,
 }: {
   now?: () => number;
@@ -223,6 +225,7 @@ export function AutopilotFirstScreen({
   /** Share the already-loaded inventory; do not introduce a second API poller. */
   onPositionsLoaded?: (positions: PaperOpenPosition[] | null) => void;
   verifiedPosition?: PaperOpenPosition | null;
+  verifiedOrigin?: RobotPositionOrigin | null;
   oneWorkingVolumeUsdt?: string | null;
 }) {
   const [autopilot, setAutopilot] = useState<Loadable<AutopilotModeState>>({
@@ -290,26 +293,6 @@ export function AutopilotFirstScreen({
         </p>
       ) : null}
 
-      <dl className="autopilot-summary" aria-label="Сводка дня">
-        <SummaryItem label="PnL за день">
-          <LoadState
-            value={robotDay}
-            render={(day) => day.netPnl === null ? (
-              <span className="autopilot-missing">
-                Нет данных: {day.tradesWithoutPnl} из {day.closedTrades} сделок без полного PnL
-              </span>
-            ) : (
-              <span title="PAPER Robot: закрытые сделки за день (МСК), результат за вычетом записанных комиссий">
-                {formatUsdt(day.netPnl)}
-              </span>
-            )}
-          />
-        </SummaryItem>
-        <SummaryItem label="Сделок за день">
-          <LoadState value={robotDay} render={(day) => day.closedTrades} />
-        </SummaryItem>
-      </dl>
-
       <div className="autopilot-terminal-position-panel" aria-label="Позиция робота на панели управления">
         <div className="paper-position-controls">
           <div className="paper-wv-indicator" aria-label="Engaged working volume">
@@ -365,6 +348,34 @@ export function AutopilotFirstScreen({
         </div>
       </div>
 
+
+      <div className="autopilot-trade-origin" aria-label="Происхождение выбранной сделки">
+        <strong>Основание открытой сделки</strong>
+        {!verifiedPosition ? (
+          <small>Выберите позицию робота через «Все открытые позиции»</small>
+        ) : !verifiedOrigin ? (
+          <small>Происхождение сигнала не подтверждено</small>
+        ) : (
+          <dl>
+            <div><dt>Сигнал</dt><dd>{verifiedOrigin.pattern || "Не указан"}</dd></div>
+            <div><dt>Источник</dt><dd>{verifiedOrigin.mirror_campaign ? "MIRROR" : "Сигнал робота"}</dd></div>
+            {verifiedOrigin.signal_timeframe_minutes !== null ? (
+              <div><dt>Таймфрейм сигнала</dt><dd>{verifiedOrigin.signal_timeframe_minutes}м</dd></div>
+            ) : null}
+            {verifiedOrigin.mirror_pattern ? (
+              <div><dt>Основа MIRROR</dt><dd>{verifiedOrigin.mirror_pattern}</dd></div>
+            ) : null}
+            {verifiedOrigin.mirror_level_source ? (
+              <div><dt>Уровень MIRROR</dt><dd>{verifiedOrigin.mirror_level_source}</dd></div>
+            ) : null}
+            {verifiedOrigin.reentry_attempt_index !== null ? (
+              <div><dt>Попытка входа</dt><dd>№{verifiedOrigin.reentry_attempt_index}</dd></div>
+            ) : null}
+            <div><dt>Кандидат</dt><dd className="autopilot-origin-id">{verifiedOrigin.candidate_id}</dd></div>
+          </dl>
+        )}
+      </div>
+
       <nav className="autopilot-utility-stack" aria-label="Панель управления Автопилотом">
         <button className="workspace-nav-button" type="button" aria-label="Подробности сделки" title="Подробности сделки"
           disabled={trades.status !== "ready" || positions.status !== "ready" ||
@@ -390,7 +401,25 @@ export function AutopilotFirstScreen({
         {accountControl ? <div className="workspace-nav-account">{accountControl}</div> : null}
       </nav>
 
-
+      <dl className="autopilot-summary" aria-label="Сводка дня">
+        <SummaryItem label="PnL за день">
+          <LoadState
+            value={robotDay}
+            render={(day) => day.netPnl === null ? (
+              <span className="autopilot-missing">
+                Нет данных: {day.tradesWithoutPnl} из {day.closedTrades} сделок без полного PnL
+              </span>
+            ) : (
+              <span title="PAPER Robot: закрытые сделки за день (МСК), результат за вычетом записанных комиссий">
+                {formatUsdt(day.netPnl)}
+              </span>
+            )}
+          />
+        </SummaryItem>
+        <SummaryItem label="Сделок за день">
+          <LoadState value={robotDay} render={(day) => day.closedTrades} />
+        </SummaryItem>
+      </dl>
     </section>
   );
 }

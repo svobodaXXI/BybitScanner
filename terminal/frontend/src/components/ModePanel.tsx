@@ -8,6 +8,7 @@ import { AutopilotFirstScreen } from "./AutopilotFirstScreen";
 import { AccountMenu } from "./AccountMenu";
 import { RobotManagerPanel } from "./RobotManagerPanel";
 import type { PaperOpenPosition } from "../contracts/trading";
+import type { RobotPositionOrigin } from "../autopilot/robotPositionOrigin";
 
 export type WorkspaceMode = LegacyWorkspaceMode;
 
@@ -15,6 +16,7 @@ type ModePanelProps = ComponentProps<typeof LegacyModePanel> & {
   autopilotTradeEpisodeId?: string | null;
   onRobotPositionsLoaded?: (positions: PaperOpenPosition[] | null) => void;
   verifiedRobotPosition?: PaperOpenPosition | null;
+  verifiedRobotOrigin?: RobotPositionOrigin | null;
 };
 
 export function ModePanel({
@@ -30,7 +32,8 @@ export function ModePanel({
 
   return (
     <>
-      <LegacyModePanel {...props} openPositionsRequest={openPositionsRequest} />
+      <LegacyModePanel {...props} openPositionsRequest={openPositionsRequest}
+        onRobotPositionsLoaded={onRobotPositionsLoaded} />
       {props.mode === "AUTOPILOT" ? (
         <>
           {robotManagerOpen ? (
@@ -40,6 +43,7 @@ export function ModePanel({
               <AutopilotFirstScreen
                 accountKey={accountKey}
                 verifiedPosition={props.verifiedRobotPosition ?? null}
+                verifiedOrigin={props.verifiedRobotOrigin ?? null}
                 oneWorkingVolumeUsdt={props.paperState?.one_wv_usdt ?? null}
                 onPositionsLoaded={onRobotPositionsLoaded}
                 onOpenPositions={props.accountWorkspaceProjection?.provider === "PAPER"
