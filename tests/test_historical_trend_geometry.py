@@ -7,6 +7,7 @@ from research.causal_trend_geometry import (
     last_correction_reference, main_line_contact, recent_hourly_trend,
     original_reversal_trend, trend_from_frozen_first_pair,
     wick_tight_hourly_line, confirmed_continuation_with_successive_origins,
+    reanchor_bear_on_closed_lower_low,
 )
 from research.historical_candle_feed import FIVE_MINUTES_MS, ONE_HOUR_MS
 from research.historical_market_replay import Candle
@@ -254,6 +255,51 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual(new.side, "BEAR")
         self.assertEqual(new.main.second, e)
         self.assertEqual(new.pivot_sequence[-1], f)
+
+    def test_closed_lower_low_reanchors_existing_bear_line_to_prior_high_without_fourth_pivot(self):
+        # Owner GRASS H1: the boxed new LOW is already CLOSED; the preceding
+        # HIGH (even above the last intermediate high) is confirmed and must
+        # MOVE the same yellow line's second anchor, retaining point 1.
+        # Do not wait for the new LOW to become a wing-confirmed pivot.
+        from research.causal_trend_geometry import CausalLine, TrendCandidate
+        prices = [
+            (130, 120), (124, 115), (120, 110), (125, 113),
+            (116, 105), (126, 111), (119, 108), (115, 102),
+        ]
+        bars = tuple(make_bar(i, high, low) for i, (high, low) in enumerate(prices))
+        def pivot(kind, index):
+            bar = bars[index]
+            return ConfirmedPivot(kind, index, bar.start_ms,
+                                  bar.end_ms + ONE_HOUR_MS,
+                                  bar.high if kind == "HIGH" else bar.low)
+        a = pivot("HIGH", 0)
+        b = pivot("LOW", 2)
+        c = pivot("HIGH", 3)
+        d = pivot("LOW", 4)
+        previous = TrendCandidate(
+            "BEAR", CausalLine(a, c, bars[6].end_ms),
+            CausalLine(b, d, bars[6].end_ms),
+            (a, b, c, d), bars[6].end_ms,
+        )
+        newer_high = pivot("HIGH", 5)
+        self.assertGreater(newer_high.price, c.price)
+        self.assertIsNone(reanchor_bear_on_closed_lower_low(
+            previous, (a, b, c, d, newer_high), bars[:7], bars[6],
+        ))
+        # At the CLOSED new lower-low, the original origin and historical
+        # four-pivot qualification stay immutable.
+        updated = reanchor_bear_on_closed_lower_low(
+            previous, (a, b, c, d, newer_high), bars, bars[7],
+        )
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated.main.first, a)
+        self.assertEqual(updated.main.second, newer_high)
+        self.assertEqual(updated.target, previous.target)
+        self.assertEqual(updated.pivot_sequence, previous.pivot_sequence)
+        self.assertEqual(updated.available_at_ms, bars[7].end_ms)
+        self.assertIsNone(reanchor_bear_on_closed_lower_low(
+            updated, (a, b, c, d, newer_high), bars, bars[7],
+        ))
 
     def test_bear_new_lower_low_transfers_purple_prior_to_preceding_lower_high(self):
         # User acceptance: same movement origin, but a NEW validated
