@@ -926,6 +926,36 @@ export function timeframeStepCursor(
   return index;
 }
 
+/** Parse owner-pasted UTC timestamp, never local timezone or browser locale.
+ * E.g. "29.08.2026, 12:00" or native picker "2026-08-29T12:00".
+ * Reject invalid/calendar-normalised dates instead of silently seeking.
+ */
+export function parseReplayUtcInput(value: string): number | null {
+  const input = value.trim();
+  const ru = /^(\\d{2})\\.(\\d{2})\\.(\\d{4}),?\\s+(\\d{2}):(\\d{2})$/.exec(input);
+  const iso = /^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2})$/.exec(input);
+  if (!ru && !iso) return null;
+  const [year, month, day, hour, minute] = ru
+    ? [Number(ru[3]), Number(ru[2]), Number(ru[1]), Number(ru[4]), Number(ru[5])]
+    : [Number(iso![1]), Number(iso![2]), Number(iso![3]), Number(iso![4]), Number(iso![5])];
+  if (year < 1970 || year > 9999 || month < 1 || month > 12 ||
+      day < 1 || day > 31 || hour > 23 || minute > 59) return null;
+  const timestamp = Date.UTC(year, month - 1, day, hour, minute);
+  const canonical = new Date(timestamp);
+  return canonical.getUTCFullYear() === year &&
+    canonical.getUTCMonth() + 1 === month &&
+    canonical.getUTCDate() === day &&
+    canonical.getUTCHours() === hour &&
+    canonical.getUTCMinutes() === minute ? timestamp : null;
+}
+
+export function formatReplayUtcInput(timestamp: number | null): string {
+  if (timestamp === null) return "";
+  const iso = new Date(timestamp).toISOString();
+  return iso.slice(8, 10) + "." + iso.slice(5, 7) + "." +
+    iso.slice(0, 4) + ", " + iso.slice(11, 16);
+}
+
 /** Seek to an explicitly selected UTC date/time without revealing a future candle.
  * Choose the most recent FULLY CLOSED candle on the displayed timeframe.
  * All same-timestamp events are included atomically; no source history,
