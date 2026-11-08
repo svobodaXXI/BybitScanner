@@ -60,4 +60,49 @@ describe("restored per-mode account selection", () => {
     expect(result.current.mainProjection).toBeNull();
     expect(window.localStorage.getItem(KEY)).toBe("bybit-a");
   });
+  it("restores read-only MAIN from its own gateway while PAPER preferences are offline", async () => {
+    window.localStorage.setItem(KEY, "bybit-a");
+    const fetchMock = vi.fn(async (url: string, options?: { method?: string }) => {
+      if (url === "/api/accounts/mode-preferences") throw new Error("paper_backend_offline");
+      if (url === "/api/manual-main/accounts") return response({ ok: true, accounts: [main] });
+      if (url === "/api/manual-main/accounts/bybit-a/refresh" && options?.method === "POST")
+        return response({ ok: true });
+      if (url === "/api/manual-main/accounts/bybit-a/summary")
+        return response({ ok: true, summary: snapshot });
+      throw new Error("unexpected API route " + url);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useModeAccountSelection());
+    await waitFor(() => expect(result.current.mainProjection?.account_id).toBe("bybit-a"));
+    expect(result.current.ready).toBe(true);
+    expect(result.current.preferences.TERMINAL).toBe("bybit-a");
+    expect(result.current.preferences.AUTOPILOT).toBeNull();
+    expect(result.current.mainProjection?.read_only).toBe(true);
+    expect(result.current.mainProjection?.capabilities?.market).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/activate"))).toBe(false);
+  });
+
+  it("does not show a MAIN projection when PAPER is down and MAIN gateway rejects the saved ID", async () => {
+    window.localStorage.setItem(KEY, "bybit-a");
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url === "/api/accounts/mode-preferences") throw new Error("paper_backend_offline");
+      if (url === "/api/manual-main/accounts") return response({ ok: true, accounts: [] });
+      throw new Error("unexpected endpoint " + url);
+    }));
+    const { result } = renderHook(() => useModeAccountSelection());
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(result.current.preferences.TERMINAL).toBe("bybit-a");
+    expect(result.current.mainProjection).toBeNull();
+    expect(window.localStorage.getItem(KEY)).toBe("bybit-a");
+  });
+
+  it("keeps account selection unavailable when PAPER is down without a saved valid MAIN ID", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("paper_backend_offline"); }));
+    const { result } = renderHook(() => useModeAccountSelection());
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    expect(result.current.ready).toBe(false);
+    expect(result.current.mainProjection).toBeNull();
+  });
+
 });
