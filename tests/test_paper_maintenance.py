@@ -52,6 +52,43 @@ def fake_runner(calls, *, fail=None):
 
 
 
+def test_installed_target_preserves_gateway_failure_without_installer_retry(tmp_path, monkeypatch):
+    """Active EDITOR_ONLY target cannot be reinstalled after a gateway blocker."""
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as identity
+    from tools import vps_manual_main_gateway as gateway
+
+    target = "a" * 40
+    root = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    root.mkdir()
+    for name in (
+        "deploy/systemd/bybitscanner-manual-main-read.service",
+        "deploy/terminal_ingress/nginx-authenticated.conf",
+    ):
+        path = stage / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("reviewed prerequisite")
+    transactions = tmp_path / "transactions"
+    (transactions / target).mkdir(parents=True)
+    monkeypatch.setattr(identity, "verify_release", lambda *_args: target)
+    monkeypatch.setattr(gateway, "inspect_authenticated_site", lambda **_kw: None)
+    def blocked_gateway(*_args, **_kw):
+        raise gateway.MainGatewayBlocked("main_gateway_nginx_reload_unproven")
+    monkeypatch.setattr(gateway, "prepare_gateway", blocked_gateway)
+    calls = []
+    result = deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=transactions,
+        stop=lambda *_: calls.append("STOP"),
+        installer=lambda *_args, **_kw: calls.append("INSTALL"),
+        resume=lambda *_args, **_kw: (calls.append("RESUME"), "READY: EDITOR_ONLY")[1],
+    )
+    assert "manual_main_gateway_install_unproven" in result
+    assert "main_gateway_nginx_reload_unproven" in result
+    assert "PAPER_unit_not_stopped" not in result
+    assert calls == ["RESUME"]
+
+
 def test_main_gateway_auth_preflight_fails_before_any_canonical_stop(tmp_path, monkeypatch):
     """Missing authenticated route must not consume the single STOP attempt."""
     from tools.paper_maintenance import deploy_staged_editor_only
