@@ -703,6 +703,14 @@ def deploy_staged_editor_only(
             if (not journal.is_dir() or
                     (isinstance(observed, str) and observed.startswith("READY:"))):
                 return observed
+            # MAIN gateway/frontend failures occur after the exact target is
+            # already running. Never reinterpret them as an incomplete stopped
+            # install: installer reattestation would mask the original failure
+            # with PAPER_unit_not_stopped (and must not replay STOP).
+            if (isinstance(observed, str)
+                    and (observed.startswith("BLOCKED: manual_main_gateway_")
+                         or observed.startswith("BLOCKED: frontend_"))):
+                return observed
             # If manifest commit preceded a crash copying systemd units, a
             # stopped-only installer can complete the pinned transaction.
             # It reattests stopped units and ports; no STOP is replayed.
