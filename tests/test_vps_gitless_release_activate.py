@@ -91,6 +91,20 @@ def _activate(kw, *, proof=True):
     )
 
 
+def test_staged_switch_installs_missing_main_unit_without_touching_owner_files(tmp_path, monkeypatch):
+    kw = _fixture(tmp_path, monkeypatch)
+    main_unit = "bybitscanner-manual-main-read.service"
+    installed = kw["unit_dir"] / main_unit
+    installed.unlink()
+    assert not installed.exists()
+    before = (kw["root"] / "untracked-secret.conf").read_bytes()
+    assert _activate(kw).startswith("INSTALLED_STOPPED:")
+    assert installed.read_bytes() == (kw["stage"] / "deploy/systemd" / main_unit).read_bytes()
+    journal = kw["transactions"] / kw["sha"]
+    assert json.loads((journal / "units.json").read_text())[main_unit] is False
+    assert (kw["root"] / "untracked-secret.conf").read_bytes() == before
+
+
 def test_stopped_verified_gitless_release_preserves_owner_files_and_units(tmp_path, monkeypatch):
     kw = _fixture(tmp_path, monkeypatch)
     original = kw["root"] / "untracked-secret.conf"

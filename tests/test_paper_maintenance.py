@@ -51,6 +51,38 @@ def fake_runner(calls, *, fail=None):
     return run
 
 
+
+def test_main_gateway_auth_preflight_fails_before_any_canonical_stop(tmp_path, monkeypatch):
+    """Missing authenticated route must not consume the single STOP attempt."""
+    from tools.paper_maintenance import deploy_staged_editor_only
+    from tools import vps_manual_main_gateway as gateway
+
+    root = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    root.mkdir()
+    for name in (
+        "deploy/systemd/bybitscanner-manual-main-read.service",
+        "deploy/terminal_ingress/nginx-authenticated.conf",
+    ):
+        path = stage / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("tracked prerequisite")
+    calls = []
+    def refuse_gateway(*, root):
+        raise gateway.MainGatewayBlocked("authenticated_terminal_site_not_unique")
+    monkeypatch.setattr(gateway, "inspect_authenticated_site", refuse_gateway)
+    result = deploy_staged_editor_only(
+        "a" * 40, stage=stage, root=root,
+        stop=lambda *_: calls.append("STOP"),
+        preflight=lambda *_args, **_kw: calls.append("stage"),
+        installer=lambda *_args, **_kw: calls.append("install"),
+        resume=lambda *_args, **_kw: calls.append("resume"),
+    )
+    assert result.startswith("BLOCKED: manual_main_gateway_auth_preflight:")
+    assert "no STOP or deployment" in result
+    assert calls == []
+
+
 @pytest.mark.parametrize("arguments,reason", [
     (["a" * 40, "--unexpected-switch"], "unrecognized arguments: --unexpected-switch"),
     (["a" * 40, "--staged-gitless-editor-only"], "expected one argument"),

@@ -636,8 +636,38 @@ def deploy_staged_editor_only(
         except (FrontendPublishBlocked, OSError, ValueError, UnicodeError) as exc:
             return "BLOCKED: frontend_preflight_unproven:" + type(exc).__name__
 
+    # The protected Nginx ingress is a prerequisite to the *entire*
+    # authorized monolith. Refuse BEFORE invoking irreversible canonical STOP,
+    # not after switching a working PAPER release.
+    gateway_scope = (
+        (stage / "deploy/systemd/bybitscanner-manual-main-read.service").is_file()
+        and (stage / "deploy/terminal_ingress/nginx-authenticated.conf").is_file()
+    )
+    if gateway_scope:
+        from tools.vps_manual_main_gateway import (
+            MainGatewayBlocked, inspect_authenticated_site,
+        )
+        try:
+            inspect_authenticated_site(root=stage)
+        except (MainGatewayBlocked, OSError, ValueError) as exc:
+            return ("BLOCKED: manual_main_gateway_auth_preflight:"
+                    + type(exc).__name__ + ":" + str(exc)[:160]
+                    + "; no STOP or deployment")
+
     def finish_frontend(observed: str) -> str:
         if isinstance(observed, str) and observed.startswith("READY:"):
+            if gateway_scope:
+                from tools.vps_manual_main_gateway import (
+                    MainGatewayBlocked, prepare_gateway,
+                )
+                try:
+                    confirmation = prepare_gateway(target, root=root)
+                    if not confirmation.startswith("READY:"):
+                        return "BLOCKED: manual_main_gateway_postcondition_unproven"
+                except (MainGatewayBlocked, OSError, ValueError) as exc:
+                    return ("BLOCKED: manual_main_gateway_install_unproven:"
+                            + type(exc).__name__ + ":" + str(exc)[:160]
+                            + "; no STOP replay, PAPER retained")
             if frontend_bundle is not None:
                 from tools.vps_terminal_frontend_publish import publish_frontend
                 try:
@@ -803,6 +833,24 @@ def deploy_staged_editor_only(
                 )
         else:
             result = None  # Already recorded protected transaction; no STOP replay.
+        if gateway_scope and result is not None:
+            # This non-trading worker must be stopped before replacing tracked
+            # Python bytes. A confirmed canonical PAPER stop/receipt is mandatory;
+            # never use a failed or unknown STOP to authorize this action.
+            if not (getattr(result, "ok", False) is True
+                    and getattr(result, "runtime_stopped", False) is True):
+                return "BLOCKED: main_gateway_requires_confirmed_PAPER_stop"
+            from tools.vps_manual_main_gateway import (
+                MainGatewayBlocked, quiesce_gateway_after_paper_stop,
+            )
+            try:
+                quiesce_gateway_after_paper_stop(
+                    root=root, unit_dir=installed_units, uid=trusted_uid,
+                )
+            except (MainGatewayBlocked, OSError, ValueError) as exc:
+                return ("BLOCKED: main_gateway_safe_quiescence_unproven:"
+                        + type(exc).__name__ + ":" + str(exc)[:160]
+                        + "; canonical STOP not retried")
         receipt = install_action(
             target, stage=stage, stopped_proof=result, root=root,
             manifest=manifest_path, unit_dir=installed_units,
@@ -1900,6 +1948,20 @@ def main(argv=None) -> int:
         )
     elif args.resume_installed_editor_only:
         status = resume_installed_release(args.sha, root=REPO, env_file=args.env_file)
+        if status.startswith("READY:") and (
+            (REPO / "deploy/systemd/bybitscanner-manual-main-read.service").is_file()
+            and (REPO / "deploy/terminal_ingress/nginx-authenticated.conf").is_file()
+        ):
+            from tools.vps_manual_main_gateway import (
+                MainGatewayBlocked, prepare_gateway,
+            )
+            try:
+                confirmation = prepare_gateway(args.sha, root=REPO)
+                if not confirmation.startswith("READY:"):
+                    status = "BLOCKED: manual_main_gateway_postcondition_unproven"
+            except (MainGatewayBlocked, OSError, ValueError) as exc:
+                status = ("BLOCKED: manual_main_gateway_install_unproven:"
+                          + type(exc).__name__ + ":" + str(exc)[:160])
         if status.startswith("READY:"):
             # Standalone recovery must finalize the same pinned transaction
             # as staged deploy; otherwise the next planned release remains
