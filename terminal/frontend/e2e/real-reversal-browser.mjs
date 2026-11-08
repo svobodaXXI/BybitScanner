@@ -115,17 +115,29 @@ try {
   // Owner UTC clock now lives on the drawing toolbar. Selecting a clock
   // timestamp must seek the ORIGINAL replay stream, not download fresh
   // candles, wipe manual drawing state or expose an incomplete H1.
-  const utcClock = page.getByLabel("Время рынка UTC — перейти к свече");
+  const utcClock = page.getByRole("textbox", { name: "Время рынка UTC — вставить дату и время" });
+  const calendar = page.getByLabel("Время рынка UTC — календарь");
   assert.equal(await utcClock.count(), 1);
-  const inputTime = ms => new Date(ms).toISOString().slice(0, 16);
+  assert.equal(await calendar.count(), 1);
+  const inputTime = ms => {
+    const iso = new Date(ms).toISOString();
+    return iso.slice(8, 10) + "." + iso.slice(5, 7) + "." +
+      iso.slice(0, 4) + ", " + iso.slice(11, 16);
+  };
   await utcClock.fill(inputTime(archive.events[23].time_ms));
-  await utcClock.press("Tab");
+  await utcClock.press("Enter");
   await page.waitForFunction(() =>
     document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === "24");
   assert.equal(await utcClock.inputValue(), inputTime(archive.events[23].time_ms));
-  await page.getByRole("button", { name: "H1", exact: true }).click();
+  // A malformed paste must stay editable with a visible error and leave
+  // the cursor/candles unchanged.
+  await utcClock.fill("31.02.2026, 12:00");
+  await utcClock.press("Enter");
+  assert.equal(await utcClock.getAttribute("aria-invalid"), "true");
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "24");
   await utcClock.fill(inputTime(archive.events[18].time_ms));
-  await utcClock.press("Tab");
+  await page.getByRole("button", { name: "H1", exact: true }).click();
+  await utcClock.press("Enter");
   await page.waitForFunction(expected =>
     document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
   archive.context_1h.length + 1);
