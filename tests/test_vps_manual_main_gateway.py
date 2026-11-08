@@ -262,12 +262,32 @@ def test_nginx_validation_failure_restores_exact_prior_auth_site(tmp_path):
     params, site, original, calls = _gateway_deploy_fixture(
         tmp_path, fail_nginx_test=True,
     )
-    with pytest.raises(gateway.MainGatewayBlocked, match="nginx_apply_unproven"):
+    with pytest.raises(gateway.MainGatewayBlocked, match="nginx_validation_unproven"):
         gateway.prepare_gateway("a" * 40, **params)
     assert site.read_text() == original
     assert calls.count(("systemctl", "start", gateway.UNIT)) == 1
     assert calls.count(("nginx", "-t")) == 2
     assert calls.count(("systemctl", "reload", "nginx")) == 1
+    assert not any("paper-backend" in " ".join(call) for call in calls)
+
+
+def test_nginx_reload_failure_preserves_specific_phase_and_restores_site(tmp_path):
+    params, site, original, calls = _gateway_deploy_fixture(tmp_path)
+    run = params["run"]
+    failed_once = [False]
+
+    def failed_reload(argv, **kwargs):
+        if argv == ["systemctl", "reload", "nginx"] and not failed_once[0]:
+            failed_once[0] = True
+            calls.append(tuple(argv))
+            return SimpleNamespace(returncode=1, stdout="")
+        return run(argv, **kwargs)
+
+    params["run"] = failed_reload
+    with pytest.raises(gateway.MainGatewayBlocked, match="nginx_reload_unproven"):
+        gateway.prepare_gateway("a" * 40, **params)
+    assert site.read_text() == original
+    assert calls.count(("systemctl", "reload", "nginx")) == 2
     assert not any("paper-backend" in " ".join(call) for call in calls)
 
 
