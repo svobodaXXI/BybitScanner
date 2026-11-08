@@ -19,7 +19,7 @@ from tools.vps_systemd_unit_prepare import UNITS
 ROOT = Path("/opt/BybitScanner")
 MANIFEST = Path("/etc/bybitscanner/paper-release-manifest.json")
 UNIT_DIR = Path("/etc/systemd/system")
-PORTS = (8765, 8766)
+PORTS = (8765, 8766, 8771)
 
 # These are the observed, owner-owned networking customizations on the PAPER VPS.
 # Only their precise Environment assignments are approved, not arbitrary

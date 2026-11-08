@@ -2,8 +2,8 @@
 
 Only daemon-reload and conditionally reset an already-loaded failed unit.
 Never starts/stops services, installs files, handles SQL, or touches LIVE.
-Call only after the exact approved release and its three service files are
-installed and the previous PAPER runtime has been safely stopped.
+Call only after the exact approved release and all four reviewed service files
+are installed and the previous PAPER runtime has been safely stopped.
 """
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ UNITS = (
     "bybitscanner-paper-backend.service",
     "bybitscanner-telegram.service",
     "bybitscanner-paper-start.service",
+    # Independent read-only MAIN; no Robot/Scanner/PAPER DB ownership.
+    "bybitscanner-manual-main-read.service",
 )
 
 
@@ -31,7 +33,7 @@ def prepare_units(*, run=subprocess.run) -> str:
     if result is None or result.returncode != 0:
         return "BLOCKED: systemd_daemon_reload_failed; no unit reset or start"
 
-    # Do not reset any unit until all three identities are known and loaded.
+    # Do not reset any unit until all reviewed identities are known and loaded.
     states: dict[str, tuple[str, str]] = {}
     for unit in UNITS:
         result = command("show", unit, "--property=LoadState,ActiveState", "--no-pager")

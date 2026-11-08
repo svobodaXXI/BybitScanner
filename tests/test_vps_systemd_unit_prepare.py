@@ -30,11 +30,11 @@ def test_daemon_reload_precedes_all_load_checks_and_reset_only_failed():
     result = prepare_units(run=runner(calls, states=states))
     assert result.startswith("READY:")
     assert calls[0] == ("systemctl", "daemon-reload")
-    assert calls[1:4] == [
+    assert calls[1:1 + len(UNITS)] == [
         ("systemctl", "show", unit, "--property=LoadState,ActiveState", "--no-pager")
         for unit in UNITS
     ]
-    assert calls[4:] == [("systemctl", "reset-failed", UNITS[1])]
+    assert calls[1 + len(UNITS):] == [("systemctl", "reset-failed", UNITS[1])]
     assert not any("start" in cmd or "stop" in cmd for cmd in calls)
 
 
@@ -65,7 +65,7 @@ def test_reset_failed_with_proven_inactive_unit_does_not_block():
     states[UNITS[2]] = "failed"
     failed = (("systemctl", "reset-failed", UNITS[2]),)
     def run(argv, **kwargs):
-        if argv[1] == "show" and len(calls) > 4:
+        if argv[1] == "show" and len(calls) > 1 + len(UNITS):
             states[UNITS[2]] = "inactive"
         return runner(calls, states=states, failures=failed)(argv, **kwargs)
     assert prepare_units(run=run).startswith("READY:")

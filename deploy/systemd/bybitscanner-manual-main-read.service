@@ -1,5 +1,6 @@
-# MANUAL MAIN read-only service. Template only: never auto-enable or deploy
-# without separate explicit owner VPS approval and Telegram-authenticated ingress checks.
+# MANUAL MAIN read-only service. The authorized Gitless EDITOR_ONLY monolith
+# may install/start this unit only after authenticated ingress attestation.
+# It is never enabled at boot and has no trading, PAPER DB or Robot authority.
 # Unlike PaperRuntime this process has no Robot/PAPER DB/STOP/TAKE owner.
 [Unit]
 Description=BybitScanner manual MAIN read gateway (loopback, no trading)
