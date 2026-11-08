@@ -506,6 +506,12 @@ def _proven_prior_exceptional_completion(
     prove the old intent was superseded. This remains true after later
     verified upgrades; unknown or incomplete handoffs remain a global fence.
     """
+    # A confirmed STOP may be retired only by a separately sealed, one-shot
+    # recovery of the exact previous EDITOR_ONLY release. Original STOP
+    # receipts remain untouched and are validated by the recovery proof.
+    from tools.paper_abandoned_stop_recovery import proven_abandoned_stop
+    if proven_abandoned_stop(journal_root, prior, root=root, uid=uid, require_installed=False):
+        return True
     from tools.paper_interrupted_stop_recovery import (
         OLD_BACKEND as LEGACY_BACKEND, PRIOR_TARGET as LEGACY_TARGET,
         MARKER_PREFIX as LEGACY_PREFIX, RecoveryBlocked,
