@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, replayCursorAtUtc, parseReplayUtcInput, formatReplayUtcInput, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, displayGeometryVersions, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, replayCursorAtUtc, parseReplayUtcInput, formatReplayUtcInput, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -243,10 +243,10 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       // DrawingOverlay's rayEndPoint extends the line to the price pane edge.
       // Never refit the line to the replayed price candles.
       const knownLines = visibleGeometry(document, shown.lastTimeMs);
-      const historicalLines = displayGeometryVersions(
-        visibleGeometryHistory(document, shown.lastTimeMs),
-        shown.lastTimeMs ?? -Infinity,
-      );
+      // Preserve all already-published slopes as fixed historical segments.
+      // Previous versions stop at their supersession or prior break; only
+      // the current version can extend as an active ray to the right.
+      const historicalLines = visibleGeometryHistory(document, shown.lastTimeMs);
       // Both published and provisional history are immutable visual records:
       // a replaced slope cannot erase, relocate or backdate its predecessor.
       // Avoid double-painting an early guide with identical confirmed anchors.
@@ -933,9 +933,6 @@ export function ReplayPage() {
             <button type="button" aria-pressed={timeframe === "1h"}
               onClick={() => setTimeframe("1h")}>H1</button>
             <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
-        <button type="button" onClick={() => { if (cursor === total) setCursor(0); setPlaying((s) => !s); }}>
-          {playing ? "Пауза" : "▶ Пуск"}
-        </button>
         <button type="button" onClick={() => {
           setPlaying(false);
           setCursor((current) => timeframeStepCursor(document.events, current, timeframe, "back"));
@@ -944,7 +941,6 @@ export function ReplayPage() {
           setPlaying(false);
           setCursor((current) => timeframeStepCursor(document.events, current, timeframe, "forward"));
         }} disabled={cursor >= total}>Шаг вперёд ▶</button>
-        <button type="button" onClick={() => { setPlaying(false); setCursor(0); }}>В начало</button>
         <label className="replay-rate">Скорость {rate} свечей/с
           <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
         </label>
@@ -1033,7 +1029,13 @@ export function ReplayPage() {
                         <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
           </div>
           <div className="replay-seek-bar" role="group" aria-label="Перемотка графика">
-            <span className="replay-seek-start">Начало</span>
+            <button type="button" onClick={() => {
+              setPlaying(false); setPendingStartMs(null); setCursor(0);
+            }}>В начало</button>
+            <button type="button" onClick={() => {
+              if (cursor === total) setCursor(0);
+              setPlaying(active => !active);
+            }}>{playing ? "Пауза" : "▶ Пуск"}</button>
             <input type="range" aria-label="Перемотка графика по закрытым свечам"
               min={0} max={closedFrameTimes.length} step={1}
               value={shown.candles.length}
@@ -1041,7 +1043,7 @@ export function ReplayPage() {
               onChange={(e) => seekFrame(Number(e.target.value))}
               title="Перетащите ползунок или щёлкните по полосе, чтобы перейти к закрытой свече"
             />
-            <span className="replay-seek-end">Конец</span>
+
           </div>
           <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
             drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
