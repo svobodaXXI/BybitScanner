@@ -590,19 +590,19 @@ export function DiaryOverlay({
 
   return (
     <div className="diary-backdrop" role="presentation">
-      <section className="diary-shell" role="dialog" aria-modal="true" aria-label="Торговый дневник">
+      <section className="diary-shell" role="dialog" aria-modal="true" aria-label="Статистика">
         <header className="diary-header">
           <div>
             <p className="eyebrow">Торговый терминал</p>
-            <h2>Дневник</h2>
+            <h2>Статистика</h2>
             {statisticsScope
               ? <small>{statisticsScope.owner === "ROBOT" ? "Автопилот" : "Терминал"} · {statisticsScope.accountId} · раздельная статистика</small>
               : accountId ? <small>{accountId}</small> : null}
           </div>
-          <button aria-label="Закрыть дневник" onClick={onClose} type="button">×</button>
+          <button aria-label="Закрыть статистику" onClick={onClose} type="button">×</button>
         </header>
 
-        <nav className="diary-primary-nav" aria-label="Разделы дневника">
+        <nav className="diary-primary-nav" aria-label="Разделы статистики">
           <button aria-current={section === "TRADES" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("TRADES"); setSelectedTradeId(null); }} type="button">Сделки</button>
           <button aria-current={section === "SETUPS" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("SETUPS"); setSelectedTradeId(null); }} type="button">Сетапы</button>
           <button aria-current={section === "STATISTICS" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("STATISTICS"); setSelectedTradeId(null); }} type="button">Статистика</button>
