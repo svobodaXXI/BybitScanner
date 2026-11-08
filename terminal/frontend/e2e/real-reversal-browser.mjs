@@ -162,6 +162,10 @@ try {
   assert.equal(await scrubber.count(), 1);
   assert.equal(await scrubber.getAttribute("max"), String(
     archive.events.filter(event => event.kind === "CANDLE_CLOSED").length));
+  const seekRow = page.getByRole("group", { name: "Перемотка графика" });
+  assert.deepEqual(await seekRow.locator("button").allTextContents(), ["В начало", "▶ Пуск"]);
+  assert.equal(await page.getByText("Начало", { exact: true }).count(), 0);
+  assert.equal(await page.getByText("Конец", { exact: true }).count(), 0);
   await scrubber.focus();
   await scrubber.press("End");
   await page.waitForFunction(expected =>
@@ -328,8 +332,10 @@ try {
         await advanceTo(structuralIndex + 1);
         await page.getByRole("button", { name: "H1", exact: true }).click();
         const supports = JSON.parse(await overlay.getAttribute("data-h1-main-wick-supports") ?? "[]");
-        assert.equal(supports.length, 1,
-          "new confirmed lower-high/low must replace old visible yellow slope, not add a second");
+        assert.ok(supports.length >= 2,
+          "earlier confirmed yellow H1 lines must remain painted as historical segments");
+        assert.ok(supports.some(x => x.support_ms !== supportAt),
+          "at least one immutable preceding support must survive a later H1 revision");
         const version = supports.find(x =>
           x.origin_ms === originAt && x.support_ms === supportAt &&
           x.price === supportPrice && x.adjusted === false);
