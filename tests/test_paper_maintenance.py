@@ -3090,3 +3090,77 @@ def test_existing_attempt_without_ready_receipt_must_not_replay(abandoned_stop_c
     attempt.write_bytes(recovery._receipt_payload(OLD, TARGET))
     with pytest.raises(recovery.AbandonedStopBlocked, match="prior_recovery_attempt"):
         run(abandoned_stop_case)
+
+
+def test_dual_stopped_telegram_then_backend_exactly_once(abandoned_stop_case, monkeypatch):
+    from tools import paper_maintenance as maintenance
+    telegram_ready = [False]
+    monkeypatch.setattr(maintenance, "_editor_telegram_ready", lambda *_: telegram_ready[0])
+    commands = []
+    def start(argv, **kwargs):
+        commands.append(argv)
+        if argv[-1] == "bybitscanner-telegram.service":
+            telegram_ready[0] = True
+        return SimpleNamespace(returncode=0)
+
+    result, _ = run(abandoned_stop_case, runner=start,
+                    host=lambda *args, **kwargs: True)
+    assert result.startswith("READY:")
+    assert commands == [
+        ["sudo", "-n", "systemctl", "start", "bybitscanner-telegram.service"],
+        ["sudo", "-n", "systemctl", "start", "bybitscanner-paper-backend.service"],
+    ]
+    assert recovery.proven_abandoned_stop(
+        abandoned_stop_case, TARGET, root=Path("/release"), uid=os.geteuid())
+    again, commands_after = run(abandoned_stop_case)
+    assert again.startswith("READY:")
+    assert commands_after == []
+
+
+def test_dual_stopped_telegram_health_failure_fences_backend(abandoned_stop_case, monkeypatch):
+    from tools import paper_maintenance as maintenance
+    monkeypatch.setattr(maintenance, "_editor_telegram_ready", lambda *_: False)
+    calls = []
+    def start(argv, **kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0)
+
+    with pytest.raises(recovery.AbandonedStopBlocked,
+                       match="telegram_postcondition_unproven_no_retry"):
+        run(abandoned_stop_case, runner=start,
+            host=lambda *args, **kwargs: True)
+    assert [x[-1] for x in calls] == ["bybitscanner-telegram.service"]
+    assert not (abandoned_stop_case / (".abandoned-stop-restored-" + TARGET)).exists()
+    with pytest.raises(recovery.AbandonedStopBlocked,
+                       match="prior_recovery_attempt_outcome_unknown_no_retry"):
+        run(abandoned_stop_case)
+
+
+def test_dual_stopped_telegram_unknown_result_never_restarts(abandoned_stop_case):
+    commands = []
+    def missing_reply(argv, **kwargs):
+        commands.append(argv)
+        raise OSError("unknown start outcome")
+
+    with pytest.raises(recovery.AbandonedStopBlocked,
+                       match="telegram_start_outcome_unknown_no_retry"):
+        run(abandoned_stop_case, runner=missing_reply,
+            host=lambda *args, **kwargs: True)
+    assert [x[-1] for x in commands] == ["bybitscanner-telegram.service"]
+    assert (abandoned_stop_case / (".abandoned-stop-attempt-" + TARGET)).is_file()
+    with pytest.raises(recovery.AbandonedStopBlocked,
+                       match="prior_recovery_attempt_outcome_unknown_no_retry"):
+        run(abandoned_stop_case)
+
+
+def test_dual_stopped_telegram_failed_start_never_reaches_backend(abandoned_stop_case):
+    calls = []
+    def failed(argv, **kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=1)
+    with pytest.raises(recovery.AbandonedStopBlocked,
+                       match="telegram_start_failed_no_retry"):
+        run(abandoned_stop_case, runner=failed,
+            host=lambda *args, **kwargs: True)
+    assert len(calls) == 1
+    assert calls[0][-1] == "bybitscanner-telegram.service"
