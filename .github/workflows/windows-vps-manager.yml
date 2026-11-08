@@ -1,0 +1,44 @@
+name: Windows VPS Manager smoke
+on:
+  pull_request:
+    paths:
+      - "tools/windows_vps_manager.py"
+      - "tools/Запустить VPS Manager.cmd"
+      - "tests/test_windows_vps_manager.py"
+      - ".github/workflows/windows-vps-manager.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-mvp:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check Tkinter
+        run: python -c "import tkinter; print('Tkinter import OK')"
+      - name: Compile utility
+        run: python -m py_compile tools/windows_vps_manager.py
+      - name: Run isolated safety tests
+        run: python -m unittest discover -s tests -p test_windows_vps_manager.py -v
+      - name: Build portable Windows EXE
+        run: |
+          python -m pip install pyinstaller==6.16.0
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name BybitScanner-VPS-Manager tools/windows_vps_manager.py
+      - name: Verify EXE exists
+        shell: pwsh
+        run: |
+          if (!(Test-Path "dist/BybitScanner-VPS-Manager.exe")) { throw "Missing Windows executable" }
+          Get-Item "dist/BybitScanner-VPS-Manager.exe" | Select-Object Name,Length
+      - name: Upload portable EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: BybitScanner-VPS-Manager-Windows
+          path: dist/BybitScanner-VPS-Manager.exe
+          if-no-files-found: error
+          retention-days: 14
