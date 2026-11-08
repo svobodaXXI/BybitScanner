@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, replayCursorAtUtc, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, displayGeometryVersions, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, replayCursorAtUtc, parseReplayUtcInput, formatReplayUtcInput, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, displayGeometryVersions, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -585,6 +585,8 @@ export function ReplayPage() {
   const [playing, setPlaying] = useState(false);
   const [pendingStartMs, setPendingStartMs] = useState<number | null>(null);
   const [rate, setRate] = useState(8);
+  const [marketTimeDraft, setMarketTimeDraft] = useState<string | null>(null);
+  const [marketTimeInvalid, setMarketTimeInvalid] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [timeframe, setTimeframe] = useState<"5m" | "1h">("5m");
   const [drawingTool, setDrawingTool] = useState<DrawingTool>("crosshair");
@@ -970,26 +972,63 @@ export function ReplayPage() {
                 commitManualDrawings(drawings.filter(d => d.id !== selectedDrawing));
                 setSelectedDrawing(null);
               }} title="Удалить выбранное" aria-label="Удалить выбранное"><ReplayToolIcon tool="delete" /></button>
-            <label className="replay-market-time" title="Выбрать UTC-время последней закрытой свечи; после выбора воспроизведение продолжится отсюда">
+            <label className="replay-market-time" title="Вставьте дату и время UTC, нажмите Enter или выберите в календаре">
               Время рынка (UTC)
-              <input type="datetime-local" aria-label="Время рынка UTC — перейти к свече"
-                min={document.events.find(event => event.kind === "CANDLE_CLOSED")?.time_ms !== undefined
-                  ? new Date(document.events.find(event => event.kind === "CANDLE_CLOSED")!.time_ms).toISOString().slice(0, 16)
-                  : undefined}
-                max={document.events.length
-                  ? new Date(document.events[document.events.length - 1].time_ms).toISOString().slice(0, 16)
-                  : undefined}
-                step={timeframe === "1h" ? 3600 : 300}
+              <input type="text" aria-label="Время рынка UTC — вставить дату и время"
+                placeholder="29.08.2026, 12:00"
+                spellCheck={false} autoComplete="off"
+                aria-invalid={marketTimeInvalid}
+                value={marketTimeDraft ?? formatReplayUtcInput(shown.lastTimeMs)}
+                onFocus={() => {
+                  setPlaying(false);
+                  setMarketTimeInvalid(false);
+                  setMarketTimeDraft(formatReplayUtcInput(shown.lastTimeMs));
+                }}
+                onChange={(e) => {
+                  setMarketTimeDraft(e.target.value);
+                  setMarketTimeInvalid(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setMarketTimeDraft(null);
+                    setMarketTimeInvalid(false);
+                    e.currentTarget.blur();
+                  } else if (e.key === "Enter") {
+                    const value = parseReplayUtcInput(e.currentTarget.value);
+                    if (value === null) { setMarketTimeInvalid(true); return; }
+                    setPlaying(false);
+                    setPendingStartMs(null);
+                    setCursor(replayCursorAtUtc(document.events, value, timeframe));
+                    setMarketTimeDraft(null);
+                    setMarketTimeInvalid(false);
+                    e.currentTarget.blur();
+                  }
+                }}
+                onBlur={(e) => {
+                  if (marketTimeDraft === null) return;
+                  const value = parseReplayUtcInput(e.currentTarget.value);
+                  if (value === null) { setMarketTimeInvalid(true); return; }
+                  setCursor(replayCursorAtUtc(document.events, value, timeframe));
+                  setPendingStartMs(null);
+                  setMarketTimeDraft(null);
+                  setMarketTimeInvalid(false);
+                }}
+              />
+              <input type="datetime-local" aria-label="Время рынка UTC — календарь"
+                className="replay-market-calendar"
                 value={shown.lastTimeMs === null ? "" : new Date(shown.lastTimeMs).toISOString().slice(0, 16)}
                 onFocus={() => setPlaying(false)}
                 onChange={(e) => {
-                  if (!e.target.value) return;
-                  const utc = Date.parse(e.target.value + "Z");
-                  if (!Number.isFinite(utc)) return;
+                  const utc = parseReplayUtcInput(e.target.value);
+                  if (utc === null) return;
                   setPlaying(false);
                   setPendingStartMs(null);
                   setCursor(replayCursorAtUtc(document.events, utc, timeframe));
-                }} />
+                  setMarketTimeDraft(null);
+                  setMarketTimeInvalid(false);
+                }}
+              />
+              {marketTimeInvalid && <span className="replay-market-time-error" role="alert">ДД.ММ.ГГГГ, ЧЧ:ММ</span>}
             </label>
                         <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
           </div>
