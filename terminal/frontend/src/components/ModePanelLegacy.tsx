@@ -962,9 +962,24 @@ export function ModePanel({
             <button
               className="paper-autopilot-button"
               type="button"
-              aria-label="?????????"
-              title="?????????"
+              aria-label="Автопилот"
+              title="Автопилот"
               onClick={() => onModeChange("AUTOPILOT")}
+            >
+              <svg className="paper-autopilot-wheel-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="4.5" y="7" width="15" height="13" rx="3" />
+                <path d="M12 7V3.5M10.5 3.5h3M4.5 12H2.5M21.5 12h-2" />
+                <circle cx="9" cy="12.5" r="1" />
+                <circle cx="15" cy="12.5" r="1" />
+                <path d="M9 17h6" />
+              </svg>
+            </button>
+            <button
+              className="paper-autopilot-button"
+              type="button"
+              aria-label="Передать сделку роботу"
+              title="Передать сделку роботу — функция не подключена"
+              onClick={() => window.alert("Функция не подключена")}
             >
               <svg
                 className="paper-autopilot-wheel-icon"
