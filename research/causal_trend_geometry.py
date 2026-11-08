@@ -338,6 +338,49 @@ def confirmed_continuation_with_successive_origins(
     return None
 
 
+def reanchor_bear_on_closed_lower_low(
+    previous: TrendCandidate,
+    pivots: tuple[ConfirmedPivot, ...],
+    bars: tuple[Candle, ...],
+    just_closed: Candle,
+) -> TrendCandidate | None:
+    """Move the SAME bearish H1 main line to its preceding confirmed HIGH.
+
+    A continuation revision is not a new four-pivot trend. The initial
+    four-pivot qualification remains immutable. Once an H1 candle closes
+    with a new lower low after a confirmed high, the existing second support
+    moves to that real high without waiting for the new LOW swing to confirm.
+    """
+    if previous.side != "BEAR" or not bars or just_closed != bars[-1]:
+        return None
+    previous_low = previous.target.second
+    if just_closed.start_ms <= previous_low.at_ms or just_closed.low >= previous_low.price:
+        return None
+    highs = [
+        p for p in pivots
+        if p.kind == "HIGH"
+        and previous.main.second.at_ms < p.at_ms < just_closed.start_ms
+        and p.confirmed_at_ms <= just_closed.end_ms
+        and p.price < previous.main.first.price
+    ]
+    if not highs:
+        return None
+    support = highs[-1]
+    if support.at_ms <= previous_low.at_ms:
+        return None
+    main = wick_tight_hourly_line(
+        previous.main.first, support, bars, boundary="UPPER",
+        available_at_ms=just_closed.end_ms,
+    )
+    if main is None:
+        return None
+    return TrendCandidate(
+        previous.side, main, previous.target,
+        previous.pivot_sequence, just_closed.end_ms,
+        "CONTINUATION_REANCHOR_AFTER_CLOSED_LOWER_LOW",
+    )
+
+
 def last_correction_reference(
     *,
     hourly: TrendCandidate | None,
@@ -492,7 +535,8 @@ class CausalGeometryFeed:
             and self._prior_touch_ms is not None
             and line.second.at_ms > self._prior_touch_ms
             and self._prior_price is not None
-            and line.second.price < self._prior_price
+            and (line.second.price < self._prior_price or
+                 trend.classification == "CONTINUATION_REANCHOR_AFTER_CLOSED_LOWER_LOW")
             and trend.available_at_ms <= closed_at_ms
             and trend.pivot_sequence[3].kind == "LOW"
             and trend.pivot_sequence[3].confirmed_at_ms <= closed_at_ms
@@ -651,6 +695,11 @@ class CausalGeometryFeed:
                     fitted = confirmed_continuation_with_successive_origins(
                         self._hourly.pivots, previous, self._hourly.bars,
                     )
+                    if fitted is None:
+                        fitted = reanchor_bear_on_closed_lower_low(
+                            previous, self._hourly.pivots,
+                            self._hourly.bars, newly_closed_1h,
+                        )
                     if fitted is not None:
                         self._hourly_trend = fitted
                 else:
