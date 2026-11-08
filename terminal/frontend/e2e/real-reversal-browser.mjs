@@ -289,13 +289,16 @@ try {
   }
   console.log("REAL_ACTIVE_M5_RAY_SHORT_OK " + JSON.stringify(m5RayEnds));
 
-  // A newly confirmed LOWER LOW must unlock its preceding confirmed
-  // LOWER HIGH as the real next BEAR support, not keep the obsolete
-  // 27 Aug source when that source would pierce subsequent H1 wicks.
+  // Owner's annotated 28 Aug H1: the lower-low hour ending 14:00
+  // must MOVE the SAME descending line from the original 27 Aug peak to
+  // the preceding already-confirmed 28 Aug 09:00 HIGH. No independent
+  // new four-pivot trend and no wait for the LOW swing's right wing.
   const descendingVersions = [
+    [Date.UTC(2026, 7, 28, 14), Date.UTC(2026, 7, 27, 8),
+      Date.UTC(2026, 7, 28, 9), 0.3748],
     [Date.UTC(2026, 7, 29, 6), Date.UTC(2026, 7, 28, 9),
       Date.UTC(2026, 7, 28, 23), 0.3566],
-    [Date.UTC(2026, 7, 29, 11), Date.UTC(2026, 7, 28, 9),
+    [Date.UTC(2026, 7, 29, 8), Date.UTC(2026, 7, 28, 9),
       Date.UTC(2026, 7, 29, 5), 0.3546],
   ];
   for (const [publishedAt, originAt, supportAt, supportPrice] of descendingVersions) {
