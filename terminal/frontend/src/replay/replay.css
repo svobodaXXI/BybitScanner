@@ -29,7 +29,8 @@
 .replay-seek-bar { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: #111d2a; border-bottom: 1px solid #2b3e55; }
 .replay-seek-bar input[type="range"] { flex: 1 1 auto; min-width: 80px; height: 22px; cursor: pointer; accent-color: #7db6ef; }
 .replay-seek-bar input[type="range"]:disabled { cursor: default; opacity: .4; }
-.replay-seek-start, .replay-seek-end { font-size: 11px; color: #a8bad0; white-space: nowrap; }
+.replay-seek-bar button { cursor: pointer; flex: 0 0 auto; white-space: nowrap; color: #e5effb; background: #233349; border: 1px solid #405672; border-radius: 5px; padding: 5px 10px; font-size: 12px; }
+.replay-seek-bar button:hover { background: #34445d; }
 .replay-seek-bar input:focus-visible { outline: 2px solid #80b8f4; outline-offset: 2px; }
 .replay-chart-panel { min-width: 0; min-height: 710px; background: #121923; border: 1px solid #273649; border-radius: 9px; overflow: hidden; }
 .replay-chart-shell { width: 100%; }
