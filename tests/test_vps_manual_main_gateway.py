@@ -192,6 +192,85 @@ def test_unproven_main_gateway_stop_is_not_retried(tmp_path):
     assert calls.count(("systemctl", "stop", gateway.UNIT)) == 1
 
 
+
+class _GatewayHealth:
+    status = 200
+    def __enter__(self):
+        return self
+    def __exit__(self, *_args):
+        return False
+    def read(self, *_args):
+        return b'{"ok":true,"component":"manual_main_read","trading_enabled":false}'
+
+
+def _gateway_deploy_fixture(tmp_path, *, fail_nginx_test=False):
+    root, ng, site, original = _site(tmp_path)
+    unit_dir = ng / "units"
+    unit_dir.mkdir()
+    installed = unit_dir / gateway.UNIT
+    installed.write_bytes((root / "deploy/systemd" / gateway.UNIT).read_bytes())
+    active = [False]
+    calls = []
+    validations = [0]
+
+    def runner(argv, **_kwargs):
+        calls.append(tuple(argv))
+        if argv == ["nginx", "-T"]:
+            return SimpleNamespace(returncode=0, stdout=
+                f"# configuration file {site}:\n" + site.read_text())
+        if argv[:2] == ["systemctl", "show"]:
+            return SimpleNamespace(returncode=0, stdout=(
+                "LoadState=loaded\n"
+                f"ActiveState={'active' if active[0] else 'inactive'}\n"
+                f"MainPID={'123' if active[0] else '0'}\n"
+                f"FragmentPath={installed}\nDropInPaths=\n"
+            ))
+        if argv == ["systemctl", "start", gateway.UNIT]:
+            active[0] = True
+        if argv == ["nginx", "-t"]:
+            validations[0] += 1
+            if fail_nginx_test and validations[0] == 1:
+                return SimpleNamespace(returncode=1, stdout="")
+        return SimpleNamespace(returncode=0, stdout="")
+
+    def open_url(url, **_kwargs):
+        if url == "http://127.0.0.1:8771/api/manual-main/health":
+            return _GatewayHealth()
+        if url == "http://127.0.0.1:8081/api/manual-main/health":
+            raise HTTPError(url, 401, "Unauthorized", {}, None)
+        raise AssertionError("Unexpected URL " + url)
+
+    return dict(root=root, run=runner, open_url=open_url, nginx_dir=ng,
+                unit_dir=unit_dir, uid=os.geteuid(),
+                verify=lambda _path: "a" * 40), site, original, calls
+
+
+def test_gateway_install_succeeds_once_and_remains_idempotent(tmp_path):
+    params, site, original, calls = _gateway_deploy_fixture(tmp_path)
+    assert gateway.prepare_gateway("a" * 40, **params).startswith("READY:")
+    assert site.read_text() != original
+    assert "auth_request /_auth;" in site.read_text()
+    assert calls.count(("systemctl", "start", gateway.UNIT)) == 1
+    assert calls.count(("systemctl", "reload", "nginx")) == 1
+    assert gateway.prepare_gateway("a" * 40, **params).startswith("READY:")
+    assert calls.count(("systemctl", "start", gateway.UNIT)) == 1
+    assert calls.count(("systemctl", "reload", "nginx")) == 1
+    assert not any("paper-backend" in " ".join(call) for call in calls)
+
+
+def test_nginx_validation_failure_restores_exact_prior_auth_site(tmp_path):
+    params, site, original, calls = _gateway_deploy_fixture(
+        tmp_path, fail_nginx_test=True,
+    )
+    with pytest.raises(gateway.MainGatewayBlocked, match="nginx_apply_unproven"):
+        gateway.prepare_gateway("a" * 40, **params)
+    assert site.read_text() == original
+    assert calls.count(("systemctl", "start", gateway.UNIT)) == 1
+    assert calls.count(("nginx", "-t")) == 2
+    assert calls.count(("systemctl", "reload", "nginx")) == 1
+    assert not any("paper-backend" in " ".join(call) for call in calls)
+
+
 def test_anonymous_route_must_fail_with_401_or_403():
     def allow(*args, **kwargs):
         return SimpleNamespace(__enter__=lambda x: x)
