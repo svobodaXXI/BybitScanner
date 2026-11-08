@@ -115,6 +115,9 @@ def _host_preflight(old: str, identity: str, *, root: Path, env_file: Path | Non
     state = _systemd_state(BACKEND)
     _demand(state.get("ActiveState") in ("inactive", "failed")
             and state.get("MainPID") == "0", "backend_owner_not_stopped")
+    scanner = _systemd_state("bybitscanner-scanner.service")
+    _demand(scanner.get("ActiveState") in ("inactive", "failed")
+            and scanner.get("MainPID") == "0", "scanner_service_not_stopped")
     _demand(not any(probe_listener_pids(address, 8765)
                     for address in ("127.0.0.1", "0.0.0.0", "::1")),
             "backend_listener_not_absent")
