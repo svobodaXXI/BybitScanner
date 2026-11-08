@@ -269,10 +269,12 @@ def prepare_gateway(
     if before != updated:
         info = site.stat()
         _atomic_file(site, updated, stat.S_IMODE(info.st_mode), group_gid=info.st_gid)
+        phase = "nginx_validation"
         try:
             _command(["nginx", "-t"], run=run)
+            phase = "nginx_reload"
             _command(["systemctl", "reload", "nginx"], run=run)
-        except MainGatewayBlocked:
+        except MainGatewayBlocked as exc:
             # Restore only our own narrowly proven previous site bytes.
             if site.read_bytes() == updated:
                 _atomic_file(site, before, stat.S_IMODE(info.st_mode), group_gid=info.st_gid)
@@ -281,6 +283,6 @@ def prepare_gateway(
                     _command(["systemctl", "reload", "nginx"], run=run)
                 except MainGatewayBlocked:
                     raise MainGatewayBlocked("main_gateway_nginx_rollback_unknown")
-            raise MainGatewayBlocked("main_gateway_nginx_apply_unproven")
+            raise MainGatewayBlocked("main_gateway_" + phase + "_unproven") from exc
     _verify_anonymous_denial(open_url=open_url)
     return "READY: MAIN read-only service healthy and owner-authenticated Nginx route proven; PAPER unchanged"
