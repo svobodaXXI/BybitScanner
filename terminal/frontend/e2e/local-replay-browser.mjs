@@ -58,9 +58,15 @@ try {
   // never in the file-import row above the chart.
   const controlBar = page.getByRole("group", { name: "Таймфрейм графика" });
   const playbackBar = controlBar.getByRole("group", { name: "Управление воспроизведением" });
-  for (const caption of ["Пуск", "◀ Шаг назад", "Шаг вперёд ▶", "В начало"]) {
-    assert.equal(await playbackBar.getByRole("button", { name: caption, exact: caption !== "Пуск" }).count(), 1);
+  for (const caption of ["◀ Шаг назад", "Шаг вперёд ▶"]) {
+    assert.equal(await playbackBar.getByRole("button", { name: caption, exact: true }).count(), 1);
   }
+  assert.equal(await playbackBar.getByRole("button", { name: "В начало" }).count(), 0);
+  assert.equal(await playbackBar.getByRole("button", { name: "Пуск" }).count(), 0);
+  const seekBar = page.getByRole("group", { name: "Перемотка графика" });
+  assert.deepEqual(await seekBar.locator("button").allTextContents(), ["В начало", "▶ Пуск"]);
+  assert.equal(await page.getByText("Начало", { exact: true }).count(), 0);
+  assert.equal(await page.getByText("Конец", { exact: true }).count(), 0);
   assert.equal(await playbackBar.locator(".replay-rate input[type=range]").count(), 1);
   assert.equal(await page.locator(".replay-controls .replay-rate").count(), 0);
   const drawingBar = page.getByRole("group", { name: "Инструменты рисования" });
@@ -97,7 +103,8 @@ try {
   // after its 14/14 warmup. Check TRUE-price markers, not shifted chart arrows.
   const demoIndicator = page.getByRole("group", { name: "Индикатор ADX DMI" });
   await page.locator(".replay-rate input").fill("60");
-  await page.getByRole("button", { name: "Пуск", exact: false }).click();
+  await seekBar.getByRole("button", { name: "Пуск" }).click();
+  assert.equal(await seekBar.getByRole("button", { name: "Пауза" }).count(), 1);
   await page.waitForFunction(() => {
     const slider = document.querySelector('input[aria-label="Перемотка графика по закрытым свечам"]');
     return slider?.value === slider?.max;
