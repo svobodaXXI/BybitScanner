@@ -27,8 +27,8 @@ from research.simulator_v2.trade_range import (
 SYMBOL = "GRASSUSDT"
 START_DAY = date(2026, 10, 1)
 DAYS = 30
-START_MS = 1_759_276_800_000  # Explicit range verified against each date below.
-END_MS = 1_761_868_800_000
+START_MS = 1_790_812_800_000  # Explicit range verified against each date below.
+END_MS = 1_793_404_800_000
 MAX_TOTAL_ARCHIVE_BYTES = 400_000_000
 OUT_DIR = Path("simulator-v2-grass-real-30days-202610")
 
