@@ -3199,3 +3199,68 @@ def test_dual_stopped_telegram_failed_start_never_reaches_backend(abandoned_stop
             host=lambda *args, **kwargs: True)
     assert len(calls) == 1
     assert calls[0][-1] == "bybitscanner-telegram.service"
+
+
+def test_editor_post_start_settles_http_without_any_extra_systemd_commands(monkeypatch):
+    from tools.paper_maintenance import resume_installed_release
+    import tools.paper_maintenance as maintenance
+
+    calls = []
+    probes = []
+    sleeps = []
+    monkeypatch.setattr(maintenance.time, "sleep", lambda delay: sleeps.append(delay))
+
+    def probe(_sha, _identity):
+        probes.append(1)
+        return len(probes) == 4
+
+    outcome = resume_installed_release(
+        "a" * 40, root=Path("/opt/BybitScanner"), env_file=None,
+        runner=lambda argv, **_: (
+            calls.append(tuple(argv)), SimpleNamespace(returncode=0)
+        )[1],
+        resume_proof=lambda *_a, **_kw: "RESUME_READY: exact",
+        freeze_proof=lambda *_: "b" * 64,
+        runtime_ready=probe,
+    )
+    assert outcome.startswith("READY:")
+    assert len(probes) == 4
+    assert len(calls) == 3  # prepare, Backend START, Telegram START, exactly once
+    assert all("paper-start" not in " ".join(argv) for argv in calls)
+
+
+def test_editor_settle_fails_closed_with_component_reason(monkeypatch):
+    from tools.paper_maintenance import resume_installed_release
+    import tools.paper_maintenance as maintenance
+
+    monkeypatch.setattr(maintenance.time, "sleep", lambda _: None)
+    monkeypatch.setattr(maintenance, "_editor_backend_ready", lambda *_: True)
+    monkeypatch.setattr(maintenance, "_editor_telegram_ready", lambda *_: False)
+    calls = []
+    outcome = resume_installed_release(
+        "a" * 40, root=Path("/opt/BybitScanner"), env_file=None,
+        runner=lambda argv, **_: (
+            calls.append(tuple(argv)), SimpleNamespace(returncode=0)
+        )[1],
+        resume_proof=lambda *_a, **_kw: "RESUME_READY: exact",
+        freeze_proof=lambda *_: "b" * 64,
+        runtime_ready=lambda *_: False,
+    )
+    assert "EDITOR_ONLY_postconditions_unproven:telegram_unproven" in outcome
+    assert "no restart or replay" in outcome
+    assert len(calls) == 3
+    assert all("paper-start" not in " ".join(argv) for argv in calls)
+
+
+def test_editor_readiness_settle_is_bounded_and_read_only():
+    from tools.paper_maintenance import _settled_editor_readiness
+
+    observed = []
+    sleeps = []
+    assert not _settled_editor_readiness(
+        lambda sha, identity: (observed.append((sha, identity)), False)[1],
+        "a" * 40, "b" * 64, attempts=3, delay=0,
+        sleep=lambda seconds: sleeps.append(seconds),
+    )
+    assert observed == [("a" * 40, "b" * 64)] * 3
+    assert sleeps == [0, 0]

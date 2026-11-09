@@ -97,6 +97,36 @@ def _editor_runtime_ready(target: str, database_identity: str) -> bool:
             and _editor_telegram_ready(database_identity))
 
 
+def _settled_editor_readiness(probe, target: str, identity: str, *,
+                              attempts: int = 4, delay: float = 0.5,
+                              sleep=time.sleep) -> bool:
+    """Read-only settle window after one successful systemd start sequence.
+
+    systemctl reports the start request finished, not that both HTTP health
+    endpoints already answer. Never reissue START/STOP, reconcile or trade.
+    Every successful probe still checks the exact SHA, DB identity and OFF gates.
+    """
+    for attempt in range(attempts):
+        if probe(target, identity):
+            return True
+        if attempt + 1 < attempts:
+            sleep(delay)
+    return False
+
+
+def _editor_postcondition_reason(target: str, identity: str) -> str:
+    """Read-only component attribution; never substitutes for readiness proof."""
+    backend = _editor_backend_ready(target, identity)
+    telegram = _editor_telegram_ready(identity)
+    if not backend and not telegram:
+        return "backend_and_telegram_unproven"
+    if not backend:
+        return "backend_unproven"
+    if not telegram:
+        return "telegram_unproven"
+    return "readiness_changed_after_probe"
+
+
 def _resume_missing_telegram(
     target: str, database_identity: str, *, root: Path, runner, probe,
 ) -> str:
@@ -143,8 +173,10 @@ def _resume_missing_telegram(
             return "BLOCKED: Telegram_start_failed_or_unknown; no retry"
     except (OSError, subprocess.TimeoutExpired):
         return "BLOCKED: Telegram_start_outcome_unknown; no retry"
-    if not probe(target, database_identity):
-        return "BLOCKED: EDITOR_ONLY_postconditions_unproven; Backend preserved"
+    if not _settled_editor_readiness(probe, target, database_identity):
+        return ("BLOCKED: EDITOR_ONLY_postconditions_unproven:"
+                + _editor_postcondition_reason(target, database_identity)
+                + "; Backend preserved; no restart or replay")
     return "READY: Telegram recovered in EDITOR_ONLY; Backend not restarted"
 
 
@@ -208,8 +240,10 @@ def resume_installed_release(
         return "BLOCKED: backend_start_failed_or_unknown; do not retry before observing owner"
     if not command(*PREFIX, "systemctl", "start", "bybitscanner-telegram.service"):
         return "BLOCKED: telegram_start_failed_or_unknown; Backend preserved, no trade ingress requested"
-    if not probe(target, identity):
-        return "BLOCKED: EDITOR_ONLY_postconditions_unproven; no Scanner or PAPER_AUTO requested"
+    if not _settled_editor_readiness(probe, target, identity):
+        return ("BLOCKED: EDITOR_ONLY_postconditions_unproven:"
+                + _editor_postcondition_reason(target, identity)
+                + "; no Scanner or PAPER_AUTO requested; no restart or replay")
     return "READY: exact installed PAPER release, Telegram and EDITOR_ONLY proven; no Scanner/PAPER_AUTO start"
 
 
