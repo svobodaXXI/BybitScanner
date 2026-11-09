@@ -1405,7 +1405,7 @@ export function App() {
           Исходный сигнал не указан в ссылке. Показаны текущие свечи без сохранённых линий паттерна.
         </output>
       )}
-      {(mode === "TERMINAL" || mode === "AUTOPILOT") && launchLink?.mode === "TERMINAL" && launchLink.signalId
+      {(mode === "TERMINAL" || (mode === "AUTOPILOT" && !robotPosition)) && launchLink?.mode === "TERMINAL" && launchLink.signalId
         && tradingSymbol === launchLink.symbol && timeframe === launchLink.timeframe && (
           <output role="status" aria-live="polite">
             {terminalSignalDrawings
@@ -1481,7 +1481,8 @@ export function App() {
           } : undefined}
           referenceDrawings={mode === "EDITOR"
             ? frozenSignal?.referenceDrawings ?? []
-            : mode === "AUTOPILOT" ? robotGeometry.drawings ?? []
+            : mode === "AUTOPILOT" ? (robotPosition
+                ? robotGeometry.drawings ?? [] : terminalSignalDrawings ?? [])
               : mode === "TERMINAL" ? terminalSignalDrawings ?? [] : []}
           editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
           signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
