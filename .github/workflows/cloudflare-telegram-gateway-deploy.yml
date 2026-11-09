@@ -1,15 +1,14 @@
 name: Cloudflare Telegram Gateway deploy
 
+# GitHub merge must never publish a new Gateway without separate owner approval.
+# workflow_dispatch on the reviewed stable branch is the sole production entrypoint.
 on:
-  push:
-    branches:
-      - stable/adfb50b-forward
-    paths:
-      - 'deploy/telegram_gateway/cloudflare_proxy_worker.mjs'
-      - '.github/workflows/cloudflare-telegram-gateway-deploy.yml'
   pull_request:
     paths:
       - 'deploy/telegram_gateway/cloudflare_proxy_worker.mjs'
+      - 'deploy/telegram_gateway/worker.mjs'
+      - 'deploy/telegram_gateway/wrangler.toml'
+      - 'tests/test_telegram_cloudflare_direct.mjs'
       - '.github/workflows/cloudflare-telegram-gateway-deploy.yml'
   workflow_dispatch:
 
@@ -27,13 +26,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Verify Worker syntax and new route
+      - name: Verify direct Cloudflare entrypoint and focused Gateway regressions
         run: |
           node --check deploy/telegram_gateway/cloudflare_proxy_worker.mjs
-          grep -Fq '"/v1/photo-card": "POST"' deploy/telegram_gateway/cloudflare_proxy_worker.mjs
+          node --check deploy/telegram_gateway/worker.mjs
+          node --test tests/test_telegram_cloudflare_direct.mjs tests/test_telegram_gateway_worker.mjs
+
   deploy:
     needs: verify
-    if: github.ref == 'refs/heads/stable/adfb50b-forward' && github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/stable/adfb50b-forward'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: cloudflare-telegram-gateway
@@ -42,33 +43,22 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Validate Worker source
-        run: |
-          node --check deploy/telegram_gateway/cloudflare_proxy_worker.mjs
-          grep -Fq '"/v1/photo-card": "POST"' deploy/telegram_gateway/cloudflare_proxy_worker.mjs
-      - name: Require Cloudflare credentials
+      - name: Require Cloudflare deployment credentials
         env:
           CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          test -n "$CF_TOKEN" || { echo 'Missing CLOUDFLARE_API_TOKEN'; exit 1; }
-          test -n "$CF_ACCOUNT" || { echo 'Missing CLOUDFLARE_ACCOUNT_ID'; exit 1; }
-      - name: Check existing Vercel origin
-        run: |
-          curl --fail --silent --show-error --max-time 12 \
-            https://bybitscanner-telegram-gateway.vercel.app/health \
-            | grep -Fq '"status":"up"'
-      - name: Deploy to existing Cloudflare Worker
+          test -n "$CF_TOKEN" || { echo 'Missing Cloudflare deployment token'; exit 1; }
+          test -n "$CF_ACCOUNT" || { echo 'Missing Cloudflare account ID'; exit 1; }
+      - name: Deploy direct Gateway to existing Worker (requires configured private bindings)
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: >-
-            deploy deploy/telegram_gateway/cloudflare_proxy_worker.mjs
-            --name bybitscanner-gateway
-            --compatibility-date 2026-10-30
-      - name: Verify public Worker health
+            deploy --config deploy/telegram_gateway/wrangler.toml
+      - name: Verify only public availability; not Telegram stream ownership
         run: |
           curl --fail --silent --show-error --max-time 12 \
             https://bybitscanner-gateway.svoboda21vekaru.workers.dev/health \
-            | grep -Fq '"status":"up"'
+            | grep -Fq '"delivery_verified":false'

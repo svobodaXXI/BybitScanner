@@ -1,3 +1,47 @@
+# Cloudflare direct Gateway — migration pending (09.11.2026)
+
+**Goal:** keep the existing VPS HTTPS URL and Telegram single-consumer unchanged,
+but replace the current Cloudflare → Vercel → Telegram proxy with
+Cloudflare Workers → Telegram. Existing Vercel 402 quota rejection is a proven
+transport blocker. This is an operator-controlled migration, not a Telegram,
+Backend, Scanner, Robot, or PAPER DB redeployment.
+
+- Source: `cloudflare_proxy_worker.mjs` re-exports the existing tested
+  `worker.mjs` API handler; Wrangler bundles the local module. The deployed
+  Cloudflare version must be attested separately. No Vercel fetch or env is
+  required.
+- Existing Worker name: `bybitscanner-gateway`. Existing VPS URL is unchanged.
+  Do **not** create a second bot/Worker/getUpdates consumer.
+- **Before any deploy**, create three Cloudflare Worker **Secrets** (not plain
+  variables) under the existing Worker: `GATEWAY_SHARED_SECRET` (exactly the
+  current VPS gateway secret), `TELEGRAM_BOT_TOKEN` (existing bot token),
+  `TELEGRAM_CHAT_ID` (fixed existing owner destination). Use owner-controlled
+  secret storage; never paste values into PRs, chats, CI logs, or repo files.
+  `wrangler.toml` declares these bindings required: absent secrets block the
+  deployment. Setting secrets may create a new Worker version; coordinate
+  any such rollout with separate owner authorization.
+- CI always runs the focused direct-routing/auth/single-consumer-safe tests.
+  **Merging a PR does not deploy.** After a separate owner deploy authorization,
+  dispatch the existing `Cloudflare Telegram Gateway deploy` workflow on
+  `stable/adfb50b-forward` with its protected Cloudflare environment; it
+  publishes the existing Worker, not a new worker. Cloudflare credentials for
+  the GitHub environment must be configured; the workflow never reads private
+  Telegram secret values. The Worker deploy must preserve dashboard vars and
+  existing secrets.
+- Verify existing VPS Telegram health `127.0.0.1:8766/health` reaches HTTP
+  200 `status=ready` and matching DB identity **without a restart**, then
+  confirm real authorized Telegram delivery/menu/callback under owner control.
+  A public `/health` HTTP 200 only proves Worker transport availability;
+  it is not Telegram delivery or EDITOR_ONLY readiness.
+- On any unknown, remain BLOCKED with original VPS release, Backend, PAPER DB,
+  receipts, Scanner STOPPED, Autopilot OFF and LIVE gates unchanged. Do not
+  re-run STOP, launch a second poller, delete Vercel before validated cutover,
+  or fall back directly from VPS to Telegram API. Cloudflare Workers Free has
+  resource limits; real polling and photo delivery remain runtime acceptance
+  gates.
+
+---
+
 # Telegram Gateway — минимальный маршрут (#684)
 
 **Историческая спецификация MVP #684.** По состоянию на 2026-10-30 проверены VPS → Cloudflare → Vercel → Telegram (реально получены текст и PNG); кнопки/callback и полный PAPER E2E пока не приняты. Актуальная схема, адреса, восстановление и подтверждённые факты: [TELEGRAM_CLOUDFLARE_VPS_PROVEN_ROUTE_20261030.md](../../DOCUMENTS/TELEGRAM_CLOUDFLARE_VPS_PROVEN_ROUTE_20261030.md). Этот файл сохраняет проектный контракт, не является текущим отчётом о развертывании.
