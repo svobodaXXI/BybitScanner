@@ -31,6 +31,24 @@ class ManualMainTradeBlocked(ValueError):
     pass
 
 
+def _fresh_main_snapshot(snapshot: dict | None, account_id: str, *,
+                         now_ms: int | None = None) -> bool:
+    """A cached READY label alone is never authority to submit real orders."""
+    if not isinstance(snapshot, dict):
+        return False
+    at = snapshot.get("updated_at_ms")
+    now = int(time.time() * 1000) if now_ms is None else now_ms
+    return (
+        snapshot.get("account_id") == account_id
+        and snapshot.get("environment") == "MAINNET"
+        and snapshot.get("status") == "READY"
+        and type(snapshot.get("refresh_generation")) is int
+        and snapshot["refresh_generation"] > 0
+        and type(at) is int
+        and 0 <= now - at <= 30_000
+    )
+
+
 def _require(value, reason: str) -> None:
     if not value:
         raise ManualMainTradeBlocked(reason)
@@ -127,7 +145,8 @@ class ManualMainTrader:
         try:
             stored = self._accounts._lookup(account_id)
             summary = self._accounts.summary(account_id)
-            return bool(not stored.read_only and summary and summary.get("status") == "READY")
+            return bool(stored.environment == "MAINNET" and not stored.read_only
+                        and _fresh_main_snapshot(summary, account_id))
         except (LookupError, ValueError):
             return False
 
@@ -151,7 +170,7 @@ class ManualMainTrader:
             _require(stored.environment == "MAINNET" and not stored.read_only,
                      "main_trade_credentials_not_authorized")
             snapshot = self._accounts.summary(account)
-            _require(snapshot is not None and snapshot.get("status") == "READY"
+            _require(_fresh_main_snapshot(snapshot, account)
                      and snapshot.get("refresh_generation") == generation,
                      "stale_main_account_authority")
             validated = self._accounts._validator.validate(
