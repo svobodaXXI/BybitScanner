@@ -218,6 +218,15 @@ def verify_archived_prior_timeline(doc):
         candidates = [x for x in lines if
                       x["side"] == side and x["to_ms"] == at and
                       Decimal(x["to_price"]) == price and x["available_at_ms"] <= known]
+        # A structural BEAR prior may advance to a confirmed HIGH without
+        # re-fitting yellow 1--3 (its wick envelope may forbid the slope).
+        # In that case only the SAME real movement, established by the
+        # previous audited prior, may license the independent update.
+        if not candidates and side == "BEAR" and last is not None:
+            candidates = [x for x in lines if
+                          (x["side"], x["from_ms"], x["from_price"]) == last[1]
+                          and x["available_at_ms"] <= known
+                          and x["from_ms"] < at]
         wick = "low" if side == "BULL" else "high"
         candle = hours.get(at)
         if (item["kind"] != "H1_PRIOR_CONFIRMED" or not candidates or
