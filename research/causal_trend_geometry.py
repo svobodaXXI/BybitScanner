@@ -154,7 +154,7 @@ def closed_fourth_pivot(
     if len(pivots) < 3 or not bars or bars[-1] != just_closed:
         return None
     a, b, c = pivots[-3:]
-    if c.index >= len(bars) - 1 or c.confirmed_at_ms > just_closed.start_ms:
+    if c.index >= len(bars) - 1 or c.confirmed_at_ms > just_closed.end_ms:
         return None
     if (a.kind, b.kind, c.kind) == ("LOW", "HIGH", "LOW"):
         if c.price <= a.price or just_closed.high <= b.price:
