@@ -37,10 +37,7 @@ import { DiaryOverlay } from "./DiaryOverlay";
 import { AccountMenu } from "./AccountMenu";
 import type { AccountMode, ModeAccountDescriptor } from "../accountWorkspace/modeAccountSelection";
 import { LiveAccountInventory } from "./LiveAccountInventory";
-import {
-  accountWorkspaceStore,
-  type AccountWorkspaceProjection,
-} from "../accountWorkspace/accountWorkspaceStore";
+import type { AccountWorkspaceProjection } from "../accountWorkspace/accountWorkspaceStore";
 import { StopSettings } from "./StopSettings";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
@@ -105,6 +102,7 @@ export function ModePanel({
   liveMarketAllowed = false,
   liveLimitAllowed = false,
   liveProtectionAllowed = false,
+  refreshMain = async () => { throw new Error("independent_main_refresh_missing"); },
   openPositionsRequest = 0,
   onRobotPositionsLoaded,
 }: {
@@ -160,6 +158,7 @@ export function ModePanel({
   liveMarketAllowed?: boolean;
   liveLimitAllowed?: boolean;
   liveProtectionAllowed?: boolean;
+  refreshMain?: () => Promise<void>;
   openPositionsRequest?: number;
   onRobotPositionsLoaded?: (positions: PaperOpenPosition[] | null) => void;
 }) {
@@ -600,7 +599,7 @@ export function ModePanel({
             },
             createClientActionId: () =>
               globalThis.crypto?.randomUUID?.() ?? `live-full-close-${Date.now()}`,
-            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+            refreshActiveLive: refreshMain,
           },
         );
         setExecutionStatus(
@@ -614,7 +613,7 @@ export function ModePanel({
         );
       } catch {
         setExecutionStatus("LIVE Full Close transport uncertain — reconciling; do not retry");
-        await accountWorkspaceStore.refreshActiveLive();
+        await refreshMain();
       }
       return;
     }
