@@ -206,21 +206,12 @@ try {
   let position = 0;
   async function advanceTo(n) {
     assert.ok(n >= position && n <= archive.events.length, "ordered candle steps only");
-    // Large archive jumps use the real seek control, not hundreds of
-    // synchronous React click callbacks from one browser evaluation.
-    // Individual H1/M5 step buttons are covered separately.
+    // Seek by the real owner-visible UTC field (verified above). Synthetic
+    // click batches/range events did not reliably advance the React cursor.
+    // Separate local browser checks cover individual step buttons.
     if (n !== position) {
-      await scrubber.evaluate((slider, frame) => {
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-        setter.call(slider, String(frame));
-        slider.dispatchEvent(new Event("input", { bubbles: true }));
-        slider.dispatchEvent(new Event("change", { bubbles: true }));
-      }, n);
-      // Genuine keyboard input crosses React's range change boundary even
-      // when a programmatically dispatched event is ignored as untrusted.
-      const atEnd = n === Number(await scrubber.getAttribute("max"));
-      await scrubber.press(atEnd ? "ArrowLeft" : "ArrowRight");
-      await scrubber.press(atEnd ? "ArrowRight" : "ArrowLeft");
+      await utcClock.fill(inputTime(archive.events[n - 1].time_ms));
+      await utcClock.press("Enter");
     }
     await page.waitForFunction(expected =>
       document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
