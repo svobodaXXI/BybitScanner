@@ -254,8 +254,7 @@ class SwordCounterApp:
                 widget.tag_add("deposit_balance", f"{line_number}.{len(deposit_prefix)}",
                                f"{line_number}.end")
         # Keep ordinary one-line errors compact; allow long messages to wrap.
-        longest = max((len(line) for line in lines), default=1)
-        widget.configure(height=max(1, len(lines), (longest + 34) // 35), state="disabled")
+        widget.configure(height=max(1, sum(max(1, (len(line) + 34) // 35) for line in lines)), state="disabled")
 
     def _tick(self) -> None:
         if self._closed:
