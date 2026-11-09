@@ -28,7 +28,7 @@ describe("LIVE Market command", () => {
       currentAuthority: () => ({ accountId: "paper", sessionGeneration: 8 }),
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(fetcher.mock.calls[0][0]).toBe("/api/live/market");
+    expect(fetcher.mock.calls[0][0]).toBe("/api/manual-main/trade/market");
     expect(result).toBeNull();
   });
 
