@@ -1,10 +1,14 @@
 name: Simulator V2 30-day real XRP public archive proof
 
-# Research-only network probe. Fail-closed gap observed in public trade
-# archives for 2026-10-01 (runs 42680127900, 42680488648).
-# Opt-in only, never gate the proven offline SIMULATION test suite.
+# Research-only single investigative rerun: each UTC day is validated
+# before the next is downloaded. Missing M1 blocks immediately; no fills.
 on:
-  workflow_dispatch:
+  pull_request:
+    branches:
+      - 'stable/adfb50b-forward'
+    paths:
+      - 'research/simulator_v2/public_trade_month_smoke.py'
+      - '.github/workflows/simulator-v2-public-month.yml'
 
 permissions:
   contents: read
