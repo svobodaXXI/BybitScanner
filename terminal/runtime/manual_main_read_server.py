@@ -16,7 +16,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from terminal.application.manual_main_accounts import ManualMainAccounts\nfrom terminal.application.manual_main_trading import (\n    ManualMainTrader, ManualMainTradeLedger, ManualMainTradeBlocked, enabled_from_environment,\n)
+from terminal.application.manual_main_accounts import ManualMainAccounts
+from terminal.application.manual_main_trading import (
+    ManualMainTrader, ManualMainTradeLedger, ManualMainTradeBlocked, enabled_from_environment,
+)
 from terminal.persistence.credential_store import create_credential_store
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
 
@@ -69,7 +72,8 @@ class MainReadHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlsplit(self.path).path
         if path == PREFIX + "/health":
-            self._json(200, {"ok": True, "component": "manual_main_read",\n                             "trading_enabled": bool(self.trader and self.trader.enabled)})
+            self._json(200, {"ok": True, "component": "manual_main_read",
+                             "trading_enabled": bool(self.trader and self.trader.enabled)})
         elif path == PREFIX + "/accounts":
             self._json(200, {"ok": True, **self.accounts.catalog()})
         elif (account_id := self._account_path(path, "/summary")) is not None:
@@ -78,7 +82,9 @@ class MainReadHandler(BaseHTTPRequestHandler):
             except LookupError:
                 self._json(404, {"ok": False, "error": "account_not_found"})
                 return
-            if summary is not None:\n                summary = {**summary, "trading_enabled": bool(self.trader and self.trader.can_trade(account_id))}\n            self._json(200, {"ok": True, "summary": summary})
+            if summary is not None:
+                summary = {**summary, "trading_enabled": bool(self.trader and self.trader.can_trade(account_id))}
+            self._json(200, {"ok": True, "summary": summary})
         else:
             self._json(404, {"ok": False, "error": "not_found"})
 
@@ -195,7 +201,8 @@ class MainReadHandler(BaseHTTPRequestHandler):
         pass
 
 
-def serve(accounts: ManualMainAccounts, *, port: int = PORT,\n          trader: ManualMainTrader | None = None) -> None:
+def serve(accounts: ManualMainAccounts, *, port: int = PORT,
+          trader: ManualMainTrader | None = None) -> None:
     """Intentionally loopback-bound; Nginx owner auth is the public boundary."""
     handler = type("BoundManualMainReadHandler", (MainReadHandler,), {"accounts": accounts, "trader": trader})
     server = ThreadingHTTPServer((HOST, port), handler)
