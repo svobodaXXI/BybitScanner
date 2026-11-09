@@ -133,7 +133,7 @@ class DisplayTests(unittest.TestCase):
         display = vm.build_display(self.S, r, age_s=1)
         self.assertEqual(display.status_text.splitlines(), [
             "Превышение лимита: 52 из 20",
-            "Капитал: 89.33 USDT",
+            "Капитал (с вычетом ПНЛ): 89.33 USDT",
             "Доступно: 72.10 USDT",
             "Занятая маржа: 17.23 USDT",
             "Общий депозит: 147.14 USDT",
@@ -316,7 +316,7 @@ class GuiSmokeTests(unittest.TestCase):
                 self.assertEqual(app_module.STATUS_FONT_PT, 10)
                 self.assertEqual(panel.get("1.0", "end-1c").splitlines(), [
                     "Превышение лимита: 30 из 20",
-                    "Капитал: 89.36 USDT",
+                    "Капитал (с вычетом ПНЛ): 89.36 USDT",
                     "Доступно: 81.17 USDT",
                     "Занятая маржа: 7.77 USDT",
                     "Общий депозит: 146.98 USDT",
