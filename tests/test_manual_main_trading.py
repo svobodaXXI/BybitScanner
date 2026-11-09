@@ -1,6 +1,7 @@
 """Focused, network-free evidence for isolated manual MAIN order lifecycle."""
 from decimal import Decimal
 from pathlib import Path
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -33,6 +34,8 @@ class FakeAccounts:
             environment="MAINNET", read_only=False, api_key="test", api_secret="test")
         self._validator = FakeValidator()
         self.snapshot = {
+            "account_id": ACCOUNT, "environment": "MAINNET",
+            "updated_at_ms": int(time.time() * 1000),
             "status": "READY", "refresh_generation": 3,
             "positions": [{"symbol": "BTCUSDT", "side": "Long", "size": "0.2"}],
             "orders": [{"account_id": ACCOUNT, "symbol": "BTCUSDT",
@@ -197,3 +200,30 @@ def test_stop_take_and_cancel_send_only_account_scoped_mutations(setup):
               "order_id": "order-exchange-1"}
     assert trader.submit("limit/cancel", cancel)["status"] == "accepted_pending"
     assert api.calls[1][0] == "cancel"
+
+def test_cached_or_cross_account_ready_is_not_live_trading_authority(setup):
+    trader, accounts, api, _ = setup
+    fresh = accounts.snapshot["updated_at_ms"]
+    for bad in [
+        {"updated_at_ms": fresh - 31_000},
+        {"updated_at_ms": fresh + 5_000},
+        {"updated_at_ms": None},
+        {"account_id": "bybit-different"},
+        {"environment": "PAPER"},
+    ]:
+        original = dict(accounts.snapshot)
+        accounts.snapshot.update(bad)
+        try:
+            assert trader.can_trade(ACCOUNT) is False
+            with pytest.raises(ManualMainTradeBlocked, match="stale_main_account_authority"):
+                trader.submit("market", MARKET)
+        finally:
+            accounts.snapshot = original
+    assert api.calls == []
+
+
+def test_fresh_main_snapshot_allows_independent_manual_capability(setup):
+    trader, accounts, _, _ = setup
+    assert trader.can_trade(ACCOUNT) is True
+    accounts.stored.environment = "TESTNET"
+    assert trader.can_trade(ACCOUNT) is False
