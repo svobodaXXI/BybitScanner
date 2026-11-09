@@ -101,7 +101,7 @@ class ActualWedgeObserverTests(unittest.TestCase):
         self.assertFalse(any(e.source == "SCANNER" for e in session.events))
 
     def test_failed_exchange_minute_cannot_publish_or_duplicate_wedge(self):
-        session = new_session(run="refill", balance="1")
+        session = new_session(run="refill", balance="0.01")
         for i in range(249):
             session.step(bar(i))
         session.submit(MarketRequest("oversized", "BUY", D("1")))
