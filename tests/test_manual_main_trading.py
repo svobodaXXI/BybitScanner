@@ -35,6 +35,9 @@ class FakeAccounts:
         self.snapshot = {
             "status": "READY", "refresh_generation": 3,
             "positions": [{"symbol": "BTCUSDT", "side": "Long", "size": "0.2"}],
+            "orders": [{"account_id": ACCOUNT, "symbol": "BTCUSDT",
+                        "order_id": "order-exchange-1", "quantity": "0.2",
+                        "status": "open"}],
         }
 
     def _lookup(self, account):
