@@ -98,6 +98,30 @@ describe("Autopilot Robot positions use the existing inventory view safely", () 
     expect(onNavigate).toHaveBeenCalledWith("ETHUSDT");
   });
 
+  it("shows live Robot inventory from the first screen without additional polling", async () => {
+    const first = [{ ...position, robot_trade_id: "robot-btc" }];
+    const second = [{ ...position, symbol: "ETHUSDT", robot_trade_id: "robot-eth" }];
+    const fetchMock = vi.fn().mockResolvedValue(inventory(first));
+    vi.stubGlobal("fetch", fetchMock);
+    const baseProps = {
+      activeSymbol: "BTCUSDT", robotOnly: true, onClose: vi.fn(), onNavigate: vi.fn(),
+      runPaperMutation: <T,>(_key: string, operation: () => Promise<T>) => operation(),
+      applyPaperState: vi.fn(() => true),
+    };
+    const view = render(<OpenPositionsOverlay {...baseProps} liveRobotPositions={first} />);
+    expect(await screen.findByRole("button", { name: "Показать позицию BTCUSDT на графике" }))
+      .toBeInTheDocument();
+    view.rerender(<OpenPositionsOverlay {...baseProps} liveRobotPositions={second} />);
+    expect(screen.queryByRole("button", { name: "Показать позицию BTCUSDT на графике" }))
+      .not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Показать позицию ETHUSDT на графике" }))
+      .toBeInTheDocument();
+    view.rerender(<OpenPositionsOverlay {...baseProps} liveRobotPositions={null} />);
+    expect(screen.getByText("Принадлежность позиций роботу не подтверждена")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Показать позицию/ })).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("does not misclassify an old backend inventory as a Robot inventory", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(inventory([position])));
     renderOverlay(vi.fn(), "BTCUSDT", true);
