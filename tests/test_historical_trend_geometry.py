@@ -4,7 +4,7 @@ import unittest
 
 from research.causal_trend_geometry import (
     CausalGeometryFeed, ConfirmedPivot, ConfirmedSwingStream,
-    closed_fourth_pivot,
+    closed_fourth_pivot, impulse_four_point_trend,
     last_correction_reference, main_line_contact, recent_hourly_trend,
     original_reversal_trend, trend_from_frozen_first_pair,
     wick_tight_hourly_line,
@@ -29,6 +29,42 @@ BEAR = [
 
 
 class ConfirmedGeometryTests(unittest.TestCase):
+    def test_real_grass_h1_impulse_survives_minor_pivots_until_fourth_close(self):
+        # Actual 27 Aug 08:00 through 28 Aug 03:00 GRASSUSDT closed H1
+        # wick pairs. Minor intervening pivots must not discard the first
+        # impulse HIGH before the final fourth lower LOW is known.
+        rows = [
+            ("0.39660", "0.37630"), ("0.38840", "0.36990"),
+            ("0.37580", "0.35900"), ("0.36740", "0.36070"),
+            ("0.36710", "0.36320"), ("0.37070", "0.36380"),
+            ("0.37200", "0.36750"), ("0.37260", "0.36470"),
+            ("0.36950", "0.36480"), ("0.37320", "0.36650"),
+            ("0.36970", "0.36100"), ("0.36640", "0.36310"),
+            ("0.36500", "0.36060"), ("0.36400", "0.35940"),
+            ("0.36250", "0.35930"), ("0.36440", "0.35950"),
+            ("0.36680", "0.36150"), ("0.37360", "0.36360"),
+            ("0.36700", "0.35950"), ("0.36150", "0.35770"),
+        ]
+        stream = ConfirmedSwingStream(
+            timeframe_ms=ONE_HOUR_MS, wing=1, seed_first_pivot=True,
+        )
+        versions = []
+        for i, (high, low) in enumerate(rows):
+            bar = make_bar(i, Decimal(high), Decimal(low))
+            stream.observe_closed(bar)
+            versions.append(impulse_four_point_trend(
+                stream.pivots, stream.bars, bar,
+            ))
+        self.assertTrue(all(t is None for t in versions[:-1]))
+        trend = versions[-1]
+        self.assertIsNotNone(trend)
+        self.assertEqual(trend.side, "BEAR")
+        self.assertEqual([p.index for p in trend.pivot_sequence], [0, 2, 17, 19])
+        self.assertEqual(trend.main.first.price, Decimal("0.39660"))
+        self.assertEqual(trend.main.second.price, Decimal("0.37360"))
+        self.assertEqual(trend.target.second.price, Decimal("0.35770"))
+        self.assertEqual(trend.available_at_ms, 20 * ONE_HOUR_MS)
+
     def test_point_four_is_known_on_its_close_without_waiting_for_wing(self):
         bars = tuple(make_bar(i, high, low) for i, (high, low) in enumerate([
             (110, 100), (116, 109), (112, 105), (119, 111),
