@@ -46,6 +46,7 @@ def checked_main_state_dir(value: str) -> Path:
 class MainReadHandler(BaseHTTPRequestHandler):
     """Only owner-authenticated MAIN provisioning and reads, no order execution."""
     accounts: ManualMainAccounts
+    trader: ManualMainTrader | None = None
 
     def _json(self, status: int, body: dict) -> None:
         data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
