@@ -6,7 +6,7 @@ from research.causal_trend_geometry import (
     CausalGeometryFeed, ConfirmedPivot, ConfirmedSwingStream,
     last_correction_reference, main_line_contact, recent_hourly_trend,
     original_reversal_trend, trend_from_frozen_first_pair,
-    wick_tight_hourly_line, confirmed_continuation_with_successive_origins,
+    wick_tight_hourly_line,
     reanchor_bear_on_closed_lower_low,
 )
 from research.historical_candle_feed import FIVE_MINUTES_MS, ONE_HOUR_MS
@@ -217,44 +217,37 @@ class ConfirmedGeometryTests(unittest.TestCase):
         for bar in compatible[1:]:
             self.assertLessEqual(line.value_at(bar.start_ms), bar.low)
 
-    def test_h1_bear_continuation_moves_to_prior_confirmed_lower_high_after_new_low(self):
-        # A newer 4-pivot structure can use a later confirmed 1/2 pair
-        # when the original 1/2 would intersect genuine H1 wicks.
-        # This must not mint a version before the fourth point is confirmed.
-        from research.causal_trend_geometry import (
-            CausalLine, TrendCandidate, recent_hourly_trend,
-        )
-        highs_lows = [
-            (130, 112), (127, 107), (125, 109), (124, 100),
-            (122, 106), (118, 99), (116, 100), (115, 92),
-            (114, 98), (111, 91), (109, 93), (107, 87),
+    def test_stale_fourth_pivot_low_cannot_create_another_h1_bear_trend(self):
+        # On real GRASS 29 Aug, a later H1 low was below the FIRST
+        # four-pivot target but still ABOVE an already-observed movement low.
+        # No second BEAR first anchor, no phantom reanchor or purple prior.
+        from research.causal_trend_geometry import CausalLine, TrendCandidate
+        prices = [
+            (130, 120), (124, 115), (120, 110), (125, 113),
+            (116, 105), (126, 111), (119, 100), (117, 109),
+            (124, 110), (118, 104),
         ]
-        bars = tuple(make_bar(i, high, low) for i, (high, low) in enumerate(highs_lows))
-        def pivot(kind, i):
-            bar = bars[i]
-            return ConfirmedPivot(kind, i, bar.start_ms, bar.end_ms + ONE_HOUR_MS,
-                                  bar.high if kind == "HIGH" else bar.low)
-        a, b, c, d, e, f = (
-            pivot("HIGH", 0), pivot("LOW", 3),
-            pivot("HIGH", 4), pivot("LOW", 7),
-            pivot("HIGH", 8), pivot("LOW", 11),
+        bars = tuple(make_bar(i, high, low) for i, (high, low) in enumerate(prices))
+        def pivot(kind, index):
+            bar = bars[index]
+            return ConfirmedPivot(
+                kind, index, bar.start_ms, bar.end_ms + ONE_HOUR_MS,
+                bar.high if kind == "HIGH" else bar.low,
+            )
+        a, b, c, d, recent_high = (
+            pivot("HIGH", 0), pivot("LOW", 2),
+            pivot("HIGH", 3), pivot("LOW", 4), pivot("HIGH", 8),
         )
         previous = TrendCandidate(
-            "BEAR", CausalLine(a, c, d.confirmed_at_ms),
-            CausalLine(b, d, d.confirmed_at_ms),
-            (a, b, c, d), d.confirmed_at_ms,
+            "BEAR", CausalLine(a, c, bars[8].end_ms),
+            CausalLine(b, d, bars[8].end_ms),
+            (a, b, c, d), bars[8].end_ms,
         )
-        # Test the helper at the actual fourth-pivot confirmation boundary.
-        # Earlier than this, the last LOW is not a confirmed structural point.
-        before = confirmed_continuation_with_successive_origins(
-            (a, b, c, d, e), previous, bars)
-        self.assertIsNone(before)
-        new = confirmed_continuation_with_successive_origins(
-            (a, b, c, d, e, f), previous, bars)
-        self.assertIsNotNone(new)
-        self.assertEqual(new.side, "BEAR")
-        self.assertEqual(new.main.second, e)
-        self.assertEqual(new.pivot_sequence[-1], f)
+        self.assertLess(bars[9].low, previous.target.second.price)
+        self.assertGreater(bars[9].low, min(bar.low for bar in bars[:9]))
+        self.assertIsNone(reanchor_bear_on_closed_lower_low(
+            previous, (a, b, c, d, recent_high), bars, bars[9],
+        ))
 
     def test_closed_lower_low_reanchors_existing_bear_line_to_prior_high_without_fourth_pivot(self):
         # Owner GRASS H1: the boxed new LOW is already CLOSED; the preceding
