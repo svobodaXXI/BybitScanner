@@ -33,7 +33,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-v2-xrp-real-30days-202610
-          path: simulator-v2-xrp-real-30days-202610/
+          name: simulator-v2-xrp-real-30days-20260910-20261009
+          path: simulator-v2-xrp-real-30days-20260910-20261009/
           if-no-files-found: error
           retention-days: 7
