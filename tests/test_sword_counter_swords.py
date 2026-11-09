@@ -7,7 +7,7 @@ from pathlib import Path
 
 from tools.SwordCounter import swords as sw
 from tools.SwordCounter.bybit_positions import (
-    BybitApiError, BybitCredentialsError, BybitResponseError, BybitTransportError, OpenPosition,
+    AccountBalances,     BybitApiError, BybitCredentialsError, BybitResponseError, BybitTransportError, OpenPosition,
 )
 from tools.SwordCounter.swords import (
     STATUS_NO_CONNECTION, STATUS_OK, STATUS_UNAVAILABLE, SwordSettings, count_swords,
@@ -204,6 +204,14 @@ class WalletBalanceRoTests(unittest.TestCase):
         self.assertEqual((bigger.sword_size_usdt, bigger.used_swords, bigger.free_swords), (Decimal("11"), 2, 18))
         ten = count_swords_with_wallet_balance(lambda: self.LIVE, lambda: Decimal("106.22"), 10)     # RO 11 (10.622)
         self.assertEqual((ten.sword_size_usdt, ten.used_swords, ten.free_swords), (Decimal("11"), 2, 8))
+
+    def test_account_metrics_carry_through_sword_count_without_changing_entry_notional(self):
+        snapshot = AccountBalances(wallet_balance=Decimal("147.14"), equity=Decimal("89.33"),
+                                   available_balance=Decimal("72.10"), initial_margin=Decimal("17.23"))
+        r = count_swords_with_wallet_balance(lambda: [pos(value="207")], lambda: snapshot, 20)
+        self.assertEqual((r.sword_size_usdt, r.used_swords), (Decimal("7"), 30))
+        self.assertEqual(r.account_balances, snapshot)
+        self.assertEqual(r.wallet_balance_usdt, Decimal("147.14"))
 
     def test_wallet_balance_147_14_changes_used_from_52_to_30(self):
         positions = [pos("BTCUSDT", "207", size="1")]
