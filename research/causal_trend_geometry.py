@@ -356,6 +356,18 @@ def reanchor_bear_on_closed_lower_low(
     previous_low = previous.target.second
     if just_closed.start_ms <= previous_low.at_ms or just_closed.low >= previous_low.price:
         return None
+    # The old 2--4 LOW belongs to the ORIGINAL four-pivot qualification
+    # and must not serve forever as the continuation threshold. A later
+    # H1 candle that dips below that frozen LOW but remains ABOVE an
+    # already observed lower low is NOT a new low of this movement.
+    # On real GRASS 29 Aug 21:00 that stale comparison invented a
+    # same-side reanchor and moved the purple prior without a new low.
+    earlier_lows = [
+        bar.low for bar in bars
+        if previous.main.first.at_ms <= bar.start_ms < just_closed.start_ms
+    ]
+    if not earlier_lows or just_closed.low >= min(earlier_lows):
+        return None
     highs = [
         p for p in pivots
         if p.kind == "HIGH"
