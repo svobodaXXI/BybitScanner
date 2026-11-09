@@ -62,7 +62,7 @@ def build_display(settings: AppSettings, result, age_s: float | None) -> Display
         return _word(settings, "Ошибка", "Неизвестный статус")
     status = (f"Превышение лимита: задействовано {result.used_swords} из {result.total_swords}"
               if result.over_limit else "Обновлено")
-    if result.equity_usdt is not None:
-        status += f" · Equity {result.equity_usdt.quantize(Decimal('0.01'))}"
+    if result.wallet_balance_usdt is not None:
+        status += f" · Wallet Balance {result.wallet_balance_usdt.quantize(Decimal('0.01'))}"
     return Display(header_text(result), str(result.free_swords), str(result.used_swords),
                    GREEN, RED, status, True)
