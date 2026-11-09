@@ -147,11 +147,20 @@ class M1CacheTests(unittest.TestCase):
         )
 
     def test_cache_rejects_symlink_file_and_unsafe_source(self):
-        self.root.mkdir(parents=True)
-        target = self.root / "foreign"
-        target.write_text("protected")
-        symlink = self.root / "m1_BTCUSDT_0_240000_00000000000000000000.json"
-        # Identity uses a hash; assert unsafe source before touching paths.
+        self.chunks(fetch_candles=public_fixture(11, []))
+        cache_file = sorted(self.root.glob("*.json"))[0]
+        sentinel = self.root / "foreign"
+        sentinel.write_bytes(b"owner-owned-file")
+        cache_file.unlink()  # only this test's own disposable fixture
+        try:
+            cache_file.symlink_to(sentinel)
+        except (NotImplementedError, OSError):
+            self.skipTest("symlinks unavailable on this host")
+        with self.assertRaises(ValueError):
+            self.chunks(
+                fetch_candles=lambda *_a, **_kw: (),
+            )
+        self.assertEqual(sentinel.read_bytes(), b"owner-owned-file")
         with self.assertRaises(ValueError):
             self.chunks(
                 fetch_candles=public_fixture(11, []), source_id="../PAPER",
