@@ -301,6 +301,16 @@ try {
   assert.equal(await overlay.getAttribute("data-m5-h1-spans"), "[]",
     "M5's own blue reference must never inherit the H1 visual cap");
   const m5RayEnds = JSON.parse(await overlay.getAttribute("data-active-m5-ray-ends") ?? "[]");
+  console.log("REAL_FIRST_BLUE_STATE " + JSON.stringify({
+    knownAt: firstMain.available_at_ms,
+    visible: await overlay.getAttribute("data-visible-geometry"),
+    painted: await overlay.getAttribute("data-painted-geometry"),
+    paintedRay: m5RayEnds,
+    blueSources: archive.geometry.filter(line =>
+      line.kind === "REFERENCE_5M" && line.available_at_ms <= firstMain.available_at_ms
+    ).slice(-8).map(({ available_at_ms, from_ms, to_ms, retired_at_ms, superseded_at_ms }) =>
+      ({ available_at_ms, from_ms, to_ms, retired_at_ms, superseded_at_ms })),
+  }));
   assert.ok(m5RayEnds.length > 0,
     "real GRASS first confirmed blue reference must render as an active M5 ray");
   for (const ray of m5RayEnds) {
