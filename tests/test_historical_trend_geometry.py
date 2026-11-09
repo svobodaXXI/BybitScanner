@@ -4,6 +4,7 @@ import unittest
 
 from research.causal_trend_geometry import (
     CausalGeometryFeed, ConfirmedPivot, ConfirmedSwingStream,
+    closed_fourth_pivot,
     last_correction_reference, main_line_contact, recent_hourly_trend,
     original_reversal_trend, trend_from_frozen_first_pair,
     wick_tight_hourly_line,
@@ -28,6 +29,53 @@ BEAR = [
 
 
 class ConfirmedGeometryTests(unittest.TestCase):
+    def test_point_four_is_known_on_its_close_without_waiting_for_wing(self):
+        bars = tuple(make_bar(i, high, low) for i, (high, low) in enumerate([
+            (110, 100), (116, 109), (112, 105), (119, 111),
+        ]))
+        pivots = (
+            ConfirmedPivot("LOW", 0, bars[0].start_ms, bars[1].end_ms, bars[0].low),
+            ConfirmedPivot("HIGH", 1, bars[1].start_ms, bars[2].end_ms, bars[1].high),
+            ConfirmedPivot("LOW", 2, bars[2].start_ms, bars[3].end_ms, bars[2].low),
+        )
+        self.assertIsNone(closed_fourth_pivot(pivots, bars[:3], bars[2]))
+        fourth = closed_fourth_pivot(pivots, bars, bars[3])
+        self.assertIsNotNone(fourth)
+        self.assertEqual(fourth.index, 3)
+        self.assertEqual(fourth.confirmed_at_ms, bars[3].end_ms)
+        trend = recent_hourly_trend(pivots + (fourth,))
+        self.assertIsNotNone(trend)
+        self.assertEqual(trend.available_at_ms, bars[3].end_ms)
+
+    def test_feed_exposes_fourth_h1_pivot_on_its_close(self):
+        feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
+        hours = [(110, 100), (116, 109), (112, 105), (119, 111)]
+        states = []
+        for hour, (high, low) in enumerate(hours):
+            for minute in range(12):
+                index = hour * 12 + minute
+                five = make_bar(index, high, low, FIVE_MINUTES_MS)
+                closed_hour = make_bar(hour, high, low) if minute == 11 else None
+                trend, _ = feed.observe_closed(five, closed_hour)
+            states.append(trend)
+        self.assertEqual(states[:3], [None, None, None])
+        self.assertIsNotNone(states[3])
+        self.assertEqual(states[3].available_at_ms, 4 * ONE_HOUR_MS)
+        self.assertEqual([p.index for p in states[3].pivot_sequence], [0, 1, 2, 3])
+
+    def test_fourth_close_rejects_outside_bar_and_non_break(self):
+        bars = tuple(make_bar(i, high, low) for i, (high, low) in enumerate([
+            (110, 100), (116, 109), (112, 105), (119, 104),
+        ]))
+        pivots = (
+            ConfirmedPivot("LOW", 0, bars[0].start_ms, bars[1].end_ms, bars[0].low),
+            ConfirmedPivot("HIGH", 1, bars[1].start_ms, bars[2].end_ms, bars[1].high),
+            ConfirmedPivot("LOW", 2, bars[2].start_ms, bars[3].end_ms, bars[2].low),
+        )
+        self.assertIsNone(closed_fourth_pivot(pivots, bars, bars[3]))
+        weak = make_bar(3, 115, 108)
+        self.assertIsNone(closed_fourth_pivot(pivots, bars[:3] + (weak,), weak))
+
     def test_first_h1_candle_is_candidate_until_right_wing_closes(self):
         # A genuine boundary extremum may be point 1, but is not published
         # on its own close. The completed point 4 is the release gate.
