@@ -7,7 +7,7 @@ from research.causal_trend_geometry import (
     last_correction_reference, main_line_contact, recent_hourly_trend,
     original_reversal_trend, trend_from_frozen_first_pair,
     wick_tight_hourly_line, confirmed_continuation_with_successive_origins,
-    reanchor_bear_on_closed_lower_low,
+    reanchor_bear_on_closed_lower_low, reanchor_bull_on_closed_higher_high,
 )
 from research.historical_candle_feed import FIVE_MINUTES_MS, ONE_HOUR_MS
 from research.historical_market_replay import Candle
@@ -299,6 +299,91 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual(updated.available_at_ms, bars[7].end_ms)
         self.assertIsNone(reanchor_bear_on_closed_lower_low(
             updated, (a, b, c, d, newer_high), bars, bars[7],
+        ))
+
+    def test_closed_higher_high_reanchors_bull_on_confirmed_higher_low_not_lone_wick(self):
+        # Mirror the owner's BEAR rule without inventing a fresh four-pivot
+        # trend: the old LOW point 1 is fixed and point 3 advances only after
+        # a subsequent H1 candle CLOSES with a higher HIGH. The LOW itself
+        # must already be a real confirmed swing, never an interim wick.
+        from research.causal_trend_geometry import CausalLine, TrendCandidate
+        bearish_prices = [
+            (130, 120), (124, 115), (120, 110), (125, 113),
+            (116, 105), (126, 111), (119, 108), (115, 102),
+        ]
+        prices = [(250 - low, 250 - high) for high, low in bearish_prices]
+        bars = tuple(make_bar(i, high, low) for i, (high, low) in enumerate(prices))
+
+        def pivot(kind, index):
+            bar = bars[index]
+            return ConfirmedPivot(kind, index, bar.start_ms,
+                                  bar.end_ms + ONE_HOUR_MS,
+                                  bar.high if kind == "HIGH" else bar.low)
+
+        a, b, c, d = (
+            pivot("LOW", 0), pivot("HIGH", 2),
+            pivot("LOW", 3), pivot("HIGH", 4),
+        )
+        previous = TrendCandidate(
+            "BULL", CausalLine(a, c, bars[6].end_ms),
+            CausalLine(b, d, bars[6].end_ms),
+            (a, b, c, d), bars[6].end_ms,
+        )
+        later_low = pivot("LOW", 5)
+        self.assertLess(later_low.price, c.price)
+        self.assertIsNone(reanchor_bull_on_closed_higher_high(
+            previous, (a, b, c, d, later_low), bars[:7], bars[6],
+        ))
+        updated = reanchor_bull_on_closed_higher_high(
+            previous, (a, b, c, d, later_low), bars, bars[7],
+        )
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated.main.first, a)
+        self.assertEqual(updated.main.second, later_low)
+        self.assertEqual(updated.target, previous.target)
+        self.assertEqual(updated.pivot_sequence, previous.pivot_sequence)
+        self.assertEqual(updated.available_at_ms, bars[7].end_ms)
+        self.assertIsNone(reanchor_bull_on_closed_higher_high(
+            updated, (a, b, c, d, later_low), bars, bars[7],
+        ))
+        # The purple H1 prior belongs to that SAME new support and version,
+        # not to the previous old wick nor to the confirming HIGH.
+        feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
+        feed._hourly_trend = previous
+        feed._advance_hourly_prior(previous.available_at_ms)
+        self.assertEqual(feed.confirmed_hourly_prior, c.price)
+        feed._hourly_trend = updated
+        feed._advance_hourly_prior(updated.available_at_ms)
+        self.assertEqual(feed.confirmed_hourly_prior, later_low.price)
+        self.assertEqual(feed.confirmed_hourly_prior_touch_ms, later_low.at_ms)
+        self.assertEqual(feed._prior_trend_version, updated.available_at_ms)
+
+    def test_bull_higher_high_does_not_use_unconfirmed_low_or_piercing_wick(self):
+        from research.causal_trend_geometry import CausalLine, TrendCandidate
+        prices = [
+            (130, 120), (135, 126), (140, 130), (137, 125),
+            (145, 134), (139, 124), (142, 131), (148, 135),
+        ]
+        bars = tuple(make_bar(i, high, low) for i, (high, low) in enumerate(prices))
+        def p(kind, i, known_after=1):
+            bar = bars[i]
+            return ConfirmedPivot(kind, i, bar.start_ms,
+                                  bar.end_ms + known_after * ONE_HOUR_MS,
+                                  bar.high if kind == "HIGH" else bar.low)
+        a, b, c, d = p("LOW", 0), p("HIGH", 2), p("LOW", 3), p("HIGH", 4)
+        previous = TrendCandidate("BULL",
+            CausalLine(a, c, bars[6].end_ms),
+            CausalLine(b, d, bars[6].end_ms),
+            (a, b, c, d), bars[6].end_ms)
+        late = p("LOW", 5, known_after=3)
+        self.assertIsNone(reanchor_bull_on_closed_higher_high(
+            previous, (a, b, c, d, late), bars, bars[7],
+        ))
+        confirmed = p("LOW", 5)
+        pierced = list(bars)
+        pierced[4] = make_bar(4, 145, 118)  # Intermediate wick crosses 1--3.
+        self.assertIsNone(reanchor_bull_on_closed_higher_high(
+            previous, (a, b, c, d, confirmed), tuple(pierced), pierced[7],
         ))
 
     def test_bear_new_lower_low_transfers_purple_prior_to_preceding_lower_high(self):
