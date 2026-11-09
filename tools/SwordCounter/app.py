@@ -20,13 +20,13 @@ import tkinter as tk
 from pathlib import Path
 from typing import Callable
 
-from tools.SwordCounter.bybit_positions import fetch_account_equity, fetch_open_positions
+from tools.SwordCounter.bybit_positions import fetch_wallet_balance, fetch_open_positions
 from tools.SwordCounter.connection import ConnectionController
 from tools.SwordCounter.credential_store import CredentialStore, WindowsCredentialStore, resolve_credentials
 from tools.SwordCounter.settings_store import (
     AppSettings, default_settings_path, load_settings, parse_total_swords, save_settings,
 )
-from tools.SwordCounter.swords import count_swords_with_equity
+from tools.SwordCounter.swords import count_swords_with_wallet_balance
 from tools.SwordCounter.view_model import GREY, WORKER_FAILED, build_display, header_text
 
 REFRESH_INTERVAL_S = 10
@@ -95,9 +95,9 @@ class Refresher:
 
 
 def make_live_counter(get_settings: Callable[[], AppSettings]) -> Callable[[], object]:
-    """Account Equity + open positions + S2 count with the settings current at call time.
+    """Wallet Balance + open positions + S2 count with the settings current at call time.
 
-    1 RO = Account Equity / total swords, recomputed on every refresh. The key is SwordCounter's
+    1 RO = Wallet Balance / total swords, recomputed on every refresh. The key is SwordCounter's
     own (Windows Credential Manager). A missing or unreadable key is "Нет соединения"; no network
     request is made without it.
     """
@@ -110,8 +110,8 @@ def make_live_counter(get_settings: Callable[[], AppSettings]) -> Callable[[], o
                 credentials = resolve_credentials()[0]
             return credentials
 
-        return count_swords_with_equity(lambda: fetch_open_positions(creds()),
-                                        lambda: fetch_account_equity(creds()),
+        return count_swords_with_wallet_balance(lambda: fetch_open_positions(creds()),
+                                        lambda: fetch_wallet_balance(creds()),
                                         get_settings().total_swords)
     return count
 
