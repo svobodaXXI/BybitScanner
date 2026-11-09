@@ -283,8 +283,13 @@ export function App() {
   // Only draw exact frozen anchors on matching *current* candles, never on
   // an unrelated symbol/interval or an approximate historical bar.
   const terminalSignalDrawings = useMemo(() => {
-    if ((mode !== "TERMINAL" && mode !== "AUTOPILOT") || launchLink?.mode !== "TERMINAL"
-        || !launchLink.signalId || !frozenSignal
+    // Keep the verified Editor source rays on manual Terminal navigation only.
+    // Editor-origin geometry cannot become an Autopilot/Robot trading signal.
+    const eligible = launchLink?.mode === "TERMINAL"
+      ? mode === "TERMINAL" || mode === "AUTOPILOT"
+      : launchLink?.mode === "EDITOR" && mode === "TERMINAL";
+    if (!eligible
+        || !launchLink?.signalId || !frozenSignal
         || tradingSymbol !== launchLink.symbol || timeframe !== launchLink.timeframe)
       return null;
     try {
@@ -1405,7 +1410,8 @@ export function App() {
           Исходный сигнал не указан в ссылке. Показаны текущие свечи без сохранённых линий паттерна.
         </output>
       )}
-      {(mode === "TERMINAL" || (mode === "AUTOPILOT" && !robotPosition)) && launchLink?.mode === "TERMINAL" && launchLink.signalId
+      {((mode === "TERMINAL" && (launchLink?.mode === "TERMINAL" || launchLink?.mode === "EDITOR"))
+        || (mode === "AUTOPILOT" && !robotPosition && launchLink?.mode === "TERMINAL")) && launchLink?.signalId
         && tradingSymbol === launchLink.symbol && timeframe === launchLink.timeframe && (
           <output role="status" aria-live="polite">
             {terminalSignalDrawings

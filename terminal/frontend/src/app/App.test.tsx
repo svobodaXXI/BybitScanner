@@ -252,3 +252,42 @@ it("opens a Telegram signal in read-only Autopilot with immutable lines and live
   expect(screen.getByText(/Исходная геометрия сигнала: Falling Wedge/)).toBeInTheDocument();
   expect(fetchMock.mock.calls.some(([url]) => url === "/api/market" || url === "/api/close-all")).toBe(false);
 });
+
+it("retains exact immutable signal lines when leaving Editor for manual Terminal", async () => {
+  window.history.replaceState({}, "", "/?mode=EDITOR&symbol=BTCUSDT&timeframe=5m&signal_id=source-original%3Aabc");
+  marketFixture.candles = [
+    { time: "2026-10-19T00:00:00.000Z", open: 10, high: 12, low: 8, close: 11 },
+    { time: "2026-10-19T00:05:00.000Z", open: 11, high: 14, low: 9, close: 13 },
+  ];
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.startsWith("/api/workspace/signal-geometry?")) return { ok: true, json: async () => ({
+      ok: true, snapshot_revision: "a".repeat(64), bars_sha256: "b".repeat(64),
+      original_pattern: "Falling Wedge", latest_review: null,
+      snapshot: { signal_id: "source-original:abc", symbol: "BTCUSDT", timeframe: "5",
+        bars: marketFixture.candles.map((bar) => ({
+          open_time_ms: Date.parse(bar.time), open: bar.open, high: bar.high, low: bar.low, close: bar.close,
+        })),
+        boundaries: [{ boundary_id: "lower-ray", kind: "ray", anchors: [
+          { bar_open_time_ms: Date.parse(marketFixture.candles[0].time), price: 9 },
+          { bar_open_time_ms: Date.parse(marketFixture.candles[1].time), price: 10 },
+        ] }],
+      },
+    }) };
+    if (url === "/api/workspace/symbol") return { ok: true, json: async () => ({
+      ok: true, symbol: "BTCUSDT", generation: 7,
+    }) };
+    return { ok: false, json: async () => ({}) };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  expect(screen.getByTestId("active-workspace-mode")).toHaveTextContent("EDITOR");
+  await waitFor(() => expect(screen.getByTestId("source-line-count")).toHaveTextContent("1"));
+  fireEvent.click(screen.getByRole("button", { name: "Open Terminal" }));
+  expect(screen.getByTestId("active-workspace-mode")).toHaveTextContent("TERMINAL");
+  await waitFor(() => expect(screen.getByTestId("source-line-count")).toHaveTextContent("1"));
+  expect(screen.getByText(/Исходная геометрия сигнала: Falling Wedge/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Open Autopilot" }));
+  expect(screen.getByTestId("active-workspace-mode")).toHaveTextContent("AUTOPILOT");
+  await waitFor(() => expect(screen.getByTestId("source-line-count")).toHaveTextContent("0"));
+  expect(fetchMock.mock.calls.some(([url]) => url === "/api/market" || url === "/api/close-all")).toBe(false);
+});
