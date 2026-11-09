@@ -690,16 +690,19 @@ class CausalGeometryFeed:
                         if fitted is not None:
                             self._hourly_trend = fitted
                 elif previous.side == "BEAR":
-                    # Owner's GRASS descending correction: a new confirmed
-                    # LH+LL can be blocked by obsolete 27 Aug origin wicks.
-                    fitted = confirmed_continuation_with_successive_origins(
-                        self._hourly.pivots, previous, self._hourly.bars,
+                    # One movement = ONE fixed first H1 HIGH. Later lower
+                    # lows may revise ONLY the second HIGH of that same
+                    # descending line, using an already confirmed pivot and
+                    # a wick-clear line from the original first anchor.
+                    # NEVER choose a newer first HIGH inside an unbroken
+                    # bearish movement: that created a spurious BEAR->BEAR
+                    # line on the owner's GRASS screenshots. A new movement
+                    # requires the independently confirmed purple-prior
+                    # break followed by an opposite four-pivot structure.
+                    fitted = reanchor_bear_on_closed_lower_low(
+                        previous, self._hourly.pivots,
+                        self._hourly.bars, newly_closed_1h,
                     )
-                    if fitted is None:
-                        fitted = reanchor_bear_on_closed_lower_low(
-                            previous, self._hourly.pivots,
-                            self._hourly.bars, newly_closed_1h,
-                        )
                     if fitted is not None:
                         self._hourly_trend = fitted
                 else:
