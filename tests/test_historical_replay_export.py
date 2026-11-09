@@ -80,7 +80,7 @@ class MarketOnlyExportTests(unittest.TestCase):
         yellow = [e for e in document["geometry"] if e["kind"] in ("MAIN_1H","TARGET_1H")]
         self.assertEqual(len(yellow), 2)
         self.assertEqual({x["kind"] for x in yellow}, {"MAIN_1H", "TARGET_1H"})
-        self.assertEqual({x["available_at_ms"] for x in yellow}, {13*12*FIVE_MINUTES_MS})
+        self.assertEqual({x["available_at_ms"] for x in yellow}, {11*12*FIVE_MINUTES_MS})  # fourth H1 close
         self.assertTrue(all(x["classification"] == "UNVALIDATED_GEOMETRY_ONLY" for x in yellow))
         self.assertTrue(all(x["available_at_ms"] > x["to_ms"] for x in yellow))
         self.assertTrue(all(e["kind"] == "CANDLE_CLOSED" for e in document["events"]))
