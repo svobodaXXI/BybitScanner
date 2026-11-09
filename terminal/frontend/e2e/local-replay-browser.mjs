@@ -221,7 +221,9 @@ try {
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "40");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "3");
-  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "3");
+  // Two source anchors belong to invisible warmup, not this replay:
+  // their clipped lines must not masquerade as anchored rays.
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-priors"), "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-priors"), "1");
   // The magnet is a real on/off control, independent of replay state.
