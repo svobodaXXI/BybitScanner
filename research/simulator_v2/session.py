@@ -16,6 +16,7 @@ from research.simulator_v2.timeline import (
 )
 from research.simulator_v2.virtual_account import VirtualAccount, VirtualAccountSnapshot
 from research.simulator_v2.virtual_exchange import MarketRequest, VirtualExchange
+from research.simulator_v2.reused_geometry import ReadOnlyReusedGeometry
 
 
 class VirtualReplaySession:
@@ -28,7 +29,13 @@ class VirtualReplaySession:
     def __init__(
         self, *, simulation_run_id: str, symbol: str,
         initial_balance: Decimal, taker_fee_rate: Decimal = Decimal("0.0006"),
+        enable_reused_geometry: bool = False,
     ) -> None:
+        if type(enable_reused_geometry) is not bool:
+            raise TypeError("explicit boolean for optional research geometry required")
+        self.reused_geometry = (
+            ReadOnlyReusedGeometry() if enable_reused_geometry else None
+        )
         self.account = VirtualAccount(
             simulation_run_id=simulation_run_id, symbol=symbol,
             initial_balance=initial_balance,
@@ -38,6 +45,8 @@ class VirtualReplaySession:
         )
         self.timeline = IsolatedTimeline(
             simulation_run_id=simulation_run_id, symbol=symbol,
+            scanner=(self.reused_geometry.observe_staged
+                     if self.reused_geometry is not None else None),
             exchange=self._on_closed_exchange_stage,
         )
 
@@ -68,7 +77,14 @@ class VirtualReplaySession:
     def step(self, minute: Candle) -> VirtualAccountSnapshot:
         if self.timeline.virtual_time_ms != self.exchange.virtual_time_ms:
             raise StepBlocked("SIMULATION clocks disagree; no new M1 is permitted")
-        self.timeline.step(minute)
+        try:
+            self.timeline.step(minute)
+        except Exception:
+            if self.reused_geometry is not None:
+                self.reused_geometry.discard_failed_m1()
+            raise
+        if self.reused_geometry is not None:
+            self.reused_geometry.commit_after_m1()
         if self.timeline.virtual_time_ms != self.exchange.virtual_time_ms:
             raise StepBlocked("SIMULATION clocks diverged; stop this replay")
         return self.account.snapshot(
