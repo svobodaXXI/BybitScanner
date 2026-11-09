@@ -29,7 +29,9 @@ START_DAY = date(2026, 9, 10)
 DAYS = 30
 START_MS = 1_788_998_400_000  # Explicit range verified against each date below.
 END_MS = 1_791_590_400_000
-MAX_TOTAL_ARCHIVE_BYTES = 900_000_000
+# Previous attempt verified 27/30 days (896,591,089 bytes); remaining
+# three known public days bring the measured range to ~969 MB.
+MAX_TOTAL_ARCHIVE_BYTES = 1_100_000_000
 OUT_DIR = Path("simulator-v2-xrp-real-30days-20260910-20261009")
 
 
