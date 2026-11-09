@@ -110,7 +110,7 @@ def test_market_ack_uses_real_symbol_lot_and_no_duplicate_execution(setup):
     assert result["status"] == "accepted_pending"
     assert result["order_id"] == "exchange-1"
     assert len(api.calls) == 1
-    assert api.calls[0][1]["qty"] == "0.10"
+    assert Decimal(api.calls[0][1]["qty"]) == Decimal("0.10")
     assert trader.submit("market", MARKET) == result
     assert len(api.calls) == 1
     with pytest.raises(ManualMainTradeBlocked, match="client_action_conflict"):
