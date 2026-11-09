@@ -1,156 +1,185 @@
-"""Pure offline, closed-bar simulation kernel for research-only pattern adapters.
+"""Causal multi-pattern orchestration for the existing offline SIMULATION replay.
 
-No exchange, credential, Robot, PAPER database or wall-clock dependencies.
-Signals must be computed by their caller using candles through signal bar only.
-All money uses Decimal; an ambiguous intrabar STOP/TAKE resolves at STOP.
+No second execution engine, exchange orders, credentials, filesystem, or PAPER
+ledger access. Adapters receive only CLOSED 5m bars and closed H1/H4 context.
+Adapter order is the explicit tie-break priority for simultaneous setups.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Iterable, Mapping
+from typing import Callable, Mapping, Sequence
 
-
-def D(value: object) -> Decimal:
-    result = Decimal(str(value))
-    if not result.is_finite():
-        raise ValueError("non-finite numerical input")
-    return result
-
-
-@dataclass(frozen=True)
-class Candle:
-    time_ms: int
-    open: Decimal
-    high: Decimal
-    low: Decimal
-    close: Decimal
-
-    def __post_init__(self) -> None:
-        if self.time_ms < 0 or min(self.open, self.high, self.low, self.close) <= 0:
-            raise ValueError("invalid candle")
-        if self.low > min(self.open, self.close) or self.high < max(self.open, self.close):
-            raise ValueError("inconsistent OHLC")
+from research.historical_candle_feed import (
+    FIVE_MINUTES_MS, ClosedMultiTimeframeView, replay_with_closed_context,
+)
+from research.historical_market_replay import (
+    Candle, EntryIntent, ReplayResult, ReplayVisualEvent, SimulatedTrade,
+)
 
 
 @dataclass(frozen=True)
-class Signal:
-    """Decision known at the CLOSE of candle at index signal_index."""
-    signal_index: int
-    pattern: str
-    side: str
-    stop: Decimal
-    take: Decimal
+class PatternAdapter:
+    """Caller-provided strategy; NEVER supply it candles beyond the current close."""
+    name: str
+    on_closed_context: Callable[[ClosedMultiTimeframeView], EntryIntent | None]
 
 
 @dataclass(frozen=True)
-class Trade:
-    pattern: str
-    side: str
+class PatternDecision:
     signal_time_ms: int
-    entry_time_ms: int
-    exit_time_ms: int
-    entry: Decimal
-    exit: Decimal
-    exit_reason: str
-    quantity: Decimal
-    gross_pnl: Decimal
-    fees: Decimal
-    net_pnl: Decimal
+    candidates: tuple[str, ...]
+    submitted_pattern: str | None
 
 
 @dataclass(frozen=True)
-class Result:
-    simulation_run_id: str
-    namespace: str
-    initial_equity: Decimal
-    final_equity: Decimal
-    max_drawdown: Decimal
-    trades: tuple[Trade, ...]
-    equity_curve: tuple[Decimal, ...]
+class PatternTrade:
+    pattern: str
+    trade: SimulatedTrade
 
 
-def simulate(
-    candles: Iterable[Candle],
-    signals: Iterable[Signal],
+@dataclass(frozen=True)
+class PatternPerformance:
+    pattern: str
+    candidate_signals: int
+    completed_trades: int
+    net_pnl: Decimal
+    fees: Decimal
+    win_rate: Decimal | None
+    profit_factor: Decimal | None
+
+
+@dataclass(frozen=True)
+class PatternSimulation:
+    replay: ReplayResult
+    decisions: tuple[PatternDecision, ...]
+    completed_trades: tuple[PatternTrade, ...]
+    per_pattern: tuple[PatternPerformance, ...]
+    visual_events: tuple[ReplayVisualEvent, ...]
+    closed_trade_drawdown: Decimal
+
+
+def candles_from_rows(rows: Sequence[Mapping[str, object]]) -> tuple[Candle, ...]:
+    """Reuse the public historical replay's time/OHLCV row format."""
+    return tuple(Candle(
+        start_ms=int(row["time"]), interval_ms=FIVE_MINUTES_MS,
+        open=row["open"], high=row["high"], low=row["low"],
+        close=row["close"], volume=row["volume"],
+    ) for row in rows)
+
+
+def simulate_patterns(
     *,
     simulation_run_id: str,
-    initial_equity: Decimal = Decimal("1000"),
-    notional: Decimal = Decimal("100"),
-    fee_rate: Decimal = Decimal("0.0006"),
-    slippage_rate: Decimal = Decimal("0.0002"),
-) -> Result:
-    """Next-open entry, stop/take on subsequent OHLC, no look-ahead or order endpoints.
+    candles: Sequence[Candle],
+    adapters: Sequence[PatternAdapter],
+    geometry_warmup_candles: Sequence[Candle] = (),
+    initial_cash: Decimal = Decimal("5000"),
+    taker_fee_rate: Decimal = Decimal("0.0006"),
+    adverse_slippage_rate: Decimal = Decimal("0.0002"),
+    minimum_reward_risk: Decimal | None = None,
+    maximum_stop_fraction: Decimal | None = None,
+) -> PatternSimulation:
+    """Run a single-position multi-pattern historical experiment.
 
-    Only one position at a time. A signal at close i may first execute at open i+1.
-    Last bar signals cannot execute. Signals overlapping an active trade are skipped.
-    If an exit gap crosses a stop, the worse gap-open fill is used.
+    Only the next bar OPEN can fill a just-closed-bar decision. In a collision,
+    first adapter in `adapters` wins; all candidates remain in the decision
+    trace. Positions and exits use the existing research executor. Metrics
+    exclude unrealized PnL; the original replay reports marked equity
+    separately. No strategy is considered approved just by being an adapter.
     """
-    if not simulation_run_id or "/" in simulation_run_id or "\\" in simulation_run_id:
-        raise ValueError("invalid SIMULATION run identity")
-    initial_equity, notional = D(initial_equity), D(notional)
-    fee_rate, slippage_rate = D(fee_rate), D(slippage_rate)
-    if initial_equity <= 0 or notional <= 0 or not (0 <= fee_rate < 1) or not (0 <= slippage_rate < 1):
-        raise ValueError("invalid simulation costs or capital")
+    names = tuple(a.name for a in adapters)
+    if not names or any(not n or not n.strip() for n in names) or len(set(names)) != len(names):
+        raise ValueError("provide unique, named pattern adapters in priority order")
     bars = tuple(candles)
-    if not bars or any(b.time_ms <= a.time_ms for a, b in zip(bars, bars[1:])):
-        raise ValueError("candles must have strictly increasing timestamps")
-    decisions: dict[int, Signal] = {}
-    for signal in signals:
-        if signal.signal_index < 0 or signal.signal_index >= len(bars):
-            raise ValueError("signal index outside history")
-        if signal.signal_index in decisions:
-            raise ValueError("multiple simultaneous signals require explicit selection")
-        if not signal.pattern.strip() or signal.side not in ("LONG", "SHORT"):
-            raise ValueError("invalid signal identity/side")
-        if min(signal.stop, signal.take) <= 0:
-            raise ValueError("invalid exit levels")
-        decisions[signal.signal_index] = signal
-    equity = initial_equity
-    high_water = equity
-    max_dd = Decimal("0")
-    curve = [equity]
-    trades: list[Trade] = []
-    active: tuple[Signal, int, Decimal, Decimal] | None = None
-    for i, bar in enumerate(bars):
-        if active is None and (i - 1) in decisions:
-            s = decisions[i - 1]
-            entry = bar.open * (1 + slippage_rate if s.side == "LONG" else 1 - slippage_rate)
-            if (s.side == "LONG" and s.stop < entry < s.take) or (
-                s.side == "SHORT" and s.take < entry < s.stop
-            ):
-                active = (s, i, entry, notional / entry)
-            else:
-                # A stale or already crossed setup is not admitted.
-                active = None
-        if active is not None:
-            s, entry_index, entry, qty = active
-            stop_hit = bar.low <= s.stop if s.side == "LONG" else bar.high >= s.stop
-            take_hit = bar.high >= s.take if s.side == "LONG" else bar.low <= s.take
-            if stop_hit or take_hit or i == len(bars) - 1:
-                reason = "STOP" if stop_hit else "TAKE" if take_hit else "END"
-                target = s.stop if stop_hit else s.take if take_hit else bar.close
-                # Gap at the first tradable price takes precedence over a stop target.
-                if stop_hit and ((s.side == "LONG" and bar.open < target) or
-                                 (s.side == "SHORT" and bar.open > target)):
-                    target = bar.open
-                exit_price = target * (1 - slippage_rate if s.side == "LONG" else 1 + slippage_rate)
-                gross = (exit_price - entry) * qty * (1 if s.side == "LONG" else -1)
-                fees = (entry + exit_price) * qty * fee_rate
-                net = gross - fees
-                equity += net
-                trades.append(Trade(s.pattern, s.side, bars[s.signal_index].time_ms,
-                                    bars[entry_index].time_ms, bar.time_ms, entry,
-                                    exit_price, reason, qty, gross, fees, net))
-                active = None
-        high_water = max(high_water, equity)
-        max_dd = max(max_dd, high_water - equity)
-        curve.append(equity)
-    return Result(simulation_run_id, "SIMULATION", initial_equity, equity,
-                  max_dd, tuple(trades), tuple(curve))
+    if not bars or any(b.interval_ms != FIVE_MINUTES_MS or
+                       b.start_ms % FIVE_MINUTES_MS for b in bars):
+        raise ValueError("simulation requires UTC-aligned 5m candles")
+    if any(b.start_ms != a.end_ms for a, b in zip(bars, bars[1:])):
+        raise ValueError("missing/overlapping historical candle; refusing simulation")
 
+    submitted: dict[int, str] = {}
+    decisions: list[PatternDecision] = []
+    events: list[ReplayVisualEvent] = []
 
-def candles_from_rows(rows: Iterable[Mapping[str, object]]) -> tuple[Candle, ...]:
-    """Adapt the existing historical replay's time/open/high/low/close rows."""
-    return tuple(Candle(int(row["time"]), D(row["open"]), D(row["high"]),
-                        D(row["low"]), D(row["close"])) for row in rows)
+    def choose(view: ClosedMultiTimeframeView) -> EntryIntent | None:
+        found: list[tuple[str, EntryIntent]] = []
+        for adapter in adapters:
+            intent = adapter.on_closed_context(view)
+            if intent is not None:
+                if not isinstance(intent, EntryIntent):
+                    raise TypeError(f"{adapter.name} must return EntryIntent or None")
+                found.append((adapter.name, intent))
+        chosen = found[0] if found and not view.five_minute.in_position else None
+        decision_time = view.five_minute.signal_time_ms
+        decisions.append(PatternDecision(
+            decision_time, tuple(name for name, _ in found),
+            chosen[0] if chosen is not None else None,
+        ))
+        if chosen is not None:
+            submitted[decision_time] = chosen[0]
+            return chosen[1]
+        return None
+
+    replay = replay_with_closed_context(
+        simulation_run_id=simulation_run_id,
+        candles=bars,
+        geometry_warmup_candles=geometry_warmup_candles,
+        on_closed_context=choose,
+        on_visual_event=events.append,
+        max_open_positions=1,
+        initial_cash=initial_cash,
+        taker_fee_rate=taker_fee_rate,
+        adverse_slippage_rate=adverse_slippage_rate,
+        minimum_reward_risk=minimum_reward_risk,
+        maximum_stop_fraction=maximum_stop_fraction,
+    )
+
+    # An entry at bar i's OPEN is attributable only to the decision at the
+    # immediately preceding CLOSED bar. Reject anything else, never guess.
+    preceding_close = {
+        bars[i].start_ms: bars[i - 1].end_ms for i in range(1, len(bars))
+    }
+    labelled: list[PatternTrade] = []
+    for trade in replay.trades:
+        signal_time = preceding_close.get(trade.entry_time_ms)
+        pattern = submitted.get(signal_time) if signal_time is not None else None
+        if pattern is None:
+            raise ValueError("simulated fill lacks a causal pattern decision")
+        labelled.append(PatternTrade(pattern, trade))
+
+    grouped: list[PatternPerformance] = []
+    for name in names:
+        associated = [item.trade for item in labelled if item.pattern == name]
+        winners = [t.net_pnl for t in associated if t.net_pnl > 0]
+        losses = [-t.net_pnl for t in associated if t.net_pnl < 0]
+        profit_factor = (
+            sum(winners, Decimal(0)) / sum(losses, Decimal(0))
+            if losses else None
+        )
+        grouped.append(PatternPerformance(
+            pattern=name,
+            candidate_signals=sum(name in d.candidates for d in decisions),
+            completed_trades=len(associated),
+            net_pnl=sum((t.net_pnl for t in associated), Decimal(0)),
+            fees=sum((t.fees for t in associated), Decimal(0)),
+            win_rate=Decimal(len(winners)) / len(associated) if associated else None,
+            profit_factor=profit_factor,
+        ))
+
+    closed_balance = replay.initial_cash
+    high_water = closed_balance
+    max_drawdown = Decimal(0)
+    for trade in replay.trades:
+        closed_balance += trade.net_pnl
+        high_water = max(high_water, closed_balance)
+        max_drawdown = max(max_drawdown, high_water - closed_balance)
+
+    return PatternSimulation(
+        replay=replay,
+        decisions=tuple(decisions),
+        completed_trades=tuple(labelled),
+        per_pattern=tuple(grouped),
+        visual_events=tuple(events),
+        closed_trade_drawdown=max_drawdown,
+    )
