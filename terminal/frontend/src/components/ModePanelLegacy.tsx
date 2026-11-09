@@ -107,6 +107,7 @@ export function ModePanel({
   liveProtectionAllowed = false,
   openPositionsRequest = 0,
   onRobotPositionsLoaded,
+  robotLivePositions,
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
@@ -162,6 +163,7 @@ export function ModePanel({
   liveProtectionAllowed?: boolean;
   openPositionsRequest?: number;
   onRobotPositionsLoaded?: (positions: PaperOpenPosition[] | null) => void;
+  robotLivePositions?: PaperOpenPosition[] | null;
 }) {
   const tradingInputFocus = useTradingNumericInputFocusPolicy();
   const [executionStatus, setExecutionStatus] = useState("");
@@ -1369,6 +1371,7 @@ export function ModePanel({
             <OpenPositionsOverlay
               activeSymbol={symbol}
               robotOnly={mode === "AUTOPILOT"}
+              liveRobotPositions={mode === "AUTOPILOT" ? robotLivePositions : undefined}
               onInventoryLoaded={mode === "AUTOPILOT" ? onRobotPositionsLoaded : undefined}
               onClose={() => setOpenPositionsVisible(false)}
               onNavigate={(nextSymbol) => {
