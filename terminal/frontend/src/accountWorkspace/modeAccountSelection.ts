@@ -28,7 +28,9 @@ export function scopedProjection(
       && paperProjection.environment === "PAPER" ? paperProjection : null;
   }
   return mode === "TERMINAL" && mainProjection?.account_id === selectedAccountId
-    && mainProjection.provider === "BYBIT" && mainProjection.read_only === true
+    && mainProjection.provider === "BYBIT"
+    && (mainProjection.read_only === true || (mainProjection.read_only === false
+      && mainProjection.capabilities?.market === true))
     ? mainProjection : null;
 }
 
@@ -97,8 +99,17 @@ export function useModeAccountSelection() {
         }
       } catch {
         if (sequence === request.current) {
-          setError("Saved account selection unavailable. Trading is disabled.");
-          setReady(false);
+          // The independent MAIN gateway must not depend on PAPER preferences.
+          let localMain: string | null = null;
+          try { localMain = readDeviceMainId(); } catch { /* fail closed */ }
+          if (localMain) {
+            setPreferences({ TERMINAL: localMain, AUTOPILOT: null });
+            setError("PAPER preferences unavailable; MAIN requires independent verification.");
+            setReady(true);
+          } else {
+            setError("Saved account selection unavailable. Trading is disabled.");
+            setReady(false);
+          }
         }
       }
     })();
