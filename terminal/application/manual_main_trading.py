@@ -57,7 +57,7 @@ class ManualMainTradeLedger:
         _require(path.parent.is_dir() and not path.parent.is_symlink()
                  and not path.parent.stat().st_mode & 0o077,
                  "main_ledger_directory_not_private")
-        self._conn = sqlite3.connect(str(path), isolation_level=None, timeout=5)
+        self._conn = sqlite3.connect(str(path), isolation_level=None, timeout=5, check_same_thread=False)
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.execute("PRAGMA journal_mode=DELETE")
         self._conn.execute("""CREATE TABLE IF NOT EXISTS manual_main_actions (
