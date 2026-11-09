@@ -142,6 +142,41 @@ class ConfirmedSwingStream:
         return result
 
 
+def closed_fourth_pivot(
+    pivots: tuple[ConfirmedPivot, ...], bars: tuple[Candle, ...], just_closed: Candle,
+) -> ConfirmedPivot | None:
+    """Publish point 4 on its OWN close, without an extra right-wing delay.
+
+    Points 1..3 remain genuinely confirmed swings. The fourth is an observed
+    higher high / lower low, not a future-confirmed local peak/trough. Keep the
+    event time separate from the candle's anchor time for replay causality.
+    """
+    if len(pivots) < 3 or not bars or bars[-1] != just_closed:
+        return None
+    a, b, c = pivots[-3:]
+    if c.index >= len(bars) - 1 or c.confirmed_at_ms > just_closed.start_ms:
+        return None
+    if (a.kind, b.kind, c.kind) == ("LOW", "HIGH", "LOW"):
+        if c.price <= a.price or just_closed.high <= b.price:
+            return None
+        # An outside bar exceeding BOTH sides is not an unambiguous point 4.
+        if just_closed.low < c.price:
+            return None
+        kind, price = "HIGH", just_closed.high
+    elif (a.kind, b.kind, c.kind) == ("HIGH", "LOW", "HIGH"):
+        if c.price >= a.price or just_closed.low >= b.price:
+            return None
+        if just_closed.high > c.price:
+            return None
+        kind, price = "LOW", just_closed.low
+    else:
+        return None
+    return ConfirmedPivot(
+        kind=kind, index=len(bars) - 1, at_ms=just_closed.start_ms,
+        confirmed_at_ms=just_closed.end_ms, price=price,
+    )
+
+
 def recent_hourly_trend(pivots: tuple[ConfirmedPivot, ...]) -> TrendCandidate | None:
     """Last 4 alternating 1h pivots, narrowing 1--3 / 2--4 envelope."""
     if len(pivots) < 4:
@@ -568,7 +603,9 @@ class CausalGeometryFeed:
                 self._prior_touch_ms = touch
                 self._prior_trend_version = trend.available_at_ms
 
-    def _install_opposite_if_confirmed(self, at_ms: int) -> None:
+    def _install_opposite_if_confirmed(
+        self, at_ms: int, just_closed_1h: Candle | None = None,
+    ) -> None:
         if self._waiting_for_side is None:
             return
         if self._reversal_source_start_ms is None:
@@ -578,6 +615,15 @@ class CausalGeometryFeed:
             source_start_ms=self._reversal_source_start_ms,
             known_at_ms=at_ms,
         )
+        if proposal is None and just_closed_1h is not None:
+            fourth = closed_fourth_pivot(
+                self._hourly.pivots, self._hourly.bars, just_closed_1h,
+            )
+            if fourth is not None:
+                candidate = recent_hourly_trend(self._hourly.pivots[-3:] + (fourth,))
+                if (candidate is not None and candidate.side == self._waiting_for_side
+                        and candidate.main.first.at_ms >= self._reversal_source_start_ms):
+                    proposal = candidate
         if proposal is None:
             return
         if proposal.available_at_ms > at_ms:
@@ -652,6 +698,12 @@ class CausalGeometryFeed:
                 previous = self._hourly_trend
                 if previous is None:
                     proposal = recent_hourly_trend(self._hourly.recent_pivots)
+                    if proposal is None:
+                        fourth = closed_fourth_pivot(
+                            self._hourly.pivots, self._hourly.bars, newly_closed_1h,
+                        )
+                        if fourth is not None:
+                            proposal = recent_hourly_trend(self._hourly.pivots[-3:] + (fourth,))
                     if proposal is not None:
                         fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
                         if fitted is not None:
@@ -686,7 +738,7 @@ class CausalGeometryFeed:
                         fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
                         if fitted is not None:
                             self._hourly_trend = fitted
-        self._install_opposite_if_confirmed(five_minute.end_ms)
+        self._install_opposite_if_confirmed(five_minute.end_ms, newly_closed_1h)
         trend = self._hourly_trend
         movement = ((trend.side, trend.main.first.at_ms, trend.main.first.price)
                     if trend is not None else None)
@@ -723,6 +775,12 @@ class CausalGeometryFeed:
                 self._blue_broken_at_ms = five_minute.end_ms
         if self._active_blue is None and trend is not None:
             recent = self._five.recent_pivots
+            # Point 4 is known on the closed break of the previous point 2,
+            # not after an additional arbitrary right-wing confirmation.
+            if len(recent) >= 3:
+                fourth = closed_fourth_pivot(self._five.pivots, self._five.bars, five_minute)
+                if fourth is not None:
+                    recent = self._five.pivots[-3:] + (fourth,)
             # Publication requires four SIGNIFICANT, confirmed M5 swings,
             # just like the independent H1 trend. Three pivots establish
             # only a provisional slope: never export it as a blue reference.
@@ -750,9 +808,8 @@ class CausalGeometryFeed:
                     five_minute_bars=between,
                 )
                 if candidate is not None:
-                    # A fourth swing's RIGHT-side confirmation is essential.
-                    # The 1-3 line remains anchored in the past but cannot
-                    # appear at the third pivot or be backdated on rewind.
+                    # The 1-3 line is published when the closed fourth
+                    # extremum exceeds point 2, never before that close.
                     published = CausalLine(
                         candidate.first, candidate.second,
                         max(candidate.available_at_ms, recent[3].confirmed_at_ms),
