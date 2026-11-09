@@ -48,9 +48,9 @@ class LiveAccountSnapshot:
 
 
 class LiveAccountProjectionStore:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, check_same_thread: bool = True) -> None:
         try:
-            self._connection = sqlite3.connect(path)
+            self._connection = sqlite3.connect(path, check_same_thread=check_same_thread)
             self._connection.execute("PRAGMA journal_mode = WAL")
             self._connection.execute("PRAGMA synchronous = FULL")
             self._connection.execute("""
