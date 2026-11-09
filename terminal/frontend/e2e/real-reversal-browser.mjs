@@ -213,9 +213,20 @@ try {
       await utcClock.fill(inputTime(archive.events[n - 1].time_ms));
       await utcClock.press("Enter");
     }
-    await page.waitForFunction(expected =>
-      document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
-    n, { timeout: 30000 });
+    try {
+      await page.waitForFunction(expected =>
+        document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
+      n, { timeout: 3500 });
+    } catch (error) {
+      const state = await page.evaluate(() => ({
+        shown: document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles"),
+        tf: document.querySelector(".replay-chart-shell")?.getAttribute("data-chart-timeframe"),
+        currentUtc: document.querySelector('input[aria-label="Время рынка UTC — вставить дату и время"]')?.value,
+        invalid: document.querySelector('input[aria-label="Время рынка UTC — вставить дату и время"]')?.getAttribute("aria-invalid"),
+        seek: document.querySelector('input[aria-label="Перемотка графика по закрытым свечам"]')?.value,
+      }));
+      throw new Error("Real H1 seek mismatch: expected=" + n + " state=" + JSON.stringify(state), { cause: error });
+    }
     position = n;
     assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   }
