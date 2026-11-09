@@ -7,9 +7,9 @@ import csv
 import gzip
 import unittest
 
-from research.simulator_v2.report import run_verified_chunks
+from research.simulator_v2.report import run_verified_chunks, run_cached_archive
 from research.simulator_v2.session import VirtualReplaySession
-from research.simulator_v2.trade_archive import parse_local_trade_day, SOURCE_ID
+from research.simulator_v2.trade_archive import parse_local_trade_day, import_trade_day_into_cache, SOURCE_ID
 from research.simulator_v2.virtual_exchange import MarketRequest
 from research.simulator_v2.history import MINUTE_MS
 
@@ -160,6 +160,79 @@ class TradeArchiveTests(unittest.TestCase):
             self.assertEqual(report.final_balance, D("1000"))
             self.assertEqual(len(report.daily_equity), 1)
             self.assertEqual(len(raw_hash), 64)
+
+
+    def test_import_archive_into_existing_cache_and_replay_without_network(self):
+        with TemporaryDirectory() as td:
+            path = write_archive(td, records())
+            cache = Path(td) / "dedicated-simulation-cache"
+            derived, raw_sha = import_trade_day_into_cache(
+                path, cache_dir=cache, symbol="BTCUSDT", utc_day=UTC_DAY,
+                latest_closed_boundary_ms=END,
+            )
+            self.assertEqual(derived.source_id, f"{SOURCE_ID}_{raw_sha[:24]}")
+            self.assertEqual(len(list(cache.glob("*.json"))), 1)
+            replay = run_cached_archive(
+                cache_dir=cache, simulation_run_id="real_archive_fixture",
+                symbol="BTCUSDT", initial_balance=D("1000"),
+                start_ms=START, end_ms=END,
+                latest_closed_boundary_ms=END,
+                source_id=derived.source_id, chunk_minutes=1440,
+                taker_fee_rate=D("0"),
+                order_schedule={
+                    START + MINUTE_MS: MarketRequest("entry", "BUY", D("1")),
+                    START + 2 * MINUTE_MS: MarketRequest("exit", "SELL", D("1")),
+                },
+            )
+            self.assertEqual(replay.minutes, 1440)
+            self.assertEqual(replay.virtual_fills, 2)
+            self.assertEqual(replay.total_net_pnl, D("0"))
+            self.assertEqual(replay.chunk_sha256, (derived.sha256,))
+            again, digest = import_trade_day_into_cache(
+                path, cache_dir=cache, symbol="BTCUSDT", utc_day=UTC_DAY,
+                latest_closed_boundary_ms=END,
+            )
+            self.assertEqual((again, digest), (derived, raw_sha))
+            self.assertEqual(len(list(cache.glob("*.json"))), 1)
+
+    def test_raw_archive_fingerprint_separates_distinct_cache_sources(self):
+        with TemporaryDirectory() as td:
+            path = write_archive(td, records())
+            cache = Path(td) / "dedicated-simulation-cache"
+            old, old_hash = import_trade_day_into_cache(
+                path, cache_dir=cache, symbol="BTCUSDT", utc_day=UTC_DAY,
+                latest_closed_boundary_ms=END,
+            )
+            changed = records()
+            changed[0]["price"] = "102"
+            write_archive(td, changed)
+            new, new_hash = import_trade_day_into_cache(
+                path, cache_dir=cache, symbol="BTCUSDT", utc_day=UTC_DAY,
+                latest_closed_boundary_ms=END,
+            )
+            self.assertNotEqual(old_hash, new_hash)
+            self.assertNotEqual(old.source_id, new.source_id)
+            self.assertNotEqual(old.sha256, new.sha256)
+            self.assertEqual(len(list(cache.glob("*.json"))), 2)
+
+    def test_damaged_existing_cache_blocks_reimport_without_overwrite(self):
+        with TemporaryDirectory() as td:
+            path = write_archive(td, records())
+            cache = Path(td) / "dedicated-simulation-cache"
+            import_trade_day_into_cache(
+                path, cache_dir=cache, symbol="BTCUSDT", utc_day=UTC_DAY,
+                latest_closed_boundary_ms=END,
+            )
+            cached = next(cache.glob("*.json"))
+            payload = cached.read_text()
+            cached.write_text(payload.replace('"sha256":"', '"sha256":"broken'))
+            corrupt = cached.read_bytes()
+            with self.assertRaises(ValueError):
+                import_trade_day_into_cache(
+                    path, cache_dir=cache, symbol="BTCUSDT", utc_day=UTC_DAY,
+                    latest_closed_boundary_ms=END,
+                )
+            self.assertEqual(cached.read_bytes(), corrupt)
 
 
 if __name__ == "__main__":
