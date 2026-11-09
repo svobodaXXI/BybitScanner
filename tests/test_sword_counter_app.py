@@ -120,9 +120,9 @@ class DisplayTests(unittest.TestCase):
             self.assertEqual(d.header, "1 РО = — USDT")   # never an invented RO cost
         self.assertEqual(vm.header_text(), "1 РО = — USDT")
 
-    def test_status_line_shows_the_equity_the_ro_comes_from(self):
+    def test_status_line_shows_full_deposit_from_wallet_balance(self):
         d = vm.build_display(self.S, result(wallet_balance="106.22345059"), age_s=1)
-        self.assertIn("Wallet Balance 106.22", d.status_text)
+        self.assertIn("Общий депозит: 106.22 USDT", d.status_text)
 
     def test_five_status_lines_and_last_line_is_full_deposit(self):
         snapshot = AccountBalances(wallet_balance=Decimal("147.14"), equity=Decimal("89.33"),
