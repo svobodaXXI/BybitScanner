@@ -1,4 +1,4 @@
-"""One-shot 30-day real GRASSUSDT public archive proof for Simulator V2.
+"""One-shot 30-day real XRPUSDT public archive proof for Simulator V2.
 
 This script is intentionally run ONLY in a separately opted-in research CI.
 Downloads immutable dated public trade archives from the exact official
@@ -24,13 +24,13 @@ from research.simulator_v2.trade_range import (
     import_local_trade_range, run_cached_trade_range,
 )
 
-SYMBOL = "GRASSUSDT"
+SYMBOL = "XRPUSDT"
 START_DAY = date(2026, 10, 1)
 DAYS = 30
 START_MS = 1_790_812_800_000  # Explicit range verified against each date below.
 END_MS = 1_793_404_800_000
-MAX_TOTAL_ARCHIVE_BYTES = 400_000_000
-OUT_DIR = Path("simulator-v2-grass-real-30days-202610")
+MAX_TOTAL_ARCHIVE_BYTES = 900_000_000
+OUT_DIR = Path("simulator-v2-xrp-real-30days-202610")
 
 
 def fetch_archives(archive_dir: Path) -> int:
@@ -71,7 +71,7 @@ def main() -> None:
     actual_end = int(datetime(2026, 10, 31, tzinfo=timezone.utc).timestamp()*1000)
     if (START_MS, END_MS) != (actual_start, actual_end):
         raise ValueError("incorrect fixed UTC range")
-    with tempfile.TemporaryDirectory(prefix="sim-v2-grass-30d-") as temp:
+    with tempfile.TemporaryDirectory(prefix="sim-v2-xrp-30d-") as temp:
         root = Path(temp)
         incoming = root / "official-raw"
         incoming.mkdir()
@@ -88,7 +88,7 @@ def main() -> None:
         report = run_cached_trade_range(
             cache_dir=cache, symbol=SYMBOL, proofs=proofs,
             latest_closed_boundary_ms=END_MS,
-            simulation_run_id="grass_public_trades_202610_30d",
+            simulation_run_id="xrp_public_trades_202610_30d",
             initial_balance=Decimal("1000"),
         )
         if (
