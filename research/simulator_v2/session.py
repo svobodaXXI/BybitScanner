@@ -18,6 +18,7 @@ from research.simulator_v2.virtual_account import VirtualAccount, VirtualAccount
 from research.simulator_v2.virtual_exchange import MarketRequest, VirtualExchange
 from research.simulator_v2.reused_geometry import ReadOnlyReusedGeometry
 from research.simulator_v2.wedge_observer import ReadOnlyWedgeScanner, WedgeScannerConfig
+from research.simulator_v2.wedge_robot_observer import ReadOnlyWedgeRobot, SimWedgeRobotConfig
 
 
 class VirtualReplaySession:
@@ -32,6 +33,7 @@ class VirtualReplaySession:
         initial_balance: Decimal, taker_fee_rate: Decimal = Decimal("0.0006"),
         enable_reused_geometry: bool = False,
         wedge_scanner_config: WedgeScannerConfig | None = None,
+        wedge_robot_config: SimWedgeRobotConfig | None = None,
     ) -> None:
         if type(enable_reused_geometry) is not bool:
             raise TypeError("explicit boolean for optional research geometry required")
@@ -41,6 +43,12 @@ class VirtualReplaySession:
         self.wedge_scanner = (
             ReadOnlyWedgeScanner(wedge_scanner_config)
             if wedge_scanner_config is not None else None
+        )
+        if wedge_robot_config is not None and self.wedge_scanner is None:
+            raise ValueError("SIMULATION Wedge Robot requires original Wedge Scanner stage")
+        self.wedge_robot = (
+            ReadOnlyWedgeRobot(scanner=self.wedge_scanner, config=wedge_robot_config)
+            if wedge_robot_config is not None else None
         )
         self.account = VirtualAccount(
             simulation_run_id=simulation_run_id, symbol=symbol,
@@ -54,6 +62,8 @@ class VirtualReplaySession:
             scanner=(self._on_readonly_scanner_stage
                      if self.reused_geometry is not None or self.wedge_scanner is not None
                      else None),
+            robot=(self.wedge_robot.observe_staged
+                   if self.wedge_robot is not None else None),
             exchange=self._on_closed_exchange_stage,
         )
 
@@ -102,11 +112,15 @@ class VirtualReplaySession:
                 self.reused_geometry.discard_failed_m1()
             if self.wedge_scanner is not None:
                 self.wedge_scanner.discard_failed_m1()
+            if self.wedge_robot is not None:
+                self.wedge_robot.discard_failed_m1()
             raise
         if self.reused_geometry is not None:
             self.reused_geometry.commit_after_m1()
         if self.wedge_scanner is not None:
             self.wedge_scanner.commit_after_m1(frame)
+        if self.wedge_robot is not None:
+            self.wedge_robot.commit_after_m1()
         if self.timeline.virtual_time_ms != self.exchange.virtual_time_ms:
             raise StepBlocked("SIMULATION clocks diverged; stop this replay")
         return self.account.snapshot(
