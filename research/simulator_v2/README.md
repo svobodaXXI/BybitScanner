@@ -8,6 +8,6 @@
 
 Переиспользуем `research.historical_market_replay.Candle` и `research.historical_candle_feed.ClosedHigherTimeframeFeed`. Любые будущие интеграции реальных Scanner/Robot должны иметь изолированное состояние, виртуальное время, идемпотентность, fail-closed barrier и отсутствие доступа к настоящим биржевым ордерам/PAPER.
 
-Прицельный тест (после включения ветки в поддерживаемый тестовый workspace): `python -m unittest tests.test_simulator_v2_timeline`. Он не требует сети, торговых ключей или служб.
+Прицельный тест (после включения ветки в поддерживаемый тестовый workspace): `python -m unittest discover -s tests -p test_simulator_v2_timeline.py`. Он не требует сети, торговых ключей или служб.
 
 **Не объявлять полноценной симуляцией:** пока нет подключённых настоящих стратегий и виртуального исполнения, расчёта PnL, загрузки месячной истории и UI.
