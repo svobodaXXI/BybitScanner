@@ -162,8 +162,11 @@ try {
   assert.equal(await scrubber.count(), 1);
   assert.equal(await scrubber.getAttribute("max"), String(
     archive.events.filter(event => event.kind === "CANDLE_CLOSED").length));
-  const seekRow = page.getByRole("group", { name: "Перемотка графика" });
-  assert.deepEqual(await seekRow.locator("button").allTextContents(), ["В начало", "▶ Пуск"]);
+  const seekRow = page.getByRole("group", { name: "Управление воспроизведением" });
+  assert.deepEqual(await seekRow.locator("button").allTextContents(), ["", "", "", ""]);
+  assert.deepEqual(await seekRow.locator("button").evaluateAll(nodes =>
+    nodes.map(node => node.getAttribute("aria-label"))),
+  ["В начало", "Шаг назад", "Пуск", "Шаг вперёд"]);
   assert.equal(await page.getByText("Начало", { exact: true }).count(), 0);
   assert.equal(await page.getByText("Конец", { exact: true }).count(), 0);
   await scrubber.focus();
@@ -198,8 +201,8 @@ try {
   // disclosure. Open it just as the owner would before reading prior events.
   await page.getByText("Диагностика", { exact: true }).click();
 
-  const forward = page.getByRole("button", { name: "Шаг вперёд ▶", exact: true });
-  const backward = page.getByRole("button", { name: "◀ Шаг назад", exact: true });
+  const forward = seekRow.getByRole("button", { name: "Шаг вперёд", exact: true });
+  const backward = seekRow.getByRole("button", { name: "Шаг назад", exact: true });
   let position = 0;
   async function advanceTo(n) {
     assert.ok(n >= position && n <= archive.events.length, "ordered candle steps only");
