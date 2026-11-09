@@ -432,6 +432,12 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       event.kind === "CANDLE_CLOSED").map(event => event.time_ms));
     let lastAvailable = -1;
     const knownAnchors = geometry.filter(line => line.kind === "MAIN_1H");
+    const hours = [...(context_1h ?? []), ...completeHourlyCandles(
+      events.filter(event => event.kind === "CANDLE_CLOSED").map(event => event.candle!),
+    )];
+    const byHour = new Map(hours.map(hour => [hour.start_ms, hour] as const));
+    let previousMain: ReplayGeometry | undefined;
+    let previousPrior: ReplayPriorLevel | undefined;
     hourly_prior_updates = object.hourly_prior_updates.map(raw => {
       const item = record(raw);
       const side = item.side;
@@ -439,19 +445,49 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       const available_at_ms = positiveInteger(item.available_at_ms, "prior available_at_ms");
       const trend_version = positiveInteger(item.trend_version, "prior trend_version");
       const price = safeNumber(item.price, "prior price");
+      const anchored = knownAnchors.find(line => line.side === side &&
+        line.to_ms === at_ms && line.to_price === price &&
+        line.available_at_ms <= available_at_ms);
+      // The prior can advance after a CLOSED lower low even if the updated
+      // yellow line fails its wick-envelope check. Do not fabricate a line:
+      // require the same published BEAR movement and its original source.
+      const movement = !anchored && side === "BEAR" && previousMain &&
+        previousPrior?.side === "BEAR"
+        ? knownAnchors.find(line => line.side === "BEAR" &&
+            line.from_ms === previousMain!.from_ms &&
+            line.from_price === previousMain!.from_price &&
+            line.trend_version === trend_version &&
+            line.available_at_ms <= available_at_ms)
+        : undefined;
+      const high = byHour.get(at_ms);
+      const index = hours.findIndex(hour => hour.start_ms === at_ms);
+      const earlier = movement ? hours.filter(hour =>
+        hour.start_ms >= movement.from_ms && hour.start_ms < at_ms) : [];
+      const validStructural = Boolean(movement && previousPrior &&
+        at_ms > previousPrior.at_ms && price < movement.from_price &&
+        high && high.end_ms <= available_at_ms && high.high === price &&
+        index > 0 && index + 1 < hours.length &&
+        hours[index - 1].high < price && hours[index + 1].high < price &&
+        hours[index + 1].end_ms <= available_at_ms &&
+        earlier.length && hours.some(hour =>
+          hour.start_ms > at_ms && hour.end_ms <= available_at_ms &&
+          hour.low < Math.min(...earlier.map(bar => bar.low))));
       if (item.kind !== "H1_PRIOR_CONFIRMED" ||
           item.classification !== "UNVALIDATED_GEOMETRY_ONLY" ||
           (side !== "BULL" && side !== "BEAR") || price <= 0 ||
           at_ms >= available_at_ms || !completedTimes.has(available_at_ms) ||
           available_at_ms <= lastAvailable ||
           trend_version > available_at_ms ||
-          !knownAnchors.some(line => line.side === side &&
-            line.to_ms === at_ms && line.to_price === price &&
-            line.available_at_ms <= available_at_ms)) {
+          (!anchored && !validStructural)) {
         throw new Error("Приор не подтверждён закрытой свечой и H1-опорой");
       }
       lastAvailable = available_at_ms;
-      return { side, at_ms, available_at_ms, price, trend_version };
+      previousMain = anchored ?? movement;
+      const accepted: ReplayPriorLevel = {
+        side, at_ms, available_at_ms, price, trend_version,
+      };
+      previousPrior = accepted;
+      return accepted;
     });
   }
   // The Python kernel is the authority for H1 reversal. The importer
