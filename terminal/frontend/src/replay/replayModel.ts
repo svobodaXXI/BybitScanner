@@ -526,8 +526,12 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       const parent = geometry!.find(line =>
         line.kind === "MAIN_1H" &&
         line.trend_version === trend_version &&
-        line.to_ms === prior_at_ms && line.to_price === prior_price &&
-        line.side === previous_side && line.available_at_ms <= hourly_close_ms);
+        line.side === previous_side && line.available_at_ms <= hourly_close_ms &&
+        ((line.to_ms === prior_at_ms && line.to_price === prior_price) ||
+          // The frozen purple prior was already audited above: it may
+          // follow a later confirmed HIGH without refitting yellow 1--3.
+          (previous_side === "BEAR" && line.from_ms < prior_at_ms &&
+            prior_price < line.from_price)));
       const movement = parent
         ? `${parent.side}:${parent.from_ms}:${parent.from_price}` : "";
       if (item.kind !== "PRIOR_CLOSE_NEXT_OPEN" ||
