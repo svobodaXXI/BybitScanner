@@ -605,6 +605,39 @@ class CausalGeometryFeed:
             self._last_prior_candidate_touch_ms = line.second.at_ms
             self._prior_candidates = []
             return
+        # Purple prior is a STRUCTURAL HIGH before each NEW closed lower LOW,
+        # not a reward for successful yellow 1--3 slope refitting. A real
+        # confirmed HIGH can qualify even when wick envelope blocks reanchoring
+        # the yellow trendline; retain that yellow line's original geometry.
+        if (
+            trend.side == "BEAR"
+            and self._prior_touch_ms is not None
+            and self._prior_price is not None
+            and self._hourly.bars
+            and self._hourly.bars[-1].end_ms == closed_at_ms
+        ):
+            last = self._hourly.bars[-1]
+            if last.start_ms > trend.target.second.at_ms:
+                earlier = [
+                    bar.low for bar in self._hourly.bars
+                    if trend.main.first.at_ms <= bar.start_ms < last.start_ms
+                ]
+                if earlier and last.low < min(earlier):
+                    highs = [
+                        pivot for pivot in self._hourly.pivots
+                        if pivot.kind == "HIGH"
+                        and self._prior_touch_ms < pivot.at_ms < last.start_ms
+                        and pivot.confirmed_at_ms <= closed_at_ms
+                        and pivot.price < trend.main.first.price
+                    ]
+                    if highs:
+                        support = highs[-1]
+                        self._prior_price = support.price
+                        self._prior_touch_ms = support.at_ms
+                        self._prior_trend_version = closed_at_ms
+                        self._last_prior_candidate_touch_ms = support.at_ms
+                        self._prior_candidates = []
+                        return
         # The PURPLE prior follows new confirmed H1 touches of the already
         # frozen 1--3 line; it does not need a newly refitted yellow 1--3/2--4.
         # A wick-pierced H1 proposal must be rejected, but that rejection
