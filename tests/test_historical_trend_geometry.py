@@ -627,8 +627,8 @@ class ConfirmedGeometryTests(unittest.TestCase):
                 trend, _ = feed.observe_closed(five, h1)
         self.assertIsNotNone(trend)
         self.assertEqual(trend.side, "BULL")
-        # Four CONFIRMED pivots: HIGH144 - LOW120 - lower HIGH137 -
-        # lower LOW117. The last LOW is confirmed only at candle 8 close.
+        # The fourth lower LOW117 is already usable on its own close
+        # (candle 7), no additional pivot-right-wing waiting.
         path = [
             (140, 132), (144, 135), (141, 131), (130, 120),
             (137, 127), (132, 126), (130, 121), (128, 117),
@@ -639,19 +639,18 @@ class ConfirmedGeometryTests(unittest.TestCase):
         for minute, (high, low) in enumerate(path):
             five = make_bar(84 + minute, high, low, FIVE_MINUTES_MS)
             _, blue = feed.observe_closed(five, None)
-            if minute < 8:
-                self.assertIsNone(blue, "fourth M5 pivot not yet confirmed")
-            if minute == 8:
+            if minute < 7:
+                self.assertIsNone(blue, "only three pivots are known")
+            if minute == 7:
                 self.assertIsNotNone(blue)
                 created = blue
                 self.assertEqual(created.first.price, Decimal(144))
                 self.assertEqual(created.second.price, Decimal(137))
                 self.assertEqual(created.available_at_ms, five.end_ms)
-            if minute == 9:
-                self.assertEqual(blue, created, "confirmed correction stays active")
-            if minute == 10:
-                self.assertIsNone(blue, "later M5 OPEN retires active blue")
-        self.assertEqual(feed._blue_broken_at_ms, (84 + 11) * FIVE_MINUTES_MS)
+            if minute >= 8:
+                self.assertIsNone(blue, "next M5 OPEN beyond published line retires blue")
+        self.assertIsNotNone(created)
+        self.assertEqual(feed._blue_broken_at_ms, (84 + 9) * FIVE_MINUTES_MS)
 
     def test_m5_deeper_correction_revisions_keep_first_wick_and_replay_history(self):
         feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
@@ -661,8 +660,8 @@ class ConfirmedGeometryTests(unittest.TestCase):
                 h1 = make_bar(hour, high, low) if minute == 11 else None
                 feed.observe_closed(five, h1)
 
-        # Publish only when fourth lower LOW=80 is confirmed, then lengthen
-        # with a new LOW=79 followed by a confirmed returning HIGH=139.
+        # Publish at the fourth LOW=80 close, then lengthen after
+        # a new LOW=79 and subsequently confirmed returning HIGH=139.
         path = [
             (140, 132), (144, 135), (141, 131), (130, 120),
             (137, 127), (132, 126),
@@ -675,8 +674,8 @@ class ConfirmedGeometryTests(unittest.TestCase):
             five = make_bar(84 + minute, high, low, FIVE_MINUTES_MS)
             _, blue = feed.observe_closed(five, None)
             versions.append(blue)
-        self.assertTrue(all(v is None for v in versions[:7]))
-        original = versions[7]
+        self.assertTrue(all(v is None for v in versions[:6]))
+        original = versions[6]
         revised = versions[12]
         self.assertIsNotNone(original)
         self.assertIsNotNone(revised)
@@ -688,7 +687,7 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual(revised.second.index, 95)
         self.assertGreater(revised.available_at_ms, original.available_at_ms)
         self.assertIsNone(versions[13])
-        self.assertEqual(versions[7].second.price, Decimal(137))
+        self.assertEqual(versions[6].second.price, Decimal(137))
         for bar in feed._five.bars[original.first.index + 1:96]:
             self.assertGreaterEqual(revised.value_at(bar.start_ms), bar.high)
 
@@ -790,18 +789,18 @@ class ConfirmedGeometryTests(unittest.TestCase):
         # A first H1 OPEN outside the purple prior is observed only after the
         # first completed M5; until then the last H1 close alone isn't enough.
         self.assertIsNone(observations[10, 0])
-        self.assertIsNone(observations[14, 11])
-        reversed_trend = observations[15, 11]
+        self.assertIsNone(observations[13, 11])
+        reversed_trend = observations[14, 11]
         self.assertIsNotNone(reversed_trend)
         self.assertEqual(reversed_trend.side, "BEAR")
         self.assertEqual(reversed_trend.main.first.kind, "HIGH")
         self.assertEqual(reversed_trend.main.second.kind, "HIGH")
         self.assertLess(reversed_trend.main.second.price, reversed_trend.main.first.price)
-        self.assertEqual(reversed_trend.main.available_at_ms, 16 * ONE_HOUR_MS)
-        self.assertEqual(reversed_trend.available_at_ms, 16 * ONE_HOUR_MS)
+        self.assertEqual(reversed_trend.main.available_at_ms, 15 * ONE_HOUR_MS)
+        self.assertEqual(reversed_trend.available_at_ms, 15 * ONE_HOUR_MS)
         self.assertTrue(all(
             observations[hour, minute] is None
-            for hour in range(10, 15) for minute in range(12)
+            for hour in range(10, 14) for minute in range(12)
         ))
 
     def test_reversal_uses_last_confirmed_purple_prior_not_old_yellow_second(self):
@@ -914,7 +913,7 @@ class ConfirmedGeometryTests(unittest.TestCase):
                     first_times.append(next_5m.end_ms)
                 self.assertTrue(last is None or last.available_at_ms <= next_5m.end_ms)
                 self.assertTrue(blue is None or blue.available_at_ms <= next_5m.end_ms)
-        self.assertEqual(first_times, [7*ONE_HOUR_MS])
+        self.assertEqual(first_times, [6*ONE_HOUR_MS])  # point 4 close, no extra wing
         # A pierced later 2–4 proposal cannot replace the frozen
         # structurally valid original target pivot at hour 5.
         self.assertEqual(last.pivot_sequence[3].index, 5)
