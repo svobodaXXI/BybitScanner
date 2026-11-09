@@ -1,4 +1,4 @@
-name: Simulator V2 30-day real GRASS public archive proof
+name: Simulator V2 30-day real XRP public archive proof
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   public-trades-30day:
-    name: Real GRASSUSDT 30 UTC days (SIMULATION only)
+    name: Real XRPUSDT 30 UTC days (SIMULATION only)
     runs-on: ubuntu-latest
     timeout-minutes: 18
     steps:
@@ -23,7 +23,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Verify official public GRASSUSDT trades 30-day range and offline account
+      - name: Verify official public XRPUSDT trades 30-day range and offline account
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python -m research.simulator_v2.public_trade_month_smoke
@@ -31,7 +31,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: simulator-v2-grass-real-30days-202610
-          path: simulator-v2-grass-real-30days-202610/
+          name: simulator-v2-xrp-real-30days-202610
+          path: simulator-v2-xrp-real-30days-202610/
           if-no-files-found: error
           retention-days: 7
