@@ -105,7 +105,7 @@ describe("Autopilot Robot positions use the existing inventory view safely", () 
     vi.stubGlobal("fetch", fetchMock);
     const baseProps = {
       activeSymbol: "BTCUSDT", robotOnly: true, onClose: vi.fn(), onNavigate: vi.fn(),
-      runPaperMutation: (_key: string, operation: () => Promise<unknown>) => operation(),
+      runPaperMutation: <T,>(_key: string, operation: () => Promise<T>) => operation(),
       applyPaperState: vi.fn(() => true),
     };
     const view = render(<OpenPositionsOverlay {...baseProps} liveRobotPositions={first} />);
