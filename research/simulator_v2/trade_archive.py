@@ -140,3 +140,54 @@ def parse_local_trade_day(
         ),
         archive_hash,
     )
+
+
+def import_trade_day_into_cache(
+    path: Path, *, cache_dir: Path, symbol: str, utc_day: date,
+    latest_closed_boundary_ms: int,
+) -> tuple[HistoryChunk, str]:
+    """Re-use the existing verified M1 cache, partitioned by RAW archive SHA.
+
+    All candles remain explicitly *trade-derived*, not official Bybit klines.
+    The compressed archive fingerprint is embedded in the cache source_id.
+    A corrupt or conflicting existing cache blocks import; no overwrite or
+    network fallback is attempted. This is a single-writer research function.
+    """
+    from dataclasses import replace
+    from research.simulator_v2.cache import iter_cached_m1_chunks
+
+    derived, raw_sha = parse_local_trade_day(
+        path, symbol=symbol, utc_day=utc_day,
+        latest_closed_boundary_ms=latest_closed_boundary_ms,
+    )
+    source_id = f"{SOURCE_ID}_{raw_sha[:24]}"
+    derived = replace(derived, source_id=source_id)
+    normalized = [
+        {
+            "time": str(c.start_ms), "open": str(c.open),
+            "high": str(c.high), "low": str(c.low),
+            "close": str(c.close), "volume": str(c.volume),
+        }
+        for c in derived.candles
+    ]
+
+    def from_verified_archive(
+        fetched_symbol: str, interval: str, limit: int, *, end_ms: int,
+    ) -> list[dict[str, str]]:
+        if fetched_symbol != symbol or interval != "1":
+            raise ValueError("foreign historical read callback")
+        return [
+            row for row in reversed(normalized)
+            if int(row["time"]) <= end_ms
+        ][:limit]
+
+    stored = tuple(iter_cached_m1_chunks(
+        cache_dir=cache_dir, symbol=symbol,
+        start_ms=derived.start_ms, end_ms=derived.end_ms,
+        latest_closed_boundary_ms=latest_closed_boundary_ms,
+        chunk_minutes=1440, page_limit=1000,
+        fetch_candles=from_verified_archive, source_id=source_id,
+    ))
+    if len(stored) != 1 or stored[0] != derived:
+        raise ValueError("SIMULATION stored M1 does not match source archive")
+    return stored[0], raw_sha
