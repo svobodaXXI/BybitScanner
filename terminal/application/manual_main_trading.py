@@ -200,6 +200,9 @@ class ManualMainTrader:
                     active = [p for p in entries if Decimal(str(p.get("size", "0"))) > 0]
                     _require(len(active) == 1 and active[0].get("positionIdx") == 0,
                              "live_protection_position_ambiguous")
+                    expected_side = "Buy" if params.pop("_snapshot_side") == "Long" else "Sell"
+                    _require(active[0].get("side") == expected_side,
+                             "live_protection_side_changed")
                 method = {
                     "market": api.place_order,
                     "limit": api.place_order,
@@ -323,7 +326,8 @@ class ManualMainTrader:
         positions = [p for p in snapshot.get("positions", [])
                      if p.get("symbol") == symbol and p.get("side") in ("Long", "Short")]
         _require(len(positions) == 1, "main_protection_position_ambiguous")
-        args = {**common, "tpslMode": "Full", "positionIdx": 0}
+        args = {**common, "tpslMode": "Full", "positionIdx": 0,
+                "_snapshot_side": positions[0]["side"]}
         if op.startswith("stop"):
             args["stopLoss"] = "0" if op.endswith("/delete") else _number(_positive(stop, "stop_loss"))
             args["slTriggerBy"] = "MarkPrice"
