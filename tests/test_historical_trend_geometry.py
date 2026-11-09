@@ -378,6 +378,54 @@ class ConfirmedGeometryTests(unittest.TestCase):
             updated, (a, b, c, d, newer_high), bars, bars[7],
         ))
 
+    def test_bear_prior_moves_on_each_closed_lower_low_even_if_yellow_wick_refit_fails(self):
+        # Yellow 0->3 is pierced by the HIGH at 5, so the old yellow
+        # revision cannot publish. The structural purple prior still
+        # follows each independently confirmed preceding HIGH: 125 -> 126
+        # at lower LOW 102, then 126 -> 124 at lower LOW 98.
+        from research.causal_trend_geometry import CausalLine, TrendCandidate
+        prices = [
+            (130, 120), (124, 115), (120, 110), (125, 113),
+            (116, 105), (126, 111), (119, 108), (115, 102),
+            (117, 104), (124, 106), (118, 103), (112, 98),
+        ]
+        feed = CausalGeometryFeed(wing_1h=1, wing_5m=1)
+        observed = []
+        first_anchor = second_anchor = target = None
+        for i, (high, low) in enumerate(prices):
+            bar = make_bar(i, high, low)
+            feed._hourly.observe_closed(bar)
+            if i == 4:
+                pivots = {p.index: p for p in feed._hourly.pivots}
+                first_anchor, second_anchor, target = pivots[0], pivots[3], pivots[2]
+                fourth = ConfirmedPivot("LOW", 4, bar.start_ms, bar.end_ms, bar.low)
+                feed._hourly_trend = TrendCandidate(
+                    "BEAR",
+                    CausalLine(first_anchor, second_anchor, bar.end_ms),
+                    CausalLine(target, fourth, bar.end_ms),
+                    (first_anchor, target, second_anchor, fourth),
+                    bar.end_ms,
+                )
+            if i >= 4:
+                feed._advance_hourly_prior(bar.end_ms)
+                observed.append((
+                    i, feed.confirmed_hourly_prior,
+                    feed.confirmed_hourly_prior_touch_ms,
+                    feed._prior_trend_version,
+                ))
+        prices_by_hour = {i: price for i, price, _, _ in observed}
+        self.assertEqual([prices_by_hour[i] for i in range(4, 7)], [125, 125, 125])
+        self.assertEqual(prices_by_hour[7], 126)
+        self.assertEqual([prices_by_hour[i] for i in range(8, 11)], [126, 126, 126])
+        self.assertEqual(prices_by_hour[11], 124)
+        self.assertEqual([touch for i, _, touch, _ in observed if i in (7, 11)],
+                         [5 * ONE_HOUR_MS, 9 * ONE_HOUR_MS])
+        self.assertEqual([version for i, _, _, version in observed if i in (7, 11)],
+                         [8 * ONE_HOUR_MS, 12 * ONE_HOUR_MS])
+        # No line refit or first anchor mutation is needed to move the prior.
+        self.assertEqual(feed._hourly_trend.main.first, first_anchor)
+        self.assertEqual(feed._hourly_trend.main.second, second_anchor)
+
     def test_bear_new_lower_low_transfers_purple_prior_to_preceding_lower_high(self):
         # User acceptance: same movement origin, but a NEW validated
         # HIGH--LOW--LOWER HIGH--LOWER LOW version. Both main support and
