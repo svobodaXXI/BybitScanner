@@ -380,7 +380,9 @@ export function AccountMenu({
               <article className="account-card mainnet" key={account.id} aria-label="Manual MAIN account">
                 <strong>{account.display_name}</strong>
                 <small>BYBIT · MAINNET · {account.status} · Separate MAIN service</small>
-                <small>{workspaceProjection?.account_id === account.id && workspaceProjection.read_only === false\n                  ? "Manual MAIN trading verified for this session."\n                  : "Trading requires independent MAIN authorization; read-only until verified."}</small>
+                <small>{workspaceProjection?.account_id === account.id && workspaceProjection.read_only === false
+                  ? "Manual MAIN trading verified for this session."
+                  : "Trading requires independent MAIN authorization; read-only until verified."}</small>
                 {mode === "TERMINAL" && account.id !== selectedAccountId ? (
                   <button type="button" disabled={switching}
                     onClick={() => setConfirmAccount(account)}>Select MAIN</button>
