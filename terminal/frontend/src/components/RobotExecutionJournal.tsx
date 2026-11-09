@@ -22,7 +22,7 @@ export function RobotExecutionJournal({ selectedTradeId, markers }: RobotExecuti
 
   return (
     <section className="robot-execution-journal" aria-label="Журнал подтверждённых событий робота">
-      <strong>События сделки <small>МСК · подтверждённые исполнения и заявки</small></strong>
+      <strong>События на графике <small>МСК · реальные исполнения и активные заявки Robot</small></strong>
       {!selectedTradeId ? <p>Выберите открытую позицию робота.</p>
         : markers === null ? <p>Данные исполнений недоступны.</p>
           : verified.length === 0 ? <p>Подтверждённых исполнений пока нет.</p>
