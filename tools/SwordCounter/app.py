@@ -20,13 +20,13 @@ import tkinter as tk
 from pathlib import Path
 from typing import Callable
 
-from tools.SwordCounter.bybit_positions import fetch_account_equity, fetch_open_positions
+from tools.SwordCounter.bybit_positions import fetch_account_balances, fetch_open_positions
 from tools.SwordCounter.connection import ConnectionController
 from tools.SwordCounter.credential_store import CredentialStore, WindowsCredentialStore, resolve_credentials
 from tools.SwordCounter.settings_store import (
     AppSettings, default_settings_path, load_settings, parse_total_swords, save_settings,
 )
-from tools.SwordCounter.swords import count_swords_with_equity
+from tools.SwordCounter.swords import count_swords_with_wallet_balance
 from tools.SwordCounter.view_model import GREY, WORKER_FAILED, build_display, header_text
 
 REFRESH_INTERVAL_S = 10
@@ -95,9 +95,9 @@ class Refresher:
 
 
 def make_live_counter(get_settings: Callable[[], AppSettings]) -> Callable[[], object]:
-    """Account Equity + open positions + S2 count with the settings current at call time.
+    """Wallet Balance + open positions + S2 count with the settings current at call time.
 
-    1 RO = Account Equity / total swords, recomputed on every refresh. The key is SwordCounter's
+    1 RO = Wallet Balance / total swords, recomputed on every refresh. The key is SwordCounter's
     own (Windows Credential Manager). A missing or unreadable key is "Нет соединения"; no network
     request is made without it.
     """
@@ -110,8 +110,8 @@ def make_live_counter(get_settings: Callable[[], AppSettings]) -> Callable[[], o
                 credentials = resolve_credentials()[0]
             return credentials
 
-        return count_swords_with_equity(lambda: fetch_open_positions(creds()),
-                                        lambda: fetch_account_equity(creds()),
+        return count_swords_with_wallet_balance(lambda: fetch_open_positions(creds()),
+                                        lambda: fetch_account_balances(creds()),
                                         get_settings().total_swords)
     return count
 
@@ -193,7 +193,7 @@ class SwordCounterApp:
         self.free_value = self._row(1, "Свободно")
         self.used_value = self._row(2, "Задействовано")
         self.status_label = tk.Label(root, text="", font=(FONT, 8), fg=GREY, anchor="w",
-                                     wraplength=240, justify="left")
+                                     wraplength=360, justify="left")
         self.status_label.grid(row=3, column=0, columnspan=3, sticky="we", pady=(4, 0))
         root.columnconfigure(2, weight=1)
 
@@ -266,7 +266,7 @@ class SwordCounterApp:
         total_var = tk.StringVar(value=str(self.settings.total_swords))
         tk.Label(dialog, text="Всего мечей").grid(row=0, column=0, sticky="w")
         tk.Entry(dialog, textvariable=total_var, width=8).grid(row=0, column=1, padx=(8, 0))
-        tk.Label(dialog, text="1 РО = Equity аккаунта / всего мечей (авто, до целых USDT)", fg=GREY
+        tk.Label(dialog, text="1 РО = Общий депозит / всего мечей (авто, до целых USDT)", fg=GREY
                  ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
         error = tk.Label(dialog, text="", fg="#D32F2F", wraplength=220, justify="left")
         error.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))

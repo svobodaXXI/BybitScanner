@@ -7,11 +7,11 @@ from pathlib import Path
 
 from tools.SwordCounter import swords as sw
 from tools.SwordCounter.bybit_positions import (
-    BybitApiError, BybitCredentialsError, BybitResponseError, BybitTransportError, OpenPosition,
+    AccountBalances,     BybitApiError, BybitCredentialsError, BybitResponseError, BybitTransportError, OpenPosition,
 )
 from tools.SwordCounter.swords import (
     STATUS_NO_CONNECTION, STATUS_OK, STATUS_UNAVAILABLE, SwordSettings, count_swords,
-    count_swords_from_api, count_swords_with_equity, ro_from_equity,
+    count_swords_from_api, count_swords_with_wallet_balance, ro_from_wallet_balance,
 )
 
 
@@ -184,59 +184,75 @@ class ConnectionTests(unittest.TestCase):
 
 
 
-class EquityRoTests(unittest.TestCase):
+class WalletBalanceRoTests(unittest.TestCase):
     LIVE = [pos("SENTUSDT", "0.022818", size="210"), pos("VELVETUSDT", "0.0728", size="50", side="Sell"),
             pos("XNYUSDT", "0.006218", size="800"), pos("LYNUSDT", "0.01753", size="284")]
 
     def test_ro_is_equity_over_total_swords_rounded_half_up(self):
-        for equity, total, ro in (("106.22345059", 20, 5), ("110", 20, 6), ("109.99", 20, 5), ("50", 20, 3),
+        for wallet_balance, total, ro in (("106.22345059", 20, 5), ("110", 20, 6), ("109.99", 20, 5), ("50", 20, 3),
                                   ("49.99", 20, 2), ("100", 10, 10), ("1000", 20, 50)):
-            with self.subTest(equity=equity, total=total):
-                self.assertEqual(ro_from_equity(Decimal(equity), total), Decimal(ro))
+            with self.subTest(wallet_balance=wallet_balance, total=total):
+                self.assertEqual(ro_from_wallet_balance(Decimal(wallet_balance), total), Decimal(ro))
 
     def test_live_case_equity_106_22_gives_ro_5_and_4_used_16_free(self):
-        r = count_swords_with_equity(lambda: self.LIVE, lambda: Decimal("106.22345059"), 20)
-        self.assertEqual((r.status, r.sword_size_usdt, r.equity_usdt, r.occupied_margin_usdt, r.used_swords, r.free_swords),
+        r = count_swords_with_wallet_balance(lambda: self.LIVE, lambda: Decimal("106.22345059"), 20)
+        self.assertEqual((r.status, r.sword_size_usdt, r.wallet_balance_usdt, r.occupied_margin_usdt, r.used_swords, r.free_swords),
                          (STATUS_OK, Decimal("5"), Decimal("106.22345059"), Decimal("18.3847"), 4, 16))
 
     def test_ro_follows_equity_and_the_number_of_swords(self):
-        bigger = count_swords_with_equity(lambda: self.LIVE, lambda: Decimal("210"), 20)    # RO 11 (10.5 up)
+        bigger = count_swords_with_wallet_balance(lambda: self.LIVE, lambda: Decimal("210"), 20)    # RO 11 (10.5 up)
         self.assertEqual((bigger.sword_size_usdt, bigger.used_swords, bigger.free_swords), (Decimal("11"), 2, 18))
-        ten = count_swords_with_equity(lambda: self.LIVE, lambda: Decimal("106.22"), 10)     # RO 11 (10.622)
+        ten = count_swords_with_wallet_balance(lambda: self.LIVE, lambda: Decimal("106.22"), 10)     # RO 11 (10.622)
         self.assertEqual((ten.sword_size_usdt, ten.used_swords, ten.free_swords), (Decimal("11"), 2, 8))
+
+    def test_account_metrics_carry_through_sword_count_without_changing_entry_notional(self):
+        snapshot = AccountBalances(wallet_balance=Decimal("147.14"), equity=Decimal("89.33"),
+                                   available_balance=Decimal("72.10"), initial_margin=Decimal("17.23"))
+        r = count_swords_with_wallet_balance(lambda: [pos(value="207")], lambda: snapshot, 20)
+        self.assertEqual((r.sword_size_usdt, r.used_swords), (Decimal("7"), 30))
+        self.assertEqual(r.account_balances, snapshot)
+        self.assertEqual(r.wallet_balance_usdt, Decimal("147.14"))
+
+    def test_wallet_balance_147_14_changes_used_from_52_to_30(self):
+        positions = [pos("BTCUSDT", "207", size="1")]
+        from_equity = count_swords_with_wallet_balance(lambda: positions, lambda: Decimal("89.76"), 20)
+        from_wallet = count_swords_with_wallet_balance(lambda: positions, lambda: Decimal("147.14"), 20)
+        self.assertEqual((from_equity.sword_size_usdt, from_equity.used_swords), (Decimal("4"), 52))
+        self.assertEqual((from_wallet.sword_size_usdt, from_wallet.used_swords), (Decimal("7"), 30))
+        self.assertEqual(from_wallet.occupied_margin_usdt, Decimal("207"))
 
     def test_unknown_equity_or_api_failure_shows_no_ro_and_no_numbers(self):
         def down():
             raise BybitApiError("Bybit retCode 10005: Permission denied", ret_code=10005)
         for fetch_equity, fetch_positions in ((down, lambda: self.LIVE), (lambda: Decimal("100"), down)):
-            r = count_swords_with_equity(fetch_positions, fetch_equity, 20)
+            r = count_swords_with_wallet_balance(fetch_positions, fetch_equity, 20)
             self.assertEqual((r.status, r.sword_size_usdt, r.used_swords, r.free_swords),
                              (STATUS_NO_CONNECTION, None, None, None))
 
     def test_nonfinite_equity_is_unavailable_not_a_worker_crash(self):
         for raw in ("NaN", "Infinity", "-Infinity"):
-            with self.subTest(equity=raw):
+            with self.subTest(wallet_balance=raw):
                 # Corrupt numeric values must not crash the GUI worker.
-                equity = Decimal(raw)
-                result = count_swords_with_equity(
-                    lambda: self.LIVE, lambda: equity, 20,
+                wallet_balance = Decimal(raw)
+                result = count_swords_with_wallet_balance(
+                    lambda: self.LIVE, lambda: wallet_balance, 20,
                 )
                 self.assertEqual(result.status, STATUS_UNAVAILABLE)
                 self.assertIsNone(result.sword_size_usdt)
                 self.assertIsNone(result.used_swords)
                 self.assertIsNone(result.free_swords)
-                self.assertIsNone(result.equity_usdt)
-                self.assertEqual(result.reason, "Account Equity is not finite")
+                self.assertIsNone(result.wallet_balance_usdt)
+                self.assertEqual(result.reason, "Wallet Balance is not finite")
 
     def test_non_positive_equity_or_an_ro_rounding_to_zero_is_unavailable_not_a_division_by_zero(self):
-        for equity in ("0", "-5", "9.99", "0.01"):       # 9.99 / 20 = 0.4995 -> 0 USDT
-            with self.subTest(equity=equity):
-                r = count_swords_with_equity(lambda: self.LIVE, lambda: Decimal(equity), 20)
+        for wallet_balance in ("0", "-5", "9.99", "0.01"):       # 9.99 / 20 = 0.4995 -> 0 USDT
+            with self.subTest(wallet_balance=wallet_balance):
+                r = count_swords_with_wallet_balance(lambda: self.LIVE, lambda: Decimal(wallet_balance), 20)
                 self.assertEqual((r.status, r.sword_size_usdt, r.used_swords, r.free_swords),
                                  (STATUS_UNAVAILABLE, None, None, None))
                 self.assertTrue(r.reason)
-        self.assertIsNone(ro_from_equity(Decimal("9.99"), 20))
-        self.assertEqual(ro_from_equity(Decimal("10"), 20), Decimal("1"))   # 0.5 rounds half up to 1
+        self.assertIsNone(ro_from_wallet_balance(Decimal("9.99"), 20))
+        self.assertEqual(ro_from_wallet_balance(Decimal("10"), 20), Decimal("1"))   # 0.5 rounds half up to 1
 
 
 if __name__ == "__main__":

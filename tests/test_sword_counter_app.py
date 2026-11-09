@@ -20,6 +20,7 @@ from tools.SwordCounter.connection import ConnectionController
 from tools.SwordCounter.setup_keys import CheckResult
 from tools.SwordCounter import settings_store as store
 from tools.SwordCounter import view_model as vm
+from tools.SwordCounter.bybit_positions import AccountBalances
 from tools.SwordCounter.settings_store import AppSettings, parse_total_swords
 from tools.SwordCounter.swords import (
     STATUS_NO_CONNECTION, STATUS_OK, STATUS_UNAVAILABLE, SwordCount,
@@ -28,10 +29,10 @@ from tools.SwordCounter.swords import (
 REPO = Path(__file__).resolve().parents[1]
 
 
-def result(status=STATUS_OK, used=3, free=17, total=20, size="5", over=False, equity=None):
+def result(status=STATUS_OK, used=3, free=17, total=20, size="5", over=False, wallet_balance=None):
     numbers = status == STATUS_OK
     return SwordCount(status=status, total_swords=total, sword_size_usdt=Decimal(size) if numbers else None,
-                      equity_usdt=None if equity is None else Decimal(equity),
+                      wallet_balance_usdt=None if wallet_balance is None else Decimal(wallet_balance),
                       positions_count=2 if numbers else None,
                       occupied_margin_usdt=Decimal("12") if numbers else None,
                       used_swords=used if numbers else None, free_swords=free if numbers else None,
@@ -119,9 +120,25 @@ class DisplayTests(unittest.TestCase):
             self.assertEqual(d.header, "1 РО = — USDT")   # never an invented RO cost
         self.assertEqual(vm.header_text(), "1 РО = — USDT")
 
-    def test_status_line_shows_the_equity_the_ro_comes_from(self):
-        d = vm.build_display(self.S, result(equity="106.22345059"), age_s=1)
-        self.assertIn("Equity 106.22", d.status_text)
+    def test_status_line_shows_full_deposit_from_wallet_balance(self):
+        d = vm.build_display(self.S, result(wallet_balance="106.22345059"), age_s=1)
+        self.assertIn("Общий депозит: 106.22 USDT", d.status_text)
+
+    def test_five_status_lines_and_last_line_is_full_deposit(self):
+        snapshot = AccountBalances(wallet_balance=Decimal("147.14"), equity=Decimal("89.33"),
+                                   available_balance=Decimal("72.10"), initial_margin=Decimal("17.23"))
+        r = result(used=52, free=0, size="7", over=True, wallet_balance="147.14")
+        from dataclasses import replace
+        r = replace(r, account_balances=snapshot)
+        display = vm.build_display(self.S, r, age_s=1)
+        self.assertEqual(display.status_text.splitlines(), [
+            "Превышение лимита: 52 из 20",
+            "Equity: 89.33 USDT",
+            "Available Balance: 72.10 USDT",
+            "Занятая маржа: 17.23 USDT",
+            "Общий депозит: 147.14 USDT",
+        ])
+        self.assertEqual(display.header, "1 РО = 7 USDT")
 
     def test_ok_shows_green_free_and_red_used(self):
         d = vm.build_display(self.S, result(used=3, free=17), age_s=1)
