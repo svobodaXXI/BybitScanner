@@ -12,6 +12,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from pathlib import Path
 
@@ -176,6 +177,20 @@ class ManualMainTrader:
                     testnet=False, api_key=stored.api_key, api_secret=stored.api_secret,
                     timeout=10, force_retry=False, max_retries=0, log_requests=False,
                 )
+                if operation in ("market", "limit"):
+                    params["qty"] = self._exchange_quantity(api, symbol, params)
+                if operation == "full-close":
+                    # Never close based solely on a potentially stale cached position.
+                    live = api.get_positions(category="linear", symbol=symbol)
+                    _require(isinstance(live, dict) and live.get("retCode") == 0,
+                             "live_close_position_unproven")
+                    entries = live.get("result", {}).get("list", [])
+                    active = [p for p in entries if Decimal(str(p.get("size", "0"))) > 0]
+                    _require(len(active) == 1 and active[0].get("positionIdx") == 0,
+                             "live_close_position_ambiguous")
+                    _require(active[0].get("side") != params["side"]
+                             and active[0].get("size") == params["qty"],
+                             "live_close_position_changed")
                 method = {
                     "market": api.place_order,
                     "limit": api.place_order,
@@ -199,6 +214,31 @@ class ManualMainTrader:
                 status = "UNKNOWN"
             self._ledger.finish(account, action, status, order_id)
             return self._result(status, action, order_id)
+
+    def _exchange_quantity(self, api, symbol: str, params: dict) -> str:
+        instrument = api.get_instruments_info(category="linear", symbol=symbol)
+        _require(isinstance(instrument, dict) and instrument.get("retCode") == 0,
+                 "main_instrument_unavailable")
+        rows = instrument.get("result", {}).get("list", [])
+        _require(len(rows) == 1 and rows[0].get("symbol") == symbol,
+                 "main_instrument_ambiguous")
+        lot = rows[0].get("lotSizeFilter", {})
+        step = _positive(lot.get("qtyStep"), "main_quantity_step")
+        minimum = _positive(lot.get("minOrderQty"), "main_min_quantity")
+        quantity = (Decimal(params["qty"]) / step).to_integral_value(
+            rounding=ROUND_DOWN) * step
+        _require(quantity >= minimum and quantity > 0, "main_quantity_below_minimum")
+        quote = api.get_tickers(category="linear", symbol=symbol)
+        _require(isinstance(quote, dict) and quote.get("retCode") == 0,
+                 "main_market_price_unavailable")
+        ticks = quote.get("result", {}).get("list", [])
+        _require(len(ticks) == 1 and ticks[0].get("symbol") == symbol,
+                 "main_market_price_ambiguous")
+        market = _positive(ticks[0].get("markPrice"), "main_market_price")
+        price = max(market, Decimal(params.get("price", "0")))
+        _require(quantity * price <= self._ceiling,
+                 "manual_main_notional_ceiling")
+        return _number(quantity)
 
     @staticmethod
     def _result(state: str, action_id: str, order_id: str | None) -> dict:
@@ -241,15 +281,13 @@ class ManualMainTrader:
         if op == "full-close":
             positions = [p for p in snapshot.get("positions", [])
                          if p.get("symbol") == symbol and
-                         Decimal(str(p.get("quantity", "0"))) > 0]
+                         Decimal(str(p.get("size", "0"))) > 0]
             _require(len(positions) == 1, "main_close_position_ambiguous")
             position = positions[0]
-            _require(position.get("side") in ("Buy", "Sell"), "main_close_side_invalid")
-            idx = position.get("position_idx", 0)
-            _require(type(idx) is int and idx in (0, 1, 2), "main_close_hedge_invalid")
-            return {**common, "side": "Sell" if position["side"] == "Buy" else "Buy",
-                    "orderType": "Market", "qty": str(position["quantity"]),
-                    "reduceOnly": True, "positionIdx": idx,
+            _require(position.get("side") in ("Long", "Short"), "main_close_side_invalid")
+            return {**common, "side": "Sell" if position["side"] == "Long" else "Buy",
+                    "orderType": "Market", "qty": str(position["size"]),
+                    "reduceOnly": True, "positionIdx": 0,
                     "orderLinkId": data["client_action_id"][:36]}
         if op in ("limit/amend", "limit/cancel"):
             order_id = data.get("order_id")
@@ -265,7 +303,7 @@ class ManualMainTrader:
         _require(op.startswith(("stop", "take")), "unsupported_main_operation")
         stop = data.get("stop_loss")
         take = data.get("take_profit")
-        args = {**common, "tpslMode": "Full", "positionIdx": 0}
+        positions = [p for p in snapshot.get("positions", [])\n                     if p.get("symbol") == symbol and p.get("side") in ("Long", "Short")]\n        _require(len(positions) == 1, "main_protection_position_ambiguous")\n        args = {**common, "tpslMode": "Full", "positionIdx": 0}
         if op.startswith("stop"):
             args["stopLoss"] = "0" if op.endswith("/delete") else _number(_positive(stop, "stop_loss"))
             args["slTriggerBy"] = "MarkPrice"
