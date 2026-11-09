@@ -1,9 +1,9 @@
 name: Simulator V2 public M1 provenance probe
 
 on:
-  push:
+  pull_request:
     branches:
-      - 'feature/simulator-v2-*'
+      - 'stable/adfb50b-forward'
     paths:
       - 'research/simulator_v2/public_m1_smoke.py'
       - '.github/workflows/simulator-v2-public-m1.yml'
