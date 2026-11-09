@@ -195,6 +195,15 @@ class ReadOnlyWedgeScanner:
         self._pending = bars, observation
         return ()  # Research facts are NOT disguised as production SCANNER events.
 
+    @property
+    def staged_observation(self) -> WedgeObservation | None:
+        """Only the next ROBOT stage may inspect an unpublished M5 result.
+
+        The research output remains inaccessible via `observations` until
+        the exchange and timeline commit their common virtual minute.
+        """
+        return self._pending[1] if self._pending is not None else None
+
     def commit_after_m1(self, frame: MinuteFrame) -> None:
         if self._pending is not None:
             bars, observation = self._pending
