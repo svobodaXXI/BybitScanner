@@ -1,12 +1,9 @@
 name: Simulator V2 public Bybit trades archive proof
 
+# Real archive access was verified in run 42678175587 (2026-11-09).
+# Keep 54MB external downloads opt-in; offline unit CI remains independent.
 on:
-  pull_request:
-    branches:
-      - 'stable/adfb50b-forward'
-    paths:
-      - 'research/simulator_v2/public_trade_archive_smoke.py'
-      - '.github/workflows/simulator-v2-public-trades.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
