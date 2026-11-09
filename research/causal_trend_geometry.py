@@ -457,6 +457,57 @@ def main_line_contact(trend: TrendCandidate | None, bar: Candle) -> Decimal | No
 
 
 
+def impulse_four_point_trend(
+    pivots: tuple[ConfirmedPivot, ...], bars: tuple[Candle, ...], just_closed: Candle,
+) -> TrendCandidate | None:
+    """Keep the significant first H1 impulse anchor despite smaller corrections.
+
+    Consecutive last-four local pivots can discard a valid larger movement.
+    Point 3 is the latest confirmed return extremum; points 1 and 2 are real
+    earlier swing extremes. Publish point 4 on its own H1 close only after
+    the original wick envelope passes.
+    """
+    if not bars or just_closed != bars[-1]:
+        return None
+    for side, initial, mid, last_kind in (
+        ("BEAR", "HIGH", "LOW", "HIGH"),
+        ("BULL", "LOW", "HIGH", "LOW"),
+    ):
+        thirds = [p for p in pivots if p.kind == last_kind and
+                  p.at_ms < just_closed.start_ms and
+                  p.confirmed_at_ms <= just_closed.end_ms]
+        if not thirds:
+            continue
+        c = thirds[-1]
+        seconds = [p for p in pivots if p.kind == mid and p.at_ms < c.at_ms
+                   and p.confirmed_at_ms <= just_closed.end_ms]
+        seconds.sort(key=lambda p: p.price, reverse=side == "BULL")
+        for b in seconds:
+            if (side == "BEAR" and just_closed.low >= b.price) or (
+                side == "BULL" and just_closed.high <= b.price
+            ):
+                continue
+            firsts = [p for p in pivots if p.kind == initial and p.at_ms < b.at_ms
+                      and p.confirmed_at_ms <= just_closed.end_ms]
+            firsts.sort(key=lambda p: p.price, reverse=side == "BEAR")
+            for a in firsts:
+                if (side == "BEAR" and (c.price >= a.price or just_closed.high > c.price)) or (
+                    side == "BULL" and (c.price <= a.price or just_closed.low < c.price)
+                ):
+                    continue
+                d = ConfirmedPivot(
+                    "LOW" if side == "BEAR" else "HIGH",
+                    len(bars) - 1, just_closed.start_ms, just_closed.end_ms,
+                    just_closed.low if side == "BEAR" else just_closed.high,
+                )
+                candidate = recent_hourly_trend((a, b, c, d))
+                if candidate is not None:
+                    fitted = wick_tight_hourly_trend(candidate, bars)
+                    if fitted is not None:
+                        return fitted
+    return None
+
+
 class CausalGeometryFeed:
     """Time-causal local H1 state: trend continuation, prior break, opposite line.
 
@@ -702,17 +753,21 @@ class CausalGeometryFeed:
             if self._waiting_for_side is None:
                 previous = self._hourly_trend
                 if previous is None:
-                    proposal = recent_hourly_trend(self._hourly.recent_pivots)
-                    if proposal is None:
-                        fourth = closed_fourth_pivot(
-                            self._hourly.pivots, self._hourly.bars, newly_closed_1h,
-                        )
-                        if fourth is not None:
-                            proposal = recent_hourly_trend(self._hourly.pivots[-3:] + (fourth,))
-                    if proposal is not None:
-                        fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
-                        if fitted is not None:
-                            self._hourly_trend = fitted
+                    fitted = impulse_four_point_trend(
+                        self._hourly.pivots, self._hourly.bars, newly_closed_1h,
+                    )
+                    if fitted is None:
+                        proposal = recent_hourly_trend(self._hourly.recent_pivots)
+                        if proposal is None:
+                            fourth = closed_fourth_pivot(
+                                self._hourly.pivots, self._hourly.bars, newly_closed_1h,
+                            )
+                            if fourth is not None:
+                                proposal = recent_hourly_trend(self._hourly.pivots[-3:] + (fourth,))
+                        if proposal is not None:
+                            fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
+                    if fitted is not None:
+                        self._hourly_trend = fitted
                 elif previous.side == "BEAR":
                     # One movement = ONE fixed first H1 HIGH. Later lower
                     # lows may revise ONLY the second HIGH of that same
