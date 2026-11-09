@@ -84,11 +84,30 @@ def get_updates(**params):
         response = session.post(endpoint + "/v1/get-updates", json=params,
                                 headers={"Authorization": "Bearer " + key},
                                 timeout=42, allow_redirects=False)
+    except requests.RequestException as exc:
+        raise TelegramGatewayError(
+            "Gateway poll unavailable: exception=" + type(exc).__name__ +
+            ", status=unavailable, content_type=unavailable"
+        ) from exc
+    content_type = str(response.headers.get("content-type", "")).split(";", 1)[0].strip().lower()
+    if not content_type:
+        content_type = "missing"
+    elif (len(content_type) > 127 or
+          not all(char.isascii() and (char.isalnum() or char in "/.+-_")
+                  for char in content_type)):
+        content_type = "invalid"
+    try:
         result = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        raise TelegramGatewayError("Gateway poll unavailable") from exc
+    except ValueError as exc:
+        raise TelegramGatewayError(
+            "Gateway poll unavailable: exception=" + type(exc).__name__ +
+            f", status={response.status_code}, content_type={content_type}"
+        ) from exc
     if response.status_code != 200 or not isinstance(result, dict):
-        raise TelegramGatewayError("Gateway poll rejected")
+        raise TelegramGatewayError(
+            "Gateway poll rejected: exception=none, " +
+            f"status={response.status_code}, content_type={content_type}"
+        )
     return result
 
 def bot_method(method, **params):

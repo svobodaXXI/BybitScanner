@@ -96,6 +96,54 @@ class TelegramGatewayTests(unittest.TestCase):
         self.assertEqual(session_cls.return_value.post.call_count, 1)
 
     @patch("telegram_gateway_client.requests.Session")
+    def test_poll_transport_error_reports_only_exception_class(self, session_cls):
+        session_cls.return_value.post.side_effect = gateway.requests.ConnectTimeout(
+            "must-not-leak"
+        )
+        with self.assertRaises(gateway.TelegramGatewayError) as raised:
+            gateway.get_updates(timeout=30)
+        message = str(raised.exception)
+        self.assertIn(
+            "exception=ConnectTimeout, status=unavailable, "
+            "content_type=unavailable", message
+        )
+        self.assertNotIn("must-not-leak", message)
+        self.assertNotIn("relay.example.org", message)
+
+    @patch("telegram_gateway_client.requests.Session")
+    def test_poll_non_json_reports_status_and_content_type_only(self, session_cls):
+        response = MagicMock(
+            status_code=404,
+            headers={"content-type": "text/plain; charset=utf-8"},
+        )
+        response.json.side_effect = ValueError("must-not-leak")
+        session_cls.return_value.post.return_value = response
+        with self.assertRaises(gateway.TelegramGatewayError) as raised:
+            gateway.get_updates(timeout=30)
+        message = str(raised.exception)
+        self.assertIn(
+            "exception=ValueError, status=404, content_type=text/plain", message
+        )
+        self.assertNotIn("must-not-leak", message)
+        self.assertNotIn("relay.example.org", message)
+
+    @patch("telegram_gateway_client.requests.Session")
+    def test_poll_json_rejection_reports_status_and_content_type(self, session_cls):
+        response = MagicMock(
+            status_code=401,
+            headers={"content-type": "application/json; charset=utf-8"},
+        )
+        response.json.return_value = {"ok": False, "error": "unauthorized"}
+        session_cls.return_value.post.return_value = response
+        with self.assertRaises(gateway.TelegramGatewayError) as raised:
+            gateway.get_updates(timeout=30)
+        message = str(raised.exception)
+        self.assertIn(
+            "exception=none, status=401, content_type=application/json", message
+        )
+        self.assertNotIn("unauthorized", message)
+
+    @patch("telegram_gateway_client.requests.Session")
     def test_fail_closed_no_direct_fallback(self, session_cls):
         session_cls.return_value.post.side_effect = gateway.requests.ConnectionError()
         with self.assertRaises(gateway.TelegramGatewayError):
