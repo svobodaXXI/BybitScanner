@@ -305,7 +305,11 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         // immutable structural pivots used to compute the precise slope.
         const replayStartMs = document.events.find(event =>
           event.kind === "CANDLE_CLOSED" && event.candle)?.candle?.start_ms ?? line.from_ms;
-        const paintFromMs = line.kind === "MAIN_1H" || line.kind === "TARGET_1H"
+        const isHourly = line.kind === "MAIN_1H" || line.kind === "TARGET_1H";
+        // Warmup H1 pivots are valid context but have no source candle in
+        // this replay. Never make a clipped projection look like an anchor.
+        if (isHourly && line.from_ms < replayStartMs) continue;
+        const paintFromMs = isHourly
           ? forwardLinePaintStartMs(line, replayStartMs)
           : line.from_ms;
         const segment = geometryLogicalSegment(
