@@ -132,6 +132,51 @@ class M1HistoryTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     tuple(iter_closed_m1_chunks(**self.kwargs(**changes)))
 
+    def test_90_day_stream_is_bounded_and_causal(self):
+        """129600 mock M1 candles, yielded as at most 1440 at a time."""
+        days = 90
+        calls = 0
+
+        def fetch(symbol, interval, limit, *, end_ms):
+            nonlocal calls
+            calls += 1
+            last_index = end_ms // STEP
+            first_index = max(0, last_index - limit + 1)
+            return [row(i) for i in range(last_index, first_index - 1, -1)]
+
+        chunks = 0
+        bars = 0
+        last_end = 0
+        for chunk in iter_closed_m1_chunks(
+            symbol="BTCUSDT", start_ms=0,
+            end_ms=days * 1440 * STEP,
+            latest_closed_boundary_ms=days * 1440 * STEP,
+            fetch_candles=fetch, source_id="FIXTURE_90D",
+        ):
+            self.assertEqual(chunk.start_ms, last_end)
+            self.assertLessEqual(len(chunk.candles), 1440)
+            self.assertEqual(chunk.candles[0].start_ms, chunk.start_ms)
+            self.assertEqual(chunk.candles[-1].end_ms, chunk.end_ms)
+            chunks += 1
+            bars += len(chunk.candles)
+            last_end = chunk.end_ms
+        self.assertEqual((chunks, bars), (90, 129600))
+        self.assertEqual(last_end, days * 1440 * STEP)
+        self.assertGreaterEqual(calls, 180)
+
+    def test_history_chunks_feed_existing_timeline_unchanged(self):
+        from research.simulator_v2.timeline import IsolatedTimeline
+        timeline = IsolatedTimeline(simulation_run_id="history", symbol="BTCUSDT")
+        for chunk in iter_closed_m1_chunks(**self.kwargs(
+            end_ms=65 * STEP, latest_closed_boundary_ms=65 * STEP,
+            fetch_candles=closed_history(0, 65), chunk_minutes=7,
+            page_limit=5,
+        )):
+            for candle in chunk.candles:
+                timeline.step(candle)
+        self.assertEqual(timeline.processed_minutes, 65)
+        self.assertEqual(sum(event.kind == "H1_CLOSED" for event in timeline.events), 1)
+
     def test_no_private_api_and_request_is_unsigned_public_market_get(self):
         payload = {"retCode": 0, "result": {"list": [
             ["60000", "100", "101", "99", "100", "2"],
