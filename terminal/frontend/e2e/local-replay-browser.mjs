@@ -57,17 +57,18 @@ try {
   // The entire replay control surface belongs beside the M5/H1 switch,
   // never in the file-import row above the chart.
   const controlBar = page.getByRole("group", { name: "Таймфрейм графика" });
-  const playbackBar = controlBar.getByRole("group", { name: "Управление воспроизведением" });
-  for (const caption of ["◀ Шаг назад", "Шаг вперёд ▶"]) {
-    assert.equal(await playbackBar.getByRole("button", { name: caption, exact: true }).count(), 1);
-  }
-  assert.equal(await playbackBar.getByRole("button", { name: "В начало" }).count(), 0);
-  assert.equal(await playbackBar.getByRole("button", { name: "Пуск" }).count(), 0);
-  const seekBar = page.getByRole("group", { name: "Перемотка графика" });
-  assert.deepEqual(await seekBar.locator("button").allTextContents(), ["В начало", "▶ Пуск"]);
-  assert.equal(await page.getByText("Начало", { exact: true }).count(), 0);
-  assert.equal(await page.getByText("Конец", { exact: true }).count(), 0);
-  assert.equal(await playbackBar.locator(".replay-rate input[type=range]").count(), 1);
+  const seekBar = page.getByRole("group", { name: "Управление воспроизведением" });
+  const captions = ["В начало", "Шаг назад", "Пуск", "Шаг вперёд"];
+  assert.deepEqual(await seekBar.locator("button").evaluateAll(
+    nodes => nodes.map(node => node.getAttribute("aria-label")), 
+  ), captions);
+  assert.deepEqual(await seekBar.locator("button").allTextContents(), ["", "", "", ""]);
+  assert.deepEqual(await seekBar.locator("svg[data-playback-icon]").evaluateAll(
+    nodes => nodes.map(node => node.getAttribute("data-playback-icon")),
+  ), ["start", "back", "play", "forward"]);
+  assert.equal(await controlBar.getByRole("button", { name: "Шаг назад" }).count(), 0);
+  assert.equal(await controlBar.getByRole("button", { name: "Шаг вперёд" }).count(), 0);
+  assert.equal(await controlBar.locator(".replay-rate input[type=range]").count(), 1);
   assert.equal(await page.locator(".replay-controls .replay-rate").count(), 0);
   const drawingBar = page.getByRole("group", { name: "Инструменты рисования" });
   const trendTool = drawingBar.getByRole("button", { name: "Трендовая" });
@@ -83,8 +84,8 @@ try {
   const progress = page.getByRole("slider", { name: "Перемотка графика по закрытым свечам" });
   assert.equal(await progress.inputValue(), "0");
   assert.equal(await progress.getAttribute("max"), "64");
-  const forward = page.getByRole("button", { name: "Шаг вперёд ▶", exact: true });
-  const backward = page.getByRole("button", { name: "◀ Шаг назад", exact: true });
+  const forward = seekBar.getByRole("button", { name: "Шаг вперёд", exact: true });
+  const backward = seekBar.getByRole("button", { name: "Шаг назад", exact: true });
   assert.equal(await backward.isDisabled(), true);
   await forward.click();
   const firstStep = Number(await progress.inputValue());
