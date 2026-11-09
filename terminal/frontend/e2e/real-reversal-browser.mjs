@@ -92,12 +92,24 @@ try {
     "real official-archive instrument stays identified in metadata");
   assert.equal(await page.getByRole("slider", { name: "Перемотка графика по закрытым свечам" }).inputValue(), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
-  // Reference implementation: chart's H1 axis includes the ORIGINAL
-  // already-closed warmup OHLC bars. The first frozen MAIN source anchor
-  // must therefore exist as an actual chart candle, not an offscreen ray.
+  // Warmup H1 is grey chart/DMI context, never a ghost H1 trend anchor.
+  // The first published MAIN must use a REAL H1 wick from the replay itself.
   const firstMain = yellow[0];
-  assert.ok(archive.context_1h.some(bar => bar.start_ms === firstMain.from_ms),
-    "real first H1 line must have a genuine context source candle");
+  assert.ok(firstMain.from_ms >= archive.from_ms,
+    "first H1 source anchor must be inside the requested replay window");
+  const sourceHour = archive.events.filter(event =>
+    event.kind === "CANDLE_CLOSED" && event.candle &&
+    event.candle.start_ms >= firstMain.from_ms &&
+    event.candle.start_ms < firstMain.from_ms + 3_600_000
+  ).map(event => event.candle);
+  assert.equal(sourceHour.length, 12, "H1 source needs 12 real M5 candles");
+  assert.equal(Number(firstMain.from_price), firstMain.side === "BEAR"
+    ? Math.max(...sourceHour.map(bar => Number(bar.high)))
+    : Math.min(...sourceHour.map(bar => Number(bar.low))));
+  assert.equal(firstMain.side, "BEAR");
+  assert.equal(firstMain.from_ms, Date.UTC(2026, 7, 27, 8));
+  assert.equal(firstMain.available_at_ms, Date.UTC(2026, 7, 28, 4),
+    "confirmed fourth lower LOW must publish the original BEAR 1–3 immediately");
   await page.getByRole("button", { name: "H1", exact: true }).click();
   const chartShell = page.locator(".replay-chart-shell");
   await page.waitForFunction(expected =>
