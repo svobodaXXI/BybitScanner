@@ -14,12 +14,13 @@ import subprocess
 import sys
 
 from tools.vps_release_identity import ReleaseIdentityBlocked, verify_release
-from tools.vps_systemd_unit_prepare import UNITS
+from tools.vps_systemd_unit_prepare import PAPER_UNITS, UNITS
 
 ROOT = Path("/opt/BybitScanner")
 MANIFEST = Path("/etc/bybitscanner/paper-release-manifest.json")
 UNIT_DIR = Path("/etc/systemd/system")
-PORTS = (8765, 8766, 8771)
+PORTS = (8765, 8766, 8771)  # Strict stopped-only Gitless installer.
+PAPER_PORTS = (8765, 8766)  # PAPER-only resume; MAIN stays independent.
 
 # These are the observed, owner-owned networking customizations on the PAPER VPS.
 # Only their precise Environment assignments are approved, not arbitrary
@@ -122,9 +123,10 @@ def _systemd_state(unit: str, *, run=subprocess.run, unit_dir: Path = UNIT_DIR, 
     return state
 
 
-def _assert_no_listeners() -> None:
-    # No bind, no network call. Refuse any local TCP listener on the backend
-    # or Telegram ports, including IPv6 or a non-systemd owner.
+def _assert_no_ports(ports: tuple[int, ...]) -> None:
+    # No bind, no network call. Refuse listed local TCP listeners, including
+    # IPv6 or a non-systemd owner. Release installation uses all ports; normal
+    # PAPER resume excludes the unrelated always-on MAIN listener.
     try:
         for table in ("/proc/net/tcp", "/proc/net/tcp6"):
             for line in Path(table).read_text().splitlines()[1:]:
@@ -132,7 +134,7 @@ def _assert_no_listeners() -> None:
                 if len(fields) < 4:
                     raise ResumeBlocked("invalid_tcp_snapshot")
                 port = int(fields[1].rsplit(":", 1)[1], 16)
-                if fields[3] == "0A" and port in PORTS:
+                if fields[3] == "0A" and port in ports:
                     raise ResumeBlocked("PAPER_port_owned_by_another_process")
     except ResumeBlocked:
         raise
@@ -140,9 +142,19 @@ def _assert_no_listeners() -> None:
         raise ResumeBlocked("tcp_snapshot_unavailable") from exc
 
 
+def _assert_no_listeners() -> None:
+    """Strict all-service listener proof for stopped-only release activation."""
+    _assert_no_ports(PORTS)
+
+
+def _assert_no_paper_listeners() -> None:
+    """Only PAPER listeners must be absent before a PAPER-only resume."""
+    _assert_no_ports(PAPER_PORTS)
+
+
 def check_resume(target: str, *, root: Path = ROOT,
                  manifest: Path = MANIFEST, unit_dir: Path = UNIT_DIR,
-                 states=_systemd_state, listeners=_assert_no_listeners,
+                 states=_systemd_state, listeners=_assert_no_paper_listeners,
                  verify=verify_release) -> str:
     if len(target) != 40 or any(char not in "0123456789abcdef" for char in target):
         raise ResumeBlocked("invalid_approved_target")
@@ -162,10 +174,10 @@ def check_resume(target: str, *, root: Path = ROOT,
                 raise ResumeBlocked("installed_unit_does_not_match_release")
         except OSError as exc:
             raise ResumeBlocked("installed_unit_unreadable") from exc
-    for unit in UNITS:
+    for unit in PAPER_UNITS:
         states(unit)
     listeners()
-    return "RESUME_READY: approved tracked release and units installed, PAPER processes stopped; no action performed"
+    return "RESUME_READY: approved tracked release and units installed, PAPER processes stopped; MAIN untouched"
 
 
 def main(argv=None) -> int:
