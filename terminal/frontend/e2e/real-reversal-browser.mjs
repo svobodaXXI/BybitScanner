@@ -232,17 +232,24 @@ try {
   await page.waitForFunction(expected =>
     document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
   archive.context_1h.length + 11);
-  assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 2,
-    "initial H1 main and target must render against their real context OHLC");
   const wickProjections = JSON.parse(await overlay.getAttribute("data-h1-main-wick-supports") ?? "[]");
   const startingMain = wickProjections.find(line => line.origin_ms === firstMain.from_ms);
-  assert.ok(startingMain, "first H1 main must be drawn at its original source wick");
-  assert.equal(startingMain.adjusted, false,
-    "published H1 main must not substitute a later wick for its structural third pivot");
-  assert.equal(startingMain.support_ms, firstMain.to_ms,
-    "the frozen first H1 slope must retain its actual confirmed second LOW");
-  assert.equal(startingMain.price, Number(firstMain.to_price));
-  console.log("REAL_FIRST_H1_STRUCTURAL_ANCHORS_OK " + JSON.stringify(startingMain));
+  if (firstMain.from_ms < archive.from_ms) {
+    // Genuine context candles are not part of the OWNER's replay.
+    // A clipped segment starting after its hidden wick is a ghost ray.
+    assert.equal(startingMain, undefined,
+      "H1 rays from hidden preplayback anchors must not be projected");
+    console.log("REAL_FIRST_H1_GHOST_ANCHOR_HIDDEN_OK");
+  } else {
+    assert.ok(Number(await overlay.getAttribute("data-painted-geometry")) >= 2,
+      "H1 main and target must render from their in-replay source wicks");
+    assert.ok(startingMain, "first H1 main must be drawn at its original source wick");
+    assert.equal(startingMain.adjusted, false,
+      "published H1 main must not substitute a later wick");
+    assert.equal(startingMain.support_ms, firstMain.to_ms);
+    assert.equal(startingMain.price, Number(firstMain.to_price));
+    console.log("REAL_FIRST_H1_STRUCTURAL_ANCHORS_OK " + JSON.stringify(startingMain));
+  }
   // The real first frame previously showed a BLUE M5 continuation ray
   // crossing the entire H1 pane. Keep its history, but only through its
   // own M5 confirmation time on the coarser H1 chart.
