@@ -287,7 +287,7 @@ export function App() {
       ? mode === "TERMINAL" || mode === "AUTOPILOT"
       : launchLink?.mode === "EDITOR" && mode === "TERMINAL";
     if (!eligible
-        || !launchLink.signalId || !frozenSignal
+        || !launchLink?.signalId || !frozenSignal
         || tradingSymbol !== launchLink.symbol || timeframe !== launchLink.timeframe)
       return null;
     try {
