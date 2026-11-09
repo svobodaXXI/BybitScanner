@@ -19,10 +19,10 @@ import shutil
 import tempfile
 from urllib.request import Request, urlopen
 
-from research.simulator_v2.trade_archive import MAX_ARCHIVE_BYTES
-from research.simulator_v2.trade_range import (
-    import_local_trade_range, run_cached_trade_range,
+from research.simulator_v2.trade_archive import (
+    MAX_ARCHIVE_BYTES, import_trade_day_into_cache,
 )
+from research.simulator_v2.trade_range import TradeDayProof, run_cached_trade_range
 
 SYMBOL = "XRPUSDT"
 START_DAY = date(2026, 10, 1)
@@ -33,8 +33,9 @@ MAX_TOTAL_ARCHIVE_BYTES = 900_000_000
 OUT_DIR = Path("simulator-v2-xrp-real-30days-202610")
 
 
-def fetch_archives(archive_dir: Path) -> int:
+def fetch_archives(archive_dir: Path, cache_dir: Path) -> tuple[int, tuple[TradeDayProof, ...]]:
     total = 0
+    proofs: list[TradeDayProof] = []
     for i in range(DAYS):
         day = START_DAY + timedelta(days=i)
         name = f"{SYMBOL}{day.isoformat()}.csv.gz"
@@ -59,9 +60,26 @@ def fetch_archives(archive_dir: Path) -> int:
                 output.write(block)
         if daily == 0:
             raise ValueError("empty public Bybit daily archive")
-        print(f"PUBLIC_ARCHIVE_DOWNLOADED utc_day={day.isoformat()} compressed_bytes={daily}",
-              flush=True)
-    return total
+        # Validate and cache each individual complete day BEFORE downloading
+        # the next; never spend bandwidth on later days after the first gap.
+        try:
+            chunk, raw_sha = import_trade_day_into_cache(
+                destination, cache_dir=cache_dir, symbol=SYMBOL, utc_day=day,
+                latest_closed_boundary_ms=END_MS,
+            )
+        except Exception as exc:
+            raise ValueError(
+                f"public historical day rejected utc_day={day.isoformat()}: {exc}"
+            ) from exc
+        proofs.append(TradeDayProof(day, raw_sha, chunk.sha256))
+        print(
+            f"PUBLIC_ARCHIVE_DAY_VERIFIED utc_day={day.isoformat()}"
+            f" compressed_bytes={daily} m1_minutes=1440"
+            f" raw_sha256={raw_sha} m1_sha256={chunk.sha256}",
+            flush=True,
+        )
+        destination.unlink()  # Only ephemeral CI-owned downloaded archive.
+    return total, tuple(proofs)
 
 
 def main() -> None:
@@ -76,12 +94,7 @@ def main() -> None:
         incoming = root / "official-raw"
         incoming.mkdir()
         cache = root / "derived-m1-cache"
-        total_bytes = fetch_archives(incoming)
-        proofs = import_local_trade_range(
-            archive_dir=incoming, cache_dir=cache, symbol=SYMBOL,
-            start_day=START_DAY, days=DAYS,
-            latest_closed_boundary_ms=END_MS,
-        )
+        total_bytes, proofs = fetch_archives(incoming, cache)
         if len(proofs) != DAYS or len(tuple(cache.glob("*.json"))) != DAYS:
             raise ValueError("incomplete raw provenance / derived M1 cache")
         # Actual strategy not wired yet. No implicit test orders or fabricated PnL.
