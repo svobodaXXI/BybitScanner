@@ -32,8 +32,9 @@ import "./AutopilotFirstScreen.css";
 /**
  * AUTOPILOT first screen (UI-1): read-only summary and open-trade cards.
  *
- * Refresh is explicit (mount + button): every request is served by the PAPER
- * owner thread, so this screen must not add a background polling load to a
+ * Refreshes the one existing read-only positions projection while visible.
+ * Every request is served by the PAPER owner thread, so never re-poll the
+ * full set of runtime/diary endpoints on a timer or add a second bot poller.
  * running PAPER_AUTO session.
  */
 
@@ -242,6 +243,30 @@ export function AutopilotFirstScreen({
   });
   const [robotDay, setRobotDay] = useState<Loadable<RobotDaySummary>>({ status: "loading" });
   const generation = useRef(0);
+  const pendingInventory = useRef<AbortController | null>(null);
+
+  // One bounded, cancellable read-only inventory request at a time. The
+  // selected chart and the shared Terminal list use the same snapshot.
+  const refreshPositions = useCallback(async (initial = false) => {
+    if (pendingInventory.current) return;
+    const controller = new AbortController();
+    pendingInventory.current = controller;
+    if (initial) setPositions({ status: "loading" });
+    try {
+      const inventory = await loadOpenPositions(controller.signal);
+      if (!controller.signal.aborted) {
+        setPositions({ status: "ready", value: inventory });
+        onPositionsLoaded?.(inventory);
+      }
+    } catch {
+      if (!controller.signal.aborted) {
+        setPositions({ status: "error" });
+        onPositionsLoaded?.(null); // Never retain a stale Robot attribution.
+      }
+    } finally {
+      if (pendingInventory.current === controller) pendingInventory.current = null;
+    }
+  }, [onPositionsLoaded]);
 
   const refresh = useCallback(async () => {
     const current = ++generation.current;
@@ -252,7 +277,6 @@ export function AutopilotFirstScreen({
       };
     setAutopilot({ status: "loading" });
     setHealth({ status: "loading" });
-    setPositions({ status: "loading" });
     setTrades({ status: "loading" });
     setRobotDay({ status: "loading" });
 
@@ -261,21 +285,23 @@ export function AutopilotFirstScreen({
       settle(loadRuntimeHealth).then(apply(setHealth)),
       settle(() => loadDiaryTrades(accountKey)).then(apply(setTrades)),
       settle(loadRobotDaySummary).then(apply(setRobotDay)),
-      settle(loadOpenPositions).then((result) => {
-        apply(setPositions)(result);
-        if (current === generation.current)
-          onPositionsLoaded?.(result.status === "ready" ? result.value : null);
-      }),
+      refreshPositions(true),
     ]);
-  }, [accountKey, onPositionsLoaded]);
+  }, [accountKey, refreshPositions]);
 
   useEffect(() => {
     void refresh();
+    // Only the existing PAPER inventory is refreshed, not all the other
+    // endpoints. No request overlap, timer or Robot attribution after unmount.
+    const timer = window.setInterval(() => { void refreshPositions(); }, 8_000);
     return () => {
+      window.clearInterval(timer);
       generation.current += 1;
+      pendingInventory.current?.abort();
+      pendingInventory.current = null;
       onPositionsLoaded?.(null);
     };
-  }, [refresh, onPositionsLoaded]);
+  }, [refresh, refreshPositions, onPositionsLoaded]);
 
   const backendOffline =
     health.status === "error" &&
