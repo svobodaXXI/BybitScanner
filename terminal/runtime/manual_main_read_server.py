@@ -144,7 +144,13 @@ class MainReadHandler(BaseHTTPRequestHandler):
             self._json(409, {"ok": False, "error": str(exc)[:80]})
             return
         except Exception:
-            self._json(503, {"ok": False, "error": "main_trade_unavailable"})
+            # This boundary cannot prove that no exchange call took place.
+            # Never turn a 503 into a retryable release of the client action.
+            self._json(503, {
+                "ok": False, "status": "unknown",
+                "reason_code": "manual_main_outcome_unknown",
+                "reconciliation_required": True,
+            })
             return
         self._json(200, {"ok": result["status"] != "rejected", **result})
 
