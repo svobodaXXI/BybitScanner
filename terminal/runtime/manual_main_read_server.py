@@ -1,7 +1,7 @@
-"""Loopback-only, read-only HTTP boundary for independently owned Bybit MAIN accounts.
+"""Loopback-only, independently owned Bybit MAIN HTTP boundary.
 
 Access is intended exclusively through the existing Telegram-authenticated Nginx
-origin. No paper runtime, Robot or order execution is added by importing this module.
+origin. No PAPER runtime or Robot is imported. Manual trading is separately gated, off by default.
 The only credential ingress is a same-origin MAIN provisioning POST. POST /refresh performs exchange READS
 and updates only the separate MAIN snapshot store.
 """
@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from terminal.application.manual_main_accounts import ManualMainAccounts
+from terminal.application.manual_main_accounts import ManualMainAccounts\nfrom terminal.application.manual_main_trading import (\n    ManualMainTrader, ManualMainTradeLedger, ManualMainTradeBlocked, enabled_from_environment,\n)
 from terminal.persistence.credential_store import create_credential_store
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
 
@@ -69,7 +69,7 @@ class MainReadHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlsplit(self.path).path
         if path == PREFIX + "/health":
-            self._json(200, {"ok": True, "component": "manual_main_read", "trading_enabled": False})
+            self._json(200, {"ok": True, "component": "manual_main_read",\n                             "trading_enabled": bool(self.trader and self.trader.enabled)})
         elif path == PREFIX + "/accounts":
             self._json(200, {"ok": True, **self.accounts.catalog()})
         elif (account_id := self._account_path(path, "/summary")) is not None:
@@ -78,7 +78,7 @@ class MainReadHandler(BaseHTTPRequestHandler):
             except LookupError:
                 self._json(404, {"ok": False, "error": "account_not_found"})
                 return
-            self._json(200, {"ok": True, "summary": summary})
+            if summary is not None:\n                summary = {**summary, "trading_enabled": bool(self.trader and self.trader.can_trade(account_id))}\n            self._json(200, {"ok": True, "summary": summary})
         else:
             self._json(404, {"ok": False, "error": "not_found"})
 
@@ -86,6 +86,10 @@ class MainReadHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == PREFIX + "/accounts":
             self._provision()
+            return
+        trade_prefix = PREFIX + "/trade/"
+        if path.startswith(trade_prefix):
+            self._trade(path[len(trade_prefix):])
             return
         if (account_id := self._account_path(path, "/refresh")) is None:
             self._json(405, {"ok": False, "error": "read_only_gateway"})
@@ -103,6 +107,39 @@ class MainReadHandler(BaseHTTPRequestHandler):
             self._json(503, {"ok": False, "error": "main_account_refresh_unavailable"})
             return
         self._json(200, {"ok": True, "summary": summary})
+
+    def _trade(self, operation: str) -> None:
+        """Same-origin manual MAIN action, not PAPER execution."""
+        if self.trader is None or not self.trader.enabled:
+            self._json(403, {"ok": False, "error": "manual_main_live_disabled"})
+            return
+        host = self.headers.get("Host", "")
+        if not host or self.headers.get("Origin", "") != "https://" + host:
+            self._json(403, {"ok": False, "error": "origin_required"})
+            return
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            self._json(415, {"ok": False, "error": "json_required"})
+            return
+        if self.headers.get("Transfer-Encoding"):
+            self._json(400, {"ok": False, "error": "invalid_payload"})
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "-1"))
+        except ValueError:
+            size = -1
+        if not 0 < size <= 4096:
+            self._json(413, {"ok": False, "error": "invalid_payload"})
+            return
+        try:
+            payload = json.loads(self.rfile.read(size))
+            result = self.trader.submit(operation, payload)
+        except (ManualMainTradeBlocked, ValueError, TypeError) as exc:
+            self._json(409, {"ok": False, "error": str(exc)[:80]})
+            return
+        except Exception:
+            self._json(503, {"ok": False, "error": "main_trade_unavailable"})
+            return
+        self._json(200, {"ok": result["status"] != "rejected", **result})
 
     def _provision(self) -> None:
         # Existing authenticated ingress enforces Telegram owner session + Origin.
@@ -158,9 +195,9 @@ class MainReadHandler(BaseHTTPRequestHandler):
         pass
 
 
-def serve(accounts: ManualMainAccounts, *, port: int = PORT) -> None:
+def serve(accounts: ManualMainAccounts, *, port: int = PORT,\n          trader: ManualMainTrader | None = None) -> None:
     """Intentionally loopback-bound; Nginx owner auth is the public boundary."""
-    handler = type("BoundManualMainReadHandler", (MainReadHandler,), {"accounts": accounts})
+    handler = type("BoundManualMainReadHandler", (MainReadHandler,), {"accounts": accounts, "trader": trader})
     server = ThreadingHTTPServer((HOST, port), handler)
     try:
         server.serve_forever()
@@ -175,9 +212,14 @@ def main() -> None:
         create_credential_store(state_dir / "main.credentials.systemd"),
         LiveAccountProjectionStore(state_dir / "main.snapshots.sqlite3"),
     )
+    enabled, ceiling = enabled_from_environment()
+    ledger = ManualMainTradeLedger(state_dir / "main.actions.sqlite3") if enabled and ceiling > 0 else None
+    trader = ManualMainTrader(accounts, ledger, enabled=enabled, max_notional=ceiling) if ledger else None
     try:
-        serve(accounts)
+        serve(accounts, trader=trader)
     finally:
+        if ledger:
+            ledger.close()
         accounts.close()
 
 
