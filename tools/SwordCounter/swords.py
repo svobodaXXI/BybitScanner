@@ -24,7 +24,7 @@ from dataclasses import dataclass, field, replace
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 from typing import Callable, Iterable
 
-from tools.SwordCounter.bybit_positions import BybitPositionsError, OpenPosition
+from tools.SwordCounter.bybit_positions import AccountBalances, BybitPositionsError, OpenPosition
 
 DEFAULT_TOTAL_SWORDS = 20
 DEFAULT_SWORD_SIZE_USDT = Decimal("5")
@@ -74,6 +74,7 @@ class SwordCount:
     unknown_margin_symbols: tuple[str, ...] = field(default=())
     reason: str = ""
     wallet_balance_usdt: Decimal | None = None   # Wallet Balance the RO was derived from (None: unknown)
+    account_balances: AccountBalances | None = None  # same-account snapshot for status panel
 
     @property
     def status_label(self) -> str:
@@ -118,13 +119,14 @@ def ro_from_wallet_balance(wallet_balance: Decimal, total_swords: int) -> Decima
 
 
 def count_swords_with_wallet_balance(fetch_positions: Callable[[], Iterable[OpenPosition]],
-                             fetch_wallet_balance: Callable[[], Decimal], total_swords: int) -> SwordCount:
+                             fetch_wallet_balance: Callable[[], Decimal | AccountBalances], total_swords: int) -> SwordCount:
     """Read Wallet Balance and positions now; RO = wallet_balance / total swords. Never a guessed RO."""
     if isinstance(total_swords, bool) or not isinstance(total_swords, int) or total_swords <= 0:
         raise ValueError("total_swords must be a positive integer")
     failure = None
     try:
-        wallet_balance = fetch_wallet_balance()
+        snapshot = fetch_wallet_balance()
+        wallet_balance = snapshot.wallet_balance if isinstance(snapshot, AccountBalances) else snapshot
         positions = tuple(fetch_positions())
     except BybitPositionsError as error:
         failure = f"{type(error).__name__}: {error}"
@@ -146,7 +148,8 @@ def count_swords_with_wallet_balance(fetch_positions: Callable[[], Iterable[Open
         return SwordCount(STATUS_UNAVAILABLE, total_swords=total_swords, sword_size_usdt=None,
                           positions_count=len(positions), reason=why, wallet_balance_usdt=None if not wallet_balance.is_finite() else wallet_balance)
     result = count_swords(positions, SwordSettings(total_swords=total_swords, sword_size_usdt=ro))
-    return replace(result, wallet_balance_usdt=wallet_balance)
+    return replace(result, wallet_balance_usdt=wallet_balance,
+                   account_balances=snapshot if isinstance(snapshot, AccountBalances) else None)
 
 
 def count_swords_from_api(fetch_positions: Callable[[], Iterable[OpenPosition]],
