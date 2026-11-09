@@ -210,7 +210,7 @@ def main() -> None:
     # No PAPER database, port, credentials or runtime are ever opened here.
     accounts = ManualMainAccounts(
         create_credential_store(state_dir / "main.credentials.systemd"),
-        LiveAccountProjectionStore(state_dir / "main.snapshots.sqlite3"),
+        LiveAccountProjectionStore(state_dir / "main.snapshots.sqlite3", check_same_thread=False),
     )
     enabled, ceiling = enabled_from_environment()
     ledger = ManualMainTradeLedger(state_dir / "main.actions.sqlite3") if enabled and ceiling > 0 else None
