@@ -73,8 +73,8 @@ def seed_50_m5(session, pattern="Falling Wedge", approved=True):
 class PureWedgeRobotTests(unittest.TestCase):
     def test_original_fsm_and_original_limit_planner_for_both_wedge_directions(self):
         for pattern, opening, retest, side, expected_price in [
-            ("Falling Wedge", "102", "101", "BUY", D("100.02")),
-            ("Rising Wedge", "98", "99", "SELL", D("99.98")),
+            ("Falling Wedge", "102", "101", "Buy", D("100.02")),
+            ("Rising Wedge", "98", "99", "Sell", D("99.98")),
         ]:
             with self.subTest(pattern=pattern):
                 session = make_session(run=pattern.replace(" ", ""))
