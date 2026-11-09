@@ -216,6 +216,11 @@ try {
         slider.dispatchEvent(new Event("input", { bubbles: true }));
         slider.dispatchEvent(new Event("change", { bubbles: true }));
       }, n);
+      // Genuine keyboard input crosses React's range change boundary even
+      // when a programmatically dispatched event is ignored as untrusted.
+      const atEnd = n === Number(await scrubber.getAttribute("max"));
+      await scrubber.press(atEnd ? "ArrowLeft" : "ArrowRight");
+      await scrubber.press(atEnd ? "ArrowRight" : "ArrowLeft");
     }
     await page.waitForFunction(expected =>
       document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
