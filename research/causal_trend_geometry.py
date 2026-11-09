@@ -634,7 +634,9 @@ class CausalGeometryFeed:
                         support = highs[-1]
                         self._prior_price = support.price
                         self._prior_touch_ms = support.at_ms
-                        self._prior_trend_version = closed_at_ms
+                        # Keep the movement's published yellow version as
+                        # provenance; a prior update must not invent a line.
+                        self._prior_trend_version = trend.available_at_ms
                         self._last_prior_candidate_touch_ms = support.at_ms
                         self._prior_candidates = []
                         return
