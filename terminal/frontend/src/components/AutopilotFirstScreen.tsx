@@ -35,7 +35,6 @@ import "./AutopilotFirstScreen.css";
  * Refreshes the one existing read-only positions projection while visible.
  * Every request is served by the PAPER owner thread, so never re-poll the
  * full set of runtime/diary endpoints on a timer or add a second bot poller.
- * running PAPER_AUTO session.
  */
 
 const NO_SOURCE = "Нет источника данных";
