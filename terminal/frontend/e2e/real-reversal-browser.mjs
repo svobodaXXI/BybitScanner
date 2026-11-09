@@ -343,13 +343,19 @@ try {
   const firstBear = yellow.find(line => line.side === "BEAR");
   const lastBearBreak = breaks.find(event =>
     event.previous_side === "BEAR" &&
-    event.confirmed_at_ms === Date.UTC(2026, 7, 30, 23, 5));
+    event.confirmed_at_ms === Date.UTC(2026, 7, 29, 14, 5));
   assert.ok(firstBear && lastBearBreak &&
     firstBear.from_ms === Date.UTC(2026, 7, 27, 8) &&
     Number(firstBear.from_price) === 0.3966 &&
-    Number(lastBearBreak.prior_price) === 0.3748 &&
-    lastBearBreak.prior_at_ms === Date.UTC(2026, 7, 28, 9),
+    Number(lastBearBreak.prior_price) === 0.3566 &&
+    lastBearBreak.prior_at_ms === Date.UTC(2026, 7, 28, 23),
     "one original BEAR H1 movement must persist until its true later prior break");
+  const structuralShift = archive.hourly_prior_updates.find(level =>
+    level.side === "BEAR" && level.available_at_ms === Date.UTC(2026, 7, 29, 4) &&
+    level.at_ms === Date.UTC(2026, 7, 28, 23) &&
+    Number(level.price) === 0.3566);
+  assert.ok(structuralShift,
+    "closed lower LOW must move purple prior to preceding H1 HIGH without yellow refit");
   const sameMovement = yellow.filter(line =>
     line.side === "BEAR" &&
     line.available_at_ms < lastBearBreak.confirmed_at_ms);
@@ -378,7 +384,7 @@ try {
     const firstYellowIndex = byEventTime.get(opposite.available_at_ms);
     assert.ok(firstYellowIndex > index, "new yellow main line must NOT predate the break");
     if (event.previous_side === "BEAR" &&
-        event.confirmed_at_ms === Date.UTC(2026, 7, 30, 23, 5)) {
+        event.confirmed_at_ms === Date.UTC(2026, 7, 29, 14, 5)) {
       for (const [publishedAt, originAt, supportAt, supportPrice] of descendingVersions) {
         const structuralIndex = byEventTime.get(publishedAt);
         assert.ok(Number.isInteger(structuralIndex) && structuralIndex >= position);
