@@ -286,11 +286,14 @@ describe("Autopilot compact first screen", () => {
       "/api/open-positions": { ok: true, account_id: "paper", positions: initial },
     };
     const intervals: Array<() => void> = [];
-    vi.spyOn(window, "setInterval").mockImplementation((fn) => {
-      intervals.push(fn as () => void);
-      return 17;
+    const nativeSetInterval = window.setInterval.bind(window);
+    vi.spyOn(window, "setInterval").mockImplementation((fn, delay) => {
+      if (delay === 8_000) {
+        intervals.push(fn as () => void);
+        return 987654321; // Only our component timer; not testing-library waitFor.
+      }
+      return nativeSetInterval(fn, delay);
     });
-    vi.spyOn(window, "clearInterval").mockImplementation(() => {});
     const fetchMock = mockFetch(routes);
     const onPositionsLoaded = vi.fn();
     const view = render(<AutopilotFirstScreen onPositionsLoaded={onPositionsLoaded} />);
@@ -315,11 +318,14 @@ describe("Autopilot compact first screen", () => {
     let resolveInventory: ((response: Response) => void) | null = null;
     const pending = new Promise<Response>((resolve) => { resolveInventory = resolve; });
     const intervals: Array<() => void> = [];
-    vi.spyOn(window, "setInterval").mockImplementation((fn) => {
-      intervals.push(fn as () => void);
-      return 18;
+    const nativeSetInterval = window.setInterval.bind(window);
+    vi.spyOn(window, "setInterval").mockImplementation((fn, delay) => {
+      if (delay === 8_000) {
+        intervals.push(fn as () => void);
+        return 987654321; // Only our component timer; not testing-library waitFor.
+      }
+      return nativeSetInterval(fn, delay);
     });
-    vi.spyOn(window, "clearInterval").mockImplementation(() => {});
     const fetchMock = vi.fn((url: string, _options?: RequestInit) =>
       url === "/api/open-positions" ? pending
         : Promise.resolve(new Response(JSON.stringify(healthyRoutes[url]), { status: 200 })));
@@ -350,11 +356,14 @@ describe("Autopilot compact first screen", () => {
       "/api/open-positions": { ok: true, account_id: "paper", positions: initial },
     };
     const intervals: Array<() => void> = [];
-    vi.spyOn(window, "setInterval").mockImplementation((fn) => {
-      intervals.push(fn as () => void);
-      return 19;
+    const nativeSetInterval = window.setInterval.bind(window);
+    vi.spyOn(window, "setInterval").mockImplementation((fn, delay) => {
+      if (delay === 8_000) {
+        intervals.push(fn as () => void);
+        return 987654321; // Only our component timer; not testing-library waitFor.
+      }
+      return nativeSetInterval(fn, delay);
     });
-    vi.spyOn(window, "clearInterval").mockImplementation(() => {});
     mockFetch(routes);
     const onPositionsLoaded = vi.fn();
     render(<AutopilotFirstScreen onPositionsLoaded={onPositionsLoaded} />);
