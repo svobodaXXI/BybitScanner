@@ -81,9 +81,7 @@ class ReusedGeometryTests(unittest.TestCase):
         self.assertEqual(session.exchange.events, ())
 
     def test_rejected_virtual_fill_discards_geometry_preparation_and_retries_once(self):
-        session = instance("rejected", taker_fee_rate=D("0.1"))
-        # Fee = 10 for quantity one and price 100, but deposit will be one:
-        # For this regression explicitly use a separate low-deposit session.
+        # The next-open fee on one BTC exceeds the 1-USDT virtual deposit.
         session = VirtualReplaySession(
             simulation_run_id="rejected", symbol="BTCUSDT",
             initial_balance=D("1"), taker_fee_rate=D("0.1"),
