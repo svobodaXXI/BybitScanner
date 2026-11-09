@@ -54,6 +54,33 @@ try {
   assert.match(await page.locator("body").innerText(), /SIMULATION ONLY/);
   assert.match(await page.locator("body").innerText(), /Синтетический пример/);
   await page.waitForFunction(() => document.querySelectorAll(".replay-chart canvas").length > 0);
+
+  // Universal setup config changes only local React state, never live/PAPER IO.
+  const setup = page.getByRole("region", { name: "Настройка стратегий и периода" });
+  const all = setup.getByRole("checkbox", { name: "Все стратегии" });
+  await all.check();
+  assert.equal(await setup.getByRole("checkbox", { name: "Mirror — комплекс" }).isChecked(), true);
+  assert.equal(await setup.getByRole("checkbox", { name: "Восходящий клин" }).isChecked(), true);
+  assert.equal(await setup.getByRole("checkbox", { name: "Ikigai Box" }).isChecked(), true);
+  await setup.getByRole("checkbox", { name: "Ikigai Box" }).uncheck();
+  assert.equal(await setup.getByRole("checkbox", { name: "Mirror — комплекс" }).isChecked(), true);
+  await setup.getByRole("button", { name: "Только клинья" }).click();
+  assert.equal(await setup.getByRole("checkbox", { name: "Mirror — комплекс" }).isChecked(), false);
+  assert.equal(await setup.getByRole("checkbox", { name: "Восходящий клин" }).isChecked(), true);
+  assert.equal(await setup.getByRole("checkbox", { name: "Нисходящий клин" }).isChecked(), true);
+  assert.equal(await setup.getByRole("checkbox", { name: "Зеркальные уровни" }).isChecked(), false);
+  const startUtc = setup.getByRole("textbox", { name: "Начало прогона UTC" });
+  const endUtc = setup.getByRole("textbox", { name: "Конец прогона UTC" });
+  await startUtc.fill("2026-10-01T12:34");
+  await setup.getByRole("button", { name: "Неделя", exact: true }).click();
+  assert.equal(await endUtc.inputValue(), "2026-10-08T12:33");
+  await setup.getByRole("button", { name: "Месяц · 30 дней" }).click();
+  assert.equal(await endUtc.inputValue(), "2026-10-31T12:33");
+  await endUtc.fill("2026-10-11T18:45");
+  assert.equal(await setup.getByRole("button", { name: "Месяц · 30 дней" }).getAttribute("aria-pressed"), "false");
+  assert.equal(await setup.getByRole("button", { name: /Торговый прогон/ }).isDisabled(), true);
+  assert.equal(requests.filter(url => url.includes("/api/") || url.includes("/v5/")).length, 0);
+
   // The entire replay control surface belongs beside the M5/H1 switch,
   // never in the file-import row above the chart.
   const controlBar = page.getByRole("group", { name: "Таймфрейм графика" });
