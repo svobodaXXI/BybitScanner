@@ -1,8 +1,11 @@
 """Causally confirmed exploratory 1h trend lines and 5m correction slopes.
 
-NO trading signals or execution permissions. Provisional pivot wing=2 is a
-research parameter, not an owner-approved pivot rule. Candidate trend and
-reference lines are visible only after their *right-side* candles have closed.
+Single H-017 detector for offline replay and future Scanner pattern fan-out.
+Consumes only supplied closed H1/M5 candles; owns no data fetching, Telegram,
+execution, PAPER state, or other pattern logic. The default one-bar swing wing
+is a research heuristic for points 1–3; point 4 is published when its own
+extremum candle closes, with no later right-wing lookahead.
+NO trading signals or execution permissions.
 """
 from __future__ import annotations
 
