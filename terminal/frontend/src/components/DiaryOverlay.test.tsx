@@ -261,10 +261,7 @@ describe("DiaryOverlay", () => {
 
   it("opens Setups as Сетапы and exposes attention evidence read-only", async () => {
     const fetchMock = installFetchMock();
-    render(<DiaryOverlay accountKey="paper:1" onClose={() => {}} />);
-
-    await screen.findByText("BTCUSDT");
-    fireEvent.click(screen.getByRole("button", { name: "Сетапы" }));
+    render(<DiaryOverlay accountKey="paper:1" initialSection="SETUPS" onClose={() => {}} />);
 
     expect(await screen.findByText("Режим входа breakout_retest")).toBeTruthy();
     expect(screen.getByText("Не хватает данных: MISSING_DECISION_EVENTS")).toBeTruthy();
@@ -274,10 +271,7 @@ describe("DiaryOverlay", () => {
 
   it("opens D6.4 statistics read-only and keeps unavailable metrics missing", async () => {
     const fetchMock = installFetchMock();
-    render(<DiaryOverlay accountKey="paper:1" statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
-
-    await screen.findByText("BTCUSDT");
-    fireEvent.click(screen.getByRole("button", { name: "Статистика" }));
+    render(<DiaryOverlay accountKey="paper:1" initialSection="STATISTICS" statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
 
     expect(await screen.findByText("Выборка")).toBeTruthy();
     expect(screen.getByText("Результативность")).toBeTruthy();
@@ -292,10 +286,7 @@ describe("DiaryOverlay", () => {
 
   it("shows Scanner MIRROR levels read-only with geometry, retest and PAPER status", async () => {
     const fetchMock = installFetchMock();
-    render(<DiaryOverlay accountKey="paper:1" onClose={() => {}} />);
-
-    await screen.findByText("BTCUSDT");
-    fireEvent.click(screen.getByRole("button", { name: "MIRROR" }));
+    render(<DiaryOverlay accountKey="paper:1" initialSection="MIRROR" onClose={() => {}} />);
 
     expect(await screen.findByText("KNCUSDT")).toBeTruthy();
     expect(screen.getByText("КАНДИДАТ")).toBeTruthy();
@@ -322,7 +313,7 @@ describe("scoped statistics fail-closed UX", () => {
   it("never uses global statistics when no authoritative account/owner scope exists", async () => {
     const fetchMock = installFetchMock();
     render(<DiaryOverlay accountKey="unknown:0" initialSection="STATISTICS" onClose={() => {}} />);
-    await screen.findByText("Не удалось загрузить дневник");
+    await screen.findByText("Не удалось загрузить статистику выбранного счёта");
     expect(fetchMock).not.toHaveBeenCalledWith("/api/diary/statistics");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -334,7 +325,7 @@ describe("scoped statistics fail-closed UX", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<DiaryOverlay accountKey="paper:1" initialSection="STATISTICS"
       statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
-    await screen.findByText("Не удалось загрузить дневник");
+    await screen.findByText("Не удалось загрузить статистику выбранного счёта");
     expect(screen.queryByText("Результативность")).not.toBeInTheDocument();
   });
 
@@ -363,6 +354,57 @@ describe("scoped statistics fail-closed UX", () => {
     if (!pending.resolve) throw new Error("old request missing");
     pending.resolve(new Response(JSON.stringify(statisticsResponse), { status: 200 }));
     await waitFor(() => expect(screen.getByText(/bybit-main · раздельная статистика/)).toBeInTheDocument());
-    expect(screen.queryByText("Не удалось загрузить дневник")).not.toBeInTheDocument();
+    expect(screen.queryByText("Не удалось загрузить статистику выбранного счёта")).not.toBeInTheDocument();
+  });
+});
+
+const finrezResponse = {
+  ok: true,
+  account_id: "paper",
+  owner: "ROBOT" as const,
+  period: "TODAY" as const,
+  period_start_ms: 1_793_000_000_000,
+  as_of_ms: 1_793_050_000_000,
+  source_revision: 3,
+  source: "PAPER_EXECUTIONS_ATTRIBUTED" as const,
+  pnl_basis: "REALIZED_PRICE_MINUS_EXECUTION_FEES" as const,
+  tickers: [
+    { symbol: "ETHUSDT", pnl_usdt: "7.2", trade_count: 3 },
+    { symbol: "BTCUSDT", pnl_usdt: "-2.5", trade_count: 1 },
+  ],
+};
+
+describe("Finrez first-screen UI", () => {
+  it("shows the ticker ranking with two periods, reuses the Diary modal and defers other sections", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
+      ...finrezResponse,
+      period: url.includes("period=ALL") ? "ALL" : "TODAY",
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:1" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(screen.getByRole("dialog", { name: "Статистика" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Сегодня" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByText("+7.2 USDT")).toBeInTheDocument();
+    expect(screen.getByText("-2.5 USDT")).toBeInTheDocument();
+    expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=TODAY");
+    fireEvent.click(screen.getByRole("button", { name: "Всё время" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=ALL"));
+    fireEvent.click(screen.getByRole("button", { name: "Паттерны" }));
+    expect(await screen.findByText(/Паттерны — второй этап/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
+    expect(await screen.findByText(/Сделки — третий этап/)).toBeInTheDocument();
+  });
+
+  it("never shows foreign-account ranking or silently falls back to manual", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ ...finrezResponse, owner: "MANUAL" }), { status: 200 },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:1" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText("Не удалось загрузить статистику выбранного счёта")).toBeInTheDocument();
+    expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
   });
 });
