@@ -117,6 +117,15 @@ export function useModeAccountSelection() {
   }, []);
 
   const mainId = ready && preferences.TERMINAL !== "paper" ? preferences.TERMINAL : null;
+  const currentMainId = useRef<string | null>(null);
+  currentMainId.current = mainId;
+  const refreshMain = useCallback(async () => {
+    const accountId = currentMainId.current;
+    if (!accountId) throw new Error("main_account_not_selected");
+    const projection = await mainProjectionFor(accountId, true);
+    if (currentMainId.current !== accountId) throw new Error("main_account_changed");
+    setMainProjection(projection);
+  }, []);
   useEffect(() => {
     let live = true;
     if (!mainId) {
@@ -177,5 +186,5 @@ export function useModeAccountSelection() {
     }
   }, [ready]);
 
-  return { preferences, ready, pending, pendingMode, mainProjection, error, selectAccount };
+  return { preferences, ready, pending, pendingMode, mainProjection, error, selectAccount, refreshMain };
 }
