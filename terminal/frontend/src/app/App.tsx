@@ -31,6 +31,8 @@ import type { Candle } from "../contracts/marketData";
 import type { PaperOpenPosition } from "../contracts/trading";
 import type { RobotTradeMarker } from "../chart/robotTradeMarkers";
 import { parseRobotPositionOrigin, type RobotPositionOrigin } from "../autopilot/robotPositionOrigin";
+import { useRobotSignalGeometry } from "../autopilot/useRobotSignalGeometry";
+import { RobotExecutionJournal } from "../components/RobotExecutionJournal";
 import type { DrawingObject } from "../chart/drawingModel";
 import {
   createLimitDraft,
@@ -399,6 +401,14 @@ export function App() {
   // Read-only snapshot of EXACTLY the same TradeMarkers used by Telegram
   // position cards. Never infer Robot executions from OHLC or generic Diary.
   const activeRobotTradeId = robotPosition?.robot_trade_id ?? null;
+  const robotGeometry = useRobotSignalGeometry({
+    observing: mode === "AUTOPILOT" && robotPosition !== null,
+    tradeId: activeRobotTradeId,
+    symbol: tradingSymbol,
+    markers: robotMarkers,
+    timeframe,
+    candles: market.candles,
+  });
   useEffect(() => {
     setRobotMarkers(null);
     if (mode !== "AUTOPILOT" || !activeRobotTradeId || !robotPosition) return;
@@ -1395,7 +1405,7 @@ export function App() {
           Исходный сигнал не указан в ссылке. Показаны текущие свечи без сохранённых линий паттерна.
         </output>
       )}
-      {(mode === "TERMINAL" || mode === "AUTOPILOT") && launchLink?.mode === "TERMINAL" && launchLink.signalId
+      {(mode === "TERMINAL" || (mode === "AUTOPILOT" && !robotPosition)) && launchLink?.mode === "TERMINAL" && launchLink.signalId
         && tradingSymbol === launchLink.symbol && timeframe === launchLink.timeframe && (
           <output role="status" aria-live="polite">
             {terminalSignalDrawings
@@ -1405,6 +1415,17 @@ export function App() {
                 : "Линии исходного сигнала недоступны на текущих свечах; ордера не изменены."}
           </output>
         )}
+      {mode === "AUTOPILOT" && activeRobotTradeId && robotGeometry.origin ? (
+        <output role="status" aria-live="polite" aria-label="Геометрия сигнала выбранной сделки">
+          {robotGeometry.drawings
+            ? `Исходный сигнал робота: ${robotGeometry.origin.pattern ?? robotGeometry.origin.candidate_id}`
+            : robotGeometry.status === "loading"
+              ? "Загрузка исходной геометрии сделки…"
+              : robotGeometry.status === "unavailable"
+                ? "Исходная геометрия сделки отсутствует или не подтверждена."
+                : "Линии исходного сигнала вне текущих свечей или таймфрейм не совпадает."}
+        </output>
+      ) : null}
       <section className="workspace-grid" aria-label="Trading workspace">
         <div
           className={`workspace-market-row ${mode !== "EDITOR" && marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
@@ -1460,7 +1481,9 @@ export function App() {
           } : undefined}
           referenceDrawings={mode === "EDITOR"
             ? frozenSignal?.referenceDrawings ?? []
-            : mode === "TERMINAL" || mode === "AUTOPILOT" ? terminalSignalDrawings ?? [] : []}
+            : mode === "AUTOPILOT" ? (robotPosition
+                ? robotGeometry.drawings ?? [] : terminalSignalDrawings ?? [])
+              : mode === "TERMINAL" ? terminalSignalDrawings ?? [] : []}
           editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
           signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
           originalPattern={mode === "EDITOR" ? frozenSignal?.originalPattern ?? null : null}
@@ -1615,6 +1638,13 @@ export function App() {
           onTakeDelete={() => deleteProtection("TAKE")}
           averageEntryPrice={mode === "TERMINAL" && protectionPositionSide !== "Flat" || mode === "AUTOPILOT" && robotPosition ? protectionAverageEntry : null}
           readOnly={mode === "AUTOPILOT"}
+          positionFooter={mode === "AUTOPILOT" ? (
+            <RobotExecutionJournal
+              selectedTradeId={activeRobotTradeId}
+              markers={robotPosition && robotMarkers?.tradeId === activeRobotTradeId
+                && robotMarkers.symbol === tradingSymbol ? robotMarkers.markers : null}
+            />
+          ) : undefined}
           robotTradeMarkers={mode === "AUTOPILOT" && robotPosition &&
             robotMarkers?.symbol === tradingSymbol &&
             robotMarkers.tradeId === robotPosition.robot_trade_id
@@ -1683,9 +1713,7 @@ export function App() {
           onRobotPositionsLoaded={setRobotPositions}
           robotLivePositions={robotPositions}
           verifiedRobotPosition={robotPosition}
-          verifiedRobotOrigin={mode === "AUTOPILOT" && robotPosition &&
-            robotMarkers?.symbol === robotPosition.symbol && robotMarkers?.tradeId === robotPosition.robot_trade_id
-              ? robotMarkers.origin : null}
+          verifiedRobotOrigin={robotGeometry.origin}
           symbol={tradingSymbol}
           paperState={currentPaperState}
           activeLimitOrders={
