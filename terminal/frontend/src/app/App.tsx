@@ -404,13 +404,17 @@ export function App() {
     if (mode !== "AUTOPILOT" || !activeRobotTradeId || !robotPosition) return;
     const controller = new AbortController();
     const symbol = robotPosition.symbol, tradeId = activeRobotTradeId;
-    void (async () => {
+    let pending = false;
+
+    const refreshMarkers = async () => {
+      if (pending || controller.signal.aborted) return;
+      pending = true;
       try {
         const response = await fetch(
           `/api/robot/position-markers?symbol=${encodeURIComponent(symbol)}&trade_id=${encodeURIComponent(tradeId)}`,
           { signal: controller.signal },
         );
-        if (!response.ok) return;
+        if (!response.ok) throw new Error("Robot marker projection unavailable");
         const result = await response.json() as {
           ok?: boolean; account_id?: string; source?: string; symbol?: string;
           trade_id?: string; markers?: RobotTradeMarker[]; origin?: unknown;
@@ -418,14 +422,25 @@ export function App() {
         if (result.ok !== true || result.account_id !== "paper" ||
             result.source !== "robot_position_view.TradeMarker" ||
             result.symbol !== symbol || result.trade_id !== tradeId ||
-            !Array.isArray(result.markers)) return;
+            !Array.isArray(result.markers))
+          throw new Error("Robot marker identity unproven");
         if (!controller.signal.aborted)
           setRobotMarkers({ symbol, tradeId, markers: result.markers, origin: parseRobotPositionOrigin(result.origin) });
       } catch {
-        // Read-only observation only: unavailable evidence means no markers.
+        // Fail closed: stale entry/fill markers cannot masquerade as live facts.
+        if (!controller.signal.aborted) setRobotMarkers(null);
+      } finally {
+        pending = false;
       }
-    })();
-    return () => controller.abort();
+    };
+    void refreshMarkers();
+    // Reuse the existing Robot read-only projection for new fills and
+    // average-entry changes. No trading request or Telegram poller is added.
+    const timer = window.setInterval(() => { void refreshMarkers(); }, 8_000);
+    return () => {
+      window.clearInterval(timer);
+      controller.abort();
+    };
   }, [mode, activeRobotTradeId, robotPosition?.symbol]);
 
   const liveProtectionPosition = liveProtectionAllowed
