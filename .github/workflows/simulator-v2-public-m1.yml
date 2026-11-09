@@ -1,12 +1,9 @@
 name: Simulator V2 public M1 provenance probe
 
+# This external-market diagnostic is opt-in only. Bybit's public API
+# returned HTTP 403 from GitHub-hosted CI on 2026-11-09 (run 42676656902).
+# Do not gate offline SIMULATION tests or merges on network/geographic access.
 on:
-  pull_request:
-    branches:
-      - 'stable/adfb50b-forward'
-    paths:
-      - 'research/simulator_v2/public_m1_smoke.py'
-      - '.github/workflows/simulator-v2-public-m1.yml'
   workflow_dispatch:
 
 permissions:
