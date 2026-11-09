@@ -54,6 +54,20 @@ function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" | "undo" | "mag
     <path d={REPLAY_TOOL_PATHS[tool]} />
   </svg>;
 }
+type PlaybackIconName = "start" | "back" | "play" | "pause" | "forward";
+const PLAYBACK_ICON_PATHS: Record<PlaybackIconName, string> = {
+  start: "M4 5v14M13 6L6 12l7 6zM21 6l-7 6 7 6z",
+  back: "M5 5v14M19 6L9 12l10 6z",
+  play: "M7 4l13 8-13 8z",
+  pause: "M8 5v14M16 5v14",
+  forward: "M19 5v14M5 6l10 6-10 6z",
+};
+function ReplayPlaybackIcon({ name }: { name: PlaybackIconName }) {
+  return <svg className="replay-playback-icon" viewBox="0 0 24 24"
+    data-playback-icon={name} aria-hidden="true" focusable="false">
+    <path d={PLAYBACK_ICON_PATHS[name]} />
+  </svg>;
+}
 function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selectedId,
   drawingTool, magnet, onDrawingsChange, onSelectDrawing, onDrawingGesture, onDrawingComplete, onDrawingGestureEnd, onChooseStart }: {
   document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h";
@@ -932,18 +946,10 @@ export function ReplayPage() {
               onClick={() => setTimeframe("5m")}>M5</button>
             <button type="button" aria-pressed={timeframe === "1h"}
               onClick={() => setTimeframe("1h")}>H1</button>
-            <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
-        <button type="button" onClick={() => {
-          setPlaying(false);
-          setCursor((current) => timeframeStepCursor(document.events, current, timeframe, "back"));
-        }} disabled={shown.candles.length === 0}>◀ Шаг назад</button>
-        <button type="button" onClick={() => {
-          setPlaying(false);
-          setCursor((current) => timeframeStepCursor(document.events, current, timeframe, "forward"));
-        }} disabled={cursor >= total}>Шаг вперёд ▶</button>
-        <label className="replay-rate">Скорость {rate} свечей/с
-          <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
-        </label>
+            <div className="replay-playback-controls">
+              <label className="replay-rate">Скорость {rate} свечей/с
+                <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
+              </label>
             </div>
           </div>
           <div className="replay-drawing-tools" role="group" aria-label="Инструменты рисования">
@@ -1028,14 +1034,32 @@ export function ReplayPage() {
             </label>
                         <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
           </div>
-          <div className="replay-seek-bar" role="group" aria-label="Перемотка графика">
-            <button type="button" onClick={() => {
-              setPlaying(false); setPendingStartMs(null); setCursor(0);
-            }}>В начало</button>
-            <button type="button" onClick={() => {
-              if (cursor === total) setCursor(0);
-              setPlaying(active => !active);
-            }}>{playing ? "Пауза" : "▶ Пуск"}</button>
+          <div className="replay-seek-bar" role="group" aria-label="Управление воспроизведением">
+            <button type="button" aria-label="В начало" title="В начало"
+              onClick={() => { setPlaying(false); setPendingStartMs(null); setCursor(0); }}>
+              <ReplayPlaybackIcon name="start" />
+            </button>
+            <button type="button" aria-label="Шаг назад" title="Шаг назад"
+              disabled={shown.candles.length === 0} onClick={() => {
+                setPlaying(false);
+                setCursor(current => timeframeStepCursor(document.events, current, timeframe, "back"));
+              }}>
+              <ReplayPlaybackIcon name="back" />
+            </button>
+            <button type="button" aria-label={playing ? "Пауза" : "Пуск"}
+              title={playing ? "Пауза" : "Пуск"} onClick={() => {
+                if (cursor === total) setCursor(0);
+                setPlaying(active => !active);
+              }}>
+              <ReplayPlaybackIcon name={playing ? "pause" : "play"} />
+            </button>
+            <button type="button" aria-label="Шаг вперёд" title="Шаг вперёд"
+              disabled={cursor >= total} onClick={() => {
+                setPlaying(false);
+                setCursor(current => timeframeStepCursor(document.events, current, timeframe, "forward"));
+              }}>
+              <ReplayPlaybackIcon name="forward" />
+            </button>
             <input type="range" aria-label="Перемотка графика по закрытым свечам"
               min={0} max={closedFrameTimes.length} step={1}
               value={shown.candles.length}
