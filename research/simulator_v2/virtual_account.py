@@ -152,10 +152,8 @@ class VirtualAccount:
         """Rewind from immutable fills, never mutate a running strategy/ledger."""
         if type(as_of_ms) is not int or as_of_ms < 0:
             raise ValueError("invalid virtual cursor")
-        if self._fills and as_of_ms > self._fills[-1].virtual_time_ms:
-            # Later market marks are still allowed: a fresh closed candle may
-            # arrive without a trade. A mark must be explicitly supplied.
-            pass
+        # Later market marks are allowed without a trade; the caller must
+        # explicitly supply the closed-market mark when a position is open.
         active = tuple(fill for fill in self._fills
                        if fill.virtual_time_ms <= as_of_ms)
         return self._project(active, as_of_ms, mark_price)
