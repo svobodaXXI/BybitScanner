@@ -99,7 +99,7 @@ const healthyRoutes: Routes = {
 };
 
 function mockFetch(routes: Routes | "offline" | "pending") {
-  const fetchMock = vi.fn((url: string) => {
+  const fetchMock = vi.fn((url: string, _options?: RequestInit) => {
     if (routes === "pending") return new Promise<Response>(() => {});
     if (routes === "offline")
       return Promise.reject(new TypeError("Failed to fetch"));
@@ -320,7 +320,7 @@ describe("Autopilot compact first screen", () => {
       return 18;
     });
     vi.spyOn(window, "clearInterval").mockImplementation(() => {});
-    const fetchMock = vi.fn((url: string) =>
+    const fetchMock = vi.fn((url: string, _options?: RequestInit) =>
       url === "/api/open-positions" ? pending
         : Promise.resolve(new Response(JSON.stringify(healthyRoutes[url]), { status: 200 })));
     vi.stubGlobal("fetch", fetchMock);
