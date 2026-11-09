@@ -113,6 +113,6 @@ def test_a_wick_without_body_close_cannot_become_robot_proof():
 def test_source_window_is_explicit_not_new_implicit_pattern_strategy():
     step = CausalMinuteFeed("BTCUSDT").observe_closed_m1(row(0))
     with pytest.raises(ValueError):
-        original_neckline_proofs(step, source_window=8)
+        original_neckline_proofs(step, source_window=0)
     with pytest.raises(ValueError):
         original_neckline_proofs(step, source_window=True)
