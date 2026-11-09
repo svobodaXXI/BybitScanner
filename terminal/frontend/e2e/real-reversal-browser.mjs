@@ -464,10 +464,10 @@ try {
   assert.ok(breakIndex >= position);
   await advanceTo(breakIndex);
   assert.doesNotMatch(await page.getByRole("status", { name: "Приор H1" }).innerText(),
-    /Исторический \\(сломанный\\)/, "BULL prior must stay active until the next OPEN");
+    /Исторический \(сломанный\)/, "BULL prior must stay active until the next OPEN");
   await advanceTo(breakIndex + 1);
   assert.match(await page.getByRole("status", { name: "Приор H1" }).innerText(),
-    /Исторический \\(сломанный\\)/,
+    /Исторический \(сломанный\)/,
     "an already confirmed next-hour OPEN break cannot be undone by rebound");
   assert.equal(await overlay.getAttribute("data-visible-geometry"), "0",
     "do not fabricate an opposite four-pivot trend from the first recovering M5");
@@ -479,7 +479,7 @@ try {
     "actual market must reclaim IV only after the confirmed 05:05 break");
   await advanceTo(laterIndex + 1);
   assert.match(await page.getByRole("status", { name: "Приор H1" }).innerText(),
-    /Исторический \\(сломанный\\)/,
+    /Исторический \(сломанный\)/,
     "the later real M5 reclaim never resurrects a structurally broken BULL prior");
   await page.getByRole("button", { name: "H1", exact: true }).click();
   await page.screenshot({
