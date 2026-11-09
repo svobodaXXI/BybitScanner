@@ -555,7 +555,9 @@ export function ModePanel({
     }
     liveDispatchActionIdRef.current = action.client_action_id;
     setLiveConfirmationSubmitting(true);
-    const result = await executeLiveMarketCommand(action, {
+    let result;
+    try {
+      result = await executeLiveMarketCommand(action, {
       currentAuthority: () => {
         const latest = marketAuthority.current;
         const currentProjection = latest.projection;
@@ -567,6 +569,12 @@ export function ModePanel({
           : null;
       },
     });
+    } catch {
+      setLiveConfirmation(null);
+      setLiveConfirmationSubmitting(false);
+      setExecutionStatus("LIVE outcome unknown — check Bybit; do not retry");
+      return;
+    }
     if (!result) {
       setLiveConfirmation(null);
       setLiveConfirmationSubmitting(false);
@@ -575,6 +583,9 @@ export function ModePanel({
     }
     setLiveConfirmation(null);
     setLiveConfirmationSubmitting(false);
+    if (result.status === "accepted_pending") {
+      try { await refreshMain(); } catch { /* exchange ACK is not fill proof */ }
+    }
     setExecutionStatus(result.status === "unknown"
       ? "LIVE result ambiguous — reconciling; do not retry"
       : result.status === "accepted_pending" ? "LIVE accepted — awaiting REST evidence"
