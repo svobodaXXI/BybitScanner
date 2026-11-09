@@ -266,7 +266,17 @@ def fetch_api_key_info(
     )
 
 
-def fetch_wallet_balance(
+@dataclass(frozen=True)
+class AccountBalances:
+    """One coherent Unified-account wallet snapshot from a single Bybit response."""
+
+    wallet_balance: Decimal      # totalWalletBalance: excludes unrealised P&L
+    equity: Decimal              # totalEquity: includes unrealised P&L
+    available_balance: Decimal   # totalAvailableBalance
+    initial_margin: Decimal      # totalInitialMargin: occupied initial margin
+
+
+def fetch_account_balances(
     credentials: Credentials,
     *,
     base_url: str = BASE_URL,
@@ -274,11 +284,11 @@ def fetch_wallet_balance(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     session: _Session | None = None,
     clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
-) -> Decimal:
-    """Total Wallet Balance of the Unified account, excluding unrealised P&L.
+) -> AccountBalances:
+    """Read all four values from one signed, read-only Unified wallet request.
 
-    Read ``totalWalletBalance`` exactly as reported by Bybit. Never substitute
-    equity, available balance, margin, position value, or another field.
+    Reject absent/non-numeric fields: no fallback to equity, available funds or
+    stale values. No separate network calls that could mix account snapshots.
     """
     if not isinstance(recv_window_ms, int) or not 1 <= recv_window_ms <= MAX_RECV_WINDOW_MS:
         raise ValueError("recv_window_ms must be between 1 and 60000")
@@ -293,8 +303,29 @@ def fetch_wallet_balance(
         raise BybitResponseError("wallet balance reply does not hold exactly one account")
     if accounts[0].get("accountType") != UNIFIED_ACCOUNT_TYPE:
         raise BybitResponseError("wallet balance reply is not for the Unified account")
-    return _decimal(accounts[0], "totalWalletBalance")
+    account = accounts[0]
+    return AccountBalances(
+        wallet_balance=_decimal(account, "totalWalletBalance"),
+        equity=_decimal(account, "totalEquity"),
+        available_balance=_decimal(account, "totalAvailableBalance"),
+        initial_margin=_decimal(account, "totalInitialMargin"),
+    )
 
+
+def fetch_wallet_balance(
+    credentials: Credentials,
+    *,
+    base_url: str = BASE_URL,
+    recv_window_ms: int = DEFAULT_RECV_WINDOW_MS,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    session: _Session | None = None,
+    clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
+) -> Decimal:
+    """Compatibility reader: full balance without unrealised P&L."""
+    return fetch_account_balances(
+        credentials, base_url=base_url, recv_window_ms=recv_window_ms,
+        timeout_s=timeout_s, session=session, clock_ms=clock_ms,
+    ).wallet_balance
 
 def _result_object(body: dict) -> dict:
     ret_code = body.get("retCode")
