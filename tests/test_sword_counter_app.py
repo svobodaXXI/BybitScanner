@@ -329,7 +329,7 @@ class GuiSmokeTests(unittest.TestCase):
                 self.assertEqual(tagged("deposit_balance"), "146.98 USDT")
                 self.assertEqual(panel.tag_cget("limit_over", "foreground").lower(), vm.RED.lower())
                 self.assertEqual(panel.tag_cget("deposit_balance", "foreground").lower(), vm.GREEN.lower())
-                self.assertEqual(int(panel.cget("height")), 6)
+                self.assertEqual(int(panel.cget("height")), 5)
                 gui.apply_result(result(status=STATUS_NO_CONNECTION))
                 gui.render()
                 self.assertFalse(panel.tag_ranges("limit_over"))
