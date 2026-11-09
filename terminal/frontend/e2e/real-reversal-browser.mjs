@@ -238,9 +238,12 @@ try {
   assert.ok(Number.isInteger(firstH1Index), "initial H1 main publication must be a real M5 close");
   await advanceTo(firstH1Index + 1);
   await page.getByRole("button", { name: "H1", exact: true }).click();
+  const completedReplayHours = archive.events.slice(0, firstH1Index + 1)
+    .filter(event => event.kind === "CANDLE_CLOSED" &&
+      event.candle?.end_ms % (60 * 60 * 1000) === 0).length;
   await page.waitForFunction(expected =>
     document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
-  archive.context_1h.length + 11);
+  archive.context_1h.length + completedReplayHours);
   const wickProjections = JSON.parse(await overlay.getAttribute("data-h1-main-wick-supports") ?? "[]");
   const startingMain = wickProjections.find(line => line.origin_ms === firstMain.from_ms);
   if (firstMain.from_ms < archive.from_ms) {
