@@ -1,0 +1,36 @@
+name: Simulator V2 public Bybit trades archive proof
+
+on:
+  pull_request:
+    branches:
+      - 'stable/adfb50b-forward'
+    paths:
+      - 'research/simulator_v2/public_trade_archive_smoke.py'
+      - '.github/workflows/simulator-v2-public-trades.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  public-trades-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout isolated Simulator V2 revision
+        uses: actions/checkout@v4
+      - name: Use Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify one day of official public Bybit trade archive
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python -m research.simulator_v2.public_trade_archive_smoke
+      - name: Preserve proven archive, derived M1 and zero-trade virtual report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-v2-bybit-public-trades-20261001
+          path: simulator-v2-bybit-public-trades-20261001/
+          if-no-files-found: error
+          retention-days: 7
