@@ -206,14 +206,16 @@ try {
   let position = 0;
   async function advanceTo(n) {
     assert.ok(n >= position && n <= archive.events.length, "ordered candle steps only");
-    // The actual React button updates the same cursor as owner clicks.
-    // Batch the genuine button handler calls to avoid a 35-second timer wait
-    // or changing the product with a test-only seek API.
-    const amount = n - position;
-    if (amount) {
-      await forward.evaluate((button, count) => {
-        for (let i = 0; i < count; i++) button.click();
-      }, amount);
+    // Large archive jumps use the real seek control, not hundreds of
+    // synchronous React click callbacks from one browser evaluation.
+    // Individual H1/M5 step buttons are covered separately.
+    if (n !== position) {
+      await scrubber.evaluate((slider, frame) => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+        setter.call(slider, String(frame));
+        slider.dispatchEvent(new Event("input", { bubbles: true }));
+        slider.dispatchEvent(new Event("change", { bubbles: true }));
+      }, n);
     }
     await page.waitForFunction(expected =>
       document.querySelector(".replay-chart-shell")?.getAttribute("data-displayed-candles") === String(expected),
