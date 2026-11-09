@@ -727,7 +727,7 @@ export function App() {
         currentAuthority: currentLiveAuthority,
         createClientActionId: () =>
           globalThis.crypto?.randomUUID?.() ?? `live-limit-${Date.now()}`,
-        refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+        refreshActiveLive: modeAccountSelection.refreshMain,
       });
       return attempt.promise.then(() => undefined);
     }
@@ -828,7 +828,7 @@ export function App() {
           currentAuthority: currentLiveAuthority,
           createClientActionId: () =>
             globalThis.crypto?.randomUUID?.() ?? `live-limit-cancel-${Date.now()}`,
-          refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+          refreshActiveLive: modeAccountSelection.refreshMain,
         },
       );
       return attempt.promise;
@@ -854,7 +854,7 @@ export function App() {
           currentAuthority: currentLiveAuthority,
           createClientActionId: () =>
             globalThis.crypto?.randomUUID?.() ?? `live-limit-amend-${Date.now()}`,
-          refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+          refreshActiveLive: modeAccountSelection.refreshMain,
         },
       );
       const result = await attempt.promise;
@@ -950,7 +950,7 @@ export function App() {
             currentAuthority: currentLiveProtectionAuthority,
             createClientActionId: () =>
               globalThis.crypto?.randomUUID?.() ?? `live-stop-${Date.now()}`,
-            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+            refreshActiveLive: modeAccountSelection.refreshMain,
           },
         );
         if (
@@ -963,7 +963,7 @@ export function App() {
           dispatchStopDraft({ type: "restore-editing" });
         }
       } catch {
-        await accountWorkspaceStore.refreshActiveLive();
+        await modeAccountSelection.refreshMain();
       }
       return;
     }
@@ -1095,7 +1095,7 @@ export function App() {
             currentAuthority: currentLiveProtectionAuthority,
             createClientActionId: () =>
               globalThis.crypto?.randomUUID?.() ?? `live-take-${Date.now()}`,
-            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+            refreshActiveLive: modeAccountSelection.refreshMain,
           },
         );
         if (
@@ -1108,7 +1108,7 @@ export function App() {
           dispatchTakeDraft({ type: "restore-editing" });
         }
       } catch {
-        await accountWorkspaceStore.refreshActiveLive();
+        await modeAccountSelection.refreshMain();
       }
       return;
     }
@@ -1244,7 +1244,7 @@ export function App() {
             currentAuthority: currentLiveProtectionAuthority,
             createClientActionId: () =>
               globalThis.crypto?.randomUUID?.() ?? `live-${leg.toLowerCase()}-${Date.now()}`,
-            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+            refreshActiveLive: modeAccountSelection.refreshMain,
           },
         );
         if (
@@ -1257,7 +1257,7 @@ export function App() {
           dispatch({ type: "restore-editing" });
         }
       } catch {
-        await accountWorkspaceStore.refreshActiveLive();
+        await modeAccountSelection.refreshMain();
       }
       return;
     }
@@ -1318,11 +1318,11 @@ export function App() {
             currentAuthority: currentLiveProtectionAuthority,
             createClientActionId: () =>
               globalThis.crypto?.randomUUID?.() ?? `live-${leg.toLowerCase()}-delete-${Date.now()}`,
-            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+            refreshActiveLive: modeAccountSelection.refreshMain,
           },
         );
       } catch {
-        await accountWorkspaceStore.refreshActiveLive();
+        await modeAccountSelection.refreshMain();
       }
       return;
     }
@@ -1749,6 +1749,7 @@ export function App() {
           accountOpen={accountOpen}
           onAccountToggle={() => setAccountOpen((open) => !open)}
           accountWorkspaceProjection={accountProjection}
+          refreshMain={modeAccountSelection.refreshMain}
           modeAccountId={selectedModeAccountId}
           onModeAccountSelect={modeAccountSelection.selectAccount}
           modeAccountError={modeAccountSelection.error}
