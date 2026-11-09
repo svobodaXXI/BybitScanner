@@ -412,6 +412,30 @@ class WalletBalanceTests(unittest.TestCase):
         self.assertEqual(call["headers"]["X-BAPI-SIGN"], expected)
         self.assertFalse(call["allow_redirects"])
 
+    def test_one_wallet_request_supplies_all_four_account_metrics(self):
+        reply = wallet(wallet_balance="147.14", equity="89.33")
+        acc = reply["result"]["list"][0]
+        acc["totalAvailableBalance"] = "72.10"
+        acc["totalInitialMargin"] = "17.23"
+        session = FakeSession(FakeResponse(reply))
+        snapshot = bp.fetch_account_balances(creds(), session=session, clock_ms=lambda: NOW_MS)
+        self.assertEqual(
+            (snapshot.wallet_balance, snapshot.equity,
+             snapshot.available_balance, snapshot.initial_margin),
+            (Decimal("147.14"), Decimal("89.33"), Decimal("72.10"), Decimal("17.23")),
+        )
+        self.assertEqual(len(session.calls), 1)
+        self.assertIn("/v5/account/wallet-balance", session.calls[0]["url"])
+
+    def test_missing_any_metric_is_an_error_without_partial_snapshot(self):
+        for field in ("totalWalletBalance", "totalEquity", "totalAvailableBalance", "totalInitialMargin"):
+            with self.subTest(field=field):
+                payload = wallet()
+                del payload["result"]["list"][0][field]
+                with self.assertRaises(BybitResponseError):
+                    bp.fetch_account_balances(creds(), session=FakeSession(FakeResponse(payload)),
+                                              clock_ms=lambda: NOW_MS)
+
     def test_does_not_use_equity_or_available_as_wallet_balance(self):
         reply = wallet(wallet_balance="147.14", equity="89.76")
         reply["result"]["list"][0]["totalAvailableBalance"] = "63.01"
