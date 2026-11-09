@@ -1,0 +1,41 @@
+name: Simulator V2 isolated unit tests
+
+on:
+  push:
+    branches:
+      - 'feature/simulator-v2-*'
+    paths:
+      - 'research/simulator_v2/**'
+      - 'tests/test_simulator_v2_*.py'
+      - '.github/workflows/simulator-v2-check.yml'
+  pull_request:
+    branches:
+      - 'stable/adfb50b-forward'
+    paths:
+      - 'research/simulator_v2/**'
+      - 'tests/test_simulator_v2_*.py'
+      - '.github/workflows/simulator-v2-check.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: simulator-v2-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-unit:
+    name: Offline tests (no trading runtime)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v4
+      - name: Use Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run isolated simulator tests without secrets
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python -m unittest discover -s tests -p 'test_simulator_v2_*.py' -v
