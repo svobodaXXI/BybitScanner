@@ -69,8 +69,8 @@ try {
   assert.equal(await setup.getByRole("checkbox", { name: "Восходящий клин" }).isChecked(), true);
   assert.equal(await setup.getByRole("checkbox", { name: "Нисходящий клин" }).isChecked(), true);
   assert.equal(await setup.getByRole("checkbox", { name: "Зеркальные уровни" }).isChecked(), false);
-  const startUtc = setup.getByRole("textbox", { name: "Начало прогона UTC" });
-  const endUtc = setup.getByRole("textbox", { name: "Конец прогона UTC" });
+  const startUtc = setup.getByLabel("Начало прогона UTC");
+  const endUtc = setup.getByLabel("Конец прогона UTC");
   await startUtc.fill("2026-10-01T12:34");
   await setup.getByRole("button", { name: "Неделя", exact: true }).click();
   assert.equal(await endUtc.inputValue(), "2026-10-08T12:33");
