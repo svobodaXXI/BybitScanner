@@ -65,7 +65,7 @@ def build_display(settings: AppSettings, result, age_s: float | None) -> Display
     balances = result.account_balances
     if balances is not None:
         lines.extend((
-            f"Капитал: {balances.equity:.2f} USDT",
+            f"Капитал (с учётом нереализованного PnL): {balances.equity:.2f} USDT",
             f"Доступно: {balances.available_balance:.2f} USDT",
             f"Занятая маржа: {balances.initial_margin:.2f} USDT",
             f"Общий депозит: {balances.wallet_balance:.2f} USDT",
