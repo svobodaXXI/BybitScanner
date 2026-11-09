@@ -119,12 +119,12 @@ def _ordered_proofs(
         raise ValueError("expected 1..90 ordered trade days")
     if any(not isinstance(item, TradeDayProof) for item in proofs):
         raise ValueError("invalid provenance item")
-    _validate_range(symbol, proofs[0].utc_day, len(proofs), latest_closed_boundary_ms)
     if any(
         item.utc_day != proofs[0].utc_day + timedelta(days=i)
         for i, item in enumerate(proofs)
     ):
         raise ValueError("missing, reordered or duplicate public trade days")
+    _validate_range(symbol, proofs[0].utc_day, len(proofs), latest_closed_boundary_ms)
     manifest = json.dumps(
         [item.to_payload(symbol=symbol) for item in proofs],
         separators=(",", ":"), sort_keys=True,
