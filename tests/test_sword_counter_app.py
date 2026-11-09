@@ -133,7 +133,7 @@ class DisplayTests(unittest.TestCase):
         display = vm.build_display(self.S, r, age_s=1)
         self.assertEqual(display.status_text.splitlines(), [
             "Превышение лимита: 52 из 20",
-            "Капитал (с вычетом ПНЛ): 89.33 USDT",
+            "Капитал (с учётом нереализованного PnL): 89.33 USDT",
             "Доступно: 72.10 USDT",
             "Занятая маржа: 17.23 USDT",
             "Общий депозит: 147.14 USDT",
@@ -316,7 +316,7 @@ class GuiSmokeTests(unittest.TestCase):
                 self.assertEqual(app_module.STATUS_FONT_PT, 10)
                 self.assertEqual(panel.get("1.0", "end-1c").splitlines(), [
                     "Превышение лимита: 30 из 20",
-                    "Капитал (с вычетом ПНЛ): 89.36 USDT",
+                    "Капитал (с учётом нереализованного PnL): 89.36 USDT",
                     "Доступно: 81.17 USDT",
                     "Занятая маржа: 7.77 USDT",
                     "Общий депозит: 146.98 USDT",
@@ -328,7 +328,7 @@ class GuiSmokeTests(unittest.TestCase):
                 self.assertEqual(tagged("deposit_balance"), "146.98 USDT")
                 self.assertEqual(panel.tag_cget("limit_over", "foreground").lower(), vm.RED.lower())
                 self.assertEqual(panel.tag_cget("deposit_balance", "foreground").lower(), vm.GREEN.lower())
-                self.assertEqual(int(panel.cget("height")), 5)
+                self.assertEqual(int(panel.cget("height")), 6)
                 gui.apply_result(result(status=STATUS_NO_CONNECTION))
                 gui.render()
                 self.assertFalse(panel.tag_ranges("limit_over"))
