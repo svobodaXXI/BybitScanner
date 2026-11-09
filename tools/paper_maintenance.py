@@ -98,8 +98,7 @@ def _editor_runtime_ready(target: str, database_identity: str) -> bool:
 
 
 def _resume_missing_telegram(
-    target: str, database_identity: str, *, root: Path, runner,
-    probe,
+    target: str, database_identity: str, *, root: Path, runner, probe,
 ) -> str:
     """A partial successful resume only needs its proven-absent Telegram worker."""
     from tools.legacy_runtime_process import LegacyOwnerUnproven, probe_listener_pids
@@ -116,6 +115,17 @@ def _resume_missing_telegram(
                 or installed.read_bytes() != source.read_bytes()):
             raise ResumeBlocked("telegram_unit_mismatch")
         state = _systemd_state(unit)
+        if (isinstance(state, dict) and state.get("ActiveState") == "active"
+                and str(state.get("MainPID", "0")).isdigit()
+                and int(state["MainPID"]) > 0):
+            # Backend and exact release are already proven. An active 503
+            # Telegram worker must never be restarted just to fix an external
+            # Cloudflare/Vercel or machine-local credential blocker.
+            # Only the worker's live state is proven here. Do not guess a
+            # cause from an unrelated config.py or turn VPS install identity
+            # into a prerequisite for an independent Cloudflare upload.
+            return ("BLOCKED: Telegram_running_not_ready:"
+                    "worker_active_health_unproven; no STOP, restart or deployment")
         if (not isinstance(state, dict)
                 or state.get("ActiveState") not in ("inactive", "failed")
                 or str(state.get("MainPID")) != "0"):
@@ -715,7 +725,12 @@ def deploy_staged_editor_only(
             # with PAPER_unit_not_stopped (and must not replay STOP).
             if (isinstance(observed, str)
                     and (observed.startswith("BLOCKED: manual_main_gateway_")
-                         or observed.startswith("BLOCKED: frontend_"))):
+                         or observed.startswith("BLOCKED: frontend_")
+                         or observed.startswith("BLOCKED: Telegram_running_not_ready:"))):
+                # Active Telegram HTTP 503 cannot be fixed by reinstalling
+                # bytes beneath a running, already-verified Backend. Preserve
+                # its real blocker, rather than masking it with an installer
+                # refusal such as PAPER_unit_not_stopped.
                 return observed
             # If manifest commit preceded a crash copying systemd units, a
             # stopped-only installer can complete the pinned transaction.

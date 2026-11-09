@@ -143,6 +143,122 @@ Backend и STOP/TAKE сохранены. Не подменять причину 
 5. Для доказанной частично завершённой операции — пользоваться существующей защищённой моделью handoff/receipt/immutable installer, но **не превращать незавершённый STOP intent в успешный STOP**. Только отдельное разрешение на конкретный guarded handoff, точная identity процесса, неизменный proof под SQLite writer reservation (никакого HTTP под lock), один сигнал без повтора, подтверждённый выход Backend и Telegram. Не копировать историческое исключение JASMY/FLOW на другой инцидент без нового доказательства.
 6. Проверить остановленные сервисы и отсутствие listeners, активировать Gitless release и Backend/Telegram **только EDITOR_ONLY**. Scanner, Robot admission и PAPER_AUTO не возобновлять; возвращение торговли — отдельная явно авторизованная операция после иной приёмки.
 
+**Новый инцидент монолитного запуска/восстановления — 09.11.2026: SSH + Telegram Gateway.**
+Это **один тип восстановления внутри того же owner-ledger workflow**, не второй монолит
+и не отдельная очередь ручных диагностических задач. Разработанная граница
+`tools.paper_maintenance.resume_installed_release` должна сохранять уже
+подтверждённую фазу EDITOR_ONLY, а не повторно останавливать/устанавливать код.
+
+- **Вход на VPS:** 08–09.11 новый платный IPv4 `212.193.14.116/24` иногда
+  отсутствовал на `ens3`, несмотря на успешный `netplan generate`; это
+  подтверждено VNC-наблюдением до ручного `ip addr add`. После добавления
+  адреса SSH через Windows OpenSSH иногда возвращал `SSH_OK`, иногда зависал
+  до banner; локальный `sshd` отвечал, TCP на сервер доходил. Одна
+  успешная сессия не доказывает устойчивого удалённого управления и
+  сохранения адреса после reboot. Считать `banner exchange timeout`
+  **транспортным BLOCKED до исполнения монолита**, а не поводом менять
+  ключ, повторять STOP, перезапускать сервисы или переустанавливать релиз.
+  Использовать документированный рабочий Windows SSH config/ключ и
+  доступный owner VNC как резерв; никакого автоматического `netplan apply`,
+  нового default route или reboot под предлогом восстановления.
+- **Внешний Telegram:** прежняя схема Cloudflare → Vercel получает HTTP
+  `402` от Vercel после исчерпания квоты. GitHub PR #964 подготовил
+  Cloudflare → Telegram напрямую, но merge **не** устанавливает Worker и
+  не подтверждает секреты. Три private bindings нового Worker:
+  `GATEWAY_SHARED_SECRET` (точное совпадение с VPS
+  `BYBITSCANNER_TELEGRAM_GATEWAY_SECRET`), `TELEGRAM_BOT_TOKEN`
+  (прежний бот), `TELEGRAM_CHAT_ID` (проверенный owner private chat).
+  Сравнивать конфигурацию *установленной* Telegram-службы из
+  `/opt/BybitScanner`, а не отдельного `/root/BybitScanner`. Не
+  искать эти значения через цепочки ручных SSH-команд и не помещать
+  значения в GitHub, журналы, stdout или тестовые fixtures.
+- **Фаза восстановления:** при подтверждённом Backend точного SHA и
+  замороженном Scanner/Autopilot, но активной Telegram-службе с
+  `/health=503`, существующий монолит возвращает один
+  `BLOCKED: Telegram_running_not_ready:<redacted_reason>` и **не**
+  повторяет STOP, restart, Gitless install, смену PAPER DB или торговые
+  операции. **Уточнение аудита 09.11:** прежняя диагностика #968
+  ошибочно выводила причину из предполагаемого `<install-root>/config.py`.
+  Это не подтверждает фактически импортированный модуль `config`
+  и не является предусловием Cloudflare staging; такая эвристика удалена.
+  Для активного Telegram с неподтверждённым health монолит сообщает
+  только подтверждаемое `worker_active_health_unproven`.
+  `getUpdates` не запускается вторым процессом; наличие кода и публичный
+  `/health=200` не доказывают реальную доставку Telegram.
+- **Единое продолжение, не отдельные квесты:** после единственного
+  необходимого owner-допуска на секреты/Cloudflare production monolith
+  переиспользует разрешённую настройку существующего Worker, не создаёт
+  нового бота/poller; проверяет реальное `getUpdates` только через
+  действующего VPS Telegram consumer, затем `status=ready`, ту же PAPER
+  DB identity, реальную доставку и кнопки. Все внешние Cloudflare
+  staging/deploy остаются **отдельно авторизуемыми** контролируемыми
+  эффектами; монолит их не совершает самовольно. Не скрывать
+  `BLOCKED`, не объявлять `READY` по одним тестам, HTTP health
+  или готовому коду. Сохранить защиту Backend и LIVE=OFF.
+
+**Системный аудит предпосылок (09.11.2026, репозиторий):**
+
+| Независимая операция | Что действительно необходимо | Что не должно блокировать её |
+| --- | --- | --- |
+| Cloudflare staging (неопубликованная версия) | Проверенный исходник Worker из GitHub, Cloudflare auth и секреты существующего Worker | Наличие GitHub SHA на VPS, запущенные Backend/Telegram, `config.py`, SQLite, systemd или STOP |
+| Cloudflare production (только по отдельному разрешению) | Подтверждённая новая версия Worker и контролируемое переключение Cloudflare deployment | Gitless install PAPER, Scanner/Robot stop или изменение VPS IP |
+| EDITOR_ONLY запускаемого релиза | Защищённый exact-SHA установленного VPS, DB identity, frozen Scanner/Autopilot, Backend и реально готовый Telegram | Отсутствие последнего SHA GitHub на **другом** хосте/Cloudflare |
+| Неактивная служба Telegram | Доказанное отсутствие systemd worker/listener, затем один разрешённый start | Слепой повтор START после неизвестного результата |
+| Активная служба Telegram с `503` | Сохранить установленный SHA/Backend и выдать конкретный runtime BLOCKED | Повтор STOP, installer и анализ предполагаемого `config.py` |
+| PAPER STOP/Trade | Свежие ledger/identity/protection/STOP-TAKE proofs, владелец операции, guarded receipts и разрешение | Упрощения безопасности ради независимого Gateway staging |
+
+**Ещё одна доказанная ложная связка и исправление:** до этого аудита
+`tools.vps_systemd_unit_prepare.UNITS` одновременно использовался для
+строгой stopped-only **замены файлов релиза** и обычного **PAPER START**.
+В списке находился независимый `bybitscanner-manual-main-read.service`,
+поэтому работающий MAIN/занятый порт 8771 блокировал обычное продолжение
+Backend/Telegram. В исправлении `PAPER_UNITS` используется для
+`prepare_units`, `check_resume` и проверки портов 8765/8766.
+При этом `UNITS` всех четырёх служб, полная сверка их unit-файлов,
+строгие порты 8765/8766/8771 и `_stopped` остаются обязательными
+для `activate_staged_release`: замена кода под работающим MAIN
+по-прежнему запрещена. Доказательство: адресные регрессии для
+active/absent MAIN, точных unit bytes и занятого MAIN-порта.
+
+**Отдельная гипотеза об IP:** `vps_release_resume.REVIEWED_DROPINS`
+содержит исторически разрешённый HTTPS-адрес терминала
+`83.217.213.181` в `terminal-ingress.conf`. Это **не**
+`HostName` Windows SSH alias и не Cloudflare route. Новому IP
+`212.193.14.116` не следует автоматически подменять этот защищённый
+terminal URL без proof фактического ingress и отдельного
+разрешения на конфигурацию. Данный hardcode объясняет потенциальный
+`unexpected_systemd_dropin` после ручной смены terminal URL,
+но не доказывает причину `STABLE_SHA_UNAVAILABLE_ON_VPS`.
+
+**Причина `STABLE_SHA_UNAVAILABLE_ON_VPS`:** такого именованного
+блокера в текущем проверенном коде нет; формулировка получена от внешнего
+исполнителя. Вероятно, он ошибочно сделал сравнение VPS SHA условием
+Cloudflare staging. **Это не доказательство неисправности самого VPS.**
+Исходный SHA Cloudflare берётся из проверенного GitHub stable, а installed
+SHA VPS контролирует только VPS Gitless release/Editor/Trading.
+Гипотеза о сетевой природе не исключена: Windows SSH alias на новом
+`212.193.14.116` хотя бы дважды проходил, но попытки Codex могли
+использовать иной SSH config/route, а баннер мог пропадать до выполнения
+команды. Различать `SSH_TRANSPORT_UNVERIFIED` и `VPS_RELEASE_SHA_MISMATCH`
+по доказанному результату **одной** ограниченной проверки только когда
+потребуется реальная VPS-операция; не запускать эту диагностику для
+Cloudflare staging. Никакой автоматической смены IP, netplan,
+reboot или повторного STOP.
+
+**Подход зрелых систем:** Flux разделяет получение проверяемого
+артефакта из Git от применения желаемого состояния и последующего
+health-check; Kubernetes reconciliation сравнивает состояние **своего**
+ресурса с желаемым, не требует неизменности чужих компонентов.
+Cloudflare Workers раздельно хранит *uploaded version* и *active
+deployment*. Применить эти границы **в действующем monolith**, не
+устанавливая Kubernetes/Flux, нового orchestrator или БД.
+
+**Acceptance этого инцидента:** один согласованный запуск/продолжение до
+доказанной доставки и EDITOR_ONLY либо один точный безопасный BLOCKED,
+без цепочки owner-run SSH/secret поисков. Реальный VPS/Cloudflare результат
+не доказан этим изменением репозитория; текущий Cloudflare production не
+изменён.
+
 **Актуальное доказательство VPS, 06.11.2026 (после одной разрешённой попытки):** stage `1e9129f51e5b620f71503bb1814f14a431498fc5`, `RELEASE_PREFLIGHT: PASS`; установлен `4090641514b8f558a0054fd577b2750b944fd8d6`. Исторический `094d74f…` признан superseded строго по защищённым handoff receipts (`PRIOR_STOP_RECOVERY_PROVEN: True`). Новый вызов вернул `BLOCKED: canonical_safe_stop_unproven; no retry, no deployment`; его `.stop-invoked-1e9129f…` сохранён, install journal целевого SHA отсутствует. После этого Robot `ROBOT_STOPPED/ROBOT_STOPPED`, Scanner `SCANNER_STOPPED`, Autopilot `OFF`, Backend старой версии отвечает HTTP 200, protection healthy и `covered_symbols=[]`, `armed_symbols=[]`, `coverage_roles={}`, `unhealthy_symbols={}`. Поле `worker_quiescent` в этой старой версии отсутствует (UNKNOWN), и само по себе не является отказом. **Точная причина отказа backend shutdown не установлена.** Возможное расхождение: текущий `paper_shutdown_blocker()` старого Backend отвергает всякий `APPROVED`, тогда как новый `_active_required_flat_proof()` допускает строго доказанные инертные кандидаты; наличие таких кандидатов **на текущем VPS ещё не доказано**. Нельзя объявлять END/READY и повторять STOP.
 
 **Единственная требуемая development-граница:** зафиксировать именно источник отказа последнего safe-stop и обеспечить одноразовое доказанное продолжение оставшихся фаз *через имеющиеся примитивы*. Не строить вторую модель управления или отдельный recovery-tool для каждого символа/инцидента. Требуемые регрессии: инертный `APPROVED` и конкурирующий fill, active LIMIT, non-FLAT/OPEN, неизвестный outcome, crash после сигнала, точный service/DB/release identity, отсутствие повторного сигнала. Цель приёмки — живой EDITOR_ONLY редактор, не число PR/тестов.

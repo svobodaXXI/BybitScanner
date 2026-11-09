@@ -24,6 +24,7 @@ export function OpenPositionsOverlay({
   applyPaperState,
   robotOnly = false,
   onInventoryLoaded,
+  liveRobotPositions,
 }: {
   activeSymbol: string;
   onClose: () => void;
@@ -33,6 +34,8 @@ export function OpenPositionsOverlay({
   /** Autopilot reuses this inventory for Robot-linked positions, view-only. */
   robotOnly?: boolean;
   onInventoryLoaded?: (positions: PaperOpenPosition[]) => void;
+  /** Current inventory shared by Autopilot observation; null means unverified. */
+  liveRobotPositions?: PaperOpenPosition[] | null;
 }) {
   const [positions, setPositions] = useState<PaperOpenPosition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,10 +51,16 @@ export function OpenPositionsOverlay({
   const bulkActionId = useRef<string | null>(null);
   const bulkTargetSymbols = useRef(new Set<string>());
   const fullCloseSubmission = useRef(new PaperFullCloseSubmissionController());
-  const attributionAvailable = positions.every((position) => position.robot_trade_id !== undefined);
+  // The read-only Autopilot observation owns the refresh timer. Reuse its
+  // inventory instead of creating another poller inside Terminal's overlay.
+  const liveInventoryUnavailable = robotOnly && liveRobotPositions === null;
+  const observedPositions = robotOnly && liveRobotPositions !== undefined
+    ? liveRobotPositions ?? [] : positions;
+  const attributionAvailable = !liveInventoryUnavailable &&
+    observedPositions.every((position) => position.robot_trade_id !== undefined);
   const visiblePositions = robotOnly
-    ? positions.filter((position) => Boolean(position.robot_trade_id))
-    : positions;
+    ? observedPositions.filter((position) => Boolean(position.robot_trade_id))
+    : observedPositions;
   const activePositionIndex = visiblePositions.findIndex(
     (position) => position.symbol === activeSymbol,
   );

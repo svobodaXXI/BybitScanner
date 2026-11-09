@@ -2,8 +2,8 @@
 
 Rules
 -----
-- ``total_swords`` swords (default 20). Live, one sword (1 RO) = Account Equity / total swords,
-  rounded half up to whole USDT (``count_swords_with_equity``); unknown or non-positive equity, or
+- ``total_swords`` swords (default 20). Live, one sword (1 RO) = Wallet Balance / total swords,
+  rounded half up to whole USDT (``count_swords_with_wallet_balance``); unknown or non-positive wallet_balance, or
   an RO that rounds to 0, makes the count unavailable instead of guessing.
 - Working volume is the sum of ``size x avgPrice`` (USDT entry notional, not divided by leverage)
   over every open position from S1. ``positionValue`` (by mark price) and ``positionIM`` (margin)
@@ -24,7 +24,7 @@ from dataclasses import dataclass, field, replace
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 from typing import Callable, Iterable
 
-from tools.SwordCounter.bybit_positions import BybitPositionsError, OpenPosition
+from tools.SwordCounter.bybit_positions import AccountBalances, BybitPositionsError, OpenPosition
 
 DEFAULT_TOTAL_SWORDS = 20
 DEFAULT_SWORD_SIZE_USDT = Decimal("5")
@@ -73,7 +73,8 @@ class SwordCount:
     over_limit: bool | None = None
     unknown_margin_symbols: tuple[str, ...] = field(default=())
     reason: str = ""
-    equity_usdt: Decimal | None = None   # Account Equity the RO was derived from (None: unknown)
+    wallet_balance_usdt: Decimal | None = None   # Wallet Balance the RO was derived from (None: unknown)
+    account_balances: AccountBalances | None = None  # same-account snapshot for status panel
 
     @property
     def status_label(self) -> str:
@@ -107,46 +108,48 @@ def count_swords(positions: Iterable[OpenPosition], settings: SwordSettings) -> 
                       over_limit=used > settings.total_swords, **base)
 
 
-def ro_from_equity(equity: Decimal, total_swords: int) -> Decimal | None:
-    """1 RO = Account Equity / total swords, ROUND_HALF_UP to whole USDT; None if not positive."""
-    if not equity.is_finite() or equity <= 0:
+def ro_from_wallet_balance(wallet_balance: Decimal, total_swords: int) -> Decimal | None:
+    """1 RO = Wallet Balance / total swords, ROUND_HALF_UP to whole USDT; None if not positive."""
+    if not wallet_balance.is_finite() or wallet_balance <= 0:
         return None
     with localcontext() as ctx:
         ctx.prec = 200
-        ro = (equity / Decimal(total_swords)).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+        ro = (wallet_balance / Decimal(total_swords)).quantize(Decimal(1), rounding=ROUND_HALF_UP)
     return ro if ro > 0 else None
 
 
-def count_swords_with_equity(fetch_positions: Callable[[], Iterable[OpenPosition]],
-                             fetch_equity: Callable[[], Decimal], total_swords: int) -> SwordCount:
-    """Read Account Equity and positions now; RO = equity / total swords. Never a guessed RO."""
+def count_swords_with_wallet_balance(fetch_positions: Callable[[], Iterable[OpenPosition]],
+                             fetch_wallet_balance: Callable[[], Decimal | AccountBalances], total_swords: int) -> SwordCount:
+    """Read Wallet Balance and positions now; RO = wallet_balance / total swords. Never a guessed RO."""
     if isinstance(total_swords, bool) or not isinstance(total_swords, int) or total_swords <= 0:
         raise ValueError("total_swords must be a positive integer")
     failure = None
     try:
-        equity = fetch_equity()
+        snapshot = fetch_wallet_balance()
+        wallet_balance = snapshot.wallet_balance if isinstance(snapshot, AccountBalances) else snapshot
         positions = tuple(fetch_positions())
     except BybitPositionsError as error:
         failure = f"{type(error).__name__}: {error}"
     if failure is not None:
         return SwordCount(STATUS_NO_CONNECTION, total_swords=total_swords, sword_size_usdt=None,
                           positions_count=None, reason=failure)
-    ro = ro_from_equity(equity, total_swords)
+    ro = ro_from_wallet_balance(wallet_balance, total_swords)
     if ro is None:
         # Comparing Decimal('NaN') with zero raises InvalidOperation. A
         # non-finite value never authorizes numeric sword counts, nor should
         # it crash the background worker while rendering "Недоступно".
-        if not equity.is_finite():
-            why = "Account Equity is not finite"
-        elif equity <= 0:
-            why = "Account Equity is not positive"
+        if not wallet_balance.is_finite():
+            why = "Wallet Balance is not finite"
+        elif wallet_balance <= 0:
+            why = "Wallet Balance is not positive"
         else:
-            why = (f"1 RO = {equity} / {total_swords} rounds to 0 USDT "
+            why = (f"1 RO = {wallet_balance} / {total_swords} rounds to 0 USDT "
                    "(minimum RO rule not agreed)")
         return SwordCount(STATUS_UNAVAILABLE, total_swords=total_swords, sword_size_usdt=None,
-                          positions_count=len(positions), reason=why, equity_usdt=None if not equity.is_finite() else equity)
+                          positions_count=len(positions), reason=why, wallet_balance_usdt=None if not wallet_balance.is_finite() else wallet_balance)
     result = count_swords(positions, SwordSettings(total_swords=total_swords, sword_size_usdt=ro))
-    return replace(result, equity_usdt=equity)
+    return replace(result, wallet_balance_usdt=wallet_balance,
+                   account_balances=snapshot if isinstance(snapshot, AccountBalances) else None)
 
 
 def count_swords_from_api(fetch_positions: Callable[[], Iterable[OpenPosition]],

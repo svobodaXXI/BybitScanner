@@ -105,6 +105,7 @@ export function ModePanel({
   refreshMain = async () => { throw new Error("independent_main_refresh_missing"); },
   openPositionsRequest = 0,
   onRobotPositionsLoaded,
+  robotLivePositions,
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
@@ -161,6 +162,7 @@ export function ModePanel({
   refreshMain?: () => Promise<void>;
   openPositionsRequest?: number;
   onRobotPositionsLoaded?: (positions: PaperOpenPosition[] | null) => void;
+  robotLivePositions?: PaperOpenPosition[] | null;
 }) {
   const tradingInputFocus = useTradingNumericInputFocusPolicy();
   const [executionStatus, setExecutionStatus] = useState("");
@@ -1379,6 +1381,7 @@ export function ModePanel({
             <OpenPositionsOverlay
               activeSymbol={symbol}
               robotOnly={mode === "AUTOPILOT"}
+              liveRobotPositions={mode === "AUTOPILOT" ? robotLivePositions : undefined}
               onInventoryLoaded={mode === "AUTOPILOT" ? onRobotPositionsLoaded : undefined}
               onClose={() => setOpenPositionsVisible(false)}
               onNavigate={(nextSymbol) => {
