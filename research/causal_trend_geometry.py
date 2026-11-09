@@ -292,51 +292,6 @@ def wick_tight_hourly_trend(
 
 
 
-def confirmed_continuation_with_successive_origins(
-    pivots: tuple[ConfirmedPivot, ...],
-    previous: TrendCandidate,
-    bars: tuple[Candle, ...],
-) -> TrendCandidate | None:
-    """Publish only on a NEW confirmed lower-high/lower-low (or higher pair).
-
-    Keep original 1/2 whenever the complete new 1--3/2--4 corridor remains
-    valid. If a later confirmed wick makes that historical first pair
-    geometrically impossible, try successively newer REAL alternating 1/2
-    pivots, not an arbitrary interim candle or a screen-space refit.
-    Old versions remain immutable in the export history.
-    """
-    if len(pivots) < 4:
-        return None
-    c, d = pivots[-2:]
-    if c.kind != previous.main.second.kind or d.kind != previous.target.second.kind:
-        return None
-    if c.at_ms <= previous.main.second.at_ms or d.at_ms <= previous.target.second.at_ms:
-        return None
-    if previous.side == "BEAR":
-        if c.price >= previous.main.second.price or d.price >= previous.target.second.price:
-            return None
-    elif c.price <= previous.main.second.price or d.price <= previous.target.second.price:
-        return None
-
-    def fit(a: ConfirmedPivot, b: ConfirmedPivot) -> TrendCandidate | None:
-        proposal = recent_hourly_trend((a, b, c, d))
-        return wick_tight_hourly_trend(proposal, bars) if proposal is not None else None
-
-    frozen = fit(previous.main.first, previous.target.first)
-    if frozen is not None:
-        return frozen
-    # First/second pair must remain actual alternating CONFIRMED pivots.
-    # Try the most recent qualifying historic pair first, ending before c.
-    for i in range(len(pivots) - 4, -1, -1):
-        a, b = pivots[i:i + 2]
-        if (a.at_ms >= c.at_ms or b.at_ms >= c.at_ms or
-                a.kind != c.kind or b.kind != d.kind):
-            continue
-        fitted = fit(a, b)
-        if fitted is not None:
-            return fitted
-    return None
-
 
 def reanchor_bear_on_closed_lower_low(
     previous: TrendCandidate,
