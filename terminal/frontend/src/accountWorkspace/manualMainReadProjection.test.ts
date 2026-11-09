@@ -10,7 +10,7 @@ const main = (account_id = "bybit-a") => ({
 });
 
 describe("manual MAIN account inventory boundary", () => {
-  it("converts matching signed snapshot to permanently non-trading inventory", () => {
+  it("keeps MAIN read-only until its independent gateway grants trading authority", () => {
     const result = manualMainReadProjection("bybit-a", main());
     expect(result?.positions).toHaveLength(1);
     expect(result?.account_id).toBe("bybit-a");
@@ -19,6 +19,22 @@ describe("manual MAIN account inventory boundary", () => {
       market: false, limit: false, stop: false, take: false, full_close: false,
     });
     expect(result?.paper_state).toBeNull();
+  });
+
+  it("enables MAIN manual controls only for a READY authenticated trading gateway snapshot", () => {
+    const writable = manualMainReadProjection("bybit-a", { ...main(), trading_enabled: true });
+    expect(writable?.read_only).toBe(false);
+    expect(writable?.capabilities).toEqual({
+      market: true, limit: true, stop: true, take: true, full_close: true,
+    });
+    const readOnly = manualMainReadProjection("bybit-a", {
+      ...main(), status: "READ_ONLY", trading_enabled: true,
+    });
+    expect(readOnly?.read_only).toBe(true);
+    expect(readOnly?.capabilities?.market).toBe(false);
+    expect(manualMainReadProjection("bybit-a", {
+      ...main(), trading_enabled: "true",
+    })?.read_only).toBe(true);
   });
 
   it("never accepts stale, cross-account, PAPER or malformed evidence", () => {
