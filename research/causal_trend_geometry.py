@@ -381,51 +381,6 @@ def reanchor_bear_on_closed_lower_low(
     )
 
 
-
-def reanchor_bull_on_closed_higher_high(
-    previous: TrendCandidate,
-    pivots: tuple[ConfirmedPivot, ...],
-    bars: tuple[Candle, ...],
-    just_closed: Candle,
-) -> TrendCandidate | None:
-    """Mirror the H1 BEAR continuation: use the last confirmed higher LOW.
-
-    The first four-pivot BULL trend is already established. A later CLOSED
-    higher high may move the same main line's second anchor to a preceding
-    confirmed LOW without waiting for the new HIGH to be pivot-confirmed.
-    A lone LOW or unclosed HIGH cannot publish another version.
-    """
-    if previous.side != "BULL" or not bars or just_closed != bars[-1]:
-        return None
-    previous_high = previous.target.second
-    if just_closed.start_ms <= previous_high.at_ms or just_closed.high <= previous_high.price:
-        return None
-    lows = [
-        p for p in pivots
-        if p.kind == "LOW"
-        and previous.main.second.at_ms < p.at_ms < just_closed.start_ms
-        and p.confirmed_at_ms <= just_closed.end_ms
-        and p.price > previous.main.first.price
-    ]
-    if not lows:
-        return None
-    support = lows[-1]
-    if support.at_ms <= previous_high.at_ms:
-        return None
-    main = wick_tight_hourly_line(
-        previous.main.first, support, bars, boundary="LOWER",
-        available_at_ms=just_closed.end_ms,
-    )
-    if main is None:
-        return None
-    return TrendCandidate(
-        previous.side, main, previous.target,
-        previous.pivot_sequence, just_closed.end_ms,
-        "CONTINUATION_REANCHOR_AFTER_CLOSED_HIGHER_HIGH",
-    )
-
-
-
 def last_correction_reference(
     *,
     hourly: TrendCandidate | None,
@@ -576,21 +531,14 @@ class CausalGeometryFeed:
         # started strictly AFTER line.second; thus the new actual pivot was
         # never considered. Do not publish from a mere HIGH wick / lone LH.
         if (
-            self._prior_touch_ms is not None
+            trend.side == "BEAR"
+            and self._prior_touch_ms is not None
             and line.second.at_ms > self._prior_touch_ms
             and self._prior_price is not None
-            and (
-                (trend.side == "BEAR" and (
-                    line.second.price < self._prior_price or
-                    trend.classification == "CONTINUATION_REANCHOR_AFTER_CLOSED_LOWER_LOW"
-                )) or
-                (trend.side == "BULL" and (
-                    line.second.price > self._prior_price or
-                    trend.classification == "CONTINUATION_REANCHOR_AFTER_CLOSED_HIGHER_HIGH"
-                ))
-            )
+            and (line.second.price < self._prior_price or
+                 trend.classification == "CONTINUATION_REANCHOR_AFTER_CLOSED_LOWER_LOW")
             and trend.available_at_ms <= closed_at_ms
-            and trend.pivot_sequence[3].kind == ("LOW" if trend.side == "BEAR" else "HIGH")
+            and trend.pivot_sequence[3].kind == "LOW"
             and trend.pivot_sequence[3].confirmed_at_ms <= closed_at_ms
         ):
             self._prior_price = line.second.price
@@ -755,20 +703,19 @@ class CausalGeometryFeed:
                     if fitted is not None:
                         self._hourly_trend = fitted
                 else:
-                    # Symmetric H1 continuation: keep the first LOW and move
-                    # the existing BULL support only after a closed higher HIGH
-                    # following an already-confirmed higher LOW. A newly
-                    # confirmed four-pivot continuation has priority.
-                    fitted = confirmed_continuation_with_successive_origins(
-                        self._hourly.pivots, previous, self._hourly.bars,
+                    # Preserve the existing BULL lifecycle and independent
+                    # prior-confirmation semantics; today's owner regression
+                    # concerns only the BEAR lower-high/lower-low boundary.
+                    proposal = trend_from_frozen_first_pair(
+                        self._hourly.pivots,
+                        previous.main.first, previous.target.first,
                     )
-                    if fitted is None:
-                        fitted = reanchor_bull_on_closed_higher_high(
-                            previous, self._hourly.pivots,
-                            self._hourly.bars, newly_closed_1h,
-                        )
-                    if fitted is not None:
-                        self._hourly_trend = fitted
+                    if (proposal is not None and proposal.side == previous.side and
+                            proposal.pivot_sequence[3].at_ms >
+                            previous.pivot_sequence[3].at_ms):
+                        fitted = wick_tight_hourly_trend(proposal, self._hourly.bars)
+                        if fitted is not None:
+                            self._hourly_trend = fitted
         self._install_opposite_if_confirmed(five_minute.end_ms)
         trend = self._hourly_trend
         movement = ((trend.side, trend.main.first.at_ms, trend.main.first.price)
