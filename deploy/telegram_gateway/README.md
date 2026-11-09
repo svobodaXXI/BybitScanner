@@ -12,6 +12,17 @@ Backend, Scanner, Robot, or PAPER DB redeployment.
   required.
 - Existing Worker name: `bybitscanner-gateway`. Existing VPS URL is unchanged.
   Do **not** create a second bot/Worker/getUpdates consumer.
+- **Source and host are separate authorities.** Upload a staged Cloudflare version
+  from an exact reviewed GitHub checkout of `stable/adfb50b-forward` on the
+  authorized workstation/CI, not the VPS installation. The installed VPS
+  Backend SHA can legitimately lag GitHub stable and is not a condition for
+  `wrangler versions upload`. In particular, `STABLE_SHA_UNAVAILABLE_ON_VPS`
+  must not block **Cloudflare staging**; diagnose a real SSH/host routing issue
+  only when a VPS-dependent action is explicitly authorized. Do not transfer
+  or install GitHub source onto VPS just to stage the Worker.
+  Cloudflare version ID and **active deployment** are separate facts:
+  uploaded != production; verify both independently and never infer cutover
+  from `/health=200`.
 - **Before any deploy**, create three Cloudflare Worker **Secrets** (not plain
   variables) under the existing Worker: `GATEWAY_SHARED_SECRET` (exactly the
   current VPS gateway secret), `TELEGRAM_BOT_TOKEN` (existing bot token),
