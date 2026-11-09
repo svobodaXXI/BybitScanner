@@ -301,25 +301,22 @@ try {
   assert.equal(await overlay.getAttribute("data-m5-h1-spans"), "[]",
     "M5's own blue reference must never inherit the H1 visual cap");
   const m5RayEnds = JSON.parse(await overlay.getAttribute("data-active-m5-ray-ends") ?? "[]");
-  console.log("REAL_FIRST_BLUE_STATE " + JSON.stringify({
-    knownAt: firstMain.available_at_ms,
-    visible: await overlay.getAttribute("data-visible-geometry"),
-    painted: await overlay.getAttribute("data-painted-geometry"),
-    paintedRay: m5RayEnds,
-    blueSources: archive.geometry.filter(line =>
-      line.kind === "REFERENCE_5M" && line.available_at_ms <= firstMain.available_at_ms
-    ).slice(-8).map(({ available_at_ms, from_ms, to_ms, retired_at_ms, superseded_at_ms }) =>
-      ({ available_at_ms, from_ms, to_ms, retired_at_ms, superseded_at_ms })),
-  }));
-  assert.ok(m5RayEnds.length > 0,
-    "real GRASS first confirmed blue reference must render as an active M5 ray");
+  const activeBlueAtFirstH1 = archive.geometry.some(line =>
+    line.kind === "REFERENCE_5M" &&
+    line.available_at_ms <= firstMain.available_at_ms &&
+    (line.retired_at_ms ?? Infinity) > firstMain.available_at_ms &&
+    (line.superseded_at_ms ?? Infinity) > firstMain.available_at_ms);
+  assert.equal(m5RayEnds.length > 0, activeBlueAtFirstH1,
+    "M5 must not show an unconfirmed reference before its causal publication");
   for (const ray of m5RayEnds) {
     assert.ok(ray.end_x <= ray.pane_width &&
       ray.end_x >= ray.last_candle_x &&
       ray.end_x - ray.last_candle_x <= 36.01,
     "active blue M5 ray must stop near last price candle: " + JSON.stringify(ray));
   }
-  console.log("REAL_ACTIVE_M5_RAY_SHORT_OK " + JSON.stringify(m5RayEnds));
+  console.log("REAL_M5_PUBLICATION_BOUNDARY_OK " + JSON.stringify({
+    activeBlueAtFirstH1, painted: m5RayEnds.length,
+  }));
 
   // Latest owner acceptance rule (09 Nov): one movement has exactly
   // one immutable FIRST HIGH until the confirmed purple-prior break.
