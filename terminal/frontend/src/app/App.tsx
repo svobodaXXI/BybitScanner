@@ -1681,6 +1681,7 @@ export function App() {
           mode={mode}
           onModeChange={setMode}
           onRobotPositionsLoaded={setRobotPositions}
+          robotLivePositions={robotPositions}
           verifiedRobotPosition={robotPosition}
           verifiedRobotOrigin={mode === "AUTOPILOT" && robotPosition &&
             robotMarkers?.symbol === robotPosition.symbol && robotMarkers?.tradeId === robotPosition.robot_trade_id
