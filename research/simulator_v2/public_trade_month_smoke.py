@@ -25,12 +25,12 @@ from research.simulator_v2.trade_archive import (
 from research.simulator_v2.trade_range import TradeDayProof, run_cached_trade_range
 
 SYMBOL = "XRPUSDT"
-START_DAY = date(2026, 10, 1)
+START_DAY = date(2026, 9, 10)
 DAYS = 30
-START_MS = 1_790_812_800_000  # Explicit range verified against each date below.
-END_MS = 1_793_404_800_000
+START_MS = 1_788_998_400_000  # Explicit range verified against each date below.
+END_MS = 1_791_590_400_000
 MAX_TOTAL_ARCHIVE_BYTES = 900_000_000
-OUT_DIR = Path("simulator-v2-xrp-real-30days-202610")
+OUT_DIR = Path("simulator-v2-xrp-real-30days-20260910-20261009")
 
 
 def fetch_archives(archive_dir: Path, cache_dir: Path) -> tuple[int, tuple[TradeDayProof, ...]]:
@@ -83,10 +83,10 @@ def fetch_archives(archive_dir: Path, cache_dir: Path) -> tuple[int, tuple[Trade
 
 
 def main() -> None:
-    # Date proof is explicit: 2026-10-01 00:00 to 2026-10-31 00:00 UTC.
+    # Date proof is explicit: 2026-09-10 00:00 to 2026-10-10 00:00 UTC.
     from datetime import datetime, timezone
-    actual_start = int(datetime(2026, 10, 1, tzinfo=timezone.utc).timestamp()*1000)
-    actual_end = int(datetime(2026, 10, 31, tzinfo=timezone.utc).timestamp()*1000)
+    actual_start = int(datetime(2026, 9, 10, tzinfo=timezone.utc).timestamp()*1000)
+    actual_end = int(datetime(2026, 10, 10, tzinfo=timezone.utc).timestamp()*1000)
     if (START_MS, END_MS) != (actual_start, actual_end):
         raise ValueError("incorrect fixed UTC range")
     with tempfile.TemporaryDirectory(prefix="sim-v2-xrp-30d-") as temp:
@@ -101,7 +101,7 @@ def main() -> None:
         report = run_cached_trade_range(
             cache_dir=cache, symbol=SYMBOL, proofs=proofs,
             latest_closed_boundary_ms=END_MS,
-            simulation_run_id="xrp_public_trades_202610_30d",
+            simulation_run_id="xrp_public_trades_20260910_30d",
             initial_balance=Decimal("1000"),
         )
         if (
