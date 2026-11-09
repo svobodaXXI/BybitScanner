@@ -89,7 +89,12 @@ def build_market_only_document(
     published_at: dict[str, int] = {}
 
     def collect_lines(view) -> None:
-        def collect(kind: str, line, side: str, trend_version: int) -> None:
+        def collect(kind: str, line, side: str, trend_version: int, pivots,
+                    envelope_status: str | None = None) -> None:
+            if pivots is None or len(pivots) != 4:
+                raise ValueError("a published line must retain four source pivots")
+            if any(point.confirmed_at_ms > view.five_minute.signal_time_ms for point in pivots):
+                raise ValueError("source pivot belongs to the future")
             identity = (line.first.at_ms, line.second.at_ms, trend_version)
             if versions.get(kind) == identity:
                 return
@@ -103,15 +108,33 @@ def build_market_only_document(
                 "from_ms": line.first.at_ms, "to_ms": line.second.at_ms,
                 "from_price": str(line.first.price), "to_price": str(line.second.price),
                 "trend_version": trend_version,
+                # These are structural confirmed extrema. A wick-envelope
+                # fitting point may differ but must never replace their identity.
+                "source_pivots": [
+                    {"kind": point.kind, "at_ms": point.at_ms,
+                     "confirmed_at_ms": point.confirmed_at_ms,
+                     "price": str(point.price)}
+                    for point in pivots
+                ],
                 "classification": "UNVALIDATED_GEOMETRY_ONLY",
+                **({"envelope_status": envelope_status}
+                   if envelope_status is not None else {}),
             })
 
         trend = view.hourly_trend
         if trend is not None:
-            collect("MAIN_1H", trend.main, trend.side, trend.available_at_ms)
-            collect("TARGET_1H", trend.target, trend.side, trend.available_at_ms)
+            collect("MAIN_1H", trend.main, trend.side,
+                    trend.available_at_ms, trend.pivot_sequence,
+                    trend.envelope_status)
+            collect("TARGET_1H", trend.target, trend.side,
+                    trend.available_at_ms, trend.pivot_sequence,
+                    trend.envelope_status)
             if view.reference_5m is not None:
-                collect("REFERENCE_5M", view.reference_5m, trend.side, trend.available_at_ms)
+                collect("REFERENCE_5M", view.reference_5m, trend.side,
+                        trend.available_at_ms, view.reference_5m_pivots)
+            if view.acceleration_5m is not None:
+                collect("ACCELERATION_5M", view.acceleration_5m, trend.side,
+                        trend.available_at_ms, view.acceleration_5m_pivots)
 
     def collect_main_line_observations(view) -> None:
         nonlocal pending_contact
@@ -152,10 +175,14 @@ def build_market_only_document(
     def collect_context(view) -> None:
         nonlocal previous_trend, previous_blue, last_prior_identity
         # Only geometry known at the PRIOR close may qualify this bar OPEN.
-        preview = blue_open_risk_preview(
+        # An unfitted four-pivot corridor is shown for visual review only.
+        # Its target is not a verified strict-wick boundary and must not be
+        # silently promoted into H-017 risk/entry research previews.
+        preview = (blue_open_risk_preview(
             bar=view.five_minute.bar, known_trend=previous_trend,
             known_blue=previous_blue, policy=risk_policy,
-        )
+        ) if previous_trend is not None and
+          previous_trend.envelope_status == "WICK_TIGHT" else None)
         if preview is not None:
             blue_risk_previews.append(preview)
         snapshot = view.dmi_5m

@@ -72,8 +72,8 @@ try {
   const fibTool = drawingBar.getByRole("button", { name: "Fibonacci" });
   assert.equal((await fibTool.innerText()).trim(), "", "Fibonacci uses a pictogram, not a text word");
   assert.equal(await fibTool.locator('svg[data-tool-icon="fibonacci"] path').count(), 1);
-  assert.equal(await drawingBar.locator('button[aria-label] svg.replay-tool-icon').count(), 12,
-    "ten drawing tools plus undo and delete all have true graphical icons");
+  assert.equal(await drawingBar.locator('button[aria-label] svg.replay-tool-icon').count(), 13,
+    "ten drawing tools plus magnet, undo and delete have graphical icons");
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
   const progress = page.locator('[role="progressbar"]');
   const forward = page.getByRole("button", { name: "Шаг вперёд ▶", exact: true });
@@ -200,24 +200,50 @@ try {
   await page.getByRole("button", { name: "H1", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"), "1h");
+  assert.match(await page.locator(".replay-chart-watermark").innerText(), /BTCUSDT · 1H/);
   assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
+  await backward.click();
+  await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "2");
+  await forward.click();
+  await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   await page.getByRole("button", { name: "M5", exact: true }).click();
+  // Switching TF preserves the playhead at the just-reached third H1
+  // close (36 M5), rather than restoring the previous 40-bar endpoint.
+  await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "36");
+  for (let i = 0; i < 4; i++) await forward.click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "40");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "3");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "3");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-priors"), "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-priors"), "1");
+  assert.match(await page.locator(".replay-chart-watermark").innerText(), /BTCUSDT · 5M/);
+  // Last candle sits left of the future-space margin (rightOffset 42).
+  // A click on blank space at x=280 has no candle and must NOT open a dialog.
+  const chartFrame = page.locator(".replay-chart-frame");
+  const frameBox = await chartFrame.boundingBox();
+  assert.ok(frameBox);
+  await chartFrame.dblclick({ position: { x: frameBox.width * 0.7, y: 180 } });
+  assert.equal(await page.getByRole("dialog", { name: "Начать отсюда?" }).count(), 1);
+  await page.getByRole("button", { name: "Нет", exact: true }).click();
+  assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
   // Manual annotations use the same UTC anchor across real M5/H1 candles;
   // they survive replay rewind and can be deleted without altering geometry.
   await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
   await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 160 } });
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
-  const undo = page.getByRole("button", { name: "Отменить последнюю фигуру" });
+  assert.equal(await page.getByRole("button", { name: "Курсор / сдвиг" }).getAttribute("aria-pressed"), "true",
+    "a finished drawing must return to crosshair instead of drawing a second");
+  const magnet = page.getByRole("button", { name: "Магнит" });
+  await magnet.click();
+  assert.equal(await magnet.getAttribute("aria-pressed"), "true");
+  const undo = page.getByRole("button", { name: "Отменить последнее действие" });
   assert.equal(await undo.isDisabled(), false);
   assert.equal(await undo.locator('svg[data-tool-icon="undo"] path').count(), 1);
+  await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
   await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 230 } });
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "2");
+  assert.equal(await page.getByRole("button", { name: "Курсор / сдвиг" }).getAttribute("aria-pressed"), "true");
   await undo.click();
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
   await page.getByRole("button", { name: "H1", exact: true }).click();

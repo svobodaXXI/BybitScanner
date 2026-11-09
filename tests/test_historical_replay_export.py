@@ -48,8 +48,9 @@ class MarketOnlyExportTests(unittest.TestCase):
         self.assertTrue(all("trade_id" not in e and "side" not in e for e in doc["events"]))
 
     def test_export_draws_new_yellow_candidate_only_after_1h_pivots_confirmed(self):
-        # Strict 2-left/2-right swings: L4-H6-L8-H10, known only
-        # after hour 12 closes; no replay overlay may appear earlier.
+        # Nested one-hour and broad two-hour wings share the same four-point
+        # rule; the earlier fully confirmed four-pivot H1 structure is available
+        # at hour 12 (after hour 11 closes), not the older wing-2 hour 13.
         hourly = [
             (105,100), (110,102), (115,104), (107,99), (104,95),
             (110,103), (118,107), (113,104), (108,99), (112,106),
@@ -80,7 +81,10 @@ class MarketOnlyExportTests(unittest.TestCase):
         yellow = [e for e in document["geometry"] if e["kind"] in ("MAIN_1H","TARGET_1H")]
         self.assertEqual(len(yellow), 2)
         self.assertEqual({x["kind"] for x in yellow}, {"MAIN_1H", "TARGET_1H"})
-        self.assertEqual({x["available_at_ms"] for x in yellow}, {13*12*FIVE_MINUTES_MS})
+        self.assertEqual({x["available_at_ms"] for x in yellow}, {12*12*FIVE_MINUTES_MS})
+        self.assertTrue(all(len(x["source_pivots"]) == 4 for x in yellow))
+        self.assertTrue(all(x["source_pivots"][-1]["confirmed_at_ms"] <=
+                            x["available_at_ms"] for x in yellow))
         self.assertTrue(all(x["classification"] == "UNVALIDATED_GEOMETRY_ONLY" for x in yellow))
         self.assertTrue(all(x["available_at_ms"] > x["to_ms"] for x in yellow))
         self.assertTrue(all(e["kind"] == "CANDLE_CLOSED" for e in document["events"]))
