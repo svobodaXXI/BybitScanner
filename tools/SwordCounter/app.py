@@ -198,7 +198,7 @@ class SwordCounterApp:
         # without changing the rest of each line. Read-only, no focus or border.
         self.status_label = tk.Text(root, font=(FONT, STATUS_FONT_PT), fg=GREY,
                                     bg=root.cget("bg"), borderwidth=0, relief="flat",
-                                    highlightthickness=0, wrap="word", width=42, height=1,
+                                    highlightthickness=0, wrap="word", width=36, height=1,
                                     padx=0, pady=0, takefocus=0, cursor="arrow")
         self.status_label.tag_configure("limit_over", foreground=RED)
         self.status_label.tag_configure("deposit_balance", foreground=GREEN)
@@ -255,7 +255,7 @@ class SwordCounterApp:
                                f"{line_number}.end")
         # Keep ordinary one-line errors compact; allow long messages to wrap.
         longest = max((len(line) for line in lines), default=1)
-        widget.configure(height=max(1, len(lines), (longest + 40) // 41), state="disabled")
+        widget.configure(height=max(1, len(lines), (longest + 34) // 35), state="disabled")
 
     def _tick(self) -> None:
         if self._closed:
