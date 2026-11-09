@@ -116,7 +116,17 @@ def parse_local_trade_day(
             item["volume"] += quantity
 
     if len(minute_bars) != 1440:
-        raise ValueError(f"missing {1440 - len(minute_bars)} trade-derived M1 minutes")
+        absent = [
+            start + i * MINUTE_MS for i in range(1440)
+            if start + i * MINUTE_MS not in minute_bars
+        ]
+        first_gap_utc = datetime.fromtimestamp(
+            absent[0] / 1000, tz=timezone.utc
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        raise ValueError(
+            f"missing {len(absent)} trade-derived M1 minutes"
+            f" utc_day={utc_day.isoformat()} first_missing_utc={first_gap_utc}"
+        )
     candles = tuple(
         Candle(
             start_ms=start + i * MINUTE_MS, interval_ms=MINUTE_MS,
