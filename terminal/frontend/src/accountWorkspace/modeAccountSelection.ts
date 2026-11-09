@@ -28,7 +28,9 @@ export function scopedProjection(
       && paperProjection.environment === "PAPER" ? paperProjection : null;
   }
   return mode === "TERMINAL" && mainProjection?.account_id === selectedAccountId
-    && mainProjection.provider === "BYBIT" && mainProjection.read_only === true
+    && mainProjection.provider === "BYBIT"
+    && (mainProjection.read_only === true || (mainProjection.read_only === false
+      && mainProjection.capabilities?.market === true))
     ? mainProjection : null;
 }
 
@@ -97,8 +99,17 @@ export function useModeAccountSelection() {
         }
       } catch {
         if (sequence === request.current) {
-          setError("Saved account selection unavailable. Trading is disabled.");
-          setReady(false);
+          // The independent MAIN gateway must not depend on PAPER preferences.
+          let localMain: string | null = null;
+          try { localMain = readDeviceMainId(); } catch { /* fail closed */ }
+          if (localMain) {
+            setPreferences({ TERMINAL: localMain, AUTOPILOT: null });
+            setError("PAPER preferences unavailable; MAIN requires independent verification.");
+            setReady(true);
+          } else {
+            setError("Saved account selection unavailable. Trading is disabled.");
+            setReady(false);
+          }
         }
       }
     })();
@@ -106,6 +117,15 @@ export function useModeAccountSelection() {
   }, []);
 
   const mainId = ready && preferences.TERMINAL !== "paper" ? preferences.TERMINAL : null;
+  const currentMainId = useRef<string | null>(null);
+  currentMainId.current = mainId;
+  const refreshMain = useCallback(async () => {
+    const accountId = currentMainId.current;
+    if (!accountId) throw new Error("main_account_not_selected");
+    const projection = await mainProjectionFor(accountId, true);
+    if (currentMainId.current !== accountId) throw new Error("main_account_changed");
+    setMainProjection(projection);
+  }, []);
   useEffect(() => {
     let live = true;
     if (!mainId) {
@@ -166,5 +186,5 @@ export function useModeAccountSelection() {
     }
   }, [ready]);
 
-  return { preferences, ready, pending, pendingMode, mainProjection, error, selectAccount };
+  return { preferences, ready, pending, pendingMode, mainProjection, error, selectAccount, refreshMain };
 }

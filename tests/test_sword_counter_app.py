@@ -133,11 +133,12 @@ class DisplayTests(unittest.TestCase):
         display = vm.build_display(self.S, r, age_s=1)
         self.assertEqual(display.status_text.splitlines(), [
             "Превышение лимита: 52 из 20",
-            "Equity: 89.33 USDT",
-            "Available Balance: 72.10 USDT",
+            "Капитал (с учетом P&L): 89.33 USDT",
+            "Доступно: 72.10 USDT",
             "Занятая маржа: 17.23 USDT",
             "Общий депозит: 147.14 USDT",
         ])
+        self.assertLessEqual(len(display.status_text.splitlines()[1]), 36)
         self.assertEqual(display.header, "1 РО = 7 USDT")
 
     def test_ok_shows_green_free_and_red_used(self):
@@ -289,6 +290,50 @@ class GuiSmokeTests(unittest.TestCase):
                 self.assertEqual(gui.free_value.cget("text"), "9")
                 with self.assertRaises(ValueError):
                     gui.save_settings_from_text("0")
+            finally:
+                gui.close()
+
+    def test_compact_financial_panel_has_colored_values_only_when_fresh(self):
+        try:
+            import tkinter
+            root = tkinter.Tk()
+        except Exception as error:
+            self.skipTest(f"Tk unavailable: {type(error).__name__}")
+        root.withdraw()
+        with tempfile.TemporaryDirectory() as tmp:
+            gui = app_module.SwordCounterApp(root, settings_path=Path(tmp) / "settings.json",
+                                             counter_factory=lambda get: (lambda: result()),
+                                             start_worker=False)
+            try:
+                from dataclasses import replace
+                balances = AccountBalances(wallet_balance=Decimal("146.98"), equity=Decimal("89.36"),
+                                           available_balance=Decimal("81.17"),
+                                           initial_margin=Decimal("7.77"))
+                gui.apply_result(replace(result(used=30, free=0, size="7", over=True),
+                                         account_balances=balances))
+                gui.render()
+                panel = gui.status_label
+                self.assertEqual(app_module.COUNT_FONT_PT, 23)
+                self.assertEqual(app_module.STATUS_FONT_PT, 10)
+                self.assertEqual(panel.get("1.0", "end-1c").splitlines(), [
+                    "Превышение лимита: 30 из 20",
+                    "Капитал (с учетом P&L): 89.36 USDT",
+                    "Доступно: 81.17 USDT",
+                    "Занятая маржа: 7.77 USDT",
+                    "Общий депозит: 146.98 USDT",
+                ])
+                def tagged(tag):
+                    start, end = panel.tag_ranges(tag)
+                    return panel.get(start, end)
+                self.assertEqual(tagged("limit_over"), "30")
+                self.assertEqual(tagged("deposit_balance"), "146.98 USDT")
+                self.assertEqual(panel.tag_cget("limit_over", "foreground").lower(), vm.RED.lower())
+                self.assertEqual(panel.tag_cget("deposit_balance", "foreground").lower(), vm.GREEN.lower())
+                self.assertEqual(int(panel.cget("height")), 5)
+                gui.apply_result(result(status=STATUS_NO_CONNECTION))
+                gui.render()
+                self.assertFalse(panel.tag_ranges("limit_over"))
+                self.assertFalse(panel.tag_ranges("deposit_balance"))
             finally:
                 gui.close()
 

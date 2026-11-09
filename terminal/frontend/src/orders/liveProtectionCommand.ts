@@ -25,7 +25,7 @@ const protectionPath = (
   leg: LiveProtectionLeg,
   operation: LiveProtectionOperation,
 ) => {
-  const base = leg === "STOP" ? "/api/live/stop" : "/api/live/take";
+  const base = leg === "STOP" ? "/api/manual-main/trade/stop" : "/api/manual-main/trade/take";
   if (operation === "CREATE") return base;
   if (operation === "AMEND") return `${base}/amend`;
   return `${base}/delete`;
@@ -41,7 +41,7 @@ export async function executeLiveProtection(
   const response = await fetcher(protectionPath(leg, operation), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
+    body: JSON.stringify({ ...request, confirmed: true }),
   });
   const result = await response.json() as LiveProtectionResponse;
   const current = currentAuthority();

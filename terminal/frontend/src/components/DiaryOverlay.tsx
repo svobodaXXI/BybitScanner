@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { marketApiRoutes } from "../marketData/apiRoutes";
 import "./DiaryOverlay.css";
 
-export type DiarySection = "TRADES" | "SETUPS" | "STATISTICS" | "MIRROR";
+export type DiarySection = "FINREZ" | "PATTERNS" | "DEALS" | "TRADES" | "SETUPS" | "STATISTICS" | "MIRROR";
+type FinrezPeriod = "TODAY" | "ALL";
 type DiaryFilter = "ALL" | "OPEN" | "CLOSED" | "ATTENTION";
 type SetupFilter = "ALL" | "ATTENTION";
 
@@ -151,6 +152,20 @@ type DiaryStatistics = {
     pnl_ready_ratio: string;
     post_trade_factors: Record<string, FactorCoverage>;
   };
+};
+
+type FinrezTicker = { symbol: string; pnl_usdt: string; trade_count: number };
+type FinrezResponse = {
+  ok: boolean;
+  account_id: string;
+  owner: "MANUAL" | "ROBOT";
+  period: FinrezPeriod;
+  period_start_ms: number;
+  as_of_ms: number;
+  source_revision: number;
+  source: "PAPER_EXECUTIONS_ATTRIBUTED";
+  pnl_basis: "REALIZED_PRICE_MINUS_EXECUTION_FEES";
+  tickers: FinrezTicker[];
 };
 
 type DiaryTradesResponse = {
@@ -462,6 +477,26 @@ function StatisticsView({ statistics }: { statistics: DiaryStatistics }) {
   );
 }
 
+function FinrezView({ report }: { report: FinrezResponse }) {
+  return (
+    <div className="diary-finrez" aria-label="Финансовый результат по тикерам">
+      <p className="diary-finrez-basis">Реализованный PnL, цена − комиссии исполнений · USDT</p>
+      {report.tickers.length === 0 ? <p className="diary-state">Нет закрытых сделок за выбранный период</p> : (
+        <div className="diary-finrez-list">
+          {report.tickers.map((ticker) => (
+            <div className="diary-finrez-row" key={ticker.symbol}>
+              <strong>{ticker.symbol}</strong>
+              <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
+                {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{ticker.pnl_usdt} USDT
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function DiaryOverlay({
   accountKey,
   onClose,
@@ -481,6 +516,8 @@ export function DiaryOverlay({
   const [trades, setTrades] = useState<DiaryTrade[]>([]);
   const [setups, setSetups] = useState<DiarySetup[]>([]);
   const [statistics, setStatistics] = useState<DiaryStatistics | null>(null);
+  const [finrez, setFinrez] = useState<FinrezResponse | null>(null);
+  const [finrezPeriod, setFinrezPeriod] = useState<FinrezPeriod>("TODAY");
   const [mirrorLevels, setMirrorLevels] = useState<MirrorLevelRow[]>([]);
   const [tradeFilter, setTradeFilter] = useState<DiaryFilter>("ALL");
   const [setupFilter, setSetupFilter] = useState<SetupFilter>("ALL");
@@ -498,8 +535,39 @@ export function DiaryOverlay({
     setLoading(true);
     setLoadError(false);
     if (section === "STATISTICS") setStatistics(null);
+    if (section === "FINREZ") setFinrez(null);
     try {
-      if (section === "TRADES") {
+      if (section === "FINREZ") {
+        if (!statisticsScope) throw new Error("finrez scope required");
+        const response = await fetch(marketApiRoutes.diaryTickerFinrez(
+          statisticsScope.accountId, statisticsScope.owner, finrezPeriod,
+        ));
+        if (!response.ok) throw new Error("finrez report unavailable");
+        const result = (await response.json()) as FinrezResponse;
+        if (!current()) return;
+        const seen = new Set<string>();
+        if (!result.ok || result.account_id !== statisticsScope.accountId
+          || result.owner !== statisticsScope.owner || result.period !== finrezPeriod
+          || result.source !== "PAPER_EXECUTIONS_ATTRIBUTED"
+          || result.pnl_basis !== "REALIZED_PRICE_MINUS_EXECUTION_FEES"
+          || !Number.isSafeInteger(result.source_revision) || result.source_revision < 1
+          || !Number.isSafeInteger(result.period_start_ms) || result.period_start_ms < 0
+          || !Number.isSafeInteger(result.as_of_ms) || result.as_of_ms < result.period_start_ms
+          || !Array.isArray(result.tickers) || result.tickers.some((row) => {
+            if (typeof row.symbol !== "string" || !row.symbol || seen.has(row.symbol)
+              || typeof row.pnl_usdt !== "string" || !row.pnl_usdt.trim()
+              || !Number.isFinite(Number(row.pnl_usdt))
+              || !Number.isSafeInteger(row.trade_count) || row.trade_count < 1) return true;
+            seen.add(row.symbol);
+            return false;
+          })) throw new Error("finrez scope/data mismatch");
+        setRequestedTradeMissing(false);
+        setFinrez(result);
+        setAccountId(result.account_id);
+      } else if (section === "PATTERNS" || section === "DEALS") {
+        // These agreed tabs are intentionally deferred until owner visual acceptance.
+        setRequestedTradeMissing(false);
+      } else if (section === "TRADES") {
         const response = await fetch(marketApiRoutes.diaryTrades);
         if (!response.ok) throw new Error("diary request failed");
         const result = (await response.json()) as DiaryTradesResponse;
@@ -561,10 +629,11 @@ export function DiaryOverlay({
     } finally {
       if (current()) setLoading(false);
     }
-  }, [section, statisticsScope?.accountId, statisticsScope?.owner]);
+  }, [section, statisticsScope?.accountId, statisticsScope?.owner, finrezPeriod]);
 
   useEffect(() => {
     setStatistics(null);
+    setFinrez(null);
     setTrades([]);
     setSelectedTradeId(null);
     setRequestedTradeMissing(false);
@@ -602,40 +671,44 @@ export function DiaryOverlay({
           <button aria-label="Закрыть статистику" onClick={onClose} type="button">×</button>
         </header>
 
-        <nav className="diary-primary-nav" aria-label="Разделы статистики">
-          <button aria-current={section === "TRADES" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("TRADES"); setSelectedTradeId(null); }} type="button">Сделки</button>
-          <button aria-current={section === "SETUPS" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("SETUPS"); setSelectedTradeId(null); }} type="button">Сетапы</button>
-          <button aria-current={section === "STATISTICS" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("STATISTICS"); setSelectedTradeId(null); }} type="button">Статистика</button>
-          <button aria-current={section === "MIRROR" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("MIRROR"); setSelectedTradeId(null); }} type="button">MIRROR</button>
-        </nav>
-
-        {!selectedTrade && section !== "STATISTICS" && section !== "MIRROR" ? (
-          <div className="diary-filter-bar" aria-label={section === "TRADES" ? "Фильтры сделок" : "Фильтры сетапов"}>
-            {(section === "TRADES" ? tradeFilters : setupFilters).map((candidate) => {
-              const pressed = section === "TRADES" ? tradeFilter === candidate.id : setupFilter === candidate.id;
-              return (
-                <button
-                  aria-pressed={pressed}
-                  key={candidate.id}
-                  onClick={() => section === "TRADES" ? setTradeFilter(candidate.id as DiaryFilter) : setSetupFilter(candidate.id as SetupFilter)}
-                  type="button"
-                >
-                  {candidate.label}
-                </button>
-              );
-            })}
-          </div>
-        ) : <div className="diary-filter-placeholder" />}
+        <div className="diary-navigation">
+          {(section === "FINREZ" || section === "PATTERNS" || section === "DEALS") ? (
+            <nav className="diary-period-nav" aria-label="Период статистики">
+              <button aria-pressed={finrezPeriod === "TODAY"} type="button" onClick={() => setFinrezPeriod("TODAY")}>Сегодня</button>
+              <button aria-pressed={finrezPeriod === "ALL"} type="button" onClick={() => setFinrezPeriod("ALL")}>Всё время</button>
+            </nav>
+          ) : null}
+          <nav className="diary-primary-nav" aria-label="Разделы статистики">
+            <button aria-current={section === "FINREZ" || section === "STATISTICS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("FINREZ"); }} type="button">Финрез</button>
+            <button aria-current={section === "PATTERNS" || section === "SETUPS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("PATTERNS"); }} type="button">Паттерны</button>
+            <button aria-current={section === "DEALS" || section === "TRADES" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("DEALS"); }} type="button">Сделки</button>
+          </nav>
+          {!selectedTrade && (section === "TRADES" || section === "SETUPS") ? (
+            <div className="diary-filter-bar" aria-label={section === "TRADES" ? "Фильтры сделок" : "Фильтры сетапов"}>
+              {(section === "TRADES" ? tradeFilters : setupFilters).map((candidate) => {
+                const pressed = section === "TRADES" ? tradeFilter === candidate.id : setupFilter === candidate.id;
+                return (
+                  <button aria-pressed={pressed} key={candidate.id}
+                    onClick={() => section === "TRADES" ? setTradeFilter(candidate.id as DiaryFilter) : setSetupFilter(candidate.id as SetupFilter)}
+                    type="button">{candidate.label}</button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
 
         <div className="diary-content">
           {loading ? <p className="diary-state">Загрузка...</p> : null}
           {!loading && loadError ? (
             <div className="diary-state">
-              <p>Не удалось загрузить дневник</p>
+              <p>Не удалось загрузить статистику выбранного счёта</p>
               <button onClick={() => void refresh()} type="button">Повторить</button>
             </div>
           ) : null}
 
+          {!loading && !loadError && !selectedTrade && section === "FINREZ" && finrez ? <FinrezView report={finrez} /> : null}
+          {!loading && !loadError && !selectedTrade && section === "PATTERNS" ? <p className="diary-state">Паттерны — второй этап после визуальной приёмки «Финреза»</p> : null}
+          {!loading && !loadError && !selectedTrade && section === "DEALS" ? <p className="diary-state">Сделки — третий этап после визуальной приёмки «Финреза»</p> : null}
           {!loading && !loadError && selectedTrade ? <TradeDetailsView trade={selectedTrade} onBack={() => { setRequestedTradeMissing(false); setSelectedTradeId(null); }} /> : null}
           {!loading && !loadError && requestedTradeMissing && section === "TRADES" ? <p className="diary-state">Сделка недоступна в текущем дневнике</p> : null}
           {!loading && !loadError && !requestedTradeMissing && !selectedTrade && section === "TRADES" && visibleTrades.length === 0 ? <p className="diary-state">Нет сделок в этом фильтре</p> : null}

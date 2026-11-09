@@ -7,36 +7,13 @@ const statisticsResponse = {
   ok: true,
   account_id: "paper",
   owner: "ROBOT",
+  period: "TODAY",
+  period_start_ms: 1_793_000_000_000,
+  as_of_ms: 1_793_050_000_000,
   source_revision: 2,
-  statistics: {
-    sample: {
-      total: 1,
-      eligible_closed_ready: 0,
-      excluded_open: 1,
-      excluded_incomplete: 0,
-    },
-    pnl: {
-      net_pnl: null,
-      average_net_pnl: null,
-      wins: 0,
-      losses: 0,
-      breakeven: 0,
-      win_rate: null,
-      average_win: null,
-      average_loss: null,
-      payoff_ratio: null,
-      profit_factor: null,
-    },
-    holding: { average_duration_ms: null },
-    coverage: {
-      pnl_ready_ratio: "0",
-      post_trade_factors: {
-        "trade.mae_pct": { eligible_closed: 0, observed: 0, coverage_ratio: "0" },
-        "trade.mfe_pct": { eligible_closed: 0, observed: 0, coverage_ratio: "0" },
-        "trade.exit_capture_ratio": { eligible_closed: 0, observed: 0, coverage_ratio: "0" },
-      },
-    },
-  },
+  source: "PAPER_EXECUTIONS_ATTRIBUTED",
+  pnl_basis: "REALIZED_PRICE_MINUS_EXECUTION_FEES",
+  tickers: [{ symbol: "BTCUSDT", pnl_usdt: "12.5", trade_count: 1 }],
 };
 
 const linkedTrade = {
@@ -127,10 +104,10 @@ describe("AutopilotDiaryControls", () => {
     render(<AutopilotDiaryControls accountKey="paper:1" />);
     fireEvent.click(screen.getByRole("button", { name: "Статистика" }));
 
-    await screen.findByText("Выборка");
-    expect(screen.getByText("Результативность")).toBeInTheDocument();
+    await screen.findByText("BTCUSDT");
+    expect(screen.getByText("+12.5 USDT")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith("/api/diary/scoped-statistics?account_id=paper&owner=ROBOT");
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=TODAY");
   });
 
   it("opens only the explicitly linked trade episode", async () => {

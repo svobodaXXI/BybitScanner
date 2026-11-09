@@ -26,8 +26,8 @@ from tools.SwordCounter.credential_store import CredentialStore, WindowsCredenti
 from tools.SwordCounter.settings_store import (
     AppSettings, default_settings_path, load_settings, parse_total_swords, save_settings,
 )
-from tools.SwordCounter.swords import count_swords_with_wallet_balance
-from tools.SwordCounter.view_model import GREY, WORKER_FAILED, build_display, header_text
+from tools.SwordCounter.swords import SwordCount, count_swords_with_wallet_balance
+from tools.SwordCounter.view_model import GREEN, RED, GREY, WORKER_FAILED, build_display, header_text
 
 REFRESH_INTERVAL_S = 10
 POLL_MS = 500
@@ -35,6 +35,8 @@ SWORDS_ICON = "⚔"   # crossed swords
 WINDOW_TITLE = "SwordCounter"   # the crossed-swords icon sits left of it (swords.ico)
 GEAR_ICON = "⚙"
 FONT = "Segoe UI"
+COUNT_FONT_PT = 23   # reduced from 26; also reduces vertical gap between sword rows
+STATUS_FONT_PT = 10  # more legible five-line financial summary
 SECRET_MASK = "•"
 ICON_PATH = Path(__file__).with_name("swords.ico")
 APP_USER_MODEL_ID = "SwordCounter.App"   # own taskbar group: not the generic Python icon
@@ -192,15 +194,22 @@ class SwordCounterApp:
 
         self.free_value = self._row(1, "Свободно")
         self.used_value = self._row(2, "Задействовано")
-        self.status_label = tk.Label(root, text="", font=(FONT, 8), fg=GREY, anchor="w",
-                                     wraplength=360, justify="left")
-        self.status_label.grid(row=3, column=0, columnspan=3, sticky="we", pady=(4, 0))
+        # Text tags allow coloring just the over-limit count and deposit value,
+        # without changing the rest of each line. Read-only, no focus or border.
+        self.status_label = tk.Text(root, font=(FONT, STATUS_FONT_PT), fg=GREY,
+                                    bg=root.cget("bg"), borderwidth=0, relief="flat",
+                                    highlightthickness=0, wrap="word", width=36, height=1,
+                                    padx=0, pady=0, takefocus=0, cursor="arrow")
+        self.status_label.tag_configure("limit_over", foreground=RED)
+        self.status_label.tag_configure("deposit_balance", foreground=GREEN)
+        self.status_label.configure(state="disabled")
+        self.status_label.grid(row=3, column=0, columnspan=3, sticky="w", pady=(3, 0))
         root.columnconfigure(2, weight=1)
 
     def _row(self, row: int, title: str) -> tk.Label:
         tk.Label(self.root, text=SWORDS_ICON, font=(FONT, 16)).grid(row=row, column=0, sticky="w", padx=(0, 6))
         tk.Label(self.root, text=title, font=(FONT, 11)).grid(row=row, column=1, sticky="w")
-        value = tk.Label(self.root, text="…", font=(FONT, 26, "bold"), fg=GREY, anchor="e", width=4)
+        value = tk.Label(self.root, text="…", font=(FONT, COUNT_FONT_PT, "bold"), fg=GREY, anchor="e", width=4)
         value.grid(row=row, column=2, sticky="e", padx=(12, 0))
         return value
 
@@ -213,7 +222,7 @@ class SwordCounterApp:
         age = None if self._last_at is None else time.monotonic() - self._last_at
         display = build_display(self.settings, self._last, age)
         self.header_label.configure(text=display.header)
-        big = (FONT, 26, "bold") if display.numbers_shown else (FONT, 11, "bold")
+        big = (FONT, COUNT_FONT_PT, "bold") if display.numbers_shown else (FONT, 11, "bold")
         self.free_value.configure(text=display.free_text, fg=display.free_color, font=big,
                                   width=4 if display.numbers_shown else 0)
         self.used_value.configure(text=display.used_text, fg=display.used_color, font=big,
@@ -221,7 +230,31 @@ class SwordCounterApp:
         status = display.status_text
         if self._last is None and self._settings_warning:
             status = self._settings_warning
-        self.status_label.configure(text=status)
+        self._render_status(status, show_values=display.numbers_shown)
+
+    def _render_status(self, status: str, *, show_values: bool) -> None:
+        """Draw the current text with selective emphasis; never color errors or stale data."""
+        widget = self.status_label
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.insert("1.0", status)
+        widget.tag_remove("limit_over", "1.0", "end")
+        widget.tag_remove("deposit_balance", "1.0", "end")
+        lines = status.splitlines()
+        if show_values and isinstance(self._last, SwordCount):
+            prefix = "Превышение лимита: "
+            if self._last.over_limit and lines and lines[0].startswith(prefix):
+                count = str(self._last.used_swords)
+                if lines[0].startswith(prefix + count + " из "):
+                    widget.tag_add("limit_over", f"1.{len(prefix)}",
+                                   f"1.{len(prefix) + len(count)}")
+            deposit_prefix = "Общий депозит: "
+            if lines and lines[-1].startswith(deposit_prefix):
+                line_number = len(lines)
+                widget.tag_add("deposit_balance", f"{line_number}.{len(deposit_prefix)}",
+                               f"{line_number}.end")
+        # Keep ordinary one-line errors compact; allow long messages to wrap.
+        widget.configure(height=max(1, sum(max(1, (len(line) + 34) // 35) for line in lines)), state="disabled")
 
     def _tick(self) -> None:
         if self._closed:
