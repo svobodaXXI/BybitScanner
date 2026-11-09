@@ -28,10 +28,10 @@ from tools.SwordCounter.swords import (
 REPO = Path(__file__).resolve().parents[1]
 
 
-def result(status=STATUS_OK, used=3, free=17, total=20, size="5", over=False, equity=None):
+def result(status=STATUS_OK, used=3, free=17, total=20, size="5", over=False, wallet_balance=None):
     numbers = status == STATUS_OK
     return SwordCount(status=status, total_swords=total, sword_size_usdt=Decimal(size) if numbers else None,
-                      equity_usdt=None if equity is None else Decimal(equity),
+                      wallet_balance_usdt=None if wallet_balance is None else Decimal(wallet_balance),
                       positions_count=2 if numbers else None,
                       occupied_margin_usdt=Decimal("12") if numbers else None,
                       used_swords=used if numbers else None, free_swords=free if numbers else None,
@@ -120,8 +120,8 @@ class DisplayTests(unittest.TestCase):
         self.assertEqual(vm.header_text(), "1 РО = — USDT")
 
     def test_status_line_shows_the_equity_the_ro_comes_from(self):
-        d = vm.build_display(self.S, result(equity="106.22345059"), age_s=1)
-        self.assertIn("Equity 106.22", d.status_text)
+        d = vm.build_display(self.S, result(wallet_balance="106.22345059"), age_s=1)
+        self.assertIn("Wallet Balance 106.22", d.status_text)
 
     def test_ok_shows_green_free_and_red_used(self):
         d = vm.build_display(self.S, result(used=3, free=17), age_s=1)
