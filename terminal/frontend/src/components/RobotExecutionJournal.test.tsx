@@ -27,4 +27,18 @@ describe("read-only execution facts under the Robot chart", () => {
     rerender(<RobotExecutionJournal selectedTradeId={null} markers={null} />);
     expect(screen.getByText("Выберите открытую позицию робота.")).toBeInTheDocument();
   });
+  it("rejects malformed execution timestamps and prices without creating journal events", () => {
+    const at = Date.UTC(2026, 10, 9, 12);
+    const { container } = render(<RobotExecutionJournal selectedTradeId="robot-btc" markers={[
+      { time_ms: Number.NaN, price: "100", side: "Buy", filled: true },
+      { time_ms: at, price: "Infinity", side: "Sell", filled: true },
+      { time_ms: at + 1000, price: "-5", side: "Buy", filled: false },
+      { time_ms: at + 2000, price: "101", side: "Sell", filled: true },
+    ]} />);
+    expect(container.querySelectorAll("time")).toHaveLength(1);
+    expect(screen.getByText("Sell исполнено · 101 USDT")).toBeInTheDocument();
+    expect(screen.queryByText(/Infinity|-5 USDT/)).toBeNull();
+  });
+
+
 });
