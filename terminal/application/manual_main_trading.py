@@ -303,7 +303,10 @@ class ManualMainTrader:
         _require(op.startswith(("stop", "take")), "unsupported_main_operation")
         stop = data.get("stop_loss")
         take = data.get("take_profit")
-        positions = [p for p in snapshot.get("positions", [])\n                     if p.get("symbol") == symbol and p.get("side") in ("Long", "Short")]\n        _require(len(positions) == 1, "main_protection_position_ambiguous")\n        args = {**common, "tpslMode": "Full", "positionIdx": 0}
+        positions = [p for p in snapshot.get("positions", [])
+                     if p.get("symbol") == symbol and p.get("side") in ("Long", "Short")]
+        _require(len(positions) == 1, "main_protection_position_ambiguous")
+        args = {**common, "tpslMode": "Full", "positionIdx": 0}
         if op.startswith("stop"):
             args["stopLoss"] = "0" if op.endswith("/delete") else _number(_positive(stop, "stop_loss"))
             args["slTriggerBy"] = "MarkPrice"
