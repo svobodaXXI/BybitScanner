@@ -1,7 +1,7 @@
 """Offline, mocked systemd regression tests. No real services are touched."""
 from types import SimpleNamespace
 
-from tools.vps_systemd_unit_prepare import UNITS, prepare_units
+from tools.vps_systemd_unit_prepare import PAPER_UNITS, UNITS, prepare_units
 
 
 def runner(calls, *, states=None, failures=(), reset_converges=False):
@@ -30,11 +30,11 @@ def test_daemon_reload_precedes_all_load_checks_and_reset_only_failed():
     result = prepare_units(run=runner(calls, states=states))
     assert result.startswith("READY:")
     assert calls[0] == ("systemctl", "daemon-reload")
-    assert calls[1:1 + len(UNITS)] == [
+    assert calls[1:1 + len(PAPER_UNITS)] == [
         ("systemctl", "show", unit, "--property=LoadState,ActiveState", "--no-pager")
-        for unit in UNITS
+        for unit in PAPER_UNITS
     ]
-    assert calls[1 + len(UNITS):] == [("systemctl", "reset-failed", UNITS[1])]
+    assert calls[1 + len(PAPER_UNITS):] == [("systemctl", "reset-failed", UNITS[1])]
     assert not any("start" in cmd or "stop" in cmd for cmd in calls)
 
 
@@ -65,7 +65,7 @@ def test_reset_failed_with_proven_inactive_unit_does_not_block():
     states[UNITS[2]] = "failed"
     failed = (("systemctl", "reset-failed", UNITS[2]),)
     def run(argv, **kwargs):
-        if argv[1] == "show" and len(calls) > 1 + len(UNITS):
+        if argv[1] == "show" and len(calls) > 1 + len(PAPER_UNITS):
             states[UNITS[2]] = "inactive"
         return runner(calls, states=states, failures=failed)(argv, **kwargs)
     assert prepare_units(run=run).startswith("READY:")
@@ -85,3 +85,21 @@ def test_daemon_reload_failure_blocks_without_followup():
     calls = []
     assert prepare_units(run=runner(calls, failures=(("systemctl", "daemon-reload"),))).startswith("BLOCKED:")
     assert calls == [("systemctl", "daemon-reload")]
+
+
+def test_independent_main_running_does_not_block_paper_unit_preparation():
+    calls = []
+    states = {unit: "inactive" for unit in UNITS}
+    states[UNITS[-1]] = "active"
+    result = prepare_units(run=runner(calls, states=states))
+    assert result.startswith("READY:")
+    assert not any(UNITS[-1] in call for call in calls)
+    assert not any("start" in call or "stop" in call for call in calls)
+
+
+def test_independent_main_missing_does_not_block_paper_unit_preparation():
+    calls = []
+    states = {unit: "inactive" for unit in PAPER_UNITS}
+    result = prepare_units(run=runner(calls, states=states))
+    assert result.startswith("READY:")
+    assert not any(UNITS[-1] in call for call in calls)

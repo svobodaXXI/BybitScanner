@@ -52,6 +52,38 @@ def fake_runner(calls, *, fail=None):
 
 
 
+def test_installed_target_active_telegram_503_preserves_blocker_without_installer(
+    tmp_path, monkeypatch,
+):
+    """Already-installed exact SHA + active 503 never enters stopped installer."""
+    from tools.paper_maintenance import deploy_staged_editor_only
+    import tools.vps_release_identity as identity
+
+    target = "a" * 40
+    root = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    root.mkdir()
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    (transactions / target).mkdir(parents=True)
+    monkeypatch.setattr(identity, "verify_release", lambda *_args: target)
+    calls = []
+    blocked = (
+        "BLOCKED: Telegram_running_not_ready:worker_active_health_unproven; "
+        "no STOP, restart or deployment"
+    )
+    result = deploy_staged_editor_only(
+        target, root=root, stage=stage, transactions=transactions,
+        stop=lambda *_: pytest.fail("active existing release must never STOP"),
+        installer=lambda *_args, **_kw: pytest.fail(
+            "active 503 cannot be repaired through stopped-only installer"
+        ),
+        resume=lambda *_args, **_kw: (calls.append("resume"), blocked)[1],
+    )
+    assert result == blocked
+    assert calls == ["resume"]
+
+
 def test_installed_target_preserves_gateway_failure_without_installer_retry(tmp_path, monkeypatch):
     """Active EDITOR_ONLY target cannot be reinstalled after a gateway blocker."""
     from tools.paper_maintenance import deploy_staged_editor_only
@@ -510,43 +542,6 @@ def test_partial_editor_resume_blocked_if_telegram_port_still_owned(monkeypatch,
 
 
 
-@pytest.mark.parametrize("config_value,expected", [
-    ('TELEGRAM_CHAT_ID = ""\n', "telegram_owner_chat_id_missing"),
-    ('TELEGRAM_CHAT_ID = "123456789"\n', "telegram_gateway_poll_or_worker_unproven"),
-    ('TELEGRAM_CHAT_ID = get_owner_id()\n', "telegram_owner_chat_id_source_unverified"),
-])
-def test_monolith_telegram_gateway_diagnosis_read_only_and_redacted(
-    monkeypatch, tmp_path, config_value, expected,
-):
-    from tools import paper_maintenance as maintenance
-
-    shared = "test-secret-" + "z" * 40
-    monkeypatch.setattr(maintenance, "_environment", lambda _: {
-        "BYBITSCANNER_TELEGRAM_GATEWAY_URL": "https://gateway.example/health",
-        "BYBITSCANNER_TELEGRAM_GATEWAY_SECRET": shared,
-    })
-    (tmp_path / "config.py").write_text(config_value, encoding="utf-8")
-    result = maintenance._telegram_transport_blocker(tmp_path, None)
-    assert result == expected
-    assert shared not in result
-    assert "123456789" not in result
-
-
-def test_monolith_telegram_gateway_diagnosis_missing_auth_is_not_ready(
-    monkeypatch, tmp_path,
-):
-    from tools import paper_maintenance as maintenance
-
-    (tmp_path / "config.py").write_text('TELEGRAM_CHAT_ID = "123456789"\n')
-    monkeypatch.setattr(maintenance, "_environment", lambda _: {
-        "BYBITSCANNER_TELEGRAM_GATEWAY_URL": "https://gateway.example",
-    })
-    assert maintenance._telegram_transport_blocker(
-        tmp_path, None
-    ) == "gateway_shared_secret_missing_or_short"
-
-
-
 def test_partial_editor_resume_rejects_active_telegram_unit_without_restarting(monkeypatch, tmp_path):
     from tools.paper_maintenance import resume_installed_release
     import tools.paper_maintenance as maintenance
@@ -574,7 +569,9 @@ def test_partial_editor_resume_rejects_active_telegram_unit_without_restarting(m
         runner=lambda argv, **_: calls.append(tuple(argv)),
         freeze_proof=lambda *_: "b" * 64,
     )
-    assert result.startswith("BLOCKED: Telegram_running_not_ready:")
+    assert result.startswith(
+        "BLOCKED: Telegram_running_not_ready:worker_active_health_unproven"
+    )
     assert not calls
 
 

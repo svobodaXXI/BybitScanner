@@ -97,67 +97,8 @@ def _editor_runtime_ready(target: str, database_identity: str) -> bool:
             and _editor_telegram_ready(database_identity))
 
 
-def _telegram_transport_blocker(root: Path, env_file: Path | None) -> str:
-    """Classify an unready running Telegram worker without touching the stream.
-
-    This is a phase of the existing EDITOR_ONLY monolith, not a second poller,
-    credential recovery mechanism or authorization to modify Cloudflare.
-    Never print secret values or trigger another Telegram getUpdates consumer.
-    """
-    import ast
-    from urllib.parse import urlsplit
-
-    try:
-        env = _environment(env_file)
-    except (OSError, ValueError):
-        return "gateway_environment_unverified"
-    url = env.get("BYBITSCANNER_TELEGRAM_GATEWAY_URL", "").strip()
-    if not url:
-        return "gateway_url_missing"
-    parsed = urlsplit(url)
-    if (parsed.scheme != "https" or not parsed.netloc or parsed.username
-            or parsed.password or parsed.query or parsed.fragment):
-        return "gateway_url_invalid"
-    if len(env.get("BYBITSCANNER_TELEGRAM_GATEWAY_SECRET", "").strip()) < 32:
-        return "gateway_shared_secret_missing_or_short"
-
-    # Telegram Monitoring reads config.TELEGRAM_CHAT_ID from this installed
-    # working tree, not from a different /root checkout or Vercel account.
-    # Parse rather than import machine-local code under elevated maintenance.
-    config_file = root / "config.py"
-    if config_file.is_symlink() or not config_file.is_file():
-        return "telegram_machine_config_unverified"
-    try:
-        module = ast.parse(config_file.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, SyntaxError):
-        return "telegram_machine_config_unverified"
-    assigned = []
-    for node in module.body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == "TELEGRAM_CHAT_ID"
-            for target in node.targets
-        ):
-            assigned.append(node.value)
-        elif (isinstance(node, ast.AnnAssign)
-              and isinstance(node.target, ast.Name)
-              and node.target.id == "TELEGRAM_CHAT_ID"):
-            assigned.append(node.value)
-    if not assigned:
-        return "telegram_owner_chat_id_source_unverified"
-    last = assigned[-1]
-    if isinstance(last, ast.Constant):
-        if not str(last.value or "").strip():
-            return "telegram_owner_chat_id_missing"
-    else:
-        return "telegram_owner_chat_id_source_unverified"
-    # A valid local value does not attest Cloudflare bindings, polling,
-    # authenticated bot delivery or the unchanged external production Worker.
-    return "telegram_gateway_poll_or_worker_unproven"
-
-
 def _resume_missing_telegram(
-    target: str, database_identity: str, *, root: Path, env_file: Path | None,
-    runner, probe,
+    target: str, database_identity: str, *, root: Path, runner, probe,
 ) -> str:
     """A partial successful resume only needs its proven-absent Telegram worker."""
     from tools.legacy_runtime_process import LegacyOwnerUnproven, probe_listener_pids
@@ -180,9 +121,11 @@ def _resume_missing_telegram(
             # Backend and exact release are already proven. An active 503
             # Telegram worker must never be restarted just to fix an external
             # Cloudflare/Vercel or machine-local credential blocker.
+            # Only the worker's live state is proven here. Do not guess a
+            # cause from an unrelated config.py or turn VPS install identity
+            # into a prerequisite for an independent Cloudflare upload.
             return ("BLOCKED: Telegram_running_not_ready:"
-                    + _telegram_transport_blocker(root, env_file)
-                    + "; no STOP, restart or deployment")
+                    "worker_active_health_unproven; no STOP, restart or deployment")
         if (not isinstance(state, dict)
                 or state.get("ActiveState") not in ("inactive", "failed")
                 or str(state.get("MainPID")) != "0"):
@@ -241,8 +184,7 @@ def resume_installed_release(
     # it or re-run STOP. Recover only a proven-absent worker, one time.
     if runtime_ready is None and _editor_backend_ready(target, identity):
         return _resume_missing_telegram(
-            target, identity, root=root, env_file=env_file,
-            runner=runner, probe=probe,
+            target, identity, root=root, runner=runner, probe=probe,
         )
     try:
         receipt = (resume_proof or check_resume)(target, root=root)
@@ -783,7 +725,12 @@ def deploy_staged_editor_only(
             # with PAPER_unit_not_stopped (and must not replay STOP).
             if (isinstance(observed, str)
                     and (observed.startswith("BLOCKED: manual_main_gateway_")
-                         or observed.startswith("BLOCKED: frontend_"))):
+                         or observed.startswith("BLOCKED: frontend_")
+                         or observed.startswith("BLOCKED: Telegram_running_not_ready:"))):
+                # Active Telegram HTTP 503 cannot be fixed by reinstalling
+                # bytes beneath a running, already-verified Backend. Preserve
+                # its real blocker, rather than masking it with an installer
+                # refusal such as PAPER_unit_not_stopped.
                 return observed
             # If manifest commit preceded a crash copying systemd units, a
             # stopped-only installer can complete the pinned transaction.

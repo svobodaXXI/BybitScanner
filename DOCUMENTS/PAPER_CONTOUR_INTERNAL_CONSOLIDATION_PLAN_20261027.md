@@ -177,13 +177,14 @@ Backend и STOP/TAKE сохранены. Не подменять причину 
   `/health=503`, существующий монолит возвращает один
   `BLOCKED: Telegram_running_not_ready:<redacted_reason>` и **не**
   повторяет STOP, restart, Gitless install, смену PAPER DB или торговые
-  операции. Read-only классификация смотрит переменные Gateway и
-  machine-local `config.py` установленного root; не исполняет
-  `config.py` с привилегиями и не вызывает `getUpdates` как второй
-  потребитель. Если источник Chat ID динамический или не проверен,
-  сообщать `source_unverified`, а не выдумывать отсутствие/значение.
-  Даже все найденные значения и публичный `/health=200` не доказывают
-  реальную доставку/полномочия Telegram.
+  операции. **Уточнение аудита 09.11:** прежняя диагностика #968
+  ошибочно выводила причину из предполагаемого `<install-root>/config.py`.
+  Это не подтверждает фактически импортированный модуль `config`
+  и не является предусловием Cloudflare staging; такая эвристика удалена.
+  Для активного Telegram с неподтверждённым health монолит сообщает
+  только подтверждаемое `worker_active_health_unproven`.
+  `getUpdates` не запускается вторым процессом; наличие кода и публичный
+  `/health=200` не доказывают реальную доставку Telegram.
 - **Единое продолжение, не отдельные квесты:** после единственного
   необходимого owner-допуска на секреты/Cloudflare production monolith
   переиспользует разрешённую настройку существующего Worker, не создаёт
@@ -194,6 +195,63 @@ Backend и STOP/TAKE сохранены. Не подменять причину 
   эффектами; монолит их не совершает самовольно. Не скрывать
   `BLOCKED`, не объявлять `READY` по одним тестам, HTTP health
   или готовому коду. Сохранить защиту Backend и LIVE=OFF.
+
+**Системный аудит предпосылок (09.11.2026, репозиторий):**
+
+| Независимая операция | Что действительно необходимо | Что не должно блокировать её |
+| --- | --- | --- |
+| Cloudflare staging (неопубликованная версия) | Проверенный исходник Worker из GitHub, Cloudflare auth и секреты существующего Worker | Наличие GitHub SHA на VPS, запущенные Backend/Telegram, `config.py`, SQLite, systemd или STOP |
+| Cloudflare production (только по отдельному разрешению) | Подтверждённая новая версия Worker и контролируемое переключение Cloudflare deployment | Gitless install PAPER, Scanner/Robot stop или изменение VPS IP |
+| EDITOR_ONLY запускаемого релиза | Защищённый exact-SHA установленного VPS, DB identity, frozen Scanner/Autopilot, Backend и реально готовый Telegram | Отсутствие последнего SHA GitHub на **другом** хосте/Cloudflare |
+| Неактивная служба Telegram | Доказанное отсутствие systemd worker/listener, затем один разрешённый start | Слепой повтор START после неизвестного результата |
+| Активная служба Telegram с `503` | Сохранить установленный SHA/Backend и выдать конкретный runtime BLOCKED | Повтор STOP, installer и анализ предполагаемого `config.py` |
+| PAPER STOP/Trade | Свежие ledger/identity/protection/STOP-TAKE proofs, владелец операции, guarded receipts и разрешение | Упрощения безопасности ради независимого Gateway staging |
+
+**Ещё одна доказанная ложная связка и исправление:** до этого аудита
+`tools.vps_systemd_unit_prepare.UNITS` одновременно использовался для
+строгой stopped-only **замены файлов релиза** и обычного **PAPER START**.
+В списке находился независимый `bybitscanner-manual-main-read.service`,
+поэтому работающий MAIN/занятый порт 8771 блокировал обычное продолжение
+Backend/Telegram. В исправлении `PAPER_UNITS` используется для
+`prepare_units`, `check_resume` и проверки портов 8765/8766.
+При этом `UNITS` всех четырёх служб, полная сверка их unit-файлов,
+строгие порты 8765/8766/8771 и `_stopped` остаются обязательными
+для `activate_staged_release`: замена кода под работающим MAIN
+по-прежнему запрещена. Доказательство: адресные регрессии для
+active/absent MAIN, точных unit bytes и занятого MAIN-порта.
+
+**Отдельная гипотеза об IP:** `vps_release_resume.REVIEWED_DROPINS`
+содержит исторически разрешённый HTTPS-адрес терминала
+`83.217.213.181` в `terminal-ingress.conf`. Это **не**
+`HostName` Windows SSH alias и не Cloudflare route. Новому IP
+`212.193.14.116` не следует автоматически подменять этот защищённый
+terminal URL без proof фактического ingress и отдельного
+разрешения на конфигурацию. Данный hardcode объясняет потенциальный
+`unexpected_systemd_dropin` после ручной смены terminal URL,
+но не доказывает причину `STABLE_SHA_UNAVAILABLE_ON_VPS`.
+
+**Причина `STABLE_SHA_UNAVAILABLE_ON_VPS`:** такого именованного
+блокера в текущем проверенном коде нет; формулировка получена от внешнего
+исполнителя. Вероятно, он ошибочно сделал сравнение VPS SHA условием
+Cloudflare staging. **Это не доказательство неисправности самого VPS.**
+Исходный SHA Cloudflare берётся из проверенного GitHub stable, а installed
+SHA VPS контролирует только VPS Gitless release/Editor/Trading.
+Гипотеза о сетевой природе не исключена: Windows SSH alias на новом
+`212.193.14.116` хотя бы дважды проходил, но попытки Codex могли
+использовать иной SSH config/route, а баннер мог пропадать до выполнения
+команды. Различать `SSH_TRANSPORT_UNVERIFIED` и `VPS_RELEASE_SHA_MISMATCH`
+по доказанному результату **одной** ограниченной проверки только когда
+потребуется реальная VPS-операция; не запускать эту диагностику для
+Cloudflare staging. Никакой автоматической смены IP, netplan,
+reboot или повторного STOP.
+
+**Подход зрелых систем:** Flux разделяет получение проверяемого
+артефакта из Git от применения желаемого состояния и последующего
+health-check; Kubernetes reconciliation сравнивает состояние **своего**
+ресурса с желаемым, не требует неизменности чужих компонентов.
+Cloudflare Workers раздельно хранит *uploaded version* и *active
+deployment*. Применить эти границы **в действующем monolith**, не
+устанавливая Kubernetes/Flux, нового orchestrator или БД.
 
 **Acceptance этого инцидента:** один согласованный запуск/продолжение до
 доказанной доставки и EDITOR_ONLY либо один точный безопасный BLOCKED,
