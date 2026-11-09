@@ -464,7 +464,9 @@ class CausalGeometryFeed:
     yellow 1--3/2--4 geometry. No provisional future pivot is painted.
     """
 
-    def __init__(self, *, wing_1h: int = 2, wing_5m: int = 2) -> None:
+    def __init__(self, *, wing_1h: int = 1, wing_5m: int = 1) -> None:
+        # One right-side closed candle suffices to confirm point 3 at the
+        # close of point 4; a two-bar wing delays H1/M5 beyond owner timing.
         from research.historical_candle_feed import FIVE_MINUTES_MS, ONE_HOUR_MS
 
         self._hourly = ConfirmedSwingStream(
