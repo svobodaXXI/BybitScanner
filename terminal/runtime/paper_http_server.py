@@ -63,6 +63,8 @@ from terminal.diary.statistics_endpoint import project_active_account_statistics
 from terminal.diary.scoped_statistics_archive import (
     StatisticsScopeError, load_latest_scoped_statistics_read_only,
 )
+from terminal.diary.scoped_statistics_reporter import load_paper_source_snapshot
+from terminal.diary.ticker_finrez import project_paper_ticker_pnl
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.hub import MarketDataHub, SymbolContext
 from terminal.market_data.client_projection import ClientMarketProjection, StaleProjectionError
@@ -3301,6 +3303,36 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **projection})
             return
 
+        if parsed.path == "/api/diary/ticker-finrez":
+            # Read-only PAPER execution/attribution projection. This backend is
+            # never a source of MAIN-account history or unscoped robot PnL.
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            if (set(params) != {"account_id", "owner", "period"}
+                    or any(len(values) != 1 for values in params.values())
+                    or params["period"][0] not in {"TODAY", "ALL"}
+                    or params["owner"][0] not in {"MANUAL", "ROBOT"}):
+                self._json_response(400, {"ok": False, "error": "finrez_scope_required"})
+                return
+            if params["account_id"][0] != "paper":
+                self._json_response(404, {"ok": False, "error": "finrez_scope_unavailable"})
+                return
+            try:
+                now_ms = int(time.time() * 1000)
+                snapshot = load_paper_source_snapshot(self.server.diary_source_db_path)
+                projection = project_paper_ticker_pnl(
+                    snapshot, account_id="paper", owner=params["owner"][0],
+                    period=params["period"][0], now_ms=now_ms,
+                )
+            except (StatisticsScopeError, ValueError):
+                self._json_response(503, {"ok": False, "error": "finrez_evidence_unavailable"})
+                return
+            except Exception:
+                LOGGER.exception("Ticker Finrez projection unavailable")
+                self._json_response(503, {"ok": False, "error": "finrez_evidence_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
         if parsed.path == "/api/diary/scoped-statistics":
             # This endpoint never creates or fills the archive; the separate
             # read-only source reporter owns materialization after owner approval.
@@ -5038,6 +5070,7 @@ def main() -> None:
         server.market_data = market_data
         server.robot_protection_coverage = robot_protection_coverage
         server.runtime_intent_lock = threading.Lock()
+        server.diary_source_db_path = database_path.resolve()
         server.diary_setup_store_path = decision_store_path(database_path)
         server.diary_factor_store_path = server.diary_setup_store_path
 
