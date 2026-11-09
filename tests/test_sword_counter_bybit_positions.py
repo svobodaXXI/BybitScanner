@@ -387,22 +387,22 @@ class RestartTests(unittest.TestCase):
 
 
 
-def wallet(equity="106.22345059", account_type="UNIFIED", accounts=None):
-    acc = {"accountType": account_type, "totalEquity": equity, "totalWalletBalance": "106.38454184",
+def wallet(wallet_balance="106.38454184", equity="106.22345059", account_type="UNIFIED", accounts=None):
+    acc = {"accountType": account_type, "totalEquity": equity, "totalWalletBalance": wallet_balance,
            "totalMarginBalance": "105.76490859", "totalAvailableBalance": "103.86754691",
            "totalPerpUPL": "-0.61963324", "totalInitialMargin": "1.89736168", "coin": []}
     return {"retCode": 0, "retMsg": "OK", "result": {"list": [acc] if accounts is None else accounts},
             "retExtInfo": {}, "time": NOW_MS}
 
 
-class AccountEquityTests(unittest.TestCase):
-    def equity(self, *responses):
+class WalletBalanceTests(unittest.TestCase):
+    def wallet_balance(self, *responses):
         session = FakeSession(*responses)
-        return bp.fetch_account_equity(creds(), session=session, clock_ms=lambda: NOW_MS), session
+        return bp.fetch_wallet_balance(creds(), session=session, clock_ms=lambda: NOW_MS), session
 
-    def test_reads_total_equity_of_the_unified_account_with_a_signed_read_only_get(self):
-        value, session = self.equity(FakeResponse(wallet()))
-        self.assertEqual(value, Decimal("106.22345059"))   # totalEquity, not wallet/margin/available
+    def test_reads_total_wallet_balance_of_the_unified_account_with_a_signed_read_only_get(self):
+        value, session = self.wallet_balance(FakeResponse(wallet()))
+        self.assertEqual(value, Decimal("106.38454184"))   # totalWalletBalance, not equity/margin/available
         call = session.calls[0]
         parts = urlsplit(call["url"])
         self.assertEqual((parts.netloc, parts.path, parts.query),
@@ -412,16 +412,28 @@ class AccountEquityTests(unittest.TestCase):
         self.assertEqual(call["headers"]["X-BAPI-SIGN"], expected)
         self.assertFalse(call["allow_redirects"])
 
-    def test_missing_or_doubtful_equity_is_an_error_never_another_field(self):
-        for payload in (wallet(equity=""), wallet(equity=None), wallet(equity="abc"), wallet(equity="NaN"),
+    def test_does_not_use_equity_or_available_as_wallet_balance(self):
+        reply = wallet(wallet_balance="147.14", equity="89.76")
+        reply["result"]["list"][0]["totalAvailableBalance"] = "63.01"
+        value, _ = self.wallet_balance(FakeResponse(reply))
+        self.assertEqual(value, Decimal("147.14"))
+
+    def test_missing_wallet_balance_never_falls_back_to_equity(self):
+        reply = wallet()
+        del reply["result"]["list"][0]["totalWalletBalance"]
+        with self.assertRaises(BybitResponseError):
+            self.wallet_balance(FakeResponse(reply))
+
+    def test_missing_or_doubtful_wallet_balance_is_an_error_never_another_field(self):
+        for payload in (wallet(wallet_balance=""), wallet(wallet_balance=None), wallet(wallet_balance="abc"), wallet(wallet_balance="NaN"),
                         wallet(account_type="CONTRACT"), wallet(accounts=[]),
                         wallet(accounts=[wallet()["result"]["list"][0]] * 2)):
             with self.subTest(payload=str(payload)[:80]), self.assertRaises(BybitResponseError):
-                self.equity(FakeResponse(payload))
+                self.wallet_balance(FakeResponse(payload))
         with self.assertRaises(BybitApiError):
-            self.equity(FakeResponse({"retCode": 10005, "retMsg": "Permission denied", "result": {}}))
+            self.wallet_balance(FakeResponse({"retCode": 10005, "retMsg": "Permission denied", "result": {}}))
         with self.assertRaises(BybitTransportError):
-            self.equity(requests.Timeout("slow"))
+            self.wallet_balance(requests.Timeout("slow"))
 
 
 if __name__ == "__main__":
