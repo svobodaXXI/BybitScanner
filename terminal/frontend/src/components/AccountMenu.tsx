@@ -380,10 +380,12 @@ export function AccountMenu({
               <article className="account-card mainnet" key={account.id} aria-label="Manual MAIN account">
                 <strong>{account.display_name}</strong>
                 <small>BYBIT · MAINNET · {account.status} · Separate MAIN service</small>
-                <small>Read-only MAIN. Real order execution remains disabled.</small>
+                <small>{workspaceProjection?.account_id === account.id && workspaceProjection.read_only === false
+                  ? "Manual MAIN trading verified for this session."
+                  : "Trading requires independent MAIN authorization; read-only until verified."}</small>
                 {mode === "TERMINAL" && account.id !== selectedAccountId ? (
                   <button type="button" disabled={switching}
-                    onClick={() => setConfirmAccount(account)}>Select MAIN (read-only)</button>
+                    onClick={() => setConfirmAccount(account)}>Select MAIN</button>
                 ) : null}
                 <button type="button" disabled={mainInventoryLoading === account.id}
                   onClick={() => void openMainInventory(account)}>
@@ -412,7 +414,7 @@ export function AccountMenu({
         </div>
       ) : null}
       {mainInventory ? <LiveAccountInventory
-        activeAccountName={mainInventory.name + " · MAIN · READ ONLY"}
+        activeAccountName={mainInventory.name + (mainInventory.projection.read_only ? " · MAIN · READ ONLY" : " · MAIN · MANUAL TRADING")}
         activeSymbol=""
         projection={mainInventory.projection}
         onClose={() => { ++mainInventoryRequest.current; setMainInventory(null); }}
@@ -425,7 +427,7 @@ export function AccountMenu({
             <p>{confirmAccount.display_name}</p>
             <small>{confirmAccount.provider} · {confirmAccount.environment} · {confirmAccount.status}</small>
             <p>{mode
-              ? "Only this mode's account preference changes. MAIN is read-only; LIVE remains disabled."
+              ? "Only this mode's account preference changes. Manual MAIN trading requires separate verified authority."
               : "The entire account-scoped workspace will switch. LIVE trading remains disabled."}</p>
             {switchError ? <p role="alert">{switchError}</p> : null}
             <div className="account-switch-confirm-actions">

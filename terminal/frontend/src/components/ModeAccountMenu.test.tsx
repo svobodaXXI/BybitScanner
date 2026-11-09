@@ -35,7 +35,7 @@ describe("mode-specific account selector", () => {
     const onSelectAccount = vi.fn(async () => undefined);
     render(<AccountMenu open onToggle={vi.fn()} mode="TERMINAL"
       selectedAccountId="paper" onSelectAccount={onSelectAccount} workspaceProjection={projection} />);
-    const select = await screen.findByRole("button", { name: "Select MAIN (read-only)" });
+    const select = await screen.findByRole("button", { name: "Select MAIN" });
     fireEvent.click(select);
     expect(screen.getByRole("dialog", { name: "Confirm account switch" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Switch account" }));

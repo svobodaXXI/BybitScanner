@@ -26,7 +26,7 @@ async function execute<T extends object>(
   const response = await fetcher(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
+    body: JSON.stringify({ ...request, confirmed: true }),
   });
   const result = await response.json() as LiveLimitResponse;
   const current = currentAuthority();
@@ -39,19 +39,19 @@ export const executeLiveLimitCreate = (
   request: LimitCommandRequest & AuthorityFields,
   currentAuthority: () => LiveAuthority | null,
   fetcher?: typeof fetch,
-) => execute("/api/live/limit", request, currentAuthority, fetcher);
+) => execute("/api/manual-main/trade/limit", request, currentAuthority, fetcher);
 
 export const executeLiveLimitAmend = (
   request: PaperLimitAmendRequest & AuthorityFields,
   currentAuthority: () => LiveAuthority | null,
   fetcher?: typeof fetch,
-) => execute("/api/live/limit/amend", request, currentAuthority, fetcher);
+) => execute("/api/manual-main/trade/limit/amend", request, currentAuthority, fetcher);
 
 export const executeLiveLimitCancel = (
   request: PaperLimitCancelRequest & AuthorityFields,
   currentAuthority: () => LiveAuthority | null,
   fetcher?: typeof fetch,
-) => execute("/api/live/limit/cancel", request, currentAuthority, fetcher);
+) => execute("/api/manual-main/trade/limit/cancel", request, currentAuthority, fetcher);
 
 export function projectLiveLimitOrders(
   orders: Array<Record<string, unknown>>,

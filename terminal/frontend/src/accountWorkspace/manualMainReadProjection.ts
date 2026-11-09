@@ -26,9 +26,10 @@ export function manualMainReadProjection(
       !o || typeof o !== "object" || (o as Record<string, unknown>).account_id !== accountId
     )) return null;
 
+  const tradeEnabled = data.trading_enabled === true && data.status === "READY";
   return {
     ok: true, account_id: accountId, provider: "BYBIT", environment: "MAINNET",
-    status: String(data.status), read_only: true,
+    status: String(data.status), read_only: !tradeEnabled,
     session_generation: data.refresh_generation,
     projection_generation: data.refresh_generation,
     wallet_balance_usdt: data.wallet_balance_usdt,
@@ -37,6 +38,6 @@ export function manualMainReadProjection(
     positions: data.positions as Array<Record<string, unknown>>,
     orders: data.orders as Array<Record<string, unknown>>,
     paper_state: null,
-    capabilities: { market: false, limit: false, stop: false, take: false, full_close: false },
+    capabilities: { market: tradeEnabled, limit: tradeEnabled, stop: tradeEnabled, take: tradeEnabled, full_close: tradeEnabled },
   };
 }

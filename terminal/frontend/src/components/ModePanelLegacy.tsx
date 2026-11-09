@@ -37,10 +37,7 @@ import { DiaryOverlay } from "./DiaryOverlay";
 import { AccountMenu } from "./AccountMenu";
 import type { AccountMode, ModeAccountDescriptor } from "../accountWorkspace/modeAccountSelection";
 import { LiveAccountInventory } from "./LiveAccountInventory";
-import {
-  accountWorkspaceStore,
-  type AccountWorkspaceProjection,
-} from "../accountWorkspace/accountWorkspaceStore";
+import type { AccountWorkspaceProjection } from "../accountWorkspace/accountWorkspaceStore";
 import { StopSettings } from "./StopSettings";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
@@ -105,6 +102,7 @@ export function ModePanel({
   liveMarketAllowed = false,
   liveLimitAllowed = false,
   liveProtectionAllowed = false,
+  refreshMain = async () => { throw new Error("independent_main_refresh_missing"); },
   openPositionsRequest = 0,
   onRobotPositionsLoaded,
   robotLivePositions,
@@ -161,6 +159,7 @@ export function ModePanel({
   liveMarketAllowed?: boolean;
   liveLimitAllowed?: boolean;
   liveProtectionAllowed?: boolean;
+  refreshMain?: () => Promise<void>;
   openPositionsRequest?: number;
   onRobotPositionsLoaded?: (positions: PaperOpenPosition[] | null) => void;
   robotLivePositions?: PaperOpenPosition[] | null;
@@ -558,7 +557,9 @@ export function ModePanel({
     }
     liveDispatchActionIdRef.current = action.client_action_id;
     setLiveConfirmationSubmitting(true);
-    const result = await executeLiveMarketCommand(action, {
+    let result;
+    try {
+      result = await executeLiveMarketCommand(action, {
       currentAuthority: () => {
         const latest = marketAuthority.current;
         const currentProjection = latest.projection;
@@ -570,6 +571,12 @@ export function ModePanel({
           : null;
       },
     });
+    } catch {
+      setLiveConfirmation(null);
+      setLiveConfirmationSubmitting(false);
+      setExecutionStatus("LIVE outcome unknown — check Bybit; do not retry");
+      return;
+    }
     if (!result) {
       setLiveConfirmation(null);
       setLiveConfirmationSubmitting(false);
@@ -578,6 +585,9 @@ export function ModePanel({
     }
     setLiveConfirmation(null);
     setLiveConfirmationSubmitting(false);
+    if (result.status === "accepted_pending") {
+      try { await refreshMain(); } catch { /* exchange ACK is not fill proof */ }
+    }
     setExecutionStatus(result.status === "unknown"
       ? "LIVE result ambiguous — reconciling; do not retry"
       : result.status === "accepted_pending" ? "LIVE accepted — awaiting REST evidence"
@@ -602,7 +612,7 @@ export function ModePanel({
             },
             createClientActionId: () =>
               globalThis.crypto?.randomUUID?.() ?? `live-full-close-${Date.now()}`,
-            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+            refreshActiveLive: refreshMain,
           },
         );
         setExecutionStatus(
@@ -616,7 +626,7 @@ export function ModePanel({
         );
       } catch {
         setExecutionStatus("LIVE Full Close transport uncertain — reconciling; do not retry");
-        await accountWorkspaceStore.refreshActiveLive();
+        await refreshMain();
       }
       return;
     }
