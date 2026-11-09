@@ -183,8 +183,8 @@ def original_neckline_proofs(
     not a new strategy lookback. Future pattern families require their own
     original Scanner-to-Robot handoff, not rules copied into this module.
     """
-    if type(source_window) is not int or source_window < 9:
-        raise ValueError("source Scanner window must contain at least nine bars")
+    if type(source_window) is not int or source_window < 1:
+        raise ValueError("source Scanner window must be a positive integer")
 
     from geometry.double_extremum import frozen_neckline_snapshot
     from terminal.application.robot_reentry_adapter import proven_pattern_entry
