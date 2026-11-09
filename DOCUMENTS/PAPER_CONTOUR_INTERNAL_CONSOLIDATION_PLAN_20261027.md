@@ -207,6 +207,29 @@ Backend и STOP/TAKE сохранены. Не подменять причину 
 | Активная служба Telegram с `503` | Сохранить установленный SHA/Backend и выдать конкретный runtime BLOCKED | Повтор STOP, installer и анализ предполагаемого `config.py` |
 | PAPER STOP/Trade | Свежие ledger/identity/protection/STOP-TAKE proofs, владелец операции, guarded receipts и разрешение | Упрощения безопасности ради независимого Gateway staging |
 
+**Ещё одна доказанная ложная связка и исправление:** до этого аудита
+`tools.vps_systemd_unit_prepare.UNITS` одновременно использовался для
+строгой stopped-only **замены файлов релиза** и обычного **PAPER START**.
+В списке находился независимый `bybitscanner-manual-main-read.service`,
+поэтому работающий MAIN/занятый порт 8771 блокировал обычное продолжение
+Backend/Telegram. В исправлении `PAPER_UNITS` используется для
+`prepare_units`, `check_resume` и проверки портов 8765/8766.
+При этом `UNITS` всех четырёх служб, полная сверка их unit-файлов,
+строгие порты 8765/8766/8771 и `_stopped` остаются обязательными
+для `activate_staged_release`: замена кода под работающим MAIN
+по-прежнему запрещена. Доказательство: адресные регрессии для
+active/absent MAIN, точных unit bytes и занятого MAIN-порта.
+
+**Отдельная гипотеза об IP:** `vps_release_resume.REVIEWED_DROPINS`
+содержит исторически разрешённый HTTPS-адрес терминала
+`83.217.213.181` в `terminal-ingress.conf`. Это **не**
+`HostName` Windows SSH alias и не Cloudflare route. Новому IP
+`212.193.14.116` не следует автоматически подменять этот защищённый
+terminal URL без proof фактического ingress и отдельного
+разрешения на конфигурацию. Данный hardcode объясняет потенциальный
+`unexpected_systemd_dropin` после ручной смены terminal URL,
+но не доказывает причину `STABLE_SHA_UNAVAILABLE_ON_VPS`.
+
 **Причина `STABLE_SHA_UNAVAILABLE_ON_VPS`:** такого именованного
 блокера в текущем проверенном коде нет; формулировка получена от внешнего
 исполнителя. Вероятно, он ошибочно сделал сравнение VPS SHA условием
