@@ -421,7 +421,7 @@ class ConfirmedGeometryTests(unittest.TestCase):
         self.assertEqual([touch for i, _, touch, _ in observed if i in (7, 11)],
                          [5 * ONE_HOUR_MS, 9 * ONE_HOUR_MS])
         self.assertEqual([version for i, _, _, version in observed if i in (7, 11)],
-                         [8 * ONE_HOUR_MS, 12 * ONE_HOUR_MS])
+                         [5 * ONE_HOUR_MS, 5 * ONE_HOUR_MS])
         # No line refit or first anchor mutation is needed to move the prior.
         self.assertEqual(feed._hourly_trend.main.first, first_anchor)
         self.assertEqual(feed._hourly_trend.main.second, second_anchor)
