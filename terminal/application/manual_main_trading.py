@@ -189,8 +189,17 @@ class ManualMainTrader:
                     _require(len(active) == 1 and active[0].get("positionIdx") == 0,
                              "live_close_position_ambiguous")
                     _require(active[0].get("side") != params["side"]
-                             and active[0].get("size") == params["qty"],
+                             and _positive(str(active[0].get("size")), "live_close_quantity")
+                                 == _positive(params["qty"], "close_quantity"),
                              "live_close_position_changed")
+                if operation.startswith(("stop", "take")):
+                    live = api.get_positions(category="linear", symbol=symbol)
+                    _require(isinstance(live, dict) and live.get("retCode") == 0,
+                             "live_protection_position_unproven")
+                    entries = live.get("result", {}).get("list", [])
+                    active = [p for p in entries if Decimal(str(p.get("size", "0"))) > 0]
+                    _require(len(active) == 1 and active[0].get("positionIdx") == 0,
+                             "live_protection_position_ambiguous")
                 method = {
                     "market": api.place_order,
                     "limit": api.place_order,
@@ -293,11 +302,19 @@ class ManualMainTrader:
             order_id = data.get("order_id")
             _require(isinstance(order_id, str) and 1 <= len(order_id) <= 96
                      and re.fullmatch(r"[A-Za-z0-9_-]+", order_id), "invalid_main_order_id")
+            owned = [o for o in snapshot.get("orders", [])
+                     if o.get("account_id") == data["account_id"]
+                     and o.get("symbol") == symbol
+                     and o.get("order_id") == order_id
+                     and str(o.get("status", "")).lower() in ("open", "partially_filled_open")]
+            _require(len(owned) == 1, "main_order_not_in_current_account")
             args = {**common, "orderId": order_id}
             if op == "limit/amend":
                 price = _positive(data.get("limit_price"), "limit_price")
+                remaining = _positive(str(owned[0].get("quantity")), "main_amend_quantity")
+                _require(price * remaining <= self._ceiling, "manual_main_notional_ceiling")
                 args["price"] = _number(price)
-                # Do not allow quantity increases without a fresh bounded intent.
+                # No implicit order-size increase.
                 _require(data.get("quantity") in (None, "", "0"), "main_amend_qty_unsupported")
             return args
         _require(op.startswith(("stop", "take")), "unsupported_main_operation")
