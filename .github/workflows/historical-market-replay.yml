@@ -80,7 +80,22 @@ jobs:
           cp ../../research/local_replay_viewer/smoke_package.py "$RUNNER_TEMP/machine-time/smoke_package.py"
           cp -r ../../research/local_replay_viewer/dist "$RUNNER_TEMP/machine-time/dist"
           cp ../../research/export_historical_replay.py ../../research/historical_candle_feed.py ../../research/historical_market_replay.py ../../research/h017_local_risk.py ../../research/h017_blue_open_preview.py ../../research/wilder_dmi.py ../../research/causal_trend_geometry.py "$RUNNER_TEMP/machine-time/research/"
+          # Only pure Wedge Scanner/Robot policy and isolated virtual exchange:
+          # never bundle actual Scanner process, private API, PAPER DB or keys.
+          cp -r ../../research/simulator_v2 "$RUNNER_TEMP/machine-time/research/"
+          cp -r ../../wedge ../../geometry ../../signal "$RUNNER_TEMP/machine-time/"
+          mkdir -p "$RUNNER_TEMP/machine-time/analyzer"
+          cp ../../analyzer/__init__.py ../../analyzer/scoring.py "$RUNNER_TEMP/machine-time/analyzer/"
+          cp ../../pivots.py ../../confirmation.py ../../scanner_geometry_cursor.py "$RUNNER_TEMP/machine-time/"
+          cp ../../robot_state_machine.py ../../robot_entry_limit.py ../../robot_protection.py ../../robot_l_shape.py ../../retest_account_risk.py ../../retest_campaign.py "$RUNNER_TEMP/machine-time/"
+          mkdir -p "$RUNNER_TEMP/machine-time/terminal/api" "$RUNNER_TEMP/machine-time/terminal/domain" "$RUNNER_TEMP/machine-time/terminal/application"
+          cp ../../terminal/api/models.py "$RUNNER_TEMP/machine-time/terminal/api/"
+          cp ../../terminal/domain/models.py "$RUNNER_TEMP/machine-time/terminal/domain/"
+          cp ../../terminal/application/normalization.py "$RUNNER_TEMP/machine-time/terminal/application/"
           python "$RUNNER_TEMP/machine-time/server.py" --check
+      - name: Bundle Windows Python 3.11 offline analytical wheelhouse
+        run: |
+          python -m pip download --only-binary=:all: --platform win_amd64 --python-version 311 --implementation cp --abi cp311 --dest "$RUNNER_TEMP/machine-time/python-wheels" pandas==2.2.3 numpy==2.1.3
       - name: Select preinstalled Chrome or install Chromium
         run: |
           if command -v google-chrome >/dev/null; then
@@ -120,12 +135,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Verify extracted Windows package starts and serves local assets
+      - name: Install analysis wheels exclusively in CI runner
+        shell: pwsh
+        working-directory: machine-time
+        run: python -m pip install --no-index --find-links=python-wheels pandas==2.2.3 numpy==2.1.3
+      - name: Verify Windows package imports Wedge and preserves old viewer
         shell: pwsh
         working-directory: machine-time
         run: |
           python -B server.py --check
           python -B smoke_package.py
+          python -c "from research.simulator_v2.wedge_cli import run_from_time_machine_config; from research.simulator_v2.wedge_observer import WedgeScannerConfig; import pandas; print('LOCAL_WEDGE_ENGINE_PACKAGE_IMPORT_OK')"
+          python -c "from server import local_simulation_status; s=local_simulation_status(); assert s['wedge_engine_available'] and s['python_dependencies_available']; assert not s['can_attempt']; print('LOCAL_WEDGE_ENGINE_GATED_UNTIL_ARCHIVE_AND_RISK_OK')"
 
   real-bybit-h017-readonly-acceptance:
     # A single research PR trial, or a manual rerun when separately requested.
