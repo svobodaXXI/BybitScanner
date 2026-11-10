@@ -167,10 +167,10 @@ class OfflineWedgeBacktestTests(unittest.TestCase):
             # Cache remains sufficient, without touching the unavailable network.
             with patch.object(ReadOnlyWedgeScanner, "_evaluate", return_value=None):
                 self.assertEqual(run_cached_wedge_trade_range(**kwargs).report, result.report)
-            with self.assertRaisesRegex(ValueError,"last selected UTC day"):
+            with self.assertRaisesRegex(ValueError,"outside pinned trade days"):
                 with patch.object(ReadOnlyWedgeScanner,"_evaluate",return_value=None):
                     run_cached_wedge_trade_range(
-                        **{**kwargs,"end_inclusive_ms":START_MS-1},
+                        **{**kwargs,"end_inclusive_ms":START_MS+DAY_MS},
                     )
 
     def test_invalid_windows_missing_cache_and_foreign_data_fail_without_output(self):
@@ -185,7 +185,7 @@ class OfflineWedgeBacktestTests(unittest.TestCase):
             run_verified_wedge_chunks(
                 session, [c], start_ms=0,end_inclusive_ms=5*M,
             )
-        with self.assertRaisesRegex(ValueError, "only a"):
+        with self.assertRaisesRegex(ValueError, "only internal virtual MARKET"):
             run_verified_chunks(
                 make_session(run="schedule"),
                 [c], order_schedule={M: "wrong"},
