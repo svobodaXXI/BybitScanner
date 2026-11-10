@@ -7,9 +7,13 @@ OHLC fill assumption, NOT proof of venue queue priority or real execution.
 LIMIT fills occur at their stated limit price, never a fictitious improvement.
 A marketable opening uses taker fees; intrabar limit fill uses maker fees.
 
-Only one pending virtual order, full fills, one-way position, no leverage,
-margin, depth, partial fills, STOP/TAKE or real trading endpoints. Robot owns
-entry eligibility and protection; this module owns only execution assumptions.
+Only one pending order or one protected position, full fills, one-way
+position, no leverage, depth, partial fills or real trading endpoints.
+Protected STOP/TAKE execute pessimistically on ambiguous closed M1 candles:
+STOP takes precedence over TAKE and gap STOP executes at OPEN. When entry and
+STOP hit in one bar, both receipts commit atomically. Intrabar TAKE on an
+entry candle is deferred (its order relative to entry is unprovable).
+Robot owns entry eligibility and price policy; exchange owns fill assumptions.
 """
 from __future__ import annotations
 
@@ -65,6 +69,32 @@ class LimitRequest:
 
 
 @dataclass(frozen=True)
+class ProtectedLimitRequest:
+    """Explicit research-only STOP/TAKE bracket bound to one GTC entry.
+
+    Robot controls the price calculations before constructing this request.
+    No strategy or RR logic belongs in the virtual exchange.
+    """
+    entry: LimitRequest
+    stop_price: Decimal
+    take_price: Decimal
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.entry, LimitRequest):
+            raise TypeError("exact virtual LIMIT request required")
+        for price in (self.stop_price, self.take_price):
+            if not isinstance(price, Decimal) or not price.is_finite() or price <= 0:
+                raise ValueError("finite positive protective prices required")
+        entry = self.entry.limit_price
+        if self.entry.side == "BUY":
+            valid = self.stop_price < entry < self.take_price
+        else:
+            valid = self.take_price < entry < self.stop_price
+        if not valid:
+            raise ValueError("STOP/TAKE must straddle entry on protective sides")
+
+
+@dataclass(frozen=True)
 class OrderEvent:
     order_id: str
     kind: str  # SUBMITTED, AMENDED, CANCELLED, FILLED
@@ -108,6 +138,10 @@ class VirtualExchange:
         self._pending: tuple[MarketRequest | LimitRequest, int] | None = None
         self._seen_order_ids: set[str] = set()
         self._events: list[OrderEvent] = []
+        self._pending_protection: ProtectedLimitRequest | None = None
+        self._active_protection: ProtectedLimitRequest | None = None
+        self._last_minute_fills: tuple[VirtualFill, ...] = ()
+        self._last_minute_order_events: tuple[OrderEvent, ...] = ()
 
     @property
     def virtual_time_ms(self) -> int | None:
@@ -121,6 +155,18 @@ class VirtualExchange:
     def events(self) -> tuple[OrderEvent, ...]:
         return tuple(self._events)
 
+    @property
+    def active_protection(self) -> ProtectedLimitRequest | None:
+        return self._active_protection
+
+    @property
+    def last_minute_fills(self) -> tuple[VirtualFill, ...]:
+        return self._last_minute_fills
+
+    @property
+    def last_minute_order_events(self) -> tuple[OrderEvent, ...]:
+        return self._last_minute_order_events
+
     def submit(self, request: MarketRequest, *, submitted_at_ms: int) -> None:
         if not isinstance(request, MarketRequest):
             raise TypeError("MarketRequest required")
@@ -131,13 +177,22 @@ class VirtualExchange:
             raise TypeError("LimitRequest required")
         self._submit(request, submitted_at_ms=submitted_at_ms)
 
+    def submit_protected_limit(
+        self, request: ProtectedLimitRequest, *, submitted_at_ms: int,
+    ) -> None:
+        """Bind STOP+TAKE to the GTC entry before the first possible fill."""
+        if not isinstance(request, ProtectedLimitRequest):
+            raise TypeError("ProtectedLimitRequest required")
+        self._submit(request.entry, submitted_at_ms=submitted_at_ms)
+        self._pending_protection = request
+
     def _submit(
         self, request: MarketRequest | LimitRequest, *, submitted_at_ms: int,
     ) -> None:
         if self._last_close_ms is None or submitted_at_ms != self._last_close_ms:
             raise ValueError("submit requires the latest fully closed M1 time")
-        if self._pending is not None:
-            raise ValueError("another virtual order is already pending")
+        if self._pending is not None or self._active_protection is not None:
+            raise ValueError("pending order or protected position already owns virtual symbol")
         if request.order_id in self._seen_order_ids:
             raise ValueError("virtual order ID already used")
         self._pending = (request, submitted_at_ms)
@@ -153,6 +208,8 @@ class VirtualExchange:
         """Change only price of a currently pending GTC LIMIT, not ownership."""
         if not isinstance(request, LimitRequest):
             raise TypeError("LimitRequest required")
+        if self._pending_protection is not None:
+            raise ValueError("protected LIMIT reprice requires new native Robot risk proof")
         if (self._last_close_ms is None or amended_at_ms != self._last_close_ms
                 or self._pending is None
                 or not isinstance(self._pending[0], LimitRequest)):
@@ -176,18 +233,62 @@ class VirtualExchange:
             raise ValueError("only the current pending virtual order may be cancelled")
         prior = self._pending[0]
         self._pending = None
+        self._pending_protection = None
         self._events.append(OrderEvent(
             order_id, "CANCELLED", cancelled_at_ms,
             order_type="LIMIT" if isinstance(prior, LimitRequest) else "MARKET",
         ))
 
-    def on_closed_minute(self, minute: Candle) -> VirtualFill | None:
-        """Process an M1 only after closure, with explicit fill assumptions.
+    @staticmethod
+    def _protective_exit(
+        request: ProtectedLimitRequest, minute: Candle, *, entry_candle: bool,
+    ) -> tuple[str, Decimal] | None:
+        """Pessimistic OHLC resolution with STOP priority, never false TAKE.
 
-        MARKET: next M1 OPEN. LIMIT: first future M1 with opening marketable
-        or strict penetration beyond limit. Intrabar LIMIT fill assumed at
-        limit price; equality-only touches are never considered guaranteed.
-        No unclosed/future OHLC is visible to the strategy at decision time.
+        A same-bar intrabar TAKE might have occurred before the LIMIT entry,
+        so do NOT award it. STOP is considered hit even during entry candle.
+        """
+        is_long = request.entry.side == "BUY"
+        stop_gap = (
+            minute.open <= request.stop_price if is_long
+            else minute.open >= request.stop_price
+        )
+        stop_hit = (
+            minute.low <= request.stop_price if is_long
+            else minute.high >= request.stop_price
+        )
+        if stop_hit:
+            return "STOP", minute.open if stop_gap else request.stop_price
+        if entry_candle:
+            return None
+        take_hit = (
+            minute.high >= request.take_price if is_long
+            else minute.low <= request.take_price
+        )
+        if take_hit:
+            return "TAKE", request.take_price
+        return None
+
+    def _exit_fill(
+        self, request: ProtectedLimitRequest, minute: Candle,
+        reason: str, price: Decimal,
+    ) -> VirtualFill:
+        return VirtualFill(
+            simulation_run_id=self.account.simulation_run_id,
+            symbol=self.account.symbol,
+            fill_id=request.entry.order_id + "_" + reason.lower() + "_fill",
+            virtual_time_ms=minute.end_ms,
+            side="SELL" if request.entry.side == "BUY" else "BUY",
+            quantity=request.entry.quantity,
+            price=price,
+            fee=price * request.entry.quantity * self.taker_fee_rate,
+        )
+
+    def on_closed_minute(self, minute: Candle) -> VirtualFill | None:
+        """Atomically match a closed M1 without reading future minutes.
+
+        Protected positions use STOP-first matching. A same-candle entry+STOP
+        is an atomic batch in the existing VirtualAccount, never a naked fill.
         """
         if not isinstance(minute, Candle) or minute.interval_ms != MINUTE_MS:
             raise ValueError("only closed M1 Candle is supported")
@@ -196,16 +297,37 @@ class VirtualExchange:
         if self._last_close_ms is not None and minute.start_ms != self._last_close_ms:
             raise ValueError("M1 gap, overlap or duplicate at virtual exchange")
 
-        receipt = None
-        filled_kind: str | None = None
-        if self._pending is not None:
-            request, submitted_at_ms = self._pending
+        receipts: list[VirtualFill] = []
+        new_events: list[OrderEvent] = []
+        next_pending = self._pending
+        next_pending_protection = self._pending_protection
+        next_active_protection = self._active_protection
+
+        if next_active_protection is not None:
+            if next_pending is not None:
+                raise ValueError("protected position and pending entry cannot coexist")
+            resolution = self._protective_exit(
+                next_active_protection, minute, entry_candle=False,
+            )
+            if resolution is not None:
+                reason, price = resolution
+                receipts.append(
+                    self._exit_fill(next_active_protection, minute, reason, price)
+                )
+                new_events.append(OrderEvent(
+                    next_active_protection.entry.order_id,
+                    reason + "_FILLED", minute.end_ms, order_type=reason,
+                ))
+                next_active_protection = None
+        elif next_pending is not None:
+            request, submitted_at_ms = next_pending
+            kind: str | None = None
+            price: Decimal | None = None
+            fee_rate = self.taker_fee_rate
             if isinstance(request, MarketRequest):
                 if submitted_at_ms != minute.start_ms:
                     raise ValueError("pending MARKET cannot skip its next M1 opening")
-                price = minute.open
-                fee_rate = self.taker_fee_rate
-                filled_kind = "MARKET"
+                price, kind = minute.open, "MARKET"
             else:
                 if submitted_at_ms > minute.start_ms:
                     raise ValueError("LIMIT cannot execute before submission")
@@ -219,35 +341,53 @@ class VirtualExchange:
                     else minute.high > request.limit_price
                 )
                 if marketable_open or trade_through:
-                    price = request.limit_price
+                    price, kind = request.limit_price, "LIMIT"
                     fee_rate = (
                         self.taker_fee_rate if marketable_open
                         else self.maker_fee_rate
                     )
-                    filled_kind = "LIMIT"
-            if filled_kind is not None:
-                fee = price * request.quantity * fee_rate
-                receipt = VirtualFill(
+            if kind is not None:
+                assert price is not None
+                receipts.append(VirtualFill(
                     simulation_run_id=self.account.simulation_run_id,
                     symbol=self.account.symbol,
                     fill_id=f"{request.order_id}_fill",
                     virtual_time_ms=minute.end_ms,
-                    side=request.side,
-                    quantity=request.quantity,
-                    price=price,
-                    fee=fee,
-                )
-                # Account validates atomically; failed append leaves minute
-                # cursor, pending LIMIT and event stream unchanged.
-                self.account.append(receipt)
+                    side=request.side, quantity=request.quantity,
+                    price=price, fee=price * request.quantity * fee_rate,
+                ))
+                new_events.append(OrderEvent(
+                    request.order_id, "FILLED", minute.end_ms, order_type=kind,
+                ))
+                if next_pending_protection is not None:
+                    if not isinstance(request, LimitRequest) or next_pending_protection.entry != request:
+                        raise ValueError("STOP/TAKE bracket differs from pending LIMIT")
+                    resolution = self._protective_exit(
+                        next_pending_protection, minute, entry_candle=True,
+                    )
+                    if resolution is not None:
+                        reason, exit_price = resolution
+                        receipts.append(self._exit_fill(
+                            next_pending_protection, minute, reason, exit_price,
+                        ))
+                        new_events.append(OrderEvent(
+                            request.order_id, reason + "_FILLED", minute.end_ms,
+                            order_type=reason,
+                        ))
+                    else:
+                        next_active_protection = next_pending_protection
+                    next_pending_protection = None
+                next_pending = None
 
+        if receipts:
+            # If both the entry and its STOP trigger in the same M1, either
+            # both are accounted for, or the entire minute remains uncommitted.
+            self.account.append_many(tuple(receipts))
         self._last_close_ms = minute.end_ms
-        if receipt is not None:
-            self._pending = None
-            self._events.append(
-                OrderEvent(
-                    request.order_id, "FILLED", minute.end_ms,
-                    order_type=filled_kind,
-                )
-            )
-        return receipt
+        self._pending = next_pending
+        self._pending_protection = next_pending_protection
+        self._active_protection = next_active_protection
+        self._events.extend(new_events)
+        self._last_minute_fills = tuple(receipts)
+        self._last_minute_order_events = tuple(new_events)
+        return receipts[-1] if receipts else None
