@@ -128,23 +128,36 @@ class VirtualAccount:
         return tuple(self._fills)
 
     def append(self, receipt: VirtualFill) -> None:
-        """Validate candidate ledger atomically before one local append."""
-        if not isinstance(receipt, VirtualFill):
-            raise TypeError("only explicit VirtualFill receipts are allowed")
-        if (
-            receipt.namespace != "SIMULATION"
-            or receipt.simulation_run_id != self.simulation_run_id
-            or receipt.symbol != self.symbol
-        ):
-            raise ValueError("receipt does not belong to this virtual account")
-        if any(fill.fill_id == receipt.fill_id for fill in self._fills):
-            raise ValueError("duplicate virtual fill; refusing double accounting")
-        if self._fills and receipt.virtual_time_ms < self._fills[-1].virtual_time_ms:
-            raise ValueError("virtual receipts must arrive chronologically")
-        # A rejected fill must not change prior accounting state.
-        self._project(tuple(self._fills) + (receipt,), receipt.virtual_time_ms,
-                      receipt.price)
-        self._fills.append(receipt)
+        """Validate and atomically commit one virtual execution receipt."""
+        self.append_many((receipt,))
+
+    def append_many(self, receipts: tuple[VirtualFill, ...]) -> None:
+        """Atomic M1 entry + protective exit; never publish a partial ledger.
+
+        A LIMIT and its immediate STOP may share the same closed M1; project
+        the ENTIRE batch before updating the account. No real trading IO.
+        """
+        if not isinstance(receipts, tuple) or not receipts:
+            raise ValueError("non-empty tuple of virtual fills required")
+        known = {fill.fill_id for fill in self._fills}
+        last_time = self._fills[-1].virtual_time_ms if self._fills else -1
+        for receipt in receipts:
+            if not isinstance(receipt, VirtualFill):
+                raise TypeError("only explicit VirtualFill receipts are allowed")
+            if (receipt.namespace != "SIMULATION"
+                    or receipt.simulation_run_id != self.simulation_run_id
+                    or receipt.symbol != self.symbol):
+                raise ValueError("receipt does not belong to this virtual account")
+            if receipt.fill_id in known:
+                raise ValueError("duplicate virtual fill; refusing double accounting")
+            if receipt.virtual_time_ms < last_time:
+                raise ValueError("virtual receipts must arrive chronologically")
+            known.add(receipt.fill_id)
+            last_time = receipt.virtual_time_ms
+        # This single projection verifies fee solvency, no implicit reversal,
+        # and full fill history BEFORE changing the authoritative journal.
+        self._project(tuple(self._fills) + receipts, last_time, receipts[-1].price)
+        self._fills.extend(receipts)
 
     def snapshot(
         self, *, as_of_ms: int, mark_price: Decimal | None = None,
