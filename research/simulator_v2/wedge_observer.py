@@ -13,10 +13,44 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
+from functools import lru_cache
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+from typing import Any, Callable
 
 from research.historical_market_replay import Candle
 from research.simulator_v2.timeline import MinuteFrame, SimulationEvent, StageFact
+
+
+@lru_cache(maxsize=1)
+def _original_signal_rules() -> tuple[Callable[..., Any], Callable[..., Any]]:
+    """Load ORIGINAL pure Scanner signal rules without shadowing stdlib signal.
+
+    Python's stdlib module `signal` may already be in sys.modules (pandas,
+    HTTP, subprocess, Windows runner). `from signal.quality` then fails
+    nondeterministically. Load the actual repository source files under
+    private research-only names, without mutating sys.modules or reproducing
+    their trading/filter math. Both files have no runtime/API imports.
+    """
+    root = Path(__file__).resolve().parents[2] / "signal"
+
+    def rule(file_stem: str, function: str) -> Callable[..., Any]:
+        path = root / (file_stem + ".py")
+        if not path.is_file() or path.is_symlink():
+            raise ImportError("original pure Scanner signal file is absent")
+        spec = spec_from_file_location(
+            "_sim_original_scanner_signal_" + file_stem, path,
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("cannot load original Scanner signal rule")
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        callback = getattr(module, function, None)
+        if not callable(callback):
+            raise ImportError("original Scanner signal function is missing")
+        return callback
+
+    return rule("quality", "evaluate_quality"), rule("filter", "evaluate_signal")
 
 
 @dataclass(frozen=True)
@@ -105,8 +139,7 @@ class ReadOnlyWedgeScanner:
         from wedge import analyze_wedge
         from confirmation import confirm_signal
         from analyzer.scoring import calculate_final_score
-        from signal.quality import evaluate_quality
-        from signal.filter import evaluate_signal
+        evaluate_quality, evaluate_signal = _original_signal_rules()
         from scanner_geometry_cursor import (
             ScannerGeometryCursorError, project_frozen_geometry_to_robot_1m,
         )
