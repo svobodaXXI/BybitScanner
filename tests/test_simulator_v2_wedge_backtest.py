@@ -215,7 +215,7 @@ class OfflineWedgeBacktestTests(unittest.TestCase):
             self.assertEqual(first.report.virtual_fills, 0)
             # A corrupt/unselected future cache must NOT be silently read.
             cache_files = sorted(cache.glob("m1_*.json"))
-            future = next(p for p in cache_files if str(START_MS + DAY_MS) in p.name)
+            future = next(p for p in cache_files if p.name.startswith(f"m1_{SYMBOL}_{START_MS + DAY_MS}_"))
             future.write_bytes(b"corrupt day not selected")
             with patch.object(ReadOnlyWedgeScanner, "_evaluate", return_value=None):
                 again = run_cached_wedge_trade_range(**kwargs)
