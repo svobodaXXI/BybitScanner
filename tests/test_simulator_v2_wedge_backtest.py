@@ -173,6 +173,63 @@ class OfflineWedgeBacktestTests(unittest.TestCase):
                         **{**kwargs,"end_inclusive_ms":START_MS+DAY_MS},
                     )
 
+    def test_full_multi_day_manifest_accepts_early_inclusive_end_and_exact_source_subset(self):
+        from datetime import timedelta
+        from research.simulator_v2.trade_range import _ordered_proofs
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            archive = base / "trades"
+            archive.mkdir()
+            fixture_file(archive, START_DAY)
+            fixture_file(archive, START_DAY + timedelta(days=1))
+            cache = base / "m1-cache"
+            proofs = import_local_trade_range(
+                archive_dir=archive, cache_dir=cache, symbol=SYMBOL,
+                start_day=START_DAY, days=2,
+                latest_closed_boundary_ms=START_MS + 2*DAY_MS,
+            )
+            kwargs = dict(
+                cache_dir=cache, symbol=SYMBOL, proofs=proofs,
+                latest_closed_boundary_ms=START_MS + 2*DAY_MS,
+                simulation_run_id="subset", initial_balance=D("1000"),
+                start_ms=START_MS + 120*M,
+                end_inclusive_ms=START_MS + 254*M,
+                scanner_config=WedgeScannerConfig(window_bars=50, mode="hunter", min_score=50),
+                robot_config=SimWedgeRobotConfig(
+                    selected_patterns=frozenset({"Falling Wedge"}), tick_size=D("0.01"),
+                ),
+                risk_settings=risk_settings(),
+            )
+            # Only the selected first day may contribute to report identity.
+            with patch.object(ReadOnlyWedgeScanner, "_evaluate", return_value=None):
+                first = run_cached_wedge_trade_range(**kwargs)
+            expected_source, _, _ = _ordered_proofs(
+                proofs[:1], symbol=SYMBOL,
+                latest_closed_boundary_ms=START_MS + 2*DAY_MS,
+            )
+            self.assertEqual(first.report.source_id, expected_source)
+            self.assertEqual(first.archive_proofs, proofs[:1])
+            self.assertEqual(first.report.minutes, 255)
+            self.assertEqual(first.to_payload()["requested_minutes"], 135)
+            self.assertEqual(first.report.last_closed_ms, START_MS + 255*M)
+            self.assertEqual(first.report.virtual_fills, 0)
+            # A corrupt/unselected future cache must NOT be silently read.
+            cache_files = sorted(cache.glob("m1_*.json"))
+            future = next(p for p in cache_files if str(START_MS + DAY_MS) in p.name)
+            future.write_bytes(b"corrupt day not selected")
+            with patch.object(ReadOnlyWedgeScanner, "_evaluate", return_value=None):
+                again = run_cached_wedge_trade_range(**kwargs)
+            self.assertEqual(first.report, again.report)
+            # But if the user explicitly selects the second day the same
+            # corruption must block and cannot produce a success report.
+            with self.assertRaises(ValueError):
+                with patch.object(ReadOnlyWedgeScanner, "_evaluate", return_value=None):
+                    run_cached_wedge_trade_range(
+                        **{**kwargs,
+                           "start_ms": START_MS + DAY_MS + 50*M,
+                           "end_inclusive_ms": START_MS + DAY_MS + 80*M},
+                    )
+
     def test_invalid_windows_missing_cache_and_foreign_data_fail_without_output(self):
         session = make_session(run="invalid")
         c = verified_chunk([bar(i) for i in range(5)])
