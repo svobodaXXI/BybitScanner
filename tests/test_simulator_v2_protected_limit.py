@@ -173,6 +173,21 @@ class ProtectedM1Tests(unittest.TestCase):
                 request(order_id="other"), submitted_at_ms=2*MINUTE_MS,
             )
 
+    def test_existing_unprotected_position_cannot_be_overlaid_by_protected_entry(self):
+        ex = exchange()
+        ex.on_closed_minute(bar(0, opening="100", high="101", low="99"))
+        ex.submit(MarketRequest("oldopen", "BUY", D("1")), submitted_at_ms=MINUTE_MS)
+        ex.on_closed_minute(bar(1, opening="100", high="101", low="99"))
+        self.assertEqual(
+            ex.account.snapshot(as_of_ms=2*MINUTE_MS, mark_price=D("100")).position_quantity,
+            D("1"),
+        )
+        with self.assertRaisesRegex(ValueError, "position is open"):
+            ex.submit_protected_limit(request(), submitted_at_ms=2*MINUTE_MS)
+        self.assertIsNone(ex.pending)
+        self.assertIsNone(ex.active_protection)
+        self.assertEqual(len(ex.account.fills), 1)
+
     def test_protected_stop_failure_pauses_one_virtual_minute_without_false_exit(self):
         session = VirtualReplaySession(
             simulation_run_id="staged_stop", symbol="BTCUSDT",
