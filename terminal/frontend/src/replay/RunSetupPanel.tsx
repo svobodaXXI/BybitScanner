@@ -1,9 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, PLANNED_OPTIONS,
   clearAll, isAllSelected, onlyWedges, presetEndInclusive,
   selectAll, toggleMirror, toggleStrategy, validateInclusiveWindow,
+  makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
   type PeriodPreset, type RunSelection, type StrategyId,
+  type LocalWedgeResult, type LocalWedgeStatus,
 } from "./runSetup";
 import "./runSetup.css";
 
@@ -15,15 +17,19 @@ const PRESETS: Array<{ id: PeriodPreset; name: string }> = [
   { id: "THREE_MONTHS", name: "3 месяца · 90 дней" },
 ];
 
-/** Configuration-only surface for the future original Scanner/Robot integration.
- * No requests, import of trading modules, order submission or PAPER IO.
- */
+/** Local-only Wedge execution via loopback: never production /api or PAPER. */
 export function RunSetupPanel({ symbol }: { symbol: string }) {
   const [selection, setSelection] = useState<RunSelection>(clearAll);
   const [start, setStart] = useState(INITIAL_START);
   const [end, setEnd] = useState(() => presetEndInclusive(INITIAL_START, "DAY"));
   const [preset, setPreset] = useState<PeriodPreset | null>("DAY");
   const [openMirror, setOpenMirror] = useState(true);
+  const [balance, setBalance] = useState("1000");
+  const [status, setStatus] = useState<LocalWedgeStatus | null>(null);
+  const [statusError, setStatusError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [report, setReport] = useState<LocalWedgeResult | null>(null);
+  const [runError, setRunError] = useState("");
   const parsed = useMemo(() => {
     try {
       return { window: validateInclusiveWindow(start, end), error: "" };
@@ -33,6 +39,63 @@ export function RunSetupPanel({ symbol }: { symbol: string }) {
   }, [start, end]);
   const active = ALL_SELECTABLE.filter(id => selection.selected.includes(id));
   const mirrorSelected = MIRROR_OPTIONS.filter(x => selection.selected.includes(x.id)).length;
+  const wedgesOnly = runnableWedgeSelection(selection);
+  const selectionAllowed = wedgesOnly && !parsed.error;
+  const ready = Boolean(status?.can_attempt);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch("/local-replay/simulation/status", {
+          method: "GET", cache: "no-store", signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Локальный движок пока недоступен");
+        const next = parseWedgeStatus(await response.json() as unknown);
+        if (!controller.signal.aborted) setStatus(next);
+      } catch (error) {
+        if (!controller.signal.aborted) setStatusError(
+          error instanceof Error ? error.message : "Нет подключения к локальному движку",
+        );
+      }
+    })();
+    return () => controller.abort();
+  }, []);
+
+  const runWedges = async () => {
+    setRunError(""); setReport(null);
+    let request;
+    try {
+      request = makeWedgeRunRequest(selection, symbol, start, end, balance);
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "Некорректный выбор");
+      return;
+    }
+    setLoading(true);
+    try {
+      // The loopback viewer accepts this exact path and a same-origin header.
+      // Never call /api; that path may target the PAPER backend.
+      const response = await fetch("/local-replay/simulation/wedge", {
+        method: "POST", cache: "no-store",
+        headers: { "Content-Type": "application/json", "X-Local-Simulation": "wedge" },
+        body: JSON.stringify(request),
+      });
+      const raw: unknown = await response.json();
+      if (!response.ok) {
+        const x = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+        throw new Error(typeof x.error === "string" ? x.error : "Локальный прогон заблокирован");
+      }
+      const result = parseWedgeResult(raw);
+      if (result.symbol !== request.symbol || result.requested_minutes !== parsed.window?.minutes) {
+        throw new Error("Отчёт не соответствует выбранному тикеру или периоду");
+      }
+      setReport(result);
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "Симуляция недоступна");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const updateStart = (value: string) => {
     setStart(value);
@@ -125,18 +188,55 @@ export function RunSetupPanel({ symbol }: { symbol: string }) {
             </p>}
         </fieldset>
       </div>
+      <div className="replay-run-account">
+        <label>Виртуальный депозит · USDT
+          <input aria-label="Виртуальный депозит" type="text" inputMode="decimal"
+            value={balance} onChange={e => setBalance(e.target.value)} />
+        </label>
+        <span>Риск, шаг цены и перевод 1 WV в контракты берутся только из локального профиля SIMULATION.</span>
+      </div>
       <div className="replay-run-footer">
         <span data-selected-strategies={active.join(",")}>
           Выбрано компонентов: {active.length}. {selection.mirror ? "Mirror включён." : "Mirror выключен."}
         </span>
-        <button type="button" disabled title="Фактический Scanner/Robot ещё не подключён к изолированному SIMULATION">
-          Торговый прогон — ожидает подключения Robot
+        <button type="button" onClick={() => void runWedges()}
+          disabled={loading || !selectionAllowed || !ready}
+          title={!wedgesOnly ? "В торговом режиме пока доступны только клинья"
+            : !ready ? "Требуются локальный движок, проверенный архив и профиль риска"
+            : "Локальный виртуальный прогон без PAPER"}>
+          {loading ? "Выполняется прогон…" : "Запустить клинья · SIMULATION"}
         </button>
       </div>
+      {!wedgesOnly && active.length > 0 &&
+        <p className="replay-run-error" role="status">
+          Отмеченные стратегии сохранены как выбор, но торговый запуск пока поддерживает только два клина.
+        </p>}
+      {statusError && <p role="status" className="replay-run-error">{statusError}</p>}
+      {status && !status.can_attempt &&
+        <p role="status" className="replay-run-error">
+          Локальный запуск пока недоступен: {[
+            !status.wedge_engine_available && "движок",
+            !status.python_dependencies_available && "Python pandas",
+            !status.archive_files_present && "проверенный архив M1",
+            !status.wedge_risk_profile_present && "профиль риска 1 WV",
+          ].filter(Boolean).join(", ")}.
+        </p>}
+      {runError && <p role="alert" className="replay-run-error">{runError}</p>}
+      {report && <section aria-label="Результаты виртуального прогона" className="replay-run-result" role="status">
+        <strong>Результат локального SIMULATION · {report.symbol}</strong>
+        <span>Реализованный Net PnL: {report.realized_net_pnl} USDT ·
+          нереализованный: {report.unrealized_pnl} USDT</span>
+        <span>Суммарный PnL: {report.total_net_pnl} USDT ·
+          доходность: {report.return_percent}% · просадка: {report.max_drawdown_percent}%</span>
+        <span>Обнаружено клиньев: {report.scanner_wedge_observations} ·
+          ретестов: {report.robot_retests_in_period} ·
+          LIMIT: {report.submitted_protected_limits} ·
+          исполнений: {report.virtual_fills} · STOP: {report.stop_exits} · TAKE: {report.take_exits}</span>
+        <small>Модель OHLC, не фактические биржевые исполнения. Параметры риска — локальные исследовательские допущения.</small>
+      </section>}
       <p className="replay-run-disclaimer">
-        Пока это только настройка. Торговля и общий PnL не выполняются.
-        Ниже доступен прежний просмотр публичных M5 (до 7 суток); он не использует эти новые настройки.
-        Для теста доходности клиньев требуется подключить оригинальный Scanner/Robot к виртуальному исполнителю.
+        Общий мультивыбор сохранён, но пока торгуются только клинья. Прогон строго локальный, по заранее
+        проверенным архивам Bybit без доступа к PAPER/VPS. Ниже — прежний независимый просмотр M5.
       </p>
     </section>
   );
