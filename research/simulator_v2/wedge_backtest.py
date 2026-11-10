@@ -105,7 +105,13 @@ def run_verified_wedge_chunks(
 
     def on_close(active: VirtualReplaySession, candle: Candle) -> None:
         nonlocal submitted, skipped_busy
-        if candle.start_ms < start_ms or candle.end_ms >= end_exclusive:
+        if candle.start_ms < start_ms:
+            return
+        if candle.end_ms >= end_exclusive:
+            # The final closed M1 may fill an existing order; record it for
+            # the chart, but never submit a NEW LIMIT after the chosen cutoff.
+            if visual_recorder is not None:
+                visual_recorder.record(active, candle)
             return
         if active.wedge_robot is None:
             raise ValueError("native virtual Wedge Robot disappeared")
