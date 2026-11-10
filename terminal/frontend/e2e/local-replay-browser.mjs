@@ -182,6 +182,17 @@ try {
     assert.equal(await button.locator('svg[data-player-icon="' + symbol + '"]').count(), 1);
   }
   assert.equal(await playbackBar.locator(".replay-rate input[type=range]").count(), 1);
+  assert.equal(await playbackBar.locator(".replay-seek").count(), 1,
+    "seek must live in icon player row");
+  assert.equal(await page.locator(".replay-shell > .replay-seek").count(), 0,
+    "separate seek above chart must stay removed");
+  assert.equal(await playbackBar.locator(".replay-seek").evaluate(el =>
+    el.previousElementSibling?.matches(".replay-player-button") &&
+    el.nextElementSibling?.matches(".replay-rate")), true,
+    "player order: icons → seek → speed");
+  assert.equal(await page.locator(".replay-events").count(), 0,
+    "owner rejected right-side Events panel");
+  assert.equal(await page.getByRole("heading", { name: "События", exact: true }).count(), 0);
   assert.equal(await page.locator(".replay-controls .replay-rate").count(), 0);
   const drawingBar = page.getByRole("group", { name: "Инструменты рисования" });
   const trendTool = drawingBar.getByRole("button", { name: "Трендовая" });
@@ -209,7 +220,7 @@ try {
   assert.equal(Number(await progress.getAttribute("aria-valuenow")), firstStep);
   await forward.click();
   assert.equal(Number(await progress.getAttribute("aria-valuenow")), secondStep);
-  const scrub = page.getByRole("slider", { name: "Перемотка воспроизведения" });
+  const scrub = playbackBar.getByRole("slider", { name: "Перемотка воспроизведения" });
   await scrub.fill("12");
   assert.equal(await scrub.inputValue(), "12");
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "12");

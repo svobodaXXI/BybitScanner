@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
-  type ReplayDocument, type ReplayEvent,
+  type ReplayDocument,
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
 import { rayEndPoint } from "../chart/drawingGeometry";
@@ -16,14 +16,6 @@ import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDra
 import { RunSetupPanel } from "./RunSetupPanel";
 import "./replay.css";
 
-function label(event: ReplayEvent): string {
-  switch (event.kind) {
-    case "CANDLE_CLOSED": return "Свеча закрылась";
-    case "ENTRY_SIGNAL": return "Сигнал " + (event.side ?? "");
-    case "ENTRY_FILLED": return "Вход " + (event.side ?? "");
-    case "EXIT_FILLED": return "Выход " + (event.reason ?? "");
-  }
-}
 // The replay tools share the terminal's compact icon-first interaction, with
 // real vector pictograms rather than font-dependent textual approximations.
 const REPLAY_DRAWING_TOOLS: Array<{ tool: DrawingTool; label: string }> = [
@@ -541,17 +533,6 @@ export function ReplayPage() {
     event.prior_price === latestPrior.price &&
     event.trend_version === latestPrior.trend_version
   );
-  const recentEvents = document.events.slice(Math.max(0, cursor - 8), cursor);
-  const recentFromMs = recentEvents[0]?.time_ms ?? Infinity;
-  const lastTimeline = [
-    ...recentEvents.map(event => ({
-      kind: "REPLAY" as const, time_ms: event.time_ms, key: String(event.sequence), event,
-    })),
-    ...priorBreaks.filter(item => item.confirmed_at_ms >= recentFromMs).map(item => ({
-      kind: "PRIOR_BREAK" as const, time_ms: item.confirmed_at_ms,
-      key: "prior-" + item.trend_version, breakEvent: item,
-    })),
-  ].sort((a, b) => b.time_ms - a.time_ms).slice(0, 8);
   const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
   const blueRiskPreviews = useMemo(
     () => visibleH017BlueRiskPreviews(document, shown.lastTimeMs),
@@ -768,12 +749,6 @@ export function ReplayPage() {
         aria-valuenow={progress} aria-label="Прогресс воспроизведения">
         <div style={{ width: progress + "%" }} />
       </div>
-      <input className="replay-seek" type="range" min={0} max={seekPoints.length - 1}
-        step={1} value={seekIndex} aria-label="Перемотка воспроизведения"
-        onChange={e => {
-          setPlaying(false);
-          setCursor(seekPoints[Number(e.target.value)]);
-        }} />
       {document.mode === "MARKET_ONLY" && <p className="replay-note">
         РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ СДЕЛОК:
         {" "}{document.market_data_source === "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M"
@@ -871,6 +846,12 @@ export function ReplayPage() {
           aria-label="В начало" onClick={() => { setPlaying(false); setCursor(0); }}>
           <PlayerIcon name="beginning" />
         </button>
+        <input className="replay-seek" type="range" min={0} max={seekPoints.length - 1}
+                step={1} value={seekIndex} aria-label="Перемотка воспроизведения"
+                onChange={e => {
+                  setPlaying(false);
+                  setCursor(seekPoints[Number(e.target.value)]);
+                }} />
         <label className="replay-rate">Скорость {rate} свечей/с
           <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
         </label>
@@ -904,23 +885,6 @@ export function ReplayPage() {
             onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
             onDrawingGesture={() => setPlaying(false)} />
         </section>
-        <aside className="replay-events" aria-label="Журнал событий">
-          <h2>События</h2>
-          {lastTimeline.length === 0 && <p>Нажмите «Пуск» или «Шаг».</p>}
-          {lastTimeline.map((item) => (
-            <div className="replay-event" key={item.key}>
-              <time>{new Date(item.time_ms).toLocaleTimeString("ru-RU", { timeZone: "UTC" })} UTC</time>
-              {item.kind === "REPLAY" ? <>
-                <strong>{label(item.event)}</strong>
-                {item.event.price !== undefined && <span>{item.event.price}</span>}
-                {item.event.trade_id && <small>{item.event.trade_id}</small>}
-              </> : <>
-                <strong>Слом приора H1 · {item.breakEvent.new_side === "BULL" ? "восходящий" : "нисходящий"} тренд</strong>
-                <span>{item.breakEvent.prior_price}</span>
-              </>}
-            </div>
-          ))}
-        </aside>
       </div>
       <footer className="replay-footer">
         {cursor} из {total} событий. Вход на следующем открытии не раскрывает будущую свечу.
