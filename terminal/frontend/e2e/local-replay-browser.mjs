@@ -408,7 +408,11 @@ try {
   await bounds.getByRole("button", { name: "Применить" }).click();
   await bounds.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
   await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
-  assert.match(await page.locator("body").innerText(), /browser_fixture/);
+  const marketSource = await page.locator(".replay-meta").innerText();
+  assert.match(marketSource, /Bybit · публичные свечи · без сделок/,
+    "public market-only source must be visible in the retained Source card");
+  assert.doesNotMatch(marketSource, /SYNTHETIC_DEMO|Прогон \/ рынок/,
+    "deleted synthetic run card must not be resurrected");
   const indicator = page.getByRole("group", { name: "Индикатор ADX DMI" });
   assert.match(await indicator.innerText(), /ADX\/DMI \(14, 14\)/);
   assert.match(await indicator.innerText(), /Уровень 20/);
