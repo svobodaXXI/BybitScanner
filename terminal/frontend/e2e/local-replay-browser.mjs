@@ -129,7 +129,7 @@ try {
   const runnable = readySetup.getByRole("button", { name: /Запустить клинья/ });
   assert.equal(await runnable.isDisabled(), false);
   await runnable.click();
-  await readySetup.getByRole("region", { name: "Результаты виртуального прогона" }).waitFor();
+  await readySetup.getByRole("status", { name: "Результаты виртуального прогона" }).waitFor();
   assert.match(await readySetup.innerText(), /3\.71 USDT/);
   assert.equal(posted.length, 1);
   assert.equal(posted[0].method, "POST");
