@@ -57,19 +57,26 @@ def aggregate_ticker_pnl(
 
 
 def _classified_finrez_episodes(
-    snapshot: PaperSourceSnapshot, *, account_id: str,
-) -> tuple[tuple[TradeEpisode, ...], tuple[TradeEpisode, ...], tuple[TradeEpisode, ...]]:
+    snapshot: PaperSourceSnapshot, *, account_id: str, period: str, now_ms: int,
+) -> tuple[
+    tuple[TradeEpisode, ...], tuple[TradeEpisode, ...], tuple[TradeEpisode, ...],
+    tuple[TradeEpisode, ...], int,
+]:
     """Classify whole episodes, not individual fills or split economic PnL.
 
     A robot-opened episode finished by a proven manual CLOSE is reported only
     as a distinct intervention cohort, never as an autonomous robot result.
-    Unknown origin, manual increases, reversed ownership and other mixed
-    episodes remain unavailable rather than guessed.
+    Unknown origin is excluded as explicitly incomplete coverage rather than
+    guessed. Manual increases, reversed ownership and other known mixed
+    episodes remain unavailable.
     """
     robot: list[TradeEpisode] = []
     manual: list[TradeEpisode] = []
     assisted: list[TradeEpisode] = []
+    unattributed: list[TradeEpisode] = []
+    unattributed_execution_count = 0
     seen_ids: set[str] = set()
+    start_ms = period_start_ms(period=period, now_ms=now_ms)
     for episode in snapshot.episodes:
         if not isinstance(episode, TradeEpisode):
             raise StatisticsScopeError("invalid_trade_episode")
@@ -79,15 +86,26 @@ def _classified_finrez_episodes(
             raise StatisticsScopeError("duplicate_trade_episode")
         seen_ids.add(episode.trade_episode_id.value)
 
+        closed_at = episode.closed_at_ms
+        if closed_at is None or not (start_ms <= closed_at <= now_ms):
+            continue
+
         attributed: list[str] = []
+        missing = 0
         for allocation in episode.allocations:
             if (allocation.execution_key.trading_account_id != TradingAccountId(account_id)
                     or allocation.trade_episode_id != episode.trade_episode_id):
                 raise StatisticsScopeError("cross_account_statistics_evidence")
             mapped = ORIGINS.get(snapshot.origins.get(allocation.execution_key))
             if mapped is None:
-                raise StatisticsScopeError("unattributed_statistics_evidence")
-            attributed.append(mapped)
+                missing += 1
+            else:
+                attributed.append(mapped)
+
+        if missing:
+            unattributed.append(episode)
+            unattributed_execution_count += missing
+            continue
 
         owners = set(attributed)
         if owners == {"ROBOT"}:
@@ -110,7 +128,10 @@ def _classified_finrez_episodes(
             assisted.append(episode)
         else:
             raise StatisticsScopeError("mixed_controller_trade_episode")
-    return tuple(robot), tuple(manual), tuple(assisted)
+    return (
+        tuple(robot), tuple(manual), tuple(assisted), tuple(unattributed),
+        unattributed_execution_count,
+    )
 
 
 def project_paper_ticker_pnl(
@@ -120,8 +141,10 @@ def project_paper_ticker_pnl(
     """Use the existing strict execution-origin attribution before summing."""
     if account_id != "paper" or owner not in {"ROBOT", "MANUAL"}:
         raise ValueError("unsupported_finrez_scope")
-    robot, manual, assisted = _classified_finrez_episodes(
-        snapshot, account_id=account_id,
+    robot, manual, assisted, unattributed, unattributed_execution_count = (
+        _classified_finrez_episodes(
+            snapshot, account_id=account_id, period=period, now_ms=now_ms,
+        )
     )
     start_ms, tickers = aggregate_ticker_pnl(
         robot if owner == "ROBOT" else manual, period=period, now_ms=now_ms,
@@ -138,6 +161,11 @@ def project_paper_ticker_pnl(
         "source_revision": snapshot.source_revision,
         "source": "PAPER_EXECUTIONS_ATTRIBUTED",
         "pnl_basis": "REALIZED_PRICE_MINUS_EXECUTION_FEES",
+        "attribution_coverage": {
+            "status": "PARTIAL" if unattributed else "COMPLETE",
+            "excluded_unattributed_episode_count": len(unattributed),
+            "excluded_unattributed_execution_count": unattributed_execution_count,
+        },
         "tickers": tickers,
         "manual_interventions": manual_interventions,
     }
