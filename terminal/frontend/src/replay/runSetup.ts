@@ -82,6 +82,31 @@ export function parseRunCoordinates(value: string): {
   if (window.minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
   return { symbol, start_utc, end_utc_inclusive };
 }
+/** Human-readable exact inclusive duration. A month equals 30 days in this simulator. */
+export function formatRunDuration(minutes: number): string {
+  if (!Number.isSafeInteger(minutes) || minutes <= 0)
+    throw new Error("Неверная продолжительность прогона");
+  const suffix = (count: number, one: string, two: string, many: string) => {
+    const lastTwo = count % 100;
+    const last = count % 10;
+    return lastTwo >= 11 && lastTwo <= 14 ? many :
+      last === 1 ? one : last >= 2 && last <= 4 ? two : many;
+  };
+  const units = [
+    [30 * 1440, "месяц", "месяца", "месяцев"],
+    [1440, "день", "дня", "дней"],
+    [60, "час", "часа", "часов"],
+    [1, "минута", "минуты", "минут"],
+  ] as const;
+  let remaining = minutes;
+  const parts: string[] = [];
+  for (const [unit, one, two, many] of units) {
+    const value = Math.floor(remaining / unit);
+    remaining %= unit;
+    if (value) parts.push(`${value} ${suffix(value, one, two, many)}`);
+  }
+  return parts.join(" ");
+}
 const INCREMENT_MINUTES: Record<PeriodIncrement, number> = {
   HOUR: 60, DAY: 1440, WEEK: 7 * 1440, MONTH: 30 * 1440,
 };

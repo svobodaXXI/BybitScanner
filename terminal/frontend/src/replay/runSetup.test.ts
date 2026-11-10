@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, clearAll, isAllSelected,
-  onlyWedges, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, parseRunCoordinates, selectAll,
+  onlyWedges, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, parseRunCoordinates, formatRunDuration, selectAll,
   toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
 } from "./runSetup";
@@ -47,6 +47,19 @@ describe("local one-symbol strategy setup (no trading)", () => {
       expect(window.minutes).toBe(minutes);
       expect(window.endExclusiveMs).toBe(parseUtcMinute(end) + 60_000);
     }
+  });
+  it("shows exact inclusive duration in 30-day months, days, hours and minutes", () => {
+    expect(formatRunDuration(1)).toBe("1 минута");
+    expect(formatRunDuration(60)).toBe("1 час");
+    expect(formatRunDuration(1440)).toBe("1 день");
+    expect(formatRunDuration(30 * 1440)).toBe("1 месяц");
+    expect(formatRunDuration(45 * 1440 + 7 * 60 + 16))
+      .toBe("1 месяц 15 дней 7 часов 16 минут");
+    expect(formatRunDuration(2 * 30 * 1440 + 2 * 1440 + 3 * 60 + 4))
+      .toBe("2 месяца 2 дня 3 часа 4 минуты");
+    expect(formatRunDuration(90 * 1440)).toBe("3 месяца");
+    expect(() => formatRunDuration(0)).toThrow();
+    expect(() => formatRunDuration(1.5)).toThrow();
   });
   it("extends the current inclusive UTC range cumulatively, never resets its start", () => {
     const start = "2026-09-11T00:00";

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, PLANNED_OPTIONS,
   clearAll, isAllSelected, onlyWedges, presetEndInclusive, extendInclusiveWindow,
-  parseRunCoordinates,
+  parseRunCoordinates, formatRunDuration,
   selectAll, toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
   type PeriodPreset, type PeriodIncrement, type RunSelection, type StrategyId,
@@ -255,6 +255,10 @@ export function RunSetupPanel({
             <button type="button" aria-pressed={preset === "THREE_MONTHS"}
               onClick={() => choosePreset("THREE_MONTHS")}>3 месяца · 90 дней</button>
           </div>
+          {parsed.window && <p className="replay-run-duration" role="status"
+            aria-label="Продолжительность прогона" aria-live="polite">
+            Продолжительность: <strong>{formatRunDuration(parsed.window.minutes)}</strong>
+          </p>}
           {periodError && <p role="alert" className="replay-run-error">{periodError}</p>}
           <label>Конец · дата и время, включительно
             <input aria-label="Конец прогона UTC" type="datetime-local" step={60}

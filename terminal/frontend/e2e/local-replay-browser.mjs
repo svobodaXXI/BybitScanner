@@ -87,7 +87,10 @@ try {
   await startUtc.fill("2026-10-01T12:34");
   const incrementBar = setup.getByRole("group", { name: "Продлить период прогона" });
   assert.equal(await endUtc.inputValue(), "2026-10-02T12:33");
+  const duration = setup.getByRole("status", { name: "Продолжительность прогона" });
+  assert.match(await duration.innerText(), /1 день/);
   await incrementBar.getByRole("button", { name: "+1 час", exact: true }).click();
+  assert.match(await duration.innerText(), /1 день 1 час/);
   assert.equal(await endUtc.inputValue(), "2026-10-02T13:33");
   await incrementBar.getByRole("button", { name: "+1 день", exact: true }).click();
   assert.equal(await endUtc.inputValue(), "2026-10-03T13:33");
@@ -95,7 +98,9 @@ try {
   assert.equal(await endUtc.inputValue(), "2026-10-10T13:33");
   await incrementBar.getByRole("button", { name: "+1 месяц", exact: true }).click();
   assert.equal(await endUtc.inputValue(), "2026-11-09T13:33");
+  assert.match(await duration.innerText(), /1 месяц 9 дней 1 час/);
   await endUtc.fill("2026-10-11T18:45");
+  assert.match(await duration.innerText(), /10 дней 6 часов 12 минут/);
   assert.equal(await incrementBar.getByRole("button", { name: "3 месяца · 90 дней" }).getAttribute("aria-pressed"), "false");
   const coordinates = setup.getByRole("textbox", { name: "Координаты прогона" });
   await coordinates.fill("XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59");
@@ -103,6 +108,7 @@ try {
   assert.equal(await page.getByRole("textbox", { name: "Инструмент" }).inputValue(), "XRPUSDT");
   assert.equal(await startUtc.inputValue(), "2026-09-11T00:00");
   assert.equal(await endUtc.inputValue(), "2026-09-11T23:59");
+  assert.match(await duration.innerText(), /1 день/);
   await coordinates.fill("PAPER | 2026-09-11T00:00 | 2026-09-11T23:59");
   await setup.getByRole("button", { name: "Применить" }).click();
   assert.equal(await page.getByRole("textbox", { name: "Инструмент" }).inputValue(), "XRPUSDT",
