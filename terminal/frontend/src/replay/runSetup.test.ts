@@ -3,6 +3,7 @@ import {
   ALL_SELECTABLE, MIRROR_OPTIONS, clearAll, isAllSelected,
   onlyWedges, parseUtcMinute, presetEndInclusive, selectAll,
   toggleMirror, toggleStrategy, validateInclusiveWindow,
+  makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
 } from "./runSetup";
 
 describe("local one-symbol strategy setup (no trading)", () => {
@@ -58,4 +59,55 @@ describe("local one-symbol strategy setup (no trading)", () => {
     expect(() => parseUtcMinute("2026-02-28T11:00:00")).toThrow();
     expect(() => validateInclusiveWindow("2026-10-02T00:00", "2026-10-01T23:59")).toThrow();
   });
+  it("submits one or both actual wedges, not Mirror/all/other unsupported strategies", () => {
+    expect(runnableWedgeSelection(onlyWedges())).toBe(true);
+    expect(runnableWedgeSelection(clearAll())).toBe(false);
+    expect(runnableWedgeSelection(selectAll())).toBe(false);
+    expect(runnableWedgeSelection(toggleStrategy(clearAll(), "WEDGE_RISING", true))).toBe(true);
+    const req = makeWedgeRunRequest(
+      onlyWedges(), "btcusdt", "2026-10-01T12:34", "2026-10-08T12:33", "1000",
+    );
+    expect(req).toEqual({
+      symbol: "BTCUSDT", start_utc: "2026-10-01T12:34",
+      end_utc_inclusive: "2026-10-08T12:33",
+      selected_strategies: ["WEDGE_RISING", "WEDGE_FALLING"],
+      initial_balance: "1000",
+    });
+    expect(() => makeWedgeRunRequest(
+      selectAll(), "BTCUSDT", "2026-10-01T12:34", "2026-10-08T12:33", "1000",
+    )).toThrow(/только/);
+    expect(() => makeWedgeRunRequest(
+      onlyWedges(), "BTCUSDT", "2026-10-01T00:00", "2026-12-31T00:00", "1000",
+    )).toThrow(/90/);
+    expect(() => makeWedgeRunRequest(
+      onlyWedges(), "BTCUSDT", "2026-10-01T00:00", "2026-10-01T00:00", "0",
+    )).toThrow(/депозит/);
+  });
+  it("never trusts non-SIMULATION responses or fabricated PnL", () => {
+    const status = {
+      namespace: "SIMULATION", can_attempt: true,
+      wedge_engine_available: true, python_dependencies_available: true,
+      archive_files_present: true, wedge_risk_profile_present: true,
+    };
+    expect(parseWedgeStatus(status)).toEqual(status);
+    expect(() => parseWedgeStatus({ ...status, namespace: "PAPER" })).toThrow();
+    expect(() => parseWedgeStatus({ ...status, can_attempt: "yes" })).toThrow();
+    const report = {
+      namespace: "SIMULATION",
+      scenario_type: "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION",
+      risk_terms_status: "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED",
+      symbol: "BTCUSDT", source_id: "BYBIT_PUBLIC_TRADES_RANGE_test",
+      requested_minutes: 2, scanner_wedge_observations: 0,
+      robot_retests_in_period: 0, submitted_protected_limits: 0,
+      virtual_fills: 0, stop_exits: 0, take_exits: 0,
+      realized_net_pnl: "0", unrealized_pnl: "0", total_net_pnl: "0",
+      total_fees: "0", return_percent: "0", max_drawdown_percent: "0",
+    };
+    expect(parseWedgeResult(report).requested_minutes).toBe(2);
+    expect(() => parseWedgeResult({ ...report, namespace: "PAPER" })).toThrow();
+    expect(() => parseWedgeResult({ ...report, scenario_type: "EXPLICIT_TEST_ORDERS_NOT_STRATEGY" })).toThrow();
+    expect(() => parseWedgeResult({ ...report, virtual_fills: -1 })).toThrow();
+    expect(() => parseWedgeResult({ ...report, total_net_pnl: 900 })).toThrow();
+  });
+
 });
