@@ -305,3 +305,24 @@ def test_anonymous_route_must_fail_with_401_or_403():
         open_url=lambda *_args, **_kwargs: (_ for _ in ()).throw(
             HTTPError("http://127.0.0.1", 401, "Unauthorized", {}, None)),
     )
+
+
+def test_main_gateway_warmup_rechecks_health_without_restarting(tmp_path, monkeypatch):
+    from urllib.error import URLError
+    params, _site_path, _original, calls = _gateway_deploy_fixture(tmp_path)
+    real_open = params["open_url"]
+    health_checks = [0]
+
+    def warming(url, **kwargs):
+        if url == "http://127.0.0.1:8771/api/manual-main/health":
+            health_checks[0] += 1
+            if health_checks[0] == 1:
+                raise URLError("worker still binding")
+        return real_open(url, **kwargs)
+
+    monkeypatch.setattr(gateway.time, "sleep", lambda _: None)
+    params["open_url"] = warming
+    assert gateway.prepare_gateway("a" * 40, **params).startswith("READY:")
+    assert health_checks == [2]
+    assert calls.count(("systemctl", "start", gateway.UNIT)) == 1
+    assert calls.count(("systemctl", "reload", "nginx")) == 1

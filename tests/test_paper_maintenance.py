@@ -3353,3 +3353,34 @@ def test_dual_stopped_telegram_failed_start_never_reaches_backend(abandoned_stop
             host=lambda *args, **kwargs: True)
     assert len(calls) == 1
     assert calls[0][-1] == "bybitscanner-telegram.service"
+
+
+def test_resume_seals_editor_before_main_gateway_health_failure(tmp_path, monkeypatch, capsys):
+    """A healthy Editor is durable even if independent MAIN is temporarily unavailable."""
+    from tools import paper_maintenance as maintenance
+    from tools import vps_manual_main_gateway as gateway
+
+    root = tmp_path / "release"
+    for name in (
+        "deploy/systemd/bybitscanner-manual-main-read.service",
+        "deploy/terminal_ingress/nginx-authenticated.conf",
+    ):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("test")
+    target = "a" * 40
+    events = []
+    monkeypatch.setattr(maintenance, "REPO", root)
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_args, **_kw: "READY: EDITOR_ONLY")
+    monkeypatch.setattr(maintenance, "_complete_stop_intent",
+                        lambda *_args, **_kw: events.append("editor-ready"))
+
+    def unavailable(*_args, **_kw):
+        events.append("gateway")
+        raise gateway.MainGatewayBlocked("main_gateway_health_unavailable")
+
+    monkeypatch.setattr(gateway, "prepare_gateway", unavailable)
+    assert maintenance.main([target, "--resume-installed-editor-only"]) == 2
+    assert events == ["editor-ready", "gateway"]
+    assert "main_gateway_health_unavailable" in capsys.readouterr().out

@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import time
 from typing import Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
@@ -264,7 +265,17 @@ def prepare_gateway(
         _command(["systemctl", "start", UNIT], run=run)
         _require(_service_state(run=run, installed=installed) == "active",
                  "main_gateway_start_unproven")
-    _read_gateway_health(open_url=open_url)
+    # A newly started read-only worker can take a moment to bind port 8771.
+    # Reobserve health only; never repeat systemctl start or relax the proof.
+    deadline = time.monotonic() + 8.0
+    while True:
+        try:
+            _read_gateway_health(open_url=open_url)
+            break
+        except MainGatewayBlocked as exc:
+            if str(exc) != "main_gateway_health_unavailable" or time.monotonic() >= deadline:
+                raise
+            time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
     _require(site.read_bytes() == before, "auth_site_changed_after_preflight")
     if before != updated:
         info = site.stat()

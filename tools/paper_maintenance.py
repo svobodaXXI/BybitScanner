@@ -2019,6 +2019,17 @@ def main(argv=None) -> int:
         )
     elif args.resume_installed_editor_only:
         status = resume_installed_release(args.sha, root=REPO, env_file=args.env_file)
+        if status.startswith("READY:"):
+            # EDITOR_ONLY belongs to the exact installed PAPER/Telegram runtime,
+            # not the independent MAIN gateway. Seal its proven transaction
+            # before MAIN health/ingress checks so a warming gateway cannot
+            # strand a ready Editor or force another owner intervention.
+            from tools.vps_gitless_release_activate import ActivationBlocked, TRANSACTIONS
+            try:
+                _complete_stop_intent(TRANSACTIONS, args.sha, uid=0)
+            except (ActivationBlocked, OSError, ValueError) as exc:
+                status = ("BLOCKED: completed_release_receipt_unproven:"
+                          + type(exc).__name__)
         if status.startswith("READY:") and (
             (REPO / "deploy/systemd/bybitscanner-manual-main-read.service").is_file()
             and (REPO / "deploy/terminal_ingress/nginx-authenticated.conf").is_file()
@@ -2033,16 +2044,7 @@ def main(argv=None) -> int:
             except (MainGatewayBlocked, OSError, ValueError) as exc:
                 status = ("BLOCKED: manual_main_gateway_install_unproven:"
                           + type(exc).__name__ + ":" + str(exc)[:160])
-        if status.startswith("READY:"):
-            # Standalone recovery must finalize the same pinned transaction
-            # as staged deploy; otherwise the next planned release remains
-            # fenced by its previously successful STOP attempt.
-            from tools.vps_gitless_release_activate import ActivationBlocked, TRANSACTIONS
-            try:
-                _complete_stop_intent(TRANSACTIONS, args.sha, uid=0)
-            except (ActivationBlocked, OSError, ValueError) as exc:
-                status = ("BLOCKED: completed_release_receipt_unproven:"
-                          + type(exc).__name__)
+
     else:
         status = run_maintenance(args.sha, env_file=args.env_file,
                                  wait_seconds=args.wait_seconds)
