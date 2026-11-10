@@ -203,5 +203,64 @@ class WedgeRiskSourceAndStageTests(unittest.TestCase):
             )
 
 
+    def test_original_wedge_retest_preview_executes_protected_virtual_roundtrip(self):
+        """Both Wedge sides: actual virtual LIMIT+TAKE and fee-aware net PnL.
+
+        Scanner observations are injected TEST fixtures; this asserts the
+        integrated execution mechanics, NOT genuine strategy profitability.
+        """
+        for pattern, opening, retest, exit_low, exit_high in (
+            ("Falling Wedge", "102", "101", "99.7", "105"),
+            ("Rising Wedge", "98", "99", "95", "100.2"),
+        ):
+            with self.subTest(pattern=pattern):
+                session = make_session(run=pattern.replace(" ", ""))
+                seed(session, pattern=pattern)
+                session.step(bar(250, closing=opening, low="97", high="103"))
+                session.step(bar(251, closing=retest, low="99", high="101"))
+                preview, = session.wedge_robot.risk_previews
+                session.submit_protected_preview(preview)
+                self.assertIsNotNone(session.exchange.pending)
+                self.assertEqual(session.account.fills, ())
+                session.step(bar(252, closing="100", low="99.7", high="100.2"))
+                self.assertIsNotNone(session.exchange.active_protection)
+                self.assertEqual(len(session.account.fills), 1)
+                self.assertEqual(
+                    session.account.fills[0].price, preview.request.limit_price,
+                )
+                self.assertEqual(
+                    session.account.fills[0].quantity, preview.request.quantity,
+                )
+                state = session.step(bar(
+                    253, closing="100", low=exit_low, high=exit_high,
+                ))
+                self.assertEqual(state.position_quantity, 0)
+                self.assertIsNone(session.exchange.active_protection)
+                self.assertEqual(state.applied_fills, 2)
+                self.assertEqual(session.account.fills[-1].price, preview.take_price)
+                self.assertGreater(state.realized_net_pnl, D("0"))
+                self.assertEqual(len([
+                    event for event in session.events
+                    if event.kind == "VIRTUAL_LIMIT_FILLED"
+                ]), 1)
+                self.assertEqual(len([
+                    event for event in session.events
+                    if event.kind == "VIRTUAL_TAKE_FILLED"
+                ]), 1)
+
+    def test_protected_wedge_submission_rejects_unrecorded_or_stale_preview(self):
+        session = make_session(run="no_fake")
+        seed(session)
+        session.step(bar(250, closing="102", low="97", high="103"))
+        session.step(bar(251, closing="101", low="99", high="101"))
+        preview, = session.wedge_robot.risk_previews
+        with self.assertRaisesRegex(ValueError, "not a recorded"):
+            session.submit_protected_preview(replace(preview, status="FORGED"))
+        session.step(bar(252, closing="100", low="99.7", high="100.2"))
+        with self.assertRaisesRegex(ValueError, "immediate committed RETEST"):
+            session.submit_protected_preview(preview)
+        self.assertEqual(session.account.fills, ())
+
+
 if __name__ == "__main__":
     unittest.main()
