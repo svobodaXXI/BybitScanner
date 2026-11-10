@@ -78,7 +78,7 @@ try {
   assert.equal(await endUtc.inputValue(), "2026-10-31T12:33");
   await endUtc.fill("2026-10-11T18:45");
   assert.equal(await setup.getByRole("button", { name: "Месяц · 30 дней" }).getAttribute("aria-pressed"), "false");
-  assert.equal(await setup.getByRole("button", { name: /Торговый прогон/ }).isDisabled(), true);
+  assert.equal(await setup.getByRole("button", { name: /Запустить клинья/ }).isDisabled(), true);
   assert.equal(requests.filter(url => url.includes("/api/") || url.includes("/v5/")).length, 0);
 
   // The entire replay control surface belongs beside the M5/H1 switch,
