@@ -3478,6 +3478,8 @@ def test_editor_update_cli_delegates_to_existing_monolith_once(monkeypatch, caps
     steps = []
     monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
                         lambda sha: (steps.append(("stage", sha)), stage)[1])
+    monkeypatch.setattr(maintenance, "_prepare_editor_frontend_bundle",
+                        lambda _sha, *, stage: None)
     monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
                         lambda sha, **kwargs: (
                             steps.append(("monolith", sha, kwargs["stage"])),
@@ -3497,3 +3499,95 @@ def test_editor_update_cli_rejects_competing_mode_before_staging(monkeypatch):
         maintenance.main(["a" * 40, "--update-editor-only-from-stable",
                           "--start-paper-after-editor"])
     assert exc.value.code == 2
+
+
+def test_editor_update_seals_changed_frontend_before_stop(tmp_path, monkeypatch):
+    """A Vite build is pinned to target and only run when UI sources changed."""
+    import json
+    from tools import paper_maintenance as maintenance
+    from tools import vps_gitless_release_activate as activate
+    from tools import vps_release_identity as identity
+    from tools.vps_terminal_frontend_publish import inspect_bundle
+
+    target = "b" * 40
+    stage = tmp_path / "stage"
+    frontend = stage / "terminal/frontend"
+    frontend.mkdir(parents=True)
+    previous = {"build_sha": "a" * 40, "blobs": {"terminal/frontend/src/main.tsx": "a" * 40}}
+    next_manifest = {"build_sha": target, "blobs": {"terminal/frontend/src/main.tsx": "b" * 40}}
+    monkeypatch.setattr(activate, "_trusted_file", lambda *_args: b"unused")
+    monkeypatch.setattr(activate, "_manifest", lambda _: previous)
+    monkeypatch.setattr(identity, "create_manifest", lambda _path, _sha: next_manifest)
+    commands = []
+
+    def runner(argv, **_kwargs):
+        commands.append(tuple(argv))
+        if argv[:2] == ["npm", "run"]:
+            bundle = frontend / "dist"
+            (bundle / "assets").mkdir(parents=True)
+            (bundle / "index.html").write_text('<script src="/assets/app.js"></script>')
+            (bundle / "assets/app.js").write_text("console.log('editor')")
+        return SimpleNamespace(returncode=0)
+
+    bundle = maintenance._prepare_editor_frontend_bundle(
+        target, stage=stage, runner=runner,
+    )
+    assert bundle == frontend / "dist"
+    assert commands == [("npm", "ci", "--ignore-scripts"), ("npm", "run", "build")]
+    assert inspect_bundle(bundle, target)["assets/app.js"]
+    assert json.loads((bundle / "frontend-release.json").read_text())["source_sha"] == target
+
+
+def test_editor_update_unavailable_build_fails_before_monolith(tmp_path, monkeypatch, capsys):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_gitless_release_activate as activate
+    from tools import vps_release_identity as identity
+
+    target = "b" * 40
+    stage = tmp_path / "stage"
+    (stage / "terminal/frontend").mkdir(parents=True)
+    monkeypatch.setattr(activate, "_trusted_file", lambda *_args: b"unused")
+    monkeypatch.setattr(activate, "_manifest", lambda _: {
+        "build_sha": "a" * 40, "blobs": {"terminal/frontend/src/main.tsx": "a" * 40}
+    })
+    monkeypatch.setattr(identity, "create_manifest", lambda _path, _sha: {
+        "build_sha": target, "blobs": {"terminal/frontend/src/main.tsx": "b" * 40}
+    })
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage", lambda _sha: stage)
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
+                        lambda *_args, **_kwargs: pytest.fail("never STOP on UI build failure"))
+    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kw: SimpleNamespace(returncode=127))
+    assert maintenance.main([target, "--update-editor-only-from-stable"]) == 2
+    result = capsys.readouterr().out
+    assert "approved_editor_frontend_preflight_unproven" in result
+    assert "no STOP attempted" in result
+
+
+def test_editor_update_skips_build_if_frontend_sources_unchanged(tmp_path, monkeypatch):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_gitless_release_activate as activate
+    from tools import vps_release_identity as identity
+
+    sha = "a" * 40
+    same = {"build_sha": sha, "blobs": {"terminal/frontend/src/main.tsx": sha}}
+    monkeypatch.setattr(activate, "_trusted_file", lambda *_args: b"unused")
+    monkeypatch.setattr(activate, "_manifest", lambda _: same)
+    monkeypatch.setattr(identity, "create_manifest", lambda _path, _sha: same)
+    assert maintenance._prepare_editor_frontend_bundle(
+        sha, stage=tmp_path, runner=lambda *_args, **_kw: pytest.fail("no npm"),
+    ) is None
+
+
+def test_editor_update_delegates_sealed_frontend_into_existing_monolith(monkeypatch):
+    from tools import paper_maintenance as maintenance
+    target = "b" * 40
+    stage = Path("/unused/exact-stage")
+    bundle = stage / "terminal/frontend/dist"
+    seen = []
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage", lambda _sha: stage)
+    monkeypatch.setattr(maintenance, "_prepare_editor_frontend_bundle",
+                        lambda _sha, *, stage: bundle)
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
+                        lambda _sha, **kw: (seen.append(kw["frontend_bundle"]), "READY: editor")[1])
+    assert maintenance.main([target, "--update-editor-only-from-stable"]) == 0
+    assert seen == [bundle]
