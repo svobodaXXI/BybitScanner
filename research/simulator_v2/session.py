@@ -19,6 +19,7 @@ from research.simulator_v2.virtual_exchange import MarketRequest, LimitRequest, 
 from research.simulator_v2.reused_geometry import ReadOnlyReusedGeometry
 from research.simulator_v2.wedge_observer import ReadOnlyWedgeScanner, WedgeScannerConfig
 from research.simulator_v2.wedge_robot_observer import ReadOnlyWedgeRobot, SimWedgeRobotConfig
+from research.simulator_v2.wedge_risk_preflight import SimWedgeRiskSettings
 
 
 class VirtualReplaySession:
@@ -35,6 +36,7 @@ class VirtualReplaySession:
         enable_reused_geometry: bool = False,
         wedge_scanner_config: WedgeScannerConfig | None = None,
         wedge_robot_config: SimWedgeRobotConfig | None = None,
+        wedge_risk_settings: SimWedgeRiskSettings | None = None,
     ) -> None:
         if type(enable_reused_geometry) is not bool:
             raise TypeError("explicit boolean for optional research geometry required")
@@ -47,8 +49,19 @@ class VirtualReplaySession:
         )
         if wedge_robot_config is not None and self.wedge_scanner is None:
             raise ValueError("SIMULATION Wedge Robot requires original Wedge Scanner stage")
+        if wedge_risk_settings is not None:
+            if wedge_robot_config is None:
+                raise ValueError("Wedge risk preview requires explicit virtual Robot")
+            if not isinstance(wedge_risk_settings, SimWedgeRiskSettings):
+                raise TypeError("SIMULATION Wedge risk settings required")
+            if (wedge_risk_settings.entry_fee_rate < max(taker_fee_rate, maker_fee_rate)
+                    or wedge_risk_settings.exit_fee_rate < taker_fee_rate):
+                raise ValueError("Wedge risk preview fees must cover virtual exchange fees")
         self.wedge_robot = (
-            ReadOnlyWedgeRobot(scanner=self.wedge_scanner, config=wedge_robot_config)
+            ReadOnlyWedgeRobot(
+                scanner=self.wedge_scanner, config=wedge_robot_config,
+                risk_settings=wedge_risk_settings,
+            )
             if wedge_robot_config is not None else None
         )
         self.account = VirtualAccount(
