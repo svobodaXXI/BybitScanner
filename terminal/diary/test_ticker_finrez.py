@@ -75,23 +75,26 @@ class FinrezRankingTests(unittest.TestCase):
 
 
 
-def _scoped_episode(suffix: str, symbol: str, roles_and_origins, *, closed_at=None):
+def _scoped_episode(
+    suffix: str, symbol: str, roles_and_origins, *, opened_at=None, closed_at=None,
+):
     """Typed immutable episode and exact per-execution controller evidence."""
     episode_id = TradeEpisodeId(suffix)
+    opened_at = opened_at if opened_at is not None else _ms(9, 9)
     allocations = []
     origins = {}
     for index, (role, origin) in enumerate(roles_and_origins):
         key = ExecutionDedupKey(TradingAccountId("paper"), Category.LINEAR, ExecutionId(f"{suffix}-{index}"))
         allocations.append(ExecutionAllocation(
             execution_key=key, trade_episode_id=episode_id, role=role,
-            quantity=Decimal("1"), fee=Decimal("0.1"), occurred_at_ms=_ms(9, 9) + index,
+            quantity=Decimal("1"), fee=Decimal("0.1"), occurred_at_ms=opened_at + index,
         ))
         origins[key] = origin
     episode = TradeEpisode(
         trade_episode_id=episode_id,
         position_key=PositionKey(TradingAccountId("paper"), Category.LINEAR, Symbol(symbol), 0),
         side=PositionSide.LONG, environment=DiaryEnvironment.PAPER,
-        opened_at_ms=_ms(9, 9), closed_at_ms=closed_at if closed_at is not None else _ms(9, 10),
+        opened_at_ms=opened_at, closed_at_ms=closed_at if closed_at is not None else _ms(9, 10),
         opening_price=Price(Decimal("100")), average_entry=Price(Decimal("100")),
         open_quantity=Quantity(Decimal("0")), realized_price_pnl=Decimal("5"),
         execution_fees=Decimal("0.1") * len(allocations), allocations=tuple(allocations),
@@ -122,6 +125,11 @@ class FinrezMixedControllerTests(unittest.TestCase):
         self.assertEqual(robot["manual_interventions"], [
             {"symbol": "BTCUSDT", "pnl_usdt": "4.7", "trade_count": 1},
         ])
+        self.assertEqual(robot["attribution_coverage"], {
+            "status": "COMPLETE",
+            "excluded_unattributed_episode_count": 0,
+            "excluded_unattributed_execution_count": 0,
+        })
         manual_report = project_paper_ticker_pnl(
             snapshot, account_id="paper", owner="MANUAL", period="ALL", now_ms=_ms(9, 12),
         )
@@ -141,7 +149,7 @@ class FinrezMixedControllerTests(unittest.TestCase):
         self.assertEqual(report["tickers"], [])
         self.assertEqual(report["manual_interventions"][0]["trade_count"], 1)
 
-    def test_other_mixed_or_unknown_ownership_remains_blocked(self):
+    def test_other_mixed_ownership_remains_blocked(self):
         cases = [
             [(AllocationRole.OPEN, Origin.TERMINAL_MANUAL), (AllocationRole.CLOSE, Origin.ROBOT)],
             [(AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.INCREASE, Origin.TERMINAL_MANUAL),
@@ -156,15 +164,49 @@ class FinrezMixedControllerTests(unittest.TestCase):
                     PaperSourceSnapshot(2, (mixed,), origins),
                     account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
                 )
-        assisted, origins = _scoped_episode("unknown", "ETHUSDT", [
+
+    def test_unknown_episode_is_excluded_and_reported_as_partial_not_zero(self):
+        unknown, origins = _scoped_episode("unknown", "ETHUSDT", [
             (AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.TERMINAL_MANUAL),
         ])
-        origins.pop(assisted.allocations[-1].execution_key)
-        with self.assertRaisesRegex(StatisticsScopeError, "unattributed"):
-            project_paper_ticker_pnl(
-                PaperSourceSnapshot(2, (assisted,), origins),
-                account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
-            )
+        origins.clear()
+        report = project_paper_ticker_pnl(
+            PaperSourceSnapshot(2, (unknown,), origins),
+            account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
+        )
+        self.assertEqual(report["tickers"], [])
+        self.assertEqual(report["manual_interventions"], [])
+        self.assertEqual(report["attribution_coverage"], {
+            "status": "PARTIAL",
+            "excluded_unattributed_episode_count": 1,
+            "excluded_unattributed_execution_count": 2,
+        })
+
+    def test_today_ignores_unattributed_historical_episode_outside_period(self):
+        current, current_origins = _scoped_episode("current", "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        historical, historical_origins = _scoped_episode(
+            "historical", "ETHUSDT",
+            [(AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT)],
+            opened_at=_ms(8, 23, 58),
+            closed_at=_ms(8, 23, 59),
+        )
+        historical_origins.clear()
+        report = project_paper_ticker_pnl(
+            PaperSourceSnapshot(5, (historical, current), {
+                **historical_origins, **current_origins,
+            }),
+            account_id="paper", owner="ROBOT", period="TODAY", now_ms=_ms(9, 12),
+        )
+        self.assertEqual(report["tickers"], [
+            {"symbol": "BTCUSDT", "pnl_usdt": "4.8", "trade_count": 1},
+        ])
+        self.assertEqual(report["attribution_coverage"], {
+            "status": "COMPLETE",
+            "excluded_unattributed_episode_count": 0,
+            "excluded_unattributed_execution_count": 0,
+        })
 
 if __name__ == "__main__":
     unittest.main()

@@ -379,3 +379,14 @@
   color: #dce4eb;
   font-size: 0.76rem;
 }
+
+.diary-finrez-coverage {
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #685331;
+  border-radius: 0.32rem;
+  color: #e5c48d;
+  background: #241e19;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}

@@ -167,6 +167,11 @@ type FinrezResponse = {
   pnl_basis: "REALIZED_PRICE_MINUS_EXECUTION_FEES";
   tickers: FinrezTicker[];
   manual_interventions: FinrezTicker[];
+  attribution_coverage: {
+    status: "COMPLETE" | "PARTIAL";
+    excluded_unattributed_episode_count: number;
+    excluded_unattributed_execution_count: number;
+  };
 };
 
 type DiaryTradesResponse = {
@@ -485,8 +490,20 @@ function FinrezView({ report }: { report: FinrezResponse }) {
         {report.owner === "ROBOT" ? "Только полностью роботизированные сделки" : "Только ручные сделки"}
         {" · "}Реализованный PnL (цена − комиссии исполнений) · USDT
       </p>
+      {report.attribution_coverage.status === "PARTIAL" ? (
+        <p className="diary-finrez-coverage" role="status">
+          История неполная: исключено {report.attribution_coverage.excluded_unattributed_episode_count} закрытых
+          { " " }эпизодов ({report.attribution_coverage.excluded_unattributed_execution_count} исполнений
+          { " " }без подтверждённого происхождения). Показанный PnL — только по достоверно
+          атрибутированным сделкам, не полный результат за период.
+        </p>
+      ) : null}
       {report.tickers.length === 0 ? (
-        <p className="diary-state">Нет закрытых сделок этого типа за выбранный период</p>
+        <p className="diary-state">
+          {report.attribution_coverage.status === "PARTIAL"
+            ? "Нет достоверно атрибутированных закрытых сделок этого типа за выбранный период"
+            : "Нет закрытых сделок этого типа за выбранный период"}
+        </p>
       ) : (
         <div className="diary-finrez-list">
           {report.tickers.map((ticker) => (
@@ -578,6 +595,20 @@ export function DiaryOverlay({
           || !Number.isSafeInteger(result.source_revision) || result.source_revision < 1
           || !Number.isSafeInteger(result.period_start_ms) || result.period_start_ms < 0
           || !Number.isSafeInteger(result.as_of_ms) || result.as_of_ms < result.period_start_ms
+          || !result.attribution_coverage
+          || !["COMPLETE", "PARTIAL"].includes(result.attribution_coverage.status)
+          || !Number.isSafeInteger(result.attribution_coverage.excluded_unattributed_episode_count)
+          || result.attribution_coverage.excluded_unattributed_episode_count < 0
+          || !Number.isSafeInteger(result.attribution_coverage.excluded_unattributed_execution_count)
+          || result.attribution_coverage.excluded_unattributed_execution_count < 0
+          || (result.attribution_coverage.status === "COMPLETE"
+            && (result.attribution_coverage.excluded_unattributed_episode_count !== 0
+              || result.attribution_coverage.excluded_unattributed_execution_count !== 0))
+          || (result.attribution_coverage.status === "PARTIAL"
+            && (result.attribution_coverage.excluded_unattributed_episode_count === 0
+              || result.attribution_coverage.excluded_unattributed_execution_count === 0
+              || result.attribution_coverage.excluded_unattributed_execution_count
+                < result.attribution_coverage.excluded_unattributed_episode_count))
           || !Array.isArray(result.tickers) || result.tickers.some((row) => {
             if (typeof row.symbol !== "string" || !row.symbol || seen.has(row.symbol)
               || typeof row.pnl_usdt !== "string" || !row.pnl_usdt.trim()

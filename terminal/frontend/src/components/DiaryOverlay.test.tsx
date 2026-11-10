@@ -373,6 +373,11 @@ const finrezResponse = {
     { symbol: "BTCUSDT", pnl_usdt: "-2.5", trade_count: 1 },
   ],
   manual_interventions: [],
+  attribution_coverage: {
+    status: "COMPLETE" as const,
+    excluded_unattributed_episode_count: 0,
+    excluded_unattributed_execution_count: 0,
+  },
 };
 
 describe("Finrez first-screen UI", () => {
@@ -434,6 +439,45 @@ describe("Finrez first-screen UI", () => {
       statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
     expect(await screen.findByText("Не удалось загрузить статистику выбранного счёта")).toBeInTheDocument();
     expect(screen.queryByText("-2 USDT")).not.toBeInTheDocument();
+  });
+
+  it("explicitly warns about partial attribution and never calls an unknown result zero", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
+      ...finrezResponse,
+      period: url.includes("period=ALL") ? "ALL" : "TODAY",
+      tickers: [],
+      attribution_coverage: url.includes("period=ALL") ? {
+        status: "PARTIAL",
+        excluded_unattributed_episode_count: 3,
+        excluded_unattributed_execution_count: 11,
+      } : finrezResponse.attribution_coverage,
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:4" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Всё время" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=ALL"));
+    const coverage = await screen.findByRole("status");
+    expect(coverage).toHaveTextContent("История неполная");
+    expect(coverage).toHaveTextContent("исключено 3 закрытых");
+    expect(coverage).toHaveTextContent("11 исполнений");
+    expect(coverage).toHaveTextContent("не полный результат за период");
+    expect(screen.getByText(/Нет достоверно атрибутированных закрытых сделок/)).toBeInTheDocument();
+    expect(screen.queryByText("Нет закрытых сделок этого типа за выбранный период")).not.toBeInTheDocument();
+  });
+
+  it("rejects missing or contradictory coverage instead of showing an apparently complete report", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse,
+      attribution_coverage: { status: "COMPLETE",
+        excluded_unattributed_episode_count: 2,
+        excluded_unattributed_execution_count: 2 },
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:5" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText("Не удалось загрузить статистику выбранного счёта")).toBeInTheDocument();
+    expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
   });
 
 });
