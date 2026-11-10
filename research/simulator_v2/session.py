@@ -196,16 +196,19 @@ class VirtualReplaySession:
             item == preview for item in self.wedge_robot.risk_previews
         ):
             raise ValueError("preview is not a recorded native Scanner/Robot Wedge result")
+        candidate_ids = {
+            plan.candidate_id for plan in self.wedge_robot.limit_plans
+            if plan.request.client_action_id.value == preview.request.order_id
+        }
+        if not candidate_ids:
+            raise ValueError("protected preview does not match native Robot LIMIT")
         if not any(
-            d.event == "RETEST" and d.virtual_time_ms == self.virtual_time_ms
+            d.event == "RETEST"
+            and d.virtual_time_ms == self.virtual_time_ms
+            and d.candidate_id in candidate_ids
             for d in self.wedge_robot.decisions
         ):
             raise ValueError("only immediate committed RETEST previews may trade")
-        if not any(
-            plan.request.client_action_id.value == preview.request.order_id
-            for plan in self.wedge_robot.limit_plans
-        ):
-            raise ValueError("protected preview does not match native Robot LIMIT")
         if self.wedge_robot.risk_settings is None:
             raise ValueError("SIMULATION protective settings are not enabled")
         if self.account.snapshot(
