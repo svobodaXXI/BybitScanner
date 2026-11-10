@@ -101,14 +101,13 @@ def test_installed_ready_previous_release_seals_receipt_without_extra_stop(
     units.write_text("{}")
     units.chmod(0o600)
 
-    intent = transactions / (".stop-invoked-" + installed)
-    intent.write_bytes(b"STOP_INVOKED; not install authorization\n")
-    intent.chmod(0o600)
-    confirmed = transactions / (".stop-confirmed-" + installed)
-    confirmed.write_text(
-        f"CANONICAL_ALL_STOP_CONFIRMED:{previous}:{installed}\n"
+    # Use the canonical writers: receipts are byte-pinned, not text guesses.
+    assert maintenance._record_one_shot_stop_intent(
+        transactions, installed, uid=os.geteuid(), root=root,
     )
-    confirmed.chmod(0o600)
+    assert maintenance._confirmed_stop_receipt(
+        transactions, installed, previous, uid=os.geteuid(), record=True,
+    )
 
     current = [installed]
     monkeypatch.setattr(release, "verify_release", lambda *_args: current[0])
