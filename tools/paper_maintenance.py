@@ -6,6 +6,7 @@ does not advance to git or systemd: protection stays with the current backend.
 from __future__ import annotations
 
 import argparse
+import json
 import fcntl
 import hashlib
 import os
@@ -1919,6 +1920,82 @@ def _prepare_approved_editor_stage(
     return stage
 
 
+def _prepare_editor_frontend_bundle(
+    target: str, *, stage: Path, root: Path = REPO,
+    runner=subprocess.run,
+) -> Path | None:
+    """Build a pinned UI before STOP only when tracked UI sources changed.
+
+    Reuse the current Gitless manifest and static publisher; never install
+    dependencies or replace an untrusted build artifact under a live runtime.
+    A missing Node toolchain blocks before STOP, rather than reporting a
+    backend-only release as a complete Editor/Finrez UI update.
+    """
+    from tools.vps_gitless_release_activate import _manifest, _trusted_file
+    from tools.vps_release_identity import MANIFEST, create_manifest
+    from tools.vps_terminal_frontend_publish import (
+        _paths, inspect_bundle,
+    )
+
+    installed = _manifest(_trusted_file(MANIFEST, 0))
+    approved = create_manifest(stage, target)
+    def ui_files(release: dict) -> dict[str, str]:
+        return {name: digest for name, digest in release["blobs"].items()
+                if name.startswith("terminal/frontend/")}
+    if ui_files(installed) == ui_files(approved):
+        return None
+
+    frontend = stage / "terminal/frontend"
+    bundle = frontend / "dist"
+    if bundle.exists() or bundle.is_symlink():
+        inspect_bundle(bundle, target)
+        return bundle
+
+    # npm ci removes node_modules; do not silently erase a previous,
+    # potentially owner-created or interrupted build in a reused worktree.
+    node_modules = frontend / "node_modules"
+    if node_modules.exists() or node_modules.is_symlink():
+        raise ValueError("frontend_dependency_tree_exists_without_sealed_bundle")
+    if not frontend.is_dir() or frontend.is_symlink():
+        raise ValueError("frontend_source_missing_or_untrusted")
+
+    for args, name in (
+        (["npm", "ci", "--ignore-scripts"], "frontend_npm_ci"),
+        (["npm", "run", "build"], "frontend_vite_build"),
+    ):
+        try:
+            result = runner(
+                args, cwd=frontend, capture_output=True, text=True,
+                timeout=240, check=False,
+                env={**os.environ, "CI": "true", "npm_config_audit": "false",
+                     "npm_config_fund": "false"},
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ValueError(name + "_unavailable") from exc
+        if result.returncode != 0:
+            raise ValueError(name + "_failed")
+
+    # Seal exactly the same asset set as the existing frontend-release CI.
+    files = _paths(bundle)
+    receipt = bundle / "frontend-release.json"
+    payload = json.dumps({
+        "source_sha": target,
+        "files": {name: hashlib.sha256(data).hexdigest()
+                  for name, data in files.items()},
+    }, sort_keys=True).encode("utf-8") + b"\n"
+    descriptor = os.open(
+        receipt, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644,
+    )
+    with os.fdopen(descriptor, "wb") as output:
+        output.write(payload)
+        output.flush()
+        os.fsync(output.fileno())
+    if create_manifest(stage, target) != approved:
+        raise ValueError("frontend_build_changed_tracked_source")
+    inspect_bundle(bundle, target)
+    return bundle
+
+
 class _MaintenanceParser(argparse.ArgumentParser):
     """Keep CLI refusal visible even when PowerShell truncates stderr usage."""
 
@@ -1971,12 +2048,23 @@ def main(argv=None) -> int:
             print("BLOCKED: approved_editor_staging_unproven:"
                   + str(exc).replace(chr(10), " ")[:160] + "; no STOP attempted")
             return 2
-        # Delegate to the already owned monolith. The exact installed target
-        # resumes without any stage, STOP or reinstall; other targets use the
-        # canonical protected safe-stop, installer and receipt machinery.
+        # UI binaries are ignored by Git. Seal them before STOP if Editor
+        # sources changed; a backend-only READY cannot prove the web UI.
+        bundle = None
+        if stage is not None:
+            try:
+                bundle = _prepare_editor_frontend_bundle(args.sha, stage=stage)
+            except (OSError, ValueError) as exc:
+                print("BLOCKED: approved_editor_frontend_preflight_unproven:"
+                      + str(exc).replace(chr(10), " ")[:160] + "; no STOP attempted")
+                return 2
+        # Delegate to the owned monolith with the exact preflighted bundle.
         mode = (["--resume-installed-editor-only"] if stage is None
                 else ["--staged-gitless-editor-only", str(stage)])
-        return main([args.sha, "--env-file", str(args.env_file), *mode])
+        frontend_flags = (["--frontend-bundle", str(bundle)]
+                          if bundle is not None else [])
+        return main([args.sha, "--env-file", str(args.env_file),
+                     *mode, *frontend_flags])
     if args.staged_gitless_editor_only and REPO.is_dir():
         # Fail before preflight/STOP if Python imported tools from the target
         # staging checkout instead of the installed Gitless release.
