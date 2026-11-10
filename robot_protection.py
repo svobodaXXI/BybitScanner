@@ -31,7 +31,7 @@ TAKE_REALIZATION = Decimal("0.90")
 PROTECTION_DEADLINE_MS = 5_000
 # Minimum planned take/stop ratio for a new entry (retest LIMIT and late Market entry).
 MIN_ENTRY_RR = Decimal("1.5")  # Legacy non-Wedge default.
-WEDGE_MIN_ENTRY_RR = Decimal("2")  # Owner #419 hard Wedge entry floor
+WEDGE_MIN_ENTRY_RR = Decimal("1.5")  # Owner 2026-10-09: Wedge minimum 1.5, not #419 proposed 2
 MIN_ENTRY_RR_ENV = "ROBOT_MIN_ENTRY_RR"
 MIN_ENTRY_RR_BOUNDS = (Decimal("0"), Decimal("10"))
 
@@ -66,9 +66,10 @@ def min_entry_rr() -> Decimal:
 
 
 def wedge_min_entry_rr() -> Decimal:
-    """Keep the 2R Wedge owner floor even if the optional env value is lower.
+    """Respect the owner-approved 1.5R Wedge floor and stricter valid config.
 
-    A stricter valid operator setting still applies. L-shape/Box unchanged.
+    The rejected #419 hard 2R requirement is not authoritative.
+    L-shape and Box have separate policy contracts.
     """
     return max(WEDGE_MIN_ENTRY_RR, min_entry_rr())
 
