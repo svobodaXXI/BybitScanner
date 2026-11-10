@@ -442,19 +442,22 @@ describe("Finrez first-screen UI", () => {
   });
 
   it("explicitly warns about partial attribution and never calls an unknown result zero", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
       ...finrezResponse,
-      period: "ALL",
+      period: url.includes("period=ALL") ? "ALL" : "TODAY",
       tickers: [],
-      attribution_coverage: {
+      attribution_coverage: url.includes("period=ALL") ? {
         status: "PARTIAL",
         excluded_unattributed_episode_count: 3,
         excluded_unattributed_execution_count: 11,
-      },
-    }), { status: 200 })));
+      } : finrezResponse.attribution_coverage,
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
     render(<DiaryOverlay accountKey="paper:4" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Всё время" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=ALL"));
     const coverage = await screen.findByRole("status");
     expect(coverage).toHaveTextContent("История неполная");
     expect(coverage).toHaveTextContent("исключено 3 закрытых");
