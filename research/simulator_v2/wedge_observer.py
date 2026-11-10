@@ -12,6 +12,7 @@ Each M5 update is staged until the parent SIMULATION minute commits.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from research.historical_market_replay import Candle
@@ -55,6 +56,9 @@ class WedgeObservation:
     # The original frozen projection can be passed to a FUTURE isolated
     # admission adapter; no admission or lifecycle happens in this observer.
     robot_geometry: dict[str, Any] | None
+    frozen_structural_extreme: Decimal | None = None
+    frozen_reference_price: Decimal | None = None
+    frozen_target_price: Decimal | None = None
 
 
 class ReadOnlyWedgeScanner:
@@ -92,6 +96,10 @@ class ReadOnlyWedgeScanner:
     ) -> WedgeObservation | None:
         """The same pure computational functions used by analyzer.core."""
         import pandas as pd
+        from robot_protection import (
+            RobotProtectionError, wedge_structural_extreme,
+            wedge_frozen_reference_target,
+        )
 
         from pivots import find_pivots
         from wedge import analyze_wedge
@@ -157,6 +165,21 @@ class ReadOnlyWedgeScanner:
             except (ScannerGeometryCursorError, KeyError, TypeError, ValueError, OverflowError):
                 robot_geometry = None
 
+        # Risk inputs come ONLY from this just-closed Scanner geometry.
+        # Missing counted touches / immutable target are NOT reconstructed
+        # from later candles or guessed from pattern lines.
+        frozen_extreme = frozen_reference = frozen_target = None
+        if isinstance(geometry, dict):
+            direction = "LONG" if result["pattern"] == "Falling Wedge" else "SHORT"
+            snapshot = {"geometry": geometry}
+            try:
+                frozen_extreme = wedge_structural_extreme(snapshot, direction)
+                frozen_reference, frozen_target = wedge_frozen_reference_target(
+                    snapshot, direction,
+                )
+            except RobotProtectionError:
+                frozen_extreme = frozen_reference = frozen_target = None
+
         return WedgeObservation(
             simulation_run_id=frame.simulation_run_id,
             symbol=frame.symbol,
@@ -170,6 +193,9 @@ class ReadOnlyWedgeScanner:
             scanner_filter_reason=str(decision.get("reason", "")),
             robot_geometry_ready=robot_geometry is not None and formation_id is not None,
             robot_geometry=robot_geometry,
+            frozen_structural_extreme=frozen_extreme,
+            frozen_reference_price=frozen_reference,
+            frozen_target_price=frozen_target,
         )
 
     def observe_staged(
