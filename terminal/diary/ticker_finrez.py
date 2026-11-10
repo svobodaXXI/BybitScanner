@@ -11,9 +11,10 @@ from decimal import Decimal
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
-from .models import TradeEpisode
-from .scoped_statistics_archive import _attributed_episodes
+from .models import AllocationRole, TradeEpisode
+from .scoped_statistics_archive import ORIGINS, StatisticsScopeError
 from .scoped_statistics_reporter import PaperSourceSnapshot
+from terminal.domain.models import TradingAccountId
 
 _MSK = ZoneInfo("Europe/Moscow")
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -54,6 +55,64 @@ def aggregate_ticker_pnl(
     ]
 
 
+
+def _classified_finrez_episodes(
+    snapshot: PaperSourceSnapshot, *, account_id: str,
+) -> tuple[tuple[TradeEpisode, ...], tuple[TradeEpisode, ...], tuple[TradeEpisode, ...]]:
+    """Classify whole episodes, not individual fills or split economic PnL.
+
+    A robot-opened episode finished by a proven manual CLOSE is reported only
+    as a distinct intervention cohort, never as an autonomous robot result.
+    Unknown origin, manual increases, reversed ownership and other mixed
+    episodes remain unavailable rather than guessed.
+    """
+    robot: list[TradeEpisode] = []
+    manual: list[TradeEpisode] = []
+    assisted: list[TradeEpisode] = []
+    seen_ids: set[str] = set()
+    for episode in snapshot.episodes:
+        if not isinstance(episode, TradeEpisode):
+            raise StatisticsScopeError("invalid_trade_episode")
+        if episode.position_key.trading_account_id != TradingAccountId(account_id):
+            raise StatisticsScopeError("cross_account_statistics_evidence")
+        if episode.trade_episode_id.value in seen_ids:
+            raise StatisticsScopeError("duplicate_trade_episode")
+        seen_ids.add(episode.trade_episode_id.value)
+
+        attributed: list[str] = []
+        for allocation in episode.allocations:
+            if (allocation.execution_key.trading_account_id != TradingAccountId(account_id)
+                    or allocation.trade_episode_id != episode.trade_episode_id):
+                raise StatisticsScopeError("cross_account_statistics_evidence")
+            mapped = ORIGINS.get(snapshot.origins.get(allocation.execution_key))
+            if mapped is None:
+                raise StatisticsScopeError("unattributed_statistics_evidence")
+            attributed.append(mapped)
+
+        owners = set(attributed)
+        if owners == {"ROBOT"}:
+            robot.append(episode)
+        elif owners == {"MANUAL"}:
+            manual.append(episode)
+        elif (
+            episode.is_closed
+            and owners == {"ROBOT", "MANUAL"}
+            and attributed[0] == "ROBOT"
+            and episode.allocations[0].role in {AllocationRole.OPEN, AllocationRole.REVERSAL_OPEN}
+            and attributed[-1] == "MANUAL"
+            and episode.allocations[-1].role is AllocationRole.CLOSE
+            and all(
+                controller == "ROBOT"
+                or allocation.role in {AllocationRole.REDUCE, AllocationRole.CLOSE}
+                for controller, allocation in zip(attributed, episode.allocations)
+            )
+        ):
+            assisted.append(episode)
+        else:
+            raise StatisticsScopeError("mixed_controller_trade_episode")
+    return tuple(robot), tuple(manual), tuple(assisted)
+
+
 def project_paper_ticker_pnl(
     snapshot: PaperSourceSnapshot, *, account_id: str, owner: str,
     period: str, now_ms: int,
@@ -61,11 +120,14 @@ def project_paper_ticker_pnl(
     """Use the existing strict execution-origin attribution before summing."""
     if account_id != "paper" or owner not in {"ROBOT", "MANUAL"}:
         raise ValueError("unsupported_finrez_scope")
-    attributed = _attributed_episodes(
-        account_id, owner, snapshot.episodes, snapshot.origins,
+    robot, manual, assisted = _classified_finrez_episodes(
+        snapshot, account_id=account_id,
     )
     start_ms, tickers = aggregate_ticker_pnl(
-        attributed, period=period, now_ms=now_ms,
+        robot if owner == "ROBOT" else manual, period=period, now_ms=now_ms,
+    )
+    _, manual_interventions = aggregate_ticker_pnl(
+        assisted if owner == "ROBOT" else (), period=period, now_ms=now_ms,
     )
     return {
         "account_id": account_id,
@@ -77,4 +139,5 @@ def project_paper_ticker_pnl(
         "source": "PAPER_EXECUTIONS_ATTRIBUTED",
         "pnl_basis": "REALIZED_PRICE_MINUS_EXECUTION_FEES",
         "tickers": tickers,
+        "manual_interventions": manual_interventions,
     }
