@@ -366,3 +366,16 @@
 }
 .diary-finrez-row span.profit { color: #37c88e; }
 .diary-finrez-row span.loss { color: #f07178; }
+
+.diary-finrez-interventions {
+  display: grid;
+  gap: 0.45rem;
+  padding-top: 0.65rem;
+  margin-top: 0.3rem;
+  border-top: 1px solid #3c4855;
+}
+.diary-finrez-interventions h3 {
+  margin: 0;
+  color: #dce4eb;
+  font-size: 0.76rem;
+}
