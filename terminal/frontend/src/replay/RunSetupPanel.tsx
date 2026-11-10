@@ -27,6 +27,7 @@ type LocalSimulationReport = {
   namespace: string;
   source_id: string;
   minutes: number;
+  requested_minutes: number;
   virtual_fills: number;
   submitted_protected_limits: number;
   stop_exits: number;
@@ -240,7 +241,7 @@ export function RunSetupPanel({ symbol }: { symbol: string }) {
         <div>Виртуальных исполнений: {runReport.virtual_fills}, входных LIMIT: {runReport.submitted_protected_limits},
           STOP: {runReport.stop_exits}, TAKE: {runReport.take_exits}</div>
         <div>Комиссии: {runReport.total_fees} USDT · максимальная просадка {runReport.max_drawdown_percent}%</div>
-        <div>Минут M1: {runReport.minutes} · заявка в ожидании: {runReport.pending_order_id ?? "нет"}</div>
+        <div>Выбрано минут: {runReport.requested_minutes} · обработано с прогревом: {runReport.minutes} M1 · заявка в ожидании: {runReport.pending_order_id ?? "нет"}</div>
         <small>Это модель OHLC, не реальные исполнения Bybit. Размер 1 WV задаётся исследовательским профилем, не подтверждает биржевую пригодность.</small>
       </section>}
 
