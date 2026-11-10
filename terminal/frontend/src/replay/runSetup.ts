@@ -65,6 +65,10 @@ export function isAllSelected(selection: RunSelection): boolean {
 // datetime-local strings are treated as UTC wall clock, NEVER browser local timezone.
 // A "month" preset is the agreed 30-day test interval; 3 months is 90 days.
 export type PeriodPreset = "DAY" | "WEEK" | "MONTH" | "THREE_MONTHS";
+export type PeriodIncrement = "HOUR" | "DAY" | "WEEK" | "MONTH";
+const INCREMENT_MINUTES: Record<PeriodIncrement, number> = {
+  HOUR: 60, DAY: 1440, WEEK: 7 * 1440, MONTH: 30 * 1440,
+};
 const PRESET_DAYS: Record<PeriodPreset, number> = {
   DAY: 1, WEEK: 7, MONTH: 30, THREE_MONTHS: 90,
 };
@@ -81,6 +85,19 @@ export function presetEndInclusive(start: string, preset: PeriodPreset): string 
   const time = parseUtcMinute(start);
   return new Date(time + (PRESET_DAYS[preset] * 1440 - 1) * 60_000).toISOString().slice(0, 16);
 }
+/** Extend the existing inclusive UTC range without changing its start.
+ * "Month" intentionally means 30 days, matching the legacy selector.
+ */
+export function extendInclusiveWindow(
+  start: string, endInclusive: string, increment: PeriodIncrement,
+): string {
+  const window = validateInclusiveWindow(start, endInclusive);
+  const minutes = window.minutes + INCREMENT_MINUTES[increment];
+  if (minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
+  return new Date(window.endExclusiveMs + INCREMENT_MINUTES[increment] * 60_000 - 60_000)
+    .toISOString().slice(0, 16);
+}
+
 export function validateInclusiveWindow(start: string, endInclusive: string): {
   startMs: number; endExclusiveMs: number; minutes: number;
 } {

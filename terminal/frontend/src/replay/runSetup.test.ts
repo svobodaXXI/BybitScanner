@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, clearAll, isAllSelected,
-  onlyWedges, parseUtcMinute, presetEndInclusive, selectAll,
+  onlyWedges, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, selectAll,
   toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
 } from "./runSetup";
@@ -47,6 +47,21 @@ describe("local one-symbol strategy setup (no trading)", () => {
       expect(window.minutes).toBe(minutes);
       expect(window.endExclusiveMs).toBe(parseUtcMinute(end) + 60_000);
     }
+  });
+  it("extends the current inclusive UTC range cumulatively, never resets its start", () => {
+    const start = "2026-09-11T00:00";
+    let end = "2026-09-11T23:59";
+    end = extendInclusiveWindow(start, end, "HOUR");
+    expect(end).toBe("2026-09-12T00:59");
+    end = extendInclusiveWindow(start, end, "DAY");
+    expect(end).toBe("2026-09-13T00:59");
+    end = extendInclusiveWindow(start, end, "WEEK");
+    expect(end).toBe("2026-09-20T00:59");
+    end = extendInclusiveWindow(start, end, "MONTH");
+    expect(end).toBe("2026-10-20T00:59");
+    expect(validateInclusiveWindow(start, end).minutes).toBe(39 * 1440 + 60);
+    expect(() => extendInclusiveWindow(start, presetEndInclusive(start, "THREE_MONTHS"), "HOUR"))
+      .toThrow(/90 дней/);
   });
   it("handles year and leap-day boundaries without local timezone dependence", () => {
     expect(presetEndInclusive("2024-02-29T23:59", "DAY")).toBe("2024-03-01T23:58");

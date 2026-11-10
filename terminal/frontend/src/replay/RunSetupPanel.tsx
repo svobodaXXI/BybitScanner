@@ -1,20 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, PLANNED_OPTIONS,
-  clearAll, isAllSelected, onlyWedges, presetEndInclusive,
+  clearAll, isAllSelected, onlyWedges, presetEndInclusive, extendInclusiveWindow,
   selectAll, toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
-  type PeriodPreset, type RunSelection, type StrategyId,
+  type PeriodPreset, type PeriodIncrement, type RunSelection, type StrategyId,
   type LocalWedgeResult, type LocalWedgeStatus,
 } from "./runSetup";
 import "./runSetup.css";
 
 const INITIAL_START = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 16);
-const PRESETS: Array<{ id: PeriodPreset; name: string }> = [
-  { id: "DAY", name: "День" },
-  { id: "WEEK", name: "Неделя" },
-  { id: "MONTH", name: "Месяц · 30 дней" },
-  { id: "THREE_MONTHS", name: "3 месяца · 90 дней" },
+const INCREMENTS: Array<{ id: PeriodIncrement; name: string }> = [
+  { id: "HOUR", name: "+1 час" },
+  { id: "DAY", name: "+1 день" },
+  { id: "WEEK", name: "+1 неделя" },
+  { id: "MONTH", name: "+1 месяц" },
 ];
 
 /** Local-only Wedge execution via loopback: never production /api or PAPER. */
@@ -34,6 +34,7 @@ export function RunSetupPanel({
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<LocalWedgeResult | null>(null);
   const [runError, setRunError] = useState("");
+  const [periodError, setPeriodError] = useState("");
   const datesEdited = useRef(false);
   const parsed = useMemo(() => {
     try {
@@ -114,6 +115,7 @@ export function RunSetupPanel({
 
   const updateStart = (value: string) => {
     datesEdited.current = true;
+    setPeriodError("");
     setStart(value);
     if (preset) {
       try { setEnd(presetEndInclusive(value, preset)); } catch { /* Display validation until input completed. */ }
@@ -121,8 +123,20 @@ export function RunSetupPanel({
   };
   const choosePreset = (next: PeriodPreset) => {
     datesEdited.current = true;
+    setPeriodError("");
     setPreset(next);
     try { setEnd(presetEndInclusive(start, next)); } catch { /* Invalid start remains visible. */ }
+  };
+  const addPeriod = (increment: PeriodIncrement) => {
+    try {
+      const updatedEnd = extendInclusiveWindow(start, end, increment);
+      datesEdited.current = true;
+      setPreset(null);
+      setEnd(updatedEnd);
+      setPeriodError("");
+    } catch (error) {
+      setPeriodError(error instanceof Error ? error.message : "Нельзя продлить период");
+    }
   };
   const toggleComponent = (id: StrategyId, enabled: boolean) =>
     setSelection(current => toggleStrategy(current, id, enabled));
@@ -190,14 +204,18 @@ export function RunSetupPanel({
             <input aria-label="Начало прогона UTC" type="datetime-local" step={60}
               value={start} onChange={e => updateStart(e.target.value)} />
           </label>
-          <div className="replay-run-presets" role="group" aria-label="Длина прогона">
-            {PRESETS.map(option => <button key={option.id} type="button"
-              aria-pressed={preset === option.id}
-              onClick={() => choosePreset(option.id)}>{option.name}</button>)}
+          <div className="replay-run-presets" role="group" aria-label="Продлить период прогона">
+            {INCREMENTS.map(option => <button key={option.id} type="button"
+              onClick={() => addPeriod(option.id)}>{option.name}</button>)}
+            <button type="button" aria-pressed={preset === "THREE_MONTHS"}
+              onClick={() => choosePreset("THREE_MONTHS")}>3 месяца · 90 дней</button>
           </div>
+          {periodError && <p role="alert" className="replay-run-error">{periodError}</p>}
           <label>Конец · дата и время, включительно
             <input aria-label="Конец прогона UTC" type="datetime-local" step={60}
-              value={end} onChange={e => { datesEdited.current = true; setPreset(null); setEnd(e.target.value); }} />
+              value={end} onChange={e => {
+                datesEdited.current = true; setPeriodError(""); setPreset(null); setEnd(e.target.value);
+              }} />
           </label>
           {parsed.error ? <p role="alert" className="replay-run-error">{parsed.error}</p> :
             <p role="status" className="replay-run-summary">

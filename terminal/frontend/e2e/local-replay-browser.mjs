@@ -85,12 +85,18 @@ try {
   const startUtc = setup.getByLabel("Начало прогона UTC");
   const endUtc = setup.getByLabel("Конец прогона UTC");
   await startUtc.fill("2026-10-01T12:34");
-  await setup.getByRole("button", { name: "Неделя", exact: true }).click();
-  assert.equal(await endUtc.inputValue(), "2026-10-08T12:33");
-  await setup.getByRole("button", { name: "Месяц · 30 дней" }).click();
-  assert.equal(await endUtc.inputValue(), "2026-10-31T12:33");
+  const incrementBar = setup.getByRole("group", { name: "Продлить период прогона" });
+  assert.equal(await endUtc.inputValue(), "2026-10-02T12:33");
+  await incrementBar.getByRole("button", { name: "+1 час", exact: true }).click();
+  assert.equal(await endUtc.inputValue(), "2026-10-02T13:33");
+  await incrementBar.getByRole("button", { name: "+1 день", exact: true }).click();
+  assert.equal(await endUtc.inputValue(), "2026-10-03T13:33");
+  await incrementBar.getByRole("button", { name: "+1 неделя", exact: true }).click();
+  assert.equal(await endUtc.inputValue(), "2026-10-10T13:33");
+  await incrementBar.getByRole("button", { name: "+1 месяц", exact: true }).click();
+  assert.equal(await endUtc.inputValue(), "2026-11-09T13:33");
   await endUtc.fill("2026-10-11T18:45");
-  assert.equal(await setup.getByRole("button", { name: "Месяц · 30 дней" }).getAttribute("aria-pressed"), "false");
+  assert.equal(await incrementBar.getByRole("button", { name: "3 месяца · 90 дней" }).getAttribute("aria-pressed"), "false");
   const runWedge = setup.getByRole("button", { name: /Запустить клинья/ });
   assert.equal(await runWedge.isDisabled(), true,
     "no local verified archive and native risk profile => no virtual trading");
