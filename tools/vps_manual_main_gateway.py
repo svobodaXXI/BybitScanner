@@ -267,7 +267,7 @@ def prepare_gateway(
                  "main_gateway_start_unproven")
     # A newly started read-only worker can take a moment to bind port 8771.
     # Reobserve health only; never repeat systemctl start or relax the proof.
-    deadline = time.monotonic() + 8.0
+    deadline = time.monotonic() + 20.0
     while True:
         try:
             _read_gateway_health(open_url=open_url)
