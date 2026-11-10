@@ -52,6 +52,160 @@ def fake_runner(calls, *, fail=None):
 
 
 
+
+def test_wrong_staging_module_root_refuses_before_any_gitless_action(
+    monkeypatch, tmp_path, capsys,
+):
+    import tools.paper_maintenance as maintenance
+
+    root = tmp_path / "installed"
+    root.mkdir()
+    monkeypatch.setattr(maintenance, "REPO", root)
+    monkeypatch.setattr(
+        maintenance, "deploy_staged_editor_only",
+        lambda *_args, **_kw: pytest.fail("wrong import root must not deploy"),
+    )
+    assert maintenance.main([
+        "a" * 40, "--staged-gitless-editor-only", str(tmp_path / "stage"),
+    ]) == 2
+    assert "wrong_Gitless_module_root" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("ready", [False, True])
+def test_installed_ready_previous_release_seals_receipt_without_extra_stop(
+    monkeypatch, tmp_path, ready,
+):
+    import json
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    previous, installed, target = ("c" * 40, "a" * 40, "b" * 40)
+    root = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    root.mkdir()
+    stage.mkdir()
+    transactions = tmp_path / "transactions"
+    transactions.mkdir(mode=0o700)
+    journal = transactions / installed
+    journal.mkdir(mode=0o700)
+
+    blobs = {
+        "terminal/runtime/paper_http_server.py": "f" * 40,
+        "tools/vps_release_identity.py": "f" * 40,
+    }
+    for name, sha in (("old.json", previous), ("target.json", installed)):
+        path = journal / name
+        path.write_text(json.dumps({"build_sha": sha, "blobs": blobs}))
+        path.chmod(0o600)
+    units = journal / "units.json"
+    units.write_text("{}")
+    units.chmod(0o600)
+
+    # Use the canonical writers: receipts are byte-pinned, not text guesses.
+    assert maintenance._record_one_shot_stop_intent(
+        transactions, installed, uid=os.geteuid(), root=root,
+    )
+    assert maintenance._confirmed_stop_receipt(
+        transactions, installed, previous, uid=os.geteuid(), record=True,
+    )
+
+    current = [installed]
+    monkeypatch.setattr(release, "verify_release", lambda *_args: current[0])
+    monkeypatch.setattr(
+        maintenance, "_durable_editor_freeze", lambda *_args: "d" * 64,
+    )
+    monkeypatch.setattr(
+        maintenance, "_editor_runtime_ready", lambda *_args: ready,
+    )
+    stops = []
+
+    def stop(_scope):
+        stops.append("STOP")
+        return SimpleNamespace(ok=True, runtime_stopped=True)
+
+    def install(sha, **_kw):
+        (transactions / sha).mkdir(mode=0o700)
+        current[0] = sha
+        return "INSTALLED_STOPPED: exact"
+
+    result = maintenance.deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=transactions,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_args, **_kw: None,
+        stop=stop, installer=install,
+        resume=lambda *_args, **_kw: "READY: EDITOR_ONLY",
+    )
+    old_ready = journal / "editor-ready"
+    if ready:
+        assert result == "READY: EDITOR_ONLY"
+        assert old_ready.read_bytes() == installed.encode("ascii")
+        assert (transactions / target / "editor-ready").read_bytes() == target.encode("ascii")
+        assert stops == ["STOP"]
+    else:
+        assert result == "BLOCKED: prior_installed_EDITOR_ONLY_not_ready; no STOP"
+        assert not old_ready.exists()
+        assert stops == []
+        assert not (transactions / (".stop-invoked-" + target)).exists()
+
+
+def test_post_start_http_warmup_does_not_trigger_service_restart():
+    import tools.paper_maintenance as maintenance
+
+    clock_value = [0.0]
+    calls, probes = [], []
+
+    def ready(_sha, _identity):
+        probes.append(clock_value[0])
+        return len(probes) >= 3
+
+    result = maintenance.resume_installed_release(
+        "a" * 40, root=Path("/opt/BybitScanner"), env_file=None,
+        resume_proof=lambda *_args, **_kw: "RESUME_READY: exact",
+        freeze_proof=lambda *_args: "b" * 64,
+        runner=lambda argv, **_kw: (
+            calls.append(tuple(argv)), SimpleNamespace(returncode=0)
+        )[1],
+        runtime_ready=ready,
+        clock=lambda: clock_value[0],
+        sleep=lambda seconds: clock_value.__setitem__(0, clock_value[0] + seconds),
+    )
+    assert result.startswith("READY:")
+    assert len(calls) == 3
+    assert len(probes) == 3
+    assert clock_value[0] > 0
+
+
+def test_editor_receipt_committed_before_frontend_failure(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+    import tools.vps_terminal_frontend_publish as frontend
+
+    target = "a" * 40
+    root = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_args: target)
+    monkeypatch.setattr(frontend, "inspect_bundle", lambda *_args: None)
+    events = []
+    monkeypatch.setattr(
+        maintenance, "_complete_stop_intent",
+        lambda *_args, **_kw: events.append("editor-ready"),
+    )
+    result = maintenance.deploy_staged_editor_only(
+        target, root=root, stage=stage,
+        frontend_bundle=tmp_path / "dist",
+        resume=lambda *_args, **_kw: "READY: EDITOR_ONLY",
+        stop=lambda *_args: pytest.fail("no repeated STOP"),
+        installer=lambda *_args, **_kw: pytest.fail("no repeated installer"),
+        frontend_publisher=lambda *_args, **_kw: (
+            events.append("publish"), "BLOCKED: static publication"
+        )[1],
+    )
+    assert result == "BLOCKED: frontend_publisher_postcondition_unproven"
+    assert events == ["editor-ready", "publish"]
+
+
 def test_installed_target_active_telegram_503_preserves_blocker_without_installer(
     tmp_path, monkeypatch,
 ):

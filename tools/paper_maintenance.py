@@ -151,7 +151,8 @@ def _resume_missing_telegram(
 def resume_installed_release(
     target: str, *, root: Path, env_file: Path | None,
     runner=subprocess.run, resume_proof=None, freeze_proof=None,
-    runtime_ready=None,
+    runtime_ready=None, readiness_wait_seconds: float = 8.0,
+    clock=time.monotonic, sleep=time.sleep,
 ) -> str:
     """Resume a VERIFIED, already-installed Gitless release without STOP/deploy.
 
@@ -208,8 +209,14 @@ def resume_installed_release(
         return "BLOCKED: backend_start_failed_or_unknown; do not retry before observing owner"
     if not command(*PREFIX, "systemctl", "start", "bybitscanner-telegram.service"):
         return "BLOCKED: telegram_start_failed_or_unknown; Backend preserved, no trade ingress requested"
-    if not probe(target, identity):
-        return "BLOCKED: EDITOR_ONLY_postconditions_unproven; no Scanner or PAPER_AUTO requested"
+    # Both starts returned, but HTTP health may still be warming up. Never
+    # repeat a start or STOP just because the first read was too early.
+    deadline = clock() + max(0, readiness_wait_seconds)
+    while not probe(target, identity):
+        remaining = deadline - clock()
+        if remaining <= 0:
+            return "BLOCKED: EDITOR_ONLY_postconditions_unproven; no Scanner or PAPER_AUTO requested"
+        sleep(min(0.5, remaining))
     return "READY: exact installed PAPER release, Telegram and EDITOR_ONLY proven; no Scanner/PAPER_AUTO start"
 
 
@@ -698,11 +705,12 @@ def deploy_staged_editor_only(
         return observed
 
     def finish_resume() -> str:
-        observed = finish_frontend(
-            resume_action(target, root=root, env_file=env_file)
-        )
+        observed = resume_action(target, root=root, env_file=env_file)
         if isinstance(observed, str) and observed.startswith("READY:"):
+            # This receipt attests EDITOR_ONLY, not the separate static UI.
+            # A failed frontend publication must not strand a ready Backend.
             _complete_stop_intent(journal_root, target, uid=trusted_uid)
+            return finish_frontend(observed)
         return observed
 
     try:
@@ -712,6 +720,31 @@ def deploy_staged_editor_only(
             if not journal.is_dir() or journal.is_symlink():
                 return "BLOCKED: installed_release_unproven_without_transaction"
             current = None
+        if current != target and isinstance(current, str):
+            # A previously installed and RUNNING release can be ready even if
+            # the final editor-ready receipt was lost after its canonical STOP.
+            # Retire that fence only against the sealed transaction AND live
+            # EDITOR_ONLY proof; never invent a STOP receipt or replay STOP.
+            prior = journal_root / current
+            prior_done = prior / "editor-ready"
+            if (prior.is_dir() and not prior.is_symlink()
+                    and not prior_done.exists() and not prior_done.is_symlink()
+                    and (journal_root / (".stop-invoked-" + current)).is_file()):
+                from tools.vps_gitless_release_activate import _manifest, _trusted_file
+                previous = _manifest(_trusted_file(prior / "old.json", trusted_uid))
+                installed = _manifest(_trusted_file(prior / "target.json", trusted_uid))
+                _trusted_file(prior / "units.json", trusted_uid)
+                if (installed["build_sha"] != current
+                        or previous["build_sha"] == current
+                        or not _confirmed_stop_receipt(
+                            journal_root, current, previous["build_sha"], uid=trusted_uid
+                        )):
+                    return "BLOCKED: prior_installed_transaction_unproven; no STOP"
+                identity = _durable_editor_freeze(root, env_file)
+                if not _editor_runtime_ready(current, identity):
+                    return "BLOCKED: prior_installed_EDITOR_ONLY_not_ready; no STOP"
+                _complete_stop_intent(journal_root, current, uid=trusted_uid)
+
         if current == target:
             # Already-ready installations must be idempotent (and may have
             # live units); never touch their protected journal in that case.
@@ -1845,6 +1878,15 @@ def main(argv=None) -> int:
     parser.add_argument("--expected-old-backend", metavar="SHA",
                         help="exact installed Backend observed at the failed STOP")
     args = parser.parse_args(argv)
+    if args.staged_gitless_editor_only and REPO.is_dir():
+        # Fail before preflight/STOP if Python imported tools from the target
+        # staging checkout instead of the installed Gitless release.
+        from tools import vps_gitless_release_activate, vps_release_identity
+        modules = (sys.modules[__name__], vps_gitless_release_activate,
+                   vps_release_identity)
+        if any(Path(mod.__file__).resolve().parents[1] != REPO for mod in modules):
+            print("BLOCKED: wrong_Gitless_module_root; invoke installed /opt/BybitScanner")
+            return 2
     # A sealed build staged with the Gitless release belongs to the same
     # owner-approved monolith operation; it needs no second frontend command.
     if args.staged_gitless_editor_only is not None and args.frontend_bundle is None:
