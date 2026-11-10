@@ -318,8 +318,11 @@ def handler_factory(static_dir: Path = STATIC_DIR,
         def do_POST(self) -> None:
             # POST only computes an in-memory local virtual account. It cannot
             # create files, send market orders, or change PAPER/VPS state.
-            if not self._trusted_host() or urlsplit(self.path).path != "/local-replay/simulation/wedge":
+            if not self._trusted_host():
                 self._error(403, "Local Wedge SIMULATION only")
+                return
+            if urlsplit(self.path).path != "/local-replay/simulation/wedge":
+                self._error(405, "Only local SIMULATION Wedge POST is supported")
                 return
             address = f"http://127.0.0.1:{self.server.server_address[1]}"
             local = f"http://localhost:{self.server.server_address[1]}"
