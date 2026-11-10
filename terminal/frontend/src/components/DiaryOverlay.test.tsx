@@ -372,6 +372,7 @@ const finrezResponse = {
     { symbol: "ETHUSDT", pnl_usdt: "7.2", trade_count: 3 },
     { symbol: "BTCUSDT", pnl_usdt: "-2.5", trade_count: 1 },
   ],
+  manual_interventions: [],
 };
 
 describe("Finrez first-screen UI", () => {
@@ -407,4 +408,32 @@ describe("Finrez first-screen UI", () => {
     expect(await screen.findByText("Не удалось загрузить статистику выбранного счёта")).toBeInTheDocument();
     expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
   });
+  it("shows robot-initiated manually closed deals separately and never includes them in autonomous PnL", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse,
+      tickers: [],
+      manual_interventions: [{ symbol: "BTCUSDT", pnl_usdt: "-4.5", trade_count: 1 }],
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:2" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByRole("region", { name: "Ручные закрытия сделок робота" })).toBeInTheDocument();
+    expect(screen.getByText("Робот · ручное вмешательство")).toBeInTheDocument();
+    expect(screen.getByText("-4.5 USDT")).toBeInTheDocument();
+    expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
+    expect(screen.getByText(/В PnL полностью роботизированных сделок не включён/)).toBeInTheDocument();
+  });
+
+  it("rejects mixed-controller rows in MANUAL response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse,
+      owner: "MANUAL",
+      tickers: [],
+      manual_interventions: [{ symbol: "BTCUSDT", pnl_usdt: "-2", trade_count: 1 }],
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:3" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
+    expect(await screen.findByText("Не удалось загрузить статистику выбранного счёта")).toBeInTheDocument();
+    expect(screen.queryByText("-2 USDT")).not.toBeInTheDocument();
+  });
+
 });
