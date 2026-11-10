@@ -1,4 +1,4 @@
-"""Market-only bridge: a single M1 clock and a single SIMULATION account.
+"""Single-exchange bridge: a single M1 clock and SIMULATION-only account.
 
 This composes the existing IsolatedTimeline and VirtualExchange without
 implementing Scanner/Robot strategy or touching H-017/PAPER/MAIN/testnet.
@@ -15,7 +15,7 @@ from research.simulator_v2.timeline import (
     IsolatedTimeline, MinuteFrame, SimulationEvent, StageFact, StepBlocked,
 )
 from research.simulator_v2.virtual_account import VirtualAccount, VirtualAccountSnapshot
-from research.simulator_v2.virtual_exchange import MarketRequest, VirtualExchange
+from research.simulator_v2.virtual_exchange import MarketRequest, LimitRequest, VirtualExchange
 from research.simulator_v2.reused_geometry import ReadOnlyReusedGeometry
 from research.simulator_v2.wedge_observer import ReadOnlyWedgeScanner, WedgeScannerConfig
 from research.simulator_v2.wedge_robot_observer import ReadOnlyWedgeRobot, SimWedgeRobotConfig
@@ -31,6 +31,7 @@ class VirtualReplaySession:
     def __init__(
         self, *, simulation_run_id: str, symbol: str,
         initial_balance: Decimal, taker_fee_rate: Decimal = Decimal("0.0006"),
+        maker_fee_rate: Decimal = Decimal("0.0002"),
         enable_reused_geometry: bool = False,
         wedge_scanner_config: WedgeScannerConfig | None = None,
         wedge_robot_config: SimWedgeRobotConfig | None = None,
@@ -56,6 +57,7 @@ class VirtualReplaySession:
         )
         self.exchange = VirtualExchange(
             account=self.account, taker_fee_rate=taker_fee_rate,
+            maker_fee_rate=maker_fee_rate,
         )
         self.timeline = IsolatedTimeline(
             simulation_run_id=simulation_run_id, symbol=symbol,
@@ -84,8 +86,12 @@ class VirtualReplaySession:
         receipt = self.exchange.on_closed_minute(frame.minute)
         if receipt is None:
             return ()
+        last = self.exchange.events[-1]
+        if last.kind != "FILLED" or last.virtual_time_ms != frame.virtual_time_ms:
+            raise StepBlocked("SIMULATION fill event not consistent with M1")
         return (StageFact(
-            kind="VIRTUAL_MARKET_FILLED", entity_id=receipt.fill_id,
+            kind="VIRTUAL_" + last.order_type + "_FILLED",
+            entity_id=receipt.fill_id,
             details=(
                 ("side", receipt.side),
                 ("quantity", str(receipt.quantity)),
@@ -135,6 +141,29 @@ class VirtualReplaySession:
         if self.virtual_time_ms is None:
             raise ValueError("first close a historical M1 candle")
         self.exchange.submit(request, submitted_at_ms=self.virtual_time_ms)
+
+    def submit_limit(self, request: LimitRequest) -> None:
+        """Caller must already own a fully admitted and protected LIMIT plan.
+
+        The real Wedge Robot observer intentionally does NOT invoke this until
+        its STOP/TAKE and RR gates can be proven.
+        """
+        if self.timeline.paused_stage is not None:
+            raise StepBlocked("SIMULATION paused; cannot submit LIMIT")
+        if self.timeline.virtual_time_ms != self.exchange.virtual_time_ms:
+            raise StepBlocked("SIMULATION clocks disagree; cannot submit LIMIT")
+        if self.virtual_time_ms is None:
+            raise ValueError("first close a historical M1 candle")
+        self.exchange.submit_limit(request, submitted_at_ms=self.virtual_time_ms)
+
+    def amend_limit(self, request: LimitRequest) -> None:
+        if self.timeline.paused_stage is not None:
+            raise StepBlocked("SIMULATION paused; cannot amend LIMIT")
+        if self.timeline.virtual_time_ms != self.exchange.virtual_time_ms:
+            raise StepBlocked("SIMULATION clocks disagree; cannot amend LIMIT")
+        if self.virtual_time_ms is None:
+            raise ValueError("first close a historical M1 candle")
+        self.exchange.amend_limit(request, amended_at_ms=self.virtual_time_ms)
 
     def cancel_pending(self, order_id: str) -> None:
         """A failed fill may be cancelled at the last committed minute."""
