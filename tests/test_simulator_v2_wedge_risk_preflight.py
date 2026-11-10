@@ -86,8 +86,8 @@ class NativeWedgeRiskPreflightTests(unittest.TestCase):
         from terminal.application.robot_late_admission import MIN_LATE_ADMISSION_RR
         self.assertEqual(WEDGE_MIN_ENTRY_RR, D("1.5"))
         self.assertEqual(MIN_LATE_ADMISSION_RR, D("1.5"))
-        with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "3"}):
-            self.assertEqual(wedge_min_entry_rr(), D("3"))
+        with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "10"}):
+            self.assertEqual(wedge_min_entry_rr(), D("10"))
             with self.assertRaisesRegex(WedgePreflightBlocked, "below current"):
                 preview_protected_wedge_limit(
                     original_plan(), evidence=original_evidence(),
