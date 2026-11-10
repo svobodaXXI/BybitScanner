@@ -198,14 +198,24 @@ def run_cached_wedge_trade_range(
     )
     if not (archive_start <= start_ms < end_exclusive <= archive_end):
         raise ValueError("selected minute window lies outside pinned trade days")
-    if end_exclusive <= archive_end - 86_400_000:
-        raise ValueError("manifest must end on the last selected UTC day")
     if end_exclusive > latest_closed_boundary_ms:
         raise ValueError("selected end includes an unclosed M1")
+    # Load no more than the Scanner's explicit M5 lookback plus a closed-day
+    # buffer. Do not force the requested end to equal the full manifest end.
+    # The subset gets its OWN checksum-derived source ID; unselected days
+    # are neither read nor claimed in the final report.
+    day_ms = 86_400_000
+    lookback_ms = scanner_config.window_bars * 5 * MINUTE_MS
+    warmup_start = max(archive_start, (start_ms - lookback_ms) // day_ms * day_ms)
+    first_index = (warmup_start - archive_start) // day_ms
+    last_index = (end_exclusive - archive_start + day_ms - 1) // day_ms
+    selected_proofs = proofs[first_index:last_index]
+    if not selected_proofs:
+        raise ValueError("selected UTC range has no verified archive days")
 
     def cut_to_selected_end():
         for chunk in iter_pinned_trade_chunks(
-            cache_dir=cache_dir, symbol=symbol, proofs=proofs,
+            cache_dir=cache_dir, symbol=symbol, proofs=selected_proofs,
             latest_closed_boundary_ms=latest_closed_boundary_ms,
         ):
             if chunk.end_ms <= end_exclusive:
@@ -223,6 +233,7 @@ def run_cached_wedge_trade_range(
                     candles=candles,
                     sha256=_checksum(_rows(candles)),
                 )
+                break
 
     session = VirtualReplaySession(
         simulation_run_id=simulation_run_id, symbol=symbol,
@@ -235,4 +246,4 @@ def run_cached_wedge_trade_range(
         session, cut_to_selected_end(),
         start_ms=start_ms, end_inclusive_ms=end_inclusive_ms,
     )
-    return replace(result, archive_proofs=proofs)
+    return replace(result, archive_proofs=selected_proofs)
