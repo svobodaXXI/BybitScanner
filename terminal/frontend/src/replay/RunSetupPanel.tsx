@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, PLANNED_OPTIONS,
   clearAll, isAllSelected, onlyWedges, presetEndInclusive,
@@ -18,7 +18,11 @@ const PRESETS: Array<{ id: PeriodPreset; name: string }> = [
 ];
 
 /** Local-only Wedge execution via loopback: never production /api or PAPER. */
-export function RunSetupPanel({ symbol }: { symbol: string }) {
+export function RunSetupPanel({
+  symbol, onArchiveSymbol,
+}: {
+  symbol: string; onArchiveSymbol: (archiveSymbol: string) => boolean;
+}) {
   const [selection, setSelection] = useState<RunSelection>(clearAll);
   const [start, setStart] = useState(INITIAL_START);
   const [end, setEnd] = useState(() => presetEndInclusive(INITIAL_START, "DAY"));
@@ -30,6 +34,7 @@ export function RunSetupPanel({ symbol }: { symbol: string }) {
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<LocalWedgeResult | null>(null);
   const [runError, setRunError] = useState("");
+  const datesEdited = useRef(false);
   const parsed = useMemo(() => {
     try {
       return { window: validateInclusiveWindow(start, end), error: "" };
@@ -52,7 +57,17 @@ export function RunSetupPanel({ symbol }: { symbol: string }) {
         });
         if (!response.ok) throw new Error("Локальный движок пока недоступен");
         const next = parseWedgeStatus(await response.json() as unknown);
-        if (!controller.signal.aborted) setStatus(next);
+        if (!controller.signal.aborted) {
+          setStatus(next);
+          // A manifest hint is NOT proof of the cache or instrument terms.
+          // Do not overwrite an owner-selected ticker or period.
+          if (next.archive_hint && !datesEdited.current &&
+              onArchiveSymbol(next.archive_hint.symbol)) {
+            setStart(next.archive_hint.start_utc);
+            setEnd(next.archive_hint.end_utc_inclusive);
+            setPreset("DAY");
+          }
+        }
       } catch (error) {
         if (!controller.signal.aborted) setStatusError(
           error instanceof Error ? error.message : "Нет подключения к локальному движку",
@@ -60,7 +75,7 @@ export function RunSetupPanel({ symbol }: { symbol: string }) {
       }
     })();
     return () => controller.abort();
-  }, []);
+  }, [onArchiveSymbol]);
 
   const runWedges = async () => {
     setRunError(""); setReport(null);
@@ -98,12 +113,14 @@ export function RunSetupPanel({ symbol }: { symbol: string }) {
   };
 
   const updateStart = (value: string) => {
+    datesEdited.current = true;
     setStart(value);
     if (preset) {
       try { setEnd(presetEndInclusive(value, preset)); } catch { /* Display validation until input completed. */ }
     }
   };
   const choosePreset = (next: PeriodPreset) => {
+    datesEdited.current = true;
     setPreset(next);
     try { setEnd(presetEndInclusive(start, next)); } catch { /* Invalid start remains visible. */ }
   };
@@ -180,7 +197,7 @@ export function RunSetupPanel({ symbol }: { symbol: string }) {
           </div>
           <label>Конец · дата и время, включительно
             <input aria-label="Конец прогона UTC" type="datetime-local" step={60}
-              value={end} onChange={e => { setPreset(null); setEnd(e.target.value); }} />
+              value={end} onChange={e => { datesEdited.current = true; setPreset(null); setEnd(e.target.value); }} />
           </label>
           {parsed.error ? <p role="alert" className="replay-run-error">{parsed.error}</p> :
             <p role="status" className="replay-run-summary">

@@ -63,7 +63,39 @@ def local_simulation_status() -> dict[str, object]:
     risk = (SIM_DATA / "wedge-risk.json").is_file() and not (
         SIM_DATA / "wedge-risk.json"
     ).is_symlink()
-    return {
+    # UI-only hint from a bounded local manifest header, NOT a SHA verification.
+    # The original manifest/cache proof is rechecked by run_local_simulation.
+    archive_hint = None
+    if data:
+        try:
+            with (SIM_DATA / "manifest.json").open("rb") as fh:
+                manifest_bytes = fh.read(125_001)
+            if len(manifest_bytes) <= 125_000:
+                manifest = json.loads(manifest_bytes)
+                first, last = manifest.get("start_ms"), manifest.get("end_ms")
+                days, symbol = manifest.get("days"), manifest.get("symbol")
+                day_ms = 86_400_000
+                if (
+                    manifest.get("schema") == "SIMULATOR_V2_PUBLIC_TRADES_DERIVED_M1_RANGE_V1"
+                    and type(first) is int and type(last) is int
+                    and type(days) is int and 2 <= days <= 90
+                    and first >= 0 and first % day_ms == 0
+                    and last == first + days * day_ms
+                    and last <= int(datetime.now(timezone.utc).timestamp() * 1000)
+                    and isinstance(symbol, str) and SYMBOL_RE.fullmatch(symbol)
+                ):
+                    start_ms = first + day_ms  # Full first day warms the Scanner.
+                    fmt = lambda ms: datetime.fromtimestamp(
+                        ms / 1000, tz=timezone.utc
+                    ).strftime("%Y-%m-%dT%H:%M")
+                    archive_hint = {
+                        "symbol": symbol,
+                        "start_utc": fmt(start_ms),
+                        "end_utc_inclusive": fmt(start_ms + day_ms - 60_000),
+                    }
+        except (OSError, ValueError, TypeError, OverflowError, AttributeError):
+            pass
+    result = {
         "namespace": "SIMULATION", "wedge_engine_available": engine,
         "python_dependencies_available": deps, "archive_files_present": data,
         "wedge_risk_profile_present": risk,
@@ -71,6 +103,9 @@ def local_simulation_status() -> dict[str, object]:
         "supported_strategies": ["WEDGE_FALLING", "WEDGE_RISING"],
         "archive_validation": "RECHECKED_ON_RUN_NOT_CLAIMED_READY",
     }
+    if archive_hint is not None:
+        result["archive_hint"] = archive_hint
+    return result
 
 
 def run_local_simulation(request_data: object) -> dict[str, object]:

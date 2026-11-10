@@ -215,6 +215,28 @@ class LoopbackServerTests(unittest.TestCase):
                         "initial_balance": "1000",
                     })
 
+    def test_manifest_hint_prefills_only_a_complete_local_second_day(self):
+        with TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / "m1-cache").mkdir()
+            (folder / "wedge-risk.json").write_text("{}", encoding="utf-8")
+            manifest = {
+                "schema": "SIMULATOR_V2_PUBLIC_TRADES_DERIVED_M1_RANGE_V1",
+                "symbol": "XRPUSDT", "days": 3,
+                "start_ms": 1788998400000, "end_ms": 1789257600000,
+            }
+            (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            with patch.object(local, "SIM_DATA", folder):
+                info = local.local_simulation_status()
+                self.assertEqual(info["archive_hint"], {
+                    "symbol": "XRPUSDT",
+                    "start_utc": "2026-09-11T00:00",
+                    "end_utc_inclusive": "2026-09-11T23:59",
+                })
+                manifest["end_ms"] += 60000  # Non-contiguous/inconsistent metadata.
+                (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+                self.assertNotIn("archive_hint", local.local_simulation_status())
+
     def test_wedge_simulation_post_is_loopback_origin_locked_and_never_paper(self):
         with self.running_server() as (port, calls):
             status, data, _ = self.call(port, "GET", "/local-replay/simulation/status")

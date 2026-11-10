@@ -90,6 +90,17 @@ describe("local one-symbol strategy setup (no trading)", () => {
       archive_files_present: true, wedge_risk_profile_present: true,
     };
     expect(parseWedgeStatus(status)).toEqual(status);
+    const withArchive = { ...status, archive_hint: {
+      symbol: "XRPUSDT", start_utc: "2026-09-11T00:00",
+      end_utc_inclusive: "2026-09-11T23:59",
+    } };
+    expect(parseWedgeStatus(withArchive).archive_hint?.symbol).toBe("XRPUSDT");
+    expect(() => parseWedgeStatus({ ...status, archive_hint: {
+      ...withArchive.archive_hint, end_utc_inclusive: "2026-09-12T23:59",
+    } })).toThrow();
+    expect(() => parseWedgeStatus({ ...status, archive_hint: {
+      ...withArchive.archive_hint, symbol: "../../PAPER",
+    } })).toThrow();
     expect(() => parseWedgeStatus({ ...status, namespace: "PAPER" })).toThrow();
     expect(() => parseWedgeStatus({ ...status, can_attempt: "yes" })).toThrow();
     const report = {

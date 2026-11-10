@@ -131,6 +131,9 @@ export type LocalWedgeStatus = {
   python_dependencies_available: boolean;
   archive_files_present: boolean;
   wedge_risk_profile_present: boolean;
+  archive_hint?: {
+    symbol: string; start_utc: string; end_utc_inclusive: string;
+  };
 };
 export function parseWedgeStatus(raw: unknown): LocalWedgeStatus {
   if (!raw || typeof raw !== "object") throw new Error("Недостоверный статус симулятора");
@@ -139,6 +142,17 @@ export function parseWedgeStatus(raw: unknown): LocalWedgeStatus {
       ["can_attempt", "wedge_engine_available", "python_dependencies_available",
        "archive_files_present", "wedge_risk_profile_present"].some(k => typeof x[k] !== "boolean")) {
     throw new Error("Неверный ответ локального SIMULATION");
+  }
+  if (x.archive_hint !== undefined) {
+    const hint = x.archive_hint;
+    if (!hint || typeof hint !== "object") throw new Error("Неверная подсказка архива");
+    const h = hint as Record<string, unknown>;
+    if (typeof h.symbol !== "string" || !/^[A-Z0-9]{2,25}USDT$/.test(h.symbol) ||
+        typeof h.start_utc !== "string" || typeof h.end_utc_inclusive !== "string") {
+      throw new Error("Неверный тикер или период архива");
+    }
+    const window = validateInclusiveWindow(h.start_utc, h.end_utc_inclusive);
+    if (window.minutes !== 1440) throw new Error("Подсказка должна охватывать полный день");
   }
   return x as LocalWedgeStatus;
 }

@@ -2,7 +2,7 @@ import {
   CandlestickSeries, ColorType, CrosshairMode, LineSeries, LineStyle, createChart,
   type IChartApi, type ISeriesApi, type Logical, type UTCTimestamp,
 } from "lightweight-charts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
@@ -452,6 +452,17 @@ function utcDayOffset(daysAgo: number): string {
 export function ReplayPage() {
   const [document, setDocument] = useState<ReplayDocument>(() => syntheticReplay());
   const [symbol, setSymbol] = useState("BTCUSDT");
+  const symbolEdited = useRef(false);
+  const currentSymbol = useRef(symbol);
+  currentSymbol.current = symbol;
+  const acceptArchiveSymbol = useCallback((archiveSymbol: string): boolean => {
+    if (symbolEdited.current) return currentSymbol.current === archiveSymbol;
+    if (currentSymbol.current === "BTCUSDT") {
+      setSymbol(archiveSymbol);
+      return true;
+    }
+    return currentSymbol.current === archiveSymbol;
+  }, []);
   const [startDate, setStartDate] = useState(() => utcDayOffset(3));
   const [endDate, setEndDate] = useState(() => utcDayOffset(1));
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -531,7 +542,10 @@ export function ReplayPage() {
   const fileInput = useRef<HTMLInputElement>(null);
 
   function syncImportedMarketSelection(parsed: ReplayDocument) {
-    if (parsed.symbol) setSymbol(parsed.symbol);
+    if (parsed.symbol) {
+      symbolEdited.current = true;
+      setSymbol(parsed.symbol);
+    }
     const first = parsed.events.find(item => item.kind === "CANDLE_CLOSED")?.candle;
     const last = parsed.events.filter(item => item.kind === "CANDLE_CLOSED").at(-1)?.candle;
     if (first && last) {
@@ -667,11 +681,11 @@ export function ReplayPage() {
         <span className="replay-badge">SIMULATION ONLY</span>
       </header>
 
-      <RunSetupPanel symbol={symbol} />
+      <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol} />
 
       <section className="replay-history-controls" aria-label="Публичная история Bybit">
         <label>Инструмент <input aria-label="Инструмент" value={symbol} maxLength={30}
-          onChange={(e) => setSymbol(e.target.value.toUpperCase())} /></label>
+          onChange={(e) => { symbolEdited.current = true; setSymbol(e.target.value.toUpperCase()); }} /></label>
         <label>С UTC <input aria-label="С UTC" type="date" value={startDate}
           onChange={(e) => setStartDate(e.target.value)} /></label>
         <label>По UTC (не включительно) <input aria-label="По UTC" type="date" value={endDate}
