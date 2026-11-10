@@ -7,6 +7,10 @@ on:
     paths:
       - 'research/simulator_v2/**'
       - 'tests/test_simulator_v2_*.py'
+      - 'robot_protection.py'
+      - 'tests/test_robot_protection.py'
+      - 'tests/test_robot_breakout_monitor.py'
+      - 'tests/test_robot_late_admission.py'
       - '.github/workflows/simulator-v2-check.yml'
   pull_request:
     branches:
@@ -14,6 +18,10 @@ on:
     paths:
       - 'research/simulator_v2/**'
       - 'tests/test_simulator_v2_*.py'
+      - 'robot_protection.py'
+      - 'tests/test_robot_protection.py'
+      - 'tests/test_robot_breakout_monitor.py'
+      - 'tests/test_robot_late_admission.py'
       - '.github/workflows/simulator-v2-check.yml'
 
 permissions:
@@ -45,3 +53,7 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: python -m unittest discover -s tests -p 'test_robot_protection.py' -v
+      - name: Verify owner Wedge RR in native breakout and late-admission gates
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python -m unittest tests.test_robot_breakout_monitor tests.test_robot_late_admission -v
