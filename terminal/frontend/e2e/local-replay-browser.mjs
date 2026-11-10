@@ -78,7 +78,67 @@ try {
   assert.equal(await endUtc.inputValue(), "2026-10-31T12:33");
   await endUtc.fill("2026-10-11T18:45");
   assert.equal(await setup.getByRole("button", { name: "Месяц · 30 дней" }).getAttribute("aria-pressed"), "false");
-  assert.equal(await setup.getByRole("button", { name: /Торговый прогон/ }).isDisabled(), true);
+  const runWedge = setup.getByRole("button", { name: /Запустить клинья/ });
+  assert.equal(await runWedge.isDisabled(), true,
+    "no local verified archive and native risk profile => no virtual trading");
+  // A loopback-only fixture verifies the UI transport; the actual engine's
+  // checksum and original Robot integration are independently Python-tested.
+  await page.route("**/local-replay/simulation/status", async route => {
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({
+        namespace: "SIMULATION", can_attempt: true,
+        wedge_engine_available: true, python_dependencies_available: true,
+        archive_files_present: true, wedge_risk_profile_present: true,
+      }),
+    });
+  });
+  const posted = [];
+  await page.route("**/local-replay/simulation/wedge", async route => {
+    const data = route.request();
+    posted.push({
+      url: data.url(), method: data.method(),
+      header: data.headers()["x-local-simulation"],
+      body: data.postDataJSON(),
+    });
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({
+        namespace: "SIMULATION", symbol: "BTCUSDT",
+        scenario_type: "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION",
+        risk_terms_status: "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED",
+        source_id: "BYBIT_PUBLIC_TRADES_RANGE_BROWSER_TEST_ONLY",
+        requested_minutes: 1008, scanner_wedge_observations: 1,
+        robot_retests_in_period: 1, submitted_protected_limits: 1,
+        virtual_fills: 2, stop_exits: 0, take_exits: 1,
+        realized_net_pnl: "3.71", unrealized_pnl: "0", total_net_pnl: "3.71",
+        total_fees: "0.29", return_percent: "0.371", max_drawdown_percent: "0.1",
+      }),
+    });
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  const readySetup = page.getByRole("region", { name: "Настройка стратегий и периода" });
+  await readySetup.getByRole("button", { name: "Только клинья" }).click();
+  await readySetup.getByLabel("Начало прогона UTC").fill("2026-10-01T12:34");
+  await readySetup.getByLabel("Конец прогона UTC").fill("2026-10-02T05:21");
+  await readySetup.getByLabel("Виртуальный депозит").fill("1000");
+  const runnable = readySetup.getByRole("button", { name: /Запустить клинья/ });
+  assert.equal(await runnable.isDisabled(), false);
+  await runnable.click();
+  await readySetup.getByRole("region", { name: "Результаты виртуального прогона" }).waitFor();
+  assert.match(await readySetup.innerText(), /3\.71 USDT/);
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].method, "POST");
+  assert.equal(posted[0].header, "wedge");
+  assert.deepEqual(posted[0].body, {
+    symbol: "BTCUSDT", start_utc: "2026-10-01T12:34",
+    end_utc_inclusive: "2026-10-02T05:21",
+    selected_strategies: ["WEDGE_RISING", "WEDGE_FALLING"],
+    initial_balance: "1000",
+  });
+  await readySetup.getByRole("checkbox", { name: "Все стратегии" }).check();
+  assert.equal(await runnable.isDisabled(), true,
+    "all strategies cannot be passed to wedge-only backend");
   assert.equal(requests.filter(url => url.includes("/api/") || url.includes("/v5/")).length, 0);
 
   // The entire replay control surface belongs beside the M5/H1 switch,
