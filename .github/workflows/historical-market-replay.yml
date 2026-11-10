@@ -147,6 +147,7 @@ jobs:
           python -B smoke_package.py
           python -c "from research.simulator_v2.wedge_cli import run_from_time_machine_config; from research.simulator_v2.wedge_observer import WedgeScannerConfig; import pandas; print('LOCAL_WEDGE_ENGINE_PACKAGE_IMPORT_OK')"
           python -c "from server import local_simulation_status; s=local_simulation_status(); assert s['wedge_engine_available'] and s['python_dependencies_available']; assert not s['can_attempt']; print('LOCAL_WEDGE_ENGINE_GATED_UNTIL_ARCHIVE_AND_RISK_OK')"
+          python -c "from research.simulator_v2.session import VirtualReplaySession; from research.simulator_v2.wedge_observer import WedgeScannerConfig; from research.historical_market_replay import Candle; from decimal import Decimal as D; s=VirtualReplaySession(simulation_run_id='package-m5',symbol='BTCUSDT',initial_balance=D('1000'),wedge_scanner_config=WedgeScannerConfig(window_bars=50,mode='hunter',min_score=50)); [s.step(Candle(start_ms=i*60000,interval_ms=60000,open=D('100'),high=D('101'),low=D('99'),close=D('100'),volume=D('1'))) for i in range(250)]; assert s.wedge_scanner.closed_m5_count == 50 and s.account.fills == (); print('LOCAL_WEDGE_PACKAGED_ORIGINAL_SCANNER_M5_OK')"
 
   real-bybit-h017-readonly-acceptance:
     # A single research PR trial, or a manual rerun when separately requested.
