@@ -3384,3 +3384,116 @@ def test_resume_seals_editor_before_main_gateway_health_failure(tmp_path, monkey
     assert maintenance.main([target, "--resume-installed-editor-only"]) == 2
     assert events == ["editor-ready", "gateway"]
     assert "main_gateway_health_unavailable" in capsys.readouterr().out
+
+
+def test_editor_update_self_stage_fetches_exact_stable_before_any_stop(tmp_path, monkeypatch):
+    """Same monolith prepares an exact checkout without touching PAPER runtime."""
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    old, target = "a" * 40, "b" * 40
+    stage_parent = tmp_path / "stages"
+    stage_parent.mkdir()
+    source = stage_parent / ("bybitscanner-stage-git-" + old[:7])
+    source.mkdir()
+    (source / ".git").write_text("gitdir: protected previous worktree")
+    root = tmp_path / "installed"
+    root.mkdir()
+    monkeypatch.setattr(identity, "verify_release", lambda _root: old)
+    manifests = []
+    monkeypatch.setattr(identity, "create_manifest",
+                        lambda path, sha: (manifests.append((path, sha)), {"build_sha": sha})[1])
+    calls = []
+
+    def git(argv, **kwargs):
+        calls.append(argv[3:])
+        if argv[3:] == ["rev-parse", "--verify", "HEAD"]:
+            return SimpleNamespace(returncode=0, stdout=old)
+        if argv[3:] == ["remote", "get-url", "origin"]:
+            return SimpleNamespace(returncode=0, stdout="https://github.com/svobodaXXI/BybitScanner.git")
+        if argv[3:] == ["rev-parse", "--verify", "FETCH_HEAD"]:
+            return SimpleNamespace(returncode=0, stdout=target)
+        if argv[3:5] == ["worktree", "add"]:
+            Path(argv[-2]).mkdir()
+        return SimpleNamespace(returncode=0, stdout="")
+
+    stage = maintenance._prepare_approved_editor_stage(
+        target, root=root, parent=stage_parent, runner=git, trusted_uid=os.geteuid(),
+    )
+    assert stage == stage_parent / ("bybitscanner-stage-git-" + target)
+    assert ["fetch", "--no-tags", "--quiet", "origin",
+            "refs/heads/stable/adfb50b-forward"] in calls
+    assert ["worktree", "add", "--detach", str(stage), target] in calls
+    assert manifests == [(stage, target)]
+
+
+def test_editor_update_stable_head_changed_blocks_before_worktree(tmp_path, monkeypatch):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    old, target = "a" * 40, "b" * 40
+    parent = tmp_path / "stages"
+    parent.mkdir()
+    source = parent / ("bybitscanner-stage-git-" + old[:7])
+    source.mkdir()
+    (source / ".git").write_text("gitdir: old checkout")
+    monkeypatch.setattr(identity, "verify_release", lambda _root: old)
+    calls = []
+
+    def git(argv, **kwargs):
+        calls.append(argv[3:])
+        if argv[3:] == ["rev-parse", "--verify", "HEAD"]:
+            return SimpleNamespace(returncode=0, stdout=old)
+        if argv[3:] == ["remote", "get-url", "origin"]:
+            return SimpleNamespace(returncode=0, stdout="https://github.com/svobodaXXI/BybitScanner.git")
+        if argv[3:] == ["rev-parse", "--verify", "FETCH_HEAD"]:
+            return SimpleNamespace(returncode=0, stdout="c" * 40)
+        return SimpleNamespace(returncode=0, stdout="")
+
+    with pytest.raises(ValueError, match="stable_head_changed_before_staging"):
+        maintenance._prepare_approved_editor_stage(
+            target, root=tmp_path, parent=parent, runner=git, trusted_uid=os.geteuid(),
+        )
+    assert not any(parts[:2] == ["worktree", "add"] for parts in calls)
+    assert not (parent / ("bybitscanner-stage-git-" + target)).exists()
+
+
+def test_editor_update_existing_target_never_prepares_stage(tmp_path, monkeypatch):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    target = "a" * 40
+    monkeypatch.setattr(identity, "verify_release", lambda _root: target)
+    assert maintenance._prepare_approved_editor_stage(
+        target, root=tmp_path, parent=tmp_path, trusted_uid=os.geteuid(),
+        runner=lambda *_args, **_kw: pytest.fail("no git when already installed"),
+    ) is None
+
+
+def test_editor_update_cli_delegates_to_existing_monolith_once(monkeypatch, capsys):
+    from tools import paper_maintenance as maintenance
+
+    target = "b" * 40
+    stage = Path("/nonexistent/approved-gitless-stage-for-test")
+    steps = []
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda sha: (steps.append(("stage", sha)), stage)[1])
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
+                        lambda sha, **kwargs: (
+                            steps.append(("monolith", sha, kwargs["stage"])),
+                            "READY: EDITOR_ONLY"
+                        )[1])
+    assert maintenance.main([target, "--update-editor-only-from-stable"]) == 0
+    assert steps == [("stage", target), ("monolith", target, stage)]
+    assert "READY: EDITOR_ONLY" in capsys.readouterr().out
+
+
+def test_editor_update_cli_rejects_competing_mode_before_staging(monkeypatch):
+    from tools import paper_maintenance as maintenance
+
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda *_: pytest.fail("must not stage conflicting options"))
+    with pytest.raises(SystemExit) as exc:
+        maintenance.main(["a" * 40, "--update-editor-only-from-stable",
+                          "--start-paper-after-editor"])
+    assert exc.value.code == 2
