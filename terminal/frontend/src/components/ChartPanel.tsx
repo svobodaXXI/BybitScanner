@@ -1081,7 +1081,7 @@ export function ChartPanel({
                   ))
                   .finally(() => setExtensionPending(false));
               }}>
-              {extensionPending ? "Загрузка…" : "Добавить поздние свечи"}
+              {extensionPending ? "Загрузка…" : "Показать следующие свечи"}
             </button>
             {retrospectiveContext && <small>Ретроспективный обзор: до {new Date(retrospectiveContext.asOfMs).toLocaleString("ru-RU")}. Будущие свечи не считаются известными исходному Scanner.</small>}
             {extensionStatus && <output role="status" aria-live="polite">{extensionStatus}</output>}
