@@ -1843,6 +1843,82 @@ def _recover_active_ingress_overflow(
         return "BLOCKED: active_PAPER_recovery_preflight_or_transition_unproven; no_replay"
 
 
+def _prepare_approved_editor_stage(
+    target: str, *, root: Path = REPO, parent: Path = Path("/var/lib"),
+    runner=subprocess.run, trusted_uid: int = 0,
+) -> Path | None:
+    """Pre-STOP Gitless staging from the trusted previous release checkout.
+
+    This is staging only. It cannot grant STOP, switch installed bytes, start
+    services or select a trading mode. Existing files are never overwritten
+    or cleaned up on uncertain Git results.
+    """
+    from tools.vps_release_identity import create_manifest, verify_release
+
+    if len(target) != 40 or any(ch not in "0123456789abcdef" for ch in target):
+        raise ValueError("invalid_approved_target")
+    current = verify_release(root)
+    if current == target:
+        return None
+    if (not parent.is_dir() or parent.is_symlink()
+            or parent.stat().st_uid != trusted_uid
+            or parent.stat().st_mode & 0o022):
+        raise ValueError("untrusted_staging_parent")
+
+    stage = parent / ("bybitscanner-stage-git-" + target)
+    if stage.is_symlink():
+        raise ValueError("staged_checkout_symlink")
+    if not stage.exists():
+        source = next((path for path in (
+            parent / ("bybitscanner-stage-git-" + current),
+            parent / ("bybitscanner-stage-git-" + current[:7]),
+        ) if path.is_dir() and not path.is_symlink()), None)
+        if source is None:
+            raise ValueError("verified_previous_stage_missing")
+        git_file = source / ".git"
+        for path in (source, git_file):
+            if (path.is_symlink() or not path.exists()
+                    or path.stat().st_uid != trusted_uid
+                    or path.stat().st_mode & 0o022):
+                raise ValueError("untrusted_previous_staging_checkout")
+
+        def git(*parts: str) -> str:
+            try:
+                result = runner(
+                    ["git", "-C", str(source), *parts],
+                    capture_output=True, text=True, timeout=90, check=False,
+                    env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ValueError("staging_git_unavailable") from exc
+            if result.returncode:
+                raise ValueError("staging_git_command_failed")
+            return result.stdout.strip()
+
+        if git("rev-parse", "--verify", "HEAD") != current:
+            raise ValueError("previous_staging_commit_mismatch")
+        origin = git("remote", "get-url", "origin")
+        if origin not in (
+            "https://github.com/svobodaXXI/BybitScanner",
+            "https://github.com/svobodaXXI/BybitScanner.git",
+            "git@github.com:svobodaXXI/BybitScanner.git",
+            "ssh://git@github.com/svobodaXXI/BybitScanner.git",
+        ):
+            raise ValueError("untrusted_release_git_origin")
+        git("fetch", "--no-tags", "--quiet", "origin",
+            "refs/heads/stable/adfb50b-forward")
+        if git("rev-parse", "--verify", "FETCH_HEAD") != target:
+            raise ValueError("stable_head_changed_before_staging")
+        git("worktree", "add", "--detach", str(stage), target)
+    if (not stage.is_dir() or stage.is_symlink()
+            or stage.stat().st_uid != trusted_uid
+            or stage.stat().st_mode & 0o022):
+        raise ValueError("untrusted_prepared_stage")
+    if create_manifest(stage, target)["build_sha"] != target:
+        raise ValueError("staged_release_not_exact")
+    return stage
+
+
 class _MaintenanceParser(argparse.ArgumentParser):
     """Keep CLI refusal visible even when PowerShell truncates stderr usage."""
 
@@ -1859,6 +1935,8 @@ def main(argv=None) -> int:
     parser.add_argument("--wait-seconds", type=float, default=0)
     parser.add_argument("--resume-installed-editor-only", action="store_true",
                         help="only after an exact Gitless release was safely installed")
+    parser.add_argument("--update-editor-only-from-stable", action="store_true",
+                        help="single EDITOR_ONLY update: prepare exact stable Gitless stage and run canonical monolith")
     parser.add_argument("--staged-gitless-editor-only", type=Path,
                         help="owner-approved exact staged checkout; safe-stop and install once")
     parser.add_argument("--start-paper-after-editor", action="store_true",
@@ -1878,6 +1956,27 @@ def main(argv=None) -> int:
     parser.add_argument("--expected-old-backend", metavar="SHA",
                         help="exact installed Backend observed at the failed STOP")
     args = parser.parse_args(argv)
+    if args.update_editor_only_from_stable:
+        if (args.staged_gitless_editor_only or args.resume_installed_editor_only
+                or args.start_paper_after_editor or args.publish_frontend_only
+                or args.frontend_bundle or args.frontend_current_index_sha256
+                or args.dual_orphan_handoff_20261103
+                or args.proven_one_flat_orphan_handoff
+                or args.resume_one_flat_from_prior_stop
+                or args.expected_old_backend or args.wait_seconds):
+            parser.error("automatic Editor update cannot combine with other operations")
+        try:
+            stage = _prepare_approved_editor_stage(args.sha)
+        except (OSError, ValueError) as exc:
+            print("BLOCKED: approved_editor_staging_unproven:"
+                  + str(exc).replace(chr(10), " ")[:160] + "; no STOP attempted")
+            return 2
+        # Delegate to the already owned monolith. The exact installed target
+        # resumes without any stage, STOP or reinstall; other targets use the
+        # canonical protected safe-stop, installer and receipt machinery.
+        mode = (["--resume-installed-editor-only"] if stage is None
+                else ["--staged-gitless-editor-only", str(stage)])
+        return main([args.sha, "--env-file", str(args.env_file), *mode])
     if args.staged_gitless_editor_only and REPO.is_dir():
         # Fail before preflight/STOP if Python imported tools from the target
         # staging checkout instead of the installed Gitless release.
