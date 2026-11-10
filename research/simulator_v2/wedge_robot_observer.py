@@ -236,7 +236,9 @@ class ReadOnlyWedgeRobot:
             if state["phase"] in (PHASE_RETEST_DETECTED, PHASE_EXPIRED_AT_APEX):
                 del active[cid]
             else:
-                active[cid] = _ActiveWedge(candidate, state, running.source_candle_start_ms)
+                active[cid] = _ActiveWedge(
+                    candidate, state, running.source_candle_start_ms, running.frozen_risk,
+                )
 
         obs = self.scanner.staged_observation
         if obs is not None and obs.pattern in self.config.selected_patterns:
