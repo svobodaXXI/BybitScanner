@@ -166,6 +166,7 @@ type FinrezResponse = {
   source: "PAPER_EXECUTIONS_ATTRIBUTED";
   pnl_basis: "REALIZED_PRICE_MINUS_EXECUTION_FEES";
   tickers: FinrezTicker[];
+  manual_interventions: FinrezTicker[];
 };
 
 type DiaryTradesResponse = {
@@ -480,8 +481,13 @@ function StatisticsView({ statistics }: { statistics: DiaryStatistics }) {
 function FinrezView({ report }: { report: FinrezResponse }) {
   return (
     <div className="diary-finrez" aria-label="Финансовый результат по тикерам">
-      <p className="diary-finrez-basis">Реализованный PnL, цена − комиссии исполнений · USDT</p>
-      {report.tickers.length === 0 ? <p className="diary-state">Нет закрытых сделок за выбранный период</p> : (
+      <p className="diary-finrez-basis">
+        {report.owner === "ROBOT" ? "Только полностью роботизированные сделки" : "Только ручные сделки"}
+        {" · "}Реализованный PnL (цена − комиссии исполнений) · USDT
+      </p>
+      {report.tickers.length === 0 ? (
+        <p className="diary-state">Нет закрытых сделок этого типа за выбранный период</p>
+      ) : (
         <div className="diary-finrez-list">
           {report.tickers.map((ticker) => (
             <div className="diary-finrez-row" key={ticker.symbol}>
@@ -493,6 +499,25 @@ function FinrezView({ report }: { report: FinrezResponse }) {
           ))}
         </div>
       )}
+      {report.manual_interventions.length > 0 ? (
+        <section className="diary-finrez-interventions" aria-label="Ручные закрытия сделок робота">
+          <h3>Робот · ручное вмешательство</h3>
+          <p className="diary-finrez-basis">
+            Результат сделок, открытых роботом и закрытых вручную, показан отдельно.
+            В PnL полностью роботизированных сделок не включён.
+          </p>
+          <div className="diary-finrez-list">
+            {report.manual_interventions.map((ticker) => (
+              <div className="diary-finrez-row" key={ticker.symbol}>
+                <strong>{ticker.symbol}</strong>
+                <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
+                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{ticker.pnl_usdt} USDT
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -560,7 +585,16 @@ export function DiaryOverlay({
               || !Number.isSafeInteger(row.trade_count) || row.trade_count < 1) return true;
             seen.add(row.symbol);
             return false;
-          })) throw new Error("finrez scope/data mismatch");
+          })
+          || !Array.isArray(result.manual_interventions)
+          || (result.owner !== "ROBOT" && result.manual_interventions.length > 0)
+          || result.manual_interventions.some((row, index) =>
+            typeof row.symbol !== "string" || !row.symbol
+            || result.manual_interventions.slice(0, index).some((item) => item.symbol === row.symbol)
+            || typeof row.pnl_usdt !== "string" || !row.pnl_usdt.trim()
+            || !Number.isFinite(Number(row.pnl_usdt))
+            || !Number.isSafeInteger(row.trade_count) || row.trade_count < 1
+          )) throw new Error("finrez scope/data mismatch");
         setRequestedTradeMissing(false);
         setFinrez(result);
         setAccountId(result.account_id);
