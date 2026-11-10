@@ -58,6 +58,19 @@ function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" | "undo" }) {
     <path d={REPLAY_TOOL_PATHS[tool]} />
   </svg>;
 }
+const PLAYER_PATHS = {
+  play: "M7 4L20 12L7 20Z",
+  pause: "M6 4h4v16H6zM14 4h4v16h-4z",
+  backward: "M12 5L4 12L12 19ZM21 5L13 12L21 19Z",
+  forward: "M3 5L11 12L3 19ZM12 5L20 12L12 19Z",
+  beginning: "M4 4v16M20 5L11 12L20 19ZM11 5L2 12L11 19Z",
+} as const;
+function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
+  return <svg className="replay-player-icon" viewBox="0 0 24 24"
+    data-player-icon={name} aria-hidden="true" focusable="false">
+    <path d={PLAYER_PATHS[name]} />
+  </svg>;
+}
 function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
   document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h";
@@ -455,6 +468,10 @@ export function ReplayPage() {
   const symbolEdited = useRef(false);
   const currentSymbol = useRef(symbol);
   currentSymbol.current = symbol;
+  const onPasteSymbol = useCallback((nextSymbol: string) => {
+    symbolEdited.current = true;
+    setSymbol(nextSymbol);
+  }, []);
   const acceptArchiveSymbol = useCallback((archiveSymbol: string): boolean => {
     if (symbolEdited.current) return currentSymbol.current === archiveSymbol;
     if (currentSymbol.current === "BTCUSDT") {
@@ -481,6 +498,20 @@ export function ReplayPage() {
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const total = document.events.length;
   const progress = Math.round(100 * cursor / total);
+  const seekPoints = useMemo(() => {
+    const result = [0];
+    for (let i = 0; i < document.events.length; i++) {
+      const closed = document.events[i];
+      if (closed.kind !== "CANDLE_CLOSED") continue;
+      let next = i + 1;
+      while (next < document.events.length &&
+             document.events[next].time_ms === closed.time_ms) next++;
+      if (next > result[result.length - 1]) result.push(next);
+      i = next - 1;
+    }
+    return result;
+  }, [document.events]);
+  const seekIndex = Math.max(0, seekPoints.indexOf(cursor));
   const priorBreaks = useMemo(
     () => visiblePriorBreaks(document, shown.lastTimeMs),
     [document, shown.lastTimeMs],
@@ -681,7 +712,8 @@ export function ReplayPage() {
         <span className="replay-badge">SIMULATION ONLY</span>
       </header>
 
-      <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol} />
+      <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol}
+        onPasteSymbol={onPasteSymbol} />
 
       <section className="replay-history-controls" aria-label="Публичная история Bybit">
         <label>Инструмент <input aria-label="Инструмент" value={symbol} maxLength={30}
@@ -736,6 +768,12 @@ export function ReplayPage() {
         aria-valuenow={progress} aria-label="Прогресс воспроизведения">
         <div style={{ width: progress + "%" }} />
       </div>
+      <input className="replay-seek" type="range" min={0} max={seekPoints.length - 1}
+        step={1} value={seekIndex} aria-label="Перемотка воспроизведения"
+        onChange={e => {
+          setPlaying(false);
+          setCursor(seekPoints[Number(e.target.value)]);
+        }} />
       {document.mode === "MARKET_ONLY" && <p className="replay-note">
         РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ СДЕЛОК:
         {" "}{document.market_data_source === "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M"
@@ -814,27 +852,25 @@ export function ReplayPage() {
             <button type="button" aria-pressed={timeframe === "1h"}
               onClick={() => setTimeframe("1h")}>H1</button>
             <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
-        <button type="button" onClick={() => { if (cursor === total) setCursor(0); setPlaying((s) => !s); }}>
-          {playing ? "Пауза" : "▶ Пуск"}
+        <button type="button" className="replay-player-button"
+          title={playing ? "Пауза" : "Пуск"} aria-label={playing ? "Пауза" : "Пуск"}
+          onClick={() => { if (cursor === total) setCursor(0); setPlaying((s) => !s); }}>
+          <PlayerIcon name={playing ? "pause" : "play"} />
         </button>
-        <button type="button" onClick={() => {
-          setPlaying(false);
-          setCursor((current) => {
-            const events = document.events;
-            // Rewind one complete candle step, not just one trade/event row.
-            const closed = events.slice(0, current).filter(event => event.kind === "CANDLE_CLOSED");
-            if (closed.length <= 1) return 0;
-            const previousClose = closed[closed.length - 2].time_ms;
-            let next = 0;
-            while (next < events.length && events[next].time_ms <= previousClose) next++;
-            return next;
-          });
-        }} disabled={shown.candles.length === 0}>◀ Шаг назад</button>
-        <button type="button" onClick={() => {
-          setPlaying(false);
-          setCursor((current) => nextClosedCandleCursor(document.events, current));
-        }} disabled={cursor >= total}>Шаг вперёд ▶</button>
-        <button type="button" onClick={() => { setPlaying(false); setCursor(0); }}>В начало</button>
+        <button type="button" className="replay-player-button" title="Шаг назад"
+          aria-label="Шаг назад" onClick={() => {
+            setPlaying(false);
+            setCursor(seekPoints[Math.max(0, seekIndex - 1)]);
+          }} disabled={shown.candles.length === 0}><PlayerIcon name="backward" /></button>
+        <button type="button" className="replay-player-button" title="Шаг вперёд"
+          aria-label="Шаг вперёд" onClick={() => {
+            setPlaying(false);
+            setCursor((current) => nextClosedCandleCursor(document.events, current));
+          }} disabled={cursor >= total}><PlayerIcon name="forward" /></button>
+        <button type="button" className="replay-player-button" title="В начало"
+          aria-label="В начало" onClick={() => { setPlaying(false); setCursor(0); }}>
+          <PlayerIcon name="beginning" />
+        </button>
         <label className="replay-rate">Скорость {rate} свечей/с
           <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
         </label>

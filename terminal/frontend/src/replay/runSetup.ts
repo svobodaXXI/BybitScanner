@@ -66,6 +66,22 @@ export function isAllSelected(selection: RunSelection): boolean {
 // A "month" preset is the agreed 30-day test interval; 3 months is 90 days.
 export type PeriodPreset = "DAY" | "WEEK" | "MONTH" | "THREE_MONTHS";
 export type PeriodIncrement = "HOUR" | "DAY" | "WEEK" | "MONTH";
+
+/** Copyable owner selection: TICKER | UTC START | UTC INCLUSIVE END. */
+export function parseRunCoordinates(value: string): {
+  symbol: string; start_utc: string; end_utc_inclusive: string;
+} {
+  const parts = value.trim().split(/\s*\|\s*/);
+  if (value.length > 200 || parts.length !== 3) {
+    throw new Error("Формат: XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59");
+  }
+  const [symbol, start_utc, end_utc_inclusive] = parts;
+  if (!/^[A-Z0-9]{2,25}USDT$/.test(symbol))
+    throw new Error("В координатах должен быть один USDT-тикер");
+  const window = validateInclusiveWindow(start_utc, end_utc_inclusive);
+  if (window.minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
+  return { symbol, start_utc, end_utc_inclusive };
+}
 const INCREMENT_MINUTES: Record<PeriodIncrement, number> = {
   HOUR: 60, DAY: 1440, WEEK: 7 * 1440, MONTH: 30 * 1440,
 };

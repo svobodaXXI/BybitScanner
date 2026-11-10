@@ -97,6 +97,19 @@ try {
   assert.equal(await endUtc.inputValue(), "2026-11-09T13:33");
   await endUtc.fill("2026-10-11T18:45");
   assert.equal(await incrementBar.getByRole("button", { name: "3 месяца · 90 дней" }).getAttribute("aria-pressed"), "false");
+  const coordinates = setup.getByRole("textbox", { name: "Координаты прогона" });
+  await coordinates.fill("XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59");
+  await setup.getByRole("button", { name: "Применить" }).click();
+  assert.equal(await page.getByRole("textbox", { name: "Инструмент" }).inputValue(), "XRPUSDT");
+  assert.equal(await startUtc.inputValue(), "2026-09-11T00:00");
+  assert.equal(await endUtc.inputValue(), "2026-09-11T23:59");
+  await coordinates.fill("PAPER | 2026-09-11T00:00 | 2026-09-11T23:59");
+  await setup.getByRole("button", { name: "Применить" }).click();
+  assert.equal(await page.getByRole("textbox", { name: "Инструмент" }).inputValue(), "XRPUSDT",
+    "invalid pasted coordinates must not overwrite accepted symbol");
+  await coordinates.fill("BTCUSDT | 2026-10-01T12:34 | 2026-10-11T18:45");
+  await setup.getByRole("button", { name: "Применить" }).click();
+  assert.equal(await page.getByRole("textbox", { name: "Инструмент" }).inputValue(), "BTCUSDT");
   const runWedge = setup.getByRole("button", { name: /Запустить клинья/ });
   assert.equal(await runWedge.isDisabled(), true,
     "no local verified archive and native risk profile => no virtual trading");
@@ -155,8 +168,12 @@ try {
   // never in the file-import row above the chart.
   const controlBar = page.getByRole("group", { name: "Таймфрейм графика" });
   const playbackBar = controlBar.getByRole("group", { name: "Управление воспроизведением" });
-  for (const caption of ["Пуск", "◀ Шаг назад", "Шаг вперёд ▶", "В начало"]) {
-    assert.equal(await playbackBar.getByRole("button", { name: caption, exact: caption !== "Пуск" }).count(), 1);
+  for (const [caption, symbol] of [["Пуск", "play"], ["Шаг назад", "backward"],
+      ["Шаг вперёд", "forward"], ["В начало", "beginning"]]) {
+    const button = playbackBar.getByRole("button", { name: caption, exact: true });
+    assert.equal(await button.count(), 1);
+    assert.equal((await button.innerText()).trim(), "");
+    assert.equal(await button.locator('svg[data-player-icon="' + symbol + '"]').count(), 1);
   }
   assert.equal(await playbackBar.locator(".replay-rate input[type=range]").count(), 1);
   assert.equal(await page.locator(".replay-controls .replay-rate").count(), 0);
@@ -173,8 +190,8 @@ try {
     "ten drawing tools plus undo and delete all have true graphical icons");
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
   const progress = page.locator('[role="progressbar"]');
-  const forward = page.getByRole("button", { name: "Шаг вперёд ▶", exact: true });
-  const backward = page.getByRole("button", { name: "◀ Шаг назад", exact: true });
+  const forward = page.getByRole("button", { name: "Шаг вперёд", exact: true });
+  const backward = page.getByRole("button", { name: "Шаг назад", exact: true });
   assert.equal(await backward.isDisabled(), true);
   await forward.click();
   const firstStep = Number(await progress.getAttribute("aria-valuenow"));
@@ -186,6 +203,12 @@ try {
   assert.equal(Number(await progress.getAttribute("aria-valuenow")), firstStep);
   await forward.click();
   assert.equal(Number(await progress.getAttribute("aria-valuenow")), secondStep);
+  const scrub = page.getByRole("slider", { name: "Перемотка воспроизведения" });
+  await scrub.fill("12");
+  assert.equal(await scrub.inputValue(), "12");
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "12");
+  await backward.click();
+  assert.equal(await scrub.inputValue(), "11");
   await page.getByRole("button", { name: "В начало" }).click();
   assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
 
