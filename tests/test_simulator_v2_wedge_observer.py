@@ -67,7 +67,16 @@ class ActualWedgeObserverTests(unittest.TestCase):
                 "current_index": 49,
                 "validation": {"valid": True},
                 "compression": {"compression_percent": 20},
-                "touches": {"total_touches": 5},
+                "touches": {
+                    "total_touches": 5,
+                    "lower_touch_points": [
+                        {"price": 99.5, "counted": True},
+                        {"price": 80, "counted": False},
+                        {"price": 99.7, "counted": True},
+                    ],
+                    "upper_touch_points": [{"price": 104, "counted": True}],
+                },
+                "pair_metrics": {"reference_price": 100, "start_width": 5},
             },
             "detection": {"features": {"containment_violations": None}},
         }
@@ -92,6 +101,9 @@ class ActualWedgeObserverTests(unittest.TestCase):
         self.assertEqual(actual.quality, "Elite Setup")
         self.assertTrue(actual.scanner_filter_approved)
         self.assertTrue(actual.robot_geometry_ready)
+        self.assertEqual(actual.frozen_structural_extreme, D("99.5"))
+        self.assertEqual(actual.frozen_reference_price, D("100"))
+        self.assertEqual(actual.frozen_target_price, D("105"))
         self.assertEqual(actual.robot_geometry["robot_coordinate_timeframe"], "1")
         self.assertEqual(actual.robot_geometry["current_index"], 49)
         self.assertEqual(actual.robot_geometry["upper_line"]["slope"], -0.02)
