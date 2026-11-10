@@ -49,6 +49,19 @@ try {
     if (m.type() === "error") errors.push(m.text());
   });
 
+  let simEnabled = false;
+  await page.route("**/local-replay/simulation/status", async route => {
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({
+        namespace: "SIMULATION", can_attempt: simEnabled,
+        wedge_engine_available: simEnabled,
+        python_dependencies_available: simEnabled,
+        archive_files_present: simEnabled,
+        wedge_risk_profile_present: simEnabled,
+      }),
+    });
+  });
   await page.goto(localUrl, { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: "Машина времени" }).waitFor();
   assert.match(await page.locator("body").innerText(), /SIMULATION ONLY/);
@@ -83,16 +96,7 @@ try {
     "no local verified archive and native risk profile => no virtual trading");
   // A loopback-only fixture verifies the UI transport; the actual engine's
   // checksum and original Robot integration are independently Python-tested.
-  await page.route("**/local-replay/simulation/status", async route => {
-    await route.fulfill({
-      status: 200, contentType: "application/json",
-      body: JSON.stringify({
-        namespace: "SIMULATION", can_attempt: true,
-        wedge_engine_available: true, python_dependencies_available: true,
-        archive_files_present: true, wedge_risk_profile_present: true,
-      }),
-    });
-  });
+  simEnabled = true;
   const posted = [];
   await page.route("**/local-replay/simulation/wedge", async route => {
     const data = route.request();
