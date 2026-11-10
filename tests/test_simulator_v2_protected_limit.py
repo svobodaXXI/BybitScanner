@@ -168,7 +168,7 @@ class ProtectedM1Tests(unittest.TestCase):
                 MarketRequest("overlap","BUY",D("1")),
                 submitted_at_ms=2*MINUTE_MS,
             )
-        with self.assertRaisesRegex(ValueError,"protected position"):
+        with self.assertRaisesRegex(ValueError,"position is open"):
             ex.submit_protected_limit(
                 request(order_id="other"), submitted_at_ms=2*MINUTE_MS,
             )
