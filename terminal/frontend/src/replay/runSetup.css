@@ -34,6 +34,10 @@
 @media (max-width: 850px) { .replay-run-layout { grid-template-columns: 1fr; } }
 @media (max-width: 530px) { .replay-run-components, .replay-run-independent { grid-template-columns: 1fr; } }
 
-.replay-run-result { margin-top: 12px; padding: 10px; border: 1px solid #47617f; border-radius: 7px; background: #0f1c2a; font-size: 12px; display: grid; gap: 5px; }
-.replay-run-result strong { font-size: 13px; }
-.replay-run-result small { color: #adbed1; line-height: 1.5; }
+.replay-run-account { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px; padding-top: 12px; }
+.replay-run-account label { display: grid; gap: 4px; color: #bed1e4; font-size: 12px; }
+.replay-run-account input { width: 145px; max-width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid #47617f; background: #0e1927; color: #f0f6ff; font-size: 14px; }
+.replay-run-account > span { flex: 1; color: #9fb4cc; font-size: 12px; }
+.replay-run-result { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding: 12px; border: 1px solid #4d6d85; border-radius: 8px; color: #dbeafb; font-size: 12px; }
+.replay-run-result strong { font-size: 14px; }
+.replay-run-result small { color: #cbb889; }

@@ -91,3 +91,85 @@ export function validateInclusiveWindow(start: string, endInclusive: string): {
   if (!Number.isSafeInteger(endExclusiveMs)) throw new Error("Время за пределами допустимого диапазона");
   return { startMs, endExclusiveMs, minutes: (endExclusiveMs - startMs) / 60_000 };
 }
+
+
+/** Only these two original Wedge Scanner/Robot detectors exist in local mode. */
+export const RUNNABLE_WEDGE_IDS = ["WEDGE_RISING", "WEDGE_FALLING"] as const;
+export function runnableWedgeSelection(selection: RunSelection): boolean {
+  return selection.selected.length > 0 && selection.selected.every(
+    id => RUNNABLE_WEDGE_IDS.some(wedge => wedge === id),
+  );
+}
+export function makeWedgeRunRequest(
+  selection: RunSelection, symbol: string, start: string,
+  endInclusive: string, initialBalance: string,
+): {
+  symbol: string; start_utc: string; end_utc_inclusive: string;
+  selected_strategies: StrategyId[]; initial_balance: string;
+} {
+  if (!runnableWedgeSelection(selection)) {
+    throw new Error("Пока доступны только восходящий и нисходящий клинья");
+  }
+  const { minutes } = validateInclusiveWindow(start, endInclusive);
+  if (minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
+  const ticker = symbol.trim().toUpperCase();
+  if (!/^[A-Z0-9]{2,25}USDT$/.test(ticker)) throw new Error("Укажите один USDT-тикер");
+  if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(initialBalance) ||
+      !(Number(initialBalance) > 0) || !Number.isFinite(Number(initialBalance))) {
+    throw new Error("Укажите положительный виртуальный депозит");
+  }
+  return {
+    symbol: ticker, start_utc: start, end_utc_inclusive: endInclusive,
+    selected_strategies: [...selection.selected], initial_balance: initialBalance,
+  };
+}
+
+export type LocalWedgeStatus = {
+  namespace: "SIMULATION";
+  can_attempt: boolean;
+  wedge_engine_available: boolean;
+  python_dependencies_available: boolean;
+  archive_files_present: boolean;
+  wedge_risk_profile_present: boolean;
+};
+export function parseWedgeStatus(raw: unknown): LocalWedgeStatus {
+  if (!raw || typeof raw !== "object") throw new Error("Недостоверный статус симулятора");
+  const x = raw as Record<string, unknown>;
+  if (x.namespace !== "SIMULATION" ||
+      ["can_attempt", "wedge_engine_available", "python_dependencies_available",
+       "archive_files_present", "wedge_risk_profile_present"].some(k => typeof x[k] !== "boolean")) {
+    throw new Error("Неверный ответ локального SIMULATION");
+  }
+  return x as LocalWedgeStatus;
+}
+
+export type LocalWedgeResult = {
+  namespace: "SIMULATION"; symbol: string; scenario_type: string;
+  requested_minutes: number; scanner_wedge_observations: number;
+  robot_retests_in_period: number; submitted_protected_limits: number;
+  virtual_fills: number; stop_exits: number; take_exits: number;
+  realized_net_pnl: string; unrealized_pnl: string; total_net_pnl: string;
+  total_fees: string; return_percent: string; max_drawdown_percent: string;
+  risk_terms_status: string; source_id: string;
+};
+export function parseWedgeResult(raw: unknown): LocalWedgeResult {
+  if (!raw || typeof raw !== "object") throw new Error("Недостоверный отчёт SIMULATION");
+  const x = raw as Record<string, unknown>;
+  if (x.namespace !== "SIMULATION" ||
+      x.scenario_type !== "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION" ||
+      x.risk_terms_status !== "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED") {
+    throw new Error("Отчёт не соответствует локальному прогону клиньев");
+  }
+  for (const key of ["symbol", "source_id", "realized_net_pnl", "unrealized_pnl",
+    "total_net_pnl", "total_fees", "return_percent", "max_drawdown_percent"]) {
+    if (typeof x[key] !== "string") throw new Error("В отчёте отсутствует " + key);
+  }
+  for (const key of ["requested_minutes", "scanner_wedge_observations",
+    "robot_retests_in_period", "submitted_protected_limits", "virtual_fills",
+    "stop_exits", "take_exits"]) {
+    if (!Number.isSafeInteger(x[key]) || (x[key] as number) < 0) {
+      throw new Error("Неверное количество событий в отчёте");
+    }
+  }
+  return x as LocalWedgeResult;
+}
