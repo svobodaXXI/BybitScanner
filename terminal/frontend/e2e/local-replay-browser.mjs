@@ -85,37 +85,52 @@ try {
   const startUtc = setup.getByLabel("Начало прогона UTC");
   const endUtc = setup.getByLabel("Конец прогона UTC");
   await startUtc.fill("2026-10-01T12:34");
-  const incrementBar = setup.getByRole("group", { name: "Продлить период прогона" });
+  const incrementBar = setup.getByRole("group", { name: "Изменить период прогона" });
+  assert.equal(await setup.locator(".replay-run-step").count(), 3);
+  for (const unit of ["1 час", "1 день", "1 неделя"]) {
+    const pair = incrementBar.getByRole("group", { name: "Период " + unit });
+    assert.equal(await pair.getByRole("button", { name: "Добавить " + unit }).count(), 1);
+    assert.equal(await pair.getByRole("button", { name: "Убавить " + unit }).count(), 1);
+  }
+  assert.equal(await page.locator(".replay-history-controls").count(), 0,
+    "obsolete second ticker/date/Bybit panel must never reappear");
+  assert.equal(await setup.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).count(), 1);
   assert.equal(await endUtc.inputValue(), "2026-10-02T12:33");
   const duration = setup.getByRole("status", { name: "Продолжительность прогона" });
   assert.match(await duration.innerText(), /1 день/);
-  await incrementBar.getByRole("button", { name: "+1 час", exact: true }).click();
+  await incrementBar.getByRole("button", { name: "Добавить 1 час" }).click();
   assert.match(await duration.innerText(), /1 день 1 час/);
   assert.equal(await endUtc.inputValue(), "2026-10-02T13:33");
-  await incrementBar.getByRole("button", { name: "+1 день", exact: true }).click();
+  await incrementBar.getByRole("button", { name: "Добавить 1 день" }).click();
   assert.equal(await endUtc.inputValue(), "2026-10-03T13:33");
-  await incrementBar.getByRole("button", { name: "+1 неделя", exact: true }).click();
+  await incrementBar.getByRole("button", { name: "Добавить 1 неделя" }).click();
   assert.equal(await endUtc.inputValue(), "2026-10-10T13:33");
   await incrementBar.getByRole("button", { name: "+1 месяц", exact: true }).click();
   assert.equal(await endUtc.inputValue(), "2026-11-09T13:33");
   assert.match(await duration.innerText(), /1 месяц 9 дней 1 час/);
+  await incrementBar.getByRole("button", { name: "Убавить 1 час" }).click();
+  assert.equal(await endUtc.inputValue(), "2026-11-09T12:33");
+  await incrementBar.getByRole("button", { name: "Убавить 1 день" }).click();
+  assert.equal(await endUtc.inputValue(), "2026-11-08T12:33");
+  await incrementBar.getByRole("button", { name: "Убавить 1 неделя" }).click();
+  assert.equal(await endUtc.inputValue(), "2026-11-01T12:33");
   await endUtc.fill("2026-10-11T18:45");
   assert.match(await duration.innerText(), /10 дней 6 часов 12 минут/);
   assert.equal(await incrementBar.getByRole("button", { name: "3 месяца · 90 дней" }).getAttribute("aria-pressed"), "false");
   const coordinates = setup.getByRole("textbox", { name: "Координаты прогона" });
   await coordinates.fill("XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59");
   await setup.getByRole("button", { name: "Применить" }).click();
-  assert.equal(await page.getByRole("textbox", { name: "Инструмент" }).inputValue(), "XRPUSDT");
+  assert.match(await setup.locator(".replay-run-heading").innerText(), /XRPUSDT/);
   assert.equal(await startUtc.inputValue(), "2026-09-11T00:00");
   assert.equal(await endUtc.inputValue(), "2026-09-11T23:59");
   assert.match(await duration.innerText(), /1 день/);
   await coordinates.fill("PAPER | 2026-09-11T00:00 | 2026-09-11T23:59");
   await setup.getByRole("button", { name: "Применить" }).click();
-  assert.equal(await page.getByRole("textbox", { name: "Инструмент" }).inputValue(), "XRPUSDT",
+  assert.match(await setup.locator(".replay-run-heading").innerText(), /XRPUSDT/,
     "invalid pasted coordinates must not overwrite accepted symbol");
   await coordinates.fill("BTCUSDT | 2026-10-01T12:34 | 2026-10-11T18:45");
   await setup.getByRole("button", { name: "Применить" }).click();
-  assert.equal(await page.getByRole("textbox", { name: "Инструмент" }).inputValue(), "BTCUSDT");
+  assert.match(await setup.locator(".replay-run-heading").innerText(), /BTCUSDT/);
   const runWedge = setup.getByRole("button", { name: /Запустить клинья/ });
   assert.equal(await runWedge.isDisabled(), true,
     "no local verified archive and native risk profile => no virtual trading");
@@ -371,7 +386,11 @@ try {
       body: JSON.stringify(history),
     });
   });
-  await page.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
+  const bounds = page.getByRole("region", { name: "Настройка стратегий и периода" });
+  await bounds.getByRole("textbox", { name: "Координаты прогона" })
+    .fill("BTCUSDT | 2026-10-01T00:00 | 2026-10-01T23:59");
+  await bounds.getByRole("button", { name: "Применить" }).click();
+  await bounds.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
   await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
   assert.match(await page.locator("body").innerText(), /browser_fixture/);
   const indicator = page.getByRole("group", { name: "Индикатор ADX DMI" });

@@ -14,6 +14,7 @@ import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
 import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import { RunSetupPanel } from "./RunSetupPanel";
+import { validateInclusiveWindow } from "./runSetup";
 import "./replay.css";
 
 // The replay tools share the terminal's compact icon-first interaction, with
@@ -450,10 +451,6 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
   );
 }
 
-function utcDayOffset(daysAgo: number): string {
-  return new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
-}
-
 export function ReplayPage() {
   const [document, setDocument] = useState<ReplayDocument>(() => syntheticReplay());
   const [symbol, setSymbol] = useState("BTCUSDT");
@@ -472,8 +469,6 @@ export function ReplayPage() {
     }
     return currentSymbol.current === archiveSymbol;
   }, []);
-  const [startDate, setStartDate] = useState(() => utcDayOffset(3));
-  const [endDate, setEndDate] = useState(() => utcDayOffset(1));
   const [historyLoading, setHistoryLoading] = useState(false);
   const historyRequest = useRef<AbortController | null>(null);
   const bundledRequest = useRef<AbortController | null>(null);
@@ -583,12 +578,6 @@ export function ReplayPage() {
       symbolEdited.current = true;
       setSymbol(parsed.symbol);
     }
-    const first = parsed.events.find(item => item.kind === "CANDLE_CLOSED")?.candle;
-    const last = parsed.events.filter(item => item.kind === "CANDLE_CLOSED").at(-1)?.candle;
-    if (first && last) {
-      setStartDate(new Date(first.start_ms).toISOString().slice(0, 10));
-      setEndDate(new Date(last.end_ms).toISOString().slice(0, 10));
-    }
   }
 
   // The audited GRASSUSDT archive is optional and read ONLY from loopback.
@@ -672,7 +661,7 @@ export function ReplayPage() {
     }
   }
 
-  async function loadLocalHistory() {
+  async function loadLocalHistory(selectedSymbol: string, selectedStart: string, selectedEnd: string) {
     bundledRequest.current?.abort(); bundledRequest.current = null;
     historyRequest.current?.abort();
     const controller = new AbortController();
@@ -681,7 +670,18 @@ export function ReplayPage() {
     setPlaying(false);
     setError(null);
     try {
-      const query = new URLSearchParams({ symbol: symbol.trim().toUpperCase(), start: startDate, end: endDate });
+      const window = validateInclusiveWindow(selectedStart, selectedEnd);
+      // The legacy read-only public market loader accepts full UTC days,
+      // maximum 7; it cannot silently turn a minute interval into whole days.
+      if (window.startMs % 86_400_000 || window.endExclusiveMs % 86_400_000 ||
+          window.minutes > 7 * 1440) {
+        throw new Error("Публичный Bybit M5: выберите полные UTC-дни, не более 7. Для точных минут используйте SIMULATION.");
+      }
+      const query = new URLSearchParams({
+        symbol: selectedSymbol.trim().toUpperCase(),
+        start: new Date(window.startMs).toISOString().slice(0, 10),
+        end: new Date(window.endExclusiveMs).toISOString().slice(0, 10),
+      });
       // Only the loopback Python viewer implements this research-only GET.
       // Never call /api: Vite's /api proxy belongs to the main PAPER backend.
       const response = await fetch("/local-replay/history?" + query.toString(), {
@@ -723,19 +723,9 @@ export function ReplayPage() {
 
       <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol}
         onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
-        onSimulationReady={onSimulationReady} />
-
-      <section className="replay-history-controls" aria-label="Публичная история Bybit">
-        <label>Инструмент <input aria-label="Инструмент" value={symbol} maxLength={30}
-          onChange={(e) => { symbolEdited.current = true; setSymbol(e.target.value.toUpperCase()); }} /></label>
-        <label>С UTC <input aria-label="С UTC" type="date" value={startDate}
-          onChange={(e) => setStartDate(e.target.value)} /></label>
-        <label>По UTC (не включительно) <input aria-label="По UTC" type="date" value={endDate}
-          onChange={(e) => setEndDate(e.target.value)} /></label>
-        <button type="button" onClick={() => void loadLocalHistory()} disabled={historyLoading}>
-          {historyLoading ? "Загружаю историю…" : "Загрузить Bybit (без сделок)"}
-        </button>
-      </section>
+        onSimulationReady={onSimulationReady}
+        onPublicHistoryRequest={(ticker, from, to) => void loadLocalHistory(ticker, from, to)}
+        publicHistoryLoading={historyLoading} />
       <section className="replay-controls" aria-label="Управление воспроизведением">
         <label className="replay-file">
           Загрузить JSON прогона

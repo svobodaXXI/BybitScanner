@@ -129,14 +129,21 @@ export function presetEndInclusive(start: string, preset: PeriodPreset): string 
 /** Extend the existing inclusive UTC range without changing its start.
  * "Month" intentionally means 30 days, matching the legacy selector.
  */
+export function adjustInclusiveWindow(
+  start: string, endInclusive: string, increment: PeriodIncrement,
+  direction: 1 | -1,
+): string {
+  const window = validateInclusiveWindow(start, endInclusive);
+  const minutes = window.minutes + direction * INCREMENT_MINUTES[increment];
+  if (minutes <= 0) throw new Error("Продолжительность должна быть хотя бы 1 минута");
+  if (minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
+  return new Date(window.startMs + (minutes - 1) * 60_000)
+    .toISOString().slice(0, 16);
+}
 export function extendInclusiveWindow(
   start: string, endInclusive: string, increment: PeriodIncrement,
 ): string {
-  const window = validateInclusiveWindow(start, endInclusive);
-  const minutes = window.minutes + INCREMENT_MINUTES[increment];
-  if (minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
-  return new Date(window.endExclusiveMs + INCREMENT_MINUTES[increment] * 60_000 - 60_000)
-    .toISOString().slice(0, 16);
+  return adjustInclusiveWindow(start, endInclusive, increment, 1);
 }
 
 export function validateInclusiveWindow(start: string, endInclusive: string): {

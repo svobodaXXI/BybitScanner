@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { parseReplayDocument, type ReplayDocument } from "./replayModel";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, PLANNED_OPTIONS,
-  clearAll, isAllSelected, onlyWedges, presetEndInclusive, extendInclusiveWindow,
+  clearAll, isAllSelected, onlyWedges, presetEndInclusive, adjustInclusiveWindow,
   parseRunCoordinates, formatRunDuration,
   selectAll, toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
@@ -12,22 +12,24 @@ import {
 import "./runSetup.css";
 
 const INITIAL_START = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 16);
-const INCREMENTS: Array<{ id: PeriodIncrement; name: string }> = [
-  { id: "HOUR", name: "+1 час" },
-  { id: "DAY", name: "+1 день" },
-  { id: "WEEK", name: "+1 неделя" },
-  { id: "MONTH", name: "+1 месяц" },
+const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
+  { id: "HOUR", name: "1 час" },
+  { id: "DAY", name: "1 день" },
+  { id: "WEEK", name: "1 неделя" },
 ];
 
 /** Local-only Wedge execution via loopback: never production /api or PAPER. */
 export function RunSetupPanel({
   symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
+  onPublicHistoryRequest, publicHistoryLoading,
 }: {
   symbol: string;
   onArchiveSymbol: (archiveSymbol: string) => boolean;
   onPasteSymbol: (symbol: string) => void;
   onSimulationStart: () => void;
   onSimulationReady: (replay: ReplayDocument) => void;
+  onPublicHistoryRequest: (symbol: string, start: string, endInclusive: string) => void;
+  publicHistoryLoading: boolean;
 }) {
   const [selection, setSelection] = useState<RunSelection>(clearAll);
   const [start, setStart] = useState(INITIAL_START);
@@ -150,15 +152,15 @@ export function RunSetupPanel({
     setPreset(next);
     try { setEnd(presetEndInclusive(start, next)); } catch { /* Invalid start remains visible. */ }
   };
-  const addPeriod = (increment: PeriodIncrement) => {
+  const changePeriod = (increment: PeriodIncrement, direction: 1 | -1) => {
     try {
-      const updatedEnd = extendInclusiveWindow(start, end, increment);
+      const updatedEnd = adjustInclusiveWindow(start, end, increment, direction);
       datesEdited.current = true;
       setPreset(null);
       setEnd(updatedEnd);
       setPeriodError("");
     } catch (error) {
-      setPeriodError(error instanceof Error ? error.message : "Нельзя продлить период");
+      setPeriodError(error instanceof Error ? error.message : "Нельзя изменить период");
     }
   };
   const applyCoordinates = (value: string) => {
@@ -267,9 +269,18 @@ export function RunSetupPanel({
             <input aria-label="Начало прогона UTC" type="datetime-local" step={60}
               value={start} onChange={e => updateStart(e.target.value)} />
           </label>
-          <div className="replay-run-presets" role="group" aria-label="Продлить период прогона">
-            {INCREMENTS.map(option => <button key={option.id} type="button"
-              onClick={() => addPeriod(option.id)}>{option.name}</button>)}
+          <div className="replay-run-presets" role="group" aria-label="Изменить период прогона">
+            {STEPS.map(option => <div className="replay-run-step" key={option.id}
+              role="group" aria-label={"Период " + option.name}>
+              <div className="replay-run-stepper">
+                <button type="button" aria-label={"Добавить " + option.name}
+                  onClick={() => changePeriod(option.id, 1)}>+</button>
+                <button type="button" aria-label={"Убавить " + option.name}
+                  onClick={() => changePeriod(option.id, -1)}>−</button>
+              </div>
+              <span className="replay-run-step-label">{option.name}</span>
+            </div>)}
+            <button type="button" onClick={() => changePeriod("MONTH", 1)}>+1 месяц</button>
             <button type="button" aria-pressed={preset === "THREE_MONTHS"}
               onClick={() => choosePreset("THREE_MONTHS")}>3 месяца · 90 дней</button>
           </div>
@@ -288,6 +299,12 @@ export function RunSetupPanel({
             <p role="status" className="replay-run-summary">
               {parsed.window?.minutes.toLocaleString("ru-RU")} минут M1 · конечная минута включена
             </p>}
+          <div className="replay-run-public-history">
+            <button type="button" disabled={publicHistoryLoading || !parsed.window}
+              onClick={() => onPublicHistoryRequest(symbol, start, end)}>
+              {publicHistoryLoading ? "Загружаю историю…" : "Загрузить Bybit (без сделок)"}
+            </button>
+          </div>
         </fieldset>
       </div>
       <div className="replay-run-account">

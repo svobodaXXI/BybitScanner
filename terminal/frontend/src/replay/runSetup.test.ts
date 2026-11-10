@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, clearAll, isAllSelected,
-  onlyWedges, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, parseRunCoordinates, formatRunDuration, selectAll,
+  onlyWedges, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, adjustInclusiveWindow, parseRunCoordinates, formatRunDuration, selectAll,
   toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
 } from "./runSetup";
@@ -75,6 +75,18 @@ describe("local one-symbol strategy setup (no trading)", () => {
     expect(validateInclusiveWindow(start, end).minutes).toBe(39 * 1440 + 60);
     expect(() => extendInclusiveWindow(start, presetEndInclusive(start, "THREE_MONTHS"), "HOUR"))
       .toThrow(/90 дней/);
+  });
+  it("subtracts hour, day and week without changing start or underflowing", () => {
+    const start = "2026-09-11T00:00";
+    let end = "2026-09-20T23:59";
+    end = adjustInclusiveWindow(start, end, "HOUR", -1);
+    expect(end).toBe("2026-09-20T22:59");
+    end = adjustInclusiveWindow(start, end, "DAY", -1);
+    expect(end).toBe("2026-09-19T22:59");
+    end = adjustInclusiveWindow(start, end, "WEEK", -1);
+    expect(end).toBe("2026-09-12T22:59");
+    expect(() => adjustInclusiveWindow(start, start, "HOUR", -1))
+      .toThrow(/хотя бы 1 минута/);
   });
   it("parses pasted ticker and inclusive UTC dates without timezone guessing", () => {
     expect(parseRunCoordinates("XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59")).toEqual({
