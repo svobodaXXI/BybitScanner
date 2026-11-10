@@ -48,7 +48,10 @@ MAX_SIM_CONFIG_BYTES = 12_000
 
 def local_simulation_status() -> dict[str, object]:
     """Discovery only; files/checksums are validated again on each run."""
-    engine = importlib.util.find_spec("research.simulator_v2.wedge_cli") is not None
+    try:
+        engine = importlib.util.find_spec("research.simulator_v2.wedge_cli") is not None
+    except (ImportError, ModuleNotFoundError):
+        engine = False
     deps = importlib.util.find_spec("pandas") is not None
     data = (
         SIM_DATA.is_dir() and not SIM_DATA.is_symlink()
