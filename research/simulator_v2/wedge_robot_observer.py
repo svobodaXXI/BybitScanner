@@ -4,10 +4,9 @@ Uses EXACT original robot_state_machine.initialize_state/process_closed_candle
 and robot_entry_limit.build_initial_retest_limit. Both are pure. The latter
 produces a LIMIT *plan only*; never calls the production submitter.
 
-The virtual exchange currently models MARKET only. Treating a LIMIT as a
-next-open MARKET would fabricate fills and PnL, so this adapter never submits
-an order. It stages every change until the same M1 is committed and emits
-truthful SIM-only lifecycle/plan facts, not execution facts.
+The virtual exchange models GTC LIMIT, but this adapter never submits an
+order without fully proven sizing, protection, order ownership and admission.
+It stages lifecycle and optional risk *preview* until a common M1 commit.
 """
 from __future__ import annotations
 
@@ -25,6 +24,11 @@ from robot_state_machine import (
 from robot_entry_limit import InitialRetestLimitPlan, build_initial_retest_limit
 from research.simulator_v2.timeline import MINUTE_MS, MinuteFrame, SimulationEvent, StageFact
 from research.simulator_v2.wedge_observer import ReadOnlyWedgeScanner, WedgeObservation
+from research.simulator_v2.wedge_risk_preflight import (
+    FrozenWedgeRiskEvidence, SimWedgeRiskSettings,
+    UnsubmittedProtectedWedgePreview, WedgePreflightBlocked,
+    preview_protected_wedge_limit,
+)
 
 WEDGE_PATTERNS = frozenset({"Falling Wedge", "Rising Wedge"})
 
@@ -65,6 +69,7 @@ class _ActiveWedge:
     candidate: dict[str, Any]
     state: dict[str, Any]
     source_candle_start_ms: int
+    frozen_risk: FrozenWedgeRiskEvidence | None = None
 
 
 class ReadOnlyWedgeRobot:
@@ -78,20 +83,28 @@ class ReadOnlyWedgeRobot:
 
     def __init__(
         self, *, scanner: ReadOnlyWedgeScanner, config: SimWedgeRobotConfig,
+        risk_settings: SimWedgeRiskSettings | None = None,
     ) -> None:
         if not isinstance(scanner, ReadOnlyWedgeScanner):
             raise TypeError("a read-only wedge Scanner stage is required")
         if not isinstance(config, SimWedgeRobotConfig):
             raise TypeError("explicit SIMULATION Robot configuration required")
+        if risk_settings is not None and not isinstance(risk_settings, SimWedgeRiskSettings):
+            raise TypeError("explicit SIMULATION risk settings required")
+        if risk_settings is not None and risk_settings.tick_size != config.tick_size:
+            raise ValueError("Wedge LIMIT tick and risk tick mismatch")
         self.scanner = scanner
         self.config = config
+        self.risk_settings = risk_settings
         self._active: dict[str, _ActiveWedge] = {}
         self._seen: set[str] = set()
         self._decisions: list[SimRobotDecision] = []
         self._limit_plans: list[InitialRetestLimitPlan] = []
+        self._risk_previews: list[UnsubmittedProtectedWedgePreview] = []
         self._pending: tuple[
             dict[str, _ActiveWedge], set[str],
             list[SimRobotDecision], list[InitialRetestLimitPlan],
+            list[UnsubmittedProtectedWedgePreview],
         ] | None = None
 
     @property
@@ -106,6 +119,13 @@ class ReadOnlyWedgeRobot:
         if self._pending is not None:
             raise RuntimeError("uncommitted SIMULATION LIMIT plans")
         return tuple(self._limit_plans)
+
+    @property
+    def risk_previews(self) -> tuple[UnsubmittedProtectedWedgePreview, ...]:
+        """Fee-aware STOP/TAKE/RR previews only, never submitted orders."""
+        if self._pending is not None:
+            raise RuntimeError("uncommitted SIMULATION risk preview")
+        return tuple(self._risk_previews)
 
     @property
     def active_count(self) -> int:
@@ -130,6 +150,7 @@ class ReadOnlyWedgeRobot:
         seen = set(self._seen)
         decisions: list[SimRobotDecision] = []
         limit_plans: list[InitialRetestLimitPlan] = []
+        risk_previews: list[UnsubmittedProtectedWedgePreview] = []
         facts: list[StageFact] = []
 
         def record(cid: str, pattern: str, event: str, phase: str) -> None:
@@ -178,6 +199,32 @@ class ReadOnlyWedgeRobot:
                     candidate, state, tick_size=self.config.tick_size,
                 )
                 limit_plans.append(plan)
+                if self.risk_settings is not None:
+                    # The original Scanner evidence is bound to the same
+                    # immutable formation, never reconstructed from future M1.
+                    try:
+                        preview = preview_protected_wedge_limit(
+                            plan, evidence=running.frozen_risk,
+                            settings=self.risk_settings,
+                            retest_closed_at_ms=frame.virtual_time_ms,
+                        )
+                    except WedgePreflightBlocked as exc:
+                        facts.append(StageFact(
+                            kind="SIM_WEDGE_RISK_BLOCKED", entity_id=cid,
+                            details=(("reason", str(exc)), ("note", "NOT_SUBMITTED")),
+                        ))
+                    else:
+                        risk_previews.append(preview)
+                        facts.append(StageFact(
+                            kind="SIM_WEDGE_RISK_PREVIEW", entity_id=cid,
+                            details=(
+                                ("stop", str(preview.stop_price)),
+                                ("take", str(preview.take_price)),
+                                ("net_rr", str(preview.projected_net_rr)),
+                                ("quantity", str(preview.request.quantity)),
+                                ("note", "PREVIEW_ONLY_NOT_SUBMITTED"),
+                            ),
+                        ))
                 facts.append(StageFact(
                     kind="SIM_WEDGE_LIMIT_PLANNED", entity_id=cid,
                     details=(
@@ -220,21 +267,33 @@ class ReadOnlyWedgeRobot:
                     seen.add(cid)
                     record(cid, obs.pattern, event, state["phase"])
                     if state["phase"] != PHASE_EXPIRED_AT_APEX:
+                        frozen_risk = None
+                        if (obs.frozen_structural_extreme is not None
+                                and obs.frozen_reference_price is not None
+                                and obs.frozen_target_price is not None):
+                            frozen_risk = FrozenWedgeRiskEvidence(
+                                candidate_id=cid, symbol=obs.symbol, pattern=obs.pattern,
+                                observed_at_ms=obs.available_at_ms,
+                                structural_extreme=obs.frozen_structural_extreme,
+                                frozen_signal_reference_price=obs.frozen_reference_price,
+                                frozen_scanner_target_price=obs.frozen_target_price,
+                            )
                         active[cid] = _ActiveWedge(
-                            candidate, state, obs.source_candle_start_ms,
+                            candidate, state, obs.source_candle_start_ms, frozen_risk,
                         )
 
-        self._pending = active, seen, decisions, limit_plans
+        self._pending = active, seen, decisions, limit_plans, risk_previews
         return tuple(facts)
 
     def commit_after_m1(self) -> None:
         if self._pending is None:
             raise RuntimeError("missing staged Robot M1")
-        active, seen, decisions, limit_plans = self._pending
+        active, seen, decisions, limit_plans, risk_previews = self._pending
         self._active = active
         self._seen = seen
         self._decisions.extend(decisions)
         self._limit_plans.extend(limit_plans)
+        self._risk_previews.extend(risk_previews)
         self._pending = None
 
     def discard_failed_m1(self) -> None:
