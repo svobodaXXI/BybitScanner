@@ -183,6 +183,14 @@ class VirtualExchange:
         """Bind STOP+TAKE to the GTC entry before the first possible fill."""
         if not isinstance(request, ProtectedLimitRequest):
             raise TypeError("ProtectedLimitRequest required")
+        if self._last_close_ms is None:
+            raise ValueError("a closed virtual M1 is required before protected entry")
+        position = self.account.snapshot(
+            as_of_ms=self._last_close_ms,
+            mark_price=request.entry.limit_price,
+        ).position_quantity
+        if position != 0:
+            raise ValueError("cannot submit protected entry while a virtual position is open")
         self._submit(request.entry, submitted_at_ms=submitted_at_ms)
         self._pending_protection = request
 
