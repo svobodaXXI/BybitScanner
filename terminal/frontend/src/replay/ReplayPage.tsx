@@ -13,6 +13,7 @@ import { rayEndPoint } from "../chart/drawingGeometry";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
 import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
+import { RunSetupPanel } from "./RunSetupPanel";
 import "./replay.css";
 
 function label(event: ReplayEvent): string {
@@ -665,6 +666,8 @@ export function ReplayPage() {
         </div>
         <span className="replay-badge">SIMULATION ONLY</span>
       </header>
+
+      <RunSetupPanel symbol={symbol} />
 
       <section className="replay-history-controls" aria-label="Публичная история Bybit">
         <label>Инструмент <input aria-label="Инструмент" value={symbol} maxLength={30}
