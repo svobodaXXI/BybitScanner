@@ -50,6 +50,7 @@ class WedgeBacktestResult:
             **self.report.to_payload(),
             "requested_start_ms": self.requested_start_ms,
             "requested_end_inclusive_ms": self.requested_end_inclusive_ms,
+            "requested_minutes": (self.requested_end_inclusive_ms - self.requested_start_ms) // MINUTE_MS + 1,
             "market_warmup_start_ms": self.market_warmup_start_ms,
             "scanner_wedge_observations": self.scanner_wedge_observations,
             "robot_retests_in_period": self.robot_retests_in_period,
