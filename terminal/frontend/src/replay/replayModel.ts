@@ -228,6 +228,17 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
   )) {
     throw new Error("Неверная идентичность реальной рыночной истории");
   }
+  const verifiedStrategy = mode === "STRATEGY" &&
+    object.market_data_source !== undefined;
+  if (verifiedStrategy && (
+    object.demo === true ||
+    object.market_data_source !== "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M" ||
+    typeof object.symbol !== "string" ||
+    !/^[A-Z0-9]{3,30}USDT$/.test(object.symbol) ||
+    object.timeframe !== "5m"
+  )) {
+    throw new Error("Торговый прогон без подтверждённой рыночной идентичности");
+  }
   if (!Array.isArray(object.events) || !object.events.length || object.events.length > 100_000) {
     throw new Error("Ожидается от 1 до 100000 событий");
   }
@@ -782,7 +793,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
   return {
     source: "SIMULATION", simulation_run_id: id, events, demo: object.demo === true,
     ...(mode ? { mode } : {}),
-    ...(mode === "MARKET_ONLY" ? {
+    ...(mode === "MARKET_ONLY" || verifiedStrategy ? {
       symbol: object.symbol as string,
       timeframe: "5m" as const,
       market_data_source: object.market_data_source as
