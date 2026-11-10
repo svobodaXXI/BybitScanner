@@ -135,6 +135,39 @@ def _ordered_proofs(
     )
 
 
+def iter_pinned_trade_chunks(
+    *, cache_dir: Path, symbol: str,
+    proofs: tuple[TradeDayProof, ...],
+    latest_closed_boundary_ms: int,
+):
+    """Single source of truth for verified offline trade-derived M1.
+
+    Validates pinned daily raw provenance and each cached M1 digest; never
+    downloads from Bybit, touches PAPER, or substitutes an incomplete day.
+    """
+    dataset_source, start_ms, _ = _ordered_proofs(
+        proofs, symbol=symbol, latest_closed_boundary_ms=latest_closed_boundary_ms,
+    )
+    if not isinstance(cache_dir, Path) or cache_dir.is_symlink():
+        raise ValueError("dedicated local cache directory required")
+
+    def no_network(*_args: object, **_kwargs: object) -> object:
+        raise FileNotFoundError("a pinned SIMULATION trade-day cache is absent")
+
+    for i, proof in enumerate(proofs):
+        start = start_ms + i * DAY_MS
+        found = tuple(iter_cached_m1_chunks(
+            cache_dir=cache_dir, symbol=symbol,
+            start_ms=start, end_ms=start + DAY_MS,
+            latest_closed_boundary_ms=latest_closed_boundary_ms,
+            chunk_minutes=1440, source_id=proof.source_id,
+            fetch_candles=no_network,
+        ))
+        if len(found) != 1 or found[0].sha256 != proof.m1_sha256:
+            raise ValueError("pinned SIMULATION archive checksum differs")
+        yield replace(found[0], source_id=dataset_source)
+
+
 def run_cached_trade_range(
     *, cache_dir: Path, symbol: str,
     proofs: tuple[TradeDayProof, ...], latest_closed_boundary_ms: int,
@@ -147,34 +180,19 @@ def run_cached_trade_range(
     report contract, while raw/day hashes remain in the separate caller-owned
     manifest. This does not grant permission to execute real trades.
     """
-    dataset_source, start_ms, end_ms = _ordered_proofs(
+    _, start_ms, end_ms = _ordered_proofs(
         proofs, symbol=symbol, latest_closed_boundary_ms=latest_closed_boundary_ms,
     )
-    if not isinstance(cache_dir, Path) or cache_dir.is_symlink():
-        raise ValueError("dedicated local cache directory required")
-
-    def no_network(*_args: object, **_kwargs: object) -> object:
-        raise FileNotFoundError("a pinned SIMULATION trade-day cache is absent")
-
-    def chunks():
-        for i, proof in enumerate(proofs):
-            start = start_ms + i * DAY_MS
-            found = tuple(iter_cached_m1_chunks(
-                cache_dir=cache_dir, symbol=symbol,
-                start_ms=start, end_ms=start + DAY_MS,
-                latest_closed_boundary_ms=latest_closed_boundary_ms,
-                chunk_minutes=1440, source_id=proof.source_id,
-                fetch_candles=no_network,
-            ))
-            if len(found) != 1 or found[0].sha256 != proof.m1_sha256:
-                raise ValueError("pinned SIMULATION archive checksum differs")
-            yield replace(found[0], source_id=dataset_source)
+    chunks = iter_pinned_trade_chunks(
+        cache_dir=cache_dir, symbol=symbol, proofs=proofs,
+        latest_closed_boundary_ms=latest_closed_boundary_ms,
+    )
 
     session = VirtualReplaySession(
         simulation_run_id=simulation_run_id, symbol=symbol,
         initial_balance=initial_balance, taker_fee_rate=taker_fee_rate,
     )
-    report = run_verified_chunks(session, chunks())
+    report = run_verified_chunks(session, chunks)
     if (
         report.first_open_ms != start_ms or report.last_closed_ms != end_ms
         or report.minutes != len(proofs) * 1440
