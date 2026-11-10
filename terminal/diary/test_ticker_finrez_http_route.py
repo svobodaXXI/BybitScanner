@@ -38,6 +38,7 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
             "source": "PAPER_EXECUTIONS_ATTRIBUTED",
             "pnl_basis": "REALIZED_PRICE_MINUS_EXECUTION_FEES",
             "tickers": [{"symbol": "BTCUSDT", "pnl_usdt": "2.5", "trade_count": 2}],
+            "manual_interventions": [],
         }
 
     monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", read_source)
@@ -56,6 +57,7 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
             assert payload["owner"] == "ROBOT"
             assert payload["period"] == period
             assert payload["tickers"][0]["pnl_usdt"] == "2.5"
+            assert payload["manual_interventions"] == []
 
         assert calls[0] == ("source", source_path)
         assert calls[1] == ("project", snapshot, "paper", "ROBOT", "TODAY")
