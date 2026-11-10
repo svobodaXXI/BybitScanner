@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parseReplayDocument, type ReplayDocument } from "./replayModel";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, PLANNED_OPTIONS,
@@ -11,6 +11,7 @@ import {
 } from "./runSetup";
 import "./runSetup.css";
 
+type WedgeRunRequest = ReturnType<typeof makeWedgeRunRequest>;
 const INITIAL_START = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 16);
 const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
   { id: "HOUR", name: "1 час" },
@@ -21,17 +22,21 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
 /** Local-only Wedge execution via loopback: never production /api or PAPER. */
 export function RunSetupPanel({
   symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
+  onSimulationBusy, playRequestId, showReport,
   onPublicHistoryRequest, publicHistoryLoading,
 }: {
   symbol: string;
   onArchiveSymbol: (archiveSymbol: string) => boolean;
   onPasteSymbol: (symbol: string) => void;
-  onSimulationStart: () => void;
+  onSimulationStart: (request: WedgeRunRequest) => void;
+  onSimulationBusy: (busy: boolean) => void;
+  playRequestId: number;
+  showReport: boolean;
   onSimulationReady: (replay: ReplayDocument) => void;
   onPublicHistoryRequest: (symbol: string, start: string, endInclusive: string) => void;
   publicHistoryLoading: boolean;
 }) {
-  const [selection, setSelection] = useState<RunSelection>(clearAll);
+  const [selection, setSelection] = useState<RunSelection>(onlyWedges);
   const [start, setStart] = useState(INITIAL_START);
   const [end, setEnd] = useState(() => presetEndInclusive(INITIAL_START, "DAY"));
   const [preset, setPreset] = useState<PeriodPreset | null>("DAY");
@@ -46,6 +51,10 @@ export function RunSetupPanel({
   const [coordinateText, setCoordinateText] = useState("");
   const [coordinateError, setCoordinateError] = useState("");
   const datesEdited = useRef(false);
+  const preparedRun = useRef<WedgeRunRequest | null>(null);
+  const generation = useRef(0);
+  const running = useRef(false);
+  const requestController = useRef<AbortController | null>(null);
   const parsed = useMemo(() => {
     try {
       return { window: validateInclusiveWindow(start, end), error: "" };
@@ -56,8 +65,6 @@ export function RunSetupPanel({
   const active = ALL_SELECTABLE.filter(id => selection.selected.includes(id));
   const mirrorSelected = MIRROR_OPTIONS.filter(x => selection.selected.includes(x.id)).length;
   const wedgesOnly = runnableWedgeSelection(selection);
-  const selectionAllowed = wedgesOnly && !parsed.error;
-  const ready = Boolean(status?.can_attempt);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -88,32 +95,30 @@ export function RunSetupPanel({
     return () => controller.abort();
   }, [onArchiveSymbol]);
 
-  const runWedges = async () => {
-    setRunError(""); setReport(null);
-    let request;
-    try {
-      request = makeWedgeRunRequest(selection, symbol, start, end, balance);
-    } catch (error) {
-      setRunError(error instanceof Error ? error.message : "Некорректный выбор");
-      return;
-    }
-    onSimulationStart();
-    setLoading(true);
+  const runWedges = useCallback(async (request: WedgeRunRequest, seq: number) => {
+    if (running.current) return;
+    running.current = true;
+    const controller = new AbortController();
+    requestController.current = controller;
+    setRunError(""); setReport(null); setLoading(true);
+    onSimulationBusy(true);
     try {
       // The loopback viewer accepts this exact path and a same-origin header.
       // Never call /api; that path may target the PAPER backend.
       const response = await fetch("/local-replay/simulation/wedge", {
-        method: "POST", cache: "no-store",
+        method: "POST", cache: "no-store", signal: controller.signal,
         headers: { "Content-Type": "application/json", "X-Local-Simulation": "wedge" },
         body: JSON.stringify(request),
       });
       const raw: unknown = await response.json();
+      if (seq !== generation.current || controller.signal.aborted) return;
       if (!response.ok) {
         const x = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
         throw new Error(typeof x.error === "string" ? x.error : "Локальный прогон заблокирован");
       }
       const result = parseWedgeResult(raw);
-      if (result.symbol !== request.symbol || result.requested_minutes !== parsed.window?.minutes) {
+      const window = validateInclusiveWindow(request.start_utc, request.end_utc_inclusive);
+      if (result.symbol !== request.symbol || result.requested_minutes !== window.minutes) {
         throw new Error("Отчёт не соответствует выбранному тикеру или периоду");
       }
       const payload = raw as Record<string, unknown>;
@@ -125,22 +130,32 @@ export function RunSetupPanel({
           replay.simulation_run_id !== payload.simulation_run_id ||
           !candles.length || replay.events.filter(e =>
             e.kind === "ENTRY_FILLED" || e.kind === "EXIT_FILLED").length !== result.virtual_fills ||
-          candles[0].candle!.start_ms < parsed.window!.startMs ||
-          candles.at(-1)!.candle!.end_ms > parsed.window!.endExclusiveMs) {
+          candles[0].candle!.start_ms < window.startMs ||
+          candles.at(-1)!.candle!.end_ms > window.endExclusiveMs) {
         throw new Error("Свечи и виртуальные сделки не совпадают с выбранным прогоном");
       }
       onSimulationReady(replay);
       setReport(result);
     } catch (error) {
-      setRunError(error instanceof Error ? error.message : "Симуляция недоступна");
+      if (seq === generation.current && !controller.signal.aborted)
+        setRunError(error instanceof Error ? error.message : "Симуляция недоступна");
     } finally {
-      setLoading(false);
+      if (requestController.current === controller) {
+        requestController.current = null; running.current = false;
+        setLoading(false); onSimulationBusy(false);
+      }
     }
-  };
+  }, [onSimulationReady, onSimulationBusy]);
+
+  useEffect(() => {
+    if (playRequestId > 0 && preparedRun.current)
+      void runWedges(preparedRun.current, generation.current);
+  }, [playRequestId, runWedges]);
 
   const updateStart = (value: string) => {
     datesEdited.current = true;
     setPeriodError("");
+    setCoordinateText("");
     setStart(value);
     if (preset) {
       try { setEnd(presetEndInclusive(value, preset)); } catch { /* Display validation until input completed. */ }
@@ -149,14 +164,14 @@ export function RunSetupPanel({
   const choosePreset = (next: PeriodPreset) => {
     datesEdited.current = true;
     setPeriodError("");
-    setPreset(next);
+    setPreset(next); setCoordinateText("");
     try { setEnd(presetEndInclusive(start, next)); } catch { /* Invalid start remains visible. */ }
   };
   const changePeriod = (increment: PeriodIncrement, direction: 1 | -1) => {
     try {
       const updatedEnd = adjustInclusiveWindow(start, end, increment, direction);
       datesEdited.current = true;
-      setPreset(null);
+      setPreset(null); setCoordinateText("");
       setEnd(updatedEnd);
       setPeriodError("");
     } catch (error) {
@@ -165,17 +180,23 @@ export function RunSetupPanel({
   };
   const applyCoordinates = (value: string) => {
     try {
-      const coordinates = parseRunCoordinates(value);
-      // An explicit owner paste may replace previously selected symbol/dates.
+      const coords = value.trim() ? parseRunCoordinates(value) :
+        { symbol, start_utc: start, end_utc_inclusive: end };
+      const request = makeWedgeRunRequest(
+        selection, coords.symbol, coords.start_utc, coords.end_utc_inclusive, balance,
+      );
+      requestController.current?.abort();
+      requestController.current = null;
+      running.current = false;
+      onSimulationBusy(false);
+      generation.current++;
+      preparedRun.current = request;
       datesEdited.current = true;
-      onPasteSymbol(coordinates.symbol);
-      setStart(coordinates.start_utc);
-      setEnd(coordinates.end_utc_inclusive);
-      setPreset(null);
-      setPeriodError("");
-      setCoordinateError("");
-      setRunError("");
+      onPasteSymbol(request.symbol);
+      setStart(request.start_utc); setEnd(request.end_utc_inclusive);
+      setPreset(null); setPeriodError(""); setCoordinateError(""); setRunError("");
       setReport(null);
+      onSimulationStart(request); // Prepare Source and clear old chart; POST waits for ▶.
     } catch (error) {
       setCoordinateError(error instanceof Error ? error.message : "Неверные координаты прогона");
     }
@@ -186,7 +207,7 @@ export function RunSetupPanel({
         throw new Error("Буфер недоступен — вставьте строку в поле вручную");
       const value = await navigator.clipboard.readText();
       setCoordinateText(value);
-      applyCoordinates(value);
+      setCoordinateError("");
     } catch (error) {
       setCoordinateError(error instanceof Error ? error.message : "Вставка недоступна");
     }
@@ -292,7 +313,8 @@ export function RunSetupPanel({
           <label>Конец · дата и время, включительно
             <input aria-label="Конец прогона UTC" type="datetime-local" step={60}
               value={end} onChange={e => {
-                datesEdited.current = true; setPeriodError(""); setPreset(null); setEnd(e.target.value);
+                datesEdited.current = true; setPeriodError(""); setPreset(null);
+                setCoordinateText(""); setEnd(e.target.value);
               }} />
           </label>
           {parsed.error ? <p role="alert" className="replay-run-error">{parsed.error}</p> :
@@ -318,13 +340,8 @@ export function RunSetupPanel({
         <span data-selected-strategies={active.join(",")}>
           Выбрано компонентов: {active.length}. {selection.mirror ? "Mirror включён." : "Mirror выключен."}
         </span>
-        <button type="button" onClick={() => void runWedges()}
-          disabled={loading || !selectionAllowed || !ready}
-          title={!wedgesOnly ? "В торговом режиме пока доступны только клинья"
-            : !ready ? "Требуются локальный движок, проверенный архив и профиль риска"
-            : "Локальный виртуальный прогон без PAPER"}>
-          {loading ? "Выполняется прогон…" : "Запустить клинья · SIMULATION"}
-        </button>
+        <span>{loading ? "Проверка M1 и расчёт виртуального прогона…" :
+          "Применить тикер и период → ▶ Пуск на графике"}</span>
       </div>
       {!wedgesOnly && active.length > 0 &&
         <p className="replay-run-error" role="status">
@@ -341,7 +358,7 @@ export function RunSetupPanel({
           ].filter(Boolean).join(", ")}.
         </p>}
       {runError && <p role="alert" className="replay-run-error">{runError}</p>}
-      {report && <section aria-label="Результаты виртуального прогона" className="replay-run-result" role="status">
+      {report && showReport && <section aria-label="Результаты виртуального прогона" className="replay-run-result" role="status">
         <strong>Результат локального SIMULATION · {report.symbol}</strong>
         <span>Реализованный Net PnL: {report.realized_net_pnl} USDT ·
           нереализованный: {report.unrealized_pnl} USDT</span>
@@ -355,7 +372,8 @@ export function RunSetupPanel({
       </section>}
       <p className="replay-run-disclaimer">
         Общий мультивыбор сохранён, но пока торгуются только клинья. Прогон строго локальный, по заранее
-        проверенным архивам Bybit без доступа к PAPER/VPS. График автоматически воспроизводит закрытые M5 выбранного прогона.
+        проверенным архивам Bybit без доступа к PAPER/VPS. После «Применить» нажмите ▶:
+        график воспроизводит закрытые M5 выбранного прогона.
       </p>
     </section>
   );

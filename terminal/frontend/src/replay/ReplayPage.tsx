@@ -14,7 +14,8 @@ import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
 import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import { RunSetupPanel } from "./RunSetupPanel";
-import { validateInclusiveWindow } from "./runSetup";
+import { validateInclusiveWindow, makeWedgeRunRequest } from "./runSetup";
+type WedgeRunRequest = ReturnType<typeof makeWedgeRunRequest>;
 import "./replay.css";
 
 // The replay tools share the terminal's compact icon-first interaction, with
@@ -481,8 +482,12 @@ export function ReplayPage() {
   const [drawings, setDrawings] = useState<DrawingObject[]>([]);
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [fileLabel, setFileLabel] = useState("Синтетический пример");
-  const [simulationGraphPending, setSimulationGraphPending] = useState(false);
+  const [fileLabel, setFileLabel] = useState("Тикер и период не выбраны");
+  // The synthetic fixture is available only via the explicit Example button.
+  const [simulationGraphPending, setSimulationGraphPending] = useState(true);
+  const [preparedRun, setPreparedRun] = useState(false);
+  const [runLoading, setRunLoading] = useState(false);
+  const [playRequestId, setPlayRequestId] = useState(0);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const total = document.events.length;
   const progress = Math.round(100 * cursor / total);
@@ -549,7 +554,7 @@ export function ReplayPage() {
     rows.filter(row => row.first_touch === kind).length;
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const onSimulationStart = useCallback(() => {
+  const onSimulationStart = useCallback((request: WedgeRunRequest) => {
     // A new ticker/date must never inherit old candles or demonstration fills.
     bundledRequest.current?.abort(); bundledRequest.current = null;
     historyRequest.current?.abort(); historyRequest.current = null;
@@ -557,7 +562,10 @@ export function ReplayPage() {
     setPlaying(false); setCursor(0);
     setError(null);
     setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+    setFileLabel(`${request.symbol} | ${request.start_utc} — ${request.end_utc_inclusive} UTC`);
     setSimulationGraphPending(true);
+    setPreparedRun(true);
+    setRunLoading(false);
   }, []);
 
   const onSimulationReady = useCallback((replay: ReplayDocument) => {
@@ -568,8 +576,9 @@ export function ReplayPage() {
     setSymbol(replay.symbol);
     setDocument(replay);
     setCursor(0); setTimeframe("5m");
-    setFileLabel("Проверенная история Bybit · " + replay.symbol + " · SIMULATION");
+    // The owner-selected ticker and date range stay visible in Source.
     setSimulationGraphPending(false);
+    setPreparedRun(false);
     setPlaying(true);
   }, []);
 
@@ -723,13 +732,14 @@ export function ReplayPage() {
 
       <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol}
         onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
-        onSimulationReady={onSimulationReady}
+        onSimulationReady={onSimulationReady} onSimulationBusy={setRunLoading}
+        playRequestId={playRequestId} showReport={!simulationGraphPending && cursor >= total}
         onPublicHistoryRequest={(ticker, from, to) => void loadLocalHistory(ticker, from, to)}
         publicHistoryLoading={historyLoading} />
       <section className="replay-controls" aria-label="Управление воспроизведением">
         <label className="replay-file">
           Загрузить JSON прогона
-          <input ref={fileInput} type="file" accept=".json,application/json"
+          <input ref={fileInput} type="file" accept=".json,application/json" disabled={runLoading}
             onChange={(e) => void loadFile(e.target.files?.[0])} />
         </label>
         <button type="button" onClick={() => {
@@ -737,10 +747,12 @@ export function ReplayPage() {
           historyRequest.current?.abort(); historyRequest.current = null;
           setHistoryLoading(false); setPlaying(false); setCursor(0); setError(null);
           setDocument(syntheticReplay()); setSimulationGraphPending(false);
+          setPreparedRun(false);
           setFileLabel("Синтетический пример");
           setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
         }}>Пример</button>
-        <button type="button" aria-label="Скачать журнал SIMULATION JSON" onClick={() => {
+        <button type="button" aria-label="Скачать журнал SIMULATION JSON"
+          disabled={simulationGraphPending} onClick={() => {
           const report = simulationActionJournal(document);
           const blob = new Blob([JSON.stringify(report, null, 2) + "\n"], { type: "application/json" });
           const url = URL.createObjectURL(blob);
@@ -752,25 +764,28 @@ export function ReplayPage() {
           anchor.remove();
           // Browser owns this temporary object URL; no trade/network request.
           window.setTimeout(() => URL.revokeObjectURL(url), 0);
-        }}>Журнал JSON ({simulationActionJournal(document).actions.length})</button>
+        }}>Журнал JSON ({simulationGraphPending ? 0 : simulationActionJournal(document).actions.length})</button>
 
       </section>
 
       {error && <p role="alert" className="replay-error">{error}</p>}
       {simulationGraphPending && <p className="replay-note" role="status"
         aria-label="Ожидание нового графика">
-        Старые свечи очищены. Ожидаются проверенные свечи нового прогона;
-        при ошибке причина будет показана в настройках.
+        {runLoading ? "Проверяю архив и рассчитываю виртуальный прогон…" :
+          preparedRun ? "Тикер и период применены. Нажмите ▶ Пуск." :
+            "Вставьте тикер и период, нажмите «Применить», затем ▶ Пуск."}
+        {" "}Старые и демонстрационные свечи не показываются.
       </p>}
-      {!simulationGraphPending && <>
       <section className="replay-meta" aria-label="Состояние симулятора">
         <div><span>Источник</span><strong>{fileLabel}</strong></div>
-        <div><span>Прогон / рынок</span><strong>{document.simulation_run_id}{document.symbol ? " · " + document.symbol + " · 5m" : ""}</strong></div>
-        <div><span>Время рынка</span><strong>{shown.lastTimeMs === null ? "До первого события" :
+        <div><span>Время рынка</span><strong>{simulationGraphPending ? "До начала прогона" :
+          shown.lastTimeMs === null ? "До первого события" :
           new Date(shown.lastTimeMs).toLocaleString("ru-RU", { timeZone: "UTC" }) + " UTC"}</strong></div>
         <div><span>Свечи / входы / выходы</span>
-          <strong>{shown.candles.length} / {shown.fills.length} / {shown.exits.length}</strong></div>
+          <strong>{simulationGraphPending ? "0 / 0 / 0" :
+            `${shown.candles.length} / ${shown.fills.length} / ${shown.exits.length}`}</strong></div>
       </section>
+      {!simulationGraphPending && <>
       <div className="replay-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100}
         aria-valuenow={progress} aria-label="Прогресс воспроизведения">
         <div style={{ width: progress + "%" }} />
@@ -845,6 +860,7 @@ export function ReplayPage() {
       {document.demo && <p className="replay-note">
         ДЕМО: синтетические свечи и условные события, не реальные сигналы стратегии и не результат Bybit.
       </p>}
+      </>}
       <div className="replay-grid">
         <section className="replay-chart-panel">
           <div className="replay-timeframe-switch" role="group" aria-label="Таймфрейм графика">
@@ -855,25 +871,32 @@ export function ReplayPage() {
             <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
         <button type="button" className="replay-player-button"
           title={playing ? "Пауза" : "Пуск"} aria-label={playing ? "Пауза" : "Пуск"}
-          onClick={() => { if (cursor === total) setCursor(0); setPlaying((s) => !s); }}>
+          disabled={runLoading || (simulationGraphPending && !preparedRun)}
+          onClick={() => {
+            if (simulationGraphPending) { setPlayRequestId(id => id + 1); return; }
+            if (cursor === total) setCursor(0);
+            setPlaying(s => !s);
+          }}>
           <PlayerIcon name={playing ? "pause" : "play"} />
         </button>
         <button type="button" className="replay-player-button" title="Шаг назад"
           aria-label="Шаг назад" onClick={() => {
             setPlaying(false);
             setCursor(seekPoints[Math.max(0, seekIndex - 1)]);
-          }} disabled={shown.candles.length === 0}><PlayerIcon name="backward" /></button>
+          }} disabled={simulationGraphPending || shown.candles.length === 0}><PlayerIcon name="backward" /></button>
         <button type="button" className="replay-player-button" title="Шаг вперёд"
           aria-label="Шаг вперёд" onClick={() => {
             setPlaying(false);
             setCursor((current) => nextClosedCandleCursor(document.events, current));
-          }} disabled={cursor >= total}><PlayerIcon name="forward" /></button>
+          }} disabled={simulationGraphPending || cursor >= total}><PlayerIcon name="forward" /></button>
         <button type="button" className="replay-player-button" title="В начало"
-          aria-label="В начало" onClick={() => { setPlaying(false); setCursor(0); }}>
+          aria-label="В начало" disabled={simulationGraphPending}
+          onClick={() => { setPlaying(false); setCursor(0); }}>
           <PlayerIcon name="beginning" />
         </button>
         <input className="replay-seek" type="range" min={0} max={seekPoints.length - 1}
-                step={1} value={seekIndex} aria-label="Перемотка воспроизведения"
+                step={1} value={simulationGraphPending ? 0 : seekIndex}
+                disabled={simulationGraphPending} aria-label="Перемотка воспроизведения"
                 onChange={e => {
                   setPlaying(false);
                   setCursor(seekPoints[Number(e.target.value)]);
@@ -906,15 +929,19 @@ export function ReplayPage() {
               }} title="Удалить выбранное" aria-label="Удалить выбранное"><ReplayToolIcon tool="delete" /></button>
             <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
           </div>
-          <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
-            drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
-            onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
-            onDrawingGesture={() => setPlaying(false)} />
+          {simulationGraphPending
+            ? <div className="replay-chart-pending" aria-label="Пустой график до запуска">
+                {runLoading ? "Подготавливаю проверенные свечи…" :
+                  "График нового прогона появится после нажатия ▶"}
+              </div>
+            : <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
+                drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
+                onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
+                onDrawingGesture={() => setPlaying(false)} />}
         </section>
       </div>
-      </>}
       <footer className="replay-footer">
-        {simulationGraphPending ? "График ожидает историю нового прогона." :
+        {simulationGraphPending ? "Ожидаю ▶ Пуск / проверенную историю нового прогона." :
           `${cursor} из ${total} событий. Вход на следующем открытии не раскрывает будущую свечу.`}
         Только публичные GET-запросы к истории Bybit; без приватных API, торговли и записи в PAPER.
       </footer>

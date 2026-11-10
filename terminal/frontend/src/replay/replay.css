@@ -17,7 +17,7 @@
 .replay-rate { margin-left: auto; min-width: 190px; color: #c2d0e0; display: flex; align-items: center; gap: 10px; }
 .replay-rate input { width: 130px; accent-color: #72a9ee; }
 .replay-error { background: #44202a; padding: 12px; border-radius: 7px; color: #ffb6bf; }
-.replay-meta { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
+.replay-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
 .replay-meta div { display: flex; flex-direction: column; gap: 6px; padding: 11px 13px; background: #151e2a; border: 1px solid #263447; border-radius: 8px; min-width: 0; }
 .replay-meta span { color: #98abc4; font-size: 12px; }
 .replay-meta strong { font-size: 14px; overflow-wrap: anywhere; font-weight: 600; }
@@ -89,3 +89,8 @@
   .replay-playback-controls { margin-left: 0; flex-basis: 100%; }
   .replay-playback-controls .replay-rate { margin-left: 0; }
 }
+
+/* The prepared source is visible, but neither stale nor synthetic candles are. */
+.replay-chart-pending { display: flex; align-items: center; justify-content: center;
+  min-height: 660px; padding: 24px; text-align: center; color: #94a9c3;
+  background: #121923; }

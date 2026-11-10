@@ -65,8 +65,13 @@ try {
   await page.goto(localUrl, { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: "Машина времени" }).waitFor();
   assert.match(await page.locator("body").innerText(), /SIMULATION ONLY/);
-  assert.match(await page.locator("body").innerText(), /Синтетический пример/);
-  await page.waitForFunction(() => document.querySelectorAll(".replay-chart canvas").length > 0);
+  assert.equal(await page.locator(".replay-chart canvas").count(), 0,
+    "the viewer starts blank; no synthetic candles appear by default");
+  assert.equal(await page.locator(".replay-meta").count(), 1);
+  assert.match(await page.locator(".replay-meta").innerText(), /Тикер и период не выбраны/);
+  assert.equal(await page.getByRole("button", { name: /Запустить клинья/ }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Пуск" }).isDisabled(), true,
+    "▶ becomes available after Apply");
 
   // Universal setup config changes only local React state, never live/PAPER IO.
   const setup = page.getByRole("region", { name: "Настройка стратегий и периода" });
@@ -124,6 +129,9 @@ try {
   assert.equal(await startUtc.inputValue(), "2026-09-11T00:00");
   assert.equal(await endUtc.inputValue(), "2026-09-11T23:59");
   assert.match(await duration.innerText(), /1 день/);
+  assert.match(await page.locator(".replay-meta").innerText(), /XRPUSDT.*2026-09-11T00:00/);
+  assert.equal(await page.locator(".replay-chart canvas").count(), 0,
+    "Apply must clear old candles immediately");
   await coordinates.fill("PAPER | 2026-09-11T00:00 | 2026-09-11T23:59");
   await setup.getByRole("button", { name: "Применить" }).click();
   assert.match(await setup.locator(".replay-run-heading").innerText(), /XRPUSDT/,
@@ -131,9 +139,9 @@ try {
   await coordinates.fill("BTCUSDT | 2026-10-01T12:34 | 2026-10-11T18:45");
   await setup.getByRole("button", { name: "Применить" }).click();
   assert.match(await setup.locator(".replay-run-heading").innerText(), /BTCUSDT/);
-  const runWedge = setup.getByRole("button", { name: /Запустить клинья/ });
-  assert.equal(await runWedge.isDisabled(), true,
-    "no local verified archive and native risk profile => no virtual trading");
+  assert.equal(await page.getByRole("button", { name: /Запустить клинья/ }).count(), 0,
+    "a second SIMULATION launch button must never reappear");
+  assert.match(await page.locator(".replay-meta").innerText(), /BTCUSDT.*2026-10-01T12:34/);
   // A loopback-only fixture verifies the UI transport; the actual engine's
   // checksum and original Robot integration are independently Python-tested.
   simEnabled = true;
@@ -197,31 +205,35 @@ try {
   await readySetup.getByLabel("Начало прогона UTC").fill("2026-10-01T12:34");
   await readySetup.getByLabel("Конец прогона UTC").fill("2026-10-02T05:21");
   await readySetup.getByLabel("Виртуальный депозит").fill("1000");
-  const runnable = readySetup.getByRole("button", { name: /Запустить клинья/ });
-  assert.equal(await runnable.isDisabled(), false);
-  await runnable.click();
+  const appliedPlay = page.getByRole("button", { name: "Пуск", exact: true });
+  assert.equal(await appliedPlay.isDisabled(), true, "no ticker/date applied after reload");
+  await readySetup.getByRole("button", { name: "Применить" }).click();
+  assert.equal(await appliedPlay.isDisabled(), false);
+  assert.equal(posted.length, 0, "Apply prepares data without running virtual strategy");
+  assert.match(await page.locator(".replay-meta").innerText(), /BTCUSDT.*2026-10-01T12:34/);
+  assert.equal(await page.locator(".replay-meta").innerText().then(x => x.includes("Прогон / рынок")), false);
+  assert.equal(await page.locator(".replay-chart canvas").count(), 0,
+    "old synthetic chart must not be displayed after Apply");
+  assert.equal(await page.locator(".replay-chart-pending").count(), 1);
+  await appliedPlay.click(); // The one and only command to start the run.
   await page.getByRole("status", { name: "Ожидание нового графика" }).waitFor();
-  assert.equal(await page.locator(".replay-chart-panel").count(), 0,
-    "old synthetic candle chart must immediately disappear on new run");
-  assert.equal(await page.locator(".replay-meta").count(), 0,
-    "old SYNTHETIC_DEMO metadata must not be shown with new run");
-  await readySetup.getByRole("status", { name: "Результаты виртуального прогона" }).waitFor();
-  assert.match(await readySetup.innerText(), /3\.71 USDT/);
+  assert.equal(await readySetup.getByRole("status", { name: "Результаты виртуального прогона" }).count(), 0,
+    "future PnL must not be shown before the playhead reaches the last candle");
   await page.waitForFunction(() => {
     const meta = document.querySelector(".replay-meta");
-    return meta && meta.textContent.includes("browser_wedge_test") &&
-      meta.textContent.includes("BTCUSDT") &&
-      !meta.textContent.includes("SYNTHETIC_DEMO");
+    return meta && meta.textContent.includes("BTCUSDT") &&
+      !meta.textContent.includes("SYNTHETIC_DEMO") &&
+      document.querySelector(".replay-chart canvas");
   });
-  assert.equal(await page.locator(".replay-chart-panel").count(), 1,
-    "new verified market candles should occupy the same player surface");
-  await page.waitForFunction(() => Number(document.querySelector(
-    '[role="progressbar"]')?.getAttribute("aria-valuenow")) > 0);
+  await page.waitForFunction(() =>
+    document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow") === "100");
+  await readySetup.getByRole("status", { name: "Результаты виртуального прогона" }).waitFor();
+  assert.match(await readySetup.innerText(), /3\.71 USDT/);
+  assert.equal(await page.locator(".replay-chart-panel").count(), 1);
   assert.ok((await page.locator(".replay-meta").innerText()).includes("BTCUSDT"));
-  // Reset the rest of the existing player/ADX regression tests to their
-  // intended synthetic fixture after proving the actual run auto-loads.
   await page.getByRole("button", { name: "Пример", exact: true }).click();
-  assert.match(await page.locator(".replay-meta").innerText(), /SYNTHETIC_DEMO/);
+  assert.match(await page.locator(".replay-meta").innerText(), /Синтетический пример/);
+  assert.equal(await page.locator(".replay-meta").innerText().then(x => x.includes("SYNTHETIC_DEMO")), false);
   assert.equal(posted.length, 1);
   assert.equal(posted[0].method, "POST");
   assert.equal(posted[0].header, "wedge");
@@ -232,8 +244,9 @@ try {
     initial_balance: "1000",
   });
   await readySetup.getByRole("checkbox", { name: "Все стратегии" }).check();
-  assert.equal(await runnable.isDisabled(), true,
-    "all strategies cannot be passed to wedge-only backend");
+  await readySetup.getByRole("button", { name: "Применить" }).click();
+  assert.match(await readySetup.innerText(), /Пока доступны только/);
+  assert.equal(posted.length, 1, "unsupported strategies never cause a backend POST");
   assert.equal(requests.filter(url => url.includes("/api/") || url.includes("/v5/")).length, 0);
 
   // The entire replay control surface belongs beside the M5/H1 switch,
