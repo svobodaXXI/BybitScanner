@@ -400,6 +400,9 @@ try {
     });
   });
   const bounds = page.getByRole("region", { name: "Настройка стратегий и периода" });
+  // Prior rejection test selected all unsupported strategies: restore a runnable
+  // selection before applying a new market-only public-history interval.
+  await bounds.getByRole("button", { name: "Только клинья" }).click();
   await bounds.getByRole("textbox", { name: "Координаты прогона" })
     .fill("BTCUSDT | 2026-10-01T00:00 | 2026-10-01T23:59");
   await bounds.getByRole("button", { name: "Применить" }).click();
