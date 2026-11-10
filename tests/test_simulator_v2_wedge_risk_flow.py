@@ -125,6 +125,11 @@ class WedgeRiskSourceAndStageTests(unittest.TestCase):
                 self.assertEqual(session.wedge_robot.risk_previews, ())
                 session.step(bar(250, closing=opening, low="97", high="103"))
                 session.step(bar(251, closing=retest, low="99", high="101"))
+                self.assertFalse(
+                    [dict(e.details) for e in session.events
+                     if e.kind == "SIM_WEDGE_RISK_BLOCKED"],
+                    "Native Wedge risk preflight blocked an otherwise complete test fixture",
+                )
                 preview, = session.wedge_robot.risk_previews
                 self.assertEqual(preview.status, "PREVIEW_ONLY")
                 self.assertEqual(preview.request.namespace, "SIMULATION")
@@ -175,6 +180,8 @@ class WedgeRiskSourceAndStageTests(unittest.TestCase):
         session.cancel_pending("unfunded")
         session.resume()
         session.step(bar(251, closing="101", low="99", high="101"))
+        self.assertFalse([dict(e.details) for e in session.events
+                          if e.kind == "SIM_WEDGE_RISK_BLOCKED"])
         self.assertEqual(len(session.wedge_robot.risk_previews), 1)
         self.assertEqual(len(session.wedge_robot.limit_plans), 1)
         self.assertEqual(sum(
