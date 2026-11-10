@@ -170,6 +170,7 @@ def run_local_simulation(request_data: object) -> dict[str, object]:
         config=configuration, manifest=manifest,
         cache_dir=SIM_DATA / "m1-cache",
         latest_closed_boundary_ms=latest,
+        capture_replay=True,
     )
     payload = result.to_payload()
     payload["risk_terms_source"] = profile["risk"]["terms_source"]

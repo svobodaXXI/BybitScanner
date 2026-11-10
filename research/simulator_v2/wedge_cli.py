@@ -126,6 +126,7 @@ def parse_manifest(
 def run_from_time_machine_config(
     *, config: Mapping[str, Any], manifest: Mapping[str, Any],
     cache_dir: Path, latest_closed_boundary_ms: int,
+    capture_replay: bool = False,
 ) -> WedgeBacktestResult:
     """Only currently implemented wedges; unknown strategies fail closed."""
     if not isinstance(config, Mapping) or (
@@ -181,6 +182,7 @@ def run_from_time_machine_config(
             selected_patterns=patterns, tick_size=settings.tick_size,
         ),
         risk_settings=settings,
+        capture_replay=capture_replay,
     )
 
 

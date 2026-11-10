@@ -27,6 +27,7 @@ from research.simulator_v2.trade_range import (
 from research.simulator_v2.wedge_observer import WedgeScannerConfig
 from research.simulator_v2.wedge_robot_observer import SimWedgeRobotConfig
 from research.simulator_v2.wedge_risk_preflight import SimWedgeRiskSettings
+from research.simulator_v2.wedge_visual_replay import WedgeVisualReplay
 
 
 @dataclass(frozen=True)
@@ -43,11 +44,13 @@ class WedgeBacktestResult:
     take_exits: int
     pending_protection: bool
     archive_proofs: tuple[TradeDayProof, ...] = ()
+    replay_document: dict[str, object] | None = None
     namespace: str = "SIMULATION"
 
     def to_payload(self) -> dict[str, object]:
         return {
             **self.report.to_payload(),
+            **({"replay": self.replay_document} if self.replay_document is not None else {}),
             "requested_start_ms": self.requested_start_ms,
             "requested_end_inclusive_ms": self.requested_end_inclusive_ms,
             "requested_minutes": (self.requested_end_inclusive_ms - self.requested_start_ms) // MINUTE_MS + 1,
@@ -83,6 +86,7 @@ def run_verified_wedge_chunks(
     chunks: Iterable[HistoryChunk],
     *,
     start_ms: int, end_inclusive_ms: int,
+    visual_recorder: WedgeVisualReplay | None = None,
 ) -> WedgeBacktestResult:
     """Trade ONLY after native Scanner→Robot retest and native risk preview.
 
@@ -111,6 +115,8 @@ def run_verified_wedge_chunks(
             and decision.virtual_time_ms == candle.end_ms
         }
         if not current_ids:
+            if visual_recorder is not None:
+                visual_recorder.record(active, candle)
             return
         plans = {
             plan.request.client_action_id.value: plan.candidate_id
@@ -135,6 +141,8 @@ def run_verified_wedge_chunks(
                 continue
             active.submit_protected_preview(preview)
             submitted += 1
+        if visual_recorder is not None:
+            visual_recorder.record(active, candle)
 
     report = run_verified_chunks(
         session, chunks, on_committed_m1=on_close,
@@ -184,6 +192,7 @@ def run_cached_wedge_trade_range(
     risk_settings: SimWedgeRiskSettings,
     taker_fee_rate: Decimal = Decimal("0.0006"),
     maker_fee_rate: Decimal = Decimal("0.0002"),
+    capture_replay: bool = False,
 ) -> WedgeBacktestResult:
     """Offline Bybit public-trade M1 with an exact inclusive minute cutoff.
 
@@ -243,8 +252,16 @@ def run_cached_wedge_trade_range(
         wedge_scanner_config=scanner_config, wedge_robot_config=robot_config,
         wedge_risk_settings=risk_settings,
     )
+    recorder = WedgeVisualReplay(
+        run_id=simulation_run_id, symbol=symbol,
+        start_ms=start_ms, end_ms=end_exclusive,
+    ) if capture_replay else None
     result = run_verified_wedge_chunks(
         session, cut_to_selected_end(),
         start_ms=start_ms, end_inclusive_ms=end_inclusive_ms,
+        visual_recorder=recorder,
     )
-    return replace(result, archive_proofs=selected_proofs)
+    replay = recorder.document(
+        source_id=result.report.source_id, expected_fills=result.report.virtual_fills,
+    ) if recorder is not None else None
+    return replace(result, archive_proofs=selected_proofs, replay_document=replay)

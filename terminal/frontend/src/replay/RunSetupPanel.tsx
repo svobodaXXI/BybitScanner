@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { parseReplayDocument, type ReplayDocument } from "./replayModel";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, PLANNED_OPTIONS,
   clearAll, isAllSelected, onlyWedges, presetEndInclusive, extendInclusiveWindow,
@@ -20,11 +21,13 @@ const INCREMENTS: Array<{ id: PeriodIncrement; name: string }> = [
 
 /** Local-only Wedge execution via loopback: never production /api or PAPER. */
 export function RunSetupPanel({
-  symbol, onArchiveSymbol, onPasteSymbol,
+  symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
 }: {
   symbol: string;
   onArchiveSymbol: (archiveSymbol: string) => boolean;
   onPasteSymbol: (symbol: string) => void;
+  onSimulationStart: () => void;
+  onSimulationReady: (replay: ReplayDocument) => void;
 }) {
   const [selection, setSelection] = useState<RunSelection>(clearAll);
   const [start, setStart] = useState(INITIAL_START);
@@ -92,6 +95,7 @@ export function RunSetupPanel({
       setRunError(error instanceof Error ? error.message : "Некорректный выбор");
       return;
     }
+    onSimulationStart();
     setLoading(true);
     try {
       // The loopback viewer accepts this exact path and a same-origin header.
@@ -110,6 +114,20 @@ export function RunSetupPanel({
       if (result.symbol !== request.symbol || result.requested_minutes !== parsed.window?.minutes) {
         throw new Error("Отчёт не соответствует выбранному тикеру или периоду");
       }
+      const payload = raw as Record<string, unknown>;
+      const replay = parseReplayDocument(payload.replay);
+      const candles = replay.events.filter(e => e.kind === "CANDLE_CLOSED");
+      if (replay.demo || replay.mode !== "STRATEGY" || replay.symbol !== request.symbol ||
+          replay.timeframe !== "5m" ||
+          replay.market_data_source !== "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M" ||
+          replay.simulation_run_id !== payload.simulation_run_id ||
+          !candles.length || replay.events.filter(e =>
+            e.kind === "ENTRY_FILLED" || e.kind === "EXIT_FILLED").length !== result.virtual_fills ||
+          candles[0].candle!.start_ms < parsed.window!.startMs ||
+          candles.at(-1)!.candle!.end_ms > parsed.window!.endExclusiveMs) {
+        throw new Error("Свечи и виртуальные сделки не совпадают с выбранным прогоном");
+      }
+      onSimulationReady(replay);
       setReport(result);
     } catch (error) {
       setRunError(error instanceof Error ? error.message : "Симуляция недоступна");
@@ -320,7 +338,7 @@ export function RunSetupPanel({
       </section>}
       <p className="replay-run-disclaimer">
         Общий мультивыбор сохранён, но пока торгуются только клинья. Прогон строго локальный, по заранее
-        проверенным архивам Bybit без доступа к PAPER/VPS. Ниже — прежний независимый просмотр M5.
+        проверенным архивам Bybit без доступа к PAPER/VPS. График автоматически воспроизводит закрытые M5 выбранного прогона.
       </p>
     </section>
   );

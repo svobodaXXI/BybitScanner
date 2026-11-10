@@ -15,6 +15,7 @@ from research.simulator_v2.cache import _checksum, _rows
 from research.simulator_v2.history import HistoryChunk, MINUTE_MS
 from research.simulator_v2.report import run_verified_chunks
 from research.simulator_v2.trade_range import import_local_trade_range
+from research.simulator_v2.wedge_visual_replay import WedgeVisualReplay
 from research.simulator_v2.wedge_backtest import (
     run_cached_wedge_trade_range, run_verified_wedge_chunks,
 )
@@ -75,6 +76,10 @@ class OfflineWedgeBacktestTests(unittest.TestCase):
                     bar(253, closing="100", low=lo, high=hi),
                     bar(254),
                 ]
+                visual = WedgeVisualReplay(
+                    run_id=session.account.simulation_run_id, symbol="BTCUSDT",
+                    start_ms=250*M, end_ms=255*M,
+                )
                 with patch.object(
                     session.wedge_scanner, "_evaluate",
                     side_effect=lambda *, frame, bars:
@@ -83,7 +88,26 @@ class OfflineWedgeBacktestTests(unittest.TestCase):
                     result = run_verified_wedge_chunks(
                         session, [verified_chunk(minutes)],
                         start_ms=250*M, end_inclusive_ms=254*M,
+                        visual_recorder=visual,
                     )
+                visual_doc = visual.document(
+                    source_id=result.report.source_id,
+                    expected_fills=result.report.virtual_fills,
+                )
+                self.assertEqual(visual_doc["mode"], "STRATEGY")
+                self.assertEqual(visual_doc["symbol"], "BTCUSDT")
+                self.assertEqual([e["kind"] for e in visual_doc["events"]].count(
+                    "CANDLE_CLOSED"), 1)
+                self.assertEqual([e["kind"] for e in visual_doc["events"]].count(
+                    "ENTRY_SIGNAL"), 1)
+                self.assertEqual([e["kind"] for e in visual_doc["events"]].count(
+                    "ENTRY_FILLED"), 1)
+                self.assertEqual([e["kind"] for e in visual_doc["events"]].count(
+                    "EXIT_FILLED"), 1)
+                self.assertEqual(
+                    [e["sequence"] for e in visual_doc["events"]],
+                    list(range(1, len(visual_doc["events"]) + 1)),
+                )
                 self.assertEqual(result.report.scenario_type,
                                  "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION")
                 self.assertEqual(result.market_warmup_start_ms, 0)

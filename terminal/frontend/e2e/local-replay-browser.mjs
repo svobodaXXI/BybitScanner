@@ -130,10 +130,41 @@ try {
       header: data.headers()["x-local-simulation"],
       body: data.postDataJSON(),
     });
+    // Allow browser to assert the old DEMO is removed while computing.
+    await new Promise(resolve => setTimeout(resolve, 300));
     await route.fulfill({
       status: 200, contentType: "application/json",
       body: JSON.stringify({
         namespace: "SIMULATION", symbol: "BTCUSDT",
+        simulation_run_id: "browser_wedge_test",
+        replay: {
+          source: "SIMULATION", simulation_run_id: "browser_wedge_test",
+          mode: "STRATEGY", demo: false, symbol: "BTCUSDT", timeframe: "5m",
+          market_data_source: "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M",
+          events: [
+            { source: "SIMULATION", simulation_run_id: "browser_wedge_test",
+              sequence: 1, kind: "CANDLE_CLOSED", time_ms: Date.UTC(2026, 9, 1, 12, 40),
+              candle: { start_ms: Date.UTC(2026, 9, 1, 12, 35),
+                end_ms: Date.UTC(2026, 9, 1, 12, 40),
+                open: 40000, high: 40200, low: 39900, close: 40100, volume: 50 } },
+            { source: "SIMULATION", simulation_run_id: "browser_wedge_test",
+              sequence: 2, kind: "ENTRY_SIGNAL", time_ms: Date.UTC(2026, 9, 1, 12, 40),
+              side: "LONG", price: 40100, stop: 39900, take: 40500 },
+            { source: "SIMULATION", simulation_run_id: "browser_wedge_test",
+              sequence: 3, kind: "ENTRY_FILLED", time_ms: Date.UTC(2026, 9, 1, 12, 41),
+              side: "LONG", price: 40100,
+              trade_id: "SIMULATION:browser_wedge_test:entry1" },
+            { source: "SIMULATION", simulation_run_id: "browser_wedge_test",
+              sequence: 4, kind: "EXIT_FILLED", time_ms: Date.UTC(2026, 9, 1, 12, 42),
+              side: "LONG", price: 40500, reason: "TAKE",
+              trade_id: "SIMULATION:browser_wedge_test:entry1" },
+            { source: "SIMULATION", simulation_run_id: "browser_wedge_test",
+              sequence: 5, kind: "CANDLE_CLOSED", time_ms: Date.UTC(2026, 9, 1, 12, 45),
+              candle: { start_ms: Date.UTC(2026, 9, 1, 12, 40),
+                end_ms: Date.UTC(2026, 9, 1, 12, 45),
+                open: 40100, high: 40600, low: 40000, close: 40500, volume: 40 } },
+          ],
+        },
         scenario_type: "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION",
         risk_terms_status: "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED",
         source_id: "BYBIT_PUBLIC_TRADES_RANGE_BROWSER_TEST_ONLY",
@@ -154,8 +185,28 @@ try {
   const runnable = readySetup.getByRole("button", { name: /Запустить клинья/ });
   assert.equal(await runnable.isDisabled(), false);
   await runnable.click();
+  await page.getByRole("status", { name: "Ожидание нового графика" }).waitFor();
+  assert.equal(await page.locator(".replay-chart-panel").count(), 0,
+    "old synthetic candle chart must immediately disappear on new run");
+  assert.equal(await page.locator(".replay-meta").count(), 0,
+    "old SYNTHETIC_DEMO metadata must not be shown with new run");
   await readySetup.getByRole("status", { name: "Результаты виртуального прогона" }).waitFor();
   assert.match(await readySetup.innerText(), /3\.71 USDT/);
+  await page.waitForFunction(() => {
+    const meta = document.querySelector(".replay-meta");
+    return meta && meta.textContent.includes("browser_wedge_test") &&
+      meta.textContent.includes("BTCUSDT") &&
+      !meta.textContent.includes("SYNTHETIC_DEMO");
+  });
+  assert.equal(await page.locator(".replay-chart-panel").count(), 1,
+    "new verified market candles should occupy the same player surface");
+  await page.waitForFunction(() => Number(document.querySelector(
+    '[role="progressbar"]')?.getAttribute("aria-valuenow")) > 0);
+  assert.ok((await page.locator(".replay-meta").innerText()).includes("BTCUSDT"));
+  // Reset the rest of the existing player/ADX regression tests to their
+  // intended synthetic fixture after proving the actual run auto-loads.
+  await page.getByRole("button", { name: "Пример", exact: true }).click();
+  assert.match(await page.locator(".replay-meta").innerText(), /SYNTHETIC_DEMO/);
   assert.equal(posted.length, 1);
   assert.equal(posted[0].method, "POST");
   assert.equal(posted[0].header, "wedge");

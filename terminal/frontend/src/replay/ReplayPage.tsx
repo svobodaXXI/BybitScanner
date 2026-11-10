@@ -487,6 +487,7 @@ export function ReplayPage() {
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fileLabel, setFileLabel] = useState("Синтетический пример");
+  const [simulationGraphPending, setSimulationGraphPending] = useState(false);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const total = document.events.length;
   const progress = Math.round(100 * cursor / total);
@@ -553,6 +554,30 @@ export function ReplayPage() {
     rows.filter(row => row.first_touch === kind).length;
   const fileInput = useRef<HTMLInputElement>(null);
 
+  const onSimulationStart = useCallback(() => {
+    // A new ticker/date must never inherit old candles or demonstration fills.
+    bundledRequest.current?.abort(); bundledRequest.current = null;
+    historyRequest.current?.abort(); historyRequest.current = null;
+    setHistoryLoading(false);
+    setPlaying(false); setCursor(0);
+    setError(null);
+    setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+    setSimulationGraphPending(true);
+  }, []);
+
+  const onSimulationReady = useCallback((replay: ReplayDocument) => {
+    if (replay.mode !== "STRATEGY" || replay.demo || !replay.symbol) {
+      throw new Error("Новый прогон не содержит проверенной истории");
+    }
+    symbolEdited.current = true;
+    setSymbol(replay.symbol);
+    setDocument(replay);
+    setCursor(0); setTimeframe("5m");
+    setFileLabel("Проверенная история Bybit · " + replay.symbol + " · SIMULATION");
+    setSimulationGraphPending(false);
+    setPlaying(true);
+  }, []);
+
   function syncImportedMarketSelection(parsed: ReplayDocument) {
     if (parsed.symbol) {
       symbolEdited.current = true;
@@ -588,6 +613,7 @@ export function ReplayPage() {
         }
         if (controller.signal.aborted) return;
         setDocument(parsed);
+        setSimulationGraphPending(false);
         syncImportedMarketSelection(parsed);
         setPlaying(false); setCursor(0);
         setFileLabel("Проверенный публичный архив · GRASSUSDT");
@@ -631,6 +657,7 @@ export function ReplayPage() {
       const data: unknown = JSON.parse(await file.text());
       const parsed = parseReplayDocument(data);
       setDocument(parsed);
+      setSimulationGraphPending(false);
       // Manual import also replaces the market selection, never leave stale
       // BTC/date controls beside an imported GRASSUSDT archive.
       if (parsed.mode === "MARKET_ONLY") syncImportedMarketSelection(parsed);
@@ -670,6 +697,7 @@ export function ReplayPage() {
       if (imported.mode !== "MARKET_ONLY") throw new Error("История не соответствует режиму MARKET_ONLY");
       if (historyRequest.current !== controller) return;
       setDocument(imported);
+      setSimulationGraphPending(false);
       setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel("Bybit · публичные свечи · без сделок");
@@ -694,7 +722,8 @@ export function ReplayPage() {
       </header>
 
       <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol}
-        onPasteSymbol={onPasteSymbol} />
+        onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
+        onSimulationReady={onSimulationReady} />
 
       <section className="replay-history-controls" aria-label="Публичная история Bybit">
         <label>Инструмент <input aria-label="Инструмент" value={symbol} maxLength={30}
@@ -717,7 +746,8 @@ export function ReplayPage() {
           bundledRequest.current?.abort(); bundledRequest.current = null;
           historyRequest.current?.abort(); historyRequest.current = null;
           setHistoryLoading(false); setPlaying(false); setCursor(0); setError(null);
-          setDocument(syntheticReplay()); setFileLabel("Синтетический пример");
+          setDocument(syntheticReplay()); setSimulationGraphPending(false);
+          setFileLabel("Синтетический пример");
           setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
         }}>Пример</button>
         <button type="button" aria-label="Скачать журнал SIMULATION JSON" onClick={() => {
@@ -737,6 +767,12 @@ export function ReplayPage() {
       </section>
 
       {error && <p role="alert" className="replay-error">{error}</p>}
+      {simulationGraphPending && <p className="replay-note" role="status"
+        aria-label="Ожидание нового графика">
+        Старые свечи очищены. Ожидаются проверенные свечи нового прогона;
+        при ошибке причина будет показана в настройках.
+      </p>}
+      {!simulationGraphPending && <>
       <section className="replay-meta" aria-label="Состояние симулятора">
         <div><span>Источник</span><strong>{fileLabel}</strong></div>
         <div><span>Прогон / рынок</span><strong>{document.simulation_run_id}{document.symbol ? " · " + document.symbol + " · 5m" : ""}</strong></div>
@@ -886,8 +922,10 @@ export function ReplayPage() {
             onDrawingGesture={() => setPlaying(false)} />
         </section>
       </div>
+      </>}
       <footer className="replay-footer">
-        {cursor} из {total} событий. Вход на следующем открытии не раскрывает будущую свечу.
+        {simulationGraphPending ? "График ожидает историю нового прогона." :
+          `${cursor} из ${total} событий. Вход на следующем открытии не раскрывает будущую свечу.`}
         Только публичные GET-запросы к истории Bybit; без приватных API, торговли и записи в PAPER.
       </footer>
     </main>
