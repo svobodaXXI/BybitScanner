@@ -15,11 +15,11 @@ from research.simulator_v2.timeline import (
     IsolatedTimeline, MinuteFrame, SimulationEvent, StageFact, StepBlocked,
 )
 from research.simulator_v2.virtual_account import VirtualAccount, VirtualAccountSnapshot
-from research.simulator_v2.virtual_exchange import MarketRequest, LimitRequest, VirtualExchange
+from research.simulator_v2.virtual_exchange import MarketRequest, LimitRequest, ProtectedLimitRequest, VirtualExchange
 from research.simulator_v2.reused_geometry import ReadOnlyReusedGeometry
 from research.simulator_v2.wedge_observer import ReadOnlyWedgeScanner, WedgeScannerConfig
 from research.simulator_v2.wedge_robot_observer import ReadOnlyWedgeRobot, SimWedgeRobotConfig
-from research.simulator_v2.wedge_risk_preflight import SimWedgeRiskSettings
+from research.simulator_v2.wedge_risk_preflight import SimWedgeRiskSettings, UnsubmittedProtectedWedgePreview
 
 
 class VirtualReplaySession:
@@ -96,14 +96,18 @@ class VirtualReplaySession:
     def _on_closed_exchange_stage(
         self, frame: MinuteFrame, _staged: tuple[SimulationEvent, ...],
     ) -> tuple[StageFact, ...]:
-        receipt = self.exchange.on_closed_minute(frame.minute)
-        if receipt is None:
-            return ()
-        last = self.exchange.events[-1]
-        if last.kind != "FILLED" or last.virtual_time_ms != frame.virtual_time_ms:
-            raise StepBlocked("SIMULATION fill event not consistent with M1")
-        return (StageFact(
-            kind="VIRTUAL_" + last.order_type + "_FILLED",
+        self.exchange.on_closed_minute(frame.minute)
+        receipts = self.exchange.last_minute_fills
+        order_events = self.exchange.last_minute_order_events
+        if len(receipts) != len(order_events):
+            raise StepBlocked("SIMULATION fill/event batch mismatched")
+        if any(event.virtual_time_ms != frame.virtual_time_ms
+               or event.kind not in ("FILLED", "STOP_FILLED", "TAKE_FILLED")
+               for event in order_events):
+            raise StepBlocked("SIMULATION fill event not consistent with closed M1")
+        return tuple(StageFact(
+            kind=("VIRTUAL_" + event.order_type + "_FILLED"
+                  if event.kind == "FILLED" else "VIRTUAL_" + event.kind),
             entity_id=receipt.fill_id,
             details=(
                 ("side", receipt.side),
@@ -111,7 +115,7 @@ class VirtualReplaySession:
                 ("price", str(receipt.price)),
                 ("fee", str(receipt.fee)),
             ),
-        ),)
+        ) for receipt, event in zip(receipts, order_events))
 
     @property
     def virtual_time_ms(self) -> int | None:
@@ -168,6 +172,55 @@ class VirtualReplaySession:
         if self.virtual_time_ms is None:
             raise ValueError("first close a historical M1 candle")
         self.exchange.submit_limit(request, submitted_at_ms=self.virtual_time_ms)
+
+    def submit_protected_preview(
+        self, preview: UnsubmittedProtectedWedgePreview,
+    ) -> None:
+        """Explicit isolated preview→GTC+STOP/TAKE request after native RETEST.
+
+        A preview is not production admission. This method accepts only one
+        native Robot risk preview generated on the MOST RECENT committed
+        virtual M1, with a currently flat single-symbol virtual account.
+        No Robot approval or trading capability is implied outside this
+        local SIMULATION account.
+        """
+        if self.timeline.paused_stage is not None:
+            raise StepBlocked("SIMULATION paused; protected entry forbidden")
+        if self.timeline.virtual_time_ms != self.exchange.virtual_time_ms:
+            raise StepBlocked("SIMULATION clock mismatch")
+        if self.wedge_robot is None or self.virtual_time_ms is None:
+            raise ValueError("original virtual Robot RETEST required")
+        if not isinstance(preview, UnsubmittedProtectedWedgePreview):
+            raise TypeError("native Wedge protected risk preview required")
+        if not any(
+            item == preview for item in self.wedge_robot.risk_previews
+        ):
+            raise ValueError("preview is not a recorded native Scanner/Robot Wedge result")
+        if not any(
+            d.event == "RETEST" and d.virtual_time_ms == self.virtual_time_ms
+            for d in self.wedge_robot.decisions
+        ):
+            raise ValueError("only immediate committed RETEST previews may trade")
+        if not any(
+            plan.request.client_action_id.value == preview.request.order_id
+            for plan in self.wedge_robot.limit_plans
+        ):
+            raise ValueError("protected preview does not match native Robot LIMIT")
+        if self.wedge_robot.risk_settings is None:
+            raise ValueError("SIMULATION protective settings are not enabled")
+        if self.account.snapshot(
+            as_of_ms=self.virtual_time_ms,
+            mark_price=preview.request.limit_price,
+        ).position_quantity != 0:
+            raise ValueError("virtual account must be flat before a new protected entry")
+        request = ProtectedLimitRequest(
+            entry=preview.request,
+            stop_price=preview.stop_price,
+            take_price=preview.take_price,
+        )
+        self.exchange.submit_protected_limit(
+            request, submitted_at_ms=self.virtual_time_ms,
+        )
 
     def amend_limit(self, request: LimitRequest) -> None:
         if self.timeline.paused_stage is not None:
