@@ -11,10 +11,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from research.simulator_v2.cache import _checksum, _rows, iter_cached_m1_chunks
 from research.simulator_v2.history import HistoryChunk, MINUTE_MS, SOURCE_ID_RE
+from research.historical_market_replay import Candle
 from research.simulator_v2.session import VirtualReplaySession
 from research.simulator_v2.virtual_account import VirtualAccountSnapshot
 from research.simulator_v2.virtual_exchange import MarketRequest
@@ -103,6 +104,7 @@ def run_verified_chunks(
     chunks: Iterable[HistoryChunk],
     *,
     order_schedule: Mapping[int, MarketRequest] | None = None,
+    on_committed_m1: Callable[[VirtualReplaySession, Candle], None] | None = None,
 ) -> ReplayReport:
     """Single-use, synchronous run of already verified chunks.
 
@@ -119,6 +121,10 @@ def run_verified_chunks(
         order_schedule = {}
     if not isinstance(order_schedule, Mapping):
         raise TypeError("schedule must be a mapping of closed-M1 time to request")
+    if on_committed_m1 is not None and not callable(on_committed_m1):
+        raise TypeError("SIMULATION M1 callback must be callable")
+    if on_committed_m1 is not None and order_schedule:
+        raise ValueError("cannot combine strategy replay with manual order schedule")
     for timestamp, request in order_schedule.items():
         if type(timestamp) is not int or timestamp < 0 or timestamp % MINUTE_MS:
             raise ValueError("schedule uses an invalid M1 close timestamp")
@@ -165,6 +171,10 @@ def run_verified_chunks(
                 assert latest_snapshot is not None
                 days.append(_day_entry(active_day, latest_snapshot))
             latest_snapshot = session.step(candle)
+            # Only committed closed M1 may trigger a new strategy LIMIT; its
+            # fill is eligible at the NEXT M1. Callback error blocks report.
+            if on_committed_m1 is not None:
+                on_committed_m1(session, candle)
             minutes += 1
             active_day = current_day
             if latest_snapshot.equity > peak:
