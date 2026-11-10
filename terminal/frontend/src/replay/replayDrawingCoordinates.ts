@@ -33,3 +33,167 @@ export function timeAtChartLogical(logical: number, candles: readonly ReplayCand
   return candles[i].start_ms + (logical - i) *
     (candles[i + 1].start_ms - candles[i].start_ms);
 }
+
+/**
+ * Immutable source geometry is timestamp-based, even when its M5 anchors and
+ * retirement both fall within a single displayed H1 candle. Round-to-H1-bar
+ * rendering silently drops those short historical lines.
+ *
+ * This projection uses only the displayed time axis and the already-known
+ * retirement; the source line, prices and historical publication are unchanged.
+ */
+/**
+ * An M5 correction remains on the H1 historical chart, but it must not
+ * acquire a multi-day H1 ray solely from the chart's coarse time scale.
+ * Show its actual two-pivot slope through the time it became publishable.
+ * The full open-ended research reference still renders on the M5 chart.
+ */
+export function automaticGeometryTimeframeCap(
+  line: { kind: "MAIN_1H" | "TARGET_1H" | "REFERENCE_5M" | "ACCELERATION_5M";
+    available_at_ms: number },
+  timeframe: "5m" | "1h",
+): number {
+  return timeframe === "1h" &&
+    (line.kind === "REFERENCE_5M" || line.kind === "ACCELERATION_5M")
+    ? line.available_at_ms : Infinity;
+}
+
+/** A forward-directed ray never starts in the grey prehistory.
+ * Keep the real pivot pair to calculate its slope; clip only the painted
+ * portion to the first replay candle, never refit or reverse the source.
+ */
+export function forwardLinePaintStartMs(
+  line: { from_ms: number }, replayStartMs: number,
+): number {
+  return Math.max(line.from_ms, replayStartMs);
+}
+
+export function geometryLogicalSegment(
+  line: { from_ms: number; retired_at_ms?: number; superseded_at_ms?: number },
+  displayedCandles: readonly ReplayCandle[],
+): { from: number; to: number } | null {
+  const last = displayedCandles.at(-1);
+  if (!last) return null;
+  // Preserve old anchors and history, but stop the drawn extent when the
+  // replacement becomes known. Historical rays must not cross the entire
+  // later chart while masquerading as the active trend.
+  const untilMs = Math.min(line.retired_at_ms ?? Infinity,
+    line.superseded_at_ms ?? Infinity, last.end_ms);
+  if (untilMs <= line.from_ms) return null;
+  const from = chartLogicalAtTime(line.from_ms, displayedCandles);
+  const to = chartLogicalAtTime(untilMs, displayedCandles);
+  return from === null || to === null || to <= from ? null : { from, to };
+}
+
+/**
+ * Project a timestamp onto the NATIVE candlestick coordinates. The chart
+ * may carry multiple series/panes whose logical indices need not match a
+ * caller-maintained H1 candle array. Use the chart's own H1 bar coordinates
+ * and interpolate between their actual UTC times, preserving M5 precision.
+ * Never round a five-minute anchor to an hourly open.
+ */
+export function chartXAtCandleTime(
+  atMs: number,
+  candles: readonly ReplayCandle[],
+  chartTimeToX: (candleStartMs: number) => number | null,
+): number | null {
+  if (!Number.isFinite(atMs) || candles.length < 2) return null;
+  let i = 0;
+  while (i + 2 < candles.length && candles[i + 1].start_ms <= atMs) i++;
+  // Before/after the loaded window: extrapolate only the axis spacing,
+  // not candle prices or a strategy decision. At least two REAL bars exist.
+  const a = candles[i], b = candles[i + 1];
+  if (b.start_ms <= a.start_ms) return null;
+  const ax = chartTimeToX(a.start_ms), bx = chartTimeToX(b.start_ms);
+  if (ax === null || bx === null || !Number.isFinite(ax) || !Number.isFinite(bx))
+    return null;
+  return ax + (bx - ax) * (atMs - a.start_ms) / (b.start_ms - a.start_ms);
+}
+
+/**
+ * Draw a published H1 MAIN through its TWO genuinely confirmed swing wicks.
+ * The Python causal feed validated the full four-pivot structure including
+ * intervening candles. Later wicks cannot become retroactive structural
+ * anchors and must not silently rotate a published yellow line.
+ *
+ * In real GRASS, the old screen-space wick envelope silently replaced the
+ * 30 Aug 15:00 LOW=0.35890 with the unconfirmed 30 Aug 23:00 LOW=0.34890.
+ * That erased the owner's valid rising III support and disguised its break.
+ * A new slope requires a NEW separately published four-pivot version.
+ */
+export function wickTightH1MainProjection(
+  line: { kind: string; side: "BULL" | "BEAR";
+    from_ms: number; to_ms: number; from_price: number; to_price: number;
+    available_at_ms?: number },
+  _closedHours: readonly ReplayCandle[],
+  _knownAtMs: number,
+): { from_ms: number; to_ms: number; from_price: number; to_price: number;
+     adjusted: boolean } {
+  return {
+    from_ms: line.from_ms, to_ms: line.to_ms,
+    from_price: line.from_price, to_price: line.to_price, adjusted: false,
+  };
+}
+
+export function shortActiveM5Ray(
+  from: { x: number; y: number }, through: { x: number; y: number },
+  lastCandleX: number, paneWidth: number,
+): { x: number; y: number } {
+  const dx = through.x - from.x;
+  if (!Number.isFinite(dx) || dx <= 0) return through;
+  const endX = Math.min(paneWidth, Math.max(through.x, lastCandleX + 36));
+  return { x: endX, y: through.y + (through.y - from.y) *
+    (endX - through.x) / dx };
+}
+
+/**
+ * Hide tiny remnants of already-ended lines at the left viewport edge.
+ * This affects canvas visibility only: source anchors and archived versions
+ * remain untouched and reappear when the user scrolls back to their time.
+ */
+export function isLeftEdgeHistoricalFragment(
+  fromX: number, toX: number, paneWidth: number,
+): boolean {
+  if (![fromX, toX, paneWidth].every(Number.isFinite) || paneWidth <= 0) return false;
+  return fromX < 0 && toX > 0 &&
+    toX < Math.min(120, paneWidth * 0.15);
+}
+
+/** Replay magnet: only already-visible candle HIGH/LOW, in the selected TF.
+ * This adapter maps absolute UTC slots to canvas pixels without rounding
+ * 5m anchors to H1 or touching the automatic research geometry.
+ */
+export function nearestReplayHighLowAnchor(
+  anchor: { logical: number; price: number },
+  displayedCandles: readonly ReplayCandle[],
+  logicalToX: (logical: number) => number | null,
+  priceToY: (price: number) => number | null,
+  radius = 14,
+): { logical: number; price: number } {
+  if (!displayedCandles.length) return anchor;
+  const rawX = logicalToX(anchor.logical);
+  const rawY = priceToY(anchor.price);
+  if (rawX === null || rawY === null) return anchor;
+  const atMs = drawingLogicalToTime(anchor.logical);
+  const pivot = chartLogicalAtTime(atMs, displayedCandles);
+  if (pivot === null) return anchor;
+  const nearest = Math.max(0, Math.min(displayedCandles.length - 1, Math.round(pivot)));
+  let best = anchor, bestDistance = radius;
+  for (let i = Math.max(0, nearest - 1);
+    i <= Math.min(displayedCandles.length - 1, nearest + 1); i++) {
+    const candle = displayedCandles[i];
+    const logical = timeToDrawingLogical(candle.start_ms);
+    const x = logicalToX(logical);
+    if (x === null) continue;
+    for (const price of [candle.high, candle.low]) {
+      const y = priceToY(price);
+      if (y === null) continue;
+      const distance = Math.hypot(x - rawX, y - rawY);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = { logical, price };
+      }
+    }
+  }
+  return best;
+}

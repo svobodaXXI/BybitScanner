@@ -186,16 +186,15 @@ def replay_with_closed_context(
     last_dmi_1h: DmiSnapshot | None = None
     last_dmi_4h: DmiSnapshot | None = None
 
-    # Geometry needs confirmed pivots BEFORE the requested display window.
-    # Seed only the causal, read-only H1/H4 and geometry streams. These bars
-    # are deliberately NOT passed to the replay executor, visual events, or
-    # 5m DMI output: the displayed simulation still starts at the requested time.
+    # Historical context is valid for CLOSED H1/H4 indicators and a grey
+    # chart backdrop, but must not silently seed the H1/M5 trend detector:
+    # its first anchor and prior must come from actual replay candles.
+    # Neither prior prices nor unpublished geometry can gate new in-run trends.
     if geometry_warmup_candles:
         if candles and geometry_warmup_candles[-1].end_ms != candles[0].start_ms:
             raise ValueError("geometry warmup must end exactly at replay start")
         for prior in geometry_warmup_candles:
             _, _, new_hour, new_four = context.observe_closed_five_minute(prior)
-            geometry.observe_closed(prior, new_hour)
             if new_hour is not None:
                 last_dmi_1h = dmi_1h.observe_closed(new_hour)
             if new_four is not None:

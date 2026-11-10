@@ -218,6 +218,15 @@ def verify_archived_prior_timeline(doc):
         candidates = [x for x in lines if
                       x["side"] == side and x["to_ms"] == at and
                       Decimal(x["to_price"]) == price and x["available_at_ms"] <= known]
+        # A structural BEAR prior may advance to a confirmed HIGH without
+        # re-fitting yellow 1--3 (its wick envelope may forbid the slope).
+        # In that case only the SAME real movement, established by the
+        # previous audited prior, may license the independent update.
+        if not candidates and side == "BEAR" and last is not None:
+            candidates = [x for x in lines if
+                          (x["side"], x["from_ms"], x["from_price"]) == last[1]
+                          and x["available_at_ms"] <= known
+                          and x["from_ms"] < at]
         wick = "low" if side == "BULL" else "high"
         candle = hours.get(at)
         if (item["kind"] != "H1_PRIOR_CONFIRMED" or not candidates or
@@ -241,7 +250,7 @@ def verify_archived_prior_timeline(doc):
             )
             if (at <= old_touch or known % hour_ms != 0 or not newer or
                     (side == "BULL" and price <= old_price) or
-                    (side == "BEAR" and price >= old_price)):
+                    (side == "BEAR" and price >= Decimal(line["from_price"]))):
                 raise AssertionError("prior moved without a later CLOSED H1 extreme")
             transfers += 1
         last = (known, movement, at, price)
@@ -337,6 +346,116 @@ def verify_archived_prior_break_timeline(doc):
             item["opposite_h1_first_published_ms"] is not None for item in outcomes),
         "break_events": outcomes[:12],
         "truncated": len(outcomes) > 12,
+    }
+
+
+
+def diagnose_real_h1_pivot_boundary(doc):
+    """Read-only causal proof of where opposite H1 candidates stop.
+
+    Use the SAME 72h context and complete visible H1 closes as the archive.
+    Never create a synthetic pivot or loosen the geometric acceptance gate.
+    """
+    from research.causal_trend_geometry import (
+        ConfirmedSwingStream, recent_hourly_trend, wick_tight_hourly_trend,
+    )
+    from research.historical_candle_feed import ClosedHigherTimeframeFeed, ONE_HOUR_MS
+    from research.historical_market_replay import Candle
+
+    breaks = doc.get("hourly_prior_breaks", [])
+    if not breaks:
+        return {"result": "NO_CONFIRMED_H1_BREAK", "confirmed_breaks": 0}
+    last_break = breaks[-1]
+    opposite = last_break["new_side"]
+    after_ms = last_break["confirmed_at_ms"]
+    hours = [
+        Candle(x["start_ms"], ONE_HOUR_MS, x["open"], x["high"],
+               x["low"], x["close"], x["volume"])
+        for x in doc["context_1h"]
+    ]
+    aggregator = ClosedHigherTimeframeFeed()
+    for event in doc["events"]:
+        bar = event["candle"]
+        _, _, h1, _ = aggregator.observe_closed_five_minute(
+            Candle(bar["start_ms"], M5, bar["open"], bar["high"],
+                   bar["low"], bar["close"], bar["volume"])
+        )
+        if h1 is not None:
+            hours.append(h1)
+    swings = ConfirmedSwingStream(timeframe_ms=ONE_HOUR_MS, wing=2)
+    structure_keys, convergent_keys, wick_valid_keys = set(), set(), set()
+    wick_rejects = []
+    for hour in hours:
+        swings.observe_closed(hour)
+        if hour.end_ms <= after_ms:
+            continue
+        four = swings.recent_pivots
+        if len(four) != 4:
+            continue
+        a, b, c, d = four
+        # Identical price/ordering rules from recent_hourly_trend, before
+        # the 1–3 / 2–4 narrowing and intermediate-wick checks.
+        structured = (
+            (opposite == "BULL" and
+             tuple(p.kind for p in four) == ("LOW", "HIGH", "LOW", "HIGH") and
+             c.price > a.price and d.price > b.price)
+            or
+            (opposite == "BEAR" and
+             tuple(p.kind for p in four) == ("HIGH", "LOW", "HIGH", "LOW") and
+             c.price < a.price and d.price < b.price)
+        )
+        if not structured:
+            continue
+        key = tuple((p.at_ms, str(p.price)) for p in four)
+        structure_keys.add(key)
+        proposed = recent_hourly_trend(four)
+        if proposed is None:
+            continue
+        convergent_keys.add(key)
+        fitted = wick_tight_hourly_trend(proposed, swings.bars)
+        if fitted is None:
+            if not any(x["pivots"] == key for x in wick_rejects):
+                # Identify the FIRST closed H1 wick that violates the true
+                # 1--3 or 2--4 candidate. Never adjust any pivot or tolerance.
+                violations = []
+                for label, line, boundary in (
+                    ("MAIN_1H", proposed.main, "LOWER" if opposite == "BULL" else "UPPER"),
+                    ("TARGET_1H", proposed.target, "UPPER" if opposite == "BULL" else "LOWER"),
+                ):
+                    for index in range(line.first.index + 1, line.second.index + 1):
+                        bar = swings.bars[index]
+                        wick = bar.high if boundary == "UPPER" else bar.low
+                        level = line.value_at(bar.start_ms)
+                        if (wick > level if boundary == "UPPER" else wick < level):
+                            violations.append({
+                                "line": label, "candle_ms": bar.start_ms,
+                                "boundary": boundary, "actual_wick": str(wick),
+                                "pivot_line_price": str(level),
+                                "distance": str(abs(wick - level)),
+                            })
+                            break
+                wick_rejects.append({
+                    "pivots": key, "seen_at_ms": hour.end_ms,
+                    "first_wick_violations": violations[:2],
+                })
+        else:
+            wick_valid_keys.add(key)
+    new_pivots = [
+        {"kind": p.kind, "price": str(p.price), "at_ms": p.at_ms,
+         "confirmed_at_ms": p.confirmed_at_ms}
+        for p in swings.pivots if p.confirmed_at_ms > after_ms
+    ]
+    return {
+        "result": "CAUSAL_OPPOSITE_H1_BOUNDARY",
+        "break_at_ms": after_ms, "expected_side": opposite,
+        "h1_closed_after_break": sum(h.end_ms > after_ms for h in hours),
+        "confirmed_h1_pivots_after_break": len(new_pivots),
+        "latest_confirmed_pivots": new_pivots[-10:],
+        "four_pivot_structures": len(structure_keys),
+        "convergent_four_pivot_candidates": len(convergent_keys),
+        "wick_valid_four_pivot_candidates": len(wick_valid_keys),
+        "wick_rejected_candidates": len(convergent_keys - wick_valid_keys),
+        "wick_rejected_examples": wick_rejects[:3],
     }
 
 
@@ -457,6 +576,16 @@ def check(*, start: str = START, end: str = END,
     verified_priors = verify_archived_prior_timeline(doc)
     verified_breaks = verify_archived_prior_break_timeline(doc)
     if require_complete_reversal and not verified_breaks["breaks_with_later_published_opposite_h1"]:
+        # Preserve the failing gate; expose the narrow proof boundary rather
+        # than dropping the requirement or treating an empty archive as PASS.
+        print(json.dumps({
+            "result": "BLOCKED_REAL_H1_REVERSAL",
+            "symbol": SYMBOL, "start": start, "end": end,
+            "main_h1_lines": sum(line["kind"] == "MAIN_1H" for line in doc["geometry"]),
+            "target_h1_lines": sum(line["kind"] == "TARGET_1H" for line in doc["geometry"]),
+            "confirmed_priors": verified_priors, "confirmed_breaks": verified_breaks,
+            "candidate_boundary": diagnose_real_h1_pivot_boundary(doc),
+        }, sort_keys=True), flush=True)
         raise AssertionError(
             "no complete REAL H1 sequence: frozen prior -> close/next OPEN -> "
             "opposite confirmed 1--3/2--4 line before the next break"

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReplayCandle } from "./replayModel";
 import {
-  chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical,
+  automaticGeometryTimeframeCap, chartLogicalAtTime, chartXAtCandleTime, drawingLogicalToTime, geometryLogicalSegment, forwardLinePaintStartMs, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, shortActiveM5Ray, timeAtChartLogical, timeToDrawingLogical, wickTightH1MainProjection,
 } from "./replayDrawingCoordinates";
 
 const start = Date.UTC(2026, 10, 2);
@@ -25,6 +25,206 @@ describe("manual replay UTC drawing anchors", () => {
     expect(timeToDrawingLogical(time)).toBe(anchor);
     expect(chartLogicalAtTime(time, five.slice(0, 12))).toBe(25);
   });
+  it("keeps retired five-minute geometry visible inside one H1 candle", () => {
+    const hourly = [mkBar(0, 60), mkBar(1, 60), mkBar(2, 60)];
+    const five = Array.from({ length: 36 }, (_, i) => mkBar(i));
+    const firstMs = start + 10 * 300_000;
+    const retiredMs = start + 11 * 300_000;
+    const line = { from_ms: firstMs, retired_at_ms: retiredMs };
+    const hourSegment = geometryLogicalSegment(line, hourly);
+    expect(hourSegment).not.toBeNull();
+    expect(hourSegment!.from).toBeCloseTo(10 / 12);
+    expect(hourSegment!.to).toBeCloseTo(11 / 12);
+    expect(hourSegment!.to).toBeGreaterThan(hourSegment!.from);
+    // After a same-direction H1 revision, the prior yellow slope remains
+    // reviewable at its original anchors but no longer projects indefinitely
+    // across later candles. Rewind hides the future supersession.
+    const revisedAt = start + 100 * 60_000;
+    const original = { from_ms: firstMs };
+    const oldVersion = { ...original, superseded_at_ms: revisedAt };
+    expect(geometryLogicalSegment(original, hourly)!.to).toBe(3);
+    expect(geometryLogicalSegment(oldVersion, hourly)!.to).toBeCloseTo(100 / 60);
+    expect(geometryLogicalSegment(oldVersion, five)!.to).toBeCloseTo(100 / 5);
+    expect(geometryLogicalSegment(original, hourly.slice(0, 1))!.to).toBe(1);
+    const fiveSegment = geometryLogicalSegment(line, five);
+    expect(fiveSegment).toEqual({ from: 10, to: 11 });
+    // Later candles never erase or extend the same retired historical line.
+    expect(geometryLogicalSegment(line, hourly.slice(0, 2))).toEqual(hourSegment);
+    expect(geometryLogicalSegment(line, hourly.slice(0, 1))).toEqual(hourSegment);
+    expect(geometryLogicalSegment(line, [])).toBeNull();
+    expect(geometryLogicalSegment({ from_ms: firstMs }, hourly.slice(0, 1))!.to)
+      .toBeCloseTo(1);
+    // No future retirement may be painted beyond the last closed bar.
+    expect(geometryLogicalSegment({ from_ms: firstMs, retired_at_ms: start + 5 * 3_600_000 }, hourly.slice(0, 1))!.to).toBeCloseTo(1);
+  });
+
+  it("paints a true H1 slope forward from replay start, not backward in ghost prehistory", () => {
+    const hour = 3_600_000;
+    const confirmed = { from_ms: start - 5 * hour, to_ms: start - hour,
+      from_price: 0.395, to_price: 0.375 };
+    const replayStarts = start;
+    const visualFrom = forwardLinePaintStartMs(confirmed, replayStarts);
+    expect(visualFrom).toBe(replayStarts);
+    // Original source is immutable; projected value at the clipped display
+    // start is calculated from both original pivots, without a new anchor.
+    const slope = (confirmed.to_price - confirmed.from_price) /
+      (confirmed.to_ms - confirmed.from_ms);
+    const projected = confirmed.from_price + slope * (visualFrom - confirmed.from_ms);
+    expect(projected).toBeCloseTo(0.37);
+    expect(confirmed.from_ms).toBe(start - 5 * hour);
+    const displayed = Array.from({ length: 5 }, (_, i) => mkBar(i, 60));
+    const part = geometryLogicalSegment({ from_ms: visualFrom }, displayed);
+    expect(part?.from).toBe(0);
+    expect(part?.to).toBe(5);
+    expect(forwardLinePaintStartMs({ from_ms: start + hour }, start))
+      .toBe(start + hour);
+  });
+
+  it("projects M5 timestamps through REAL H1 bar x positions, without rounding", () => {
+    const bars = Array.from({ length: 8 }, (_, i) => mkBar(i, 60));
+    // The chart has already determined the absolute pixels for each H1 bar.
+    const nativeX = (timeMs: number) => {
+      const barIndex = bars.findIndex(bar => bar.start_ms === timeMs);
+      return barIndex >= 0 ? 110 + barIndex * 9 : null;
+    };
+    expect(chartXAtCandleTime(start + 2 * 3_600_000 + 30 * 60_000,
+      bars, nativeX)).toBeCloseTo(132.5);
+    expect(chartXAtCandleTime(start + 5 * 3_600_000, bars, nativeX)).toBe(155);
+    expect(chartXAtCandleTime(start + 8 * 3_600_000, bars, nativeX)).toBe(182);
+    expect(chartXAtCandleTime(start - 30 * 60_000, bars, nativeX)).toBeCloseTo(105.5);
+    expect(chartXAtCandleTime(start, bars.slice(0, 1), nativeX)).toBeNull();
+    expect(chartXAtCandleTime(start, bars, () => null)).toBeNull();
+    expect(chartXAtCandleTime(Number.NaN, bars, nativeX)).toBeNull();
+
+    // Actual H1 candles may have a gap. Interpolation is based on the
+    // underlying timestamps, not invented bars in that gap.
+    const withGap = [bars[0], bars[1], bars[4], bars[5]];
+    expect(chartXAtCandleTime(start + 2 * 3_600_000,
+      withGap, time => ({ [bars[0].start_ms]: 10,
+        [bars[1].start_ms]: 20, [bars[4].start_ms]: 50,
+        [bars[5].start_ms]: 60 } as Record<number,number>)[time] ?? null)).toBe(30);
+  });
+
+  it("keeps confirmed H1 structural anchors despite later protruding wicks", () => {
+    const hour = 3_600_000;
+    const hours = Array.from({ length: 6 }, (_, i) => mkBar(i, 60));
+    const line = { kind: "MAIN_1H", side: "BULL" as const,
+      from_ms: start, to_ms: start + 3 * hour, from_price: 100,
+      to_price: 110, available_at_ms: start + 4 * hour };
+    const bars = hours.map((bar, i) => ({
+      ...bar, low: [100, 103.5, 107, 110, 102, 103][i],
+      high: [104, 108, 112, 115, 119, 122][i],
+    }));
+    const original = { from_ms: line.from_ms, to_ms: line.to_ms,
+      from_price: 100, to_price: 110, adjusted: false };
+    expect(wickTightH1MainProjection(line, bars.slice(0, 4),
+      start + 4 * hour)).toEqual(original);
+    expect(wickTightH1MainProjection(line, bars,
+      start + 6 * hour)).toEqual(original);
+    expect(wickTightH1MainProjection({ ...line, side: "BEAR" }, bars,
+      start + 6 * hour)).toEqual(original);
+    expect(wickTightH1MainProjection({ ...line, kind: "TARGET_1H" }, bars,
+      start + 6 * hour)).toEqual(original);
+  });
+
+  it("preserves real GRASS H1 III higher-low structural support", () => {
+    const origin = Date.UTC(2026, 7, 29, 8);
+    const higherLow = Date.UTC(2026, 7, 30, 15);
+    const laterWick = Date.UTC(2026, 7, 30, 23);
+    const line = { kind: "MAIN_1H", side: "BULL" as const,
+      from_ms: origin, to_ms: higherLow, from_price: 0.3437,
+      to_price: 0.3589, available_at_ms: Date.UTC(2026, 7, 31, 1) };
+    const known = [
+      { ...mkBar(0, 60), start_ms: origin,
+        end_ms: origin + 3_600_000, low: 0.3437 },
+      { ...mkBar(0, 60), start_ms: higherLow,
+        end_ms: higherLow + 3_600_000, low: 0.3589 },
+      { ...mkBar(0, 60), start_ms: laterWick,
+        end_ms: laterWick + 3_600_000, low: 0.3489 },
+    ];
+    // The intermediate 0.34890 is a genuine later wick, NOT the
+    // higher-low swing pivot III. It may pierce the already-known support.
+    const result = wickTightH1MainProjection(line, known,
+      Date.UTC(2026, 7, 31, 5));
+    expect(result).toEqual({ from_ms: origin, to_ms: higherLow,
+      from_price: 0.3437, to_price: 0.3589, adjusted: false });
+  });
+
+  it("ends active M5 ray slightly beyond the last price candle, not chart edge", () => {
+    expect(shortActiveM5Ray({ x: 120, y: 80 }, { x: 200, y: 120 },
+      300, 960)).toEqual({ x: 336, y: 188 });
+    expect(shortActiveM5Ray({ x: 120, y: 80 }, { x: 200, y: 120 },
+      900, 960)).toEqual({ x: 936, y: 488 });
+    expect(shortActiveM5Ray({ x: 120, y: 80 }, { x: 120, y: 120 },
+      300, 960)).toEqual({ x: 120, y: 120 });
+  });
+
+  it("caps M5 slopes on H1 at their real publication, never on native M5", () => {
+    const published = start + 6 * 3_600_000;
+    const m5 = { kind: "REFERENCE_5M" as const, available_at_ms: published };
+    const acceleration = { kind: "ACCELERATION_5M" as const, available_at_ms: published };
+    const yellow = { kind: "MAIN_1H" as const, available_at_ms: published };
+    const target = { kind: "TARGET_1H" as const, available_at_ms: published };
+    expect(automaticGeometryTimeframeCap(m5, "1h")).toBe(published);
+    expect(automaticGeometryTimeframeCap(acceleration, "1h")).toBe(published);
+    expect(automaticGeometryTimeframeCap(m5, "5m")).toBe(Infinity);
+    expect(automaticGeometryTimeframeCap(acceleration, "5m")).toBe(Infinity);
+    expect(automaticGeometryTimeframeCap(yellow, "1h")).toBe(Infinity);
+    expect(automaticGeometryTimeframeCap(target, "1h")).toBe(Infinity);
+
+    const h1 = Array.from({ length: 10 }, (_, i) => mkBar(i, 60));
+    const a = start + 2 * 3_600_000 + 10 * 60_000;
+    const original = { from_ms: a };
+    const capped = geometryLogicalSegment({
+      ...original,
+      retired_at_ms: Math.min(
+        automaticGeometryTimeframeCap(m5, "1h"), h1.at(-1)!.end_ms,
+      ),
+    }, h1);
+    expect(capped?.from).toBeCloseTo(2 + 10 / 60);
+    expect(capped?.to).toBe(6);
+    expect(geometryLogicalSegment(original, h1)?.to).toBe(10);
+    // Neither the archive nor the calculated M5 source coordinates move.
+    expect(m5).toEqual({ kind: "REFERENCE_5M", available_at_ms: published });
+  });
+
+  it("culls only small retired-line fragments clipped by the left viewport edge", () => {
+    expect(isLeftEdgeHistoricalFragment(-250, 25, 1000)).toBe(true);
+    expect(isLeftEdgeHistoricalFragment(-250, 119, 1000)).toBe(true);
+    expect(isLeftEdgeHistoricalFragment(-250, 160, 1000)).toBe(false);
+    expect(isLeftEdgeHistoricalFragment(5, 25, 1000)).toBe(false);
+    expect(isLeftEdgeHistoricalFragment(-250, -5, 1000)).toBe(false);
+    expect(isLeftEdgeHistoricalFragment(-15, 20, 200)).toBe(true);
+    expect(isLeftEdgeHistoricalFragment(-15, 35, 200)).toBe(false);
+  });
+
+  it("magnet snaps to selected TF's visible High/Low without changing future data", () => {
+    const five = Array.from({ length: 4 }, (_, i) => mkBar(i));
+    const toX = (logical: number) => {
+      const slot = chartLogicalAtTime(drawingLogicalToTime(logical), five);
+      return slot === null ? null : slot * 24;
+    };
+    const toY = (price: number) => (110 - price) * 10;
+    const source = { logical: timeToDrawingLogical(five[2].start_ms) + 0.015, price: 101.8 };
+    const snapped = nearestReplayHighLowAnchor(source, five.slice(0, 3), toX, toY);
+    expect(snapped).toEqual({ logical: timeToDrawingLogical(five[2].start_ms), price: 102 });
+    // Different selected TF: use only completed H1 and retain UTC anchor.
+    const hour = [mkBar(0, 60), mkBar(1, 60)];
+    const hourAnchor = { logical: timeToDrawingLogical(hour[1].start_ms) + 0.01, price: 99.2 };
+    const hourX = (logical: number) => {
+      const slot = chartLogicalAtTime(drawingLogicalToTime(logical), hour);
+      return slot === null ? null : slot * 30;
+    };
+    expect(nearestReplayHighLowAnchor(hourAnchor, hour, hourX, toY))
+      .toEqual({ logical: timeToDrawingLogical(hour[1].start_ms), price: 99 });
+    const future = { logical: timeToDrawingLogical(five[3].start_ms), price: 102 };
+    expect(nearestReplayHighLowAnchor(future, five.slice(0, 2), toX, toY))
+      .toEqual(future);
+    const remote = { logical: timeToDrawingLogical(five[1].start_ms), price: 120 };
+    expect(nearestReplayHighLowAnchor(remote, five, toX, toY))
+      .toEqual(remote);
+  });
+
   it("preserves actual UTC time across M5 gaps without inventing candles", () => {
     const bars = [mkBar(0), mkBar(1), mkBar(3), mkBar(4)];
     const time = mkBar(2).start_ms;

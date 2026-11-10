@@ -80,15 +80,14 @@ class MarketOnlyExportTests(unittest.TestCase):
         yellow = [e for e in document["geometry"] if e["kind"] in ("MAIN_1H","TARGET_1H")]
         self.assertEqual(len(yellow), 2)
         self.assertEqual({x["kind"] for x in yellow}, {"MAIN_1H", "TARGET_1H"})
-        self.assertEqual({x["available_at_ms"] for x in yellow}, {13*12*FIVE_MINUTES_MS})
+        self.assertEqual({x["available_at_ms"] for x in yellow}, {11*12*FIVE_MINUTES_MS})  # fourth H1 close
         self.assertTrue(all(x["classification"] == "UNVALIDATED_GEOMETRY_ONLY" for x in yellow))
         self.assertTrue(all(x["available_at_ms"] > x["to_ms"] for x in yellow))
         self.assertTrue(all(e["kind"] == "CANDLE_CLOSED" for e in document["events"]))
 
-    def test_preloaded_hourly_pivots_make_line_available_without_visible_prehistory(self):
-        # The original 13h fixture has a strict confirmed 1-3 / 2-4
-        # construction. Displaying only hours 13-15 without prehistory
-        # must not fabricate a line; 13h warmup makes it causally known.
+    def test_preloaded_hourly_context_does_not_seed_replay_geometry(self):
+        # Genuine warmup H1 OHLC may populate the grey chart context and DMI.
+        # Its pivots may NOT create an invisible active trend/prior in a new run.
         hourly = [
             (105,100), (110,102), (115,104), (107,99), (104,95),
             (110,103), (118,107), (113,104), (108,99), (112,106),
@@ -120,7 +119,7 @@ class MarketOnlyExportTests(unittest.TestCase):
         )
         self.assertEqual(no_seed["geometry"], [])
         self.assertEqual(verify_archived_prior_timeline(no_seed)["events"], 0)
-        self.assertEqual(verify_archived_prior_timeline(seeded)["events"], 1)
+        self.assertEqual(verify_archived_prior_timeline(seeded)["events"], 0)
         self.assertEqual(len(seeded["events"]), 24)
         self.assertEqual(seeded["events"][0]["candle"]["start_ms"], start_ms)
         self.assertEqual(seeded["geometry_warmup_hours"], 13)
@@ -133,19 +132,15 @@ class MarketOnlyExportTests(unittest.TestCase):
             bar["end_ms"] <= seeded["events"][0]["candle"]["start_ms"]
             for bar in seeded["context_1h"]
         ))
-        kinds = {line["kind"] for line in seeded["geometry"]}
-        self.assertTrue({"MAIN_1H", "TARGET_1H"}.issubset(kinds))
-        self.assertTrue(all(line["from_ms"] < start_ms
-                            for line in seeded["geometry"]
-                            if line["kind"] in {"MAIN_1H", "TARGET_1H"}))
-        self.assertTrue(all(line["available_at_ms"] >= start_ms
-                            for line in seeded["geometry"]))
+        self.assertEqual(seeded["geometry"], [])
+        self.assertEqual(seeded["hourly_prior_updates"], [])
+        self.assertEqual(seeded["hourly_prior_breaks"], [])
         self.assertTrue(all(e["kind"] == "CANDLE_CLOSED"
                             for e in seeded["events"]))
         self.assertEqual(seeded["dmi_5m"]["points"][0]["plus_di"], None)
 
-    def test_replay_records_contact_then_next_close_reaction_without_trades(self):
-        # Confirm H1 1--3 / 2--4 by hour 13 using ONLY the warmup.
+    def test_unpublished_hidden_warmup_line_cannot_make_contact_events(self):
+        # Contact requires a trend built from in-run H1 points, not a hidden prior.
         hourly = [
             (105,100), (110,102), (115,104), (107,99), (104,95),
             (110,103), (118,107), (113,104), (108,99), (112,106),
@@ -178,13 +173,8 @@ class MarketOnlyExportTests(unittest.TestCase):
             run_id="touch-not-fill", fetch_candles=fetch, geometry_warmup_bars=156,
         )
         marks = doc["observations"]
-        self.assertEqual([x["kind"] for x in marks],
-                         ["MAIN_1H_TOUCH", "MAIN_1H_REACTION"])
-        self.assertEqual([x["time_ms"] for x in marks],
-                         [first + FIVE_MINUTES_MS, first + 2 * FIVE_MINUTES_MS])
-        self.assertEqual(marks[1]["touch_time_ms"], marks[0]["time_ms"])
-        self.assertTrue(all(x["classification"] == "UNVALIDATED_GEOMETRY_ONLY"
-                            for x in marks))
+        self.assertEqual(marks, [])
+        self.assertEqual(doc["geometry"], [])
         self.assertTrue(all(e["kind"] == "CANDLE_CLOSED" for e in doc["events"]))
         self.assertFalse(any("trade_id" in e for e in doc["events"]))
 

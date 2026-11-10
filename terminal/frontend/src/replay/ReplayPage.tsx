@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  hourlyChartCandles, nextClosedCandleCursor, timeframeStepCursor, replayCursorAtUtc, parseReplayUtcInput, formatReplayUtcInput, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
@@ -12,17 +12,13 @@ import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from
 import { rayEndPoint } from "../chart/drawingGeometry";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
-import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
+import { automaticGeometryTimeframeCap, chartLogicalAtTime, chartXAtCandleTime, drawingLogicalToTime, geometryLogicalSegment, forwardLinePaintStartMs, isLeftEdgeHistoricalFragment, nearestReplayHighLowAnchor, shortActiveM5Ray, timeAtChartLogical, timeToDrawingLogical, wickTightH1MainProjection } from "./replayDrawingCoordinates";
+import { ReplayDrawingUndo } from "./replayDrawingUndo";
+import {
+  automaticLineStyle, lastM5AccelerationTimeline, visibleLastM5Accelerations,
+} from "./lastM5Acceleration";
 import "./replay.css";
 
-function label(event: ReplayEvent): string {
-  switch (event.kind) {
-    case "CANDLE_CLOSED": return "Свеча закрылась";
-    case "ENTRY_SIGNAL": return "Сигнал " + (event.side ?? "");
-    case "ENTRY_FILLED": return "Вход " + (event.side ?? "");
-    case "EXIT_FILLED": return "Выход " + (event.reason ?? "");
-  }
-}
 // The replay tools share the terminal's compact icon-first interaction, with
 // real vector pictograms rather than font-dependent textual approximations.
 const REPLAY_DRAWING_TOOLS: Array<{ tool: DrawingTool; label: string }> = [
@@ -37,7 +33,7 @@ const REPLAY_DRAWING_TOOLS: Array<{ tool: DrawingTool; label: string }> = [
   { tool: "ruler", label: "Линейка" },
   { tool: "rectangle", label: "Прямоугольник" },
 ];
-const REPLAY_TOOL_PATHS: Record<DrawingTool | "delete" | "undo", string> = {
+const REPLAY_TOOL_PATHS: Record<DrawingTool | "delete" | "undo" | "magnet", string> = {
   crosshair: "M12 2v20M2 12h20M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6",
   select: "M4 3l5 17 3.4-6.6L19 10z",
   trend: "M4 20L20 4M4 17v3h3M17 4h3v3",
@@ -50,17 +46,36 @@ const REPLAY_TOOL_PATHS: Record<DrawingTool | "delete" | "undo", string> = {
   rectangle: "M4 5h16v14H4zM4 9v2M20 13v2",
   delete: "M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13M10 10v7M14 10v7",
   undo: "M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-2",
+  magnet: "M5 3v9a7 7 0 0 0 14 0V3h-4v9a3 3 0 0 1-6 0V3H5z",
 };
-function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" | "undo" }) {
+function ReplayToolIcon({ tool }: { tool: DrawingTool | "delete" | "undo" | "magnet" }) {
   return <svg className="replay-tool-icon" viewBox="0 0 24 24"
     data-tool-icon={tool} aria-hidden="true" focusable="false">
     <path d={REPLAY_TOOL_PATHS[tool]} />
   </svg>;
 }
+type PlaybackIconName = "start" | "back" | "play" | "pause" | "forward";
+const PLAYBACK_ICON_PATHS: Record<PlaybackIconName, string> = {
+  start: "M4 5v14M13 6L6 12l7 6zM21 6l-7 6 7 6z",
+  back: "M5 5v14M19 6L9 12l10 6z",
+  play: "M7 4l13 8-13 8z",
+  pause: "M8 5v14M16 5v14",
+  forward: "M19 5v14M5 6l10 6-10 6z",
+};
+function ReplayPlaybackIcon({ name }: { name: PlaybackIconName }) {
+  return <svg className="replay-playback-icon" viewBox="0 0 24 24"
+    data-playback-icon={name} aria-hidden="true" focusable="false">
+    <path d={PLAYBACK_ICON_PATHS[name]} />
+  </svg>;
+}
 function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selectedId,
-  drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
+  drawingTool, magnet, onDrawingsChange, onSelectDrawing, onDrawingGesture, onDrawingComplete, onDrawingGestureEnd, onChooseStart }: {
   document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h";
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
+  magnet: boolean;
+  onDrawingComplete: () => void;
+  onDrawingGestureEnd: () => void;
+  onChooseStart: (startMs: number) => void;
   onDrawingsChange: (next: DrawingObject[]) => void;
   onSelectDrawing: (id: string | null) => void;
   onDrawingGesture: () => void;
@@ -74,14 +89,23 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
   const renderExecutions = useRef<() => void>(() => {});
    const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
-  const displayCandles = useMemo(() => timeframe === "1h"
-    ? completeHourlyCandles(shown.candles) : shown.candles, [shown.candles, timeframe]);
+  const hourlyEvidence = useMemo(() => hourlyChartCandles(document, shown.candles),
+    [shown.candles, document]);
+  const displayCandles = timeframe === "1h" ? hourlyEvidence : shown.candles;
+  const replayStartMs = document.events.find(event =>
+    event.kind === "CANDLE_CLOSED")?.candle?.start_ms ?? Infinity;
   // Build a frozen visual-only record once per archive. Each already
   // revealed provisional line persists as drawn; rewinding masks its future.
   const earlyTimeline = useMemo(() => earlyGeometryTimeline(document), [document]);
   const earlyGeometry = useMemo(
     () => visibleEarlyGeometryTimeline(earlyTimeline, shown.lastTimeMs),
     [earlyTimeline, shown.lastTimeMs],
+  );
+  // Independent visual-only counter-H1 layer: no feeds, signals or orders.
+  const accelerationTimeline = useMemo(() => lastM5AccelerationTimeline(document), [document]);
+  const accelerationGeometry = useMemo(
+    () => visibleLastM5Accelerations(accelerationTimeline, shown.lastTimeMs),
+    [accelerationTimeline, shown.lastTimeMs],
   );
   const observedDmi = useMemo(() => visibleDmi(document, shown.candles.length), [document, shown.candles.length]);
   // Only the final 5m DMI reading of each completed H1 is plotted on the H1 axis.
@@ -167,6 +191,11 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
     candleSeries.setData(displayCandles.map((c) => ({
       time: (c.start_ms / 1000) as UTCTimestamp,
       open: c.open, high: c.high, low: c.low, close: c.close,
+      // H1 before the replay's first M5 belongs to the known warmup, not
+      // to an event/frame. Muted candles distinguish evidence from playback.
+      ...(timeframe === "1h" && c.start_ms < replayStartMs
+        ? { color: "#617287", wickColor: "#8190a3", borderColor: "#617287" }
+        : {}),
     })));
      const dmiSeries = indicators.current;
     if (dmiSeries) {
@@ -228,56 +257,138 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       // DrawingOverlay's rayEndPoint extends the line to the price pane edge.
       // Never refit the line to the replayed price candles.
       const knownLines = visibleGeometry(document, shown.lastTimeMs);
+      // Preserve all already-published slopes as fixed historical segments.
+      // Previous versions stop at their supersession or prior break; only
+      // the current version can extend as an active ray to the right.
       const historicalLines = visibleGeometryHistory(document, shown.lastTimeMs);
       // Both published and provisional history are immutable visual records:
       // a replaced slope cannot erase, relocate or backdate its predecessor.
       // Avoid double-painting an early guide with identical confirmed anchors.
       const confirmedKeys = new Set(historicalLines.map(line =>
         [line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":")));
-      const drawableLines = [...historicalLines, ...earlyGeometry.filter(line =>
-        !confirmedKeys.has([line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":")))];
+      const drawableLines = [
+        ...historicalLines,
+        ...earlyGeometry.filter(line =>
+          !confirmedKeys.has([line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":"))),
+        ...accelerationGeometry,
+      ];
       const knownPriors = visiblePriorLevels(document, shown.lastTimeMs);
       const brokenByVersion = new Map(priorBreaks.map(item => [item.trend_version, item]));
       let paintedGeometry = 0;
+      let paintedM5OnH1 = 0;
+      const h1MainWickSupports: { origin_ms: number; support_ms: number;
+        price: number; adjusted: boolean }[] = [];
+      const activeM5RayEnds: { end_x: number; last_candle_x: number;
+        pane_width: number }[] = [];
+      const m5H1Spans: { from_ms: number; until_ms: number; from_x: number; to_x: number }[] = [];
       for (const line of drawableLines) {
         // Line anchors can predate the requested playback window. Lightweight
         // Charts returns null for timestamps not present in loaded candles.
         // Project the original, frozen two-point slope (CausalLine.value_at)
         // onto two actual VISIBLE candle times, without any new fitting.
-        const startingBar = displayCandles.find(bar => bar.start_ms >= line.from_ms);
-        // An improved pivot/slope is NOT a break. Keep the former solid
-        // version visible until the same movement's verified cancellation.
+        // Project exact UTC anchors, not rounded positions on the selected
+        // timeframe. A completed M5 correction may start AND retire inside a
+        // single H1 candle; rounding both ends to H1 would erase its history.
         const retiredAt = line.retired_at_ms;
-        const endingBar = retiredAt !== undefined
-          ? displayCandles.slice().reverse().find(bar => bar.start_ms < retiredAt)
-          : displayCandles.at(-1);
-        if (!startingBar || !endingBar || startingBar.start_ms >= endingBar.start_ms) continue;
-        const priceAt = (at_ms: number) => line.from_price +
-          (line.to_price - line.from_price) * (at_ms - line.from_ms) / (line.to_ms - line.from_ms);
-        const x1 = api.timeScale().timeToCoordinate((startingBar.start_ms / 1000) as UTCTimestamp);
-        const x2 = api.timeScale().timeToCoordinate((endingBar.start_ms / 1000) as UTCTimestamp);
-        const y1 = candleSeries.priceToCoordinate(priceAt(startingBar.start_ms));
-        const y2 = candleSeries.priceToCoordinate(priceAt(endingBar.start_ms));
+        const supersededAt = "superseded_at_ms" in line
+          ? line.superseded_at_ms : undefined;
+        const stoppedAt = Math.min(retiredAt ?? Infinity, supersededAt ?? Infinity);
+        // On H1, keep each M5 slope as a compact historical annotation
+        // through its confirmation time. Its active M5 ray is NOT a new
+        // multi-day H1 trend. On M5 all source geometry remains unchanged.
+        const projectionCap = automaticGeometryTimeframeCap(line, timeframe);
+        const isM5OnH1 = Number.isFinite(projectionCap);
+        const endingAtMs = Math.min(
+          stoppedAt, projectionCap, displayCandles.at(-1)!.end_ms,
+        );
+        // Never paint towards grey prehistory; anchors remain original
+        // immutable structural pivots used to compute the precise slope.
+        const replayStartMs = document.events.find(event =>
+          event.kind === "CANDLE_CLOSED" && event.candle)?.candle?.start_ms ?? line.from_ms;
+        const isHourly = line.kind === "MAIN_1H" || line.kind === "TARGET_1H";
+        // Warmup H1 pivots are valid context but have no source candle in
+        // this replay. Never make a clipped projection look like an anchor.
+        if (isHourly && line.from_ms < replayStartMs) continue;
+        const paintFromMs = isHourly
+          ? forwardLinePaintStartMs(line, replayStartMs)
+          : line.from_ms;
+        const segment = geometryLogicalSegment(
+          { from_ms: paintFromMs, retired_at_ms: endingAtMs }, displayCandles,
+        );
+        if (!segment) continue;
+        const projectedMain = wickTightH1MainProjection(
+          line, hourlyEvidence, Math.min(stoppedAt, shown.lastTimeMs ?? -Infinity),
+        );
+        if (line.kind === "MAIN_1H") h1MainWickSupports.push({
+          origin_ms: line.from_ms, support_ms: projectedMain.to_ms,
+          price: projectedMain.to_price, adjusted: projectedMain.adjusted,
+        });
+        const priceAt = (at_ms: number) => projectedMain.from_price +
+          (projectedMain.to_price - projectedMain.from_price) *
+          (at_ms - projectedMain.from_ms) /
+          (projectedMain.to_ms - projectedMain.from_ms);
+        // A fractional H1 logical index can be decoupled from the live
+        // multi-pane time axis. Project the M5 UTC source via the NATIVE
+        // displayed H1 candle coordinates instead of an assumed logical index.
+        const nativeBarX = (ms: number) =>
+          api.timeScale().timeToCoordinate((ms / 1000) as UTCTimestamp);
+        const x1 = isM5OnH1
+          ? chartXAtCandleTime(paintFromMs, displayCandles, nativeBarX)
+          : api.timeScale().logicalToCoordinate(segment.from as Logical);
+        const x2 = isM5OnH1
+          ? chartXAtCandleTime(endingAtMs, displayCandles, nativeBarX)
+          : api.timeScale().logicalToCoordinate(segment.to as Logical);
+        const y1 = candleSeries.priceToCoordinate(priceAt(paintFromMs));
+        const y2 = candleSeries.priceToCoordinate(priceAt(endingAtMs));
         if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
         // Only a confirmed retirement ends the line. Add a short VISUAL
         // tail beyond that point; no arbitrary candle-based strategy rule.
-        const tailPx = retiredAt === undefined ? 0 : Math.max(0, Math.min(8, priceWidth - x2));
-        const end = retiredAt !== undefined
+        const historical = Number.isFinite(stoppedAt);
+        // A retired line with only a small remainder at the viewport's left
+        // edge is visual noise, not evidence of an active nearby structure.
+        // Scroll left to reveal the entire archived segment again.
+        if (historical && isLeftEdgeHistoricalFragment(x1, x2, priceWidth)) continue;
+        const tailPx = historical && !isM5OnH1
+          ? Math.max(0, Math.min(8, priceWidth - x2)) : 0;
+        const lastBarX = api.timeScale().timeToCoordinate(
+          (displayCandles.at(-1)!.start_ms / 1000) as UTCTimestamp,
+        );
+        const isActiveM5 = !historical && !isM5OnH1 &&
+          (line.kind === "REFERENCE_5M" || line.kind === "ACCELERATION_5M");
+        const end = historical || isM5OnH1
           ? { x: x2 + tailPx, y: y2 + (x2 > x1 ? (y2 - y1) * tailPx / (x2 - x1) : 0) }
-          : rayEndPoint(
-              { x: x1, y: y1 }, { x: x2, y: y2 },
-              { width: priceWidth, height: paneHeight },
-            );
+          : isActiveM5 && lastBarX !== null
+            ? shortActiveM5Ray({ x: x1, y: y1 }, { x: x2, y: y2 },
+                lastBarX, priceWidth)
+            : rayEndPoint(
+                { x: x1, y: y1 }, { x: x2, y: y2 },
+                { width: priceWidth, height: paneHeight },
+              );
         context.beginPath();
-        // Main H1 and reference M5 stay solid and fully opaque in the archive.
-        // Dashed yellow exclusively identifies a TARGET_1H line.
-        context.strokeStyle = line.kind === "REFERENCE_5M" ? "#57aaff" : "#f6dc59";
+        // H1 main / M5 continuation: solid. H1 target: yellow dashed.
+        // The separate counter-H1 last acceleration: BLUE dashed only.
+        const style = automaticLineStyle(line.kind);
+        context.strokeStyle = style.stroke;
+        // Superseded/retired versions stay in the replay history but must not
+        // visually dominate the current main/target geometry.
+        context.globalAlpha = historical ? 0.38 : 1;
         context.lineWidth = 1;
-        context.setLineDash(line.kind === "TARGET_1H" ? [6, 4] : []);
+        context.setLineDash(style.dash);
         context.moveTo(x1, y1);
         context.lineTo(end.x, end.y);
         context.stroke();
+        context.globalAlpha = 1;
+        if (isActiveM5 && lastBarX !== null) activeM5RayEnds.push({
+          end_x: end.x, last_candle_x: lastBarX, pane_width: priceWidth,
+        });
         paintedGeometry += 1;
+        if (isM5OnH1) {
+          paintedM5OnH1 += 1;
+          m5H1Spans.push({
+            from_ms: line.from_ms, until_ms: endingAtMs,
+            from_x: x1, to_x: end.x,
+          });
+        }
       }
       context.setLineDash([]);
       // Purple prior: second confirmed touch of the H1 main line, at its wick.
@@ -380,9 +491,14 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
       canvas.dataset.visibleFills = String(rendered);
       canvas.dataset.visibleGeometry = String(knownLines.length);
       canvas.dataset.visibleEarlyGeometry = String(earlyGeometry.length);
+      canvas.dataset.visibleAcceleration = String(accelerationGeometry.length);
       canvas.dataset.visiblePriors = String(knownPriors.length);
       canvas.dataset.paintedPriors = String(paintedPriors);
       canvas.dataset.paintedGeometry = String(paintedGeometry);
+      canvas.dataset.h1MainWickSupports = JSON.stringify(h1MainWickSupports);
+      canvas.dataset.activeM5RayEnds = JSON.stringify(activeM5RayEnds);
+      canvas.dataset.paintedM5OnH1 = String(paintedM5OnH1);
+      canvas.dataset.m5H1Spans = JSON.stringify(m5H1Spans);
       canvas.dataset.visibleObservations = String(paintedObservations);
       canvas.dataset.visibleBlueRisk = String(paintedBlueRisk);
     };
@@ -390,7 +506,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles, earlyGeometry]);
+  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles, hourlyEvidence, earlyGeometry, accelerationGeometry]);
 
   // The editable layer reuses the terminal's drawing tools, but stores its X
   // anchors in absolute UTC M5 slots rather than indices of the selected TF.
@@ -412,8 +528,30 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
   };
   return (
     <div className="replay-chart-shell" data-chart-timeframe={timeframe}
-      data-displayed-candles={displayCandles.length} data-drawing-viewport={drawingViewport}>
-      <div className="replay-chart-frame">
+      data-displayed-candles={displayCandles.length}
+      data-first-chart-candle-ms={displayCandles[0]?.start_ms ?? ""}
+      data-context-hourly-candles={timeframe === "1h" ? document.context_1h?.length ?? 0 : 0}
+      data-drawing-viewport={drawingViewport}>
+      <div className="replay-chart-frame" onDoubleClick={event => {
+        if (drawingTool !== "crosshair" || !chart.current || displayCandles.length === 0) return;
+        const rect = event.currentTarget.getBoundingClientRect();
+        const logical = chart.current.timeScale().coordinateToLogical(event.clientX - rect.left);
+        if (logical === null) return;
+        const at = timeAtChartLogical(logical, displayCandles);
+        if (at === null) return;
+        const selected = displayCandles.find(bar => bar.start_ms <= at && at < bar.end_ms)
+          ?? displayCandles.reduce((best, bar) =>
+            Math.abs(bar.start_ms - at) < Math.abs(best.start_ms - at) ? bar : best);
+        // The grey H1 evidence predates the replay's first actionable M5.
+        // It can be inspected/drawn over but cannot become a virtual start.
+        if (selected.start_ms < replayStartMs) return;
+        onChooseStart(selected.start_ms);
+      }}>
+        <div className="replay-chart-watermark" aria-label={`Инструмент ${document.symbol}, ${timeframe}`}>
+          {document.symbol} · {timeframe === "1h" ? "1H" : "5M"}
+          {timeframe === "1h" && document.context_1h?.length
+            ? <span>Серые свечи — предыстория H1</span> : null}
+        </div>
         <div className="replay-chart" ref={container}
           aria-label="Свечной график и нижняя панель ADX DMI" />
         <canvas ref={executionCanvas} className="replay-execution-overlay"
@@ -422,9 +560,14 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
           <div className={`replay-drawing-layer tool-${drawingTool}`} style={{ height: pricePaneHeight }}
             data-drawing-count={drawings.length}>
             <DrawingOverlay drawings={drawings} selectedId={selectedId} tool={drawingTool}
-              magnet={false} candles={[]} coordinates={drawingCoordinates}
+              magnet={magnet} candles={[]} coordinates={drawingCoordinates}
+              magnetAnchor={(anchor, radius) => nearestReplayHighLowAnchor(
+                anchor, displayCandles, drawingCoordinates.logicalToX,
+                drawingCoordinates.priceToY, radius,
+              )}
               onCommit={onDrawingsChange} onSelect={onSelectDrawing}
-              onDrawingGesture={onDrawingGesture} onDrawingComplete={() => {}} />
+              onDrawingGesture={onDrawingGesture} onDrawingComplete={onDrawingComplete}
+              onDrawingGestureEnd={onDrawingGestureEnd} />
           </div>}
       </div>
       <div className="replay-dmi-legend" role="group" aria-label="Индикатор ADX DMI">
@@ -458,17 +601,34 @@ export function ReplayPage() {
   const bundledRequest = useRef<AbortController | null>(null);
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [pendingStartMs, setPendingStartMs] = useState<number | null>(null);
   const [rate, setRate] = useState(8);
+  const [marketTimeDraft, setMarketTimeDraft] = useState<string | null>(null);
+  const [marketTimeInvalid, setMarketTimeInvalid] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [timeframe, setTimeframe] = useState<"5m" | "1h">("5m");
   const [drawingTool, setDrawingTool] = useState<DrawingTool>("crosshair");
+  const [magnet, setMagnet] = useState(false);
   const [drawings, setDrawings] = useState<DrawingObject[]>([]);
+  const manualUndo = useRef(new ReplayDrawingUndo());
+  const [undoDepth, setUndoDepth] = useState(0);
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fileLabel, setFileLabel] = useState("Синтетический пример");
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const total = document.events.length;
-  const progress = Math.round(100 * cursor / total);
+  // Frame-index timeline: one step per actually CLOSED M5 candle. This avoids
+  // irregular event counts skewing video-style scrub positions.
+  const closedFrameTimes = useMemo(() => document.events
+    .filter(event => event.kind === "CANDLE_CLOSED" && event.candle)
+    .map(event => event.time_ms), [document.events]);
+  const seekFrame = (frame: number) => {
+    setPlaying(false);
+    setPendingStartMs(null);
+    const bounded = Math.max(0, Math.min(closedFrameTimes.length, Math.floor(frame)));
+    setCursor(bounded === 0 ? 0 :
+      replayCursorAtUtc(document.events, closedFrameTimes[bounded - 1], timeframe));
+  };
   const priorBreaks = useMemo(
     () => visiblePriorBreaks(document, shown.lastTimeMs),
     [document, shown.lastTimeMs],
@@ -498,17 +658,6 @@ export function ReplayPage() {
     event.prior_price === latestPrior.price &&
     event.trend_version === latestPrior.trend_version
   );
-  const recentEvents = document.events.slice(Math.max(0, cursor - 8), cursor);
-  const recentFromMs = recentEvents[0]?.time_ms ?? Infinity;
-  const lastTimeline = [
-    ...recentEvents.map(event => ({
-      kind: "REPLAY" as const, time_ms: event.time_ms, key: String(event.sequence), event,
-    })),
-    ...priorBreaks.filter(item => item.confirmed_at_ms >= recentFromMs).map(item => ({
-      kind: "PRIOR_BREAK" as const, time_ms: item.confirmed_at_ms,
-      key: "prior-" + item.trend_version, breakEvent: item,
-    })),
-  ].sort((a, b) => b.time_ms - a.time_ms).slice(0, 8);
   const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
   const blueRiskPreviews = useMemo(
     () => visibleH017BlueRiskPreviews(document, shown.lastTimeMs),
@@ -527,6 +676,27 @@ export function ReplayPage() {
     row.crossings_at_open !== null && (row.crossings_at_open.length > 0) === withCross);
   const countTouch = (rows: typeof visibleStudy, kind: typeof visibleStudy[number]["first_touch"]) =>
     rows.filter(row => row.first_touch === kind).length;
+  // Only owner-authored annotations enter this history. Automatic H1/M5
+  // geometry, observations and simulated executions remain untouched.
+  function commitManualDrawings(next: DrawingObject[]) {
+    if (!manualUndo.current.commit(next)) return;
+    setDrawings(manualUndo.current.drawings);
+    setUndoDepth(manualUndo.current.undoDepth);
+  }
+  function resetManualDrawings() {
+    manualUndo.current.reset();
+    setDrawings([]);
+    setUndoDepth(0);
+  }
+  function undoManualDrawing() {
+    const restored = manualUndo.current.undo();
+    if (restored === null) return;
+    setDrawings(restored);
+    setUndoDepth(manualUndo.current.undoDepth);
+    setSelectedDrawing(null);
+    setDrawingTool("crosshair");
+    setPlaying(false);
+  }
   const fileInput = useRef<HTMLInputElement>(null);
 
   function syncImportedMarketSelection(parsed: ReplayDocument) {
@@ -607,7 +777,7 @@ export function ReplayPage() {
       // Manual import also replaces the market selection, never leave stale
       // BTC/date controls beside an imported GRASSUSDT archive.
       if (parsed.mode === "MARKET_ONLY") syncImportedMarketSelection(parsed);
-      setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+      resetManualDrawings(); setSelectedDrawing(null); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel(file.name);
       setError(null);
@@ -643,7 +813,7 @@ export function ReplayPage() {
       if (imported.mode !== "MARKET_ONLY") throw new Error("История не соответствует режиму MARKET_ONLY");
       if (historyRequest.current !== controller) return;
       setDocument(imported);
-      setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+      resetManualDrawings(); setSelectedDrawing(null); setDrawingTool("crosshair");
       setCursor(0);
       setFileLabel("Bybit · публичные свечи · без сделок");
     } catch (e) {
@@ -688,7 +858,7 @@ export function ReplayPage() {
           historyRequest.current?.abort(); historyRequest.current = null;
           setHistoryLoading(false); setPlaying(false); setCursor(0); setError(null);
           setDocument(syntheticReplay()); setFileLabel("Синтетический пример");
-          setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+          resetManualDrawings(); setSelectedDrawing(null); setDrawingTool("crosshair");
         }}>Пример</button>
         <button type="button" aria-label="Скачать журнал SIMULATION JSON" onClick={() => {
           const report = simulationActionJournal(document);
@@ -710,22 +880,9 @@ export function ReplayPage() {
       <section className="replay-meta" aria-label="Состояние симулятора">
         <div><span>Источник</span><strong>{fileLabel}</strong></div>
         <div><span>Прогон / рынок</span><strong>{document.simulation_run_id}{document.symbol ? " · " + document.symbol + " · 5m" : ""}</strong></div>
-        <div><span>Время рынка</span><strong>{shown.lastTimeMs === null ? "До первого события" :
-          new Date(shown.lastTimeMs).toLocaleString("ru-RU", { timeZone: "UTC" }) + " UTC"}</strong></div>
         <div><span>Свечи / входы / выходы</span>
           <strong>{shown.candles.length} / {shown.fills.length} / {shown.exits.length}</strong></div>
       </section>
-      <div className="replay-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100}
-        aria-valuenow={progress} aria-label="Прогресс воспроизведения">
-        <div style={{ width: progress + "%" }} />
-      </div>
-      {document.mode === "MARKET_ONLY" && <p className="replay-note">
-        РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ СДЕЛОК:
-        {" "}{document.market_data_source === "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M"
-          ? "исторические сделки из официального публичного архива, агрегированные в закрытые 5m OHLCV"
-          : "публичные свечи API Bybit"}
-        {" "}· жёлтые 1H и синие 5m линии — предварительные кандидаты из подтверждённых экстремумов, не проверенная стратегия.
-      </p>}
       <details className="replay-diagnostics">
         <summary>Диагностика</summary>
         <label><input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} /> Показать опорные маркеры</label>
@@ -786,9 +943,6 @@ export function ReplayPage() {
           {" "}Пересечения — дополнительные аргументы, не входы и не обязательный фильтр.
         </p>}
       </details>
-      {document.demo && <p className="replay-note">
-        ДЕМО: синтетические свечи и условные события, не реальные сигналы стратегии и не результат Bybit.
-      </p>}
       <div className="replay-grid">
         <section className="replay-chart-panel">
           <div className="replay-timeframe-switch" role="group" aria-label="Таймфрейм графика">
@@ -796,31 +950,10 @@ export function ReplayPage() {
               onClick={() => setTimeframe("5m")}>M5</button>
             <button type="button" aria-pressed={timeframe === "1h"}
               onClick={() => setTimeframe("1h")}>H1</button>
-            <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
-        <button type="button" onClick={() => { if (cursor === total) setCursor(0); setPlaying((s) => !s); }}>
-          {playing ? "Пауза" : "▶ Пуск"}
-        </button>
-        <button type="button" onClick={() => {
-          setPlaying(false);
-          setCursor((current) => {
-            const events = document.events;
-            // Rewind one complete candle step, not just one trade/event row.
-            const closed = events.slice(0, current).filter(event => event.kind === "CANDLE_CLOSED");
-            if (closed.length <= 1) return 0;
-            const previousClose = closed[closed.length - 2].time_ms;
-            let next = 0;
-            while (next < events.length && events[next].time_ms <= previousClose) next++;
-            return next;
-          });
-        }} disabled={shown.candles.length === 0}>◀ Шаг назад</button>
-        <button type="button" onClick={() => {
-          setPlaying(false);
-          setCursor((current) => nextClosedCandleCursor(document.events, current));
-        }} disabled={cursor >= total}>Шаг вперёд ▶</button>
-        <button type="button" onClick={() => { setPlaying(false); setCursor(0); }}>В начало</button>
-        <label className="replay-rate">Скорость {rate} свечей/с
-          <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
-        </label>
+            <div className="replay-playback-controls">
+              <label className="replay-rate">Скорость {rate} свечей/с
+                <input type="range" min="1" max="60" value={rate} onChange={(e) => setRate(Number(e.target.value))} />
+              </label>
             </div>
           </div>
           <div className="replay-drawing-tools" role="group" aria-label="Инструменты рисования">
@@ -831,43 +964,139 @@ export function ReplayPage() {
                 <ReplayToolIcon tool={tool} />
               </button>
             ))}
-            <button type="button" disabled={drawings.length === 0}
-              onClick={() => {
-                setPlaying(false);
-                setDrawings(current => current.slice(0, -1));
-                setSelectedDrawing(null);
-              }} title="Отменить последнюю фигуру" aria-label="Отменить последнюю фигуру">
+            <button type="button" title="Магнит High/Low" aria-label="Магнит"
+              aria-pressed={magnet} onClick={() => setMagnet(value => !value)}>
+              <ReplayToolIcon tool="magnet" />
+            </button>
+            <button type="button" disabled={undoDepth === 0}
+              data-undo-depth={undoDepth} onClick={undoManualDrawing}
+              title="Отменить последнее действие" aria-label="Отменить последнее действие">
               <ReplayToolIcon tool="undo" />
             </button>
             <button type="button" disabled={!selectedDrawing}
               onClick={() => {
-                setDrawings(current => current.filter(d => d.id !== selectedDrawing));
+                commitManualDrawings(drawings.filter(d => d.id !== selectedDrawing));
                 setSelectedDrawing(null);
               }} title="Удалить выбранное" aria-label="Удалить выбранное"><ReplayToolIcon tool="delete" /></button>
-            <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
+            <label className="replay-market-time" title="Вставьте дату и время UTC, нажмите Enter или выберите в календаре">
+              Время рынка (UTC)
+              <input type="text" aria-label="Время рынка UTC — вставить дату и время"
+                placeholder="29.08.2026, 12:00"
+                spellCheck={false} autoComplete="off"
+                aria-invalid={marketTimeInvalid}
+                value={marketTimeDraft ?? formatReplayUtcInput(shown.lastTimeMs)}
+                onFocus={() => {
+                  setPlaying(false);
+                  setMarketTimeInvalid(false);
+                  setMarketTimeDraft(formatReplayUtcInput(shown.lastTimeMs));
+                }}
+                onChange={(e) => {
+                  setMarketTimeDraft(e.target.value);
+                  setMarketTimeInvalid(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setMarketTimeDraft(null);
+                    setMarketTimeInvalid(false);
+                    e.currentTarget.blur();
+                  } else if (e.key === "Enter") {
+                    const value = parseReplayUtcInput(e.currentTarget.value);
+                    if (value === null) { setMarketTimeInvalid(true); return; }
+                    setPlaying(false);
+                    setPendingStartMs(null);
+                    setCursor(replayCursorAtUtc(document.events, value, timeframe));
+                    setMarketTimeDraft(null);
+                    setMarketTimeInvalid(false);
+                    e.currentTarget.blur();
+                  }
+                }}
+                onBlur={(e) => {
+                  if (marketTimeDraft === null) return;
+                  const value = parseReplayUtcInput(e.currentTarget.value);
+                  if (value === null) { setMarketTimeInvalid(true); return; }
+                  setCursor(replayCursorAtUtc(document.events, value, timeframe));
+                  setPendingStartMs(null);
+                  setMarketTimeDraft(null);
+                  setMarketTimeInvalid(false);
+                }}
+              />
+              <input type="datetime-local" aria-label="Время рынка UTC — календарь"
+                className="replay-market-calendar"
+                value={shown.lastTimeMs === null ? "" : new Date(shown.lastTimeMs).toISOString().slice(0, 16)}
+                onFocus={() => setPlaying(false)}
+                onChange={(e) => {
+                  const utc = parseReplayUtcInput(e.target.value);
+                  if (utc === null) return;
+                  setPlaying(false);
+                  setPendingStartMs(null);
+                  setCursor(replayCursorAtUtc(document.events, utc, timeframe));
+                  setMarketTimeDraft(null);
+                  setMarketTimeInvalid(false);
+                }}
+              />
+              {marketTimeInvalid && <span className="replay-market-time-error" role="alert">ДД.ММ.ГГГГ, ЧЧ:ММ</span>}
+            </label>
+                        <span className="replay-drawing-count" aria-live="polite">Ручных линий: {drawings.length}</span>
+          </div>
+          <div className="replay-seek-bar" role="group" aria-label="Управление воспроизведением">
+            <button type="button" aria-label="В начало" title="В начало"
+              onClick={() => { setPlaying(false); setPendingStartMs(null); setCursor(0); }}>
+              <ReplayPlaybackIcon name="start" />
+            </button>
+            <button type="button" aria-label="Шаг назад" title="Шаг назад"
+              disabled={shown.candles.length === 0} onClick={() => {
+                setPlaying(false);
+                setCursor(current => timeframeStepCursor(document.events, current, timeframe, "back"));
+              }}>
+              <ReplayPlaybackIcon name="back" />
+            </button>
+            <button type="button" aria-label={playing ? "Пауза" : "Пуск"}
+              title={playing ? "Пауза" : "Пуск"} onClick={() => {
+                if (cursor === total) setCursor(0);
+                setPlaying(active => !active);
+              }}>
+              <ReplayPlaybackIcon name={playing ? "pause" : "play"} />
+            </button>
+            <button type="button" aria-label="Шаг вперёд" title="Шаг вперёд"
+              disabled={cursor >= total} onClick={() => {
+                setPlaying(false);
+                setCursor(current => timeframeStepCursor(document.events, current, timeframe, "forward"));
+              }}>
+              <ReplayPlaybackIcon name="forward" />
+            </button>
+            <input type="range" aria-label="Перемотка графика по закрытым свечам"
+              min={0} max={closedFrameTimes.length} step={1}
+              value={shown.candles.length}
+              disabled={closedFrameTimes.length === 0}
+              onChange={(e) => seekFrame(Number(e.target.value))}
+              title="Перетащите ползунок или щёлкните по полосе, чтобы перейти к закрытой свече"
+            />
+
           </div>
           <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
             drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
-            onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
-            onDrawingGesture={() => setPlaying(false)} />
+            magnet={magnet}
+            onDrawingsChange={commitManualDrawings} onSelectDrawing={setSelectedDrawing}
+            onDrawingGesture={() => { manualUndo.current.beginGesture(); setPlaying(false); }}
+            onDrawingComplete={() => { manualUndo.current.endGesture(); setDrawingTool("crosshair"); }}
+            onDrawingGestureEnd={() => manualUndo.current.endGesture()}
+            onChooseStart={setPendingStartMs} />
         </section>
-        <aside className="replay-events" aria-label="Журнал событий">
-          <h2>События</h2>
-          {lastTimeline.length === 0 && <p>Нажмите «Пуск» или «Шаг».</p>}
-          {lastTimeline.map((item) => (
-            <div className="replay-event" key={item.key}>
-              <time>{new Date(item.time_ms).toLocaleTimeString("ru-RU", { timeZone: "UTC" })} UTC</time>
-              {item.kind === "REPLAY" ? <>
-                <strong>{label(item.event)}</strong>
-                {item.event.price !== undefined && <span>{item.event.price}</span>}
-                {item.event.trade_id && <small>{item.event.trade_id}</small>}
-              </> : <>
-                <strong>Слом приора H1 · {item.breakEvent.new_side === "BULL" ? "восходящий" : "нисходящий"} тренд</strong>
-                <span>{item.breakEvent.prior_price}</span>
-              </>}
+        {pendingStartMs !== null &&
+          <div className="replay-start-confirm" role="dialog" aria-modal="true"
+            aria-label="Начать отсюда?">
+            <strong>Начать отсюда?</strong>
+            <div className="replay-start-actions">
+              <button type="button" className="replay-start-yes" onClick={() => {
+                setPlaying(false);
+                const next = document.events.findIndex(e => e.time_ms >= pendingStartMs);
+                setCursor(next < 0 ? document.events.length : next);
+                setPendingStartMs(null);
+              }}>Да</button>
+              <button type="button" className="replay-start-no"
+                onClick={() => setPendingStartMs(null)}>Нет</button>
             </div>
-          ))}
-        </aside>
+          </div>}
       </div>
       <footer className="replay-footer">
         {cursor} из {total} событий. Вход на следующем открытии не раскрывает будущую свечу.

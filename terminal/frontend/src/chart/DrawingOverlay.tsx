@@ -42,6 +42,7 @@ export function DrawingOverlay({
   selectedId,
   tool,
   magnet,
+  magnetAnchor,
   candles,
   candleAligned = false,
   coordinates,
@@ -49,6 +50,7 @@ export function DrawingOverlay({
   onSelect,
   onDrawingGesture,
   onDrawingComplete,
+  onDrawingGestureEnd,
   priceFormatter = (price) => price.toFixed(4),
 }: {
   drawings: DrawingObject[];
@@ -57,6 +59,8 @@ export function DrawingOverlay({
   selectedId: string | null;
   tool: DrawingTool;
   magnet: boolean;
+  /** Optional time-axis adapter for replay's UTC slots; terminal keeps its OHLC default. */
+  magnetAnchor?: (anchor: DrawingAnchor, radius: number) => DrawingAnchor;
   candles: readonly Candle[];
   /** Review-only: submitted pivot times must refer to exact frozen candles. */
   candleAligned?: boolean;
@@ -65,6 +69,8 @@ export function DrawingOverlay({
   onSelect: (id: string | null) => void;
   onDrawingGesture: () => void;
   onDrawingComplete: () => void;
+  /** Optional end boundary for grouped undo in the local replay viewer. */
+  onDrawingGestureEnd?: () => void;
   priceFormatter?: (price: number) => string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -105,15 +111,16 @@ export function DrawingOverlay({
       const raw = { logical, price };
       const aligned = { logical: candleAligned ? Math.round(logical) : logical, price };
       if (!magnet) return aligned;
-      const snapped = nearestOhlcAnchor(
-        raw, candles, coordinates.logicalToX, coordinates.priceToY,
-        event.pointerType === "touch" ? 26 : 14,
-      );
+      const radius = event.pointerType === "touch" ? 26 : 14;
+      const snapped = magnetAnchor
+        ? magnetAnchor(raw, radius)
+        : nearestOhlcAnchor(raw, candles,
+          coordinates.logicalToX, coordinates.priceToY, radius);
       return candleAligned
         ? { logical: Math.round(snapped.logical), price: snapped.price }
         : snapped;
     },
-    [candles, coordinates, magnet, candleAligned],
+    [candles, coordinates, magnet, candleAligned, magnetAnchor],
   );
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -181,7 +188,7 @@ export function DrawingOverlay({
           ctx.fillRect(left, Math.min(fromY, toY), width, Math.abs(toY - fromY));
         }
         ctx.fillStyle = drawing.style.color;
-        ctx.font = "600 10px Inter, ui-sans-serif, sans-serif";
+        ctx.font = "600 17.5px Inter, ui-sans-serif, sans-serif";
         for (const item of fibonacciPrices(
           firstPrice,
           secondPrice,
@@ -205,6 +212,8 @@ export function DrawingOverlay({
         const [origin, destination] = drawing.anchors;
         const m = rulerMeasurement(origin, destination);
         const sign = m.priceDelta >= 0 ? "+" : "";
+        // Canvas defaults to 10px; make ruler measurements 2x larger.
+        ctx.font = "20px Inter, ui-sans-serif, sans-serif";
         ctx.fillText(
           `${sign}${m.percentDelta.toFixed(2)}% · ${sign}${m.priceDelta.toFixed(4)} · ${m.bars} bars · ${fmtDuration(m.elapsedSeconds)}`,
           b.x + 6,
@@ -473,9 +482,10 @@ export function DrawingOverlay({
     } else {
       draft.anchors.push(anchor);
       draftRef.current = draft;
+      // Notify before the first draft commit so Undo includes the whole figure.
+      onDrawingGesture();
       onCommit(withDrawing(draft));
       onSelect(draft.id);
-      onDrawingGesture();
       event.currentTarget.setPointerCapture(event.pointerId);
       redraw();
     }
@@ -546,6 +556,7 @@ export function DrawingOverlay({
     }
   };
   const finish = () => {
+    const endedDrag = dragRef.current !== null;
     if (
       (draftRef.current?.type === "fibonacci" || draftRef.current?.type === "ruler") &&
       draftRef.current.anchors.length === 2
@@ -561,9 +572,11 @@ export function DrawingOverlay({
     rulerAnchorActiveRef.current = false;
     dragRef.current = null;
     guideAnchorRef.current = null;
+    if (endedDrag) onDrawingGestureEnd?.();
     redraw();
   };
   const cancel = () => {
+    const endedDrag = dragRef.current !== null;
     if (
       (draftRef.current?.type === "fibonacci" || draftRef.current?.type === "ruler") &&
       draftRef.current.anchors.length === 2
@@ -579,6 +592,7 @@ export function DrawingOverlay({
     rulerAnchorActiveRef.current = false;
     dragRef.current = null;
     guideAnchorRef.current = null;
+    if (endedDrag) onDrawingGestureEnd?.();
     redraw();
   };
   return (

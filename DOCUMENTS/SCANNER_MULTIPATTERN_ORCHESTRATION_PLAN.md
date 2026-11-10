@@ -119,6 +119,14 @@ Keep:
 
 Unify only orchestration, source snapshot metadata, stable observation identity, delivery sequencing and error isolation.
 
+### H-017 trendline strategy: reuse the existing causal detector (owner 2026-11-09)
+
+The **only H-017 geometry authority** is `research/causal_trend_geometry.py::CausalGeometryFeed.observe_closed(closed_m5, newly_closed_h1)`. The local simulator already consumes that feed through `research/historical_candle_feed.py::replay_with_closed_context`. Do not implement a second H1/M5 trend/pivot detector inside Scanner, TypeScript, Robot, or another pattern module.
+
+For eventual Scanner integration, instantiate one isolated feed **per symbol** within the existing symbol/timeframe traversal; consume the **same completed M5 market-data snapshot** already fetched for sibling patterns and derive closed H1 using the existing `ClosedHigherTimeframeFeed` (never query H1/M5 independently for the same pass). Repeated snapshots must not be ingested as new candles: feed state is per symbol and time-ordered. The returned immutable H1 1–3/2–4, M5 correction reference, confirmed purple prior and prior-break events are **detector evidence**, to be mapped to the existing `PatternObservation`/signal-family identity for H-017 **only after** the trendline rules and owner replay acceptance are proven.
+
+H-017 is an **additional independent family**, not a replacement, filter or winner of Wedge/Triangle, Box, L-shape or other patterns. No early `break` or per-family separate ticker loop. Share Telegram delivery, dedup identity (`symbol × timeframe × pattern × formation`), candidate admission, execution, STOP/TAKE and statistics through the existing common contracts; no H-017-specific Robot or Telegram infrastructure. The geometry feed must remain free of exchange orders and PAPER state. No real-time Scanner wiring, Robot candidate or trading authorization is implied by the current experimental replay work.
+
 ## 4. Planned implementation
 
 ### Slice A — per-timeframe fan-out

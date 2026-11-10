@@ -53,9 +53,8 @@ def build_market_only_document(
     preload_count = (start_ms - preload_start_ms) // FIVE_MINUTES_MS
     warmup_candles = all_candles[:preload_count]
     candles = all_candles[preload_count:]
-    # Closed H1 evidence used during hidden warmup, never a visible replay bar.
-    # The viewer needs it to compare prior H1 extremes when the immutable
-    # first trendline wick predates the seven-day display window.
+    # Closed H1 warmup supplies grey chart context and DMI only; it may not
+    # supply H1/M5 trend anchors or priors from before this replay window.
     context = ClosedHigherTimeframeFeed()
     context_1h = []
     for earlier in warmup_candles:
@@ -174,10 +173,8 @@ def build_market_only_document(
             ],
         })
         collect_lines(view)
-        # The strategy's frozen confirmed prior is authoritative. Export its
-        # changes once, rather than independently refitting purple levels from
-        # yellow geometry in the browser. A warmup prior first becomes visible
-        # on the FIRST displayed M5 close, not during hidden history.
+        # The strategy's in-run confirmed prior is authoritative. Export
+        # its changes once; never infer levels from invisible warmup pivots.
         prior = view.hourly_prior_price
         touch = view.hourly_prior_touch_ms
         trend = view.hourly_trend
@@ -198,7 +195,7 @@ def build_market_only_document(
             last_prior_identity = None
         break_event = getattr(view, "hourly_prior_break", None)
         if break_event is not None:
-            # Never attribute a warmup-only break to an unpublished prior.
+            # Never attribute a break to an unpublished in-run prior.
             if any(
                 level["trend_version"] == break_event["trend_version"] and
                 level["at_ms"] == break_event["prior_at_ms"] and
@@ -222,10 +219,8 @@ def build_market_only_document(
             level = previous_blue.value_at(bar.start_ms)
             beyond = ((previous_trend.side == "BULL" and bar.open > level) or
                       (previous_trend.side == "BEAR" and bar.open < level))
-            # A correction may have existed only during the pre-history
-            # warmup, then broken on the FIRST displayed M5. The current
-            # archive has no such prior line, so it must not invent a
-            # retirement referencing a non-exported geometry version.
+            # An unexported historical line cannot create a retirement
+            # referencing a geometry version absent from this replay.
             published = versions.get("REFERENCE_5M") == (
                 previous_blue.first.at_ms,
                 previous_blue.second.at_ms,

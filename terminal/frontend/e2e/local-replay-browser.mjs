@@ -57,11 +57,18 @@ try {
   // The entire replay control surface belongs beside the M5/H1 switch,
   // never in the file-import row above the chart.
   const controlBar = page.getByRole("group", { name: "Таймфрейм графика" });
-  const playbackBar = controlBar.getByRole("group", { name: "Управление воспроизведением" });
-  for (const caption of ["Пуск", "◀ Шаг назад", "Шаг вперёд ▶", "В начало"]) {
-    assert.equal(await playbackBar.getByRole("button", { name: caption, exact: caption !== "Пуск" }).count(), 1);
-  }
-  assert.equal(await playbackBar.locator(".replay-rate input[type=range]").count(), 1);
+  const seekBar = page.getByRole("group", { name: "Управление воспроизведением" });
+  const captions = ["В начало", "Шаг назад", "Пуск", "Шаг вперёд"];
+  assert.deepEqual(await seekBar.locator("button").evaluateAll(
+    nodes => nodes.map(node => node.getAttribute("aria-label")), 
+  ), captions);
+  assert.deepEqual(await seekBar.locator("button").allTextContents(), ["", "", "", ""]);
+  assert.deepEqual(await seekBar.locator("svg[data-playback-icon]").evaluateAll(
+    nodes => nodes.map(node => node.getAttribute("data-playback-icon")),
+  ), ["start", "back", "play", "forward"]);
+  assert.equal(await controlBar.getByRole("button", { name: "Шаг назад" }).count(), 0);
+  assert.equal(await controlBar.getByRole("button", { name: "Шаг вперёд" }).count(), 0);
+  assert.equal(await controlBar.locator(".replay-rate input[type=range]").count(), 1);
   assert.equal(await page.locator(".replay-controls .replay-rate").count(), 0);
   const drawingBar = page.getByRole("group", { name: "Инструменты рисования" });
   const trendTool = drawingBar.getByRole("button", { name: "Трендовая" });
@@ -72,32 +79,37 @@ try {
   const fibTool = drawingBar.getByRole("button", { name: "Fibonacci" });
   assert.equal((await fibTool.innerText()).trim(), "", "Fibonacci uses a pictogram, not a text word");
   assert.equal(await fibTool.locator('svg[data-tool-icon="fibonacci"] path').count(), 1);
-  assert.equal(await drawingBar.locator('button[aria-label] svg.replay-tool-icon').count(), 12,
-    "ten drawing tools plus undo and delete all have true graphical icons");
-  assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
-  const progress = page.locator('[role="progressbar"]');
-  const forward = page.getByRole("button", { name: "Шаг вперёд ▶", exact: true });
-  const backward = page.getByRole("button", { name: "◀ Шаг назад", exact: true });
+  assert.equal(await drawingBar.locator('button[aria-label] svg.replay-tool-icon').count(), 13,
+    "ten drawing tools plus magnet, undo and delete all have graphical icons");
+  const progress = page.getByRole("slider", { name: "Перемотка графика по закрытым свечам" });
+  assert.equal(await progress.inputValue(), "0");
+  assert.equal(await progress.getAttribute("max"), "64");
+  const forward = seekBar.getByRole("button", { name: "Шаг вперёд", exact: true });
+  const backward = seekBar.getByRole("button", { name: "Шаг назад", exact: true });
   assert.equal(await backward.isDisabled(), true);
   await forward.click();
-  const firstStep = Number(await progress.getAttribute("aria-valuenow"));
+  const firstStep = Number(await progress.inputValue());
   assert.ok(firstStep > 0);
   await forward.click();
-  const secondStep = Number(await progress.getAttribute("aria-valuenow"));
+  const secondStep = Number(await progress.inputValue());
   assert.ok(secondStep > firstStep, "second closed candle advances the recording");
   await backward.click();
-  assert.equal(Number(await progress.getAttribute("aria-valuenow")), firstStep);
+  assert.equal(Number(await progress.inputValue()), firstStep);
   await forward.click();
-  assert.equal(Number(await progress.getAttribute("aria-valuenow")), secondStep);
+  assert.equal(Number(await progress.inputValue()), secondStep);
   await page.getByRole("button", { name: "В начало" }).click();
-  assert.equal(await page.locator('[role="progressbar"]').getAttribute("aria-valuenow"), "0");
+  assert.equal(await progress.inputValue(), "0");
 
   // The synthetic demo now contains enough true closed candles to show ADX
   // after its 14/14 warmup. Check TRUE-price markers, not shifted chart arrows.
   const demoIndicator = page.getByRole("group", { name: "Индикатор ADX DMI" });
   await page.locator(".replay-rate input").fill("60");
-  await page.getByRole("button", { name: "Пуск", exact: false }).click();
-  await page.waitForFunction(() => document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow") === "100");
+  await seekBar.getByRole("button", { name: "Пуск" }).click();
+  assert.equal(await seekBar.getByRole("button", { name: "Пауза" }).count(), 1);
+  await page.waitForFunction(() => {
+    const slider = document.querySelector('input[aria-label="Перемотка графика по закрытым свечам"]');
+    return slider?.value === slider?.max;
+  });
   assert.match(await demoIndicator.innerText(), /\+DI [0-9]/);
   assert.match(await demoIndicator.innerText(), /−DI [0-9]/);
   assert.match(await demoIndicator.innerText(), /ADX [0-9]/);
@@ -184,14 +196,18 @@ try {
     });
   });
   await page.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
-  await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
-  assert.match(await page.locator("body").innerText(), /browser_fixture/);
+  await page.getByText("browser_fixture", { exact: false }).waitFor();
+  assert.equal(await page.locator(".replay-note").count(), 0,
+    "owner removed yellow market-history banner");
   const indicator = page.getByRole("group", { name: "Индикатор ADX DMI" });
   assert.match(await indicator.innerText(), /ADX\/DMI \(14, 14\)/);
   assert.match(await indicator.innerText(), /Уровень 20/);
   assert.match(await indicator.innerText(), /ADX —/);
   await page.getByRole("button", { name: "Пуск", exact: false }).click();
-  await page.waitForFunction(() => document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow") === "100");
+  await page.waitForFunction(() => {
+    const slider = document.querySelector('input[aria-label="Перемотка графика по закрытым свечам"]');
+    return slider?.value === slider?.max;
+  });
   assert.match(await page.locator("body").innerText(), /40 \/ 0 \/ 0/);
   assert.match(await indicator.innerText(), /\+DI 23\.9/);
   assert.match(await indicator.innerText(), /ADX 22\.8/);
@@ -200,26 +216,53 @@ try {
   await page.getByRole("button", { name: "H1", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"), "1h");
-  assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
+  assert.equal(await progress.inputValue(), "40");
   await page.getByRole("button", { name: "M5", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "40");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "3");
-  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "3");
+  // Two source anchors belong to invisible warmup, not this replay:
+  // their clipped lines must not masquerade as anchored rays.
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-geometry"), "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-priors"), "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-painted-priors"), "1");
+  // The magnet is a real on/off control, independent of replay state.
+  const magnet = page.getByRole("button", { name: "Магнит", exact: true });
+  assert.equal(await magnet.getAttribute("aria-pressed"), "false");
+  await magnet.click();
+  assert.equal(await magnet.getAttribute("aria-pressed"), "true");
+  await magnet.click();
+  assert.equal(await magnet.getAttribute("aria-pressed"), "false");
   // Manual annotations use the same UTC anchor across real M5/H1 candles;
   // they survive replay rewind and can be deleted without altering geometry.
   await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
   await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 160 } });
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
-  const undo = page.getByRole("button", { name: "Отменить последнюю фигуру" });
+  const undo = page.getByRole("button", { name: "Отменить последнее действие" });
   assert.equal(await undo.isDisabled(), false);
   assert.equal(await undo.locator('svg[data-tool-icon="undo"] path').count(), 1);
+  // One-shot drawing: completion must restore crosshair, not start the next line.
+  assert.equal(await page.getByRole("button", { name: "Курсор / сдвиг" }).getAttribute("aria-pressed"), "true");
+  await page.getByRole("button", { name: "Горизонталь", exact: true }).click();
   await page.locator(".replay-drawing-layer canvas").click({ position: { x: 280, y: 230 } });
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "2");
   await undo.click();
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
+  assert.equal(await undo.getAttribute("data-undo-depth"), "1");
+  // A whole drag is exactly ONE undo action (not one for every pointermove).
+  await page.getByRole("button", { name: "Редактировать", exact: true }).click();
+  const drawingCanvas = page.locator(".replay-drawing-layer canvas");
+  const bounds = await drawingCanvas.boundingBox();
+  assert.ok(bounds, "editing overlay must have a usable browser viewport");
+  await page.mouse.move(bounds.x + 280, bounds.y + 160);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + 280, bounds.y + 196, { steps: 8 });
+  await page.mouse.up();
+  assert.equal(await undo.getAttribute("data-undo-depth"), "2", "one drag = one history entry");
+  await undo.click();
+  assert.equal(await undo.getAttribute("data-undo-depth"), "1");
+  assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1",
+    "Undo restores the moved line rather than deleting it");
   await page.getByRole("button", { name: "H1", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   assert.equal(await page.locator(".replay-drawing-layer").getAttribute("data-drawing-count"), "1");
