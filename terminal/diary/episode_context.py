@@ -8,6 +8,7 @@ signal geometry. Never create, migrate or write a D2/PAPER database here.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from .decision_models import DecisionEventKind, SetupInstanceId
@@ -25,8 +26,8 @@ def _unproven(status: str) -> dict[str, object]:
 
 
 def project_episode_d2_context_read_only(
-    db_path: str | Path, *, trade_episode_id: str,
-    account_id: str, symbol: str, side: str,
+    db_path: str | Path | None, *, trade_episode_id: str,
+    account_id: str, symbol: str, side: str, opening_controller: str,
 ) -> dict[str, object]:
     """Read a pre-existing D2 link using SQLite read-only and an atomic D2 view.
 
@@ -35,6 +36,10 @@ def project_episode_d2_context_read_only(
     """
     if account_id != "paper" or side not in {"LONG", "SHORT"}:
         raise ValueError("unsupported_d2_episode_scope")
+    if opening_controller not in {"ROBOT", "MANUAL"}:
+        raise ValueError("unproven_opening_controller")
+    if db_path is None:
+        return _unproven("D2_STORE_ABSENT")
     path = Path(db_path)
     if not path.exists():
         return _unproven("D2_STORE_ABSENT")
@@ -43,7 +48,7 @@ def project_episode_d2_context_read_only(
     try:
         # The regular DiaryDecisionStore.open() initializes schemas and enters
         # a writer transaction. It is intentionally NOT used for this GET.
-        with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.5) as connection:
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.5)) as connection:
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA query_only=ON")
             connection.execute("BEGIN")
@@ -62,6 +67,9 @@ def project_episode_d2_context_read_only(
                     or plan.trading_account_id.value != account_id
                     or setup.symbol.value != symbol or plan.symbol.value != symbol
                     or setup.direction.value.upper() != side or plan.side.value.upper() != side
+                    or setup.origin.value.upper() != (
+                        "ROBOT" if opening_controller == "ROBOT" else "TERMINAL_MANUAL"
+                    )
                     or not (setup.created_at_ms <= plan.created_at_ms <= link.linked_at_ms)):
                 return _unproven("CONFLICTING_D2_LINK")
             events = store.load_decision_events(setup.setup_instance_id)
