@@ -414,10 +414,14 @@ try {
         trend_version: t + 900000, classification: "UNVALIDATED_GEOMETRY_ONLY" },
     ],
   };
+  let publicMarketAttempts = 0;
   await page.route("**/local-replay/history?*", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
+    publicMarketAttempts++;
+    await route.fulfill(publicMarketAttempts === 1 ? {
+      status: 502, contentType: "text/plain",
+      body: "Public Bybit history unavailable; nothing was simulated",
+    } : {
+      status: 200, contentType: "application/json",
       body: JSON.stringify(history),
     });
   });
@@ -428,8 +432,18 @@ try {
   await bounds.getByRole("textbox", { name: "Координаты прогона" })
     .fill("BTCUSDT | 2026-10-01T00:00 | 2026-10-01T23:59");
   await bounds.getByRole("button", { name: "Применить" }).click();
+  // The actual local Python server uses text/plain for HTTP 502 failures.
+  // Show the true failed boundary instead of a misleading JSON.parse error,
+  // without silently replacing the selected ticker/history by demo candles.
+  await bounds.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
+  const marketError = page.getByRole("alert").filter({ hasText: "Публичный Bybit M5 недоступен (HTTP 502)" });
+  await marketError.waitFor();
+  assert.match(await marketError.innerText(), /архив M1 и профиль риска/);
+  assert.equal(await page.locator(".replay-chart-shell").count(), 0,
+    "failed public market download cannot resurrect old market candles");
   await bounds.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
   await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
+  assert.equal(publicMarketAttempts, 2);
   const marketSource = await page.locator(".replay-meta").innerText();
   assert.match(marketSource, /Bybit · публичные свечи · без сделок/,
     "public market-only source must be visible in the retained Source card");
