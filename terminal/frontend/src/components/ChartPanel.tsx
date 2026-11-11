@@ -55,7 +55,7 @@ import {
 } from "../chart/robotTradeMarkers";
 import { buildEditorGeometryReview, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
 import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
-import { buildOwnerChartDraft, buildOwnerSignalDraft, type OwnerChartDraft, type OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
+import { buildOwnerChartDraft, buildOwnerSignalDraft, type OwnerChartDraft, type OwnerChartDirection, type OwnerChartPattern, type OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
 import { normalizedLimitDraftPrice } from "../orders/limitDraft";
@@ -294,7 +294,8 @@ export function ChartPanel({
   const correctionHistoryRef = useRef(historyRef.current);
   const proposalHistoryRef = useRef(new DrawingHistory([]));
   const [drawings, setDrawings] = useState<DrawingObject[]>(historyRef.current.current);
-  const [proposalPattern, setProposalPattern] = useState<OwnerSignalDraft["pattern"]>("Falling Wedge");
+  const [proposalPattern, setProposalPattern] = useState<OwnerChartPattern>("Falling Wedge");
+  const [proposalDirection, setProposalDirection] = useState<OwnerChartDirection>("LONG");
   const [proposalNote, setProposalNote] = useState("");
   const [proposalPending, setProposalPending] = useState(false);
   const [, setProposalStatus] = useState("");
@@ -408,7 +409,7 @@ export function ChartPanel({
       historyRef.current = proposalHistoryRef.current;
       setDrawings(historyRef.current.current);
       setNewSignalMode(true);
-      setTool("ray");
+      setTool(proposalPattern === "Ikigai Box" ? "fibonacci" : "ray");
     }
     setSelectedId(null);
     setClearConfirmationOpen(false);
@@ -419,7 +420,7 @@ export function ChartPanel({
           : !onSubmitOwnerSignal || !signalIdentity || !snapshotRevision || !barsSha256))
       return;
     try {
-      const content = JSON.stringify({ drawings, proposalPattern, proposalNote, retrospectiveContext });
+      const content = JSON.stringify({ drawings, proposalPattern, proposalDirection, proposalNote, retrospectiveContext });
       if (proposalToken.current?.content !== content) {
         proposalToken.current = {
           content,
@@ -431,13 +432,13 @@ export function ChartPanel({
       setProposalStatus(ownerChartMode ? "Сохранение пользовательского примера…" : "Проверка нового сигнала…");
       const receipt = ownerChartMode
         ? await onSubmitOwnerChart!(buildOwnerChartDraft({
-            symbol, timeframe, pattern: proposalPattern,
+            symbol, timeframe, pattern: proposalPattern, direction: proposalDirection,
             drawings, frozenCandles: candles,
             note: proposalNote.trim(), idempotencyKey: proposalToken.current.key,
           }))
         : await onSubmitOwnerSignal!(buildOwnerSignalDraft({
             signalId: signalIdentity!, snapshotRevision: snapshotRevision!,
-            barsSha256: barsSha256!, pattern: proposalPattern,
+            barsSha256: barsSha256!, pattern: proposalPattern as OwnerSignalDraft["pattern"],
             drawings, frozenCandles: candles,
             note: proposalNote.trim(), idempotencyKey: proposalToken.current.key,
             contextAsOfMs: retrospectiveContext?.asOfMs,
@@ -1100,10 +1101,29 @@ export function ChartPanel({
             {newSignalMode ? (
               <>
                 <select aria-label="Тип нового сигнала" value={proposalPattern}
-                  onChange={(event) => { setProposalPattern(event.target.value as OwnerSignalDraft["pattern"]); setProposalStatus(""); }}>
+                  onChange={(event) => {
+                    const pattern = event.target.value as OwnerChartPattern;
+                    setProposalPattern(pattern);
+                    setProposalStatus("");
+                    if (ownerChartMode) {
+                      proposalHistoryRef.current = new DrawingHistory([]);
+                      historyRef.current = proposalHistoryRef.current;
+                      setDrawings([]);
+                      setTool(pattern === "Ikigai Box" ? "fibonacci" : "ray");
+                    }
+                  }}>
                   <option value="Falling Wedge">Нисходящий клин</option>
                   <option value="Rising Wedge">Восходящий клин</option>
+                  {ownerChartMode && <option value="Ikigai Box">Икигай-бокс (Фибоначчи)</option>}
                 </select>
+                {ownerChartMode && (
+                  <select aria-label="Направление сигнала" value={proposalDirection}
+                    onChange={(event) => { setProposalDirection(event.target.value as OwnerChartDirection); setProposalStatus(""); }}>
+                    <option value="LONG">LONG · вверх</option>
+                    <option value="SHORT">SHORT · вниз</option>
+                  </select>
+                )}
+                {ownerChartMode && <small>Для Икигай-бокса: Fib от начала A до конца B первого импульса.</small>}
                 <input aria-label="Комментарий к новому сигналу"
                   placeholder="Комментарий (необязательно)" maxLength={1024}
                   value={proposalNote} onChange={(event) => { setProposalNote(event.target.value); setProposalStatus(""); }} />
