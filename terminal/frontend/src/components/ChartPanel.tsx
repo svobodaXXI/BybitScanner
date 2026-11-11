@@ -1229,7 +1229,7 @@ export function ChartPanel({
           return (
             <span className={"chart-candle-close" + (status.status === "STALE" ? " stale" : "")}
               aria-label={status.status === "STALE" ? "Свечи устарели" : "До закрытия свечи: " + status.label}
-              style={{ top: priceY + 14 }}
+              style={{ top: priceY + 14, width: chartRef.current?.priceScale("right").width() || PRICE_SCALE_WIDTH_FALLBACK }}
               title={status.status === "STALE" ? "Актуальность потока свечей не подтверждена" : "Осталось до закрытия текущей свечи"}>
               {status.label}
             </span>
