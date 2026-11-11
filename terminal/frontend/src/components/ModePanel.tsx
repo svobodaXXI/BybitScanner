@@ -62,6 +62,13 @@ export function ModePanel({
               />
               <AutopilotDiaryControls
             accountKey={accountKey}
+            accountMenu={{
+              workspaceProjection: props.accountWorkspaceProjection ?? null,
+              mode: props.onModeAccountSelect ? "AUTOPILOT" : undefined,
+              selectedAccountId: props.modeAccountId,
+              onSelectAccount: props.onModeAccountSelect,
+              modeAccountError: props.modeAccountError,
+            }}
             tradeEpisodeId={autopilotTradeEpisodeId}
             requestedTradeEpisodeId={requestedTradeEpisodeId}
             requestedStatisticsCount={statisticsRequest}
