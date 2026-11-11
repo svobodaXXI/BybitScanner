@@ -278,6 +278,9 @@ try {
   // The entire replay control surface belongs beside the M5/H1 switch,
   // never in the file-import row above the chart.
   const controlBar = page.getByRole("group", { name: "Таймфрейм графика" });
+  const timeframeOrder = await controlBar.locator(":scope > button").allTextContents();
+  assert.deepEqual(timeframeOrder, ["H1", "M5", "M1", "15с"],
+    "timeframes must descend from hourly to 15 seconds");
   const playbackBar = controlBar.getByRole("group", { name: "Управление воспроизведением" });
   const actualOrder = await playbackBar.locator("button.replay-player-button").evaluateAll(
     buttons => buttons.map(button => button.getAttribute("aria-label")),
