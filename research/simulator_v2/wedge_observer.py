@@ -125,6 +125,20 @@ class ReadOnlyWedgeScanner:
         return tuple(item for item in self.observations
                      if item.available_at_ms <= virtual_time_ms)
 
+    def _evaluate(
+        self, *, frame: MinuteFrame, bars: tuple[Candle, ...],
+    ) -> WedgeObservation | None:
+        """Backward-compatible M1-committed Scanner stage adapter.
+
+        Keep this exact seam for the existing Robot/timeline regression
+        fixtures; the public M5 path shares the native calculation below.
+        """
+        return self.evaluate_closed_m5_window(
+            simulation_run_id=frame.simulation_run_id,
+            symbol=frame.symbol, closed_at_ms=frame.virtual_time_ms,
+            bars=bars,
+        )
+
     def evaluate_closed_m5_window(
         self, *, simulation_run_id: str, symbol: str,
         closed_at_ms: int, bars: tuple[Candle, ...],
@@ -264,10 +278,7 @@ class ReadOnlyWedgeScanner:
             raise ValueError("gap in wedge history")
         bars = (self._committed_bars + (new,))[-self.config.window_bars:]
         observation = (
-            self.evaluate_closed_m5_window(
-                simulation_run_id=frame.simulation_run_id, symbol=frame.symbol,
-                closed_at_ms=frame.virtual_time_ms, bars=bars,
-            ) if len(bars) >= 50 else None
+            self._evaluate(frame=frame, bars=bars) if len(bars) >= 50 else None
         )
         self._pending = bars, observation
         return ()  # Research facts are NOT disguised as production SCANNER events.
