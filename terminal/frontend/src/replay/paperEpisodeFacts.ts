@@ -152,17 +152,18 @@ export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
 }
 
 /** A timestamp is painted only on its original, independently CLOSED M5.
+ * At an exact M5 boundary it belongs to the NEW bar, never the preceding one.
  * The exact exchange price is preserved; OHLC is never used as a substitute.
  */
 function originalClosedCandle(candles: readonly ReplayCandle[], timeMs: number): ReplayCandle | null {
   let lo = 0, hi = candles.length - 1;
   while (lo < hi) {
     const mid = Math.floor((lo + hi) / 2);
-    if (candles[mid].end_ms < timeMs) lo = mid + 1;
+    if (candles[mid].end_ms <= timeMs) lo = mid + 1;
     else hi = mid;
   }
   const bar = candles[lo];
-  return bar && bar.start_ms <= timeMs && timeMs <= bar.end_ms ? bar : null;
+  return bar && bar.start_ms <= timeMs && timeMs < bar.end_ms ? bar : null;
 }
 
 export function matchPaperFactsToMarket(
