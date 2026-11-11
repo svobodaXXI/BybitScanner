@@ -603,7 +603,8 @@ export function ReplayPage() {
     if (!episodeId && !nonce && !sourceOrigin) return;
     if (!episodeId || !/^te_[0-9a-f]{24}$/.test(episodeId) ||
         !nonce || !/^[0-9a-f]{32}$/.test(nonce) ||
-        !sourceOrigin || !/^https?:\\/\\/[^/?#]+$/.test(sourceOrigin)) {
+        !sourceOrigin || !["https:", "http:"].includes(new URL(sourceOrigin).protocol) ||
+        new URL(sourceOrigin).origin !== sourceOrigin) {
       setError("Неверный адрес выбранного эпизода из Статистики");
       return;
     }
