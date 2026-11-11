@@ -612,7 +612,7 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
         </button>
         {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
         <p className="diary-finrez-basis" role="status">
-          JSON содержит только реальные зарегистрированные исполнения. Свечи, решения робота
+          Это не воспроизведение. JSON содержит только реальные зарегистрированные исполнения. Свечи, решения робота
           и полное воспроизведение в локальном Симуляторе пока не подключены.
         </p>
       </div>
