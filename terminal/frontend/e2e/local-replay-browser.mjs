@@ -65,6 +65,10 @@ try {
   await page.goto(localUrl, { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: "Машина времени" }).waitFor();
   assert.match(await page.locator("body").innerText(), /SIMULATION ONLY/);
+  assert.equal(await page.locator(".replay-run-disclaimer").count(), 0,
+    "no permanent strategy explanation beneath setup controls");
+  assert.equal(await page.locator('.replay-note[aria-label="Ожидание нового графика"]').count(), 0,
+    "no permanent pre-run hint above status cards");
   assert.equal(await page.locator(".replay-chart canvas").count(), 0,
     "the viewer starts blank; no synthetic candles appear by default");
   assert.equal(await page.locator(".replay-meta").count(), 1);
