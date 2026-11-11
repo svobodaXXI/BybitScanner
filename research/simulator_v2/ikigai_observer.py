@@ -113,7 +113,25 @@ class ReadOnlyIkigaiScanner:
                         )
             pending[tf] = (bars, observed)
         self._pending = pending
-        return ()  # Observations are NOT admission or trades.
+        # Publish original detector observations at the exact close of their
+        # own M1/M5 bar. The caller's timeline commits these facts atomically
+        # with that minute; a rejected minute never becomes a Scanner signal.
+        # These are NOT Robot candidates, orders or virtual executions.
+        return tuple(
+            StageFact(
+                kind="IKIGAI_BOX_DETECTED",
+                entity_id=observation.formation_id,
+                details=(
+                    ("timeframe", observation.timeframe),
+                    ("direction", observation.formation.direction),
+                    ("source_a_ms", str(observation.source_a_ms)),
+                    ("source_b_ms", str(observation.source_b_ms)),
+                    ("status", "DETECTOR_ONLY_NO_ROBOT_ADMISSION"),
+                ),
+            )
+            for _, observation in pending.values()
+            if observation is not None
+        )
 
     def commit_after_m1(self, frame: MinuteFrame) -> None:
         if not self._pending:
