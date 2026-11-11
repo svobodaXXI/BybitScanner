@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, clearAll, isAllSelected,
-  onlyWedges, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, adjustInclusiveWindow,
+  onlyWedges, onlyBox, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, adjustInclusiveWindow,
   parseRunCoordinates, formatRunCoordinates, formatRunDuration, selectAll,
   toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
