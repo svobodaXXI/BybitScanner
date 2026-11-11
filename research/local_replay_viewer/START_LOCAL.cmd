@@ -3,10 +3,10 @@ setlocal EnableExtensions
 title BybitScanner - Mashina Vremeni (LOCAL SIMULATION)
 cd /d "%~dp0"
 
-rem Preserve the old viewer if full engine inputs are not yet present.
-rem Never pip-install into the owner's global Python environment.
-if not exist "simulator-v2-data\manifest.json" goto :viewer
-if not exist "simulator-v2-data\wedge-risk.json" goto :viewer
+rem Standalone native Wedge/Ikigai research on PUBLIC M5 needs only
+rem the shipped offline analytical wheelhouse, not a PAPER account or M1
+rem trading manifest. All packages install inside this release's private venv.
+rem Actual virtual trading remains separately gated by verified M1 + risk.
 if not exist "python-wheels\" goto :viewer
 where py >nul 2>nul
 if errorlevel 1 goto :viewer
