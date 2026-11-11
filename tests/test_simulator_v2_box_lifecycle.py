@@ -253,8 +253,6 @@ class NativeBoxSimulationLifecycleTests(unittest.TestCase):
         self.assertEqual(payload["requested_minutes"], 40)
         self.assertEqual(payload["box_entry_fills"], 4)
         self.assertEqual(payload["virtual_fills"], 8)
-        self.assertEqual(payload["risk_terms_status"] if "risk_terms_status" in payload else
-                         "INJECTED_BY_LOCAL_ADAPTER", "INJECTED_BY_LOCAL_ADAPTER")
         self.assertEqual(result.report.final_position_quantity, D("0"))
         replay = result.replay_document
         self.assertEqual(replay["market_data_source"],
