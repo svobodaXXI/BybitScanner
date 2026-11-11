@@ -339,3 +339,44 @@ def test_v3_other_shapes_are_archive_only(tmp_path):
         )
         assert saved["candidate_created"] is False
         assert saved["robot_candidate_id"] is None
+
+
+def test_v3_owner_chart_http_accepts_movement_without_trade_side(monkeypatch, tmp_path):
+    import json
+    import threading
+    from http.server import ThreadingHTTPServer
+    from urllib.request import Request, urlopen
+    from terminal.runtime.paper_http_server import PaperHttpHandler
+
+    payload = _owner_chart_payload()
+    payload.pop("direction", None)
+    payload.update(
+        schema_version=3, pattern="Wedge",
+        formation_movement="DOWN", wedge_subtype="SLOWDOWN",
+        proposed_boundaries=[
+            {**line, "id": f"manual_{index + 1}"}
+            for index, line in enumerate(payload["proposed_boundaries"])
+        ],
+    )
+    monkeypatch.setenv("BYBITSCANNER_OWNER_SIGNAL_PROPOSAL_DIR", str(tmp_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        request = Request(
+            f"http://127.0.0.1:{server.server_address[1]}/api/workspace/owner-unscanned-signal",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with urlopen(request, timeout=3) as response:
+            body = json.load(response)
+        assert body["ok"] is True
+        assert body["proposal"]["submission"]["formation_movement"] == "DOWN"
+        assert body["proposal"]["submission"]["wedge_subtype"] == "SLOWDOWN"
+        assert "direction" not in body["proposal"]["submission"]
+        assert body["proposal"]["candidate_created"] is False
+        assert body["proposal"]["robot_candidate_id"] is None
+    finally:
+        server.shutdown()
+        worker.join(timeout=3)
+        server.server_close()
