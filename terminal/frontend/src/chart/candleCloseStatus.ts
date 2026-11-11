@@ -20,7 +20,7 @@ export function candleCloseStatus(
   if (!interval || !lastCandleOpen || !Number.isFinite(nowMs))
     return { status: "UNAVAILABLE", label: "" };
   const last = Date.parse(lastCandleOpen);
-  if (!Number.isFinite(last) || last > nowMs || nowMs - last > interval * 2)
+  if (!Number.isFinite(last) || last > nowMs || nowMs - last > interval + 10_000)
     return { status: "STALE", label: "Нет свежих свечей" };
   const remaining = interval - (nowMs % interval);
   const seconds = Math.ceil(remaining / 1000);
