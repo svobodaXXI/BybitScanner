@@ -44,6 +44,7 @@ export function DrawingOverlay({
   magnet,
   candles,
   candleAligned = false,
+  priceScaleWidth = 64,
   coordinates,
   onCommit,
   onSelect,
@@ -60,6 +61,8 @@ export function DrawingOverlay({
   candles: readonly Candle[];
   /** Review-only: submitted pivot times must refer to exact frozen candles. */
   candleAligned?: boolean;
+  /** Reserve the right price axis for scaling rather than drawing gestures. */
+  priceScaleWidth?: number;
   coordinates: DrawingCoordinates;
   onCommit: (drawings: DrawingObject[]) => void;
   onSelect: (id: string | null) => void;
@@ -90,6 +93,8 @@ export function DrawingOverlay({
   const anchorOf = useCallback(
     (event: React.PointerEvent): DrawingAnchor | null => {
       const rect = event.currentTarget.getBoundingClientRect();
+      if (event.clientX - rect.left >= rect.width - priceScaleWidth ||
+          event.clientY - rect.top >= rect.height - 30) return null;
       const logical = coordinates.xToLogical(event.clientX - rect.left),
         price = coordinates.yToPrice(event.clientY - rect.top);
       if (logical === null || price === null) return null;
@@ -113,7 +118,7 @@ export function DrawingOverlay({
         ? { logical: Math.round(snapped.logical), price: snapped.price }
         : snapped;
     },
-    [candles, coordinates, magnet, candleAligned],
+    [candles, coordinates, magnet, candleAligned, priceScaleWidth],
   );
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -131,6 +136,10 @@ export function DrawingOverlay({
     if (!ctx) return;
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, Math.max(0, rect.width - priceScaleWidth), Math.max(0, rect.height - 30));
+    ctx.clip();
     for (const drawing of [
       ...referenceDrawings,
       ...drawings,
@@ -236,7 +245,8 @@ export function DrawingOverlay({
       ctx.stroke();
       ctx.restore();
     }
-  }, [drawings, referenceDrawings, pointOf, selectedId, coordinates, priceFormatter]);
+    ctx.restore();
+  }, [drawings, referenceDrawings, pointOf, selectedId, coordinates, priceFormatter, priceScaleWidth]);
   useEffect(() => {
     redraw();
     const id = requestAnimationFrame(redraw);
@@ -266,6 +276,8 @@ export function DrawingOverlay({
     }
   }, [onSelect, redraw, tool]);
   const hit = (point: Point, bounds: { width: number; height: number }) => {
+    if (point.x >= bounds.width - priceScaleWidth || point.y >= bounds.height - 30) return null;
+    bounds = { width: Math.max(0, bounds.width - priceScaleWidth), height: bounds.height - 30 };
     for (let i = drawings.length - 1; i >= 0; i--) {
       const d = drawings[i];
       if (d.hidden) continue;

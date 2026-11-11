@@ -344,6 +344,28 @@ button {
 .drawing-overlay.tool-select {
   cursor: default;
 }
+.chart-candle-close {
+  position: absolute;
+  z-index: 4;
+  right: 0.18rem;
+  min-width: 3.2rem;
+  padding: 1px 3px;
+  border-radius: 0.18rem;
+  background: #1d4825;
+  color: #e9ffec;
+  font-size: 0.68rem;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.chart-candle-close.stale {
+  background: #453224;
+  color: #ffdcaa;
+  font-size: 0.58rem;
+}
+
 .drawing-tools-panel {
   z-index: 5;
   align-self: start;
