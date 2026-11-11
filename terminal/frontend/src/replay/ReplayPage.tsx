@@ -499,6 +499,32 @@ export function ReplayPage() {
     return () => window.clearInterval(ticker);
   }, [runLoading]);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
+  const journal = useMemo(() => document.events.slice(0, cursor)
+    .filter(event => event.kind !== "CANDLE_CLOSED").map(event => {
+      const fmt = (value: string) => {
+        const number = Number(value);
+        return number > 0 ? "+" + number.toFixed(4) : number.toFixed(4);
+      };
+      let message: string;
+      switch (event.kind) {
+        case "WEDGE_ACCEPTED":
+          message = "Обнаружен паттерн: " + (event.pattern === "Rising Wedge"
+            ? "восходящий клин" : "нисходящий клин") +
+            ". Кандидат принят. Ожидается пробой"; break;
+        case "WEDGE_BREAKOUT": message = "Пробой подтверждён. Ожидается ретест"; break;
+        case "WEDGE_RETEST": message = "Ретест подтверждён"; break;
+        case "ENTRY_SIGNAL": message = "Выставлен LIMIT после ретеста"; break;
+        case "ENTRY_FILLED": message = "Позиция открыта, вход по ретесту"; break;
+        case "EXIT_FILLED":
+          message = "Позиция закрыта (" +
+            (event.reason === "STOP" ? "STOP" : event.reason === "TAKE" ? "TAKE" : "выход") +
+            ")" + (event.net_usdt !== undefined && event.pnl_percent !== undefined
+              ? ": " + fmt(event.net_usdt) + " USDT · " + fmt(event.pnl_percent) + "%"
+              : " · результат недоступен"); break;
+        default: message = "Событие";
+      }
+      return { sequence: event.sequence, time: event.time_ms, message };
+    }), [document.events, cursor]);
   const total = document.events.length;
   const progress = Math.round(100 * cursor / total);
   const seekPoints = useMemo(() => {
@@ -892,6 +918,11 @@ export function ReplayPage() {
       <div className="replay-grid">
         <section className="replay-chart-panel">
           <div className="replay-timeframe-switch" role="group" aria-label="Таймфрейм графика">
+            <strong className="replay-chart-symbol" aria-label="Тикер графика">
+              {document.symbol?.replace(/USDT$/, "") || "—"}
+            </strong>
+            <button type="button" disabled title="Нет проверенной минутной истории в потоке графика">M1</button>
+            <button type="button" disabled title="Нет исходной ленты сделок для 15-секундного графика">15с</button>
             <button type="button" aria-pressed={timeframe === "5m"}
               onClick={() => setTimeframe("5m")}>M5</button>
             <button type="button" aria-pressed={timeframe === "1h"}
@@ -967,6 +998,19 @@ export function ReplayPage() {
                 onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
                 onDrawingGesture={() => setPlaying(false)} />}
         </section>
+        <aside className="replay-events" aria-label="Журнал событий">
+          <h2>Журнал событий</h2>
+          <div className="replay-events-list" aria-live="off">
+            {journal.length === 0 && <p>Ожидаю события Scanner и Robot</p>}
+            {journal.map(item => <div className="replay-events-item" key={item.sequence}>
+              <time>{new Date(item.time).toLocaleString("ru-RU", {
+                timeZone: "UTC", day: "2-digit", month: "2-digit",
+                hour: "2-digit", minute: "2-digit",
+              })} UTC</time>
+              <span>{item.message}</span>
+            </div>)}
+          </div>
+        </aside>
       </div>
       <footer className="replay-footer">
         {simulationGraphPending ? "Ожидаю ▶ Пуск / проверенную историю нового прогона." :

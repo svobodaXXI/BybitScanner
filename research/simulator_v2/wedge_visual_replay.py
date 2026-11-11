@@ -26,13 +26,18 @@ class WedgeVisualReplay:
         self._bar: list[Candle] = []
         self._items: list[dict[str, object]] = []
         self._order_count = 0
+        self._decision_count = 0
+        self._entry_receipts: dict[str, object] = {}
         self._fills = 0
         self._m5 = 0
         self._last_released_trade_events = 0
         self._on_events = on_events
         self._emitted = 0
-        self._event_order = {"CANDLE_CLOSED": 0, "ENTRY_SIGNAL": 1,
-                             "ENTRY_FILLED": 2, "EXIT_FILLED": 3}
+        self._event_order = {
+            "CANDLE_CLOSED": 0, "WEDGE_ACCEPTED": 1, "WEDGE_BREAKOUT": 2,
+            "WEDGE_RETEST": 3, "ENTRY_SIGNAL": 4,
+            "ENTRY_FILLED": 5, "EXIT_FILLED": 6,
+        }
 
     def _publish(self) -> None:
         """Only committed events, with the same ordering/IDs as final replay.
@@ -64,6 +69,27 @@ class WedgeVisualReplay:
             session.account.simulation_run_id != self.run_id
         ):
             raise ValueError("visual replay changed SIMULATION identity")
+        robot = session.wedge_robot
+        if robot is None:
+            raise ValueError("visual replay requires the original Wedge Robot")
+        decisions = robot.decisions
+        if len(decisions) < self._decision_count:
+            raise ValueError("Robot decisions went backwards")
+        for decision in decisions[self._decision_count:]:
+            if decision.virtual_time_ms != minute.end_ms:
+                continue
+            kind = {
+                "INITIALIZED": "WEDGE_ACCEPTED",
+                "BREAKOUT": "WEDGE_BREAKOUT",
+                "RETEST": "WEDGE_RETEST",
+            }.get(decision.event)
+            if kind is not None:
+                self._items.append({
+                    "kind": kind, "time_ms": decision.virtual_time_ms,
+                    "pattern": decision.pattern,
+                    "candidate_id": decision.candidate_id,
+                })
+        self._decision_count = len(decisions)
         orders = session.exchange.events
         if len(orders) < self._order_count:
             raise ValueError("virtual order journal went backwards")
@@ -102,6 +128,24 @@ class WedgeVisualReplay:
             entry = order.kind == "FILLED"
             if not entry and order.kind not in ("STOP_FILLED", "TAKE_FILLED"):
                 raise ValueError("unclassified virtual exit")
+            # Only original immutable virtual exchange receipts define PnL.
+            # Percent is net profit divided by entry notional, not deposit ROI.
+            financials: dict[str, str] = {}
+            if entry:
+                self._entry_receipts[order.order_id] = receipt
+            else:
+                original = self._entry_receipts.pop(order.order_id, None)
+                if original is None or original.quantity != receipt.quantity:
+                    raise ValueError("virtual exit lacks a matching entry receipt")
+                gross = (receipt.price - original.price) * receipt.quantity * (
+                    1 if original.side == "BUY" else -1
+                )
+                net = gross - original.fee - receipt.fee
+                entry_notional = original.price * original.quantity
+                financials = {
+                    "net_usdt": str(net),
+                    "pnl_percent": str(net * 100 / entry_notional),
+                }
             self._items.append({
                 "kind": "ENTRY_FILLED" if entry else "EXIT_FILLED",
                 "time_ms": receipt.virtual_time_ms,
@@ -110,6 +154,7 @@ class WedgeVisualReplay:
                 "price": float(receipt.price),
                 "trade_id": f"SIMULATION:{self.run_id}:{order.order_id}",
                 **({} if entry else {"reason": order.kind.replace("_FILLED", "")}),
+                **financials,
             })
             self._fills += 1
 

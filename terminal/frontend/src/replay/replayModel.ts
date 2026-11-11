@@ -1,6 +1,8 @@
 /** Read-only contract for SIMULATION event logs, independent of PAPER and order APIs. */
 import syntheticDmiFixture from "./syntheticDmiFixture.json";
-export type ReplayKind = "CANDLE_CLOSED" | "ENTRY_SIGNAL" | "ENTRY_FILLED" | "EXIT_FILLED";
+export type ReplayKind =
+  "CANDLE_CLOSED" | "WEDGE_ACCEPTED" | "WEDGE_BREAKOUT" | "WEDGE_RETEST" |
+  "ENTRY_SIGNAL" | "ENTRY_FILLED" | "EXIT_FILLED";
 export type ReplayCandle = {
   start_ms: number;
   end_ms: number;
@@ -47,6 +49,10 @@ export type ReplayEvent = {
   time_ms: number;
   candle?: ReplayCandle;
   trade_id?: string;
+  candidate_id?: string;
+  pattern?: "Falling Wedge" | "Rising Wedge";
+  net_usdt?: string;
+  pnl_percent?: string;
   side?: "LONG" | "SHORT";
   price?: number;
   stop?: number;
@@ -204,7 +210,8 @@ function positiveInteger(value: unknown, label: string): number {
   return n;
 }
 const kinds = new Set<ReplayKind>([
-  "CANDLE_CLOSED", "ENTRY_SIGNAL", "ENTRY_FILLED", "EXIT_FILLED",
+  "CANDLE_CLOSED", "WEDGE_ACCEPTED", "WEDGE_BREAKOUT",
+  "WEDGE_RETEST", "ENTRY_SIGNAL", "ENTRY_FILLED", "EXIT_FILLED",
 ]);
 
 /** Reject foreign account/report data or any chronology violation; never rewrite input. */
@@ -297,11 +304,36 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     if (e.reason !== undefined && typeof e.reason !== "string") {
       throw new Error("Неверная причина выхода");
     }
+    const isWedge = kind === "WEDGE_ACCEPTED" ||
+      kind === "WEDGE_BREAKOUT" || kind === "WEDGE_RETEST";
+    const candidate_id = e.candidate_id;
+    const pattern = e.pattern;
+    if (isWedge ? (
+      mode !== "STRATEGY" || typeof candidate_id !== "string" ||
+      !/^SIMWEDGE_[0-9a-f]{32}$/.test(candidate_id) ||
+      (pattern !== "Falling Wedge" && pattern !== "Rising Wedge") ||
+      e.trade_id !== undefined
+    ) : candidate_id !== undefined || pattern !== undefined)
+      throw new Error("Недостоверное событие Robot по клину");
+    const net_usdt = e.net_usdt;
+    const pnl_percent = e.pnl_percent;
+    if (net_usdt !== undefined || pnl_percent !== undefined) {
+      const decimal = /^[+-]?(?:0|[1-9]\\d*)(?:\\.\\d+)?$/;
+      if (kind !== "EXIT_FILLED" ||
+          typeof net_usdt !== "string" || typeof pnl_percent !== "string" ||
+          !decimal.test(net_usdt) || !decimal.test(pnl_percent) ||
+          !Number.isFinite(Number(net_usdt)) || !Number.isFinite(Number(pnl_percent)))
+        throw new Error("Недостоверный финансовый результат виртуального выхода");
+    }
     return {
       source: "SIMULATION", simulation_run_id: id, kind, sequence, time_ms,
       ...(candle ? { candle } : {}),
       ...(side ? { side } : {}),
       ...(trade_id ? { trade_id } : {}),
+      ...(isWedge ? { candidate_id: candidate_id as string,
+        pattern: pattern as "Falling Wedge" | "Rising Wedge" } : {}),
+      ...(net_usdt !== undefined ? { net_usdt: net_usdt as string,
+        pnl_percent: pnl_percent as string } : {}),
       ...(e.reason !== undefined ? { reason: e.reason } : {}),
       ...(e.price !== undefined ? { price: parseOptionalNumber(e.price, "price") } : {}),
       ...(e.stop !== undefined ? { stop: parseOptionalNumber(e.stop, "stop") } : {}),
@@ -824,12 +856,17 @@ export function simulationActionJournal(document: ReplayDocument) {
     kind: event.kind,
     ...(document.symbol ? { symbol: document.symbol } : {}),
     ...(event.trade_id ? { trade_id: event.trade_id } : {}),
+    ...(event.candidate_id ? { candidate_id: event.candidate_id, pattern: event.pattern } : {}),
+    ...(event.net_usdt !== undefined ? { net_usdt: event.net_usdt, pnl_percent: event.pnl_percent } : {}),
     ...(event.side ? { side: event.side } : {}),
     ...(event.price !== undefined ? { price: event.price } : {}),
     ...(event.stop !== undefined ? { stop: event.stop } : {}),
     ...(event.take !== undefined ? { take: event.take } : {}),
     ...(event.reason ? { reason: event.reason } : {}),
-    comment: event.kind === "ENTRY_SIGNAL" ? `Сигнал ${event.side ?? ""}` :
+    comment: event.kind === "WEDGE_ACCEPTED" ? `Принят кандидат: ${event.pattern ?? ""}` :
+      event.kind === "WEDGE_BREAKOUT" ? "Пробой обнаружен. Ожидается ретест" :
+      event.kind === "WEDGE_RETEST" ? "Ретест подтверждён" :
+      event.kind === "ENTRY_SIGNAL" ? `LIMIT по ретесту ${event.side ?? ""}` :
       event.kind === "ENTRY_FILLED" ? `Вход ${event.side ?? ""}` :
       `Выход ${event.reason ?? ""}`,
   }));

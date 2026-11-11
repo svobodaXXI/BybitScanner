@@ -287,9 +287,13 @@ try {
     el.previousElementSibling?.matches(".replay-player-button") &&
     el.nextElementSibling?.matches(".replay-rate")), true,
     "player order: icons → seek → speed");
-  assert.equal(await page.locator(".replay-events").count(), 0,
-    "owner rejected right-side Events panel");
-  assert.equal(await page.getByRole("heading", { name: "События", exact: true }).count(), 0);
+  assert.equal(await page.locator(".replay-events").count(), 1,
+    "owner requested a read-only causal events journal on the right");
+  assert.equal(await page.getByRole("heading", { name: "Журнал событий" }).count(), 1);
+  assert.equal(await page.getByRole("group", { name: "Таймфрейм графика" })
+    .getByText("M1").isDisabled(), true);
+  assert.equal(await page.getByRole("group", { name: "Таймфрейм графика" })
+    .getByText("15с").isDisabled(), true);
   assert.equal(await page.locator(".replay-controls .replay-rate").count(), 0);
   const drawingBar = page.getByRole("group", { name: "Инструменты рисования" });
   const trendTool = drawingBar.getByRole("button", { name: "Трендовая" });
