@@ -39,6 +39,7 @@ class BoxBacktestResult:
             **self.report.to_payload(),
             "requested_start_ms": self.requested_start_ms,
             "requested_end_inclusive_ms": self.requested_end_inclusive_ms,
+            "requested_minutes": (self.requested_end_inclusive_ms - self.requested_start_ms) // MINUTE_MS + 1,
             "scanner_box_observations": self.scanner_box_observations,
             "admitted_box_candidates": self.admitted_box_candidates,
             "box_entry_fills": self.entry_fills,
