@@ -233,8 +233,9 @@ def fetch_public_klines(symbol: str, interval: str, limit: int, *, end_ms: int):
 def load_public_history(
     *, symbol: str, start: str, end: str,
     fetch_candles: Callable[..., object] = fetch_public_klines,
+    strategies: tuple[str, ...] = (),
 ) -> dict[str, object]:
-    """Strict UTC date bounds; no account state, history write or order calls."""
+    """Closed public M5; optionally run native research detectors, no trades."""
     if not SYMBOL_RE.fullmatch(symbol) or not symbol.endswith("USDT"):
         raise ValueError("Select a linear USDT symbol, e.g. BTCUSDT")
     start_ms, end_ms = parse_date_utc(start), parse_date_utc(end)
@@ -247,11 +248,27 @@ def load_public_history(
         raise ValueError("Future/incomplete candles are not available")
     # The response remains entirely in RAM; no overwrite of PAPER or SIM files.
     from secrets import token_hex
-    return build_market_only_document(
+    doc = build_market_only_document(
         symbol=symbol, start_ms=start_ms, end_ms=end_ms,
         run_id="local_" + token_hex(8), fetch_candles=fetch_candles,
         geometry_warmup_bars=GEOMETRY_PRELOAD_BARS,
     )
+    if strategies:
+        from research.simulator_v2.public_m5_scan import (
+            MAX_PUBLIC_SCAN_BARS, SELECTABLE, scan_public_closed_m5,
+        )
+        if (len(doc["events"]) > MAX_PUBLIC_SCAN_BARS
+                or len(set(strategies)) != len(strategies)
+                or any(x not in SELECTABLE for x in strategies)):
+            raise ValueError("Public research Scanner: one UTC day, only Wedge/Ikigai Box")
+        observations = scan_public_closed_m5(doc, strategies)
+        doc["scanner_research"] = {
+            "scope": "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
+            "detectors": list(strategies),
+            "configuration": "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX",
+        }
+        doc["scanner_observations"] = observations
+    return doc
 
 
 def handler_factory(static_dir: Path = STATIC_DIR,
@@ -334,13 +351,30 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                     return
                 try:
                     fields = parse_qs(url.query, strict_parsing=True)
-                    if set(fields) != {"symbol", "start", "end"} or any(len(x) != 1 for x in fields.values()):
+                    if not {"symbol", "start", "end"} <= set(fields) or not set(fields) <= {"symbol", "start", "end", "strategies"} or any(len(x) != 1 for x in fields.values()):
                         raise ValueError("Expected symbol, start and end once")
-                    doc = history_loader(symbol=fields["symbol"][0], start=fields["start"][0], end=fields["end"][0])
+                    names = fields.get("strategies", [""])[0]
+                    if names:
+                        choices = tuple(names.split(","))
+                        from research.simulator_v2.public_m5_scan import SELECTABLE
+                        if (len(choices) != len(set(choices))
+                                or len(choices) > 3 or any(name not in SELECTABLE for name in choices)):
+                            raise ValueError("Only local Wedge and Ikigai Box M5 research supported")
+                        doc = history_loader(
+                            symbol=fields["symbol"][0], start=fields["start"][0],
+                            end=fields["end"][0], strategies=choices,
+                        )
+                    else:
+                        doc = history_loader(
+                            symbol=fields["symbol"][0], start=fields["start"][0],
+                            end=fields["end"][0],
+                        )
                     body = json.dumps(doc, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
                     self._send(200, body, "application/json; charset=utf-8")
                 except (ValueError, OverflowError) as exc:
                     self._error(400, str(exc))
+                except (ImportError, ModuleNotFoundError):
+                    self._error(503, "Native Scanner requires local Python 3.11 with bundled offline analytical wheels")
                 except Exception:
                     # Failed remote market request: no fallback to cached, stale,
                     # proxy, PAPER or invented data.
