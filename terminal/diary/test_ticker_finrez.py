@@ -71,8 +71,33 @@ class FinrezRankingTests(unittest.TestCase):
             {"symbol": "ETHUSDT", "pnl_usdt": "-1.2", "trade_count": 1},
         ])
 
+    def test_calendar_periods_use_moscow_boundaries(self):
+        now = _ms(12, 12)  # Thursday 12 Nov 2026
+        self.assertEqual(period_start_ms(period="DAY", now_ms=now), _ms(12, 0))
+        self.assertEqual(period_start_ms(period="TODAY", now_ms=now), _ms(12, 0))
+        self.assertEqual(period_start_ms(period="WEEK", now_ms=now), _ms(9, 0))
+        self.assertEqual(period_start_ms(period="MONTH", now_ms=now),
+                         int(datetime(2026, 11, 1, tzinfo=_MSK).timestamp() * 1000))
+        self.assertEqual(period_start_ms(period="YEAR", now_ms=now),
+                         int(datetime(2026, 1, 1, tzinfo=_MSK).timestamp() * 1000))
+        self.assertEqual(period_start_ms(period="ALL", now_ms=now), 0)
+
+    def test_all_calendar_periods_filter_by_actual_episode_close_time(self):
+        now = _ms(12, 12)
+        rows = [
+            _episode("BTCUSDT", "1", "0", _ms(12, 2)),
+            _episode("BTCUSDT", "2", "0", _ms(9, 0)),
+            _episode("BTCUSDT", "4", "0", _ms(8, 23)),
+        ]
+        expected = {"DAY": ("1", 1), "WEEK": ("3", 2),
+                    "MONTH": ("7", 3), "YEAR": ("7", 3), "ALL": ("7", 3)}
+        for period, (pnl, count) in expected.items():
+            _, ranked = aggregate_ticker_pnl(rows, period=period, now_ms=now)
+            self.assertEqual(ranked, [{"symbol": "BTCUSDT",
+                                       "pnl_usdt": pnl, "trade_count": count}])
+
     def test_rejects_unknown_period_and_negative_time(self):
-        for period, now in [("WEEK", _ms(9, 12)), ("TODAY", -1)]:
+        for period, now in [("UNKNOWN", _ms(9, 12)), ("TODAY", -1)]:
             with self.assertRaises(ValueError):
                 period_start_ms(period=period, now_ms=now)
 
