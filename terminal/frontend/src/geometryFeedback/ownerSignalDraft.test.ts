@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOwnerSignalDraft } from "./ownerSignalDraft";
+import { buildOwnerChartDraft, buildOwnerSignalDraft } from "./ownerSignalDraft";
 import type { DrawingObject } from "../chart/drawingModel";
 
 const candles = Array.from({ length: 120 }, (_, i) => ({
@@ -67,5 +67,37 @@ describe("retrospective owner new-signal proposal", () => {
     expect(result.context_as_of_ms).toBe(asOf);
     expect(result.context_bars_sha256).toBe("c".repeat(64));
     expect(result.snapshot_revision).toBe(input.snapshotRevision);
+  });
+});
+
+
+describe("independent owner signal on a current chart", () => {
+  it("serializes closed candles and two manual rays without Scanner provenance", () => {
+    const draft = buildOwnerChartDraft({
+      symbol: "BTCUSDT", timeframe: "5m", pattern: "Falling Wedge",
+      drawings: [ray("low", [30, 95], [80, 92]), ray("upper", [30, 108], [80, 102])],
+      frozenCandles: candles, note: "Missed by Scanner",
+      idempotencyKey: "owner-missed-00000001",
+    });
+    expect(draft.source_kind).toBe("OWNER_CHART_UNVERIFIED");
+    expect(draft.timeframe).toBe("5");
+    expect(draft.bars).toHaveLength(120);
+    expect(draft.bars[30].open_time_ms).toBe(Date.parse(candles[30].time));
+    expect(draft.proposed_boundaries.map((line) => line.id)).toEqual(["upper", "lower"]);
+    expect(draft).not.toHaveProperty("signal_id");
+    expect(draft).not.toHaveProperty("snapshot_revision");
+  });
+
+  it("refuses gaps and incomplete rays before sending owner data", () => {
+    const base = {
+      symbol: "BTCUSDT", timeframe: "5m", pattern: "Falling Wedge" as const,
+      frozenCandles: candles, note: "", idempotencyKey: "owner-missed-00000002",
+      drawings: [ray("upper", [30, 108], [80, 102]), ray("lower", [30, 95], [80, 92])],
+    };
+    expect(() => buildOwnerChartDraft({ ...base, drawings: base.drawings.slice(0, 1) }))
+      .toThrow(/два луча/);
+    expect(() => buildOwnerChartDraft({
+      ...base, frozenCandles: [...candles.slice(0, 40), ...candles.slice(41)],
+    })).toThrow(/Пропуск/);
   });
 });

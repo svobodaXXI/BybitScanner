@@ -25,7 +25,7 @@ import {
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
 import { appendRetrospectiveCandles, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
-import type { OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
+import type { OwnerChartDraft, OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
 import type { PaperOpenPosition } from "../contracts/trading";
@@ -130,6 +130,8 @@ export function App() {
   } | null>(null);
   const [frozenGeometryStatus, setFrozenGeometryStatus] = useState<"loading" | "unavailable" | "ready">("loading");
   const [showCurrentEditorChart, setShowCurrentEditorChart] = useState(false);
+  const [ownerChartCandles, setOwnerChartCandles] = useState<Candle[] | null>(null);
+  const [ownerChartError, setOwnerChartError] = useState("");
   useEffect(() => {
     const link = launchLink;
     if (!link || !link.signalId) return;
@@ -1438,19 +1440,55 @@ export function App() {
           aria-modal="true" aria-label="Актуальный график">
           <div className="editor-current-chart-toolbar">
             <strong>Актуальный график · {launchLink?.symbol ?? market.book.symbol} · {timeframe}</strong>
-            <button type="button" onClick={() => setShowCurrentEditorChart(false)}>
+            <button type="button" onClick={() => { setShowCurrentEditorChart(false); setOwnerChartCandles(null); setOwnerChartError(""); }}>
               Вернуться к сигналу
             </button>
+            {!ownerChartCandles && <button type="button" onClick={() => {
+              const periods: Record<string, number> = { "1": 60000, "5": 300000, "15": 900000, "60": 3600000, "D": 86400000 };
+              const period = periods[timeframe];
+              const now = Date.now();
+              const closed = market.candles.filter(bar => {
+                const at = Date.parse(bar.time);
+                return period && Number.isSafeInteger(at) && at >= 0 && at % period === 0 && at + period <= now;
+              }).slice(-120);
+              if (closed.length < 20 || closed.some((bar, i) => i > 0 && Date.parse(bar.time) !== Date.parse(closed[i - 1].time) + period)) {
+                setOwnerChartError("Нужно не менее 20 непрерывных закрытых свечей");
+                return;
+              }
+              setOwnerChartError("");
+              setOwnerChartCandles(closed.map(bar => ({ ...bar })));
+            }}>Разметить свой сигнал</button>}
           </div>
+          {ownerChartError && <output role="status">{ownerChartError}</output>}
           {market.book.symbol === (launchLink?.symbol ?? market.book.symbol)
             && market.candles.length > 0 ? (
             <ChartPanel
-              key={`editor-current:${market.book.symbol}:${timeframe}`}
-              candles={market.candles}
-              tickSize={market.tickSize}
+              key={`editor-current:${market.book.symbol}:${timeframe}:${ownerChartCandles ? "owner" : "view"}`}
+              candles={ownerChartCandles ?? market.candles}
+              tickSize={null}
+              editorMode={ownerChartCandles !== null}
+              ownerChartMode={ownerChartCandles !== null}
+              onSubmitOwnerChart={ownerChartCandles ? async (draft: OwnerChartDraft) => {
+                const response = await fetch("/api/workspace/owner-unscanned-signal", {
+                  method: "POST", credentials: "same-origin",
+                  headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft),
+                });
+                const result = await response.json();
+                const record = result.proposal;
+                if (!response.ok || result.ok !== true || typeof record?.proposal_id !== "string" ||
+                    !/^[0-9a-f]{64}$/.test(record.proposal_id) ||
+                    record?.source_kind !== "OWNER_CHART_UNVERIFIED" ||
+                    record?.submission?.pattern !== draft.pattern ||
+                    record?.submission?.idempotency_key !== draft.idempotency_key ||
+                    record?.candidate_created !== false || record?.robot_candidate_id !== null ||
+                    record?.assessment?.decision !== "AWAITING_OFFLINE_REPLAY")
+                  throw new Error(result.error || "Сохранение примера не подтверждено");
+                return { proposalId: record.proposal_id,
+                  decision: record.assessment.decision, reason: record.assessment.reason };
+              } : undefined}
               symbol={market.book.symbol}
               timeframe={timeframe}
-              readOnly
+              readOnly={ownerChartCandles === null}
             />
           ) : (
             <output role="status">
