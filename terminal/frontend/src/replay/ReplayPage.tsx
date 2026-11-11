@@ -868,12 +868,18 @@ export function ReplayPage() {
       const response = await fetch("/local-replay/history?" + query.toString(), {
         method: "GET", cache: "no-store", signal: controller.signal,
       });
-      const raw: unknown = await response.json();
+      // Loopback returns plain-text errors (not JSON) for 400/502.
+      // A JSON.parse exception here previously concealed the actual failure.
+      // Public M5 never creates the local verified M1 + risk prerequisites
+      // for a SIMULATION strategy run.
       if (!response.ok) {
-        const reason = typeof raw === "object" && raw !== null && "error" in raw &&
-          typeof raw.error === "string" ? raw.error : "История недоступна";
-        throw new Error(reason);
+        if (response.status === 502) {
+          throw new Error("Публичный Bybit M5 недоступен (HTTP 502): запрос к рыночному API не завершился. График не загружен. Локальный торговый прогон отдельно требует архив M1 и профиль риска.");
+        }
+        const reason = (await response.text()).slice(0, 260).trim();
+        throw new Error(`Ошибка публичной истории HTTP ${response.status}: ${reason || "нет данных"}`);
       }
+      const raw: unknown = await response.json();
       const imported = parseReplayDocument(raw);
       if (imported.mode !== "MARKET_ONLY") throw new Error("История не соответствует режиму MARKET_ONLY");
       if (historyRequest.current !== controller) return;
