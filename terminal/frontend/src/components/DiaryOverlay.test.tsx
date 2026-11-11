@@ -413,7 +413,7 @@ describe("Closed deals / exact episode index", () => {
     fireEvent.click(screen.getByRole("button", { name: /К сделкам/ }));
     expect(await screen.findByRole("button", { name: /BTCUSDT/ })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=TODAY",
+      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=DAY",
     );
   });
 
@@ -592,26 +592,33 @@ describe("Statistics source headings", () => {
     expect(heading).not.toHaveTextContent("раздельная статистика");
     await screen.findByText("ETHUSDT");
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=TODAY",
+      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=DAY",
     );
   });
 });
 
 describe("Finrez first-screen UI", () => {
-  it("shows the ticker ranking with two periods, reuses the Diary modal and defers other sections", async () => {
+  it("shows the ticker ranking with five periods, reuses the Diary modal and defers other sections", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
       ...finrezResponse,
-      period: url.includes("period=ALL") ? "ALL" : "TODAY",
+      period: (new URL(url, "http://localhost").searchParams.get("period") ?? "DAY"),
     }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     render(<DiaryOverlay accountKey="paper:1" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     expect(screen.getByRole("dialog", { name: "Статистика" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Сегодня" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "День" })).toHaveAttribute("aria-pressed", "true");
     expect(await screen.findByText("+7.2 USDT")).toBeInTheDocument();
     expect(screen.getByText("-2.5 USDT")).toBeInTheDocument();
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=TODAY");
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=DAY");
+    for (const [label, period] of [["Неделя", "WEEK"], ["Месяц", "MONTH"], ["Год", "YEAR"]] as const) {
+      fireEvent.click(screen.getByRole("button", { name: label }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+        `/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=${period}`
+      ));
+      expect(screen.getByRole("button", { name: label })).toHaveAttribute("aria-pressed", "true");
+    }
     fireEvent.click(screen.getByRole("button", { name: "Всё время" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=ALL"));
     fireEvent.click(screen.getByRole("button", { name: "Паттерны" }));
@@ -661,7 +668,7 @@ describe("Finrez first-screen UI", () => {
   it("explicitly warns about partial attribution and never calls an unknown result zero", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
       ...finrezResponse,
-      period: url.includes("period=ALL") ? "ALL" : "TODAY",
+      period: (new URL(url, "http://localhost").searchParams.get("period") ?? "DAY"),
       tickers: [],
       attribution_coverage: url.includes("period=ALL") ? {
         status: "PARTIAL",
@@ -702,7 +709,7 @@ describe("Finrez first-screen UI", () => {
     current.rerender(<DiaryOverlay accountKey="paper:joint-manual" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/diary/ticker-finrez?account_id=paper&owner=MANUAL&period=TODAY",
+      "/api/diary/ticker-finrez?account_id=paper&owner=MANUAL&period=DAY",
     ));
     expect(await screen.findByRole("region", { name: "Совместно управляемые сделки" })).toHaveTextContent("-11.4 USDT");
     expect(screen.getAllByText("-11.4 USDT")).toHaveLength(1);
