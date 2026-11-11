@@ -661,14 +661,21 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
             <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{selected.pnl_usdt} USDT</dd></div>
           </dl>
         </section>
-        <button className="diary-detail-back" type="button" disabled={downloading}
-          onClick={() => void downloadFacts(selected)}>
-          {downloading ? "Выгружаю факты…" : "Скачать JSON исполнений"}
-        </button>
+        <div className="diary-episode-actions">
+          <button className="diary-detail-back" type="button" disabled={downloading}
+            onClick={() => void downloadFacts(selected)}>
+            {downloading ? "Выгружаю факты…" : "Скачать JSON исполнений"}
+          </button>
+          <button className="diary-detail-back" type="button" disabled={downloading}
+            onClick={() => void openInSimulator(selected)}>
+            🎞 В Симулятор
+          </button>
+        </div>
         {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
         <p className="diary-finrez-basis" role="status">
-          Это не воспроизведение. JSON содержит только реальные зарегистрированные исполнения. Свечи, решения робота
-          и полное воспроизведение в локальном Симуляторе пока не подключены.
+          Исторические исполнения открываются в локальной «Машине времени» по точному ID,
+          только при наличии проверенного M1-архива. Это исходные факты PAPER,
+          не повторная торговля и не запись всех прошлых решений Robot.
         </p>
       </div>
     );
@@ -684,25 +691,41 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
       {deals.length === 0 ? <p className="diary-state">Нет подтверждённых закрытых сделок за выбранный период</p> : (
         <div className="diary-trades-list">
           {deals.map((deal) => (
-            <button className={`diary-trade-row ${deal.side.toLowerCase()}`}
-              type="button" key={deal.trade_episode_id} onClick={() => setSelectedId(deal.trade_episode_id)}>
-              <div className="diary-trade-heading">
-                <strong>{deal.symbol}</strong><span>{sideLabel(deal.side)}</span><span>{dealLabels[deal.cohort]}</span>
+            <div className="diary-trade-entry" key={deal.trade_episode_id}>
+              <button className={`diary-trade-row ${deal.side.toLowerCase()}`}
+                type="button" onClick={() => setSelectedId(deal.trade_episode_id)}>
+                <div className="diary-trade-heading">
+                  <strong>{deal.symbol}</strong><span>{sideLabel(deal.side)}</span><span>{dealLabels[deal.cohort]}</span>
+                </div>
+                <div className="diary-trade-times">
+                  <span>{formatDate(deal.opened_at_ms)}</span><span>→</span><span>{formatDate(deal.closed_at_ms)}</span>
+                </div>
+                <div className="diary-trade-metrics">
+                  <span className={Number(deal.pnl_usdt) > 0 ? "profit" : Number(deal.pnl_usdt) < 0 ? "loss" : ""}
+                    title={deal.pnl_usdt}>PnL {Number(deal.pnl_usdt).toFixed(2)} USDT</span>
+                  <span>Исполнений: {deal.execution_count}</span>
+                </div>
+              </button>
+              <div className="diary-trade-actions">
+                <button type="button" title="Подробности сделки"
+                  aria-label={`Подробности сделки ${deal.trade_episode_id}`}
+                  onClick={() => setSelectedId(deal.trade_episode_id)}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6" />
+                    <path d="m14.5 14.5 6 6" /></svg>
+                </button>
+                <button type="button" title="Передать сделку в локальный Симулятор"
+                  aria-label={`В Симулятор ${deal.trade_episode_id}`}
+                  disabled={downloading} onClick={() => void openInSimulator(deal)}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <path d="M8 3v18M16 3v18M3 8h5M3 16h5M16 8h5M16 16h5" /></svg>
+                </button>
               </div>
-              <div className="diary-trade-times">
-                <span>{formatDate(deal.opened_at_ms)}</span><span>→</span><span>{formatDate(deal.closed_at_ms)}</span>
-              </div>
-              <div className="diary-trade-metrics">
-                <span className={Number(deal.pnl_usdt) > 0 ? "profit" : Number(deal.pnl_usdt) < 0 ? "loss" : ""}
-                  title={deal.pnl_usdt}>PnL {deal.pnl_usdt} USDT</span>
-                <span>Исполнений: {deal.execution_count}</span>
-              </div>
-            </button>
+            </div>
           ))}
         </div>
       )}
       <p className="diary-finrez-basis">
-        Пока доступен только идентификатор сделки; историческое воспроизведение в локальном Симуляторе ещё не подключено.
+        Киноплёнка открывает факты выбранного эпизода в локальном Симуляторе при наличии проверенного архива. Решения Robot, не сохранённые в источнике, не восстанавливаются догадками.
       </p>
     </div>
   );
