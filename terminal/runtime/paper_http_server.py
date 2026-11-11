@@ -3315,7 +3315,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             params = parse_qs(parsed.query, keep_blank_values=True)
             if (set(params) != {"account_id", "owner", "period"}
                     or any(len(values) != 1 for values in params.values())
-                    or params["period"][0] not in {"TODAY", "ALL"}
+                    or params["period"][0] not in {"TODAY", "DAY", "WEEK", "MONTH", "YEAR", "ALL"}
                     or params["owner"][0] not in {"MANUAL", "ROBOT"}):
                 self._json_response(400, {"ok": False, "error": "finrez_scope_required"})
                 return
