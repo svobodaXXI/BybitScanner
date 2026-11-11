@@ -1210,6 +1210,13 @@ export function ModePanel({
           {diaryVisible ? (
             <DiaryOverlay
               initialSection="FINREZ"
+              accountMenu={{
+                workspaceProjection: accountWorkspaceProjection,
+                mode: onModeAccountSelect ? "TERMINAL" : undefined,
+                selectedAccountId: modeAccountId,
+                onSelectAccount: onModeAccountSelect,
+                modeAccountError,
+              }}
               accountKey={`${accountWorkspaceProjection?.account_id ?? "unknown"}:${accountWorkspaceProjection?.session_generation ?? 0}`}
               statisticsScope={mode === "TERMINAL" && accountWorkspaceProjection
                 ? { accountId: accountWorkspaceProjection.account_id, owner: "MANUAL" }
