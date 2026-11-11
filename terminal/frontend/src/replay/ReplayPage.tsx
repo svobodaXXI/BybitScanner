@@ -1011,7 +1011,7 @@ export function ReplayPage() {
         aria-valuenow={progress} aria-label="Прогресс воспроизведения">
         <div style={{ width: progress + "%" }} />
       </div>
-      {document.mode === "MARKET_ONLY" && <p className="replay-note">
+      {document.mode === "MARKET_ONLY" && <p className="replay-note" role="status" aria-label="Статус выбранных стратегий">
         РЕАЛЬНЫЕ СВЕЧИ BYBIT · БЕЗ СДЕЛОК:
         {" "}{document.market_data_source === "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M"
           ? "исторические сделки из официального публичного архива, агрегированные в закрытые 5m OHLCV"
