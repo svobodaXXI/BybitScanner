@@ -18,6 +18,8 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parent
 assert (ROOT / "START_LOCAL.cmd").is_file(), "Windows launcher missing"
 assert (ROOT / "dist" / "replay.html").is_file(), "Standalone build missing"
+from local_update import installed_build
+assert installed_build(ROOT)["build_status"] == "MANIFEST_HASH_MATCH", "Build manifest/hash mismatch"
 
 # Local H-017 risk module must ship in the extracted Windows archive.
 from research.h017_local_risk import H017LocalRiskPolicy
