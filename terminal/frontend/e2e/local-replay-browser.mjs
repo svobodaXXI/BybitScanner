@@ -132,7 +132,7 @@ try {
   const coordinates = setup.getByRole("textbox", { name: "Координаты прогона" });
   await coordinates.fill("XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59");
   await setup.getByRole("button", { name: "Применить" }).click();
-  assert.match(await setup.locator(".replay-run-heading").innerText(), /XRPUSDT/);
+  assert.match(await page.locator(".replay-meta strong").first().innerText(), /XRPUSDT/);
   assert.equal(await startUtc.inputValue(), "2026-09-11T00:00");
   assert.equal(await endUtc.inputValue(), "2026-09-11T23:59");
   assert.match(await duration.innerText(), /1 день/);
@@ -147,11 +147,11 @@ try {
     "Apply must clear old candles immediately");
   await coordinates.fill("PAPER | 2026-09-11T00:00 | 2026-09-11T23:59");
   await setup.getByRole("button", { name: "Применить" }).click();
-  assert.match(await setup.locator(".replay-run-heading").innerText(), /XRPUSDT/,
+  assert.match(await page.locator(".replay-meta strong").first().innerText(), /XRPUSDT/,
     "invalid pasted coordinates must not overwrite accepted symbol");
   await coordinates.fill("BTCUSDT | 2026-10-01T12:34 | 2026-10-11T18:45");
   await setup.getByRole("button", { name: "Применить" }).click();
-  assert.match(await setup.locator(".replay-run-heading").innerText(), /BTCUSDT/);
+  assert.match(await page.locator(".replay-meta strong").first().innerText(), /BTCUSDT/);
   assert.equal(await page.getByRole("button", { name: /Запустить клинья/ }).count(), 0,
     "a second SIMULATION launch button must never reappear");
   assert.match(await page.locator(".replay-meta").innerText(), /BTCUSDT.*2026-10-01T12:34/);
