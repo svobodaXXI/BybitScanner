@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, clearAll, isAllSelected,
-  onlyWedges, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, adjustInclusiveWindow, parseRunCoordinates, formatRunDuration, selectAll,
+  onlyWedges, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, adjustInclusiveWindow,
+  parseRunCoordinates, formatRunCoordinates, formatRunDuration, selectAll,
   toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
 } from "./runSetup";
@@ -89,15 +90,23 @@ describe("local one-symbol strategy setup (no trading)", () => {
       .toThrow(/хотя бы 1 минута/);
   });
   it("parses pasted ticker and inclusive UTC dates without timezone guessing", () => {
-    expect(parseRunCoordinates("XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59")).toEqual({
+    const chosen = {
       symbol: "XRPUSDT", start_utc: "2026-09-11T00:00",
       end_utc_inclusive: "2026-09-11T23:59",
-    });
+    };
+    expect(parseRunCoordinates("XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59")).toEqual(chosen);
+    expect(parseRunCoordinates(formatRunCoordinates(
+      chosen.symbol, chosen.start_utc, chosen.end_utc_inclusive,
+    ))).toEqual(chosen);
+    expect(parseRunCoordinates("XRPUSDT | 2026-09-11T00:00 — 2026-09-11T23:59 UTC"))
+      .toEqual(chosen);
     for (const value of [
       "PAPER | 2026-09-11T00:00 | 2026-09-11T23:59",
       "XRPUSDT | 2026-02-30T00:00 | 2026-03-01T23:59",
       "XRPUSDT | 2026-09-12T00:00 | 2026-09-11T23:59",
       "XRPUSDT | 2026-09-11 | 2026-09-12",
+      "XRPUSDT | 2026-09-11T00:00 — 2026-09-12T00:00 EVIL",
+      "XRPUSDT | 2026-09-11T00:00 | 2026-09-12T00:00 | EXTRA",
       "XRPUSDT | 2026-01-01T00:00 | 2026-04-02T00:00",
     ]) expect(() => parseRunCoordinates(value)).toThrow();
   });

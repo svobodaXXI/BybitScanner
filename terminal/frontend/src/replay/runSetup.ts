@@ -67,15 +67,23 @@ export function isAllSelected(selection: RunSelection): boolean {
 export type PeriodPreset = "DAY" | "WEEK" | "MONTH" | "THREE_MONTHS";
 export type PeriodIncrement = "HOUR" | "DAY" | "WEEK" | "MONTH";
 
-/** Copyable owner selection: TICKER | UTC START | UTC INCLUSIVE END. */
+/** The Source card and input share one reversible UTC coordinate format. */
+export function formatRunCoordinates(
+  symbol: string, start: string, endInclusive: string,
+): string {
+  return `${symbol} | ${start} | ${endInclusive} UTC`;
+}
+/** Also accept the legacy Source-card em dash, without relaxing UTC validation. */
 export function parseRunCoordinates(value: string): {
   symbol: string; start_utc: string; end_utc_inclusive: string;
 } {
-  const parts = value.trim().split(/\s*\|\s*/);
-  if (value.length > 200 || parts.length !== 3) {
-    throw new Error("Формат: XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59");
-  }
-  const [symbol, start_utc, end_utc_inclusive] = parts;
+  const format = "Формат: XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59";
+  if (value.length > 200) throw new Error(format);
+  const stripped = value.trim().replace(/\s+UTC$/i, "");
+  const legacy = /^([^|]+?)\s*\|\s*(\S+)\s+[—–]\s+(\S+)$/.exec(stripped);
+  const parts = legacy ? legacy.slice(1) : stripped.split(/\s*\|\s*/);
+  if (parts.length !== 3) throw new Error(format);
+  const [symbol, start_utc, end_utc_inclusive] = parts.map(x => x.trim());
   if (!/^[A-Z0-9]{2,25}USDT$/.test(symbol))
     throw new Error("В координатах должен быть один USDT-тикер");
   const window = validateInclusiveWindow(start_utc, end_utc_inclusive);

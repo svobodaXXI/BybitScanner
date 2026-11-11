@@ -130,6 +130,12 @@ try {
   assert.equal(await endUtc.inputValue(), "2026-09-11T23:59");
   assert.match(await duration.innerText(), /1 день/);
   assert.match(await page.locator(".replay-meta").innerText(), /XRPUSDT.*2026-09-11T00:00/);
+  const copyableSource = (await page.locator(".replay-meta strong").first().innerText()).trim();
+  await coordinates.fill(copyableSource);
+  await setup.getByRole("button", { name: "Применить" }).click();
+  assert.equal(await setup.getByRole("alert").count(), 0, "copied Source must be accepted");
+  assert.equal(await startUtc.inputValue(), "2026-09-11T00:00");
+  assert.equal(await endUtc.inputValue(), "2026-09-11T23:59");
   assert.equal(await page.locator(".replay-chart canvas").count(), 0,
     "Apply must clear old candles immediately");
   await coordinates.fill("PAPER | 2026-09-11T00:00 | 2026-09-11T23:59");

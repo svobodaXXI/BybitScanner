@@ -14,7 +14,7 @@ import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
 import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import { RunSetupPanel } from "./RunSetupPanel";
-import { validateInclusiveWindow, makeWedgeRunRequest } from "./runSetup";
+import { validateInclusiveWindow, makeWedgeRunRequest, formatRunCoordinates } from "./runSetup";
 type WedgeRunRequest = ReturnType<typeof makeWedgeRunRequest>;
 import "./replay.css";
 
@@ -487,7 +487,17 @@ export function ReplayPage() {
   const [simulationGraphPending, setSimulationGraphPending] = useState(true);
   const [preparedRun, setPreparedRun] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
+  const [runWaitingSeconds, setRunWaitingSeconds] = useState(0);
   const [playRequestId, setPlayRequestId] = useState(0);
+
+  useEffect(() => {
+    if (!runLoading) { setRunWaitingSeconds(0); return; }
+    const since = Date.now();
+    const ticker = window.setInterval(
+      () => setRunWaitingSeconds(Math.floor((Date.now() - since) / 1000)), 1000,
+    );
+    return () => window.clearInterval(ticker);
+  }, [runLoading]);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
   const total = document.events.length;
   const progress = Math.round(100 * cursor / total);
@@ -562,7 +572,7 @@ export function ReplayPage() {
     setPlaying(false); setCursor(0);
     setError(null);
     setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
-    setFileLabel(`${request.symbol} | ${request.start_utc} — ${request.end_utc_inclusive} UTC`);
+    setFileLabel(formatRunCoordinates(request.symbol, request.start_utc, request.end_utc_inclusive));
     setSimulationGraphPending(true);
     setPreparedRun(true);
     setRunLoading(false);
@@ -931,7 +941,7 @@ export function ReplayPage() {
           </div>
           {simulationGraphPending
             ? <div className="replay-chart-pending" aria-label="Пустой график до запуска">
-                {runLoading ? "Подготавливаю проверенные свечи…" :
+                {runLoading ? `Ожидаю расчёт проверенных свечей: ${runWaitingSeconds} с. Длительный период может занять несколько минут.` :
                   "График нового прогона появится после нажатия ▶"}
               </div>
             : <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
