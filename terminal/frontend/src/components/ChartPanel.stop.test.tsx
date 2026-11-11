@@ -1,6 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { ChartPanel } from "./ChartPanel";
+
+const seriesSetData = vi.hoisted(() => vi.fn());
 
 vi.mock("lightweight-charts", () => ({
   CandlestickSeries: {},
@@ -10,7 +12,7 @@ vi.mock("lightweight-charts", () => ({
     addSeries: () => ({
       coordinateToPrice: () => 98,
       priceToCoordinate: () => 100,
-      setData: vi.fn(),
+      setData: seriesSetData,
       applyOptions: vi.fn(),
     }),
     timeScale: () => ({
@@ -69,4 +71,35 @@ it("renders authoritative TAKE and replaces it with only the local pending edit"
   );
   expect(screen.getByRole("slider", { name: "Pending TAKE at 104" })).toHaveClass("draft");
   expect(screen.queryByLabelText("Active TAKE at 103")).toBeNull();
+});
+
+it("previews current candles inside Editor and restores the frozen view without edits", () => {
+  const source = [
+    { time: "2026-11-01T00:00:00Z", open: 10, high: 12, low: 9, close: 11 },
+    { time: "2026-11-01T00:05:00Z", open: 11, high: 13, low: 10, close: 12 },
+  ];
+  const current = [
+    { time: "2026-11-11T00:00:00Z", open: 30, high: 32, low: 29, close: 31 },
+    { time: "2026-11-11T00:05:00Z", open: 31, high: 34, low: 30, close: 33 },
+  ];
+  seriesSetData.mockClear();
+  render(
+    <ChartPanel candles={source} currentCandles={current} tickSize={null}
+      editorMode signalIdentity="source-original:abc" symbol="ICNTUSDT" timeframe="5m" />,
+  );
+  expect(seriesSetData.mock.lastCall?.[0].at(-1).close).toBe(12);
+  expect(screen.getByRole("button", { name: "Показать следующие свечи" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Показать актуальный график" }));
+  expect(seriesSetData.mock.lastCall?.[0].at(-1).close).toBe(33);
+  expect(screen.getByText(/Текущие рыночные свечи ICNTUSDT/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Показать следующие свечи" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Вернуться к сигналу" }));
+  expect(seriesSetData.mock.lastCall?.[0].at(-1).close).toBe(12);
+  expect(screen.getByRole("button", { name: "Показать следующие свечи" })).toBeInTheDocument();
+});
+
+it("does not offer current chart without matching market candles", () => {
+  render(<ChartPanel candles={[]} tickSize={null}
+    editorMode signalIdentity="source-original:abc" />);
+  expect(screen.getByRole("button", { name: "Показать актуальный график" })).toBeDisabled();
 });
