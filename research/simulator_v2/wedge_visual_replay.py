@@ -28,6 +28,7 @@ class WedgeVisualReplay:
         self._order_count = 0
         self._fills = 0
         self._m5 = 0
+        self._last_released_trade_events = 0
         self._on_events = on_events
         self._emitted = 0
         self._event_order = {"CANDLE_CLOSED": 0, "ENTRY_SIGNAL": 1,
@@ -52,6 +53,9 @@ class WedgeVisualReplay:
         ]
         self._on_events(frame)
         self._emitted += len(frame)
+        self._last_released_trade_events += sum(
+            item["kind"] != "CANDLE_CLOSED" for item in pending
+        )
 
     def record(self, session: VirtualReplaySession, minute: Candle) -> None:
         if not self.start_ms <= minute.start_ms < self.end_ms:
@@ -132,7 +136,13 @@ class WedgeVisualReplay:
                 })
                 self._m5 += 1
                 self._bar = []
-                if self._m5 == 1 or self._m5 % 12 == 0:
+                # A newly verified trade action must not wait for an hourly
+                # candle batch: release after its CLOSED M5 alongside the bar.
+                new_actions = sum(
+                    item["kind"] != "CANDLE_CLOSED"
+                    for item in self._items[self._emitted:]
+                )
+                if self._m5 == 1 or self._m5 % 3 == 0 or new_actions:
                     self._publish()
 
     def document(self, *, source_id: str, expected_fills: int) -> dict[str, object]:

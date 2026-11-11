@@ -155,6 +155,14 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(cursor).toBe(events.length);
     expect(nextClosedCandleCursor(events, cursor)).toBe(cursor);
     expect(nextClosedCandleCursor(events, 0)).toBe(1);
+    const first = events.find(e => e.kind === "CANDLE_CLOSED")!;
+    const future = events.find(e => e.kind === "ENTRY_SIGNAL")!;
+    const frontier = [{ ...first, sequence: 1 }, {
+      ...future, sequence: 2, time_ms: first.time_ms + 60_000,
+    }];
+    // Trade actions sent ahead of the next M5 must remain behind the playhead.
+    expect(nextClosedCandleCursor(frontier, 0)).toBe(1);
+    expect(nextClosedCandleCursor(frontier, 1)).toBe(1);
   });
 
   it("exports only recorded virtual actions and never erases them on rewind", () => {
