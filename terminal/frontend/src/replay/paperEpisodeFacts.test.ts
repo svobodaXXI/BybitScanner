@@ -57,6 +57,23 @@ describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
     expect(JSON.stringify(history.events)).toBe(original); // never modify the simulation
   });
 
+  it("maps exact M5-boundary executions to the next fully closed bar, not the past", () => {
+    const changed = {
+      ...source, opened_at_ms: t + 2 * 300000,
+      execution_allocations: [
+        { ...source.execution_allocations[0], occurred_at_ms: t + 2 * 300000 },
+        source.execution_allocations[1],
+      ],
+    };
+    const parsed = parsePaperEpisodeFacts(changed);
+    const doc = market();
+    const overlay = matchPaperFactsToMarket(parsed, doc);
+    expect(overlay.status).toBe("MATCHED");
+    expect(overlay.markers[0].candle_start_ms).toBe(t + 2 * 300000);
+    expect(revealedPaperMarkers(overlay, doc.events.slice(0, 2).map(x => x.candle!))).toEqual([]);
+    expect(revealedPaperMarkers(overlay, doc.events.slice(0, 3).map(x => x.candle!))).toHaveLength(1);
+  });
+
   it("fails closed when ticker, source, candle coverage or history provenance mismatch", () => {
     const facts = parsePaperEpisodeFacts(source);
     expect(matchPaperFactsToMarket(facts, market("ETHUSDT")).status).toBe("WAIT_MARKET");
