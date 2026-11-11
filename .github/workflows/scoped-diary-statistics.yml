@@ -36,7 +36,7 @@ jobs:
       - name: Validate code syntax
         run: python -m py_compile terminal/diary/scoped_statistics_archive.py terminal/diary/test_scoped_statistics_archive.py terminal/diary/scope_evidence.py terminal/diary/test_scope_evidence.py terminal/diary/scoped_statistics_reporter.py terminal/diary/test_scoped_statistics_reporter.py terminal/diary/test_scoped_statistics_http_route.py terminal/diary/ticker_finrez.py terminal/diary/test_ticker_finrez.py terminal/diary/test_ticker_finrez_http_route.py
       - name: Verify account/owner isolation and durable replay gates
-        run: python -m pytest -q terminal/diary/test_scoped_statistics_archive.py terminal/diary/test_scope_evidence.py terminal/diary/test_scoped_statistics_reporter.py terminal/diary/test_statistics_endpoint.py terminal/diary/test_ticker_finrez.py
+        run: python -m pytest -q terminal/diary/test_scoped_statistics_archive.py terminal/diary/test_scope_evidence.py terminal/diary/test_scoped_statistics_reporter.py terminal/diary/test_statistics_endpoint.py terminal/diary/test_ticker_finrez.py terminal/diary/test_ticker_finrez_http_route.py
       - name: Confirm optional timer never starts trading or modifies PAPER DB
         run: |
           python - <<'PY'
