@@ -29,6 +29,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+import local_update
 
 from research.export_historical_replay import (
     build_market_only_document, parse_date_utc, SYMBOL_RE,
