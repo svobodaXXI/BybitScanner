@@ -22,6 +22,7 @@ class PinnedEpisodeMarketTests(unittest.TestCase):
     def test_closed_m5_uses_original_isolated_timeline_and_no_robot_or_paper(self):
         start = int(datetime(2026, 10, 1, tzinfo=timezone.utc).timestamp() * 1000)
         one_minute = 60_000
+        import research.simulator_v2.wedge_cli  # ensure the genuine parser module is available for narrow patching
         candles = tuple(Candle(
             start_ms=start + i * one_minute, interval_ms=one_minute,
             open=Decimal("100") + i, high=Decimal("103") + i,
