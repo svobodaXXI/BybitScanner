@@ -1,6 +1,8 @@
 """Local Windows viewer: public kline and loopback-only HTTP boundary tests."""
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from decimal import Decimal
+from types import SimpleNamespace
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 import json
@@ -12,7 +14,61 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 from research.historical_candle_feed import FIVE_MINUTES_MS
+from research.historical_market_replay import Candle
 from research.local_replay_viewer import server as local
+
+
+class PinnedEpisodeMarketTests(unittest.TestCase):
+    def test_closed_m5_uses_original_isolated_timeline_and_no_robot_or_paper(self):
+        start = int(datetime(2026, 10, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        one_minute = 60_000
+        candles = tuple(Candle(
+            start_ms=start + i * one_minute, interval_ms=one_minute,
+            open=Decimal("100") + i, high=Decimal("103") + i,
+            low=Decimal("99") + i, close=Decimal("101") + i,
+            volume=Decimal("2"),
+        ) for i in range(5))
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "m1-cache").mkdir()
+            (root / "manifest.json").write_text("{}", encoding="utf-8")
+            with patch.object(local, "SIM_DATA", root), \\
+                 patch("research.simulator_v2.wedge_cli.parse_manifest",
+                       return_value=("BTCUSDT", (object(),))), \\
+                 patch("research.simulator_v2.history.last_closed_m1_boundary_ms",
+                       return_value=start + 86_400_000), \\
+                 patch("research.simulator_v2.trade_range._ordered_proofs",
+                       return_value=("verified_SOURCE", start, start + 86_400_000)), \\
+                 patch("research.simulator_v2.trade_range.iter_pinned_trade_chunks",
+                       return_value=[SimpleNamespace(candles=candles)]):
+                result = local.read_verified_episode_market(
+                    symbol="BTCUSDT", start_ms=start, end_ms=start + FIVE_MINUTES_MS,
+                )
+                self.assertEqual(result["mode"], "MARKET_ONLY")
+                self.assertEqual(result["market_data_source"],
+                                 "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M")
+                self.assertEqual(len(result["events"]), 1)
+                self.assertEqual(result["events"][0]["candle"]["close"], 105.)
+                self.assertEqual(result["events"][0]["candle"]["volume"], 10.)
+                with self.assertRaisesRegex(ValueError, "incomplete"):
+                    local.read_verified_episode_market(
+                        symbol="BTCUSDT", start_ms=start,
+                        end_ms=start + 2 * FIVE_MINUTES_MS,
+                    )
+
+    def test_foreign_unaligned_and_overlong_episode_windows_fail_before_read(self):
+        start = int(datetime(2026, 10, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        for symbol, first, last in [
+            ("../PAPER", start, start + FIVE_MINUTES_MS),
+            ("BTCUSDT", start + 60_000, start + FIVE_MINUTES_MS),
+            ("BTCUSDT", start, start + 8 * 86_400_000),
+            ("BTCUSDT", start, start),
+        ]:
+            with self.subTest(symbol=symbol, first=first, last=last):
+                with self.assertRaises(ValueError):
+                    local.read_verified_episode_market(
+                        symbol=symbol, start_ms=first, end_ms=last,
+                    )
 
 
 class PublicKlineTests(unittest.TestCase):
