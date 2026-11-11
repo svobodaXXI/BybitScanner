@@ -60,19 +60,21 @@ def _classified_finrez_episodes(
     snapshot: PaperSourceSnapshot, *, account_id: str, period: str, now_ms: int,
 ) -> tuple[
     tuple[TradeEpisode, ...], tuple[TradeEpisode, ...], tuple[TradeEpisode, ...],
-    tuple[TradeEpisode, ...], int,
+    tuple[TradeEpisode, ...], tuple[TradeEpisode, ...], int,
 ]:
     """Classify whole episodes, not individual fills or split economic PnL.
 
     A robot-opened episode finished by a proven manual CLOSE is reported only
     as a distinct intervention cohort, never as an autonomous robot result.
     Unknown origin is excluded as explicitly incomplete coverage rather than
-    guessed. Manual increases, reversed ownership and other known mixed
-    episodes remain unavailable.
+    guessed. A proven robot OPEN with manual INCREASE(s) and robot CLOSE
+    is a shared-management economic episode, never attributed to either
+    controller's autonomous totals. Other known mixed episodes stay blocked.
     """
     robot: list[TradeEpisode] = []
     manual: list[TradeEpisode] = []
     assisted: list[TradeEpisode] = []
+    joint: list[TradeEpisode] = []
     unattributed: list[TradeEpisode] = []
     unattributed_execution_count = 0
     seen_ids: set[str] = set()
@@ -126,11 +128,27 @@ def _classified_finrez_episodes(
             )
         ):
             assisted.append(episode)
+        elif (
+            # This pattern has fully proven origin for *every* allocation:
+            # ROBOT open, one or more MANUAL increases, ROBOT final close.
+            # Increases change the shared average entry and cannot yield
+            # independently provable per-controller realized price PnL.
+            owners == {"ROBOT", "MANUAL"}
+            and attributed[0] == "ROBOT"
+            and episode.allocations[0].role in {AllocationRole.OPEN, AllocationRole.REVERSAL_OPEN}
+            and attributed[-1] == "ROBOT"
+            and episode.allocations[-1].role is AllocationRole.CLOSE
+            and all(
+                controller == "ROBOT" or allocation.role is AllocationRole.INCREASE
+                for controller, allocation in zip(attributed, episode.allocations)
+            )
+        ):
+            joint.append(episode)
         else:
             raise StatisticsScopeError("mixed_controller_trade_episode")
     return (
-        tuple(robot), tuple(manual), tuple(assisted), tuple(unattributed),
-        unattributed_execution_count,
+        tuple(robot), tuple(manual), tuple(assisted), tuple(joint),
+        tuple(unattributed), unattributed_execution_count,
     )
 
 
@@ -141,7 +159,7 @@ def project_paper_ticker_pnl(
     """Use the existing strict execution-origin attribution before summing."""
     if account_id != "paper" or owner not in {"ROBOT", "MANUAL"}:
         raise ValueError("unsupported_finrez_scope")
-    robot, manual, assisted, unattributed, unattributed_execution_count = (
+    robot, manual, assisted, joint, unattributed, unattributed_execution_count = (
         _classified_finrez_episodes(
             snapshot, account_id=account_id, period=period, now_ms=now_ms,
         )
@@ -151,6 +169,11 @@ def project_paper_ticker_pnl(
     )
     _, manual_interventions = aggregate_ticker_pnl(
         assisted if owner == "ROBOT" else (), period=period, now_ms=now_ms,
+    )
+    # Shared economic episodes are exposed for both views, but are excluded
+    # from BOTH scoped totals and must never be summed once per controller.
+    _, joint_management = aggregate_ticker_pnl(
+        joint, period=period, now_ms=now_ms,
     )
     return {
         "account_id": account_id,
@@ -168,4 +191,5 @@ def project_paper_ticker_pnl(
         },
         "tickers": tickers,
         "manual_interventions": manual_interventions,
+        "joint_management": joint_management,
     }
