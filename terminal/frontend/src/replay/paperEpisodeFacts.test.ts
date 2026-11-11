@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ReplayDocument } from "./replayModel";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
+  publicHistoryDaysForPaperEpisode,
 } from "./paperEpisodeFacts";
 
 const t = Date.UTC(2026, 9, 1);
@@ -243,5 +244,46 @@ describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
     const facts = parsePaperEpisodeFacts(exported);
     expect(facts.pnl_usdt).toBe("0E-8");
     expect(facts.execution_allocations[0].allocated_fee).toBe("0E-8");
+  });
+});
+
+describe("PAPER episode public-market date preselection", () => {
+  it("includes opening and closing UTC days without altering execution evidence", () => {
+    const facts = parsePaperEpisodeFacts(source);
+    expect(publicHistoryDaysForPaperEpisode(facts)).toEqual({
+      start: "2026-10-01", end: "2026-10-02",
+    });
+    expect(facts.pnl_usdt).toBe("-1.0");
+    expect(facts.execution_allocations).toHaveLength(2);
+  });
+
+  it("includes a close just after midnight in the second UTC day", () => {
+    const facts = parsePaperEpisodeFacts({
+      ...source,
+      opened_at_ms: Date.UTC(2026, 9, 1, 23, 59),
+      closed_at_ms: Date.UTC(2026, 9, 2, 0, 1),
+      execution_allocations: [
+        { ...source.execution_allocations[0], occurred_at_ms: Date.UTC(2026, 9, 1, 23, 59) },
+        { ...source.execution_allocations[1], occurred_at_ms: Date.UTC(2026, 9, 2, 0, 1) },
+      ],
+    });
+    expect(publicHistoryDaysForPaperEpisode(facts)).toEqual({
+      start: "2026-10-01", end: "2026-10-03",
+    });
+  });
+
+  it("refuses episodes spanning more than seven full UTC days", () => {
+    const opened = Date.UTC(2026, 9, 1);
+    const closed = Date.UTC(2026, 9, 9);
+    const facts = parsePaperEpisodeFacts({
+      ...source,
+      opened_at_ms: opened,
+      closed_at_ms: closed,
+      execution_allocations: [
+        { ...source.execution_allocations[0], occurred_at_ms: opened },
+        { ...source.execution_allocations[1], occurred_at_ms: closed },
+      ],
+    });
+    expect(publicHistoryDaysForPaperEpisode(facts)).toBeNull();
   });
 });
