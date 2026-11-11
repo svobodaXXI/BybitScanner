@@ -56,6 +56,8 @@ export function RunSetupPanel({
   const [coordinateError, setCoordinateError] = useState("");
   const datesEdited = useRef(false);
   const preparedRun = useRef<WedgeRunRequest | null>(null);
+  const currentSelection = useRef(selection);
+  currentSelection.current = selection;
   const generation = useRef(0);
   const running = useRef(false);
   const requestController = useRef<AbortController | null>(null);
@@ -140,9 +142,18 @@ export function RunSetupPanel({
   }, [onSimulationReady, onSimulationAppend, onSimulationFailed, onSimulationBusy]);
 
   useEffect(() => {
-    if (playRequestId > 0 && preparedRun.current)
-      void runWedges(preparedRun.current, generation.current);
-  }, [playRequestId, runWedges]);
+    if (playRequestId <= 0 || !preparedRun.current) return;
+    // Selection is user-owned and may change after Apply. Never silently
+    // trade the stale Wedge/Box selection shown under another checkbox.
+    const selected = currentSelection.current;
+    if (preparedRun.current.selected_strategies.join(",") !== selected.selected.join(",") ||
+        !runnableWedgeSelection(selected)) {
+      setRunError("Список стратегий изменён. Нажмите «Применить» перед торговым запуском.");
+      onSimulationFailed();
+      return;
+    }
+    void runWedges(preparedRun.current, generation.current);
+  }, [playRequestId, runWedges, onSimulationFailed]);
 
   const updateStart = (value: string) => {
     datesEdited.current = true;
