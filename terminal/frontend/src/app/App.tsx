@@ -1463,7 +1463,7 @@ export function App() {
           {market.book.symbol === (launchLink?.symbol ?? market.book.symbol)
             && market.candles.length > 0 ? (
             <ChartPanel
-              key={`editor-current:${market.book.symbol}:${timeframe}`}
+              key={`editor-current:${market.book.symbol}:${timeframe}:${ownerChartCandles ? "owner" : "view"}`}
               candles={ownerChartCandles ?? market.candles}
               tickSize={null}
               editorMode={ownerChartCandles !== null}
