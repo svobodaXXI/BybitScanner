@@ -137,8 +137,7 @@ describe("local one-symbol strategy setup (no trading)", () => {
     expect(runnableWedgeSelection(toggleStrategy(clearAll(), "WEDGE_RISING", true))).toBe(true);
     const boxOnly = toggleStrategy(clearAll(), "IKIGAI_BOX", true);
     expect(runnableWedgeSelection(boxOnly)).toBe(true);
-    expect(runnableWedgeSelection(toggleStrategy(onlyWedges(), "IKIGAI_BOX", true))).toBe(false,
-      "native Box and Wedge cannot own the same symbol in one run");
+    expect(runnableWedgeSelection(toggleStrategy(onlyWedges(), "IKIGAI_BOX", true))).toBe(false);
     expect(makeWedgeRunRequest(boxOnly, "XRPUSDT",
       "2026-09-11T00:00", "2026-09-11T23:59", "1000").selected_strategies)
       .toEqual(["IKIGAI_BOX"]);
