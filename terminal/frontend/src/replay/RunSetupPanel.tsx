@@ -223,6 +223,7 @@ export function RunSetupPanel({
               <strong>Все стратегии</strong>
             </label>
             <button type="button" onClick={() => setSelection(onlyWedges())}>Только клинья</button>
+            <button type="button" onClick={() => setSelection(onlyBox())}>Только Ikigai Box</button>
             <button type="button" onClick={() => setSelection(clearAll())}>Снять все</button>
           </div>
           <div className="replay-run-mirror">
