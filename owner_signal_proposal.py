@@ -12,6 +12,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import secrets
 import time
 from decimal import Decimal
@@ -171,7 +172,8 @@ def _assess_geometry(payload: dict, snapshot: dict, *, review_bars=None) -> dict
     }
 
 
-def record_owner_signal_proposal(payload: dict, snapshot: dict, *, directory=None, review_bars=None) -> dict:
+def record_owner_signal_proposal(payload: dict, snapshot: dict, *, directory=None, review_bars=None,
+                                 source_kind: str = "SCANNER") -> dict:
     """Durably record a reviewed owner proposal without creating a Robot candidate."""
     try:
         validate_snapshot(
@@ -184,7 +186,13 @@ def record_owner_signal_proposal(payload: dict, snapshot: dict, *, directory=Non
             raise
         raise OwnerSignalProposalError("invalid_source_geometry") from exc
 
-    assessment = _assess_geometry(submission, snapshot, review_bars=review_bars)
+    if source_kind not in {"SCANNER", "OWNER_CHART_UNVERIFIED"}:
+        raise OwnerSignalProposalError("unsupported_owner_source_kind")
+    assessment = (_assess_geometry(submission, snapshot, review_bars=review_bars)
+                  if source_kind == "SCANNER" else {
+                      "decision": "AWAITING_OFFLINE_REPLAY",
+                      "reason": "owner_supplied_source_not_scanner_evidence",
+                  })
     signal_id = submission["signal_id"]
     proposal_id = hashlib.sha256(
         (signal_id + "\0" + submission["idempotency_key"]).encode("utf-8")
@@ -200,6 +208,8 @@ def record_owner_signal_proposal(payload: dict, snapshot: dict, *, directory=Non
         **({"retrospective_bars": validate_extension(snapshot, review_bars, submission["context_as_of_ms"])}
            if "context_as_of_ms" in submission else {}),
         "assessment": assessment,
+        **({"source_kind": source_kind, "owner_source_snapshot": snapshot}
+           if source_kind != "SCANNER" else {}),
         "robot_candidate_id": None,
         "candidate_created": False,
     }
@@ -226,6 +236,8 @@ def record_owner_signal_proposal(payload: dict, snapshot: dict, *, directory=Non
                         previous.get("candidate_created") is not False or
                         previous.get("robot_candidate_id") is not None or
                         previous.get("assessment") != assessment or
+                        previous.get("source_kind", "SCANNER") != source_kind or
+                        (source_kind != "SCANNER" and previous.get("owner_source_snapshot") != snapshot) or
                         previous.get("retrospective_bars", []) != record.get("retrospective_bars", [])):
                     raise ValueError("idempotency_conflict")
             except (OSError, ValueError, AttributeError) as exc:
@@ -234,3 +246,128 @@ def record_owner_signal_proposal(payload: dict, snapshot: dict, *, directory=Non
     finally:
         tmp.unlink(missing_ok=True)
     return record
+
+
+def record_owner_chart_proposal(payload: dict, *, directory=None, now_ms: int | None = None) -> dict:
+    """Store owner-supplied candle examples with provenance explicitly UNVERIFIED.
+
+    Reuse the append-only owner proposal store, never Scanner's source archive.
+    These examples cannot create Robot candidates, edit PAPER DB or teach the
+    running detector without a separate chronological offline evaluation.
+    """
+    required = {
+        "schema_version", "source_kind", "symbol", "timeframe", "pattern",
+        "bars", "proposed_boundaries", "idempotency_key",
+    }
+    if (not isinstance(payload, dict) or set(payload) - {"note"} != required
+            or payload.get("schema_version") != 1
+            or payload.get("source_kind") != "OWNER_CHART_UNVERIFIED"):
+        raise OwnerSignalProposalError("invalid_owner_chart_fields")
+    symbol, timeframe = payload["symbol"], payload["timeframe"]
+    from retrospective_signal_bars import TF_MS
+    if not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9]{2,25}", symbol):
+        raise OwnerSignalProposalError("invalid_owner_chart_symbol")
+    if not isinstance(timeframe, str) or timeframe not in TF_MS:
+        raise OwnerSignalProposalError("invalid_owner_chart_timeframe")
+    period = TF_MS[timeframe]
+    if payload["pattern"] not in PATTERNS:
+        raise OwnerSignalProposalError("unsupported_proposed_pattern")
+    raw = payload["bars"]
+    if not isinstance(raw, list) or not 20 <= len(raw) <= 120:
+        raise OwnerSignalProposalError("invalid_owner_chart_window")
+    current = int(time.time() * 1000) if now_ms is None else now_ms
+    if type(current) is not int or current < 0:
+        raise OwnerSignalProposalError("invalid_owner_chart_time")
+    bars = []
+    for item in raw:
+        if not isinstance(item, dict) or set(item) != {
+            "open_time_ms", "open", "high", "low", "close",
+        }:
+            raise OwnerSignalProposalError("invalid_owner_chart_bar")
+        at = item["open_time_ms"]
+        if (type(at) is not int or at < 0 or at % period or
+                at + period > current or
+                (bars and at != bars[-1]["open_time_ms"] + period)):
+            raise OwnerSignalProposalError("invalid_owner_chart_chronology")
+        try:
+            values = {key: float(item[key])
+                      for key in ("open", "high", "low", "close")}
+        except (ValueError, OverflowError, TypeError) as exc:
+            raise OwnerSignalProposalError("invalid_owner_chart_ohlc") from exc
+        if (not all(math.isfinite(value) and value > 0 for value in values.values())
+                or values["low"] > min(values["open"], values["close"])
+                or values["high"] < max(values["open"], values["close"])
+                or values["high"] < values["low"]):
+            raise OwnerSignalProposalError("invalid_owner_chart_ohlc")
+        bars.append({"open_time_ms": at, **values})
+    lines = payload["proposed_boundaries"]
+    if not isinstance(lines, list) or len(lines) != 2:
+        raise OwnerSignalProposalError("two_complete_rays_required")
+    try:
+        normalized = [{
+            "boundary_id": line["id"], "kind": line["type"],
+            "anchors": [{"bar_open_time_ms": a["bar_open_time_ms"],
+                         "price": float(a["price"])}
+                        for a in line["anchors"]],
+        } for line in lines]
+        snapshot = {
+            "schema_version": 1,
+            "signal_id": "owner-chart:" + hashlib.sha256(canonical_bytes({
+                "symbol": symbol, "timeframe": timeframe, "bars": bars,
+            })).hexdigest()[:40],
+            "symbol": symbol, "timeframe": timeframe,
+            "bars": bars, "boundaries": normalized,
+        }
+        validate_snapshot(snapshot, candidate_id=snapshot["signal_id"],
+                          symbol=symbol, timeframe=timeframe)
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise OwnerSignalProposalError("invalid_owner_chart_geometry") from exc
+    proposal = {
+        "schema_version": 1, "signal_id": snapshot["signal_id"],
+        "snapshot_revision": source_revision(snapshot),
+        "bars_sha256": bars_digest(snapshot),
+        "pattern": payload["pattern"], "proposed_boundaries": lines,
+        "idempotency_key": payload["idempotency_key"],
+        "note": payload.get("note", ""),
+    }
+    return record_owner_signal_proposal(
+        proposal, snapshot, directory=directory,
+        source_kind="OWNER_CHART_UNVERIFIED",
+    )
+
+
+def list_owner_chart_training_examples(pattern: str, *, directory=None) -> list[dict]:
+    """Category-filtered, read-only examples for offline Scanner replay."""
+    if pattern not in PATTERNS:
+        raise OwnerSignalProposalError("unsupported_proposed_pattern")
+    root = proposal_directory(directory)
+    if not root.exists():
+        return []
+    if not root.is_dir() or root.is_symlink():
+        raise OwnerSignalProposalError("untrusted_proposal_archive")
+    found = []
+    checked = 0
+    for folder in sorted(root.iterdir()):
+        if folder.is_symlink() or not folder.is_dir():
+            continue
+        for path in sorted(folder.glob("*.json")):
+            checked += 1
+            if checked > 5000:
+                raise OwnerSignalProposalError("proposal_archive_scan_budget")
+            if path.is_symlink() or path.stat().st_size > 65536:
+                continue
+            try:
+                record = json.loads(path.read_text("utf-8"))
+            except (OSError, ValueError, UnicodeError):
+                continue
+            if (isinstance(record, dict)
+                    and record.get("source_kind") == "OWNER_CHART_UNVERIFIED"
+                    and record.get("candidate_created") is False
+                    and record.get("robot_candidate_id") is None
+                    and isinstance(record.get("submission"), dict)
+                    and record["submission"].get("pattern") == pattern
+                    and isinstance(record.get("owner_source_snapshot"), dict)):
+                found.append(record)
+    found.sort(key=lambda item: (item.get("submitted_at_ms", 0),
+                                  item.get("proposal_id", "")), reverse=True)
+    return found[:20]
