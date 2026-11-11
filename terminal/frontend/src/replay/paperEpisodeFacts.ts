@@ -16,6 +16,38 @@ export type PaperAllocation = {
   controller: "ROBOT" | "MANUAL";
 };
 
+export type D2DecisionObservation = {
+  decision_event_id: string;
+  kind: "STRATEGY" | "RISK" | "SETUP_OUTCOME";
+  previous_state: string | null;
+  next_state: string;
+  reason_code: string;
+  controller: "ROBOT" | "MANUAL" | "EXTERNAL" | "NONE";
+  origin: "ROBOT" | "TERMINAL_MANUAL" | "EXTERNAL";
+  occurred_at_ms: number;
+};
+export type PaperD2Context =
+  | {
+    status: "EXACT_D2_LINK";
+    geometry_status: "NOT_EXPORTED";
+    decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG";
+    setup: {
+      setup_instance_id: string; setup_id: string; symbol: string;
+      direction: "LONG" | "SHORT"; timeframe: string; pattern: string;
+      strategy_version: string; entry_mode: string;
+      origin: "ROBOT" | "TERMINAL_MANUAL"; created_at_ms: number;
+      has_feature_snapshot_ref: boolean;
+    };
+    decisions: D2DecisionObservation[];
+  }
+  | {
+    status: "D2_STORE_ABSENT" | "EVIDENCE_UNAVAILABLE" |
+      "NO_EXACT_EPISODE_LINK" | "CONFLICTING_D2_LINK" |
+      "INCOMPLETE_D2_DECISIONS";
+    geometry_status: "NOT_EXPORTED";
+    decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG";
+  };
+
 export type PaperEpisodeFacts = {
   schema: "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1";
   namespace: "PAPER_READ_ONLY";
@@ -30,6 +62,7 @@ export type PaperEpisodeFacts = {
   closed_at_ms: number;
   pnl_usdt: string;
   execution_allocations: PaperAllocation[];
+  setup_context?: PaperD2Context;
 };
 
 export type PaperMarker = {
@@ -64,6 +97,95 @@ function id(value: unknown, label: string): string {
   if (typeof value !== "string" || value.length > 300 || !value.trim())
     throw new Error("Неизвестный идентификатор: " + label);
   return value;
+}
+
+const D2_REASON = "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG";
+const D2_UNPROVEN = new Set([
+  "D2_STORE_ABSENT", "EVIDENCE_UNAVAILABLE", "NO_EXACT_EPISODE_LINK",
+  "CONFLICTING_D2_LINK", "INCOMPLETE_D2_DECISIONS",
+]);
+
+function d2Text(value: unknown, label: string): string {
+  const raw = id(value, label);
+  if (raw.length > 256) throw new Error("Слишком длинное поле D2: " + label);
+  return raw;
+}
+
+function parseD2Context(
+  source: unknown, symbol: string, side: "LONG" | "SHORT",
+  openingController: "ROBOT" | "MANUAL",
+): PaperD2Context {
+  const row = object(source);
+  if (row.source !== "TRADING_DIARY_D2" || row.geometry_status !== "NOT_EXPORTED"
+      || row.decision_scope !== D2_REASON)
+    throw new Error("Неизвестное происхождение D2-связи");
+  if (D2_UNPROVEN.has(row.status as string)) {
+    if (row.setup !== undefined || row.decisions !== undefined)
+      throw new Error("Недоказанная D2-связь содержит вымышленные события");
+    return {
+      status: row.status as Exclude<PaperD2Context["status"], "EXACT_D2_LINK">,
+      geometry_status: "NOT_EXPORTED", decision_scope: D2_REASON,
+    };
+  }
+  if (row.status !== "EXACT_D2_LINK" ||
+      row.consistency !== "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER")
+    throw new Error("Неизвестная согласованность D2-снимка");
+  const setup = object(row.setup);
+  const expectedOrigin = openingController === "ROBOT" ? "ROBOT" : "TERMINAL_MANUAL";
+  if (setup.symbol !== symbol || setup.direction !== side ||
+      setup.origin !== expectedOrigin || typeof setup.has_feature_snapshot_ref !== "boolean"
+      || !Array.isArray(row.decisions) || row.decisions.length < 2 ||
+      row.decisions.length > 1000)
+    throw new Error("D2 setup не соответствует фактической сделке");
+  time(setup.created_at_ms, "setup.created_at_ms");
+  time(row.linked_at_ms, "linked_at_ms");
+  const details = {
+    setup_instance_id: d2Text(setup.setup_instance_id, "setup_instance_id"),
+    setup_id: d2Text(setup.setup_id, "setup_id"),
+    symbol, direction: side,
+    timeframe: d2Text(setup.timeframe, "timeframe"),
+    pattern: d2Text(setup.pattern, "pattern"),
+    strategy_version: d2Text(setup.strategy_version, "strategy_version"),
+    entry_mode: d2Text(setup.entry_mode, "entry_mode"),
+    origin: expectedOrigin,
+    created_at_ms: setup.created_at_ms as number,
+    has_feature_snapshot_ref: setup.has_feature_snapshot_ref as boolean,
+  };
+  d2Text(row.order_plan_id, "order_plan_id");
+  const events: D2DecisionObservation[] = [];
+  let lastTime = -1;
+  let lastId = "";
+  const unique = new Set<string>();
+  for (const raw of row.decisions) {
+    const e = object(raw);
+    const decisionId = d2Text(e.decision_event_id, "decision_event_id");
+    const stamp = time(e.occurred_at_ms, "decision.occurred_at_ms");
+    if (!["STRATEGY", "RISK", "SETUP_OUTCOME"].includes(e.kind as string) ||
+        !["ROBOT", "MANUAL", "NONE", "EXTERNAL"].includes(e.controller as string) ||
+        !["ROBOT", "TERMINAL_MANUAL", "EXTERNAL"].includes(e.origin as string) ||
+        (e.previous_state !== null && typeof e.previous_state !== "string") ||
+        stamp < details.created_at_ms || stamp < lastTime ||
+        (stamp === lastTime && decisionId <= lastId) || unique.has(decisionId))
+      throw new Error("Недостоверная хронология решений D2");
+    unique.add(decisionId); lastTime = stamp; lastId = decisionId;
+    events.push({
+      decision_event_id: decisionId,
+      kind: e.kind as D2DecisionObservation["kind"],
+      previous_state: e.previous_state === null ? null : d2Text(e.previous_state, "previous_state"),
+      next_state: d2Text(e.next_state, "next_state"),
+      reason_code: d2Text(e.reason_code, "reason_code"),
+      controller: e.controller as D2DecisionObservation["controller"],
+      origin: e.origin as D2DecisionObservation["origin"],
+      occurred_at_ms: stamp,
+    });
+  }
+  if (!events.some(e => e.kind === "STRATEGY") ||
+      !events.some(e => e.kind === "RISK"))
+    throw new Error("Отсутствуют доказанные решения стратегии и риска");
+  return {
+    status: "EXACT_D2_LINK", geometry_status: "NOT_EXPORTED",
+    decision_scope: D2_REASON, setup: details, decisions: events,
+  };
 }
 
 /** Own immutable facts only; no remote requests, persistence or exchange access. */
@@ -148,6 +270,9 @@ export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
     source_revision: f.source_revision as number, trade_episode_id: f.trade_episode_id,
     symbol: f.symbol, side: f.side, opened_at_ms: opened, closed_at_ms: closed,
     pnl_usdt: pnl, execution_allocations: allocations,
+    ...(f.setup_context !== undefined ? {
+      setup_context: parseD2Context(f.setup_context, f.symbol, f.side, first.controller),
+    } : {}),
   };
 }
 
