@@ -7,14 +7,18 @@ from decimal import Decimal
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from terminal.diary.ticker_finrez import aggregate_ticker_pnl, period_start_ms, project_paper_ticker_pnl
+from terminal.diary.ticker_finrez import (
+    EpisodeFactsNotFound, EpisodeFactsSourceChanged,
+    aggregate_ticker_pnl, period_start_ms, project_paper_closed_episode_facts,
+    project_paper_ticker_pnl,
+)
 from terminal.diary.models import (
     AllocationRole, DiaryEnvironment, ExecutionAllocation, TradeEpisode, TradeEpisodeId,
 )
 from terminal.diary.scoped_statistics_archive import StatisticsScopeError
 from terminal.diary.scoped_statistics_reporter import PaperSourceSnapshot
 from terminal.domain.models import (
-    Category, ExecutionDedupKey, ExecutionId, Origin, PositionKey, PositionSide,
+    Category, Execution, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, Origin, PositionKey, PositionSide,
     Price, Quantity, Symbol, TradingAccountId,
 )
 
@@ -240,6 +244,9 @@ class FinrezMixedControllerTests(unittest.TestCase):
             source, account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
         )
         rows = robot["closed_episodes"]
+        # Real domain PositionSide values are "Long"/"Short"; HTTP requires
+        # the uppercase contract accepted by the mobile Deals validator.
+        self.assertTrue(all(r["side"] == "LONG" for r in rows))
         self.assertEqual({r["trade_episode_id"]: r["cohort"] for r in rows}, {
             "robot": "ROBOT",
             "assisted": "ROBOT_MANUAL_CLOSE",
@@ -337,6 +344,81 @@ class FinrezMixedControllerTests(unittest.TestCase):
             "excluded_unattributed_episode_count": 0,
             "excluded_unattributed_execution_count": 0,
         })
+
+
+class ClosedEpisodeFactsTests(unittest.TestCase):
+    def _snapshot(self):
+        identity = "te_" + "a" * 24
+        episode, origins = _scoped_episode(identity, "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT),
+            (AllocationRole.INCREASE, Origin.ROBOT),
+            (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        executions = tuple(
+            Execution(
+                dedup_key=item.execution_key,
+                order_id=OrderId("order-" + str(index)),
+                symbol=episode.position_key.symbol,
+                side=OrderSide.BUY if item.role in (AllocationRole.OPEN, AllocationRole.INCREASE) else OrderSide.SELL,
+                price=Price(Decimal("100") + index),
+                quantity=Quantity(item.quantity),
+                fee=item.fee,
+                exchange_timestamp_ms=item.occurred_at_ms,
+            )
+            for index, item in enumerate(episode.allocations)
+        )
+        return identity, PaperSourceSnapshot(8, (episode,), origins, executions=executions)
+
+    def test_exports_original_fill_price_orders_and_controller_without_fabricating_decisions(self):
+        identity, snapshot = self._snapshot()
+        doc = project_paper_closed_episode_facts(
+            snapshot, account_id="paper", owner="ROBOT",
+            trade_episode_id=identity, source_revision=8, now_ms=_ms(9, 12),
+        )
+        self.assertEqual(doc["schema"], "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1")
+        self.assertEqual(doc["namespace"], "PAPER_READ_ONLY")
+        self.assertEqual(doc["cohort"], "ROBOT")
+        self.assertEqual(doc["side"], "LONG")
+        self.assertEqual(doc["source_revision"], 8)
+        self.assertEqual(doc["pnl_usdt"], "4.7")
+        self.assertEqual(doc["execution_allocations"], [
+            {
+                "execution_id": f"{identity}-{index}", "order_id": f"order-{index}",
+                "order_side": "Buy" if index < 2 else "Sell",
+                "execution_price": str(100 + index),
+                "allocated_quantity": "1", "allocated_fee": "0.1",
+                "occurred_at_ms": snapshot.episodes[0].allocations[index].occurred_at_ms,
+                "allocation_role": ["OPEN", "INCREASE", "CLOSE"][index],
+                "controller": "ROBOT",
+            }
+            for index in range(3)
+        ])
+        self.assertEqual(doc["replay_evidence"], "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES")
+        self.assertNotIn("candles", doc)
+        self.assertNotIn("strategy", doc)
+        self.assertNotIn("robot_decisions", doc)
+
+    def test_fails_closed_for_stale_index_wrong_owner_or_missing_source_facts(self):
+        identity, snapshot = self._snapshot()
+        args = dict(account_id="paper", owner="ROBOT", trade_episode_id=identity, now_ms=_ms(9, 12))
+        with self.assertRaises(EpisodeFactsSourceChanged):
+            project_paper_closed_episode_facts(snapshot, source_revision=9, **args)
+        with self.assertRaises(EpisodeFactsNotFound):
+            project_paper_closed_episode_facts(snapshot, source_revision=8, **{**args, "owner": "MANUAL"})
+        with self.assertRaises(StatisticsScopeError):
+            project_paper_closed_episode_facts(
+                PaperSourceSnapshot(8, snapshot.episodes, snapshot.origins),
+                source_revision=8, **args,
+            )
+        with self.assertRaises(StatisticsScopeError):
+            project_paper_closed_episode_facts(
+                PaperSourceSnapshot(8, snapshot.episodes, snapshot.origins, executions=snapshot.executions[:1]),
+                source_revision=8, **args,
+            )
+        with self.assertRaises(ValueError):
+            project_paper_closed_episode_facts(snapshot, source_revision=8, **{**args, "trade_episode_id": "bad"})
+
+
 
 if __name__ == "__main__":
     unittest.main()

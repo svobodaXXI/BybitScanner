@@ -535,6 +535,58 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const deals = report.closed_episodes ?? [];
   const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
+
+  async function downloadFacts(deal: ClosedEpisodeLocator) {
+    if (downloading) return;
+    setDownloading(true);
+    setDownloadError("");
+    try {
+      const response = await fetch(marketApiRoutes.diaryEpisodeFacts(
+        report.account_id, report.owner, deal.trade_episode_id, report.source_revision,
+      ), { cache: "no-store" });
+      if (response.status === 409) throw new Error("История обновилась — откройте Статистику заново.");
+      if (!response.ok) throw new Error("Фактические исполнения этой сделки недоступны.");
+      const raw: unknown = await response.json();
+      if (!raw || typeof raw !== "object") throw new Error("Неверный формат истории сделки.");
+      const facts = raw as Record<string, unknown>;
+      if (facts.ok !== true || facts.schema !== "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1"
+        || facts.namespace !== "PAPER_READ_ONLY" || facts.source !== "PAPER_EXECUTIONS_ATTRIBUTED"
+        || facts.account_id !== report.account_id || facts.owner !== report.owner
+        || facts.source_revision !== report.source_revision
+        || facts.trade_episode_id !== deal.trade_episode_id
+        || facts.symbol !== deal.symbol || facts.side !== deal.side || facts.cohort !== deal.cohort
+        || facts.opened_at_ms !== deal.opened_at_ms || facts.closed_at_ms !== deal.closed_at_ms
+        || facts.pnl_usdt !== deal.pnl_usdt
+        || facts.replay_evidence !== "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES"
+        || !Array.isArray(facts.execution_allocations)
+        || facts.execution_allocations.length !== deal.execution_count
+        || facts.execution_allocations.some((item: unknown) =>
+          !item || typeof item !== "object" || !("execution_id" in item)
+          || typeof item.execution_id !== "string" || !("execution_price" in item)
+          || typeof item.execution_price !== "string"
+        )) throw new Error("История сделки не совпала с выбранным эпизодом.");
+
+      const blob = new Blob([JSON.stringify(facts, null, 2) + "\n"], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      try {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `episode-${deal.trade_episode_id}.json`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      } finally {
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      }
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : "Не удалось выгрузить сделку.");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   if (selected) {
     return (
       <div className="diary-detail" aria-label="Детали закрытой сделки">
@@ -554,9 +606,14 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
             <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{selected.pnl_usdt} USDT</dd></div>
           </dl>
         </section>
+        <button className="diary-detail-back" type="button" disabled={downloading}
+          onClick={() => void downloadFacts(selected)}>
+          {downloading ? "Выгружаю факты…" : "Скачать JSON исполнений"}
+        </button>
+        {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
         <p className="diary-finrez-basis" role="status">
-          Это идентификатор подтверждённой сделки, а не воспроизведение.
-          Передача фактических исполнений и решений робота в локальный Симулятор ещё не подключена.
+          Это не воспроизведение. JSON содержит только реальные зарегистрированные исполнения. Свечи, решения робота
+          и полное воспроизведение в локальном Симуляторе пока не подключены.
         </p>
       </div>
     );

@@ -450,6 +450,79 @@ describe("Closed deals / exact episode index", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     expect(await screen.findByText("Не удалось загрузить статистику выбранного счёта")).toBeInTheDocument();
   });
+  it("downloads exact persisted fills without claiming that Robot decisions were replayed", async () => {
+    const episodeId = "te_" + "a".repeat(24);
+    const selectedDeal = { ...robotDeal, trade_episode_id: episodeId };
+    const payload = {
+      ok: true, schema: "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
+      namespace: "PAPER_READ_ONLY", source: "PAPER_EXECUTIONS_ATTRIBUTED",
+      source_revision: finrezResponse.source_revision,
+      account_id: "paper", owner: "ROBOT", cohort: "ROBOT",
+      trade_episode_id: episodeId, symbol: "BTCUSDT", side: "LONG",
+      opened_at_ms: selectedDeal.opened_at_ms, closed_at_ms: selectedDeal.closed_at_ms,
+      pnl_usdt: "-4.8", replay_evidence: "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
+      execution_allocations: [
+        { execution_id: "exec-1", execution_price: "100" },
+        { execution_id: "exec-2", execution_price: "99" },
+      ],
+    };
+    const fetchMock = vi.fn().mockImplementation(async (url: string) =>
+      new Response(JSON.stringify(url.includes("/api/diary/episode-facts") ? payload :
+        { ...finrezResponse, closed_episodes: [selectedDeal] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const URLWithBlobs = Object.assign(class extends URL {}, {
+      createObjectURL: vi.fn(() => "blob:episode-facts"), revokeObjectURL: vi.fn(),
+    });
+    vi.stubGlobal("URL", URLWithBlobs);
+    try {
+      render(<DiaryOverlay accountKey="paper:export" initialSection="DEALS"
+        statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+      fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+      expect(screen.getByRole("status")).toHaveTextContent("только реальные зарегистрированные исполнения");
+      fireEvent.click(screen.getByRole("button", { name: "Скачать JSON исполнений" }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+        `/api/diary/episode-facts?account_id=paper&owner=ROBOT&trade_episode_id=${episodeId}&source_revision=3`,
+        { cache: "no-store" },
+      ));
+      await waitFor(() => expect(click).toHaveBeenCalledOnce());
+      expect(URLWithBlobs.createObjectURL).toHaveBeenCalledOnce();
+    } finally {
+      click.mockRestore();
+    }
+  });
+
+  it("rejects an outdated source revision without downloading a misleading replay", async () => {
+    const selectedDeal = { ...robotDeal, trade_episode_id: "te_" + "b".repeat(24) };
+    const fetchMock = vi.fn().mockImplementation(async (url: string) =>
+      new Response(JSON.stringify(url.includes("/api/diary/episode-facts")
+        ? { ok: false, error: "episode_facts_source_changed" }
+        : { ...finrezResponse, closed_episodes: [selectedDeal] }),
+      { status: url.includes("/api/diary/episode-facts") ? 409 : 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:expired" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Скачать JSON исполнений" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("История обновилась");
+  });
+
+  it("rejects an exported episode with mismatched provenance rather than saving it", async () => {
+    const selectedDeal = { ...robotDeal, trade_episode_id: "te_" + "c".repeat(24) };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) =>
+      new Response(JSON.stringify(url.includes("/api/diary/episode-facts")
+        ? { ok: true, schema: "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
+            namespace: "PAPER_READ_ONLY", source: "PAPER_EXECUTIONS_ATTRIBUTED",
+            account_id: "paper", owner: "MANUAL", trade_episode_id: selectedDeal.trade_episode_id,
+            source_revision: 3, execution_allocations: [] }
+        : { ...finrezResponse, closed_episodes: [selectedDeal] }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:wrong-owner" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Скачать JSON исполнений" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("не совпала");
+  });
+
 });
 
 describe("Statistics full-width account/close header", () => {

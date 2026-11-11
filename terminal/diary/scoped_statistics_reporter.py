@@ -18,7 +18,7 @@ from terminal.diary.scope_evidence import load_order_origins_from_connection
 from terminal.diary.scoped_statistics_archive import (
     ScopedStatisticsArchive, StatisticsScopeError, _attributed_episodes,
 )
-from terminal.domain.models import ExecutionDedupKey, Origin
+from terminal.domain.models import Execution, ExecutionDedupKey, Origin
 from terminal.persistence.sqlite_store import _execution_from_row
 
 
@@ -27,6 +27,7 @@ class PaperSourceSnapshot:
     source_revision: int
     episodes: tuple[TradeEpisode, ...]
     origins: Mapping[ExecutionDedupKey, Origin]
+    executions: tuple[Execution, ...] = ()
 
 
 def load_paper_source_snapshot(db_path: str | Path) -> PaperSourceSnapshot:
@@ -70,6 +71,7 @@ def load_paper_source_snapshot(db_path: str | Path) -> PaperSourceSnapshot:
             executions, environment=DiaryEnvironment.PAPER,
         ),
         origins=origins,
+        executions=executions,
     )
 
 

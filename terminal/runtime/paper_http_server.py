@@ -64,7 +64,10 @@ from terminal.diary.scoped_statistics_archive import (
     StatisticsScopeError, load_latest_scoped_statistics_read_only,
 )
 from terminal.diary.scoped_statistics_reporter import load_paper_source_snapshot
-from terminal.diary.ticker_finrez import project_paper_ticker_pnl
+from terminal.diary.ticker_finrez import (
+    EpisodeFactsNotFound, EpisodeFactsSourceChanged,
+    project_paper_closed_episode_facts, project_paper_ticker_pnl,
+)
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.hub import MarketDataHub, SymbolContext
 from terminal.market_data.client_projection import ClientMarketProjection, StaleProjectionError
@@ -3329,6 +3332,49 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             except Exception:
                 LOGGER.exception("Ticker Finrez projection unavailable")
                 self._json_response(503, {"ok": False, "error": "finrez_evidence_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
+        if parsed.path == "/api/diary/episode-facts":
+            # Exactly one selected closed PAPER episode. Read-only evidence
+            # from the same source snapshot as the Finrez episode index;
+            # never dispatch to Scanner/Robot or query a private exchange API.
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            if (set(params) != {"account_id", "owner", "trade_episode_id", "source_revision"}
+                    or any(len(v) != 1 for v in params.values())
+                    or params["owner"][0] not in {"ROBOT", "MANUAL"}):
+                self._json_response(400, {"ok": False, "error": "episode_facts_scope_required"})
+                return
+            if params["account_id"][0] != "paper":
+                self._json_response(404, {"ok": False, "error": "episode_facts_scope_unavailable"})
+                return
+            episode_id, revision = params["trade_episode_id"][0], params["source_revision"][0]
+            if (len(episode_id) != 27 or not episode_id.startswith("te_")
+                    or any(char not in "0123456789abcdef" for char in episode_id[3:])
+                    or not 1 <= len(revision) <= 20 or not revision.isascii()
+                    or not revision.isdecimal() or revision[0] == "0"):
+                self._json_response(400, {"ok": False, "error": "episode_facts_identity_invalid"})
+                return
+            try:
+                snapshot = load_paper_source_snapshot(self.server.diary_source_db_path)
+                projection = project_paper_closed_episode_facts(
+                    snapshot, account_id="paper", owner=params["owner"][0],
+                    trade_episode_id=episode_id, source_revision=int(revision),
+                    now_ms=int(time.time() * 1000),
+                )
+            except EpisodeFactsSourceChanged:
+                self._json_response(409, {"ok": False, "error": "episode_facts_source_changed"})
+                return
+            except EpisodeFactsNotFound:
+                self._json_response(404, {"ok": False, "error": "episode_not_in_scope"})
+                return
+            except (StatisticsScopeError, ValueError):
+                self._json_response(503, {"ok": False, "error": "episode_facts_evidence_unavailable"})
+                return
+            except Exception:
+                LOGGER.exception("Closed episode facts projection unavailable")
+                self._json_response(503, {"ok": False, "error": "episode_facts_evidence_unavailable"})
                 return
             self._json_response(200, {"ok": True, **projection})
             return
