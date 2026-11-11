@@ -149,6 +149,70 @@ class FinrezMixedControllerTests(unittest.TestCase):
         self.assertEqual(report["tickers"], [])
         self.assertEqual(report["manual_interventions"][0]["trade_count"], 1)
 
+    def test_robot_open_manual_increases_robot_close_is_joint_not_owned_pnl(self):
+        # Exact historical role/controller pattern: two robot additions,
+        # two manual additions, one robot addition, then robot final close.
+        joint, joint_origins = _scoped_episode("joint", "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT),
+            (AllocationRole.INCREASE, Origin.ROBOT),
+            (AllocationRole.INCREASE, Origin.ROBOT),
+            (AllocationRole.INCREASE, Origin.TERMINAL_MANUAL),
+            (AllocationRole.INCREASE, Origin.TERMINAL_MANUAL),
+            (AllocationRole.INCREASE, Origin.ROBOT),
+            (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        robot, robot_origins = _scoped_episode("pure-robot", "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        manual, manual_origins = _scoped_episode("pure-manual", "ETHUSDT", [
+            (AllocationRole.OPEN, Origin.TERMINAL_MANUAL),
+            (AllocationRole.CLOSE, Origin.TERMINAL_MANUAL),
+        ])
+        snapshot = PaperSourceSnapshot(
+            20, (robot, joint, manual), {**joint_origins, **robot_origins, **manual_origins},
+        )
+        for period in ("TODAY", "ALL"):
+            with self.subTest(period=period):
+                robot_report = project_paper_ticker_pnl(
+                    snapshot, account_id="paper", owner="ROBOT", period=period, now_ms=_ms(9, 12),
+                )
+                manual_report = project_paper_ticker_pnl(
+                    snapshot, account_id="paper", owner="MANUAL", period=period, now_ms=_ms(9, 12),
+                )
+                joint_rows = [{"symbol": "BTCUSDT", "pnl_usdt": "4.3", "trade_count": 1}]
+                self.assertEqual(robot_report["joint_management"], joint_rows)
+                self.assertEqual(manual_report["joint_management"], joint_rows)
+                self.assertEqual(robot_report["tickers"], [
+                    {"symbol": "BTCUSDT", "pnl_usdt": "4.8", "trade_count": 1},
+                ])
+                self.assertEqual(manual_report["tickers"], [
+                    {"symbol": "ETHUSDT", "pnl_usdt": "4.8", "trade_count": 1},
+                ])
+                self.assertEqual(robot_report["manual_interventions"], [])
+                self.assertEqual(manual_report["manual_interventions"], [])
+                self.assertEqual(robot_report["attribution_coverage"]["status"], "COMPLETE")
+                self.assertEqual(manual_report["attribution_coverage"]["status"], "COMPLETE")
+
+    def test_joint_management_outside_today_does_not_appear_or_block(self):
+        historical, origins = _scoped_episode(
+            "joint-yesterday", "BTCUSDT", [
+                (AllocationRole.OPEN, Origin.ROBOT),
+                (AllocationRole.INCREASE, Origin.TERMINAL_MANUAL),
+                (AllocationRole.CLOSE, Origin.ROBOT),
+            ], opened_at=_ms(8, 23, 58), closed_at=_ms(8, 23, 59),
+        )
+        snap = PaperSourceSnapshot(10, (historical,), origins)
+        today = project_paper_ticker_pnl(
+            snap, account_id="paper", owner="ROBOT", period="TODAY", now_ms=_ms(9, 12),
+        )
+        self.assertEqual(today["joint_management"], [])
+        all_report = project_paper_ticker_pnl(
+            snap, account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
+        )
+        self.assertEqual(all_report["joint_management"], [
+            {"symbol": "BTCUSDT", "pnl_usdt": "4.7", "trade_count": 1},
+        ])
+
     def test_other_mixed_ownership_remains_blocked(self):
         cases = [
             [(AllocationRole.OPEN, Origin.TERMINAL_MANUAL), (AllocationRole.CLOSE, Origin.ROBOT)],
