@@ -157,6 +157,18 @@ type DiaryStatistics = {
   };
 };
 
+type ClosedEpisodeLocator = {
+  trade_episode_id: string;
+  symbol: string;
+  side: "LONG" | "SHORT";
+  opened_at_ms: number;
+  closed_at_ms: number;
+  pnl_usdt: string;
+  execution_count: number;
+  cohort: "ROBOT" | "MANUAL" | "ROBOT_MANUAL_CLOSE" | "JOINT_MANAGEMENT";
+  replay_evidence: "EPISODE_INDEX_ONLY";
+};
+
 type FinrezTicker = { symbol: string; pnl_usdt: string; trade_count: number };
 type FinrezResponse = {
   ok: boolean;
@@ -169,6 +181,7 @@ type FinrezResponse = {
   source: "PAPER_EXECUTIONS_ATTRIBUTED";
   pnl_basis: "REALIZED_PRICE_MINUS_EXECUTION_FEES";
   tickers: FinrezTicker[];
+  closed_episodes?: ClosedEpisodeLocator[];
   manual_interventions: FinrezTicker[];
   joint_management: FinrezTicker[];
   attribution_coverage: {
@@ -487,6 +500,102 @@ function StatisticsView({ statistics }: { statistics: DiaryStatistics }) {
   );
 }
 
+function validClosedEpisodes(report: FinrezResponse): boolean {
+  if (!Array.isArray(report.closed_episodes)) return false;
+  const seen = new Set<string>();
+  const owners = report.owner === "ROBOT"
+    ? ["ROBOT", "ROBOT_MANUAL_CLOSE", "JOINT_MANAGEMENT"]
+    : ["MANUAL", "JOINT_MANAGEMENT"];
+  return report.closed_episodes.every((deal) => {
+    if (!deal || typeof deal.trade_episode_id !== "string" || !deal.trade_episode_id.trim()
+      || seen.has(deal.trade_episode_id) || typeof deal.symbol !== "string"
+      || !/^[A-Z0-9]{3,30}$/.test(deal.symbol)
+      || !["LONG", "SHORT"].includes(deal.side)
+      || !owners.includes(deal.cohort)
+      || deal.replay_evidence !== "EPISODE_INDEX_ONLY"
+      || !Number.isSafeInteger(deal.opened_at_ms) || deal.opened_at_ms < 0
+      || !Number.isSafeInteger(deal.closed_at_ms) || deal.closed_at_ms < deal.opened_at_ms
+      || deal.closed_at_ms < report.period_start_ms || deal.closed_at_ms > report.as_of_ms
+      || !Number.isSafeInteger(deal.execution_count) || deal.execution_count < 1
+      || typeof deal.pnl_usdt !== "string" || !deal.pnl_usdt.trim()
+      || !Number.isFinite(Number(deal.pnl_usdt))) return false;
+    seen.add(deal.trade_episode_id);
+    return true;
+  });
+}
+
+const dealLabels: Record<ClosedEpisodeLocator["cohort"], string> = {
+  ROBOT: "Робот",
+  MANUAL: "Ручная сделка",
+  ROBOT_MANUAL_CLOSE: "Робот · ручное закрытие",
+  JOINT_MANAGEMENT: "Робот + ручное управление",
+};
+
+function ClosedDealsView({ report }: { report: FinrezResponse }) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const deals = report.closed_episodes ?? [];
+  const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
+  if (selected) {
+    return (
+      <div className="diary-detail" aria-label="Детали закрытой сделки">
+        <button className="diary-detail-back" onClick={() => setSelectedId(null)} type="button">← К сделкам</button>
+        <div className="diary-detail-title">
+          <strong>{selected.symbol}</strong>
+          <span>{sideLabel(selected.side)}</span>
+          <span>{dealLabels[selected.cohort]}</span>
+        </div>
+        <section className="diary-detail-section">
+          <h3>Исторический эпизод</h3>
+          <dl>
+            <div><dt>ID сделки</dt><dd>{selected.trade_episode_id}</dd></div>
+            <div><dt>Открыта</dt><dd>{formatDate(selected.opened_at_ms)}</dd></div>
+            <div><dt>Закрыта</dt><dd>{formatDate(selected.closed_at_ms)}</dd></div>
+            <div><dt>Исполнений</dt><dd>{selected.execution_count}</dd></div>
+            <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{selected.pnl_usdt} USDT</dd></div>
+          </dl>
+        </section>
+        <p className="diary-finrez-basis" role="status">
+          Это идентификатор подтверждённой сделки, а не воспроизведение.
+          Передача фактических исполнений и решений робота в локальный Симулятор ещё не подключена.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="diary-detail" aria-label="Закрытые сделки по эпизодам">
+      {report.attribution_coverage.status === "PARTIAL" ? (
+        <p className="diary-finrez-coverage" role="status">
+          История неполная: исключено {report.attribution_coverage.excluded_unattributed_episode_count} эпизодов
+          с неизвестным источником исполнений.
+        </p>
+      ) : null}
+      {deals.length === 0 ? <p className="diary-state">Нет подтверждённых закрытых сделок за выбранный период</p> : (
+        <div className="diary-trades-list">
+          {deals.map((deal) => (
+            <button className={`diary-trade-row ${deal.side.toLowerCase()}`}
+              type="button" key={deal.trade_episode_id} onClick={() => setSelectedId(deal.trade_episode_id)}>
+              <div className="diary-trade-heading">
+                <strong>{deal.symbol}</strong><span>{sideLabel(deal.side)}</span><span>{dealLabels[deal.cohort]}</span>
+              </div>
+              <div className="diary-trade-times">
+                <span>{formatDate(deal.opened_at_ms)}</span><span>→</span><span>{formatDate(deal.closed_at_ms)}</span>
+              </div>
+              <div className="diary-trade-metrics">
+                <span className={Number(deal.pnl_usdt) > 0 ? "profit" : Number(deal.pnl_usdt) < 0 ? "loss" : ""}
+                  title={deal.pnl_usdt}>PnL {deal.pnl_usdt} USDT</span>
+                <span>Исполнений: {deal.execution_count}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+      <p className="diary-finrez-basis">
+        Пока доступен только идентификатор сделки; историческое воспроизведение в локальном Симуляторе ещё не подключено.
+      </p>
+    </div>
+  );
+}
+
 function FinrezView({ report }: { report: FinrezResponse }) {
   return (
     <div className="diary-finrez" aria-label="Финансовый результат по тикерам">
@@ -603,9 +712,9 @@ export function DiaryOverlay({
     setLoading(true);
     setLoadError(false);
     if (section === "STATISTICS") setStatistics(null);
-    if (section === "FINREZ") setFinrez(null);
+    if (section === "FINREZ" || section === "DEALS") setFinrez(null);
     try {
-      if (section === "FINREZ") {
+      if (section === "FINREZ" || section === "DEALS") {
         if (!statisticsScope) throw new Error("finrez scope required");
         const response = await fetch(marketApiRoutes.diaryTickerFinrez(
           statisticsScope.accountId, statisticsScope.owner, finrezPeriod,
@@ -659,12 +768,12 @@ export function DiaryOverlay({
             || typeof row.pnl_usdt !== "string" || !row.pnl_usdt.trim()
             || !Number.isFinite(Number(row.pnl_usdt))
             || !Number.isSafeInteger(row.trade_count) || row.trade_count < 1
-          )) throw new Error("finrez scope/data mismatch");
+          ) || (section === "DEALS" && !validClosedEpisodes(result))) throw new Error("finrez scope/data mismatch");
         setRequestedTradeMissing(false);
         setFinrez(result);
         setAccountId(result.account_id);
-      } else if (section === "PATTERNS" || section === "DEALS") {
-        // These agreed tabs are intentionally deferred until owner visual acceptance.
+      } else if (section === "PATTERNS") {
+        // Pattern tab intentionally deferred until owner visual acceptance.
         setRequestedTradeMissing(false);
       } else if (section === "TRADES") {
         const response = await fetch(marketApiRoutes.diaryTrades);
@@ -814,7 +923,9 @@ export function DiaryOverlay({
 
           {!loading && !loadError && !selectedTrade && section === "FINREZ" && finrez ? <FinrezView report={finrez} /> : null}
           {!loading && !loadError && !selectedTrade && section === "PATTERNS" ? <p className="diary-state">Паттерны — второй этап после визуальной приёмки «Финреза»</p> : null}
-          {!loading && !loadError && !selectedTrade && section === "DEALS" ? <p className="diary-state">Сделки — третий этап после визуальной приёмки «Финреза»</p> : null}
+          {!loading && !loadError && !selectedTrade && section === "DEALS" && finrez ? (
+            <ClosedDealsView key={`${finrez.account_id}:${finrez.owner}:${finrez.period}:${finrez.source_revision}`} report={finrez} />
+          ) : null}
           {!loading && !loadError && selectedTrade ? <TradeDetailsView trade={selectedTrade} onBack={() => { setRequestedTradeMissing(false); setSelectedTradeId(null); }} /> : null}
           {!loading && !loadError && requestedTradeMissing && section === "TRADES" ? <p className="diary-state">Сделка недоступна в текущем дневнике</p> : null}
           {!loading && !loadError && !requestedTradeMissing && !selectedTrade && section === "TRADES" && visibleTrades.length === 0 ? <p className="diary-state">Нет сделок в этом фильтре</p> : null}
