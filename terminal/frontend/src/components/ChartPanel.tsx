@@ -1141,8 +1141,8 @@ export function ChartPanel({
                   placeholder="Комментарий (необязательно)" maxLength={1024}
                   value={proposalNote} onChange={(event) => { setProposalNote(event.target.value); setProposalStatus(""); }} />
                 <button type="button" disabled={proposalPending || (onSubmitOwnerChart
-                    ? !proposalPattern || !proposalDirection
-                    : !onSubmitOwnerSignal)}
+                    ? !proposalPattern || !proposalDirection || (proposalPattern === "Wedge" && !proposalWedgeSubtype)
+                    : !onSubmitOwnerSignal || !proposalDirection || proposalPattern !== "Wedge")}
                   title={proposalStatus || undefined}
                   onClick={() => void submitOwnerProposal()}>
                   {proposalPending ? "Сохранение…" :
