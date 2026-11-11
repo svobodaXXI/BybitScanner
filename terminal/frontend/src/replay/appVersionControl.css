@@ -1,0 +1,30 @@
+.replay-app-version {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.55rem;
+  min-width: 0;
+  color: #9eacb8;
+  font-size: 0.72rem;
+}
+.replay-app-version > span {
+  font-variant-numeric: tabular-nums;
+}
+.replay-app-version > button {
+  padding: 0.28rem 0.6rem;
+  border: 1px solid #42505c;
+  border-radius: 0.3rem;
+  background: #1b2530;
+  color: #dce6ee;
+  font: inherit;
+  cursor: pointer;
+}
+.replay-app-version > button:disabled {
+  opacity: 0.65;
+  cursor: progress;
+}
+.replay-app-version > small {
+  flex-basis: 100%;
+  font-size: 0.67rem;
+  color: #a3b4c4;
+}
