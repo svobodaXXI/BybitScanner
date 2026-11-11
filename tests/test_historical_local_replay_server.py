@@ -190,6 +190,27 @@ class LoopbackServerTests(unittest.TestCase):
             self.assertEqual(len(calls), 1)
 
 
+    def test_public_m5_selected_detectors_are_get_only_no_paper_routes(self):
+        with self.running_server() as (port, calls):
+            path = ("/local-replay/history?symbol=BTCUSDT&start=2026-01-01"
+                    "&end=2026-01-02&strategies=WEDGE_FALLING,IKIGAI_BOX")
+            status, data, _ = self.call(port, "GET", path)
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(data)["mode"], "MARKET_ONLY")
+            self.assertEqual(calls, [{
+                "symbol": "BTCUSDT", "start": "2026-01-01", "end": "2026-01-02",
+                "strategies": ("WEDGE_FALLING", "IKIGAI_BOX"),
+            }])
+            for strategies in ("IKIGAI_BOX,IKIGAI_BOX", "UNKNOWN", "WEDGE_FALLING,PAPER"):
+                status, _, _ = self.call(port, "GET", path.split("&strategies=")[0]
+                                        + "&strategies=" + strategies)
+                self.assertEqual(status, 400)
+            status, _, _ = self.call(port, "POST", path, body=b"{}")
+            self.assertEqual(status, 405)
+            status, _, _ = self.call(port, "GET", "/api/robot/status")
+            self.assertEqual(status, 404)
+            self.assertEqual(len(calls), 1)
+
     def test_simulation_capability_never_claims_verified_archive_on_presence_alone(self):
         with TemporaryDirectory() as tmp:
             with patch.object(local, "SIM_DATA", Path(tmp)):
