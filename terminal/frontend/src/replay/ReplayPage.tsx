@@ -970,7 +970,7 @@ export function ReplayPage() {
         onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
         onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
         playRequestId={playRequestId} showReport={!simulationGraphPending && !runLoading && cursor >= total}
-        onPublicHistoryRequest={(ticker, from, to) => void loadLocalHistory(ticker, from, to)}
+        onPublicHistoryRequest={(ticker, from, to, choices) => void loadLocalHistory(ticker, from, to, choices)}
         publicHistoryLoading={historyLoading}
         onStrategySelectionChange={setSelectedStrategies} />
       <section className="replay-controls" aria-label="Управление воспроизведением">
