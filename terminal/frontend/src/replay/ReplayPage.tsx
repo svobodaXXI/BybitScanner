@@ -606,6 +606,7 @@ export function ReplayPage() {
   const [fileLabel, setFileLabel] = useState("Тикер и период не выбраны");
   // PAPER evidence is never inserted into document.events or VirtualAccount.
   const [paperFacts, setPaperFacts] = useState<PaperEpisodeFacts | null>(null);
+  const [localEpisodeMessage, setLocalEpisodeMessage] = useState("");
   const paperOverlay = useMemo(
     () => matchPaperFactsToMarket(paperFacts, document), [paperFacts, document],
   );
@@ -880,7 +881,23 @@ export function ReplayPage() {
     try {
       if (file.size > 4 * 1024 * 1024)
         throw new Error("JSON PAPER больше 4 МБ");
-      const imported = parsePaperEpisodeFacts(JSON.parse(await file.text() as string) as unknown);
+      const raw = await file.text();
+      const imported = parsePaperEpisodeFacts(JSON.parse(raw) as unknown);
+      // Import is an explicit owner file action and never calls VPS.
+      const saved = await fetch("/local-replay/paper-episode/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Local-Paper-Import": "explicit-file" },
+        body: raw,
+      });
+      if (!saved.ok) throw new Error(saved.status === 409
+        ? "Локальная запись этого ID отличается: автоматическая перезапись запрещена"
+        : "Локальное сохранение фактов сделки не подтвердилось");
+      const receipt: unknown = await saved.json();
+      if (!receipt || typeof receipt !== "object" ||
+          (receipt as Record<string, unknown>).stored_locally !== true ||
+          (receipt as Record<string, unknown>).trade_episode_id !== imported.trade_episode_id)
+        throw new Error("Не совпало подтверждение локального импорта");
+      setLocalEpisodeMessage("Факты сделки сохранены локально: " + imported.trade_episode_id);
       setPaperFacts(imported);
       setError(null);
       // Instant inspection only when the selected, independently verified
@@ -901,6 +918,37 @@ export function ReplayPage() {
       setError(e instanceof Error ? e.message : "Не удалось прочитать факты PAPER");
     } finally {
       if (paperFileInput.current) paperFileInput.current.value = "";
+    }
+  }
+
+  async function lookupLocalEpisode(episodeId: string): Promise<void> {
+    setPlaying(false);
+    setPaperFacts(null);
+    setLocalEpisodeMessage("");
+    setError(null);
+    try {
+      const response = await fetch("/local-replay/paper-episode?trade_episode_id=" +
+        encodeURIComponent(episodeId), { method: "GET", cache: "no-store" });
+      if (response.status === 404) {
+        setError("Сделка " + episodeId + " отсутствует в локальной базе Симулятора. " +
+          "Нужна синхронизация фактов сделок с VPS (либо импорт проверенного JSON).");
+        return;
+      }
+      if (!response.ok) throw new Error("Локальная база не смогла подтвердить эту сделку");
+      const parsed = parsePaperEpisodeFacts(await response.json() as unknown);
+      if (parsed.trade_episode_id !== episodeId)
+        throw new Error("ID локальной записи не совпадает с запросом");
+      setPaperFacts(parsed);
+      setLocalEpisodeMessage("Найдены локальные факты сделки: " + episodeId);
+      if (matchPaperFactsToMarket(parsed, document).status === "MATCHED") {
+        setCursor(document.events.length);
+      } else {
+        setError("Факты сделки найдены, но полная история исходного сигнала с STOP " +
+          "и повторными входами пока не подтверждена. Нужна синхронизация цепочки " +
+          "эпизодов и свечей, не только одной записи.");
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Не удалось найти локальную сделку");
     }
   }
 
@@ -980,7 +1028,8 @@ export function ReplayPage() {
         playRequestId={playRequestId} showReport={!simulationGraphPending && !runLoading && cursor >= total}
         onPublicHistoryRequest={(ticker, from, to, choices) => void loadLocalHistory(ticker, from, to, choices)}
         publicHistoryLoading={historyLoading}
-        onStrategySelectionChange={setSelectedStrategies} />
+        onStrategySelectionChange={setSelectedStrategies}
+        onEpisodeLookup={lookupLocalEpisode} />
       <section className="replay-controls" aria-label="Управление воспроизведением">
         <label className="replay-file">
           Загрузить JSON прогона
@@ -1022,6 +1071,7 @@ export function ReplayPage() {
 
       </section>
 
+      {localEpisodeMessage && <p role="status" className="replay-note">{localEpisodeMessage}</p>}
       {error && <p role="alert" className="replay-error">{error}</p>}
       {paperFacts && <p className="replay-note" role="status" aria-label="PAPER факты сделки">
         PAPER · {paperFacts.symbol} · {paperFacts.trade_episode_id}
