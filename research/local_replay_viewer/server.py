@@ -439,9 +439,7 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 return
             path = urlsplit(self.path).path
             if path == "/local-replay/update/check":
-                from research.local_replay_viewer.local_update import (
-                    check_github_release, installed_build,
-                )
+                from local_update import check_github_release, installed_build
                 port = self.server.server_address[1]
                 if (urlsplit(self.path).query
                     or self.headers.get("Origin") not in (
