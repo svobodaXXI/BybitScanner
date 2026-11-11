@@ -464,8 +464,8 @@ describe("Finrez first-screen UI", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     expect(screen.getByRole("dialog", { name: "Статистика" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Сегодня" })).toHaveAttribute("aria-pressed", "true");
-    expect(await screen.findByText("+7.2 USDT")).toBeInTheDocument();
-    expect(screen.getByText("-2.5 USDT")).toBeInTheDocument();
+    expect(await screen.findByText("+7,2 USDT")).toBeInTheDocument();
+    expect(screen.getByText("-2,5 USDT")).toBeInTheDocument();
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=TODAY");
     fireEvent.click(screen.getByRole("button", { name: "Всё время" }));
@@ -496,7 +496,7 @@ describe("Finrez first-screen UI", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     expect(await screen.findByRole("region", { name: "Ручные закрытия сделок робота" })).toBeInTheDocument();
     expect(screen.getByText("Робот · ручное вмешательство")).toBeInTheDocument();
-    expect(screen.getByText("-4.5 USDT")).toBeInTheDocument();
+    expect(screen.getByText("-4,5 USDT")).toBeInTheDocument();
     expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
     expect(screen.getByText(/В PnL полностью роботизированных сделок не включён/)).toBeInTheDocument();
   });
@@ -552,7 +552,7 @@ describe("Finrez first-screen UI", () => {
     const current = render(<DiaryOverlay accountKey="paper:joint-robot" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const section = await screen.findByRole("region", { name: "Совместно управляемые сделки" });
-    expect(section).toHaveTextContent("-11.4 USDT");
+    expect(section).toHaveTextContent("-11,4 USDT");
     expect(section).toHaveTextContent("не складывайте его дважды");
     expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
     current.rerender(<DiaryOverlay accountKey="paper:joint-manual" initialSection="FINREZ"
@@ -560,8 +560,8 @@ describe("Finrez first-screen UI", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/diary/ticker-finrez?account_id=paper&owner=MANUAL&period=TODAY",
     ));
-    expect(await screen.findByRole("region", { name: "Совместно управляемые сделки" })).toHaveTextContent("-11.4 USDT");
-    expect(screen.getAllByText("-11.4 USDT")).toHaveLength(1);
+    expect(await screen.findByRole("region", { name: "Совместно управляемые сделки" })).toHaveTextContent("-11,4 USDT");
+    expect(screen.getAllByText("-11,4 USDT")).toHaveLength(1);
   });
 
   it("keeps Finrez PnL concise on mobile in all categories without losing exact source values", async () => {
