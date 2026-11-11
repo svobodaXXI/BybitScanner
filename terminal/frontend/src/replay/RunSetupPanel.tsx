@@ -25,6 +25,7 @@ export function RunSetupPanel({
   symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
   onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
   onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange,
+  onEpisodeLookup,
 }: {
   symbol: string;
   onArchiveSymbol: (archiveSymbol: string) => boolean;
@@ -39,6 +40,7 @@ export function RunSetupPanel({
   onPublicHistoryRequest: (symbol: string, start: string, endInclusive: string, selected: readonly StrategyId[]) => void;
   publicHistoryLoading: boolean;
   onStrategySelectionChange: (selection: RunSelection) => void;
+  onEpisodeLookup: (episodeId: string) => Promise<void>;
 }) {
   const [selection, setSelection] = useState<RunSelection>(onlyWedges);
   const [start, setStart] = useState(INITIAL_START);
@@ -171,6 +173,12 @@ export function RunSetupPanel({
     }
   };
   const applyCoordinates = (value: string) => {
+    const pasted = value.trim();
+    if (/^te_[a-f0-9]{24}$/.test(pasted)) {
+      setCoordinateError("");
+      void onEpisodeLookup(pasted);
+      return;
+    }
     try {
       const coords = value.trim() ? parseRunCoordinates(value) :
         { symbol, start_utc: start, end_utc_inclusive: end };
