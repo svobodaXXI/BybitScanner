@@ -502,6 +502,51 @@ try {
   assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(), /Предыстория.*72 ч/);
   await page.getByLabel("Показать опорные маркеры").uncheck();
   await page.getByText("Диагностика", { exact: true }).click();
+
+  // Exported PAPER facts are marked as HOLLOW rings at their original prices,
+  // separate from virtual triangles. No extra /api or private exchange call.
+  const episodeFacts = {
+    ok: true, schema: "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
+    namespace: "PAPER_READ_ONLY", source: "PAPER_EXECUTIONS_ATTRIBUTED",
+    source_revision: 3, account_id: "paper", owner: "ROBOT", cohort: "ROBOT",
+    trade_episode_id: "te_" + "a".repeat(24), symbol: "BTCUSDT", side: "LONG",
+    opened_at_ms: t + 2 * 300000 + 2000,
+    closed_at_ms: t + 7 * 300000 + 2000,
+    realized_price_pnl_usdt: "-0.9", known_execution_fees_usdt: "0.1",
+    pnl_usdt: "-1.0", pnl_basis: "REALIZED_PRICE_MINUS_EXECUTION_FEES",
+    replay_evidence: "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
+    execution_allocations: [
+      { execution_id: "exec-1", order_id: "order-1", order_side: "Buy",
+        execution_price: "100.12345678", allocated_quantity: "2", allocated_fee: "0.05",
+        occurred_at_ms: t + 2 * 300000 + 2000, allocation_role: "OPEN", controller: "ROBOT" },
+      { execution_id: "exec-2", order_id: "order-2", order_side: "Sell",
+        execution_price: "99.5", allocated_quantity: "2", allocated_fee: "0.05",
+        occurred_at_ms: t + 7 * 300000 + 2000, allocation_role: "CLOSE", controller: "ROBOT" },
+    ],
+  };
+  await page.getByLabel("Импорт JSON сделки PAPER").setInputFiles({
+    name: "episode-facts.json", mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(episodeFacts)),
+  });
+  const factNote = page.getByRole("status", { name: "PAPER факты сделки" });
+  await factNote.waitFor();
+  assert.match(await factNote.innerText(), /Кружки на закрытых свечах/);
+  assert.match(await factNote.innerText(), /JSON без криптографической подписи/);
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0",
+    "a PAPER imported observation never becomes a SIMULATION fill");
+  await page.getByRole("button", { name: "В начало" }).click();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "0");
+  await page.getByRole("button", { name: "Пуск", exact: true }).click();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
+  await page.getByRole("button", { name: "Пауза", exact: true }).click();
+  await page.getByRole("button", { name: "Убрать факты PAPER" }).click();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "0");
+
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
 
