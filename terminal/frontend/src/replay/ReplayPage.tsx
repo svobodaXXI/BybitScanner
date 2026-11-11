@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  completeHourlyCandles, replayFrameCursors, replayFrameIndex, replayStepCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent, type PublicScannerObservation,
 } from "./replayModel";
@@ -672,20 +672,9 @@ export function ReplayPage() {
   const total = document.events.length;
   const progress = Math.round(100 * cursor / total);
   const playbackComplete = !simulationGraphPending && total > 0 && cursor >= total;
-  const seekPoints = useMemo(() => {
-    const result = [0];
-    for (let i = 0; i < document.events.length; i++) {
-      const closed = document.events[i];
-      if (closed.kind !== "CANDLE_CLOSED") continue;
-      let next = i + 1;
-      while (next < document.events.length &&
-             document.events[next].time_ms === closed.time_ms) next++;
-      if (next > result[result.length - 1]) result.push(next);
-      i = next - 1;
-    }
-    return result;
-  }, [document.events]);
-  const seekIndex = Math.max(0, seekPoints.indexOf(cursor));
+  const seekPoints = useMemo(() =>
+    replayFrameCursors(document.events, timeframe), [document.events, timeframe]);
+  const seekIndex = replayFrameIndex(seekPoints, cursor);
   const priorBreaks = useMemo(
     () => showTrendGeometry ? visiblePriorBreaks(document, shown.lastTimeMs) : [],
     [document, shown.lastTimeMs, showTrendGeometry],
@@ -828,23 +817,25 @@ export function ReplayPage() {
     };
   }, []);
 
-  // Keep the requested candle cadence independent of network packet arrivals.
-  // A batch may contain many verified bars, but each timer tick reveals ONE M5.
-  // A stalled Scanner frontier costs no playback time: never catch up in a burst.
-  const availableEvents = useRef(document.events);
-  availableEvents.current = document.events;
+  // Each tick reveals exactly ONE verified, closed candle of the active TF.
+  // Never reset cadence when more events arrive from the Scanner stream.
+  const availableFramePoints = useRef(seekPoints);
+  availableFramePoints.current = seekPoints;
   useEffect(() => {
     if (!playing) return;
     const timer = window.setInterval(() => {
-      setCursor(current => nextClosedCandleCursor(availableEvents.current, current));
+      setCursor(current => replayStepCursor(availableFramePoints.current, current, 1));
     }, Math.max(16, 1000 / rate));
     return () => window.clearInterval(timer);
   }, [playing, rate]);
 
   useEffect(() => {
-    // Do not stop when playback reaches the still-growing verified frontier.
-    if (cursor >= total && !runLoading) setPlaying(false);
-  }, [cursor, total, runLoading]);
+    // Continue waiting at a streaming frontier; stop only after the run ends.
+    if (!runLoading && (cursor >= total ||
+        (playing && replayStepCursor(seekPoints, cursor, 1) === cursor))) {
+      setPlaying(false);
+    }
+  }, [cursor, total, playing, runLoading, seekPoints]);
 
   async function loadFile(file?: File) {
     if (!file) return;
@@ -1169,13 +1160,13 @@ export function ReplayPage() {
         <button type="button" className="replay-player-button" title="Шаг назад"
           aria-label="Шаг назад" onClick={() => {
             setPlaying(false);
-            setCursor(seekPoints[Math.max(0, seekIndex - 1)]);
-          }} disabled={simulationGraphPending || shown.candles.length === 0}><PlayerIcon name="backward" /></button>
+            setCursor(current => replayStepCursor(seekPoints, current, -1));
+          }} disabled={simulationGraphPending || seekIndex === 0}><PlayerIcon name="backward" /></button>
         <button type="button" className="replay-player-button" title="Шаг вперёд"
           aria-label="Шаг вперёд" onClick={() => {
             setPlaying(false);
-            setCursor((current) => nextClosedCandleCursor(document.events, current));
-          }} disabled={simulationGraphPending || cursor >= total}><PlayerIcon name="forward" /></button>
+            setCursor(current => replayStepCursor(seekPoints, current, 1));
+          }} disabled={simulationGraphPending || replayStepCursor(seekPoints, cursor, 1) === cursor}><PlayerIcon name="forward" /></button>
         <input className="replay-seek" type="range" min={0} max={seekPoints.length - 1}
                 step={1} value={simulationGraphPending ? 0 : seekIndex}
                 disabled={simulationGraphPending} aria-label="Перемотка воспроизведения"
