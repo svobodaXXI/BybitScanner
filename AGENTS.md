@@ -47,6 +47,19 @@ see `DOCUMENTS/VPS_PAPER_TELEGRAM_ONE_BUTTON_LESSONS_20261027.md` §6.
 This priority is **routing, not permission**: GitHub merge, deployment,
 PAPER DB/position, STOP/START, reconcile and trading authority remain unchanged.
 
+## SSH banner timeout / blocked PAPER release — mandatory fast route (2026-11-11)
+
+When Codex or Windows OpenSSH reports `Connection timed out during banner exchange`,
+or an interrupted install reports `PAPER_unit_not_stopped`, **first read**
+`DOCUMENTS/WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md` →
+`2026-11-11 — SSH banner timeout during blocked PAPER update: PC fast path`.
+That section records the confirmed **VPN-off + old-IP one-connection success**
+and subsequent timeout, the trusted PC key path, four-unit check and exact
+fail-closed boundaries. Do **not** infer durable SSH recovery from a single
+`SSH_OK`, repeat STOP/installer, or use VNC before the existing safe
+PowerShell route has been considered. This is a routing pointer, not release
+or runtime authorization.
+
 ## Outcome-owned delegation — proven lesson (2026-10-28)
 
 **One goal → one end-to-end assignment → observable acceptance.** Do not turn a
