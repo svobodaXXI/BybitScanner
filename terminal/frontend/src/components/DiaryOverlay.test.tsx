@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DiaryOverlay } from "./DiaryOverlay";
+import { DiaryOverlay, displayTradePnl } from "./DiaryOverlay";
 
 const detail = {
   identity: {
@@ -409,7 +409,7 @@ describe("Closed deals / exact episode index", () => {
     fireEvent.click(row);
     expect(screen.getByText("robot-episode-42")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("не воспроизведение");
-    expect(screen.queryByRole("button", { name: /Открыть в Симуляторе/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Открыть сделку в Симуляторе/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /К сделкам/ }));
     expect(await screen.findByRole("button", { name: /BTCUSDT/ })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
@@ -732,4 +732,30 @@ describe("Finrez first-screen UI", () => {
     expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
   });
 
+});
+
+describe("shared statistics trade action standard", () => {
+  it("formats only visible deal PnL to two decimal places", () => {
+    expect(displayTradePnl("-1.81622186")).toBe("-1,82");
+    expect(displayTradePnl("7.2")).toBe("7,20");
+    expect(displayTradePnl("0")).toBe("0,00");
+    expect(displayTradePnl(null)).toBe("—");
+    expect(displayTradePnl("NaN")).toBe("—");
+  });
+
+  it("keeps two icon action slots on every closed deal without faking full replay", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        ...finrezResponse,
+        closed_episodes: [sharedDeal, robotDeal],
+      }), { status: 200 }),
+    );
+    render(<DiaryOverlay onClose={() => {}} initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} />);
+    expect((await screen.findAllByRole("button", { name: "Подробности сделки" })).length).toBe(2);
+    const replay = screen.getAllByRole("button", { name: "Открыть сделку в Симуляторе" });
+    expect(replay).toHaveLength(2);
+    replay.forEach((button) => expect(button).toBeDisabled());
+    expect(screen.getByText(/PnL -1,82 USDT/)).toHaveAttribute("title", "-1.81622186");
+  });
 });
