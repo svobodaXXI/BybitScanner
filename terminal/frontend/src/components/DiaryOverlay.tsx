@@ -282,6 +282,47 @@ function matchesTradeFilter(trade: DiaryTrade, filter: DiaryFilter): boolean {
   return true;
 }
 
+
+/** Display-only rounding. Immutable source strings remain untouched. */
+export function displayTradePnl(value: string | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  const numeric = Number(value);
+  if (!value.trim() || !Number.isFinite(numeric)) return "—";
+  return new Intl.NumberFormat("ru-RU", {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  }).format(numeric);
+}
+
+/** Same action placement and icons for every statistics account/owner scope.
+ * The film control is disabled until exact replay evidence is available;
+ * an execution-facts export must never be misrepresented as a full replay.
+ */
+function TradeActionButtons({ onDetails, onReplay }: {
+  onDetails: () => void;
+  onReplay?: () => void;
+}) {
+  return (
+    <div className="diary-trade-actions" role="group" aria-label="Действия со сделкой">
+      <button type="button" className="diary-trade-icon" aria-label="Подробности сделки"
+        title="Подробности сделки" onClick={onDetails}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="10.6" cy="10.6" r="6.6" /><path d="m15.5 15.5 5.2 5.2" />
+        </svg>
+      </button>
+      <button type="button" className="diary-trade-icon"
+        aria-label="Открыть сделку в Симуляторе" title={onReplay
+          ? "Передать подтверждённый исторический эпизод в Симулятор"
+          : "Нужны сверенные свечи и решения Robot; только фактов исполнений недостаточно"}
+        disabled={!onReplay} onClick={onReplay}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3.5" y="3" width="17" height="18" rx="1.5" />
+          <path d="M8 3v18M16 3v18M3.5 8h4.5M3.5 15h4.5M16 8h4.5M16 15h4.5" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 function Value({ value }: { value: string | null | undefined }) {
   return <span>{value ?? "—"}</span>;
 }
@@ -603,7 +644,7 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
             <div><dt>Открыта</dt><dd>{formatDate(selected.opened_at_ms)}</dd></div>
             <div><dt>Закрыта</dt><dd>{formatDate(selected.closed_at_ms)}</dd></div>
             <div><dt>Исполнений</dt><dd>{selected.execution_count}</dd></div>
-            <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{selected.pnl_usdt} USDT</dd></div>
+            <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{displayTradePnl(selected.pnl_usdt)} USDT</dd></div>
           </dl>
         </section>
         <button className="diary-detail-back" type="button" disabled={downloading}
@@ -629,8 +670,9 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
       {deals.length === 0 ? <p className="diary-state">Нет подтверждённых закрытых сделок за выбранный период</p> : (
         <div className="diary-trades-list">
           {deals.map((deal) => (
-            <button className={`diary-trade-row ${deal.side.toLowerCase()}`}
-              type="button" key={deal.trade_episode_id} onClick={() => setSelectedId(deal.trade_episode_id)}>
+            <div className={`diary-trade-entry ${deal.side.toLowerCase()}`} key={deal.trade_episode_id}>
+              <button className={`diary-trade-row ${deal.side.toLowerCase()}`}
+                type="button" onClick={() => setSelectedId(deal.trade_episode_id)}>
               <div className="diary-trade-heading">
                 <strong>{deal.symbol}</strong><span>{sideLabel(deal.side)}</span><span>{dealLabels[deal.cohort]}</span>
               </div>
@@ -639,10 +681,12 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
               </div>
               <div className="diary-trade-metrics">
                 <span className={Number(deal.pnl_usdt) > 0 ? "profit" : Number(deal.pnl_usdt) < 0 ? "loss" : ""}
-                  title={deal.pnl_usdt}>PnL {deal.pnl_usdt} USDT</span>
+                  title={deal.pnl_usdt}>PnL {displayTradePnl(deal.pnl_usdt)} USDT</span>
                 <span>Исполнений: {deal.execution_count}</span>
               </div>
-            </button>
+              </button>
+              <TradeActionButtons onDetails={() => setSelectedId(deal.trade_episode_id)} />
+            </div>
           ))}
         </div>
       )}
@@ -991,7 +1035,8 @@ export function DiaryOverlay({
           {!loading && !loadError && !requestedTradeMissing && !selectedTrade && section === "TRADES" && visibleTrades.length > 0 ? (
             <div className="diary-trades-list">
               {visibleTrades.map((trade) => (
-                <button className={`diary-trade-row ${trade.side.toLowerCase()}`} key={trade.trade_episode_id} onClick={() => setSelectedTradeId(trade.trade_episode_id)} type="button">
+                <div className={`diary-trade-entry ${trade.side.toLowerCase()}`} key={trade.trade_episode_id}>
+                <button className={`diary-trade-row ${trade.side.toLowerCase()}`} onClick={() => setSelectedTradeId(trade.trade_episode_id)} type="button">
                   <div className="diary-trade-heading">
                     <strong>{trade.symbol}</strong>
                     <span className="diary-trade-side">{sideLabel(trade.side)}</span>
@@ -1007,10 +1052,12 @@ export function DiaryOverlay({
                   <div className="diary-trade-metrics">
                     <span>Вход {trade.average_entry || "—"}</span>
                     <span>{trade.closed_at_ms === null ? `Открыто ${trade.open_quantity}` : `Выход ${trade.exit_price ?? "—"}`}</span>
-                    <span className={trade.pnl !== null && Number(trade.pnl) > 0 ? "profit" : trade.pnl !== null && Number(trade.pnl) < 0 ? "loss" : ""}>PnL {trade.pnl ?? "—"}</span>
+                    <span className={trade.pnl !== null && Number(trade.pnl) > 0 ? "profit" : trade.pnl !== null && Number(trade.pnl) < 0 ? "loss" : ""} title={trade.pnl ?? undefined}>PnL {displayTradePnl(trade.pnl)}</span>
                   </div>
                   {trade.controller_origin ? <small>Источник: {trade.controller_origin}</small> : null}
                 </button>
+                <TradeActionButtons onDetails={() => setSelectedTradeId(trade.trade_episode_id)} />
+                </div>
               ))}
             </div>
           ) : null}
