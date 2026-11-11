@@ -1,6 +1,79 @@
 import { describe, expect, it } from "vitest";
 import { completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
+describe("native local Wedge and Ikigai M5 observation boundaries", () => {
+  const t = Date.UTC(2026, 10, 8);
+  const events = Array.from({ length: 60 }, (_, i) => ({
+    source: "SIMULATION", simulation_run_id: "native_observations", sequence: i + 1,
+    kind: "CANDLE_CLOSED", time_ms: t + (i + 1) * 300000,
+    candle: { start_ms: t + i * 300000, end_ms: t + (i + 1)*300000,
+      open: 100, high: 102, low: 98, close: 101, volume: 10 },
+  }));
+  const doc = {
+    source: "SIMULATION", simulation_run_id: "native_observations",
+    mode: "MARKET_ONLY", symbol: "BTCUSDT", timeframe: "5m",
+    market_data_source: "BYBIT_PUBLIC_KLINE", events,
+    scanner_research: {
+      scope: "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
+      detectors: ["IKIGAI_BOX", "WEDGE_FALLING"],
+      configuration: "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX",
+    },
+    scanner_observations: [
+      { strategy: "IKIGAI_BOX", timeframe: "5m", pattern: "Ikigai Box",
+        signal_id: `5m:LONG:${t + 3*300000}:${t + 7*300000}`,
+        available_at_ms: t + 33*300000, source_candle_start_ms: t + 32*300000,
+        close_price: 101, status: "CONFIRMED_STRUCTURE_ONLY",
+        reason: "No Robot Box order admission", side: "LONG",
+        box_start_ms: t + 8*300000, box_end_ms: t + 11*300000,
+        box_low: 98, box_high: 102 },
+      { strategy: "WEDGE_FALLING", timeframe: "5m", pattern: "Falling Wedge",
+        signal_id: `${t + 6*300000}:${t + 12*300000}`,
+        available_at_ms: t + 50*300000, source_candle_start_ms: t + 49*300000,
+        close_price: 101, status: "FILTER_REJECTED",
+        reason: "FILTER_SCORE_TOO_LOW", score: 44 },
+    ],
+  };
+  it("retains native Scanner research as only original observations, never trade events", () => {
+    const imported = parseReplayDocument(doc);
+    expect(imported.scanner_observations).toHaveLength(2);
+    expect(imported.scanner_research?.detectors).toEqual(["IKIGAI_BOX", "WEDGE_FALLING"]);
+    expect(imported.scanner_observations?.map(x => x.available_at_ms))
+      .toEqual([t + 33*300000, t + 50*300000]);
+    expect(imported.events).toHaveLength(60);
+    expect(imported.events.every(e => e.kind === "CANDLE_CLOSED")).toBe(true);
+    expect(simulationActionJournal(imported).actions).toEqual([]);
+    expect(visibleReplay(imported.events, 40).fills).toEqual([]);
+  });
+  it("fails closed on fabricated Box/Wedge metadata, future markers and trade contamination", () => {
+    const patch = (invalid: Record<string, unknown>) => ({
+      ...doc, scanner_observations: [{ ...doc.scanner_observations[0], ...invalid },
+        doc.scanner_observations[1]],
+    });
+    for (const invalid of [
+      { available_at_ms: t + 99*300000 },
+      { source_candle_start_ms: t + 99*300000 },
+      { close_price: 999 },
+      { status: "TRADED" },
+      { box_end_ms: t + 60*300000 },
+      { side: "OTHER" },
+      { signal_id: "unverified" },
+      { score: 100 },
+    ]) expect(() => parseReplayDocument(patch(invalid))).toThrow();
+    expect(() => parseReplayDocument({
+      ...doc, mode: "STRATEGY",
+    })).toThrow();
+    expect(() => parseReplayDocument({
+      ...doc, scanner_research: { ...doc.scanner_research, detectors: ["OTHER"] },
+    })).toThrow();
+    expect(() => parseReplayDocument({
+      ...doc, events: [...doc.events, {
+        source: "SIMULATION", simulation_run_id: "native_observations",
+        sequence: 61, kind: "ENTRY_FILLED", time_ms: t + 60*300000,
+      }],
+    })).toThrow();
+  });
+});
+
 describe("standalone SIMULATION viewer contract", () => {
   it("derives only completed hourly OHLCV from contiguous 5m Bybit candles", () => {
     const t = Date.UTC(2026, 10, 2);
