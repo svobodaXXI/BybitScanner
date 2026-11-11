@@ -4009,7 +4009,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 payload = self._payload({
                     "schema_version", "source_kind", "symbol", "timeframe",
                     "pattern", "bars", "proposed_boundaries", "idempotency_key",
-                }, frozenset({"note", "direction"}))
+                }, frozenset({"note", "direction", "formation_movement", "wedge_subtype"}))
                 proposal = record_owner_chart_proposal(payload)
             except OwnerSignalProposalConflict as exc:
                 self._json_response(409, {"ok": False, "error": str(exc)})
