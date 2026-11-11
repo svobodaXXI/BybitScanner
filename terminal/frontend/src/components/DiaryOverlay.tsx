@@ -323,6 +323,36 @@ function TradeActionButtons({ onDetails, onReplay }: {
   );
 }
 
+
+type TradeExecutionPoint = { at: number; price: number };
+
+function TradeExecutionPriceChart({ points }: { points: readonly TradeExecutionPoint[] }) {
+  if (points.length < 1) return (
+    <p className="diary-finrez-basis">Свечной график пока недоступен: нужен проверенный архив исторических свечей.</p>
+  );
+  const ordered = [...points].sort((a, b) => a.at - b.at);
+  const first = ordered[0].at, last = ordered[ordered.length - 1].at;
+  const prices = ordered.map((point) => point.price);
+  const min = Math.min(...prices), max = Math.max(...prices);
+  const x = (at: number) => 18 + (at - first) / Math.max(1, last - first) * 284;
+  const y = (price: number) => 105 - (price - min) / Math.max(0.00000001, max - min) * 88;
+  return (
+    <section className="diary-detail-section">
+      <h3>График цен исполнений · не свечной график</h3>
+      <svg className="diary-execution-price-chart" viewBox="0 0 320 122" role="img"
+        aria-label="Фактические цены исполнений сделки по времени">
+        <path d={ordered.map((point, i) => `${i ? "L" : "M"} ${x(point.at)} ${y(point.price)}`).join(" ")}
+          fill="none" stroke="currentColor" strokeWidth="1.6" />
+        {ordered.map((point, i) => <circle key={i} cx={x(point.at)} cy={y(point.price)} r="3.3"
+          fill="currentColor">
+          <title>{point.price} · {formatDate(point.at)}</title>
+        </circle>)}
+      </svg>
+      <small>Показаны только подтверждённые исполнения, без подстановки рыночных свечей.</small>
+    </section>
+  );
+}
+
 function Value({ value }: { value: string | null | undefined }) {
   return <span>{value ?? "—"}</span>;
 }
@@ -579,6 +609,50 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
 
+  const [executionPoints, setExecutionPoints] = useState<TradeExecutionPoint[]>([]);
+  useEffect(() => {
+    const deal = deals.find((entry) => entry.trade_episode_id === selectedId);
+    setExecutionPoints([]);
+    if (!deal) return;
+    let active = true;
+    void fetch(marketApiRoutes.diaryEpisodeFacts(
+      report.account_id, report.owner, deal.trade_episode_id, report.source_revision,
+    ), { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        const value: unknown = await response.json();
+        if (!value || typeof value !== "object") return null;
+        const facts = value as Record<string, unknown>;
+        if (facts.ok !== true || facts.schema !== "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1"
+          || facts.namespace !== "PAPER_READ_ONLY"
+          || facts.source !== "PAPER_EXECUTIONS_ATTRIBUTED"
+          || facts.account_id !== report.account_id || facts.owner !== report.owner
+          || facts.trade_episode_id !== deal.trade_episode_id
+          || facts.source_revision !== report.source_revision
+          || facts.symbol !== deal.symbol || facts.side !== deal.side
+          || facts.pnl_usdt !== deal.pnl_usdt
+          || !Array.isArray(facts.execution_allocations)
+          || facts.execution_allocations.length !== deal.execution_count) return null;
+        const points: TradeExecutionPoint[] = [];
+        for (const row of facts.execution_allocations) {
+          if (!row || typeof row !== "object") return null;
+          const entry = row as Record<string, unknown>;
+          const price = Number(entry.execution_price);
+          const at = entry.occurred_at_ms;
+          if (typeof entry.execution_price !== "string" ||
+              !Number.isFinite(price) || price <= 0 ||
+              !Number.isSafeInteger(at) || typeof at !== "number" ||
+              at < deal.opened_at_ms || at > deal.closed_at_ms) return null;
+          points.push({ price, at });
+        }
+        return points;
+      })
+      .then((points) => { if (active && points) setExecutionPoints(points); })
+      .catch(() => { /* No synthetic market data on archive errors. */ });
+    return () => { active = false; };
+  }, [selectedId, report.account_id, report.owner, report.source_revision, deals]);
+
+
   async function downloadFacts(deal: ClosedEpisodeLocator) {
     if (downloading) return;
     setDownloading(true);
@@ -647,6 +721,7 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
             <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{displayTradePnl(selected.pnl_usdt)} USDT</dd></div>
           </dl>
         </section>
+        <TradeExecutionPriceChart points={executionPoints} />
         <button className="diary-detail-back" type="button" disabled={downloading}
           onClick={() => void downloadFacts(selected)}>
           {downloading ? "Выгружаю факты…" : "Скачать JSON исполнений"}
