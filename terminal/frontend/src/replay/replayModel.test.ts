@@ -207,6 +207,33 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(visibleDmi(doc, 64).at(-1)?.plus_di).toBeGreaterThan(0);
   });
 
+  it("shows genuine STRATEGY DMI only on its verified closed M5", () => {
+    const demo = syntheticReplay();
+    const candles = demo.events.filter(event => event.kind === "CANDLE_CLOSED");
+    const raw = {
+      ...demo, demo: false,
+      market_data_source: "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M",
+      dmi_5m: undefined,
+      events: candles.slice(0, 2).map((event, index) => ({
+        ...event, sequence: index + 1, dmi: {
+          time_ms: event.time_ms,
+          plus_di: index ? 21.5 : null,
+          minus_di: index ? 17.2 : null, adx: null,
+        },
+      })),
+    };
+    const verified = parseReplayDocument(raw);
+    expect(visibleDmi(verified, 0)).toEqual([]);
+    expect(visibleDmi(verified, 1)).toHaveLength(1);
+    expect(visibleDmi(verified, 2)[1].plus_di).toBe(21.5);
+    expect(visibleDmi(verified, 3)).toHaveLength(2);
+    expect(() => parseReplayDocument({
+      ...raw, events: [{ ...raw.events[0],
+        dmi: { ...raw.events[0].dmi, time_ms: raw.events[0].time_ms + 60_000 } },
+        raw.events[1]],
+    })).toThrow(/ADX доступен раньше/);
+  });
+
   it("verifies same-close DI/ADX/20 crossings and never reveals the next candle", () => {
     const demo = syntheticReplay();
     const raw = JSON.parse(JSON.stringify(demo));
