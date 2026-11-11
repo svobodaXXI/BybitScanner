@@ -244,6 +244,9 @@ class FinrezMixedControllerTests(unittest.TestCase):
             source, account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
         )
         rows = robot["closed_episodes"]
+        # Real domain PositionSide values are "Long"/"Short"; HTTP requires
+        # the uppercase contract accepted by the mobile Deals validator.
+        self.assertTrue(all(r["side"] == "LONG" for r in rows))
         self.assertEqual({r["trade_episode_id"]: r["cohort"] for r in rows}, {
             "robot": "ROBOT",
             "assisted": "ROBOT_MANUAL_CLOSE",
@@ -375,6 +378,7 @@ class ClosedEpisodeFactsTests(unittest.TestCase):
         self.assertEqual(doc["schema"], "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1")
         self.assertEqual(doc["namespace"], "PAPER_READ_ONLY")
         self.assertEqual(doc["cohort"], "ROBOT")
+        self.assertEqual(doc["side"], "LONG")
         self.assertEqual(doc["source_revision"], 8)
         self.assertEqual(doc["pnl_usdt"], "4.7")
         self.assertEqual(doc["execution_allocations"], [
