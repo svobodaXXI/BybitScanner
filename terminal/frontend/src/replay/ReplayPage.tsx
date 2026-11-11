@@ -11,6 +11,7 @@ import {
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
+  publicHistoryDaysForPaperEpisode,
   type PaperEpisodeFacts, type PaperOverlay,
 } from "./paperEpisodeFacts";
 import { rayEndPoint } from "../chart/drawingGeometry";
@@ -888,6 +889,19 @@ export function ReplayPage() {
       // substitute a candle, download private history or invent a chart.
       if (matchPaperFactsToMarket(imported, document).status === "MATCHED") {
         setCursor(document.events.length);
+      } else {
+        const range = publicHistoryDaysForPaperEpisode(imported);
+        if (range === null) {
+          setError("Эпизод не помещается в 7 полных UTC-дней публичной M5-истории. " +
+            "Факты сделки сохранены отдельно; не подставляйте неполные свечи.");
+        } else {
+          // Owner-selected PAPER evidence explicitly authorizes looking up
+          // the same symbol/date window in independent PUBLIC market data.
+          // Never merge execution facts into simulated fills or Robot decisions.
+          setSymbol(imported.symbol);
+          symbolEdited.current = true;
+          void loadLocalHistory(imported.symbol, range.start, range.end, []);
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось прочитать факты PAPER");
