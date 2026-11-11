@@ -538,11 +538,7 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
 
-  async function downloadFacts(deal: ClosedEpisodeLocator) {
-    if (downloading) return;
-    setDownloading(true);
-    setDownloadError("");
-    try {
+  async function verifiedEpisodeFacts(deal: ClosedEpisodeLocator): Promise<Record<string, unknown>> {
       const response = await fetch(marketApiRoutes.diaryEpisodeFacts(
         report.account_id, report.owner, deal.trade_episode_id, report.source_revision,
       ), { cache: "no-store" });
@@ -568,6 +564,15 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
           || typeof item.execution_price !== "string"
         )) throw new Error("История сделки не совпала с выбранным эпизодом.");
 
+      return facts;
+  }
+
+  async function downloadFacts(deal: ClosedEpisodeLocator) {
+    if (downloading) return;
+    setDownloading(true);
+    setDownloadError("");
+    try {
+      const facts = await verifiedEpisodeFacts(deal);
       const blob = new Blob([JSON.stringify(facts, null, 2) + "\n"], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       try {
@@ -583,6 +588,56 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
     } catch (error) {
       setDownloadError(error instanceof Error ? error.message : "Не удалось выгрузить сделку.");
     } finally {
+      setDownloading(false);
+    }
+  }
+
+  async function openInSimulator(deal: ClosedEpisodeLocator) {
+    if (downloading) return;
+    setDownloading(true);
+    setDownloadError("");
+    const localOrigin = "http://127.0.0.1:48765";
+    // The URL carries only a proven episode locator. Full execution facts
+    // are sent once, directly to the exact owner-opened loopback window.
+    const token = crypto.getRandomValues(new Uint8Array(16));
+    const nonce = Array.from(token, value => value.toString(16).padStart(2, "0")).join("");
+    const params = new URLSearchParams({
+      episode: deal.trade_episode_id, nonce, source_origin: window.location.origin,
+    });
+    const popup = window.open(localOrigin + "/replay.html#" + params, "_blank");
+    if (!popup) {
+      setDownloading(false);
+      setDownloadError("Открытие Симулятора заблокировано браузером.");
+      return;
+    }
+    let handler: ((event: MessageEvent) => void) | undefined;
+    let timeout: number | undefined;
+    try {
+      const ready = new Promise<void>((resolve, reject) => {
+        handler = (event: MessageEvent) => {
+          if (event.origin !== localOrigin || event.source !== popup ||
+              !event.data || typeof event.data !== "object") return;
+          const reply = event.data as Record<string, unknown>;
+          if (reply.type === "BYBITSCANNER_SIMULATOR_READY" &&
+              reply.nonce === nonce && reply.trade_episode_id === deal.trade_episode_id)
+            resolve();
+        };
+        window.addEventListener("message", handler);
+        timeout = window.setTimeout(() => reject(new Error(
+          "Локальная Машина времени не ответила. Проверьте, что она запущена на 127.0.0.1:48765.",
+        )), 15_000);
+      });
+      const [facts] = await Promise.all([verifiedEpisodeFacts(deal), ready]);
+      popup.postMessage({
+        type: "BYBITSCANNER_EPISODE_FACTS", nonce,
+        trade_episode_id: deal.trade_episode_id, facts,
+      }, localOrigin);
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message :
+        "Не удалось открыть подтверждённую сделку в Симуляторе.");
+    } finally {
+      if (timeout !== undefined) window.clearTimeout(timeout);
+      if (handler) window.removeEventListener("message", handler);
       setDownloading(false);
     }
   }
