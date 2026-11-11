@@ -772,6 +772,11 @@ export function DiaryOverlay({
           <button aria-label="Закрыть статистику" onClick={onClose} type="button">×</button>
         </header>
 
+        <div className="diary-context-heading">
+          <p>{statisticsScope?.owner === "ROBOT" ? "Автопилот" : "Терминал"}</p>
+          <h2>Статистика</h2>
+        </div>
+
         <div className="diary-navigation">
           {(section === "FINREZ" || section === "PATTERNS" || section === "DEALS") ? (
             <nav className="diary-period-nav" aria-label="Период статистики">
