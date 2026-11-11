@@ -18,7 +18,7 @@ import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
 import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDrawingLogical } from "./replayDrawingCoordinates";
 import { RunSetupPanel } from "./RunSetupPanel";
-import { validateInclusiveWindow, makeWedgeRunRequest, formatRunCoordinates } from "./runSetup";
+import { validateInclusiveWindow, makeWedgeRunRequest, formatRunCoordinates, onlyWedges, type RunSelection } from "./runSetup";
 type WedgeRunRequest = ReturnType<typeof makeWedgeRunRequest>;
 import "./replay.css";
 
@@ -69,10 +69,10 @@ function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
     <path d={PLAYER_PATHS[name]} />
   </svg>;
 }
-function ReplayChart({ document, cursor, paperOverlay, paperFacts, showDebug, timeframe, drawings, selectedId,
+function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
   document: ReplayDocument; cursor: number; paperOverlay: PaperOverlay;
-  paperFacts: PaperEpisodeFacts | null; showDebug: boolean; timeframe: "5m" | "1h";
+  paperFacts: PaperEpisodeFacts | null; showTrendGeometry: boolean; showDebug: boolean; timeframe: "5m" | "1h";
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
   onDrawingsChange: (next: DrawingObject[]) => void;
   onSelectDrawing: (id: string | null) => void;
@@ -104,14 +104,16 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showDebug, ti
       return index >= 0 ? observedDmi[index] : undefined;
     })
     : observedDmi;
-  const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
+  const observedTouches = useMemo(() =>
+    showTrendGeometry ? visibleObservations(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry]);
   const blueRiskPreviews = useMemo(
-    () => visibleH017BlueRiskPreviews(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visibleH017BlueRiskPreviews(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const priorBreaks = useMemo(
-    () => visiblePriorBreaks(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visiblePriorBreaks(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const latestDmi = observedDmi.at(-1);
   const dmiValue = (value: number | null | undefined) => value == null ? "—" : value.toFixed(1);
@@ -240,16 +242,16 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showDebug, ti
       // anchors/time of knowledge come from the frozen causal geometry feed;
       // DrawingOverlay's rayEndPoint extends the line to the price pane edge.
       // Never refit the line to the replayed price candles.
-      const knownLines = visibleGeometry(document, shown.lastTimeMs);
-      const historicalLines = visibleGeometryHistory(document, shown.lastTimeMs);
+      const knownLines = showTrendGeometry ? visibleGeometry(document, shown.lastTimeMs) : [];
+      const historicalLines = showTrendGeometry ? visibleGeometryHistory(document, shown.lastTimeMs) : [];
       // Both published and provisional history are immutable visual records:
       // a replaced slope cannot erase, relocate or backdate its predecessor.
       // Avoid double-painting an early guide with identical confirmed anchors.
       const confirmedKeys = new Set(historicalLines.map(line =>
         [line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":")));
-      const drawableLines = [...historicalLines, ...earlyGeometry.filter(line =>
+      const drawableLines = [...historicalLines, ...(showTrendGeometry ? earlyGeometry : []).filter(line =>
         !confirmedKeys.has([line.kind, line.side, line.from_ms, line.to_ms, line.from_price, line.to_price].join(":")))];
-      const knownPriors = visiblePriorLevels(document, shown.lastTimeMs);
+      const knownPriors = showTrendGeometry ? visiblePriorLevels(document, shown.lastTimeMs) : [];
       const brokenByVersion = new Map(priorBreaks.map(item => [item.trend_version, item]));
       let paintedGeometry = 0;
       for (const line of drawableLines) {
@@ -375,7 +377,7 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showDebug, ti
       context.setLineDash([]);
       // Hollow marks are geometry observations, never entry/fill triangles.
       let paintedObservations = 0;
-      for (const item of (showDebug ? observedTouches : [])) {
+      for (const item of (showTrendGeometry && showDebug ? observedTouches : [])) {
         const x = api.timeScale().timeToCoordinate(((item.time_ms - 300_000) / 1000) as UTCTimestamp);
         const y = candleSeries.priceToCoordinate(
           item.kind === "MAIN_1H_TOUCH" ? item.line_price : item.price,
@@ -396,7 +398,7 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showDebug, ti
       }
       // Hollow squares are H-017 blue-line risk previews, never fills.
       let paintedBlueRisk = 0;
-      for (const item of (showDebug ? blueRiskPreviews : [])) {
+      for (const item of (showTrendGeometry && showDebug ? blueRiskPreviews : [])) {
         const x = api.timeScale().timeToCoordinate((item.open_ms / 1000) as UTCTimestamp);
         const y = candleSeries.priceToCoordinate(item.entry_price);
         if (x === null || y === null || x < 0 || x > priceWidth || y < 0 || y > paneHeight) continue;
@@ -465,7 +467,7 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showDebug, ti
       canvas.dataset.visiblePaperFills = String(paintedPaper);
       canvas.dataset.visibleOriginalGeometry = String(paintedOriginal);
       canvas.dataset.visibleGeometry = String(knownLines.length);
-      canvas.dataset.visibleEarlyGeometry = String(earlyGeometry.length);
+      canvas.dataset.visibleEarlyGeometry = String(showTrendGeometry ? earlyGeometry.length : 0);
       canvas.dataset.visiblePriors = String(knownPriors.length);
       canvas.dataset.paintedPriors = String(paintedPriors);
       canvas.dataset.paintedGeometry = String(paintedGeometry);
@@ -476,7 +478,7 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showDebug, ti
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, paperOverlay, paperFacts, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles, earlyGeometry]);
+  }, [shown, document, cursor, paperOverlay, paperFacts, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showTrendGeometry, showDebug, timeframe, displayCandles, earlyGeometry]);
 
   // The editable layer reuses the terminal's drawing tools, but stores its X
   // anchors in absolute UTC M5 slots rather than indices of the selected TF.
@@ -533,6 +535,10 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showDebug, ti
 export function ReplayPage() {
   const [document, setDocument] = useState<ReplayDocument>(() => syntheticReplay());
   const [symbol, setSymbol] = useState("BTCUSDT");
+  const [selectedStrategies, setSelectedStrategies] = useState<RunSelection>(onlyWedges);
+  const showTrendGeometry = selectedStrategies.selected.includes("H1_TREND");
+  const showSelectedWedges = selectedStrategies.selected.includes("WEDGE_RISING") ||
+    selectedStrategies.selected.includes("WEDGE_FALLING");
   const symbolEdited = useRef(false);
   const currentSymbol = useRef(symbol);
   currentSymbol.current = symbol;
@@ -637,24 +643,24 @@ export function ReplayPage() {
   }, [document.events]);
   const seekIndex = Math.max(0, seekPoints.indexOf(cursor));
   const priorBreaks = useMemo(
-    () => visiblePriorBreaks(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visiblePriorBreaks(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const latestPriorBreak = priorBreaks.at(-1);
   const publishedGeometry = useMemo(
-    () => visibleGeometry(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visibleGeometry(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const earlyGeometry = useMemo(
-    () => visibleEarlyGeometry(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visibleEarlyGeometry(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const earlyMain = earlyGeometry.find(line => line.kind === "MAIN_1H");
   const earlyBlueCount = earlyGeometry.filter(line => line.kind === "REFERENCE_5M").length;
   const activeMain = publishedGeometry.find(line => line.kind === "MAIN_1H");
   const latestPrior = useMemo(
-    () => visiblePriorLevels(document, shown.lastTimeMs).at(-1),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visiblePriorLevels(document, shown.lastTimeMs).at(-1) : undefined,
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const oppositeMainConfirmed = latestPriorBreak !== undefined &&
     activeMain?.side === latestPriorBreak.new_side &&
@@ -665,16 +671,20 @@ export function ReplayPage() {
     event.prior_price === latestPrior.price &&
     event.trend_version === latestPrior.trend_version
   );
-  const observedTouches = useMemo(() => visibleObservations(document, shown.lastTimeMs), [document, shown.lastTimeMs]);
+  const observedTouches = useMemo(() =>
+    showTrendGeometry ? visibleObservations(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry]);
   const blueRiskPreviews = useMemo(
-    () => visibleH017BlueRiskPreviews(document, shown.lastTimeMs),
-    [document, shown.lastTimeMs],
+    () => showTrendGeometry ? visibleH017BlueRiskPreviews(document, shown.lastTimeMs) : [],
+    [document, shown.lastTimeMs, showTrendGeometry],
   );
   const dmiCrossings = useMemo(
     () => visibleDmi(document, shown.candles.length).flatMap(point => point.crossings ?? []),
     [document, shown.candles.length],
   );
-  const retrospectiveStudy = useMemo(() => studyH017BlueCandidates(document), [document]);
+  const retrospectiveStudy = useMemo(
+    () => showTrendGeometry ? studyH017BlueCandidates(document) : [],
+    [document, showTrendGeometry]);
   const visibleStudy = useMemo(
     () => visibleH017CandidateStudy(retrospectiveStudy, shown.lastTimeMs),
     [retrospectiveStudy, shown.lastTimeMs],
@@ -914,7 +924,8 @@ export function ReplayPage() {
         onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
         playRequestId={playRequestId} showReport={!simulationGraphPending && !runLoading && cursor >= total}
         onPublicHistoryRequest={(ticker, from, to) => void loadLocalHistory(ticker, from, to)}
-        publicHistoryLoading={historyLoading} />
+        publicHistoryLoading={historyLoading}
+        onStrategySelectionChange={setSelectedStrategies} />
       <section className="replay-controls" aria-label="Управление воспроизведением">
         <label className="replay-file">
           Загрузить JSON прогона
@@ -1005,12 +1016,17 @@ export function ReplayPage() {
         {" "}{document.market_data_source === "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M"
           ? "исторические сделки из официального публичного архива, агрегированные в закрытые 5m OHLCV"
           : "публичные свечи API Bybit"}
-        {" "}· жёлтые 1H и синие 5m линии — предварительные кандидаты из подтверждённых экстремумов, не проверенная стратегия.
+        {" "}{showTrendGeometry
+          ? "Трендовые H1/M5 выбраны: жёлтые H1 и синие M5 — исследовательская геометрия, не торговые сигналы."
+          : "Трендовые H1/M5 выключены: их линии и приор скрыты."}
+        {" "}{showSelectedWedges
+          ? "Клинья выбраны, но публичный M5-просмотр не запускает Scanner: клинья здесь не искались. Для торгового прогона нужны проверенные M1 и профиль риска."
+          : "Клинья не выбраны и в публичном M5-просмотре не искались."}
       </p>}
       <details className="replay-diagnostics">
         <summary>Диагностика</summary>
         <label><input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} /> Показать опорные маркеры</label>
-      {document.mode === "MARKET_ONLY" && cursor > 0 && <p className="replay-geometry-note"
+      {document.mode === "MARKET_ONLY" && showTrendGeometry && cursor > 0 && <p className="replay-geometry-note"
         role="status" aria-label="Статус трендовой геометрии">
         {publishedGeometry.length
           ? "Геометрия: полная подтверждённая часовая пара 1–3 / 2–4; ранние синие M5-линии сохраняются в истории."
@@ -1042,11 +1058,11 @@ export function ReplayPage() {
           ? "уровень уже сломан, остаётся только в истории."
           : "уровень второго подтверждённого касания трендовой."}{" "}Не торговый сигнал.
       </p>}
-      {document.mode === "MARKET_ONLY" && document.h017_blue_risk_previews && cursor > 0 &&
+      {document.mode === "MARKET_ONLY" && showTrendGeometry && document.h017_blue_risk_previews && cursor > 0 &&
         <p className="replay-geometry-note" role="status" aria-label="H-017 риск синей M5">
           Синяя M5: открытий за линией {blueRiskPreviews.length}, из них риск ≥1:1 — {blueRiskPreviews.filter(x => x.risk_status === "RISK_PASS").length}. Квадраты — исследовательские оценки по депозиту 200 USDT, не сделки.
         </p>}
-      {document.mode === "MARKET_ONLY" && document.h017_blue_risk_previews && cursor > 0 &&
+      {document.mode === "MARKET_ONLY" && showTrendGeometry && document.h017_blue_risk_previews && cursor > 0 &&
         <p className="replay-geometry-note" role="status" aria-label="H-017 сравнение DMI и исходов">
           H-017 · независимые сценарии касания фиксированных уровней для {visibleStudy.length} кандидатов ≥1R:
           {" "}цель раньше стопа {countTouch(visibleStudy, "TARGET_FIRST")},
@@ -1150,7 +1166,8 @@ export function ReplayPage() {
                   "График нового прогона появится после нажатия ▶"}
               </div>
             : <ReplayChart document={document} cursor={cursor} paperOverlay={paperOverlay}
-                paperFacts={paperFacts} showDebug={showDebug} timeframe={timeframe}
+                paperFacts={paperFacts} showTrendGeometry={showTrendGeometry}
+                showDebug={showDebug} timeframe={timeframe}
                 drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
                 onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
                 onDrawingGesture={() => setPlaying(false)} />}
