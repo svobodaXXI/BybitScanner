@@ -424,23 +424,3 @@ export function revealedPaperMarkers(
   const seen = new Set(candles.map(c => c.start_ms));
   return overlay.markers.filter(item => seen.has(item.candle_start_ms));
 }
-
-/** Preselect only full UTC days for the existing loopback PUBLIC M5 loader.
- * This provides market context, never historical Robot decisions or
- * authoritative execution candles. A >7-day episode must be handled
- * explicitly instead of silently truncating the requested interval.
- */
-export function publicHistoryDaysForPaperEpisode(
-  facts: PaperEpisodeFacts,
-): { start: string; end: string } | null {
-  const dayMs = 86_400_000;
-  const startMs = Math.floor(facts.opened_at_ms / dayMs) * dayMs;
-  const endExclusiveMs = Math.floor(facts.closed_at_ms / dayMs) * dayMs + dayMs;
-  if (!Number.isSafeInteger(startMs) || !Number.isSafeInteger(endExclusiveMs) ||
-      endExclusiveMs <= startMs || endExclusiveMs - startMs > 7 * dayMs)
-    return null;
-  return {
-    start: new Date(startMs).toISOString().slice(0, 10),
-    end: new Date(endExclusiveMs).toISOString().slice(0, 10),
-  };
-}
