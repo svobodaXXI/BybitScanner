@@ -543,7 +543,23 @@ try {
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"), "1h");
   assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
+  // H1 step/seek must move complete hours, never a five-minute candle.
+  await page.getByRole("button", { name: "В начало" }).click();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "0");
+  await forward.click();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "1");
+  assert.equal(await scrub.inputValue(), "1");
+  await forward.click();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "2");
+  await backward.click();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "1");
+  await forward.click();
+  await forward.click();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "3");
+  assert.equal(await forward.isDisabled(), true,
+    "four trailing M5 bars must not become a partial H1");
   await page.getByRole("button", { name: "M5", exact: true }).click();
+  await scrub.fill("40");
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "40");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "3");
