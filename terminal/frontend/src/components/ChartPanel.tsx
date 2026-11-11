@@ -249,7 +249,7 @@ export function ChartPanel({
   const previousEditorBars = useRef<number | null>(null);
   const panBatcherRef = useRef<ReturnType<typeof createFrameBatcher> | null>(null);
   const [renderTick, setRenderTick] = useState(0),
-    [tool, setTool] = useState<DrawingTool>("select"),
+    [tool, setTool] = useState<DrawingTool>(ownerChartMode ? "crosshair" : "select"),
     [magnet, setMagnet] = useState(editorMode),
     [selectedId, setSelectedId] = useState<string | null>(null),
     [clearConfirmationOpen, setClearConfirmationOpen] = useState(false),
