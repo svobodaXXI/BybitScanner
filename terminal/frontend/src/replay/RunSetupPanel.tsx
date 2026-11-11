@@ -3,7 +3,7 @@ import { type ReplayDocument, type ReplayEvent } from "./replayModel";
 import { streamWedge } from "./streamWedge";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, PLANNED_OPTIONS,
-  clearAll, isAllSelected, onlyWedges, presetEndInclusive, adjustInclusiveWindow,
+  clearAll, isAllSelected, onlyWedges, onlyBox, presetEndInclusive, adjustInclusiveWindow,
   parseRunCoordinates, formatRunDuration,
   selectAll, toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeStatus, runnableWedgeSelection,
