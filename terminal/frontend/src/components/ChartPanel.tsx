@@ -69,6 +69,8 @@ import {
 import { TradingControlButton } from "../interactions/useTradingControlActivation";
 import { normalizeLimitDraftPrice } from "../orders/limitDraft";
 
+const NO_EDITOR_DRAWINGS: readonly DrawingObject[] = [];
+
 const PRICE_SCALE_WIDTH_FALLBACK = 64,
   TIME_SCALE_HEIGHT = 30,
   BASE_TIME = 1_700_000_000;
@@ -110,6 +112,7 @@ type Gesture =
 
 export function ChartPanel({
   candles,
+  currentCandles,
   tickSize,
   symbol = "BTCUSDT",
   timeframe = "5m",
@@ -147,8 +150,8 @@ export function ChartPanel({
   readOnly = false,
   robotTradeMarkers = [],
   editorMode = false,
-  referenceDrawings = [],
-  editableSeedDrawings = [],
+  referenceDrawings = NO_EDITOR_DRAWINGS,
+  editableSeedDrawings = NO_EDITOR_DRAWINGS,
   signalIdentity = null,
   originalPattern = null,
   snapshotRevision = null,
@@ -163,6 +166,8 @@ export function ChartPanel({
   onEditorNavigate,
 }: {
   candles: readonly Candle[];
+  /** Matching-symbol live market candles, independent of immutable Editor context. */
+  currentCandles?: readonly Candle[];
   tickSize: number | null;
   symbol?: string;
   timeframe?: string;
@@ -235,6 +240,8 @@ export function ChartPanel({
   const followLatestRef = useRef(true);
   const initialSourceFrameApplied = useRef(false);
   const previousEditorBars = useRef<number | null>(null);
+  const sourceRangeBeforeCurrent = useRef<{ from: number; to: number } | null>(null);
+  const priorCurrentView = useRef(false);
   const panBatcherRef = useRef<ReturnType<typeof createFrameBatcher> | null>(null);
   const [renderTick, setRenderTick] = useState(0),
     [tool, setTool] = useState<DrawingTool>("select"),
@@ -244,6 +251,12 @@ export function ChartPanel({
     [confirmAllPendingOpen, setConfirmAllPendingOpen] = useState(false),
     [dismissAllPendingOpen, setDismissAllPendingOpen] = useState(false);
   const [newSignalMode, setNewSignalMode] = useState(false);
+  const [showCurrentChart, setShowCurrentChart] = useState(false);
+  const viewingCurrent = editorMode && showCurrentChart && Boolean(currentCandles?.length);
+  const displayedCandles = viewingCurrent ? currentCandles! : candles;
+  useEffect(() => {
+    if (showCurrentChart && !currentCandles?.length) setShowCurrentChart(false);
+  }, [showCurrentChart, currentCandles?.length]);
   const storageKey = `bybitscanner:${newSignalMode ? "new-signal-drawings" : editorMode ? "editor-drawings" : "drawings"}:v1:${symbol}:${timeframe}${editorMode && signalIdentity ? `:${signalIdentity}${savedReviewId && !newSignalMode ? `:review-${savedReviewId}` : ""}` : ""}${editorMode && retrospectiveContext ? `:review-asof-${retrospectiveContext.asOfMs}` : ""}`;
   const historyRef = useRef(
     new DrawingHistory(
@@ -572,39 +585,52 @@ export function ChartPanel({
     const series = seriesRef.current;
     const timeScale = chartRef.current?.timeScale();
     if (!series || !timeScale) return;
+    const enteringCurrent = viewingCurrent && !priorCurrentView.current;
+    const returningToSource = !viewingCurrent && priorCurrentView.current;
+    if (enteringCurrent) sourceRangeBeforeCurrent.current = timeScale.getVisibleLogicalRange();
     replaceSeriesDataPreservingViewport(
-      candles.map((c, i) => ({
+      displayedCandles.map((c, i) => ({
         time: candleTime(c, i),
         open: c.open,
         high: c.high,
         low: c.low,
         close: c.close,
       })),
-      followLatestRef.current,
+      viewingCurrent || followLatestRef.current,
       series,
       timeScale,
     );
-    const previousCount = previousEditorBars.current;
-    previousEditorBars.current = candles.length;
-    if (editorMode && signalIdentity && !initialSourceFrameApplied.current) {
-      const sourceRange = initialSourceGeometryRange(referenceDrawings);
-      if (sourceRange) {
-        timeScale.setVisibleLogicalRange(sourceRange);
-        followLatestRef.current = false;
-        initialSourceFrameApplied.current = true;
+    priorCurrentView.current = viewingCurrent;
+    if (enteringCurrent) {
+      const to = displayedCandles.length + 6;
+      timeScale.setVisibleLogicalRange({ from: to - 80, to });
+    } else if (returningToSource && sourceRangeBeforeCurrent.current) {
+      // Restore the exact historical viewport; drawing and Undo state stay mounted.
+      timeScale.setVisibleLogicalRange(sourceRangeBeforeCurrent.current);
+      sourceRangeBeforeCurrent.current = null;
+    }
+    if (!viewingCurrent) {
+      const previousCount = previousEditorBars.current;
+      previousEditorBars.current = candles.length;
+      if (editorMode && signalIdentity && !initialSourceFrameApplied.current) {
+        const sourceRange = initialSourceGeometryRange(referenceDrawings);
+        if (sourceRange) {
+          timeScale.setVisibleLogicalRange(sourceRange);
+          followLatestRef.current = false;
+          initialSourceFrameApplied.current = true;
+        }
+      }
+      // Only a genuine extension of the historical window scrolls forward.
+      if (!returningToSource && editorMode && previousCount !== null &&
+          candles.length > previousCount && initialSourceFrameApplied.current) {
+        const range = timeScale.getVisibleLogicalRange();
+        const span = range ? Math.max(25, range.to - range.from) : 70;
+        const to = candles.length + 6;
+        timeScale.setVisibleLogicalRange({ from: to - span, to });
       }
     }
-    // An explicit "Add later candles" action should reveal the newly closed
-    // market context instead of silently leaving it far right off-screen.
-    if (editorMode && previousCount !== null && candles.length > previousCount &&
-        initialSourceFrameApplied.current) {
-      const range = timeScale.getVisibleLogicalRange();
-      const span = range ? Math.max(25, range.to - range.from) : 70;
-      const to = candles.length + 6;
-      timeScale.setVisibleLogicalRange({ from: to - span, to });
-    }
     setRenderTick((v) => v + 1);
-  }, [candles, editorMode, signalIdentity, referenceDrawings]);
+  }, [candles, displayedCandles, viewingCurrent, editorMode, signalIdentity, referenceDrawings]);
   useEffect(() => {
     const priceFormat = tickSize === null ? null : chartPriceFormat(tickSize);
     if (priceFormat) seriesRef.current?.applyOptions({ priceFormat });
@@ -698,11 +724,11 @@ export function ChartPanel({
     const price = series.coordinateToPrice(point.y);
     const index = logical === null
       ? -1
-      : Math.max(0, Math.min(candles.length - 1, Math.round(logical)));
-    if (price !== null && candles[index]) {
+      : Math.max(0, Math.min(displayedCandles.length - 1, Math.round(logical)));
+    if (price !== null && displayedCandles[index]) {
       chart.setCrosshairPosition(
         price,
-        candleTime(candles[index], index),
+        candleTime(displayedCandles[index], index),
         series,
       );
     }
@@ -1022,6 +1048,7 @@ export function ChartPanel({
     }
   }, [commit, drawings, selectedId]);
   useEffect(() => {
+    if (viewingCurrent) return; // Live inspection must not delete archived drawing drafts.
     const key = (event: KeyboardEvent) => {
       // This listener is global: typing or deleting an owner review note (or
       // another workspace form value) must never delete a selected chart ray.
@@ -1037,7 +1064,7 @@ export function ChartPanel({
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [deleteSelected]);
+  }, [deleteSelected, viewingCurrent]);
   return (
     <section
       className={`chart-panel workspace-panel${positionFooter ? " has-position-footer" : ""}`}
@@ -1069,6 +1096,19 @@ export function ChartPanel({
               </nav>
             </div>
             <small aria-label="Название исходного сигнала">Исходный сигнал: {originalPattern ?? "тип неизвестен"}</small>
+            {showCurrentChart ? (
+              <>
+                <small>Текущие рыночные свечи {symbol} · {timeframe}. Только просмотр, без изменения исходного сигнала.</small>
+                <button type="button" onClick={() => setShowCurrentChart(false)}>
+                  Вернуться к сигналу
+                </button>
+              </>
+            ) : (
+              <>
+            <button type="button" disabled={!currentCandles?.length || extensionPending || reviewPending || proposalPending}
+              onClick={() => setShowCurrentChart(true)}>
+              Показать актуальный график
+            </button>
             <button type="button" disabled={extensionPending || reviewPending || proposalPending}
               onClick={() => {
                 if (!onExtendEditorHistory) return;
@@ -1152,9 +1192,11 @@ export function ChartPanel({
             {reviewStatus && <output role="status" aria-live="polite">{reviewStatus}</output>}
               </>
             )}
+              </>
+            )}
           </div>
         )}
-        <DrawingToolbar
+        {!viewingCurrent && <DrawingToolbar
           activeTool={tool}
           magnet={magnet}
           selected={selectedId !== null}
@@ -1172,7 +1214,7 @@ export function ChartPanel({
           onClear={() => {
             if (drawings.length) setClearConfirmationOpen(true);
           }}
-        />
+        />}
       <div
         className="chart-stage"
         role="application"
@@ -1214,7 +1256,7 @@ export function ChartPanel({
             {robotMarkerShapes}
           </svg>
         ) : null}
-        <DrawingOverlay
+        {!viewingCurrent && <DrawingOverlay
           drawings={drawings}
           referenceDrawings={referenceDrawings}
           selectedId={selectedId}
@@ -1230,7 +1272,7 @@ export function ChartPanel({
           onDrawingGesture={() => {
             gesture.current = null;
           }}
-        />
+        />}
         {(() => {
           const displayedPrice = stopDraft?.price ?? authoritativeStopPrice;
           if (displayedPrice === null) return null;

@@ -1446,6 +1446,9 @@ export function App() {
           <ChartPanel
           key={mode === "EDITOR" && frozenSignal ? `frozen:${frozenSignal.signalId}:${frozenSignal.savedReviewId ?? "initial"}` : `${market.book.symbol}:${timeframe}:${mode}`}
           candles={mode === "EDITOR" && frozenSignal ? frozenSignal.candles : market.candles}
+          currentCandles={mode === "EDITOR" && frozenSignal
+            && tradingSymbol === launchLink?.symbol && timeframe === launchLink?.timeframe
+            ? market.candles : undefined}
           editorMode={mode === "EDITOR"}
           onEditorNavigate={setMode}
           retrospectiveContext={mode === "EDITOR" ? frozenSignal?.context ?? null : null}
