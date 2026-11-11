@@ -32,15 +32,17 @@ class PinnedEpisodeMarketTests(unittest.TestCase):
             root = Path(temp)
             (root / "m1-cache").mkdir()
             (root / "manifest.json").write_text("{}", encoding="utf-8")
-            with patch.object(local, "SIM_DATA", root), \\
-                 patch("research.simulator_v2.wedge_cli.parse_manifest",
-                       return_value=("BTCUSDT", (object(),))), \\
-                 patch("research.simulator_v2.history.last_closed_m1_boundary_ms",
-                       return_value=start + 86_400_000), \\
-                 patch("research.simulator_v2.trade_range._ordered_proofs",
-                       return_value=("verified_SOURCE", start, start + 86_400_000)), \\
-                 patch("research.simulator_v2.trade_range.iter_pinned_trade_chunks",
-                       return_value=[SimpleNamespace(candles=candles)]):
+            with (
+                patch.object(local, "SIM_DATA", root),
+                patch("research.simulator_v2.wedge_cli.parse_manifest",
+                      return_value=("BTCUSDT", (object(),))),
+                patch("research.simulator_v2.history.last_closed_m1_boundary_ms",
+                      return_value=start + 86_400_000),
+                patch("research.simulator_v2.trade_range._ordered_proofs",
+                      return_value=("verified_SOURCE", start, start + 86_400_000)),
+                patch("research.simulator_v2.trade_range.iter_pinned_trade_chunks",
+                      return_value=[SimpleNamespace(candles=candles)]),
+            ):
                 result = local.read_verified_episode_market(
                     symbol="BTCUSDT", start_ms=start, end_ms=start + FIVE_MINUTES_MS,
                 )
