@@ -405,7 +405,7 @@ describe("Closed deals / exact episode index", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const row = await screen.findByRole("button", { name: /BTCUSDT/ });
     expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("Робот + ручное управление");
-    expect(row).toHaveTextContent("-4.8 USDT");
+    expect(row).toHaveTextContent("-4,80 USDT");
     fireEvent.click(row);
     expect(screen.getByText("robot-episode-42")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("не воспроизведение");
@@ -747,7 +747,16 @@ describe("shared statistics trade action standard", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
         ...finrezResponse,
-        closed_episodes: [sharedDeal, robotDeal],
+        closed_episodes: [
+          { trade_episode_id: "episode-shared", symbol: "XRPUSDT", side: "SHORT",
+            opened_at_ms: 1_793_001_500_000, closed_at_ms: 1_793_003_000_000,
+            pnl_usdt: "-1.81622186", execution_count: 7,
+            cohort: "JOINT_MANAGEMENT", replay_evidence: "EPISODE_INDEX_ONLY" },
+          { trade_episode_id: "episode-robot", symbol: "BTCUSDT", side: "LONG",
+            opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+            pnl_usdt: "-4.8", execution_count: 2,
+            cohort: "ROBOT", replay_evidence: "EPISODE_INDEX_ONLY" },
+        ],
       }), { status: 200 }),
     );
     render(<DiaryOverlay accountKey="paper" onClose={() => {}} initialSection="DEALS"
