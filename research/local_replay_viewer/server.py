@@ -230,6 +230,10 @@ def fetch_public_klines(symbol: str, interval: str, limit: int, *, end_ms: int):
     return normalized
 
 
+class NativeScannerStudyUnavailable(RuntimeError):
+    """Local analytical failure, never a failed Bybit kline request."""
+
+
 def load_public_history(
     *, symbol: str, start: str, end: str,
     fetch_candles: Callable[..., object] = fetch_public_klines,
@@ -241,6 +245,10 @@ def load_public_history(
     start_ms, end_ms = parse_date_utc(start), parse_date_utc(end)
     if end_ms <= start_ms or end_ms - start_ms > MAX_LOCAL_BARS * FIVE_MINUTES_MS:
         raise ValueError("Select 1 to 7 complete UTC days")
+    # Reject unsupported research scan windows BEFORE downloading public data.
+    # Plain MARKET_ONLY still supports the pre-existing seven-day window.
+    if strategies and end_ms - start_ms > 288 * FIVE_MINUTES_MS:
+        raise ValueError("Local native Scanner research supports one UTC day per scan")
     end_of_last_closed = (
         int(datetime.now(timezone.utc).timestamp() * 1000) // FIVE_MINUTES_MS
     ) * FIVE_MINUTES_MS
@@ -261,7 +269,14 @@ def load_public_history(
                 or len(set(strategies)) != len(strategies)
                 or any(x not in SELECTABLE for x in strategies)):
             raise ValueError("Public research Scanner: one UTC day, only Wedge/Ikigai Box")
-        observations = scan_public_closed_m5(doc, strategies)
+        try:
+            observations = scan_public_closed_m5(doc, strategies)
+        except (ImportError, ModuleNotFoundError, ValueError):
+            raise
+        except Exception as exc:
+            raise NativeScannerStudyUnavailable(
+                "Native Scanner study failed; no pattern/Robot claims published"
+            ) from exc
         doc["scanner_research"] = {
             "scope": "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
             "detectors": list(strategies),
@@ -375,6 +390,8 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                     self._error(400, str(exc))
                 except (ImportError, ModuleNotFoundError):
                     self._error(503, "Native Scanner requires local Python 3.11 with bundled offline analytical wheels")
+                except NativeScannerStudyUnavailable as exc:
+                    self._error(503, str(exc))
                 except Exception:
                     # Failed remote market request: no fallback to cached, stale,
                     # proxy, PAPER or invented data.
