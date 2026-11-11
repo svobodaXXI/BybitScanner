@@ -1438,28 +1438,6 @@ export function App() {
       {mode === "EDITOR" && showCurrentEditorChart && frozenSignal && (
         <div className="editor-current-chart-overlay" role="dialog"
           aria-modal="true" aria-label="Актуальный график">
-          <div className="editor-current-chart-toolbar">
-            <strong>Актуальный график · {launchLink?.symbol ?? market.book.symbol} · {timeframe}</strong>
-            <button type="button" onClick={() => { setShowCurrentEditorChart(false); setOwnerChartCandles(null); setOwnerChartError(""); }}>
-              Вернуться к сигналу
-            </button>
-            {!ownerChartCandles && <button type="button" onClick={() => {
-              const periods: Record<string, number> = { "1": 60000, "5": 300000, "15": 900000, "60": 3600000, "D": 86400000 };
-              const period = periods[timeframe];
-              const now = Date.now();
-              const closed = market.candles.filter(bar => {
-                const at = Date.parse(bar.time);
-                return period && Number.isSafeInteger(at) && at >= 0 && at % period === 0 && at + period <= now;
-              }).slice(-120);
-              if (closed.length < 20 || closed.some((bar, i) => i > 0 && Date.parse(bar.time) !== Date.parse(closed[i - 1].time) + period)) {
-                setOwnerChartError("Нужно не менее 20 непрерывных закрытых свечей");
-                return;
-              }
-              setOwnerChartError("");
-              setOwnerChartCandles(closed.map(bar => ({ ...bar })));
-            }}>Разметить свой сигнал</button>}
-          </div>
-          {ownerChartError && <output role="status">{ownerChartError}</output>}
           {market.book.symbol === (launchLink?.symbol ?? market.book.symbol)
             && market.candles.length > 0 ? (
             <ChartPanel
@@ -1496,6 +1474,28 @@ export function App() {
               Исторический сигнал сохранён без изменений.
             </output>
           )}
+          <div className="editor-current-chart-toolbar">
+            <strong>Актуальный график · {launchLink?.symbol ?? market.book.symbol} · {timeframe}</strong>
+            <button type="button" onClick={() => { setShowCurrentEditorChart(false); setOwnerChartCandles(null); setOwnerChartError(""); }}>
+              Вернуться к сигналу
+            </button>
+            {!ownerChartCandles && <button type="button" onClick={() => {
+              const periods: Record<string, number> = { "1": 60000, "5": 300000, "15": 900000, "60": 3600000, "D": 86400000 };
+              const period = periods[timeframe];
+              const now = Date.now();
+              const closed = market.candles.filter(bar => {
+                const at = Date.parse(bar.time);
+                return period && Number.isSafeInteger(at) && at >= 0 && at % period === 0 && at + period <= now;
+              }).slice(-120);
+              if (closed.length < 20 || closed.some((bar, i) => i > 0 && Date.parse(bar.time) !== Date.parse(closed[i - 1].time) + period)) {
+                setOwnerChartError("Нужно не менее 20 непрерывных закрытых свечей");
+                return;
+              }
+              setOwnerChartError("");
+              setOwnerChartCandles(closed.map(bar => ({ ...bar })));
+            }}>Разметить свой сигнал</button>}
+            {ownerChartError && <output role="status">{ownerChartError}</output>}
+          </div>
         </div>
       )}
       <section className="workspace-grid" aria-label="Trading workspace">
