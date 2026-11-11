@@ -98,9 +98,10 @@ class VirtualReplaySession:
             self.reused_geometry.observe_staged(frame, staged)
         if self.wedge_scanner is not None:
             self.wedge_scanner.observe_staged(frame, staged)
+        ikigai_facts: tuple[StageFact, ...] = ()
         if self.ikigai_scanner is not None:
-            self.ikigai_scanner.observe_staged(frame, staged)
-        return ()
+            ikigai_facts = self.ikigai_scanner.observe_staged(frame, staged)
+        return ikigai_facts
 
     def _on_closed_exchange_stage(
         self, frame: MinuteFrame, _staged: tuple[SimulationEvent, ...],
