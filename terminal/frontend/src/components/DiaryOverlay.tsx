@@ -167,6 +167,7 @@ type FinrezResponse = {
   pnl_basis: "REALIZED_PRICE_MINUS_EXECUTION_FEES";
   tickers: FinrezTicker[];
   manual_interventions: FinrezTicker[];
+  joint_management: FinrezTicker[];
   attribution_coverage: {
     status: "COMPLETE" | "PARTIAL";
     excluded_unattributed_episode_count: number;
@@ -535,6 +536,25 @@ function FinrezView({ report }: { report: FinrezResponse }) {
           </div>
         </section>
       ) : null}
+      {report.joint_management.length > 0 ? (
+        <section className="diary-finrez-interventions" aria-label="Совместно управляемые сделки">
+          <h3>Совместное управление · ROBOT + MANUAL</h3>
+          <p className="diary-finrez-basis">
+            Общий PnL позиции, увеличенной вручную после входа робота и закрытой роботом.
+            Не входит в итоги ROBOT или MANUAL. Одинаковый результат показан в обоих разделах — не складывайте его дважды.
+          </p>
+          <div className="diary-finrez-list">
+            {report.joint_management.map((ticker) => (
+              <div className="diary-finrez-row" key={ticker.symbol}>
+                <strong>{ticker.symbol}</strong>
+                <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
+                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{ticker.pnl_usdt} USDT
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -622,6 +642,14 @@ export function DiaryOverlay({
           || result.manual_interventions.some((row, index) =>
             typeof row.symbol !== "string" || !row.symbol
             || result.manual_interventions.slice(0, index).some((item) => item.symbol === row.symbol)
+            || typeof row.pnl_usdt !== "string" || !row.pnl_usdt.trim()
+            || !Number.isFinite(Number(row.pnl_usdt))
+            || !Number.isSafeInteger(row.trade_count) || row.trade_count < 1
+          ))
+          || !Array.isArray(result.joint_management)
+          || result.joint_management.some((row, index) =>
+            typeof row.symbol !== "string" || !row.symbol
+            || result.joint_management.slice(0, index).some((item) => item.symbol === row.symbol)
             || typeof row.pnl_usdt !== "string" || !row.pnl_usdt.trim()
             || !Number.isFinite(Number(row.pnl_usdt))
             || !Number.isSafeInteger(row.trade_count) || row.trade_count < 1
