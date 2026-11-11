@@ -685,15 +685,14 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
                 <span>Исполнений: {deal.execution_count}</span>
               </div>
               </button>
-              <TradeActionButtons onDetails={() => setSelectedId(deal.trade_episode_id)}
-                onReplay={() => void downloadFacts(deal)} />
+              <TradeActionButtons onDetails={() => setSelectedId(deal.trade_episode_id)} />
             </div>
           ))}
         </div>
       )}
       {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
       <p className="diary-finrez-basis">
-        Киноплёнка выгружает проверенные факты исполнений для локального Симулятора. Полное воспроизведение требует отдельного архива свечей и решений Robot.
+        Киноплёнка будет открывать локальный Симулятор после подтверждения исторических свечей и решений. Пока доступен экспорт только фактических исполнений из карточки сделки.
       </p>
     </div>
   );
