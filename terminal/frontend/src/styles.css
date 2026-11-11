@@ -3698,34 +3698,72 @@ button {
   grid-template-rows: minmax(33rem, 1fr) auto;
 }
 
+/* Current-chart view uses the same top-anchored chart as other workspaces.
+   Labels/actions belong below the plot, never in an oversized header. */
 .editor-current-chart-overlay {
   position: fixed;
   inset: 0;
   z-index: 1000;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 0.4rem;
+  min-height: 0;
   padding: 0.55rem;
   background: var(--chart-bg);
   color: #d7e0e8;
 }
 .editor-current-chart-toolbar {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.45rem;
   min-width: 0;
+  max-height: 34vh;
+  overflow-y: auto;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  font-size: 0.8rem;
+}
+.editor-current-chart-toolbar strong {
+  flex: 1 1 100%;
+  font-size: 0.8rem;
 }
 .editor-current-chart-toolbar button {
-  padding: 0.5rem;
+  flex: 1 1 auto;
+  min-height: 2.3rem;
+  padding: 0.35rem 0.5rem;
   border: 1px solid #394653;
   border-radius: 0.35rem;
   background: #171d24;
   color: inherit;
+  font-size: inherit;
   touch-action: manipulation;
+}
+.editor-current-chart-toolbar output {
+  flex: 1 1 100%;
 }
 .editor-current-chart-overlay .chart-panel {
   min-height: 0;
+  height: 100%;
+  grid-template-rows: minmax(0, 1fr);
+}
+.editor-current-chart-overlay .chart-content-row {
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+.editor-current-chart-overlay .chart-stage {
+  grid-row: 1;
+  min-height: 0;
+}
+.editor-current-chart-overlay .chart-engine {
+  min-height: 0;
+}
+.editor-current-chart-overlay .editor-correction-export {
+  grid-row: 2;
+  align-self: stretch;
+  margin: 0.35rem 0 0;
+  padding-right: 2.9rem;
+  max-height: 31vh;
+  overflow-y: auto;
 }
 .workspace-market-row {
   position: relative;
