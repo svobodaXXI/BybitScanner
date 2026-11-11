@@ -1037,13 +1037,6 @@ export function ReplayPage() {
               : " · D2: исходный setup появится после его подтверждённого времени на графике"
         )}
       </p>}
-      {simulationGraphPending && <p className="replay-note" role="status"
-        aria-label="Ожидание нового графика">
-        {runLoading ? "Проверяю архив и рассчитываю виртуальный прогон…" :
-          preparedRun ? "Тикер и период применены. Нажмите ▶ Пуск." :
-            "Вставьте тикер и период, нажмите «Применить», затем ▶ Пуск."}
-        {" "}Старые и демонстрационные свечи не показываются.
-      </p>}
       <section className="replay-meta" aria-label="Состояние симулятора">
         <div><span>Источник</span><strong>{fileLabel}</strong></div>
         <div><span>Время рынка</span><strong>{simulationGraphPending ? "До начала прогона" :
