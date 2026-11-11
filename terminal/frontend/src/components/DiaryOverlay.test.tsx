@@ -492,6 +492,64 @@ describe("Closed deals / exact episode index", () => {
     }
   });
 
+  it("hands exact episode facts to the selected loopback window, never through the URL", async () => {
+    const episodeId = "te_" + "d".repeat(24);
+    const deal = { ...robotDeal, trade_episode_id: episodeId };
+    const facts = {
+      ok: true, schema: "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
+      namespace: "PAPER_READ_ONLY", source: "PAPER_EXECUTIONS_ATTRIBUTED",
+      account_id: "paper", owner: "ROBOT", cohort: "ROBOT", source_revision: 3,
+      trade_episode_id: episodeId, symbol: "BTCUSDT", side: "LONG",
+      opened_at_ms: deal.opened_at_ms, closed_at_ms: deal.closed_at_ms,
+      pnl_usdt: "-4.8", replay_evidence: "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
+      execution_allocations: [
+        { execution_id: "fill-a", execution_price: "100" },
+        { execution_id: "fill-b", execution_price: "99" },
+      ],
+    };
+    const fetchMock = vi.fn().mockImplementation(async (url: string) =>
+      new Response(JSON.stringify(url.includes("/episode-facts") ? facts :
+        { ...finrezResponse, closed_episodes: [deal] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const popup = { postMessage: vi.fn() };
+    const opener = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    try {
+      render(<DiaryOverlay accountKey="paper:handoff" initialSection="DEALS"
+        statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+      fireEvent.click(await screen.findByRole("button", { name: "В Симулятор " + episodeId }));
+      expect(opener).toHaveBeenCalledOnce();
+      const target = new URL(String(opener.mock.calls[0][0]));
+      expect(target.origin).toBe("http://127.0.0.1:48765");
+      expect(target.pathname).toBe("/replay.html");
+      expect(target.search).toBe("");
+      const fragment = new URLSearchParams(target.hash.slice(1));
+      expect(fragment.get("episode")).toBe(episodeId);
+      expect(fragment.get("source_origin")).toBe(window.location.origin);
+      expect(fragment.get("nonce")).toMatch(/^[0-9a-f]{32}$/);
+      expect(target.hash).not.toContain("execution_price");
+      const ready = new MessageEvent("message", {
+        origin: target.origin,
+        data: {
+          type: "BYBITSCANNER_SIMULATOR_READY", trade_episode_id: episodeId,
+          nonce: fragment.get("nonce"),
+        },
+      });
+      Object.defineProperty(ready, "source", { value: popup });
+      window.dispatchEvent(ready);
+      await waitFor(() => expect(popup.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "BYBITSCANNER_EPISODE_FACTS", trade_episode_id: episodeId, facts,
+        }),
+        target.origin,
+      ));
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/diary/episode-facts?"), { cache: "no-store" },
+      );
+    } finally {
+      opener.mockRestore();
+    }
+  });
+
   it("rejects an outdated source revision without downloading a misleading replay", async () => {
     const selectedDeal = { ...robotDeal, trade_episode_id: "te_" + "b".repeat(24) };
     const fetchMock = vi.fn().mockImplementation(async (url: string) =>
