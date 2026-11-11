@@ -564,6 +564,33 @@ describe("Finrez first-screen UI", () => {
     expect(screen.getAllByText("-11.4 USDT")).toHaveLength(1);
   });
 
+  it("keeps Finrez PnL concise on mobile in all categories without losing exact source values", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse,
+      tickers: [
+        { symbol: "GIGADEVICEUSDT", pnl_usdt: "4.3583303660000000000004", trade_count: 1 },
+        { symbol: "TINYUSDT", pnl_usdt: "0.0000000004", trade_count: 1 },
+        { symbol: "ZEROUSDT", pnl_usdt: "0", trade_count: 1 },
+      ],
+      manual_interventions: [
+        { symbol: "JASMYUSDT", pnl_usdt: "-0.0026140884", trade_count: 1 },
+      ],
+      joint_management: [
+        { symbol: "CASHCATUSDT", pnl_usdt: "-1.8162218600000000000000", trade_count: 1 },
+      ],
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:compact" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const longTicker = await screen.findByText("GIGADEVICEUSDT");
+    expect(longTicker).toHaveAttribute("title", "GIGADEVICEUSDT");
+    expect(screen.getByTitle("4.3583303660000000000004 USDT")).toHaveTextContent("+4,3583 USDT");
+    expect(screen.getByTitle("0.0000000004 USDT")).toHaveTextContent("+<0,000001 USDT");
+    expect(screen.getByTitle("0 USDT")).toHaveTextContent("0 USDT");
+    expect(screen.getByTitle("-0.0026140884 USDT")).toHaveTextContent("-0,002614 USDT");
+    expect(screen.getByTitle("-1.8162218600000000000000 USDT")).toHaveTextContent("-1,8162 USDT");
+    expect(screen.queryByText("4.3583303660000000000004 USDT")).not.toBeInTheDocument();
+  });
+
   it("rejects a missing or invalid shared-management contract", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ...finrezResponse,
