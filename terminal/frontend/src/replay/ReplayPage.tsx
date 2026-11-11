@@ -558,6 +558,18 @@ export function ReplayPage() {
       }
       return { sequence: event.sequence, time: event.time_ms, message };
     }), [document.events, cursor]);
+  const paperSetupContext = paperFacts?.setup_context;
+  const paperSetupVisible = paperSetupContext?.status === "EXACT_D2_LINK" &&
+    paperOverlay.status === "MATCHED" && shown.lastTimeMs !== null &&
+    shown.lastTimeMs >= paperSetupContext.setup.created_at_ms;
+  // D2 observations remain outside SIMULATION events/journal/PnL. Like
+  // candles, a D2 decision cannot be seen until its timestamp is reached.
+  const paperDecisionObservations = useMemo(() =>
+    paperFacts?.setup_context?.status === "EXACT_D2_LINK" &&
+    paperOverlay.status === "MATCHED" && shown.lastTimeMs !== null
+      ? paperFacts.setup_context.decisions.filter(e => e.occurred_at_ms <= shown.lastTimeMs!)
+      : [], [paperFacts, paperOverlay, shown.lastTimeMs]);
+
   const total = document.events.length;
   const progress = Math.round(100 * cursor / total);
   const seekPoints = useMemo(() => {
@@ -897,6 +909,13 @@ export function ReplayPage() {
           : paperOverlay.reason}
         {" · "}PnL по цене и известным комиссиям: {paperFacts.pnl_usdt} USDT
         {" · "}JSON без криптографической подписи; не виртуальные сделки и не решения Robot.
+        {paperSetupContext && (
+          paperSetupContext.status !== "EXACT_D2_LINK"
+            ? " · D2: нет подтверждённой связи с исходным setup"
+            : paperSetupVisible
+              ? ` · D2: ${paperSetupContext.setup.pattern} · ${paperSetupContext.setup.timeframe} · версия ${paperSetupContext.setup.strategy_version} · геометрия не экспортирована`
+              : " · D2: исходный setup появится после его подтверждённого времени на графике"
+        )}
       </p>}
       {simulationGraphPending && <p className="replay-note" role="status"
         aria-label="Ожидание нового графика">
@@ -1078,6 +1097,21 @@ export function ReplayPage() {
           <h2>Журнал событий</h2>
           <div className="replay-events-list" aria-live="off">
             {journal.length === 0 && <p>Ожидаю события Scanner и Robot</p>}
+            {paperDecisionObservations.length > 0 && (
+              <section aria-label="Наблюдения PAPER D2" className="replay-d2-observations">
+                <strong>Подтверждённые наблюдения D2 · не полный журнал Robot</strong>
+                {paperDecisionObservations.map(event => (
+                  <div className="replay-events-item" key={event.decision_event_id}>
+                    <time>{new Date(event.occurred_at_ms).toLocaleString("ru-RU", {
+                      timeZone: "UTC", day: "2-digit", month: "2-digit",
+                      hour: "2-digit", minute: "2-digit",
+                    })} UTC</time>
+                    <span>{event.kind}: {event.previous_state ?? "—"} → {event.next_state} · {event.reason_code}</span>
+                    <span>Источник: {event.controller}</span>
+                  </div>
+                ))}
+              </section>
+            )}
             {journal.map(item => <div className="replay-events-item" key={item.sequence}>
               <time>{new Date(item.time).toLocaleString("ru-RU", {
                 timeZone: "UTC", day: "2-digit", month: "2-digit",
