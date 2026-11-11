@@ -3676,6 +3676,35 @@ button {
   grid-template-rows: minmax(33rem, 1fr) auto;
 }
 
+.editor-current-chart-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0.4rem;
+  padding: 0.55rem;
+  background: var(--chart-bg);
+  color: #d7e0e8;
+}
+.editor-current-chart-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.editor-current-chart-toolbar button {
+  padding: 0.5rem;
+  border: 1px solid #394653;
+  border-radius: 0.35rem;
+  background: #171d24;
+  color: inherit;
+  touch-action: manipulation;
+}
+.editor-current-chart-overlay .chart-panel {
+  min-height: 0;
+}
 .workspace-market-row {
   position: relative;
   display: grid;

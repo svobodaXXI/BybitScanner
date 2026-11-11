@@ -161,6 +161,7 @@ export function ChartPanel({
   retrospectiveContext = null,
   onExtendEditorHistory,
   onEditorNavigate,
+  onShowCurrentEditorChart,
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
@@ -218,6 +219,7 @@ export function ChartPanel({
   retrospectiveContext?: { asOfMs: number; barsSha256: string } | null;
   onExtendEditorHistory?: () => Promise<void>;
   onEditorNavigate?: (mode: "TERMINAL" | "AUTOPILOT") => void;
+  onShowCurrentEditorChart?: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -1082,6 +1084,11 @@ export function ChartPanel({
                   .finally(() => setExtensionPending(false));
               }}>
               {extensionPending ? "Загрузка…" : "Показать следующие свечи"}
+            </button>
+            <button type="button" disabled={extensionPending || reviewPending || proposalPending
+                || !onShowCurrentEditorChart}
+              onClick={() => onShowCurrentEditorChart?.()}>
+              Показать актуальный график
             </button>
             {retrospectiveContext && <small>Ретроспективный обзор: до {new Date(retrospectiveContext.asOfMs).toLocaleString("ru-RU")}. Будущие свечи не считаются известными исходному Scanner.</small>}
             {extensionStatus && <output role="status" aria-live="polite">{extensionStatus}</output>}
