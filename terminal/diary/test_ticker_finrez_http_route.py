@@ -122,9 +122,10 @@ def test_episode_facts_route_rejects_invalid_scope_and_exports_only_one_selected
         return {
             "schema": "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
             "namespace": "PAPER_READ_ONLY", "source_revision": source_revision,
-            "trade_episode_id": trade_episode_id,
+            "trade_episode_id": trade_episode_id, "symbol": "BTCUSDT",
+            "side": "LONG",
             "replay_evidence": "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
-            "execution_allocations": [],
+            "execution_allocations": [{"controller": "ROBOT"}],
         }
 
     monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", read_source)
@@ -154,6 +155,7 @@ def test_episode_facts_route_rejects_invalid_scope_and_exports_only_one_selected
         assert payload["ok"] is True
         assert payload["trade_episode_id"] == episode_id
         assert payload["replay_evidence"] == "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES"
+        assert payload["setup_context"]["status"] == "D2_STORE_ABSENT"
         assert calls == [("source", source), ("project", "paper", "ROBOT", episode_id, 9)]
 
         status, payload = _get(root + prefix + "&source_revision=8")
