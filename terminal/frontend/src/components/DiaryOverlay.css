@@ -115,6 +115,8 @@
 }
 
 .diary-header > .diary-account-unavailable {
+  width: 100%;
+  min-width: 0;
   font-size: 0.8rem;
   text-align: center;
   opacity: 0.65;
