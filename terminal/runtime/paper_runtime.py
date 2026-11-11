@@ -78,6 +78,7 @@ from terminal.application.paper_close_all_report import (
     verified_robot_close,
 )
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
+from terminal.application.box_protection_finalizer import finalize_box_protection_obligation
 from terminal.application.ikigai_box_catchup import (
     build_box_manual_close_market_plan,
     durable_box_market_intent,
@@ -3464,74 +3465,9 @@ class PaperRuntime:
             # unproven position state.
             return obligation
         if trade.pattern == "IKIGAI_BOX":
-            candidate = self.store.get_robot_candidate(trade.candidate_id)
-            source_id = (
-                candidate.signal_snapshot.get("source_box_candidate_id")
-                if candidate is not None else None
+            return finalize_box_protection_obligation(
+                self.store, obligation, trade, now_ms=now_ms,
             )
-            if not isinstance(source_id, str) or not source_id.strip():
-                return obligation
-            try:
-                proof = self.store.prove_box_owned_position(source_id.strip())
-            except Exception:
-                return obligation
-            if (
-                proof.remaining_quantity != 0
-                or proof.average_exit is None
-                or proof.last_execution_at_ms is None
-                or proof.entry_notional <= 0
-            ):
-                return obligation
-            realized_pct = (
-                (proof.realized_pnl - proof.accumulated_fee)
-                / proof.entry_notional
-                * Decimal("100")
-            )
-            # A prior Box monitor may have labelled this already-executed
-            # STOP as TAKE before the obligation finalizer ran. Only the
-            # exact, zero-exposure, matching-economics race may be corrected.
-            if trade.exit_time_ms is not None and trade.exit_reason != obligation.winning_leg:
-                corrected = self.store.correct_box_take_race_from_proven_stop(
-                    trade_id=trade.trade_id,
-                    obligation_id=obligation.obligation_id,
-                    exit_time_ms=proof.last_execution_at_ms,
-                    exit_price=proof.average_exit,
-                    realized_pnl_usdt=proof.realized_pnl,
-                    realized_pnl_pct=realized_pct,
-                    fees_costs_usdt=proof.accumulated_fee,
-                    updated_at_ms=now_ms,
-                )
-                if not corrected:
-                    LOGGER.error(
-                        "Box STOP/TAKE race cannot be proved; reconciliation required: obligation=%s",
-                        obligation.obligation_id,
-                    )
-                    return obligation
-                LOGGER.warning(
-                    "Corrected proven Box STOP/TAKE reason race: obligation=%s trade=%s",
-                    obligation.obligation_id, trade.trade_id,
-                )
-            else:
-                self.store.close_robot_trade(
-                    trade.trade_id,
-                    exit_time_ms=proof.last_execution_at_ms,
-                    exit_price=proof.average_exit,
-                    exit_reason=obligation.winning_leg,
-                    realized_pnl_usdt=proof.realized_pnl,
-                    realized_pnl_pct=realized_pct,
-                    fees_costs_usdt=proof.accumulated_fee,
-                    updated_at_ms=now_ms,
-                )
-            self.store.clear_paper_protection_for_flat(position_key)
-            if obligation.status == "DISPATCHING":
-                obligation = self.store.transition_paper_protection_obligation(
-                    obligation.obligation_id,
-                    expected_status="DISPATCHING",
-                    next_status="RESOLVED",
-                    expected_version=obligation.version,
-                    updated_at_ms=now_ms,
-                )
-            return obligation
 
         if trade.entry_quantity is None:
             # Reached only if an exec was somehow recorded for a trade
