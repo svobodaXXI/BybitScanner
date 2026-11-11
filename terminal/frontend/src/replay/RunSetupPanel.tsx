@@ -24,7 +24,7 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
 export function RunSetupPanel({
   symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
   onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
-  onPublicHistoryRequest, publicHistoryLoading,
+  onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange,
 }: {
   symbol: string;
   onArchiveSymbol: (archiveSymbol: string) => boolean;
@@ -38,6 +38,7 @@ export function RunSetupPanel({
   onSimulationFailed: () => void;
   onPublicHistoryRequest: (symbol: string, start: string, endInclusive: string) => void;
   publicHistoryLoading: boolean;
+  onStrategySelectionChange: (selection: RunSelection) => void;
 }) {
   const [selection, setSelection] = useState<RunSelection>(onlyWedges);
   const [start, setStart] = useState(INITIAL_START);
@@ -68,6 +69,12 @@ export function RunSetupPanel({
   const active = ALL_SELECTABLE.filter(id => selection.selected.includes(id));
   const mirrorSelected = MIRROR_OPTIONS.filter(x => selection.selected.includes(x.id)).length;
   const wedgesOnly = runnableWedgeSelection(selection);
+
+  // The chart is another VIEW of the same checked selection. Never
+  // let public MARKET_ONLY geometry disregard the owner's strategy choices.
+  // This is not strategy admission or a trading command.
+  useEffect(() => { onStrategySelectionChange(selection); },
+    [selection, onStrategySelectionChange]);
 
   useEffect(() => {
     const controller = new AbortController();
