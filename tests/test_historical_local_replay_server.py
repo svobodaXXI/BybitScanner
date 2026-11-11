@@ -147,11 +147,14 @@ class LoopbackServerTests(unittest.TestCase):
                 httpd.server_close()
                 worker.join(timeout=4)
 
-    def call(self, port: int, method: str, path: str, host: str | None = None):
+    def call(self, port: int, method: str, path: str, host: str | None = None, *,
+             body: bytes | None = None, extra_headers: dict[str, str] | None = None):
         connection = HTTPConnection("127.0.0.1", port, timeout=3)
         try:
             headers = {"Host": host} if host else {}
-            connection.request(method, path, headers=headers)
+            if extra_headers:
+                headers.update(extra_headers)
+            connection.request(method, path, body=body, headers=headers)
             response = connection.getresponse()
             return response.status, response.read(), dict(response.getheaders())
         finally:
@@ -185,6 +188,151 @@ class LoopbackServerTests(unittest.TestCase):
             status, _, _ = self.call(port, "GET", "/local-replay/history?symbol=BTCUSDT")
             self.assertEqual(status, 400)
             self.assertEqual(len(calls), 1)
+
+
+    def test_public_m5_selected_detectors_are_get_only_no_paper_routes(self):
+        with self.running_server() as (port, calls):
+            path = ("/local-replay/history?symbol=BTCUSDT&start=2026-01-01"
+                    "&end=2026-01-02&strategies=WEDGE_FALLING,IKIGAI_BOX")
+            status, data, _ = self.call(port, "GET", path)
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(data)["mode"], "MARKET_ONLY")
+            self.assertEqual(calls, [{
+                "symbol": "BTCUSDT", "start": "2026-01-01", "end": "2026-01-02",
+                "strategies": ("WEDGE_FALLING", "IKIGAI_BOX"),
+            }])
+            for strategies in ("IKIGAI_BOX,IKIGAI_BOX", "UNKNOWN", "WEDGE_FALLING,PAPER"):
+                status, _, _ = self.call(port, "GET", path.split("&strategies=")[0]
+                                        + "&strategies=" + strategies)
+                self.assertEqual(status, 400)
+            status, _, _ = self.call(port, "POST", path, body=b"{}")
+            self.assertEqual(status, 405)
+            status, _, _ = self.call(port, "GET", "/api/robot/status")
+            self.assertEqual(status, 404)
+            self.assertEqual(len(calls), 1)
+
+    def test_simulation_capability_never_claims_verified_archive_on_presence_alone(self):
+        with TemporaryDirectory() as tmp:
+            with patch.object(local, "SIM_DATA", Path(tmp)):
+                info = local.local_simulation_status()
+                self.assertEqual(info["namespace"], "SIMULATION")
+                self.assertFalse(info["can_attempt"])
+                self.assertFalse(info["archive_files_present"])
+                self.assertFalse(info["wedge_risk_profile_present"])
+                with self.assertRaisesRegex(ValueError, "отсутствует"):
+                    local.run_local_simulation({
+                        "symbol": "BTCUSDT",
+                        "start_utc": "2026-10-01T00:00",
+                        "end_utc_inclusive": "2026-10-01T01:00",
+                        "selected_strategies": ["IKIGAI_BOX"],
+                        "initial_balance": "1000",
+                    })
+                with self.assertRaisesRegex(ValueError, "отсутствует"):
+                    local.run_local_simulation({
+                        "symbol": "BTCUSDT",
+                        "start_utc": "2026-10-01T00:00",
+                        "end_utc_inclusive": "2026-10-01T01:00",
+                        "selected_strategies": ["WEDGE_FALLING"],
+                        "initial_balance": "1000",
+                    })
+
+    def test_manifest_hint_prefills_only_a_complete_local_second_day(self):
+        with TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / "m1-cache").mkdir()
+            (folder / "wedge-risk.json").write_text("{}", encoding="utf-8")
+            manifest = {
+                "schema": "SIMULATOR_V2_PUBLIC_TRADES_DERIVED_M1_RANGE_V1",
+                "symbol": "XRPUSDT", "days": 3,
+                "start_ms": 1788998400000, "end_ms": 1789257600000,
+            }
+            (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            with patch.object(local, "SIM_DATA", folder):
+                info = local.local_simulation_status()
+                self.assertEqual(info["archive_hint"], {
+                    "symbol": "XRPUSDT",
+                    "start_utc": "2026-09-11T00:00",
+                    "end_utc_inclusive": "2026-09-11T23:59",
+                })
+                manifest["end_ms"] += 60000  # Non-contiguous/inconsistent metadata.
+                (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+                self.assertNotIn("archive_hint", local.local_simulation_status())
+
+    def test_wedge_simulation_post_is_loopback_origin_locked_and_never_paper(self):
+        with self.running_server() as (port, calls):
+            status, data, _ = self.call(port, "GET", "/local-replay/simulation/status")
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(data)["namespace"], "SIMULATION")
+            payload = json.dumps({
+                "symbol": "BTCUSDT",
+                "start_utc": "2026-10-01T00:00",
+                "end_utc_inclusive": "2026-10-01T00:10",
+                "selected_strategies": ["WEDGE_FALLING"],
+                "initial_balance": "1000",
+            }).encode("utf-8")
+            valid_headers = {
+                "Origin": f"http://127.0.0.1:{port}",
+                "Content-Type": "application/json",
+                "X-Local-Simulation": "wedge",
+            }
+            for headers in (
+                {"Origin": "https://malicious.example", **{
+                    k: v for k,v in valid_headers.items() if k != "Origin"
+                }},
+                {k: v for k, v in valid_headers.items() if k != "X-Local-Simulation"},
+                {**valid_headers, "Sec-Fetch-Site": "cross-site"},
+            ):
+                with self.subTest(headers=headers):
+                    code, _, _ = self.call(
+                        port, "POST", "/local-replay/simulation/wedge",
+                        body=payload, extra_headers=headers,
+                    )
+                    self.assertEqual(code, 403)
+            with patch.object(local, "run_local_simulation", return_value={
+                "namespace": "SIMULATION", "virtual_fills": 0,
+                "scenario_type": "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION",
+            }) as invoked:
+                code, data, _ = self.call(
+                    port, "POST", "/local-replay/simulation/wedge",
+                    body=payload, extra_headers=valid_headers,
+                )
+                self.assertEqual(code, 200)
+                self.assertEqual(json.loads(data)["virtual_fills"], 0)
+                invoked.assert_called_once_with(json.loads(payload))
+            code, _, _ = self.call(
+                port, "POST", "/local-replay/history",
+                body=payload, extra_headers=valid_headers,
+            )
+            self.assertEqual(code, 405)
+            code, _, _ = self.call(port, "GET", "/api/orders")
+            self.assertEqual(code, 404)
+            self.assertEqual(calls, [])
+
+    def test_wedge_simulation_rejects_unsupported_content_and_active_lock(self):
+        with self.running_server() as (port, calls):
+            sample = b'{"selected_strategies":["WEDGE_FALLING"]}'
+            headers = {
+                "Origin": f"http://127.0.0.1:{port}",
+                "Content-Type": "application/json",
+                "X-Local-Simulation": "wedge",
+            }
+            with local.SIM_LOCK:
+                status, _, _ = self.call(
+                    port, "POST", "/local-replay/simulation/wedge",
+                    body=sample, extra_headers=headers,
+                )
+                self.assertEqual(status, 409)
+            status, _, _ = self.call(
+                port, "POST", "/local-replay/simulation/wedge",
+                body=sample, extra_headers=headers,
+            )
+            self.assertEqual(status, 422)
+            status, _, _ = self.call(
+                port, "POST", "/local-replay/simulation/wedge",
+                body=sample, extra_headers={**headers, "Content-Type": "text/plain"},
+            )
+            self.assertEqual(status, 403)
+            self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

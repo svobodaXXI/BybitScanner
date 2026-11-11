@@ -31,7 +31,7 @@ TAKE_REALIZATION = Decimal("0.90")
 PROTECTION_DEADLINE_MS = 5_000
 # Minimum planned take/stop ratio for a new entry (retest LIMIT and late Market entry).
 MIN_ENTRY_RR = Decimal("1.5")  # Legacy non-Wedge default.
-WEDGE_MIN_ENTRY_RR = Decimal("2")  # Owner #419 hard Wedge entry floor
+WEDGE_MIN_ENTRY_RR = Decimal("1.5")  # Owner 2026-10-09: Wedge minimum 1.5, not #419 proposed 2
 MIN_ENTRY_RR_ENV = "ROBOT_MIN_ENTRY_RR"
 MIN_ENTRY_RR_BOUNDS = (Decimal("0"), Decimal("10"))
 
@@ -66,9 +66,10 @@ def min_entry_rr() -> Decimal:
 
 
 def wedge_min_entry_rr() -> Decimal:
-    """Keep the 2R Wedge owner floor even if the optional env value is lower.
+    """Respect the owner-approved 1.5R Wedge floor and stricter valid config.
 
-    A stricter valid operator setting still applies. L-shape/Box unchanged.
+    The rejected #419 hard 2R requirement is not authoritative.
+    L-shape and Box have separate policy contracts.
     """
     return max(WEDGE_MIN_ENTRY_RR, min_entry_rr())
 
@@ -122,6 +123,70 @@ def _integer(value: Any, field: str) -> int:
     if not number.is_finite() or number != number.to_integral_value():
         raise RobotProtectionError(f"{field} must be an integer")
     return int(number)
+
+
+
+def wedge_structural_extreme(
+    signal_snapshot: Mapping[str, Any], direction: str,
+) -> Decimal:
+    """Frozen counted Wedge touches: native Robot STOP provenance.
+
+    LONG uses the lowest *counted* lower touch; SHORT uses the highest
+    *counted* upper touch. Uncounted excursions are not structural evidence.
+    Shared by PAPER Robot and local SIMULATION; never reads market/runtime.
+    """
+    if not isinstance(signal_snapshot, Mapping):
+        raise RobotProtectionError("frozen Wedge signal snapshot is missing")
+    geometry = signal_snapshot.get("geometry")
+    if not isinstance(geometry, Mapping):
+        raise RobotProtectionError("frozen Wedge geometry is missing")
+    touches = geometry.get("touches")
+    if not isinstance(touches, Mapping):
+        raise RobotProtectionError("frozen Wedge touch evidence is missing")
+    if direction == DIRECTION_LONG:
+        key = "lower_touch_points"
+    elif direction == DIRECTION_SHORT:
+        key = "upper_touch_points"
+    else:
+        raise RobotProtectionError("unsupported Wedge direction")
+    points = touches.get(key)
+    if not isinstance(points, (list, tuple)):
+        raise RobotProtectionError(f"no counted {key} available to compute structural_extreme")
+    prices = [
+        _decimal(point.get("price"), "counted Wedge touch price")
+        for point in points
+        if isinstance(point, Mapping) and point.get("counted")
+    ]
+    if not prices:
+        raise RobotProtectionError(f"no counted {key} available to compute structural_extreme")
+    return min(prices) if direction == DIRECTION_LONG else max(prices)
+
+
+def wedge_frozen_reference_target(
+    signal_snapshot: Mapping[str, Any], direction: str,
+) -> tuple[Decimal, Decimal]:
+    """Native Robot Wedge frozen width potential, not an inferred future high.
+
+    The source is geometry.pair_metrics.reference_price/start_width exactly
+    as in the original RobotBreakoutMonitor._frozen_prices.
+    """
+    if not isinstance(signal_snapshot, Mapping):
+        raise RobotProtectionError("frozen Wedge signal snapshot is missing")
+    geometry = signal_snapshot.get("geometry")
+    pair_metrics = geometry.get("pair_metrics") if isinstance(geometry, Mapping) else None
+    if not isinstance(pair_metrics, Mapping):
+        raise RobotProtectionError("signal snapshot pair_metrics is missing reference_price/start_width")
+    reference = _decimal(pair_metrics.get("reference_price"), "frozen Wedge reference")
+    width = _decimal(pair_metrics.get("start_width"), "frozen Wedge width").copy_abs()
+    if direction == DIRECTION_LONG:
+        target = reference + width
+    elif direction == DIRECTION_SHORT:
+        target = reference - width
+    else:
+        raise RobotProtectionError("unsupported Wedge direction")
+    if target <= 0:
+        raise RobotProtectionError("frozen Wedge target is not positive")
+    return reference, target
 
 
 def _action_id(candidate_id: str, leg: str, price: Decimal | None = None) -> ClientActionId:

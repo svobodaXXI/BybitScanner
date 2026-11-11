@@ -2280,42 +2280,21 @@ class RobotBreakoutMonitor:
 
     @staticmethod
     def _structural_extreme(signal_snapshot: Mapping[str, object], direction: str) -> Decimal:
-        touches = signal_snapshot.get("geometry", {}).get("touches") or {}
-        key = (
-            "lower_touch_points"
-            if direction == robot_state_machine.DIRECTION_LONG
-            else "upper_touch_points"
-        )
-        points = [
-            point for point in (touches.get(key) or [])
-            if isinstance(point, Mapping) and point.get("counted")
-        ]
-        if not points:
-            raise RobotBreakoutMonitorError(
-                f"no counted {key} available to compute structural_extreme"
-            )
-        prices = [Decimal(str(point["price"])) for point in points]
-        return min(prices) if direction == robot_state_machine.DIRECTION_LONG else max(prices)
+        # Shared pure policy is the sole authority for frozen counted touches.
+        try:
+            return robot_protection.wedge_structural_extreme(signal_snapshot, direction)
+        except robot_protection.RobotProtectionError as exc:
+            raise RobotBreakoutMonitorError(str(exc)) from exc
 
     @staticmethod
     def _frozen_prices(
         signal_snapshot: Mapping[str, object], direction: str,
     ) -> tuple[Decimal, Decimal]:
-        pair_metrics = signal_snapshot.get("geometry", {}).get("pair_metrics") or {}
-        reference_price = pair_metrics.get("reference_price")
-        start_width = pair_metrics.get("start_width")
-        if reference_price is None or start_width is None:
-            raise RobotBreakoutMonitorError(
-                "signal snapshot pair_metrics is missing reference_price/start_width"
-            )
-        reference = Decimal(str(reference_price))
-        width = Decimal(str(start_width)).copy_abs()
-        target = (
-            reference + width
-            if direction == robot_state_machine.DIRECTION_LONG
-            else reference - width
-        )
-        return reference, target
+        # Reuse exactly the same frozen width reference/target in SIMULATION.
+        try:
+            return robot_protection.wedge_frozen_reference_target(signal_snapshot, direction)
+        except robot_protection.RobotProtectionError as exc:
+            raise RobotBreakoutMonitorError(str(exc)) from exc
 
     def _build_initial_retest_limit_plan(
         self, record: RobotCandidateRecord, state: Mapping[str, object],
