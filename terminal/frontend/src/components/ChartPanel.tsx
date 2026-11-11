@@ -54,7 +54,7 @@ import {
 } from "../chart/robotTradeMarkers";
 import { buildEditorGeometryReview, compareEditorRayChanges, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
 import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
-import { buildOwnerSignalDraft, type OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
+import { buildOwnerChartDraft, buildOwnerSignalDraft, type OwnerChartDraft, type OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
 import { normalizedLimitDraftPrice } from "../orders/limitDraft";
@@ -162,6 +162,8 @@ export function ChartPanel({
   onExtendEditorHistory,
   onEditorNavigate,
   onShowCurrentEditorChart,
+  ownerChartMode = false,
+  onSubmitOwnerChart,
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
@@ -220,6 +222,8 @@ export function ChartPanel({
   onExtendEditorHistory?: () => Promise<void>;
   onEditorNavigate?: (mode: "TERMINAL" | "AUTOPILOT") => void;
   onShowCurrentEditorChart?: () => void;
+  ownerChartMode?: boolean;
+  onSubmitOwnerChart?: (proposal: OwnerChartDraft) => Promise<{ proposalId: string; decision: string; reason: string }>;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -245,7 +249,7 @@ export function ChartPanel({
     [clearConfirmationOpen, setClearConfirmationOpen] = useState(false),
     [confirmAllPendingOpen, setConfirmAllPendingOpen] = useState(false),
     [dismissAllPendingOpen, setDismissAllPendingOpen] = useState(false);
-  const [newSignalMode, setNewSignalMode] = useState(false);
+  const [newSignalMode, setNewSignalMode] = useState(ownerChartMode);
   const storageKey = `bybitscanner:${newSignalMode ? "new-signal-drawings" : editorMode ? "editor-drawings" : "drawings"}:v1:${symbol}:${timeframe}${editorMode && signalIdentity ? `:${signalIdentity}${savedReviewId && !newSignalMode ? `:review-${savedReviewId}` : ""}` : ""}${editorMode && retrospectiveContext ? `:review-asof-${retrospectiveContext.asOfMs}` : ""}`;
   const historyRef = useRef(
     new DrawingHistory(
@@ -427,8 +431,10 @@ export function ChartPanel({
     setClearConfirmationOpen(false);
   };
   const submitOwnerProposal = async () => {
-    if (!newSignalMode || !onSubmitOwnerSignal || !signalIdentity || !snapshotRevision ||
-        !barsSha256 || proposalPending || reviewPending) return;
+    if (!newSignalMode || proposalPending || reviewPending ||
+        (ownerChartMode ? !onSubmitOwnerChart
+          : !onSubmitOwnerSignal || !signalIdentity || !snapshotRevision || !barsSha256))
+      return;
     try {
       const content = JSON.stringify({ drawings, proposalPattern, proposalNote, retrospectiveContext });
       if (proposalToken.current?.content !== content) {
@@ -438,16 +444,30 @@ export function ChartPanel({
             `owner-proposal-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         };
       }
-      const draft = buildOwnerSignalDraft({
-        signalId: signalIdentity, snapshotRevision, barsSha256,
-        pattern: proposalPattern, drawings, frozenCandles: candles,
-        note: proposalNote.trim(), idempotencyKey: proposalToken.current.key,
-        contextAsOfMs: retrospectiveContext?.asOfMs,
-        contextBarsSha256: retrospectiveContext?.barsSha256,
-      });
       setProposalPending(true);
-      setProposalStatus("Проверка нового сигнала…");
-      const receipt = await onSubmitOwnerSignal(draft);
+      setProposalStatus(ownerChartMode ? "Сохранение пользовательского примера…" : "Проверка нового сигнала…");
+      const receipt = ownerChartMode
+        ? await onSubmitOwnerChart!(buildOwnerChartDraft({
+            symbol, timeframe, pattern: proposalPattern,
+            drawings, frozenCandles: candles,
+            note: proposalNote.trim(), idempotencyKey: proposalToken.current.key,
+          }))
+        : await onSubmitOwnerSignal!(buildOwnerSignalDraft({
+            signalId: signalIdentity!, snapshotRevision: snapshotRevision!,
+            barsSha256: barsSha256!, pattern: proposalPattern,
+            drawings, frozenCandles: candles,
+            note: proposalNote.trim(), idempotencyKey: proposalToken.current.key,
+            contextAsOfMs: retrospectiveContext?.asOfMs,
+            contextBarsSha256: retrospectiveContext?.barsSha256,
+          }));
+      if (ownerChartMode) {
+        setProposalStatus(
+          `Пример ${receipt.proposalId.slice(0, 12)} сохранён в «Мои сигналы». ` +
+          "Источник свечей — пользовательский, требует проверки на истории. " +
+          "Scanner не обучался автоматически; торговый кандидат не создан.",
+        );
+        return;
+      }
       const reasons: Record<string, string> = {
         ray_anchor_not_confirmed_pivot: "опорная точка не подтверждена Scanner",
         ray_pair_not_generated: "пара точек не формирует допустимую линию",
@@ -1046,7 +1066,7 @@ export function ChartPanel({
       aria-label="Candlestick chart"
     >
       <div className="chart-content-row">
-        {editorMode && signalIdentity && (
+        {editorMode && (signalIdentity || ownerChartMode) && (
           <div className="editor-correction-export">
             <div className="editor-review-topline">
               <nav className="editor-workspace-shortcuts" aria-label="Переход между вкладками">
@@ -1070,8 +1090,8 @@ export function ChartPanel({
                 </button>
               </nav>
             </div>
-            <small aria-label="Название исходного сигнала">Исходный сигнал: {originalPattern ?? "тип неизвестен"}</small>
-            <button type="button" disabled={extensionPending || reviewPending || proposalPending}
+            <small aria-label="Название исходного сигнала">{ownerChartMode ? "Мой сигнал · закрытые свечи, источник не проверен" : `Исходный сигнал: ${originalPattern ?? "тип неизвестен"}`}</small>
+            {!ownerChartMode && <button type="button" disabled={extensionPending || reviewPending || proposalPending}
               onClick={() => {
                 if (!onExtendEditorHistory) return;
                 setExtensionPending(true);
@@ -1084,18 +1104,18 @@ export function ChartPanel({
                   .finally(() => setExtensionPending(false));
               }}>
               {extensionPending ? "Загрузка…" : "Показать следующие свечи"}
-            </button>
-            <button type="button" disabled={extensionPending || reviewPending || proposalPending
+            </button>}
+            {!ownerChartMode && <button type="button" disabled={extensionPending || reviewPending || proposalPending
                 || !onShowCurrentEditorChart}
               onClick={() => onShowCurrentEditorChart?.()}>
               Показать актуальный график
-            </button>
+            </button>}
             {retrospectiveContext && <small>Ретроспективный обзор: до {new Date(retrospectiveContext.asOfMs).toLocaleString("ru-RU")}. Будущие свечи не считаются известными исходному Scanner.</small>}
             {extensionStatus && <output role="status" aria-live="polite">{extensionStatus}</output>}
-            <button type="button" disabled={extensionPending || reviewPending || proposalPending}
+            {!ownerChartMode && <button type="button" disabled={extensionPending || reviewPending || proposalPending}
               aria-pressed={newSignalMode} onClick={switchSignalDrawingMode}>
               {newSignalMode ? "Вернуться к исправлению" : "Создать новый сигнал"}
-            </button>
+            </button>}
             {newSignalMode ? (
               <>
                 <select aria-label="Тип нового сигнала" value={proposalPattern}
@@ -1106,11 +1126,11 @@ export function ChartPanel({
                 <input aria-label="Комментарий к новому сигналу"
                   placeholder="Комментарий (необязательно)" maxLength={1024}
                   value={proposalNote} onChange={(event) => { setProposalNote(event.target.value); setProposalStatus(""); }} />
-                <button type="button" disabled={proposalPending || !onSubmitOwnerSignal}
+                <button type="button" disabled={proposalPending || (ownerChartMode ? !onSubmitOwnerChart : !onSubmitOwnerSignal)}
                   onClick={() => void submitOwnerProposal()}>
-                  {proposalPending ? "Проверка…" : "Передать на оценку Robot"}
+                  {proposalPending ? "Сохранение…" : ownerChartMode ? "Сохранить в «Мои сигналы»" : "Передать на оценку Robot"}
                 </button>
-                <small>Исходные линии — пунктир. Нарисуй два новых луча; оценка не разрешает торговлю.</small>
+                <small>{ownerChartMode ? "Нарисуй два луча. Пример сохранится для офлайн-проверки Сканера; торговля не запускается." : "Исходные линии — пунктир. Нарисуй два новых луча; оценка не разрешает торговлю."}</small>
                 {proposalStatus && <output role="status" aria-live="polite">{proposalStatus}</output>}
               </>
             ) : (
