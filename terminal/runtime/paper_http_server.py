@@ -3385,6 +3385,31 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **projection})
             return
 
+        if parsed.path == "/api/workspace/owner-training-examples":
+            # Read-only, pattern-filtered OWNER charts. Never trading source.
+            from owner_signal_proposal import (
+                OwnerSignalProposalError, list_owner_chart_training_examples,
+            )
+            params = parse_qs(parsed.query)
+            patterns = params.get("pattern", [])
+            if set(params) != {"pattern"} or len(patterns) != 1:
+                self._json_response(400, {"ok": False, "error": "owner_pattern_required"})
+                return
+            try:
+                examples = list_owner_chart_training_examples(patterns[0])
+            except OwnerSignalProposalError as exc:
+                self._json_response(400, {"ok": False, "error": str(exc)})
+                return
+            except (OSError, ValueError):
+                self._json_response(503, {"ok": False, "error": "owner_examples_unavailable"})
+                return
+            self._json_response(200, {
+                "ok": True, "category": "OWNER_CHART_UNVERIFIED",
+                "pattern": patterns[0], "examples": examples,
+                "training_authorized": False,
+            })
+            return
+
         if parsed.path == "/api/workspace/signal-geometry/continuation":
             # Explicit owner-initiated historical extension; archival source
             # stays immutable, only fully closed Bybit candles are returned.
@@ -3908,6 +3933,36 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/workspace/owner-unscanned-signal":
+            # Standalone, untrusted owner chart evidence in the existing
+            # append-only proposal archive. No Scanner or Robot admission.
+            from owner_signal_proposal import (
+                MAX_REQUEST_BYTES, OwnerSignalProposalError,
+                OwnerSignalProposalConflict, record_owner_chart_proposal,
+            )
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if size <= 0 or size > MAX_REQUEST_BYTES:
+                    raise OwnerSignalProposalError("invalid_owner_chart_size")
+                payload = self._payload({
+                    "schema_version", "source_kind", "symbol", "timeframe",
+                    "pattern", "bars", "proposed_boundaries", "idempotency_key",
+                }, frozenset({"note"}))
+                proposal = record_owner_chart_proposal(payload)
+            except OwnerSignalProposalConflict as exc:
+                self._json_response(409, {"ok": False, "error": str(exc)})
+                return
+            except (OwnerSignalProposalError, ValueError, TypeError,
+                    json.JSONDecodeError) as exc:
+                self._json_response(400, {"ok": False, "error": str(exc)})
+                return
+            except Exception:
+                LOGGER.exception("Owner unscanned signal archival failed")
+                self._json_response(503, {"ok": False, "error": "owner_chart_unavailable"})
+                return
+            self._json_response(200, {"ok": True, "proposal": proposal})
+            return
+
         if path == "/api/workspace/owner-signal-proposal":
             # Browser-authenticated owner proposal only; never Robot admission,
             # candidate persistence, PAPER mutation, or strategy authority.
