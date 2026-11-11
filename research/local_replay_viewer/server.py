@@ -44,6 +44,9 @@ SIM_DATA = HERE / "simulator-v2-data"
 SIM_LOCK = threading.Lock()
 MAX_SIM_REQUEST_BYTES = 4_096
 MAX_SIM_CONFIG_BYTES = 12_000
+# Stable loopback URL enables the verified, read-only Statistics → Simulator
+# handoff from a separate account UI. No external bind, CORS or PAPER API.
+LOCAL_VIEWER_PORT = 48765
 
 
 def local_simulation_status() -> dict[str, object]:
@@ -623,13 +626,23 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Local-only read-only historical simulator viewer")
     parser.add_argument("--check", action="store_true", help="verify packaged assets/imports, no network")
     parser.add_argument("--no-browser", action="store_true", help="run loopback server without opening the browser")
+    parser.add_argument("--port", type=int, default=LOCAL_VIEWER_PORT,
+                        help="local loopback port (default: Statistics bridge 48765; 0 = ephemeral)")
     args = parser.parse_args()
     if not (STATIC_DIR / "replay.html").is_file():
         raise SystemExit("Missing standalone replay build: dist/replay.html")
     if args.check:
         print("LOCAL_REPLAY_PACKAGE_OK (assets and imports); no HTTP/network exercised")
         return
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_factory())
+    if not 0 <= args.port <= 65535:
+        raise SystemExit("invalid loopback port")
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_factory())
+    except OSError as exc:
+        raise SystemExit(
+            f"Local simulator loopback port {args.port} unavailable; "
+            "close the other simulator instance or select --port explicitly"
+        ) from exc
     port = server.server_address[1]
     uri = f"http://127.0.0.1:{port}/replay.html"
     print("Local research simulation viewer: " + uri, flush=True)
