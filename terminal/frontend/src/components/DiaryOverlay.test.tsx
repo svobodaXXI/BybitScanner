@@ -750,6 +750,22 @@ describe("shared statistics trade action standard", () => {
     expect(displayTradePnl("NaN")).toBe("—");
   });
 
+  it("shares the two-button layout with other account scopes without changing raw PnL", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      ...tradesResponse, active_account_id: "bybit-main", environment: "LIVE",
+      trades: [{ ...tradesResponse.trades[0], environment: "LIVE", pnl: "0.125001" }],
+    }), { status: 200 }));
+    render(<DiaryOverlay accountKey="bybit-main" initialSection="TRADES"
+      statisticsScope={{ accountId: "bybit-main", owner: "MANUAL" }} onClose={() => {}} />);
+    const row = await screen.findByRole("button", { name: /BTCUSDT/ });
+    expect(row).toHaveTextContent("PnL 0,13");
+    const magnifier = screen.getByRole("button", { name: "Подробности сделки" });
+    expect(magnifier).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Открыть сделку в Симуляторе" })).toBeDisabled();
+    fireEvent.click(magnifier);
+    expect(screen.getByText("Эпизод сделки")).toBeInTheDocument();
+  });
+
   it("keeps two icon action slots on every closed deal without faking full replay", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
