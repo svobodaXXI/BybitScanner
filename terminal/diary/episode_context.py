@@ -174,8 +174,7 @@ def attach_verified_original_geometry(
             or meta.get("pattern") != setup.get("pattern")):
         return setup_context
     sent_ms = meta.get("sent_at_ms")
-    if (type(sent_ms) is not int or sent_ms < 0 or sent_ms > opened_at_ms
-            or sent_ms > setup.get("created_at_ms", -1)):
+    if type(sent_ms) is not int or sent_ms < 0 or sent_ms > opened_at_ms:
         return setup_context
 
     frozen = load_frozen_signal_geometry(candidate_id)
