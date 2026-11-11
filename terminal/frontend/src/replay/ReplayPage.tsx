@@ -601,10 +601,14 @@ export function ReplayPage() {
     const nonce = params.get("nonce");
     const sourceOrigin = params.get("source_origin");
     if (!episodeId && !nonce && !sourceOrigin) return;
+    let trustedOrigin = false;
+    try {
+      const url = new URL(sourceOrigin || "");
+      trustedOrigin = (url.protocol === "https:" || url.protocol === "http:") &&
+        url.origin === sourceOrigin;
+    } catch { /* An invalid foreign URL can never become the authority. */ }
     if (!episodeId || !/^te_[0-9a-f]{24}$/.test(episodeId) ||
-        !nonce || !/^[0-9a-f]{32}$/.test(nonce) ||
-        !sourceOrigin || !["https:", "http:"].includes(new URL(sourceOrigin).protocol) ||
-        new URL(sourceOrigin).origin !== sourceOrigin) {
+        !nonce || !/^[0-9a-f]{32}$/.test(nonce) || !trustedOrigin) {
       setError("Неверный адрес выбранного эпизода из Статистики");
       return;
     }
