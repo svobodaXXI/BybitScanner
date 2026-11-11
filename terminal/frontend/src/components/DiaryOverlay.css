@@ -30,7 +30,7 @@
 
 .diary-shell {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   width: min(58rem, 100%);
   max-height: min(48rem, calc(100vh - 1.3rem));
   overflow: hidden;
@@ -121,6 +121,28 @@
   text-align: center;
   opacity: 0.65;
   cursor: default;
+}
+
+.diary-context-heading {
+  display: grid;
+  gap: 0.12rem;
+  padding: 0.55rem 0.7rem 0.5rem;
+  border-bottom: 1px solid #27313b;
+}
+
+.diary-context-heading p,
+.diary-context-heading h2 {
+  margin: 0;
+}
+
+.diary-context-heading p {
+  color: #8d9baa;
+  font-size: 0.72rem;
+}
+
+.diary-context-heading h2 {
+  color: #e4eaf0;
+  font-size: 1rem;
 }
 
 .diary-period-nav,
