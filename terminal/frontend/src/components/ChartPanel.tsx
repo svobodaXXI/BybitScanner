@@ -417,7 +417,7 @@ export function ChartPanel({
   };
   const submitOwnerProposal = async () => {
     if (!newSignalMode || proposalPending || reviewPending ||
-        (ownerChartMode ? !onSubmitOwnerChart || !proposalPattern || !proposalDirection || (proposalPattern === "Wedge" && !proposalWedgeSubtype)
+        (onSubmitOwnerChart ? !proposalPattern || !proposalDirection || (proposalPattern === "Wedge" && !proposalWedgeSubtype)
           : !onSubmitOwnerSignal || !signalIdentity || !snapshotRevision || !barsSha256 || !proposalDirection || proposalPattern !== "Wedge"))
       return;
     try {
@@ -431,7 +431,7 @@ export function ChartPanel({
       }
       setProposalPending(true);
       setProposalStatus("Сохранение сигнала…");
-      const receipt = ownerChartMode
+      const receipt = onSubmitOwnerChart
         ? await onSubmitOwnerChart!(buildOwnerChartDraftV3({
             symbol, timeframe, pattern: proposalPattern as OwnerChartPatternV3,
             formationMovement: proposalDirection as OwnerChartMovement,
@@ -447,10 +447,10 @@ export function ChartPanel({
             contextAsOfMs: retrospectiveContext?.asOfMs,
             contextBarsSha256: retrospectiveContext?.barsSha256,
           }));
-      if (ownerChartMode) {
+      if (onSubmitOwnerChart) {
         setProposalStatus(
           `Пример ${receipt.proposalId.slice(0, 12)} сохранён в «Мои сигналы». ` +
-          "Источник свечей — пользовательский, требует проверки на истории. " +
+          "Ручная геометрия требует проверки на истории. " +
           "Scanner не обучался автоматически; торговый кандидат не создан.",
         );
         return;
@@ -1140,8 +1140,8 @@ export function ChartPanel({
                 <input aria-label="Комментарий к новому сигналу"
                   placeholder="Комментарий (необязательно)" maxLength={1024}
                   value={proposalNote} onChange={(event) => { setProposalNote(event.target.value); setProposalStatus(""); }} />
-                <button type="button" disabled={proposalPending || (ownerChartMode
-                    ? !onSubmitOwnerChart || !proposalPattern || !proposalDirection
+                <button type="button" disabled={proposalPending || (onSubmitOwnerChart
+                    ? !proposalPattern || !proposalDirection
                     : !onSubmitOwnerSignal)}
                   title={proposalStatus || undefined}
                   onClick={() => void submitOwnerProposal()}>
