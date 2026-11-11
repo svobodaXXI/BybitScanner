@@ -765,8 +765,8 @@ describe("shared statistics trade action standard", () => {
     const replay = screen.getAllByRole("button", { name: "Открыть сделку в Симуляторе" });
     expect(replay).toHaveLength(2);
     replay.forEach((button) => {
-      expect(button).toBeEnabled();
-      expect(button).toHaveAttribute("title", expect.stringContaining("Скачать проверенные факты"));
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("title", expect.stringContaining("Нужен проверенный исторический пакет"));
     });
     expect(screen.getByText(/PnL -1,82 USDT/)).toHaveAttribute("title", "-1.81622186");
   });
