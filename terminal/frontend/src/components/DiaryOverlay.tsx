@@ -487,6 +487,19 @@ function StatisticsView({ statistics }: { statistics: DiaryStatistics }) {
   );
 }
 
+function formatFinrezPnl(value: string): string {
+  // Presentation only: preserve the exact server value for accounting and tooltips.
+  const amount = Number(value);
+  const decimals = Math.abs(amount) < 0.01 ? 6 : 4;
+  const minimum = 10 ** -decimals;
+  const sign = amount > 0 ? "+" : amount < 0 ? "-" : "";
+  const magnitude = Math.abs(amount);
+  if (magnitude > 0 && magnitude < minimum / 2) {
+    return `${sign}<${new Intl.NumberFormat("ru-RU", { minimumFractionDigits: decimals }).format(minimum)} USDT`;
+  }
+  return `${sign}${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: decimals }).format(magnitude)} USDT`;
+}
+
 function FinrezView({ report }: { report: FinrezResponse }) {
   return (
     <div className="diary-finrez" aria-label="Финансовый результат по тикерам">
@@ -512,9 +525,9 @@ function FinrezView({ report }: { report: FinrezResponse }) {
         <div className="diary-finrez-list">
           {report.tickers.map((ticker) => (
             <div className="diary-finrez-row" key={ticker.symbol}>
-              <strong>{ticker.symbol}</strong>
-              <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
-                {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{ticker.pnl_usdt} USDT
+              <strong title={ticker.symbol}>{ticker.symbol}</strong>
+              <span title={`${ticker.pnl_usdt} USDT`} className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
+                {formatFinrezPnl(ticker.pnl_usdt)}
               </span>
             </div>
           ))}
@@ -530,9 +543,9 @@ function FinrezView({ report }: { report: FinrezResponse }) {
           <div className="diary-finrez-list">
             {report.manual_interventions.map((ticker) => (
               <div className="diary-finrez-row" key={ticker.symbol}>
-                <strong>{ticker.symbol}</strong>
-                <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
-                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{ticker.pnl_usdt} USDT
+                <strong title={ticker.symbol}>{ticker.symbol}</strong>
+                <span title={`${ticker.pnl_usdt} USDT`} className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
+                  {formatFinrezPnl(ticker.pnl_usdt)}
                 </span>
               </div>
             ))}
@@ -549,9 +562,9 @@ function FinrezView({ report }: { report: FinrezResponse }) {
           <div className="diary-finrez-list">
             {report.joint_management.map((ticker) => (
               <div className="diary-finrez-row" key={ticker.symbol}>
-                <strong>{ticker.symbol}</strong>
-                <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
-                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{ticker.pnl_usdt} USDT
+                <strong title={ticker.symbol}>{ticker.symbol}</strong>
+                <span title={`${ticker.pnl_usdt} USDT`} className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
+                  {formatFinrezPnl(ticker.pnl_usdt)}
                 </span>
               </div>
             ))}
