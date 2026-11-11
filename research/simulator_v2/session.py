@@ -74,6 +74,7 @@ class VirtualReplaySession:
             simulation_run_id=simulation_run_id, symbol=symbol,
             initial_balance=initial_balance,
         )
+        self._last_committed_minute: Candle | None = None
         self.exchange = VirtualExchange(
             account=self.account, taker_fee_rate=taker_fee_rate,
             maker_fee_rate=maker_fee_rate,
@@ -133,6 +134,11 @@ class VirtualReplaySession:
     def events(self) -> tuple[SimulationEvent, ...]:
         return self.timeline.events
 
+    @property
+    def last_committed_minute(self) -> Candle | None:
+        """Only the exact closed M1 whose full shared timeline committed."""
+        return self._last_committed_minute
+
     def step(self, minute: Candle) -> VirtualAccountSnapshot:
         if self.timeline.virtual_time_ms != self.exchange.virtual_time_ms:
             raise StepBlocked("SIMULATION clocks disagree; no new M1 is permitted")
@@ -158,6 +164,7 @@ class VirtualReplaySession:
             self.wedge_robot.commit_after_m1()
         if self.timeline.virtual_time_ms != self.exchange.virtual_time_ms:
             raise StepBlocked("SIMULATION clocks diverged; stop this replay")
+        self._last_committed_minute = minute
         return self.account.snapshot(
             as_of_ms=minute.end_ms, mark_price=minute.close,
         )
