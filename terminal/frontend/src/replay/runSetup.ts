@@ -170,12 +170,17 @@ export function validateInclusiveWindow(start: string, endInclusive: string): {
 }
 
 
-/** Only these two original Wedge Scanner/Robot detectors exist in local mode. */
+/** Native Scanner/Robot families that the local Python dispatcher actually implements.
+ * A Box campaign currently owns its symbol exclusively; never silently omit
+ * other checked strategies or create a second Robot for the same symbol.
+ */
 export const RUNNABLE_WEDGE_IDS = ["WEDGE_RISING", "WEDGE_FALLING"] as const;
+export const RUNNABLE_NATIVE_IDS = [...RUNNABLE_WEDGE_IDS, "IKIGAI_BOX"] as const;
 export function runnableWedgeSelection(selection: RunSelection): boolean {
-  return selection.selected.length > 0 && selection.selected.every(
-    id => RUNNABLE_WEDGE_IDS.some(wedge => wedge === id),
-  );
+  return selection.selected.length === 1 && selection.selected[0] === "IKIGAI_BOX" ||
+    selection.selected.length > 0 && selection.selected.every(
+      id => RUNNABLE_WEDGE_IDS.some(wedge => wedge === id),
+    );
 }
 export function makeWedgeRunRequest(
   selection: RunSelection, symbol: string, start: string,
@@ -185,7 +190,7 @@ export function makeWedgeRunRequest(
   selected_strategies: StrategyId[]; initial_balance: string;
 } {
   if (!runnableWedgeSelection(selection)) {
-    throw new Error("Пока доступны только восходящий и нисходящий клинья");
+    throw new Error("Торговый прогон доступен для клиньев или отдельно Ikigai Box. Остальные стратегии ещё не подключены к изолированному Robot.");
   }
   const { minutes } = validateInclusiveWindow(start, endInclusive);
   if (minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
@@ -235,32 +240,43 @@ export function parseWedgeStatus(raw: unknown): LocalWedgeStatus {
 }
 
 export type LocalWedgeResult = {
-  namespace: "SIMULATION"; symbol: string; scenario_type: string;
-  requested_minutes: number; scanner_wedge_observations: number;
-  robot_retests_in_period: number; submitted_protected_limits: number;
+  namespace: "SIMULATION"; symbol: string; source_id: string;
+  risk_terms_status: "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED";
+  requested_minutes: number;
   virtual_fills: number; stop_exits: number; take_exits: number;
   realized_net_pnl: string; unrealized_pnl: string; total_net_pnl: string;
   total_fees: string; return_percent: string; max_drawdown_percent: string;
-  risk_terms_status: string; source_id: string;
-};
+} & ({
+  scenario_type: "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION";
+  scanner_wedge_observations: number; robot_retests_in_period: number;
+  submitted_protected_limits: number;
+} | {
+  scenario_type: "ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION";
+  scanner_box_observations: number; admitted_box_candidates: number;
+  box_entry_fills: number;
+});
 export function parseWedgeResult(raw: unknown): LocalWedgeResult {
   if (!raw || typeof raw !== "object") throw new Error("Недостоверный отчёт SIMULATION");
   const x = raw as Record<string, unknown>;
+  const isBox = x.scenario_type === "ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION";
   if (x.namespace !== "SIMULATION" ||
-      x.scenario_type !== "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION" ||
+      (!isBox && x.scenario_type !== "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION") ||
       x.risk_terms_status !== "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED") {
-    throw new Error("Отчёт не соответствует локальному прогону клиньев");
+    throw new Error("Отчёт не соответствует оригинальному локальному Scanner/Robot");
   }
   for (const key of ["symbol", "source_id", "realized_net_pnl", "unrealized_pnl",
     "total_net_pnl", "total_fees", "return_percent", "max_drawdown_percent"]) {
     if (typeof x[key] !== "string") throw new Error("В отчёте отсутствует " + key);
   }
-  for (const key of ["requested_minutes", "scanner_wedge_observations",
-    "robot_retests_in_period", "submitted_protected_limits", "virtual_fills",
-    "stop_exits", "take_exits"]) {
+  for (const key of ["requested_minutes", "virtual_fills", "stop_exits", "take_exits",
+    ...(isBox
+      ? ["scanner_box_observations", "admitted_box_candidates", "box_entry_fills"]
+      : ["scanner_wedge_observations", "robot_retests_in_period", "submitted_protected_limits"])]) {
     if (!Number.isSafeInteger(x[key]) || (x[key] as number) < 0) {
       throw new Error("Неверное количество событий в отчёте");
     }
   }
+  if (isBox && (x.box_entry_fills as number) > (x.virtual_fills as number))
+    throw new Error("Box входов больше всех подтверждённых исполнений");
   return x as LocalWedgeResult;
 }
