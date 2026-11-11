@@ -4008,7 +4008,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     raise OwnerSignalProposalError("invalid_owner_chart_size")
                 payload = self._payload({
                     "schema_version", "source_kind", "symbol", "timeframe",
-                    "pattern", "bars", "proposed_boundaries", "idempotency_key",
+                    "pattern", "direction", "bars", "proposed_boundaries", "idempotency_key",
                 }, frozenset({"note"}))
                 proposal = record_owner_chart_proposal(payload)
             except OwnerSignalProposalConflict as exc:
