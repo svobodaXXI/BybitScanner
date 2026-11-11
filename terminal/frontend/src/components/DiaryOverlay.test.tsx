@@ -353,7 +353,7 @@ describe("scoped statistics fail-closed UX", () => {
     await screen.findByText("Результативность");
     if (!pending.resolve) throw new Error("old request missing");
     pending.resolve(new Response(JSON.stringify(statisticsResponse), { status: 200 }));
-    await waitFor(() => expect(screen.getByText(/bybit-main · раздельная статистика/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Переключение счёта недоступно" })).toHaveTextContent("Счёт: bybit-main"));
     expect(screen.queryByText("Не удалось загрузить статистику выбранного счёта")).not.toBeInTheDocument();
   });
 });
