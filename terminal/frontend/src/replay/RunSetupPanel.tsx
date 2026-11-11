@@ -211,7 +211,6 @@ export function RunSetupPanel({
     <section className="replay-run-setup" aria-label="Настройка стратегий и периода">
       <div className="replay-run-heading">
         <strong>Универсальный симулятор · настройка прогона</strong>
-        <span>Локальный SIMULATION · один тикер: {symbol.trim().toUpperCase() || "не выбран"}</span>
       </div>
       <div className="replay-run-layout">
         <fieldset className="replay-run-strategies">
