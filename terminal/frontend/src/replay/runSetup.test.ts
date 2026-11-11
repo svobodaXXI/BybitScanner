@@ -135,6 +135,13 @@ describe("local one-symbol strategy setup (no trading)", () => {
     expect(runnableWedgeSelection(clearAll())).toBe(false);
     expect(runnableWedgeSelection(selectAll())).toBe(false);
     expect(runnableWedgeSelection(toggleStrategy(clearAll(), "WEDGE_RISING", true))).toBe(true);
+    const boxOnly = toggleStrategy(clearAll(), "IKIGAI_BOX", true);
+    expect(runnableWedgeSelection(boxOnly)).toBe(true);
+    expect(runnableWedgeSelection(toggleStrategy(onlyWedges(), "IKIGAI_BOX", true))).toBe(false,
+      "native Box and Wedge cannot own the same symbol in one run");
+    expect(makeWedgeRunRequest(boxOnly, "XRPUSDT",
+      "2026-09-11T00:00", "2026-09-11T23:59", "1000").selected_strategies)
+      .toEqual(["IKIGAI_BOX"]);
     const req = makeWedgeRunRequest(
       onlyWedges(), "btcusdt", "2026-10-01T12:34", "2026-10-08T12:33", "1000",
     );
@@ -186,6 +193,23 @@ describe("local one-symbol strategy setup (no trading)", () => {
       total_fees: "0", return_percent: "0", max_drawdown_percent: "0",
     };
     expect(parseWedgeResult(report).requested_minutes).toBe(2);
+    const box = {
+      ...report,
+      scenario_type: "ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION",
+      scanner_wedge_observations: undefined,
+      robot_retests_in_period: undefined,
+      submitted_protected_limits: undefined,
+      scanner_box_observations: 1, admitted_box_candidates: 1,
+      box_entry_fills: 1, virtual_fills: 2, stop_exits: 1, take_exits: 0,
+    };
+    expect(parseWedgeResult(box).scenario_type)
+      .toBe("ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION");
+    expect(() => parseWedgeResult({ ...box, box_entry_fills: 3 })).toThrow(/Box/);
+    expect(() => parseWedgeResult({ ...box, scanner_box_observations: -1 })).toThrow();
+    expect(() => parseWedgeResult({ ...box, requested_minutes: undefined })).toThrow();
+    expect(() => parseWedgeResult({
+      ...box, scenario_type: "ORIGINAL_PAPER_ROBOT", namespace: "PAPER",
+    })).toThrow();
     expect(() => parseWedgeResult({ ...report, namespace: "PAPER" })).toThrow();
     expect(() => parseWedgeResult({ ...report, scenario_type: "EXPLICIT_TEST_ORDERS_NOT_STRATEGY" })).toThrow();
     expect(() => parseWedgeResult({ ...report, virtual_fills: -1 })).toThrow();
