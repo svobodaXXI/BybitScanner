@@ -226,7 +226,8 @@ def read_verified_episode_market(*, symbol: str, start_ms: int, end_ms: int) -> 
             or cache_dir.is_symlink() or not manifest_path.is_file()
             or not cache_dir.is_dir()):
         raise ValueError("verified local M1 archive is unavailable")
-    raw = manifest_path.read_bytes()
+    with manifest_path.open("rb") as source:
+        raw = source.read(MAX_MANIFEST_BYTES + 1)
     if len(raw) > MAX_MANIFEST_BYTES:
         raise ValueError("local archive manifest exceeds limit")
     latest = last_closed_m1_boundary_ms()
