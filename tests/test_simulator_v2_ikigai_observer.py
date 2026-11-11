@@ -112,6 +112,9 @@ class IkigaiIsolationTests(unittest.TestCase):
         self.assertEqual(session.events, old_events)
         self.assertEqual(session.virtual_time_ms, old_clock)
         self.assertEqual(session.ikigai_scanner.observations, ())
+        # An explicitly paused timeline requires an explicit same-minute
+        # resume after the original detector becomes available again.
+        session.resume()
         with patch("research.simulator_v2.ikigai_observer.detect_ikigai_box",
                    return_value=None):
             session.step(m1(31))
