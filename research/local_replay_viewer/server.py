@@ -27,6 +27,8 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE if (HERE / "research").is_dir() else HERE.parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 
 from research.export_historical_replay import (
     build_market_only_document, parse_date_utc, SYMBOL_RE,
