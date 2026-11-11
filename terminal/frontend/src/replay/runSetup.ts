@@ -13,9 +13,9 @@ export const MIRROR_OPTIONS: readonly StrategyOption[] = [
   { id: "MIRROR_LEVELS", label: "Зеркальные уровни" },
   { id: "WEDGE_RISING", label: "Восходящий клин" },
   { id: "WEDGE_FALLING", label: "Нисходящий клин" },
-  { id: "IKIGAI_BOX", label: "Ikigai Box" },
 ];
 export const OTHER_OPTIONS: readonly StrategyOption[] = [
+  { id: "IKIGAI_BOX", label: "Ikigai Box" },
   { id: "H1_TREND", label: "Трендовые H1/M5" },
   { id: "L_SHAPE", label: "L-shape" },
   { id: "TRIANGLE", label: "Triangle" },
@@ -43,6 +43,9 @@ export function toggleMirror(current: RunSelection, enabled: boolean): RunSelect
     if (enabled) ids.add(option.id);
     else ids.delete(option.id);
   }
+  // Mirror includes Ikigai, but standalone Ikigai is not a Mirror dependency.
+  // Disabling Mirror never erases the independent Ikigai selection.
+  if (enabled) ids.add("IKIGAI_BOX");
   return { mirror: enabled, selected: ALL_SELECTABLE.filter(id => ids.has(id)) };
 }
 export function toggleStrategy(current: RunSelection, id: StrategyId, enabled: boolean): RunSelection {
@@ -51,8 +54,8 @@ export function toggleStrategy(current: RunSelection, id: StrategyId, enabled: b
   if (enabled) ids.add(id);
   else ids.delete(id);
   return {
-    // Ikigai can be selected independently; Mirror still preselects it as a bundle.
-    mirror: current.mirror || (enabled && id !== "IKIGAI_BOX" && MIRROR_OPTIONS.some(x => x.id === id)),
+    // An independent strategy never enables Mirror as a side effect.
+    mirror: current.mirror || (enabled && MIRROR_OPTIONS.some(x => x.id === id)),
     selected: ALL_SELECTABLE.filter(option => ids.has(option)),
   };
 }

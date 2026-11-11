@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  ALL_SELECTABLE, MIRROR_OPTIONS, clearAll, isAllSelected,
+  ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, clearAll, isAllSelected,
   onlyWedges, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, adjustInclusiveWindow,
   parseRunCoordinates, formatRunCoordinates, formatRunDuration, selectAll,
   toggleMirror, toggleStrategy, validateInclusiveWindow,
@@ -33,6 +33,9 @@ describe("local one-symbol strategy setup (no trading)", () => {
     expect(isolated.mirror).toBe(false);
     expect(isolated.selected).toEqual(["IKIGAI_BOX"]);
     expect(toggleMirror(clearAll(), true).selected).toContain("IKIGAI_BOX");
+    expect(MIRROR_OPTIONS.some(option => option.id === "IKIGAI_BOX")).toBe(false);
+    expect(OTHER_OPTIONS.some(option => option.id === "IKIGAI_BOX")).toBe(true);
+    expect(toggleMirror(isolated, false).selected).toEqual(["IKIGAI_BOX"]);
   });
   it("lets owner isolate wedges without activating Mirror or other patterns", () => {
     expect(onlyWedges()).toEqual({
