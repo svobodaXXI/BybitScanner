@@ -47,4 +47,4 @@ jobs:
         working-directory: terminal/frontend
         run: |
           npm run build
-          npx vitest run src/geometryFeedback/ownerSignalDraft.test.ts src/geometryFeedback/geometryReviewDraft.test.ts src/geometryFeedback/signalChartBridge.test.ts
+          npx vitest run src/geometryFeedback/ownerSignalDraft.test.ts src/geometryFeedback/geometryReviewDraft.test.ts src/geometryFeedback/signalChartBridge.test.ts src/components/ChartPanel.stop.test.tsx
