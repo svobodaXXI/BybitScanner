@@ -1083,6 +1083,10 @@ export function ChartPanel({
               }}>
               {extensionPending ? "Загрузка…" : "Показать следующие свечи"}
             </button>
+            <button type="button" disabled={extensionPending || reviewPending || proposalPending}
+              onClick={() => onEditorNavigate?.("TERMINAL")}>
+              Показать актуальный график
+            </button>
             {retrospectiveContext && <small>Ретроспективный обзор: до {new Date(retrospectiveContext.asOfMs).toLocaleString("ru-RU")}. Будущие свечи не считаются известными исходному Scanner.</small>}
             {extensionStatus && <output role="status" aria-live="polite">{extensionStatus}</output>}
             <button type="button" disabled={extensionPending || reviewPending || proposalPending}
