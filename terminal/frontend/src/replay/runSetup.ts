@@ -62,6 +62,9 @@ export function toggleStrategy(current: RunSelection, id: StrategyId, enabled: b
 export function onlyWedges(): RunSelection {
   return { mirror: false, selected: ["WEDGE_RISING", "WEDGE_FALLING"] };
 }
+export function onlyBox(): RunSelection {
+  return { mirror: false, selected: ["IKIGAI_BOX"] };
+}
 export function isAllSelected(selection: RunSelection): boolean {
   return selection.mirror && ALL_SELECTABLE.every(id => selection.selected.includes(id));
 }
