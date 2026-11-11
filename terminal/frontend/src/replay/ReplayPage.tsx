@@ -963,7 +963,13 @@ export function ReplayPage() {
           paperSetupContext.status !== "EXACT_D2_LINK"
             ? " · D2: нет подтверждённой связи с исходным setup"
             : paperSetupVisible
-              ? ` · D2: ${paperSetupContext.setup.pattern} · ${paperSetupContext.setup.timeframe} · версия ${paperSetupContext.setup.strategy_version} · геометрия не экспортирована`
+              ? ` · D2: ${paperSetupContext.setup.pattern} · ${paperSetupContext.setup.timeframe} · версия ${paperSetupContext.setup.strategy_version}` +
+                (paperSetupContext.geometry_status !== "ORIGINAL_ARCHIVE_HASH_VERIFIED"
+                  ? " · исходная геометрия не экспортирована"
+                  : shown.lastTimeMs !== null &&
+                    shown.lastTimeMs >= paperSetupContext.original_geometry!.sent_at_ms
+                    ? " · лиловая пунктирная: архивная исходная геометрия (только наблюдение, неподписанный JSON)"
+                    : " · архивная геометрия появится после времени исходного сигнала")
               : " · D2: исходный setup появится после его подтверждённого времени на графике"
         )}
       </p>}
