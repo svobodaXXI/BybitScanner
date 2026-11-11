@@ -457,3 +457,50 @@
   font-size: 0.72rem;
   line-height: 1.45;
 }
+
+/* Two stable icon slots across all account scopes; no precision loss in stored PnL. */
+.diary-trade-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.diary-trade-entry > .diary-trade-row {
+  min-width: 0;
+}
+.diary-trade-actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.3rem;
+}
+.diary-trade-actions .diary-trade-icon {
+  display: grid;
+  place-items: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  min-width: 2.4rem;
+  border: 1px solid #394653;
+  border-radius: 0.35rem;
+  background: #171d24;
+  color: #d7e0e8;
+  cursor: pointer;
+}
+.diary-trade-icon svg {
+  width: 1.16rem;
+  height: 1.16rem;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.diary-trade-icon:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.diary-trade-icon:not(:disabled):hover,
+.diary-trade-icon:not(:disabled):focus-visible {
+  border-color: #859bb1;
+}
