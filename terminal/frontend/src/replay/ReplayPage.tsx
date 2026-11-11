@@ -634,6 +634,12 @@ export function ReplayPage() {
             throw new Error("ID фактов сделки не совпадает с выбранным");
           setPaperFacts(facts);
           onPasteSymbol(facts.symbol);
+          // A new exact-ID episode cannot inherit the previous bundled chart
+          // if the pinned historical market read is incomplete or unavailable.
+          setPlaying(false); setCursor(0);
+          setSimulationGraphPending(true); setPreparedRun(false);
+          setFileLabel("Проверяю локальную историю PAPER-эпизода " + episodeId);
+          setError(null);
           const m5 = 300_000;
           const start = Math.floor(facts.opened_at_ms / m5) * m5;
           // At a boundary a fill belongs to the NEW M5, never the old bar.
