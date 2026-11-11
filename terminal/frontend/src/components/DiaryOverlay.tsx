@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { marketApiRoutes } from "../marketData/apiRoutes";
+import { AccountMenu } from "./AccountMenu";
 import "./DiaryOverlay.css";
 
 export type DiarySection = "FINREZ" | "PATTERNS" | "DEALS" | "TRADES" | "SETUPS" | "STATISTICS" | "MIRROR";
+export type DiaryAccountMenuProps = Pick<ComponentProps<typeof AccountMenu>,
+  "workspaceProjection" | "mode" | "selectedAccountId" | "onSelectAccount" | "modeAccountError">;
 type FinrezPeriod = "TODAY" | "ALL";
 type DiaryFilter = "ALL" | "OPEN" | "CLOSED" | "ATTENTION";
 type SetupFilter = "ALL" | "ATTENTION";
@@ -565,12 +568,14 @@ export function DiaryOverlay({
   initialSection = "TRADES",
   initialTradeEpisodeId = null,
   statisticsScope = null,
+  accountMenu = null,
 }: {
   accountKey: string;
   onClose: () => void;
   initialSection?: DiarySection;
   initialTradeEpisodeId?: string | null;
   statisticsScope?: DiaryStatisticsScope | null;
+  accountMenu?: DiaryAccountMenuProps | null;
 }) {
   const [section, setSection] = useState<DiarySection>(
     initialTradeEpisodeId === null ? initialSection : "TRADES",
@@ -586,6 +591,7 @@ export function DiaryOverlay({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [accountId, setAccountId] = useState("");
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
   const [requestedTradeMissing, setRequestedTradeMissing] = useState(false);
   const initialTradeRequest = useRef<string | null>(initialTradeEpisodeId);
@@ -754,15 +760,22 @@ export function DiaryOverlay({
     <div className="diary-backdrop" role="presentation">
       <section className="diary-shell" role="dialog" aria-modal="true" aria-label="Статистика">
         <header className="diary-header">
-          <div>
-            <p className="eyebrow">Торговый терминал</p>
-            <h2>Статистика</h2>
-            {statisticsScope
-              ? <small>{statisticsScope.owner === "ROBOT" ? "Автопилот" : "Терминал"} · {statisticsScope.accountId} · раздельная статистика</small>
-              : accountId ? <small>{accountId}</small> : null}
-          </div>
+          {accountMenu ? (
+            <AccountMenu {...accountMenu} open={accountMenuOpen}
+              onToggle={() => setAccountMenuOpen((open) => !open)} />
+          ) : (
+            <button className="diary-account-unavailable" type="button" disabled
+              aria-label="Переключение счёта недоступно">
+              Счёт: {statisticsScope?.accountId ?? accountId ?? "не выбран"}
+            </button>
+          )}
           <button aria-label="Закрыть статистику" onClick={onClose} type="button">×</button>
         </header>
+
+        <div className="diary-context-heading">
+          <p>{statisticsScope?.owner === "ROBOT" ? "Автопилот" : "Терминал"}</p>
+          <h2>Статистика</h2>
+        </div>
 
         <div className="diary-navigation">
           {(section === "FINREZ" || section === "PATTERNS" || section === "DEALS") ? (

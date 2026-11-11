@@ -353,7 +353,7 @@ describe("scoped statistics fail-closed UX", () => {
     await screen.findByText("Результативность");
     if (!pending.resolve) throw new Error("old request missing");
     pending.resolve(new Response(JSON.stringify(statisticsResponse), { status: 200 }));
-    await waitFor(() => expect(screen.getByText(/bybit-main · раздельная статистика/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Переключение счёта недоступно" })).toHaveTextContent("Счёт: bybit-main"));
     expect(screen.queryByText("Не удалось загрузить статистику выбранного счёта")).not.toBeInTheDocument();
   });
 });
@@ -380,6 +380,78 @@ const finrezResponse = {
     excluded_unattributed_execution_count: 0,
   },
 };
+
+describe("Statistics full-width account/close header", () => {
+  it("reuses the canonical golden-key account picker beside an equal-height square close button", async () => {
+    const catalog = {
+      ok: true, active_account_id: "paper", session_generation: 1,
+      accounts: [{ id: "paper", display_name: "Paper / Virtual",
+        provider: "PAPER", environment: "PAPER", status: "READY" }],
+    };
+    const onClose = vi.fn();
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url === "/api/accounts") {
+        return new Response(JSON.stringify(catalog), { status: 200 });
+      }
+      if (url === "/api/manual-main/accounts") {
+        return new Response(JSON.stringify({ ok: true, accounts: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify(finrezResponse), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<DiaryOverlay accountKey="paper:header" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "MANUAL" }}
+      accountMenu={{
+        workspaceProjection: {
+          ok: true, account_id: "paper", provider: "PAPER", environment: "PAPER",
+          status: "READY", session_generation: 1, projection_generation: 1,
+          read_only: false, wallet_balance_usdt: "100",
+          total_equity_usdt: "100", available_balance_usdt: "100",
+          positions: [], orders: [], paper_state: null,
+        },
+        mode: "TERMINAL", selectedAccountId: "paper", onSelectAccount: vi.fn(),
+      }}
+      onClose={onClose} />);
+    const header = container.querySelector(".diary-header")!;
+    const accountControl = screen.getByRole("button", { name: "Open account selection" });
+    const closeButton = screen.getByRole("button", { name: "Закрыть статистику" });
+    expect(header.children).toHaveLength(2);
+    expect(header.firstElementChild).toBe(accountControl.closest(".paper-account-control"));
+    expect(header.lastElementChild).toBe(closeButton);
+    const heading = container.querySelector(".diary-context-heading")!;
+    expect(header.nextElementSibling).toBe(heading);
+    expect(heading).toHaveTextContent("Терминал");
+    expect(heading).toHaveTextContent("Статистика");
+    expect(heading).not.toHaveTextContent("раздельная статистика");
+    expect(accountControl).toHaveClass("account-switch-button");
+    expect(accountControl.querySelectorAll(".account-switch-key")).toHaveLength(1);
+    expect(await screen.findByText("PAPER")).toBeInTheDocument();
+    fireEvent.click(accountControl);
+    expect(await screen.findByRole("dialog", { name: "Accounts" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close Accounts" }));
+    expect(screen.queryByRole("dialog", { name: "Accounts" })).not.toBeInTheDocument();
+    fireEvent.click(closeButton);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Statistics source headings", () => {
+  it("shows Автопилот above Статистика for the robot scope, without a duplicated account caption", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(finrezResponse), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<DiaryOverlay accountKey="paper:robot" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const heading = container.querySelector(".diary-context-heading")!;
+    expect(heading.querySelector("p")).toHaveTextContent("Автопилот");
+    expect(heading.querySelector("h2")).toHaveTextContent("Статистика");
+    expect(heading).not.toHaveTextContent("PAPER");
+    expect(heading).not.toHaveTextContent("раздельная статистика");
+    await screen.findByText("ETHUSDT");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=TODAY",
+    );
+  });
+});
 
 describe("Finrez first-screen UI", () => {
   it("shows the ticker ranking with two periods, reuses the Diary modal and defers other sections", async () => {
