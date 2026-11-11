@@ -9,6 +9,10 @@ import {
   type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
+import {
+  matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
+  type PaperEpisodeFacts, type PaperOverlay,
+} from "./paperEpisodeFacts";
 import { rayEndPoint } from "../chart/drawingGeometry";
 import { DrawingOverlay } from "../chart/DrawingOverlay";
 import type { DrawingObject, DrawingTool } from "../chart/drawingModel";
@@ -65,9 +69,10 @@ function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
     <path d={PLAYER_PATHS[name]} />
   </svg>;
 }
-function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selectedId,
+function ReplayChart({ document, cursor, paperOverlay, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
-  document: ReplayDocument; cursor: number; showDebug: boolean; timeframe: "5m" | "1h";
+  document: ReplayDocument; cursor: number; paperOverlay: PaperOverlay;
+  showDebug: boolean; timeframe: "5m" | "1h";
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
   onDrawingsChange: (next: DrawingObject[]) => void;
   onSelectDrawing: (id: string | null) => void;
@@ -384,8 +389,31 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         context.stroke();
         rendered += 1;
       }
+      // PAPER observations are a separate, hollow-ring overlay. These are
+      // original owner-imported execution prices, NOT SIMULATION fill events.
+      // Only plot a factual fill once its independently closed M5 is revealed.
+      let paintedPaper = 0;
+      for (const fill of revealedPaperMarkers(paperOverlay, shown.candles)) {
+        const stamp = timeframe === "1h"
+          ? Math.floor(fill.candle_start_ms / 3_600_000) * 3_600_000
+          : fill.candle_start_ms;
+        if (!displayCandles.some(bar => bar.start_ms === stamp)) continue;
+        const x = api.timeScale().timeToCoordinate((stamp / 1000) as UTCTimestamp);
+        const y = candleSeries.priceToCoordinate(fill.price);
+        if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y) ||
+            x < 0 || x > priceWidth || y < 0 || y > paneHeight) continue;
+        context.beginPath();
+        context.arc(x, y, 5.5, 0, 2 * Math.PI);
+        context.fillStyle = "#121923";
+        context.fill();
+        context.strokeStyle = fill.order_side === "Buy" ? TELEGRAM_BUY_COLOR : TELEGRAM_SELL_COLOR;
+        context.lineWidth = 2;
+        context.stroke();
+        paintedPaper++;
+      }
       context.restore();
       canvas.dataset.visibleFills = String(rendered);
+      canvas.dataset.visiblePaperFills = String(paintedPaper);
       canvas.dataset.visibleGeometry = String(knownLines.length);
       canvas.dataset.visibleEarlyGeometry = String(earlyGeometry.length);
       canvas.dataset.visiblePriors = String(knownPriors.length);
@@ -398,7 +426,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles, earlyGeometry]);
+  }, [shown, document, cursor, paperOverlay, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles, earlyGeometry]);
 
   // The editable layer reuses the terminal's drawing tools, but stores its X
   // anchors in absolute UTC M5 slots rather than indices of the selected TF.
@@ -425,7 +453,7 @@ function ReplayChart({ document, cursor, showDebug, timeframe, drawings, selecte
         <div className="replay-chart" ref={container}
           aria-label="Свечной график и нижняя панель ADX DMI" />
         <canvas ref={executionCanvas} className="replay-execution-overlay"
-          aria-hidden="true" data-visible-fills="0" data-visible-observations="0" data-visible-blue-risk="0" />
+          aria-hidden="true" data-visible-fills="0" data-visible-paper-fills="0" data-visible-observations="0" data-visible-blue-risk="0" />
         {pricePaneHeight > 0 && displayCandles.length > 0 &&
           <div className={`replay-drawing-layer tool-${drawingTool}`} style={{ height: pricePaneHeight }}
             data-drawing-count={drawings.length}>
@@ -483,6 +511,11 @@ export function ReplayPage() {
   const [selectedDrawing, setSelectedDrawing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fileLabel, setFileLabel] = useState("Тикер и период не выбраны");
+  // PAPER evidence is never inserted into document.events or VirtualAccount.
+  const [paperFacts, setPaperFacts] = useState<PaperEpisodeFacts | null>(null);
+  const paperOverlay = useMemo(
+    () => matchPaperFactsToMarket(paperFacts, document), [paperFacts, document],
+  );
   // The synthetic fixture is available only via the explicit Example button.
   const [simulationGraphPending, setSimulationGraphPending] = useState(true);
   const [preparedRun, setPreparedRun] = useState(false);
@@ -589,6 +622,7 @@ export function ReplayPage() {
   const countTouch = (rows: typeof visibleStudy, kind: typeof visibleStudy[number]["first_touch"]) =>
     rows.filter(row => row.first_touch === kind).length;
   const fileInput = useRef<HTMLInputElement>(null);
+  const paperFileInput = useRef<HTMLInputElement>(null);
 
   const onSimulationStart = useCallback((request: WedgeRunRequest) => {
     // A new ticker/date must never inherit old candles or demonstration fills.
@@ -723,6 +757,28 @@ export function ReplayPage() {
     }
   }
 
+  async function loadPaperFacts(file?: File) {
+    if (!file) return;
+    setPlaying(false);
+    try {
+      if (file.size > 4 * 1024 * 1024)
+        throw new Error("JSON PAPER больше 4 МБ");
+      const imported = parsePaperEpisodeFacts(JSON.parse(await file.text() as string) as unknown);
+      setPaperFacts(imported);
+      setError(null);
+      // Instant inspection only when the selected, independently verified
+      // public M5 archive already covers every fact. Otherwise do not
+      // substitute a candle, download private history or invent a chart.
+      if (matchPaperFactsToMarket(imported, document).status === "MATCHED") {
+        setCursor(document.events.length);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось прочитать факты PAPER");
+    } finally {
+      if (paperFileInput.current) paperFileInput.current.value = "";
+    }
+  }
+
   async function loadLocalHistory(selectedSymbol: string, selectedStart: string, selectedEnd: string) {
     bundledRequest.current?.abort(); bundledRequest.current = null;
     historyRequest.current?.abort();
@@ -796,6 +852,15 @@ export function ReplayPage() {
           <input ref={fileInput} type="file" accept=".json,application/json" disabled={runLoading}
             onChange={(e) => void loadFile(e.target.files?.[0])} />
         </label>
+        <label className="replay-file">
+          Импорт JSON сделки PAPER
+          <input ref={paperFileInput} aria-label="Импорт JSON сделки PAPER"
+            type="file" accept=".json,application/json" disabled={runLoading}
+            onChange={(e) => void loadPaperFacts(e.target.files?.[0])} />
+        </label>
+        {paperFacts && <button type="button" onClick={() => setPaperFacts(null)}>
+          Убрать факты PAPER
+        </button>}
         <button type="button" onClick={() => {
           bundledRequest.current?.abort(); bundledRequest.current = null;
           historyRequest.current?.abort(); historyRequest.current = null;
@@ -823,6 +888,15 @@ export function ReplayPage() {
       </section>
 
       {error && <p role="alert" className="replay-error">{error}</p>}
+      {paperFacts && <p className="replay-note" role="status" aria-label="PAPER факты сделки">
+        PAPER · {paperFacts.symbol} · {paperFacts.trade_episode_id}
+        {" · "}{paperFacts.execution_allocations.length} фактических исполнений
+        {" · "}{paperOverlay.status === "MATCHED"
+          ? "Кружки на закрытых свечах · цена оригинального исполнения"
+          : paperOverlay.reason}
+        {" · "}PnL по цене и известным комиссиям: {paperFacts.pnl_usdt} USDT
+        {" · "}JSON без криптографической подписи; не виртуальные сделки и не решения Robot.
+      </p>}
       {simulationGraphPending && <p className="replay-note" role="status"
         aria-label="Ожидание нового графика">
         {runLoading ? "Проверяю архив и рассчитываю виртуальный прогон…" :
@@ -993,7 +1067,8 @@ export function ReplayPage() {
                 {runLoading ? `Проверяю первые M1: ${runWaitingSeconds} с. Затем свечи появятся постепенно.` :
                   "График нового прогона появится после нажатия ▶"}
               </div>
-            : <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
+            : <ReplayChart document={document} cursor={cursor} paperOverlay={paperOverlay}
+                showDebug={showDebug} timeframe={timeframe}
                 drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
                 onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
                 onDrawingGesture={() => setPlaying(false)} />}
