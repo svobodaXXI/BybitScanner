@@ -125,10 +125,25 @@ class ReadOnlyWedgeScanner:
         return tuple(item for item in self.observations
                      if item.available_at_ms <= virtual_time_ms)
 
-    def _evaluate(
-        self, *, frame: MinuteFrame, bars: tuple[Candle, ...],
+    def evaluate_closed_m5_window(
+        self, *, simulation_run_id: str, symbol: str,
+        closed_at_ms: int, bars: tuple[Candle, ...],
     ) -> WedgeObservation | None:
-        """The same pure computational functions used by analyzer.core."""
+        """Original Scanner rules on independently verified closed M5.
+
+        Also supports read-only MARKET_ONLY scan without inventing an M1
+        timeline, a Scanner process, an admission or Robot trade.
+        """
+        if (not bars or len(bars) < 50 or len(bars) > self.config.window_bars
+                or bars[-1].end_ms != closed_at_ms or
+                any(bar.interval_ms != 300_000 or bar.start_ms % 300_000
+                    or (index and bar.start_ms != bars[index - 1].end_ms)
+                    for index, bar in enumerate(bars))):
+            raise ValueError("Scanner window requires uninterrupted closed M5")
+        if not isinstance(symbol, str) or not symbol.endswith("USDT") or (
+            not isinstance(simulation_run_id, str) or not simulation_run_id
+        ):
+            raise ValueError("unscoped local Scanner observation")
         import pandas as pd
         from robot_protection import (
             RobotProtectionError, wedge_structural_extreme,
@@ -214,10 +229,10 @@ class ReadOnlyWedgeScanner:
                 frozen_extreme = frozen_reference = frozen_target = None
 
         return WedgeObservation(
-            simulation_run_id=frame.simulation_run_id,
-            symbol=frame.symbol,
+            simulation_run_id=simulation_run_id,
+            symbol=symbol,
             source_candle_start_ms=bars[-1].start_ms,
-            available_at_ms=frame.virtual_time_ms,
+            available_at_ms=closed_at_ms,
             pattern=result["pattern"],
             formation_id=formation_id,
             final_score=float(score),
@@ -249,7 +264,10 @@ class ReadOnlyWedgeScanner:
             raise ValueError("gap in wedge history")
         bars = (self._committed_bars + (new,))[-self.config.window_bars:]
         observation = (
-            self._evaluate(frame=frame, bars=bars) if len(bars) >= 50 else None
+            self.evaluate_closed_m5_window(
+                simulation_run_id=frame.simulation_run_id, symbol=frame.symbol,
+                closed_at_ms=frame.virtual_time_ms, bars=bars,
+            ) if len(bars) >= 50 else None
         )
         self._pending = bars, observation
         return ()  # Research facts are NOT disguised as production SCANNER events.
