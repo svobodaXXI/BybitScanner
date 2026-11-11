@@ -374,12 +374,87 @@ const finrezResponse = {
   ],
   manual_interventions: [],
   joint_management: [],
+  closed_episodes: [],
   attribution_coverage: {
     status: "COMPLETE" as const,
     excluded_unattributed_episode_count: 0,
     excluded_unattributed_execution_count: 0,
   },
 };
+
+describe("Closed deals / exact episode index", () => {
+  const robotDeal = {
+    trade_episode_id: "robot-episode-42", symbol: "BTCUSDT", side: "LONG",
+    opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+    pnl_usdt: "-4.8", execution_count: 2,
+    cohort: "ROBOT", replay_evidence: "EPISODE_INDEX_ONLY",
+  };
+  const sharedDeal = {
+    trade_episode_id: "shared-episode-43", symbol: "XRPUSDT", side: "SHORT",
+    opened_at_ms: 1_793_001_500_000, closed_at_ms: 1_793_003_000_000,
+    pnl_usdt: "-1.81622186", execution_count: 7,
+    cohort: "JOINT_MANAGEMENT", replay_evidence: "EPISODE_INDEX_ONLY",
+  };
+
+  it("displays exact robot episode identifiers and keeps shared PnL labelled separately", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse, closed_episodes: [sharedDeal, robotDeal],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const row = await screen.findByRole("button", { name: /BTCUSDT/ });
+    expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("Робот + ручное управление");
+    expect(row).toHaveTextContent("-4.8 USDT");
+    fireEvent.click(row);
+    expect(screen.getByText("robot-episode-42")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("не воспроизведение");
+    expect(screen.queryByRole("button", { name: /Открыть в Симуляторе/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /К сделкам/ }));
+    expect(await screen.findByRole("button", { name: /BTCUSDT/ })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=TODAY",
+    );
+  });
+
+  it("blocks missing episode contract on an older backend instead of inventing deals", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse, closed_episodes: undefined,
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:old" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText("Не удалось загрузить статистику выбранного счёта")).toBeInTheDocument();
+    expect(screen.queryByText("robot-episode-42")).not.toBeInTheDocument();
+  });
+
+  it("rejects foreign controller provenance, duplicate IDs, invalid timestamps and unproven replay claims", async () => {
+    const violations = [
+      { ...robotDeal, cohort: "MANUAL" },
+      { ...robotDeal, replay_evidence: "FULL_REPLAY" },
+      { ...robotDeal, closed_at_ms: 1_792_000_000_000 },
+      { ...robotDeal, pnl_usdt: "NaN" },
+    ];
+    for (const invalid of violations) {
+      const { unmount } = render(<DiaryOverlay accountKey={"paper:" + invalid.cohort + invalid.closed_at_ms}
+        initialSection="DEALS" statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+      // Explicitly install mocked response only after constructing the known case.
+      unmount();
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        ...finrezResponse, closed_episodes: [invalid],
+      }), { status: 200 })));
+      const view = render(<DiaryOverlay accountKey="paper:invalid" initialSection="DEALS"
+        statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+      expect(await screen.findByText("Не удалось загрузить статистику выбранного счёта")).toBeInTheDocument();
+      view.unmount();
+    }
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse, closed_episodes: [robotDeal, robotDeal],
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:duplicate" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText("Не удалось загрузить статистику выбранного счёта")).toBeInTheDocument();
+  });
+});
 
 describe("Statistics full-width account/close header", () => {
   it("reuses the canonical golden-key account picker beside an equal-height square close button", async () => {
@@ -473,7 +548,7 @@ describe("Finrez first-screen UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "Паттерны" }));
     expect(await screen.findByText(/Паттерны — второй этап/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
-    expect(await screen.findByText(/Сделки — третий этап/)).toBeInTheDocument();
+    expect(await screen.findByText(/Нет подтверждённых закрытых сделок/)).toBeInTheDocument();
   });
 
   it("never shows foreign-account ranking or silently falls back to manual", async () => {
