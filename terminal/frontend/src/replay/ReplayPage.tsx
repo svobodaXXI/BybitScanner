@@ -69,10 +69,10 @@ function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
     <path d={PLAYER_PATHS[name]} />
   </svg>;
 }
-function ReplayChart({ document, cursor, paperOverlay, showDebug, timeframe, drawings, selectedId,
+function ReplayChart({ document, cursor, paperOverlay, paperFacts, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
   document: ReplayDocument; cursor: number; paperOverlay: PaperOverlay;
-  showDebug: boolean; timeframe: "5m" | "1h";
+  paperFacts: PaperEpisodeFacts | null; showDebug: boolean; timeframe: "5m" | "1h";
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
   onDrawingsChange: (next: DrawingObject[]) => void;
   onSelectDrawing: (id: string | null) => void;
@@ -293,6 +293,55 @@ function ReplayChart({ document, cursor, paperOverlay, showDebug, timeframe, dra
         paintedGeometry += 1;
       }
       context.setLineDash([]);
+      // Source-original detector geometry is read-only archive evidence and
+      // DISTINCT from the dynamically computed yellow H1 / blue M5 lines.
+      // The exact anchors are never refitted to candles; no pre-signal leak.
+      const original = paperOverlay.status === "MATCHED" &&
+        paperFacts?.setup_context?.status === "EXACT_D2_LINK" &&
+        paperFacts.setup_context.geometry_status === "ORIGINAL_ARCHIVE_HASH_VERIFIED"
+        ? paperFacts.setup_context.original_geometry : undefined;
+      let paintedOriginal = 0;
+      if (original && shown.lastTimeMs !== null && shown.lastTimeMs >= original.sent_at_ms
+          && displayCandles.length >= 2) {
+        const oldest = displayCandles[0].start_ms;
+        const newest = displayCandles[displayCandles.length - 1].start_ms;
+        for (const boundary of original.boundaries) {
+          const first = boundary.anchors[0];
+          const last = boundary.anchors[boundary.anchors.length - 1];
+          const startAt = boundary.kind === "horizontal"
+            ? oldest : Math.max(oldest, first.bar_open_time_ms);
+          const endAt = boundary.kind === "segment"
+            ? Math.min(newest, last.bar_open_time_ms) : newest;
+          // Map only to actual already-revealed chart bars; original time
+          // prices still come from the immutable anchor formula.
+          const leftBar = displayCandles.find(bar => bar.start_ms >= startAt);
+          const rightBar = displayCandles.slice().reverse().find(bar => bar.start_ms <= endAt);
+          if (!leftBar || !rightBar || leftBar.start_ms >= rightBar.start_ms) continue;
+          const priceAt = (at: number) => boundary.anchors.length === 1 ? first.price :
+            first.price + (last.price - first.price) *
+              (at - first.bar_open_time_ms) / (last.bar_open_time_ms - first.bar_open_time_ms);
+          const x1 = api.timeScale().timeToCoordinate((leftBar.start_ms / 1000) as UTCTimestamp);
+          const x2 = api.timeScale().timeToCoordinate((rightBar.start_ms / 1000) as UTCTimestamp);
+          const y1 = candleSeries.priceToCoordinate(priceAt(leftBar.start_ms));
+          const y2 = candleSeries.priceToCoordinate(priceAt(rightBar.start_ms));
+          if (x1 === null || x2 === null || y1 === null || y2 === null ||
+              !Number.isFinite(x1) || !Number.isFinite(x2) ||
+              !Number.isFinite(y1) || !Number.isFinite(y2)) continue;
+          const to = boundary.kind === "ray" || boundary.kind === "horizontal-ray"
+            ? rayEndPoint({ x: x1, y: y1 }, { x: x2, y: y2 },
+                { width: priceWidth, height: paneHeight })
+            : { x: x2, y: y2 };
+          context.beginPath();
+          context.strokeStyle = "#d08cf0";
+          context.lineWidth = 1.25;
+          context.setLineDash([3, 4]);
+          context.moveTo(x1, y1);
+          context.lineTo(to.x, to.y);
+          context.stroke();
+          paintedOriginal++;
+        }
+        context.setLineDash([]);
+      }
       // Purple prior: second confirmed touch of the H1 main line, at its wick.
       // Old levels stop at the time of replacement; only the latest level
       // extends into the right-hand whitespace. No future version is shown.
@@ -414,6 +463,7 @@ function ReplayChart({ document, cursor, paperOverlay, showDebug, timeframe, dra
       context.restore();
       canvas.dataset.visibleFills = String(rendered);
       canvas.dataset.visiblePaperFills = String(paintedPaper);
+      canvas.dataset.visibleOriginalGeometry = String(paintedOriginal);
       canvas.dataset.visibleGeometry = String(knownLines.length);
       canvas.dataset.visibleEarlyGeometry = String(earlyGeometry.length);
       canvas.dataset.visiblePriors = String(knownPriors.length);
@@ -426,7 +476,7 @@ function ReplayChart({ document, cursor, paperOverlay, showDebug, timeframe, dra
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, paperOverlay, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles, earlyGeometry]);
+  }, [shown, document, cursor, paperOverlay, paperFacts, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showDebug, timeframe, displayCandles, earlyGeometry]);
 
   // The editable layer reuses the terminal's drawing tools, but stores its X
   // anchors in absolute UTC M5 slots rather than indices of the selected TF.
@@ -453,7 +503,7 @@ function ReplayChart({ document, cursor, paperOverlay, showDebug, timeframe, dra
         <div className="replay-chart" ref={container}
           aria-label="Свечной график и нижняя панель ADX DMI" />
         <canvas ref={executionCanvas} className="replay-execution-overlay"
-          aria-hidden="true" data-visible-fills="0" data-visible-paper-fills="0" data-visible-observations="0" data-visible-blue-risk="0" />
+          aria-hidden="true" data-visible-fills="0" data-visible-paper-fills="0" data-visible-original-geometry="0" data-visible-observations="0" data-visible-blue-risk="0" />
         {pricePaneHeight > 0 && displayCandles.length > 0 &&
           <div className={`replay-drawing-layer tool-${drawingTool}`} style={{ height: pricePaneHeight }}
             data-drawing-count={drawings.length}>
@@ -1088,7 +1138,7 @@ export function ReplayPage() {
                   "График нового прогона появится после нажатия ▶"}
               </div>
             : <ReplayChart document={document} cursor={cursor} paperOverlay={paperOverlay}
-                showDebug={showDebug} timeframe={timeframe}
+                paperFacts={paperFacts} showDebug={showDebug} timeframe={timeframe}
                 drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
                 onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
                 onDrawingGesture={() => setPlaying(false)} />}
