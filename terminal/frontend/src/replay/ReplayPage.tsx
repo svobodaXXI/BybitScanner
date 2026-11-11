@@ -61,7 +61,7 @@ const PLAYER_PATHS = {
   pause: "M6 4h4v16H6zM14 4h4v16h-4z",
   backward: "M12 5L4 12L12 19ZM21 5L13 12L21 19Z",
   forward: "M3 5L11 12L3 19ZM12 5L20 12L12 19Z",
-  beginning: "M4 4v16M20 5L11 12L20 19ZM11 5L2 12L11 19Z",
+  beginning: "M4 4h2v16H4zM20 5L9 12L20 19Z",
 } as const;
 function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
   return <svg className="replay-player-icon" viewBox="0 0 24 24"
