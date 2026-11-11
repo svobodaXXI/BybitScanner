@@ -50,7 +50,7 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
     try:
         host, port = server.server_address
         root = f"http://{host}:{port}/api/diary/ticker-finrez"
-        for period in ("TODAY", "ALL"):
+        for period in ("TODAY", "DAY", "WEEK", "MONTH", "YEAR", "ALL"):
             status, payload = _get(root + f"?account_id=paper&owner=ROBOT&period={period}")
             assert status == 200
             assert payload["ok"] is True
@@ -63,7 +63,7 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
         assert calls[1] == ("project", snapshot, "paper", "ROBOT", "TODAY")
         for query in (
             "", "?account_id=paper&owner=ROBOT",
-            "?account_id=paper&owner=ROBOT&period=WEEK",
+            "?account_id=paper&owner=ROBOT&period=INVALID",
             "?account_id=paper&owner=ROBOT&period=ALL&owner=MANUAL",
             "?account_id=paper&owner=ROBOT&period=ALL&extra=1",
         ):
@@ -71,7 +71,7 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
             assert (status, payload["error"]) == (400, "finrez_scope_required")
         status, payload = _get(root + "?account_id=bybit-main&owner=ROBOT&period=TODAY")
         assert (status, payload["error"]) == (404, "finrez_scope_unavailable")
-        assert len(calls) == 4  # invalid/cross-account requests never read the ledger
+        assert len(calls) == 12  # invalid/cross-account requests never read the ledger
     finally:
         server.shutdown()
         server.server_close()
