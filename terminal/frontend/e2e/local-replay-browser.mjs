@@ -460,6 +460,27 @@ try {
   assert.match(await indicator.innerText(), /ADX 22\.8/);
   assert.ok((await page.locator(".replay-chart canvas").count()) >= 4);
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "40");
+  const overlay = page.locator(".replay-execution-overlay");
+  // Owner regression: "Only wedges" must NOT draw the unrelated H1/M5
+  // geometry just because this is a public market-only chart. The Wedge
+  // Scanner was NOT invoked by this public Bybit M5 GET.
+  const strategyNote = page.getByRole("status", { name: "Статус выбранных стратегий" });
+  assert.match(await strategyNote.innerText(), /Трендовые H1\/M5 выключены/);
+  assert.match(await strategyNote.innerText(), /клинья здесь не искались/);
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleGeometry === "0");
+  assert.equal(await overlay.getAttribute("data-painted-geometry"), "0");
+  assert.equal(await overlay.getAttribute("data-visible-priors"), "0");
+  assert.equal(await overlay.getAttribute("data-visible-early-geometry"), "0");
+
+  // Explicitly enabling H1/M5 reveals ONLY its research overlays, without
+  // modifying candles, Wedge choices, the virtual account, or creating fills.
+  await bounds.getByRole("checkbox", { name: "Трендовые H1/M5" }).check();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleGeometry === "3");
+  assert.match(await strategyNote.innerText(), /Трендовые H1\/M5 выбраны/);
+  assert.equal(await overlay.getAttribute("data-visible-fills"), "0");
+  assert.equal(await overlay.getAttribute("data-painted-geometry"), "3");
   await page.getByRole("button", { name: "H1", exact: true }).click();
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"), "1h");
@@ -516,6 +537,19 @@ try {
   assert.match(await page.getByRole("status", { name: "Статус трендовой геометрии" }).innerText(), /Предыстория.*72 ч/);
   await page.getByLabel("Показать опорные маркеры").uncheck();
   await page.getByText("Диагностика", { exact: true }).click();
+  // Disable the strategy again: every automated H1/M5 line, prior and
+  // diagnostic disappears immediately. Manual drawing/PAPER facts are not
+  // secretly removed and no Scanner or new market fetch is triggered.
+  await bounds.getByRole("checkbox", { name: "Трендовые H1/M5" }).uncheck();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleGeometry === "0");
+  assert.equal(await overlay.getAttribute("data-painted-geometry"), "0");
+  assert.equal(await overlay.getAttribute("data-visible-priors"), "0");
+  assert.equal(await overlay.getAttribute("data-painted-priors"), "0");
+  assert.equal(await overlay.getAttribute("data-visible-early-geometry"), "0");
+  assert.equal(await overlay.getAttribute("data-visible-fills"), "0");
+  assert.equal(await bounds.getByRole("checkbox", { name: "Восходящий клин" }).isChecked(), true);
+  assert.equal(await bounds.getByRole("checkbox", { name: "Нисходящий клин" }).isChecked(), true);
 
   // Exported PAPER facts are marked as HOLLOW rings at their original prices,
   // separate from virtual triangles. No extra /api or private exchange call.
