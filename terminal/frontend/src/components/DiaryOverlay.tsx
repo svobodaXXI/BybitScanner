@@ -630,16 +630,22 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
           || facts.trade_episode_id !== deal.trade_episode_id
           || facts.source_revision !== report.source_revision
           || facts.symbol !== deal.symbol || facts.side !== deal.side
+          || facts.cohort !== deal.cohort
+          || facts.opened_at_ms !== deal.opened_at_ms
+          || facts.closed_at_ms !== deal.closed_at_ms
           || facts.pnl_usdt !== deal.pnl_usdt
+          || facts.replay_evidence !== "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES"
           || !Array.isArray(facts.execution_allocations)
-          || facts.execution_allocations.length !== deal.execution_count) return null;
+          || facts.execution_allocations.length !== deal.execution_count
+          || facts.execution_allocations.length > 5000) return null;
         const points: TradeExecutionPoint[] = [];
         for (const row of facts.execution_allocations) {
           if (!row || typeof row !== "object") return null;
           const entry = row as Record<string, unknown>;
           const price = Number(entry.execution_price);
           const at = entry.occurred_at_ms;
-          if (typeof entry.execution_price !== "string" ||
+          if (typeof entry.execution_id !== "string" || !entry.execution_id ||
+              typeof entry.execution_price !== "string" ||
               !Number.isFinite(price) || price <= 0 ||
               typeof at !== "number" || !Number.isSafeInteger(at) ||
               at < deal.opened_at_ms || at > deal.closed_at_ms) return null;
