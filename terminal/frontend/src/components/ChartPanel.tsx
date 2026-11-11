@@ -46,6 +46,7 @@ import {
 } from "../chart/gestureMath";
 import { chartPriceFormat } from "../chart/priceFormat";
 import { editorMoscowCrosshairTime, editorMoscowTickMark } from "../chart/editorMoscowTime";
+import { candleCloseStatus } from "../chart/candleCloseStatus";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
 import {
@@ -225,6 +226,11 @@ export function ChartPanel({
   ownerChartMode?: boolean;
   onSubmitOwnerChart?: (proposal: OwnerChartDraft) => Promise<{ proposalId: string; decision: string; reason: string }>;
 }) {
+  const [candleClockMs, setCandleClockMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setCandleClockMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
     seriesRef = useRef<Series | null>(null);
@@ -508,7 +514,7 @@ export function ChartPanel({
         css.getPropertyValue(name).trim() || fallback;
     const chart = createChart(host, {
       autoSize: true,
-      ...(editorMode ? { localization: { locale: "ru-RU", timeFormatter: editorMoscowCrosshairTime } } : {}),
+      localization: { locale: "ru-RU", timeFormatter: editorMoscowCrosshairTime },
       layout: {
         background: {
           type: ColorType.Solid,
@@ -542,7 +548,7 @@ export function ChartPanel({
         minimumWidth: 0,
       },
       timeScale: {
-        ...(editorMode ? { tickMarkFormatter: editorMoscowTickMark } : {}),
+        tickMarkFormatter: editorMoscowTickMark,
         visible: true,
         borderColor: "#303b47",
         timeVisible: true,
@@ -1234,6 +1240,23 @@ export function ChartPanel({
       >
         {workspaceControls}
         <div ref={hostRef} className="chart-engine" />
+        {!editorMode && (() => {
+          const last = candles[candles.length - 1];
+          const status = candleCloseStatus(last?.time, timeframe, candleClockMs);
+          if (status.status === "UNAVAILABLE") return null;
+          const priceY = last ? coordinates.priceToY(last.close) : null;
+          if (priceY === null || !Number.isFinite(priceY)) return null;
+          const height = hostRef.current?.clientHeight ?? 0;
+          if (priceY < 0 || priceY > height - TIME_SCALE_HEIGHT - 19) return null;
+          return (
+            <span className={"chart-candle-close" + (status.status === "STALE" ? " stale" : "")}
+              aria-label={status.status === "STALE" ? "Свечи устарели" : "До закрытия свечи: " + status.label}
+              style={{ top: priceY + 14 }}
+              title={status.status === "STALE" ? "Актуальность потока свечей не подтверждена" : "Осталось до закрытия текущей свечи"}>
+              {status.label}
+            </span>
+          );
+        })()}
         {robotMarkerShapes.length > 0 ? (
           <svg className="robot-execution-marker-layer" aria-label="Маркеры исполнений робота"
             aria-hidden="true" viewBox={`0 0 ${hostRef.current?.clientWidth ?? 1} ${hostRef.current?.clientHeight ?? 1}`}
@@ -1249,6 +1272,7 @@ export function ChartPanel({
           magnet={magnet}
           candles={candles}
           candleAligned={editorMode && signalIdentity !== null}
+          priceScaleWidth={chartRef.current?.priceScale("right").width() || PRICE_SCALE_WIDTH_FALLBACK}
           coordinates={coordinates}
           priceFormatter={drawingPriceFormatter}
           onCommit={commit}
