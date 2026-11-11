@@ -211,7 +211,7 @@ describe("standalone SIMULATION viewer contract", () => {
     const demo = syntheticReplay();
     const candles = demo.events.filter(event => event.kind === "CANDLE_CLOSED");
     const raw = {
-      ...demo, demo: false,
+      ...demo, demo: false, symbol: "XRPUSDT", timeframe: "5m",
       market_data_source: "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M",
       dmi_5m: undefined,
       events: candles.slice(0, 2).map((event, index) => ({
