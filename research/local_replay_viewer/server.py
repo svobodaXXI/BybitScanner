@@ -330,7 +330,7 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 if (url.query or self.headers.get("Sec-Fetch-Site") == "cross-site"):
                     self._error(403, "Local app version only")
                     return
-                from research.local_replay_viewer.local_update import installed_build
+                from local_update import installed_build
                 self._send(200, json.dumps(installed_build(HERE)).encode("utf-8"),
                            "application/json; charset=utf-8")
                 return
