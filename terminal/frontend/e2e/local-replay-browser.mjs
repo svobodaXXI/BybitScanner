@@ -287,6 +287,9 @@ try {
   );
   assert.deepEqual(actualOrder, ["В начало", "Пуск", "Шаг назад", "Шаг вперёд"],
     "approved player order must be stable");
+  const beginningShape = await playbackBar.locator('svg[data-player-icon="beginning"] path').getAttribute("d");
+  assert.equal(beginningShape, "M4 4h2v16H4zM20 5L9 12L20 19Z",
+    "beginning has a visibly filled left stop-bar and exactly one left triangle, not the backward chevrons");
   for (const [caption, symbol] of [["В начало", "beginning"], ["Пуск", "play"],
       ["Шаг назад", "backward"], ["Шаг вперёд", "forward"]]) {
     const button = playbackBar.getByRole("button", { name: caption, exact: true });
