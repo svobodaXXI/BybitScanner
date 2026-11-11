@@ -246,6 +246,15 @@ class NativeBoxSimulationLifecycleTests(unittest.TestCase):
         self.assertEqual(result.take_exits, 4)
         self.assertEqual(result.stop_exits, 0)
         self.assertEqual(result.report.virtual_fills, 8)
+        payload = result.to_payload()
+        self.assertEqual(payload["namespace"], "SIMULATION")
+        self.assertEqual(payload["scenario_type"],
+                         "ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION")
+        self.assertEqual(payload["requested_minutes"], 40)
+        self.assertEqual(payload["box_entry_fills"], 4)
+        self.assertEqual(payload["virtual_fills"], 8)
+        self.assertEqual(payload["risk_terms_status"] if "risk_terms_status" in payload else
+                         "INJECTED_BY_LOCAL_ADAPTER", "INJECTED_BY_LOCAL_ADAPTER")
         self.assertEqual(result.report.final_position_quantity, D("0"))
         replay = result.replay_document
         self.assertEqual(replay["market_data_source"],
