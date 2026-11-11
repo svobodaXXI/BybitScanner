@@ -19,6 +19,8 @@ from research.simulator_v2.virtual_exchange import MarketRequest, LimitRequest, 
 from research.simulator_v2.reused_geometry import ReadOnlyReusedGeometry
 from research.simulator_v2.wedge_observer import ReadOnlyWedgeScanner, WedgeScannerConfig
 from research.simulator_v2.ikigai_observer import ReadOnlyIkigaiScanner, IkigaiScannerConfig
+from research.simulator_v2.ikigai_plan_preview import BoxSimulationRiskTerms, preview_box_plan
+from research.simulator_v2.ikigai_observer import IkigaiObservation
 from research.simulator_v2.wedge_robot_observer import ReadOnlyWedgeRobot, SimWedgeRobotConfig
 from research.simulator_v2.wedge_risk_preflight import SimWedgeRiskSettings, UnsubmittedProtectedWedgePreview
 
@@ -159,6 +161,31 @@ class VirtualReplaySession:
         return self.account.snapshot(
             as_of_ms=minute.end_ms, mark_price=minute.close,
         )
+
+    def preview_ikigai_grid(
+        self, observation: IkigaiObservation, terms: BoxSimulationRiskTerms,
+    ):
+        """Original Box P1..P4/risk validation, never submit."""
+        if self.ikigai_scanner is None or self.virtual_time_ms is None:
+            raise ValueError("confirmed local Ikigai Scanner required")
+        if self.timeline.paused_stage is not None or (
+            self.virtual_time_ms != self.exchange.virtual_time_ms
+        ):
+            raise StepBlocked("SIMULATION uncommitted minute")
+        if not isinstance(observation, IkigaiObservation) or not any(
+            item is observation for item in self.ikigai_scanner.observations
+        ):
+            raise ValueError("Box is not committed by this Scanner")
+        if observation.available_at_ms != self.virtual_time_ms:
+            raise ValueError("stale Box needs separate late-admission policy")
+        if self.exchange.pending is not None or self.exchange.active_protection is not None:
+            raise ValueError("virtual exchange is occupied")
+        if self.account.snapshot(
+            as_of_ms=self.virtual_time_ms,
+            mark_price=Decimal(str(observation.formation.fibonacci_1_0)),
+        ).position_quantity != 0:
+            raise ValueError("virtual account is not flat")
+        return preview_box_plan(observation, terms=terms)
 
     def submit(self, request: MarketRequest) -> None:
         if self.timeline.paused_stage is not None:
