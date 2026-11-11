@@ -2,7 +2,7 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
-from types import SimpleNamespace
+from types import SimpleNamespace, ModuleType
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 import json
@@ -22,7 +22,6 @@ class PinnedEpisodeMarketTests(unittest.TestCase):
     def test_closed_m5_uses_original_isolated_timeline_and_no_robot_or_paper(self):
         start = int(datetime(2026, 10, 1, tzinfo=timezone.utc).timestamp() * 1000)
         one_minute = 60_000
-        import research.simulator_v2.wedge_cli  # ensure the genuine parser module is available for narrow patching
         candles = tuple(Candle(
             start_ms=start + i * one_minute, interval_ms=one_minute,
             open=Decimal("100") + i, high=Decimal("103") + i,
@@ -33,16 +32,26 @@ class PinnedEpisodeMarketTests(unittest.TestCase):
             root = Path(temp)
             (root / "m1-cache").mkdir()
             (root / "manifest.json").write_text("{}", encoding="utf-8")
+            # The read-only endpoint reuses native modules in production;
+            # this market projection test needs no pandas/native Robot import.
+            fake_cli = ModuleType("research.simulator_v2.wedge_cli")
+            fake_cli.MAX_MANIFEST_BYTES = 125_000
+            fake_cli.parse_manifest = lambda *_args, **_kw: ("BTCUSDT", (object(),))
+            fake_range = ModuleType("research.simulator_v2.trade_range")
+            fake_range._ordered_proofs = lambda *_args, **_kw: (
+                "verified_SOURCE", start, start + 86_400_000,
+            )
+            fake_range.iter_pinned_trade_chunks = lambda **_kw: (
+                SimpleNamespace(candles=candles),
+            )
             with (
                 patch.object(local, "SIM_DATA", root),
-                patch("research.simulator_v2.wedge_cli.parse_manifest",
-                      return_value=("BTCUSDT", (object(),))),
+                patch.dict("sys.modules", {
+                    "research.simulator_v2.wedge_cli": fake_cli,
+                    "research.simulator_v2.trade_range": fake_range,
+                }),
                 patch("research.simulator_v2.history.last_closed_m1_boundary_ms",
                       return_value=start + 86_400_000),
-                patch("research.simulator_v2.trade_range._ordered_proofs",
-                      return_value=("verified_SOURCE", start, start + 86_400_000)),
-                patch("research.simulator_v2.trade_range.iter_pinned_trade_chunks",
-                      return_value=[SimpleNamespace(candles=candles)]),
             ):
                 result = local.read_verified_episode_market(
                     symbol="BTCUSDT", start_ms=start, end_ms=start + FIVE_MINUTES_MS,
