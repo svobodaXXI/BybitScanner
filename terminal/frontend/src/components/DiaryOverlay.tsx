@@ -311,8 +311,8 @@ function TradeActionButtons({ onDetails, onReplay }: {
       </button>
       <button type="button" className="diary-trade-icon"
         aria-label="Открыть сделку в Симуляторе" title={onReplay
-          ? "Передать подтверждённый исторический эпизод в Симулятор"
-          : "Нужны сверенные свечи и решения Robot; только фактов исполнений недостаточно"}
+          ? "Скачать проверенные факты для импорта в локальный Симулятор; свечи отдельно"
+          : "Нужен проверенный исторический пакет; сделку нельзя воспроизводить без него"}
         disabled={!onReplay} onClick={onReplay}>
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <rect x="3.5" y="3" width="17" height="18" rx="1.5" />
@@ -685,13 +685,15 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
                 <span>Исполнений: {deal.execution_count}</span>
               </div>
               </button>
-              <TradeActionButtons onDetails={() => setSelectedId(deal.trade_episode_id)} />
+              <TradeActionButtons onDetails={() => setSelectedId(deal.trade_episode_id)}
+                onReplay={() => void downloadFacts(deal)} />
             </div>
           ))}
         </div>
       )}
+      {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
       <p className="diary-finrez-basis">
-        Пока доступен только идентификатор сделки; историческое воспроизведение в локальном Симуляторе ещё не подключено.
+        Киноплёнка выгружает проверенные факты исполнений для локального Симулятора. Полное воспроизведение требует отдельного архива свечей и решений Robot.
       </p>
     </div>
   );
