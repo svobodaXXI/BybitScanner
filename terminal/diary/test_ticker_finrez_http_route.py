@@ -94,3 +94,77 @@ def test_finrez_route_does_not_fabricate_zero_when_paper_source_is_missing(tmp_p
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_episode_facts_route_rejects_invalid_scope_and_exports_only_one_selected_episode(
+    tmp_path: Path, monkeypatch,
+):
+    from terminal.diary.ticker_finrez import EpisodeFactsNotFound, EpisodeFactsSourceChanged
+
+    source = tmp_path / "missing-paper.sqlite3"
+    calls = []
+    snapshot = object()
+    episode_id = "te_" + "a" * 24
+    absent_id = "te_" + "b" * 24
+
+    def read_source(path):
+        calls.append(("source", path))
+        return snapshot
+
+    def project(source_snapshot, *, account_id, owner, trade_episode_id, source_revision, now_ms):
+        calls.append(("project", account_id, owner, trade_episode_id, source_revision))
+        assert source_snapshot is snapshot
+        assert now_ms > 0
+        if source_revision == 8:
+            raise EpisodeFactsSourceChanged("revision_changed")
+        if trade_episode_id == absent_id:
+            raise EpisodeFactsNotFound("not_in_controller_scope")
+        return {
+            "schema": "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
+            "namespace": "PAPER_READ_ONLY", "source_revision": source_revision,
+            "trade_episode_id": trade_episode_id,
+            "replay_evidence": "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
+            "execution_allocations": [],
+        }
+
+    monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", read_source)
+    monkeypatch.setattr(paper_http_server, "project_paper_closed_episode_facts", project)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.diary_source_db_path = source
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        root = f"http://127.0.0.1:{server.server_address[1]}/api/diary/episode-facts"
+        prefix = f"?account_id=paper&owner=ROBOT&trade_episode_id={episode_id}"
+        for query, expected in [
+            ("", 400),
+            ("?account_id=paper&owner=ROBOT", 400),
+            (prefix + "&source_revision=0", 400),
+            (prefix + "&source_revision=01", 400),
+            ("?account_id=paper&owner=ROBOT&trade_episode_id=bad&source_revision=9", 400),
+            (prefix + "&source_revision=9&source_revision=8", 400),
+            (prefix.replace("account_id=paper", "account_id=bybit-main") + "&source_revision=9", 404),
+        ]:
+            status, _ = _get(root + query)
+            assert status == expected
+        assert calls == []  # Bad scopes never access PAPER source.
+
+        status, payload = _get(root + prefix + "&source_revision=9")
+        assert status == 200
+        assert payload["ok"] is True
+        assert payload["trade_episode_id"] == episode_id
+        assert payload["replay_evidence"] == "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES"
+        assert calls == [("source", source), ("project", "paper", "ROBOT", episode_id, 9)]
+
+        status, payload = _get(root + prefix + "&source_revision=8")
+        assert (status, payload["error"]) == (409, "episode_facts_source_changed")
+        status, payload = _get(root +
+            f"?account_id=paper&owner=ROBOT&trade_episode_id={absent_id}&source_revision=9")
+        assert (status, payload["error"]) == (404, "episode_not_in_scope")
+        assert not source.exists()  # No PAPER DB created or modified.
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
