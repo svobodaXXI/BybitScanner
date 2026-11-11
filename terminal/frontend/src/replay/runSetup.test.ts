@@ -153,7 +153,7 @@ describe("local one-symbol strategy setup (no trading)", () => {
     });
     expect(() => makeWedgeRunRequest(
       selectAll(), "BTCUSDT", "2026-10-01T12:34", "2026-10-08T12:33", "1000",
-    )).toThrow(/только/);
+    )).toThrow(/подключены/);
     expect(() => makeWedgeRunRequest(
       onlyWedges(), "BTCUSDT", "2026-10-01T00:00", "2026-12-31T00:00", "1000",
     )).toThrow(/90/);
