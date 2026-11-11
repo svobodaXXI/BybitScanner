@@ -211,7 +211,6 @@ export function RunSetupPanel({
     <section className="replay-run-setup" aria-label="Настройка стратегий и периода">
       <div className="replay-run-heading">
         <strong>Универсальный симулятор · настройка прогона</strong>
-        <span>Локальный SIMULATION · один тикер: {symbol.trim().toUpperCase() || "не выбран"}</span>
       </div>
       <div className="replay-run-layout">
         <fieldset className="replay-run-strategies">
@@ -359,11 +358,6 @@ export function RunSetupPanel({
           исполнений: {report.virtual_fills} · STOP: {report.stop_exits} · TAKE: {report.take_exits}</span>
         <small>Модель OHLC, не фактические биржевые исполнения. Параметры риска — локальные исследовательские допущения.</small>
       </section>}
-      <p className="replay-run-disclaimer">
-        Общий мультивыбор сохранён, но пока торгуются только клинья. Прогон строго локальный, по заранее
-        проверенным архивам Bybit без доступа к PAPER/VPS. После «Применить» нажмите ▶:
-        график воспроизводит закрытые M5 выбранного прогона.
-      </p>
     </section>
   );
 }
