@@ -604,7 +604,7 @@ const dealLabels: Record<ClosedEpisodeLocator["cohort"], string> = {
 
 function ClosedDealsView({ report }: { report: FinrezResponse }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const deals = report.closed_episodes ?? [];
+  const deals = useMemo(() => report.closed_episodes ?? [], [report.closed_episodes]);
   const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
@@ -641,7 +641,7 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
           const at = entry.occurred_at_ms;
           if (typeof entry.execution_price !== "string" ||
               !Number.isFinite(price) || price <= 0 ||
-              !Number.isSafeInteger(at) || typeof at !== "number" ||
+              typeof at !== "number" || !Number.isSafeInteger(at) ||
               at < deal.opened_at_ms || at > deal.closed_at_ms) return null;
           points.push({ price, at });
         }
