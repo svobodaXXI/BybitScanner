@@ -362,7 +362,7 @@ const finrezResponse = {
   ok: true,
   account_id: "paper",
   owner: "ROBOT" as const,
-  period: "TODAY" as const,
+  period: "DAY" as const,
   period_start_ms: 1_793_000_000_000,
   as_of_ms: 1_793_050_000_000,
   source_revision: 3,
