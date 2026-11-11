@@ -269,8 +269,10 @@ def record_owner_chart_proposal(payload: dict, *, directory=None, now_ms: int | 
         "schema_version", "source_kind", "symbol", "timeframe", "pattern",
         "direction", "bars", "proposed_boundaries", "idempotency_key",
     }
-    if (not isinstance(payload, dict) or set(payload) - {"note"} != required
-            or payload.get("schema_version") != 2
+    legacy = isinstance(payload, dict) and payload.get("schema_version") == 1
+    if (not isinstance(payload, dict) or
+            set(payload) - {"note"} != (required - {"direction"} if legacy else required)
+            or payload.get("schema_version") not in (1, 2)
             or payload.get("source_kind") != "OWNER_CHART_UNVERIFIED"):
         raise OwnerSignalProposalError("invalid_owner_chart_fields")
     symbol, timeframe = payload["symbol"], payload["timeframe"]
@@ -282,7 +284,8 @@ def record_owner_chart_proposal(payload: dict, *, directory=None, now_ms: int | 
     period = TF_MS[timeframe]
     if payload["pattern"] not in OWNER_CHART_PATTERNS:
         raise OwnerSignalProposalError("unsupported_proposed_pattern")
-    if payload["direction"] not in ("LONG", "SHORT"):
+    if (legacy and payload["pattern"] == "Ikigai Box") or (
+            not legacy and payload["direction"] not in ("LONG", "SHORT")):
         raise OwnerSignalProposalError("invalid_owner_chart_direction")
     note = payload.get("note", "")
     token = payload["idempotency_key"]
@@ -377,10 +380,11 @@ def record_owner_chart_proposal(payload: dict, *, directory=None, now_ms: int | 
             raise OwnerSignalProposalError("invalid_owner_chart_geometry") from exc
 
     proposal = {
-        "schema_version": 2, "signal_id": snapshot["signal_id"],
+        "schema_version": 1 if legacy else 2, "signal_id": snapshot["signal_id"],
         "snapshot_revision": source_revision(snapshot),
         "bars_sha256": bars_digest(snapshot),
-        "pattern": payload["pattern"], "direction": payload["direction"],
+        "pattern": payload["pattern"],
+        **({} if legacy else {"direction": payload["direction"]}),
         "proposed_boundaries": [{
             "id": line["boundary_id"], "type": line["kind"],
             "anchors": line["anchors"],
