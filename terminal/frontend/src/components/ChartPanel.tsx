@@ -298,7 +298,7 @@ export function ChartPanel({
   const [proposalDirection, setProposalDirection] = useState<OwnerChartDirection>("LONG");
   const [proposalNote, setProposalNote] = useState("");
   const [proposalPending, setProposalPending] = useState(false);
-  const [, setProposalStatus] = useState("");
+  const [proposalStatus, setProposalStatus] = useState("");
   const [extensionPending, setExtensionPending] = useState(false);
   const [, setExtensionStatus] = useState("");
   const proposalToken = useRef<{ content: string; key: string } | null>(null);
@@ -1128,8 +1128,12 @@ export function ChartPanel({
                   placeholder="Комментарий (необязательно)" maxLength={1024}
                   value={proposalNote} onChange={(event) => { setProposalNote(event.target.value); setProposalStatus(""); }} />
                 <button type="button" disabled={proposalPending || (ownerChartMode ? !onSubmitOwnerChart : !onSubmitOwnerSignal)}
+                  title={proposalStatus || undefined}
                   onClick={() => void submitOwnerProposal()}>
-                  {proposalPending ? "Сохранение…" : ownerChartMode ? "Сохранить в «Мои сигналы»" : "Передать на оценку Robot"}
+                  {proposalPending ? "Сохранение…" :
+                    proposalStatus.startsWith("Не удалось передать:") ? "Ошибка сохранения — повторить" :
+                    proposalStatus.startsWith("Пример ") ? "Пример сохранён в «Мои сигналы»" :
+                    ownerChartMode ? "Сохранить в «Мои сигналы»" : "Передать на оценку Robot"}
                 </button>
               </>
             ) : (
