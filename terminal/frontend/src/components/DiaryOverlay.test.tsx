@@ -373,6 +373,7 @@ const finrezResponse = {
     { symbol: "BTCUSDT", pnl_usdt: "-2.5", trade_count: 1 },
   ],
   manual_interventions: [],
+  joint_management: [],
   attribution_coverage: {
     status: "COMPLETE" as const,
     excluded_unattributed_episode_count: 0,
@@ -465,6 +466,41 @@ describe("Finrez first-screen UI", () => {
     expect(coverage).toHaveTextContent("не полный результат за период");
     expect(screen.getByText(/Нет достоверно атрибутированных закрытых сделок/)).toBeInTheDocument();
     expect(screen.queryByText("Нет закрытых сделок этого типа за выбранный период")).not.toBeInTheDocument();
+  });
+
+  it("shows the same shared economic episode in both scopes without claiming either owned it", async () => {
+    const shared = [{ symbol: "BTCUSDT", pnl_usdt: "-11.4", trade_count: 1 }];
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
+      ...finrezResponse,
+      owner: url.includes("owner=MANUAL") ? "MANUAL" : "ROBOT",
+      tickers: [],
+      joint_management: shared,
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const current = render(<DiaryOverlay accountKey="paper:joint-robot" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const section = await screen.findByRole("region", { name: "Совместно управляемые сделки" });
+    expect(section).toHaveTextContent("-11.4 USDT");
+    expect(section).toHaveTextContent("не складывайте его дважды");
+    expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
+    current.rerender(<DiaryOverlay accountKey="paper:joint-manual" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/diary/ticker-finrez?account_id=paper&owner=MANUAL&period=TODAY",
+    ));
+    expect(await screen.findByRole("region", { name: "Совместно управляемые сделки" })).toHaveTextContent("-11.4 USDT");
+    expect(screen.getAllByText("-11.4 USDT")).toHaveLength(1);
+  });
+
+  it("rejects a missing or invalid shared-management contract", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse,
+      joint_management: [{ symbol: "BTCUSDT", pnl_usdt: "NaN", trade_count: 1 }],
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:joint-invalid" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText("Не удалось загрузить статистику выбранного счёта")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Совместно управляемые сделки" })).not.toBeInTheDocument();
   });
 
   it("rejects missing or contradictory coverage instead of showing an apparently complete report", async () => {
