@@ -41,6 +41,8 @@ describe("local one-symbol strategy setup (no trading)", () => {
     expect(onlyWedges()).toEqual({
       mirror: false, selected: ["WEDGE_RISING", "WEDGE_FALLING"],
     });
+    expect(onlyBox()).toEqual({ mirror: false, selected: ["IKIGAI_BOX"] });
+    expect(runnableWedgeSelection(onlyBox())).toBe(true);
   });
   it("applies inclusive last minute for day, week, 30 and 90 days", () => {
     const start = "2026-10-01T12:34";
