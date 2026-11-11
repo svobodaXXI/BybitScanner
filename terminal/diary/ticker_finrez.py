@@ -56,6 +56,32 @@ def aggregate_ticker_pnl(
 
 
 
+def index_closed_episodes(
+    episodes: Iterable[tuple[TradeEpisode, str]],
+) -> list[dict[str, object]]:
+    """Proven closed episode locators only; NOT faithful Robot execution replay.
+
+    A full local replay requires independently verified original market history,
+    order/fill prices, Robot decisions and strategy version. None are inferred.
+    """
+    rows: list[dict[str, object]] = []
+    for episode, cohort in episodes:
+        if episode.closed_at_ms is None:
+            raise ValueError("open_episode_not_replayable")
+        rows.append({
+            "trade_episode_id": episode.trade_episode_id.value,
+            "symbol": episode.position_key.symbol.value,
+            "side": episode.side.value,
+            "opened_at_ms": episode.opened_at_ms,
+            "closed_at_ms": episode.closed_at_ms,
+            "pnl_usdt": str(episode.realized_price_pnl - episode.execution_fees),
+            "execution_count": len(episode.allocations),
+            "cohort": cohort,
+            "replay_evidence": "EPISODE_INDEX_ONLY",
+        })
+    return sorted(rows, key=lambda row: (-row["closed_at_ms"], row["trade_episode_id"]))
+
+
 def _classified_finrez_episodes(
     snapshot: PaperSourceSnapshot, *, account_id: str, period: str, now_ms: int,
 ) -> tuple[
@@ -175,7 +201,15 @@ def project_paper_ticker_pnl(
     _, joint_management = aggregate_ticker_pnl(
         joint, period=period, now_ms=now_ms,
     )
+    selected = robot if owner == "ROBOT" else manual
+    eligible: list[tuple[TradeEpisode, str]] = [
+        (episode, owner) for episode in selected
+    ]
+    if owner == "ROBOT":
+        eligible.extend((episode, "ROBOT_MANUAL_CLOSE") for episode in assisted)
+    eligible.extend((episode, "JOINT_MANAGEMENT") for episode in joint)
     return {
+        "closed_episodes": index_closed_episodes(eligible),
         "account_id": account_id,
         "owner": owner,
         "period": period,
