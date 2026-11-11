@@ -616,6 +616,7 @@ def deploy_staged_editor_only(
     frontend_bundle: Path | None = None,
     frontend_expected_index_sha256: str | None = None,
     frontend_publisher=None,
+    confirmed_stop_only: bool = False,
 ) -> str:
     """Single bounded intent: preflight -> canonical STOP -> Gitless switch -> Editor.
 
@@ -639,6 +640,8 @@ def deploy_staged_editor_only(
         return "BLOCKED: invalid_approved_target"
     if dual_orphan_handoff and proven_one_flat_orphan_handoff:
         return "BLOCKED: competing_exceptional_handoff_options"
+    if confirmed_stop_only and (stop is not None or dual_orphan_handoff or proven_one_flat_orphan_handoff):
+        return "BLOCKED: confirmed_stop_only_conflicting_STOP_or_handoff"
     if (not root.is_dir() or root.is_symlink() or (root / ".git").exists()
             or not stage.is_dir() or stage.is_symlink()):
         return "BLOCKED: incorrect_Gitless_release_layout"
@@ -721,6 +724,13 @@ def deploy_staged_editor_only(
             if not journal.is_dir() or journal.is_symlink():
                 return "BLOCKED: installed_release_unproven_without_transaction"
             current = None
+        if confirmed_stop_only:
+            # Owner authorized continuation of a durable, exact prior STOP, not a
+            # second STOP or a new attempt. Refuse any different transaction shape.
+            if not isinstance(current, str) or current == target or journal.exists():
+                return "BLOCKED: confirmed_stop_only_release_or_journal_mismatch; no STOP"
+            if not _confirmed_stop_receipt(journal_root, target, current, uid=trusted_uid):
+                return "BLOCKED: confirmed_stop_only_receipt_missing; no STOP"
         if current != target and isinstance(current, str):
             # A previously installed and RUNNING release can be ready even if
             # the final editor-ready receipt was lost after its canonical STOP.
@@ -840,6 +850,8 @@ def deploy_staged_editor_only(
                     runtime_stopped=True,
                 )
             else:
+                if confirmed_stop_only:
+                    return "BLOCKED: confirmed_stop_only_pending_intent_missing; no STOP"
                 (preflight or inspect_staged_release)(
                     target, stage=stage, root=root, manifest=manifest_path,
                     unit_dir=installed_units, uid=trusted_uid,
@@ -2016,6 +2028,8 @@ def main(argv=None) -> int:
                         help="single EDITOR_ONLY update: prepare exact stable Gitless stage and run canonical monolith")
     parser.add_argument("--staged-gitless-editor-only", type=Path,
                         help="owner-approved exact staged checkout; safe-stop and install once")
+    parser.add_argument("--continue-confirmed-stop-only", action="store_true",
+                        help="continue exact prior confirmed STOP; never invoke STOP again")
     parser.add_argument("--start-paper-after-editor", action="store_true",
                         help="after safe Gitless Editor recovery, start owner PAPER oneshot")
     parser.add_argument("--publish-frontend-only", action="store_true",
@@ -2040,7 +2054,8 @@ def main(argv=None) -> int:
                 or args.dual_orphan_handoff_20261103
                 or args.proven_one_flat_orphan_handoff
                 or args.resume_one_flat_from_prior_stop
-                or args.expected_old_backend or args.wait_seconds):
+                or args.expected_old_backend or args.wait_seconds
+                or args.continue_confirmed_stop_only):
             parser.error("automatic Editor update cannot combine with other operations")
         try:
             stage = _prepare_approved_editor_stage(args.sha)
@@ -2065,6 +2080,13 @@ def main(argv=None) -> int:
                           if bundle is not None else [])
         return main([args.sha, "--env-file", str(args.env_file),
                      *mode, *frontend_flags])
+    if args.continue_confirmed_stop_only and (
+        not args.staged_gitless_editor_only or args.resume_installed_editor_only
+        or args.start_paper_after_editor or args.publish_frontend_only
+        or args.dual_orphan_handoff_20261103 or args.proven_one_flat_orphan_handoff
+        or args.resume_one_flat_from_prior_stop or args.expected_old_backend
+    ):
+        parser.error("confirmed STOP continuation requires only exact Gitless staging")
     if args.staged_gitless_editor_only and REPO.is_dir():
         # Fail before preflight/STOP if Python imported tools from the target
         # staging checkout instead of the installed Gitless release.
@@ -2203,6 +2225,7 @@ def main(argv=None) -> int:
             proven_one_flat_orphan_handoff=args.proven_one_flat_orphan_handoff,
             frontend_bundle=args.frontend_bundle,
             frontend_expected_index_sha256=args.frontend_current_index_sha256,
+            confirmed_stop_only=args.continue_confirmed_stop_only,
         )
     elif args.resume_installed_editor_only:
         status = resume_installed_release(args.sha, root=REPO, env_file=args.env_file)
