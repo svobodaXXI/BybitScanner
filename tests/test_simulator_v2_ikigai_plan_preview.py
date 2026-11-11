@@ -1,6 +1,7 @@
 """Native Box P1–P4 preview, separately scoped M1/M5, no orders."""
 import unittest
 from dataclasses import replace
+from unittest.mock import patch
 from decimal import Decimal as D
 
 from geometry.ikigai_box import IkigaiBoxFormation
@@ -50,6 +51,17 @@ class NativeBoxPreviewTests(unittest.TestCase):
                 self.assertEqual(preview.plan.stop_price, D("89.6"))
                 self.assertFalse(preview.plan.execution_authorized)
                 self.assertTrue(preview.risk.allowed)
+
+    def test_missing_original_robot_box_planner_never_falls_back(self):
+        with patch(
+            "research.simulator_v2.ikigai_plan_preview.plan_approved_first_ikigai_box",
+            side_effect=RuntimeError("original Box planner unavailable"),
+        ) as original:
+            for tf in ("1m", "5m"):
+                with self.subTest(timeframe=tf):
+                    with self.assertRaisesRegex(RuntimeError, "original Box planner unavailable"):
+                        preview_box_plan(signal(tf), terms=terms())
+        self.assertEqual(original.call_count, 2)
 
     def test_risk_and_signal_provenance_fail_closed(self):
         for invalid in (

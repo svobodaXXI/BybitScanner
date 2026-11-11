@@ -73,7 +73,12 @@ class _ActiveWedge:
 
 
 class ReadOnlyWedgeRobot:
-    """Read the Scanner's tentative closed M5 and advance an original Robot FSM.
+    """Read the Scanner's tentative closed M5 and advance the ORIGINAL Robot FSM.
+
+    This is a read-only native-policy replay adapter, NOT a replacement for
+    the production Robot coordinator, its durable admission, order ownership,
+    partial-fill lifecycle, or PAPER protection. Virtual matching belongs to
+    the SIMULATION exchange adapter; no alternative trading policy is allowed.
 
     The local selected-strategy auto-approval is explicitly SIMULATION-only;
     it does NOT call durable admission, bypass production gates, or claim that

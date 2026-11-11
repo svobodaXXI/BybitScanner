@@ -107,6 +107,27 @@ class PureWedgeRobotTests(unittest.TestCase):
                     for event in session.events
                 ))
 
+    def test_missing_original_robot_fsm_blocks_wedge_without_shadow_fallback(self):
+        session = make_session(run="native_fsm_required")
+        for i in range(249):
+            session.step(bar(i))
+        last_close = session.virtual_time_ms
+        with patch.object(
+            session.wedge_scanner, "_evaluate",
+            side_effect=lambda *, frame, bars: fake_wedge(frame),
+        ), patch(
+            "research.simulator_v2.wedge_robot_observer.initialize_state",
+            side_effect=RuntimeError("original Robot unavailable"),
+        ) as original:
+            with self.assertRaisesRegex(RuntimeError, "original Robot unavailable"):
+                session.step(bar(249))
+        self.assertEqual(original.call_count, 1)
+        self.assertEqual(session.virtual_time_ms, last_close)
+        self.assertEqual(session.wedge_scanner.observations, ())
+        self.assertEqual(session.wedge_robot.decisions, ())
+        self.assertEqual(session.exchange.events, ())
+        self.assertEqual(session.account.fills, ())
+
     def test_selected_pattern_and_scanner_filter_are_strict(self):
         for pattern, approved in (("Rising Wedge", True), ("Falling Wedge", False)):
             with self.subTest(pattern=pattern, approved=approved):
