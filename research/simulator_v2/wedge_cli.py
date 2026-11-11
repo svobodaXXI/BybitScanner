@@ -12,7 +12,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from research.simulator_v2.trade_range import TradeDayProof, _ordered_proofs
 from research.simulator_v2.wedge_backtest import (
@@ -127,6 +127,7 @@ def run_from_time_machine_config(
     *, config: Mapping[str, Any], manifest: Mapping[str, Any],
     cache_dir: Path, latest_closed_boundary_ms: int,
     capture_replay: bool = False,
+    on_replay_events: Callable[[list[dict[str, object]]], None] | None = None,
 ) -> WedgeBacktestResult:
     """Only currently implemented wedges; unknown strategies fail closed."""
     if not isinstance(config, Mapping) or (
@@ -183,6 +184,7 @@ def run_from_time_machine_config(
         ),
         risk_settings=settings,
         capture_replay=capture_replay,
+        on_replay_events=on_replay_events,
     )
 
 

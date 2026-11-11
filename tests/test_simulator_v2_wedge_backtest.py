@@ -76,9 +76,11 @@ class OfflineWedgeBacktestTests(unittest.TestCase):
                     bar(253, closing="100", low=lo, high=hi),
                     bar(254),
                 ]
+                emitted = []
                 visual = WedgeVisualReplay(
                     run_id=session.account.simulation_run_id, symbol="BTCUSDT",
                     start_ms=250*M, end_ms=255*M,
+                    on_events=lambda events: emitted.extend(events),
                 )
                 with patch.object(
                     session.wedge_scanner, "_evaluate",
@@ -94,6 +96,8 @@ class OfflineWedgeBacktestTests(unittest.TestCase):
                     source_id=result.report.source_id,
                     expected_fills=result.report.virtual_fills,
                 )
+                self.assertEqual(emitted, visual_doc["events"],
+                                 "streaming events must equal final journal without lookahead")
                 self.assertEqual(visual_doc["mode"], "STRATEGY")
                 self.assertEqual(visual_doc["symbol"], "BTCUSDT")
                 self.assertEqual([e["kind"] for e in visual_doc["events"]].count(

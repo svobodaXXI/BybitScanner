@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
-  type ReplayDocument,
+  type ReplayDocument, type ReplayEvent,
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
 import { rayEndPoint } from "../chart/drawingGeometry";
@@ -578,6 +578,17 @@ export function ReplayPage() {
     setRunLoading(false);
   }, []);
 
+  const onSimulationAppend = useCallback((runId: string, events: ReplayEvent[]) => {
+    setDocument(previous => previous.simulation_run_id === runId
+      ? { ...previous, events: [...previous.events, ...events] }
+      : previous);
+  }, []);
+  const onSimulationFailed = useCallback(() => {
+    setPlaying(false);
+    setSimulationGraphPending(true);
+    setPreparedRun(true);
+    setCursor(0);
+  }, []);
   const onSimulationReady = useCallback((replay: ReplayDocument) => {
     if (replay.mode !== "STRATEGY" || replay.demo || !replay.symbol) {
       throw new Error("Новый прогон не содержит проверенной истории");
@@ -650,8 +661,9 @@ export function ReplayPage() {
   }, [playing, rate, document.events]);
 
   useEffect(() => {
-    if (cursor >= total) setPlaying(false);
-  }, [cursor, total]);
+    // Do not stop when playback reaches the still-growing verified frontier.
+    if (cursor >= total && !runLoading) setPlaying(false);
+  }, [cursor, total, runLoading]);
 
   async function loadFile(file?: File) {
     if (!file) return;
@@ -742,8 +754,9 @@ export function ReplayPage() {
 
       <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol}
         onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
-        onSimulationReady={onSimulationReady} onSimulationBusy={setRunLoading}
-        playRequestId={playRequestId} showReport={!simulationGraphPending && cursor >= total}
+        onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
+        onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
+        playRequestId={playRequestId} showReport={!simulationGraphPending && !runLoading && cursor >= total}
         onPublicHistoryRequest={(ticker, from, to) => void loadLocalHistory(ticker, from, to)}
         publicHistoryLoading={historyLoading} />
       <section className="replay-controls" aria-label="Управление воспроизведением">
@@ -881,7 +894,7 @@ export function ReplayPage() {
             <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
         <button type="button" className="replay-player-button"
           title={playing ? "Пауза" : "Пуск"} aria-label={playing ? "Пауза" : "Пуск"}
-          disabled={runLoading || (simulationGraphPending && !preparedRun)}
+          disabled={simulationGraphPending && (runLoading || !preparedRun)}
           onClick={() => {
             if (simulationGraphPending) { setPlayRequestId(id => id + 1); return; }
             if (cursor === total) setCursor(0);
@@ -941,7 +954,7 @@ export function ReplayPage() {
           </div>
           {simulationGraphPending
             ? <div className="replay-chart-pending" aria-label="Пустой график до запуска">
-                {runLoading ? `Ожидаю расчёт проверенных свечей: ${runWaitingSeconds} с. Длительный период может занять несколько минут.` :
+                {runLoading ? `Проверяю первые M1: ${runWaitingSeconds} с. Затем свечи появятся постепенно.` :
                   "График нового прогона появится после нажатия ▶"}
               </div>
             : <ReplayChart document={document} cursor={cursor} showDebug={showDebug} timeframe={timeframe}
@@ -952,6 +965,7 @@ export function ReplayPage() {
       </div>
       <footer className="replay-footer">
         {simulationGraphPending ? "Ожидаю ▶ Пуск / проверенную историю нового прогона." :
+          runLoading ? `${cursor} из ${total} подтверждённых событий · Scanner/Robot продолжают расчёт.` :
           `${cursor} из ${total} событий. Вход на следующем открытии не раскрывает будущую свечу.`}
         Только публичные GET-запросы к истории Bybit; без приватных API, торговли и записи в PAPER.
       </footer>

@@ -6,6 +6,8 @@ Incomplete 5m groups are not shown as completed M5 candles.
 """
 from __future__ import annotations
 
+from typing import Callable
+
 from research.historical_market_replay import Candle
 from research.simulator_v2.session import VirtualReplaySession
 
@@ -13,7 +15,10 @@ FIVE_MIN_MS = 300_000
 
 
 class WedgeVisualReplay:
-    def __init__(self, *, run_id: str, symbol: str, start_ms: int, end_ms: int):
+    def __init__(
+        self, *, run_id: str, symbol: str, start_ms: int, end_ms: int,
+        on_events: Callable[[list[dict[str, object]]], None] | None = None,
+    ):
         self.run_id = run_id
         self.symbol = symbol
         self.start_ms = start_ms
@@ -23,6 +28,30 @@ class WedgeVisualReplay:
         self._order_count = 0
         self._fills = 0
         self._m5 = 0
+        self._on_events = on_events
+        self._emitted = 0
+        self._event_order = {"CANDLE_CLOSED": 0, "ENTRY_SIGNAL": 1,
+                             "ENTRY_FILLED": 2, "EXIT_FILLED": 3}
+
+    def _publish(self) -> None:
+        """Only committed events, with the same ordering/IDs as final replay.
+
+        The first M5 is sent immediately. Subsequent batches contain at
+        most one hour of additional M5 bars to avoid excessive UI renders.
+        """
+        if self._on_events is None or self._emitted == len(self._items):
+            return
+        pending = sorted(
+            self._items[self._emitted:],
+            key=lambda x: (x["time_ms"], self._event_order[x["kind"]]),
+        )
+        frame = [
+            {"source": "SIMULATION", "simulation_run_id": self.run_id,
+             "sequence": self._emitted + i + 1, **item}
+            for i, item in enumerate(pending)
+        ]
+        self._on_events(frame)
+        self._emitted += len(frame)
 
     def record(self, session: VirtualReplaySession, minute: Candle) -> None:
         if not self.start_ms <= minute.start_ms < self.end_ms:
@@ -103,15 +132,16 @@ class WedgeVisualReplay:
                 })
                 self._m5 += 1
                 self._bar = []
+                if self._m5 == 1 or self._m5 % 12 == 0:
+                    self._publish()
 
     def document(self, *, source_id: str, expected_fills: int) -> dict[str, object]:
         if self._fills != expected_fills:
             raise ValueError("replay marker count disagrees with virtual account")
         if self._m5 < 1:
             raise ValueError("Период не содержит завершённых M5-свечей для графика")
-        order = {"CANDLE_CLOSED": 0, "ENTRY_SIGNAL": 1,
-                 "ENTRY_FILLED": 2, "EXIT_FILLED": 3}
-        items = sorted(self._items, key=lambda x: (x["time_ms"], order[x["kind"]]))
+        self._publish()  # Last partial hour can contain executed orders.
+        items = sorted(self._items, key=lambda x: (x["time_ms"], self._event_order[x["kind"]]))
         if len(items) > 100_000:
             raise ValueError("visual replay event count exceeds viewer limit")
         events = [

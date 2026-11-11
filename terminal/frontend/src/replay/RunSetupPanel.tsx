@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { parseReplayDocument, type ReplayDocument } from "./replayModel";
+import { type ReplayDocument, type ReplayEvent } from "./replayModel";
+import { streamWedge } from "./streamWedge";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, PLANNED_OPTIONS,
   clearAll, isAllSelected, onlyWedges, presetEndInclusive, adjustInclusiveWindow,
   parseRunCoordinates, formatRunDuration,
   selectAll, toggleMirror, toggleStrategy, validateInclusiveWindow,
-  makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
+  makeWedgeRunRequest, parseWedgeStatus, runnableWedgeSelection,
   type PeriodPreset, type PeriodIncrement, type RunSelection, type StrategyId,
   type LocalWedgeResult, type LocalWedgeStatus,
 } from "./runSetup";
@@ -22,7 +23,7 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
 /** Local-only Wedge execution via loopback: never production /api or PAPER. */
 export function RunSetupPanel({
   symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
-  onSimulationBusy, playRequestId, showReport,
+  onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
   onPublicHistoryRequest, publicHistoryLoading,
 }: {
   symbol: string;
@@ -33,6 +34,8 @@ export function RunSetupPanel({
   playRequestId: number;
   showReport: boolean;
   onSimulationReady: (replay: ReplayDocument) => void;
+  onSimulationAppend: (runId: string, events: ReplayEvent[]) => void;
+  onSimulationFailed: () => void;
   onPublicHistoryRequest: (symbol: string, start: string, endInclusive: string) => void;
   publicHistoryLoading: boolean;
 }) {
@@ -96,56 +99,38 @@ export function RunSetupPanel({
   }, [onArchiveSymbol]);
 
   const runWedges = useCallback(async (request: WedgeRunRequest, seq: number) => {
-    if (running.current) return;
+    if (running.current) return; // No duplicate Scanner/Robot computation.
     running.current = true;
     const controller = new AbortController();
     requestController.current = controller;
     setRunError(""); setReport(null); setLoading(true);
     onSimulationBusy(true);
     try {
-      // The loopback viewer accepts this exact path and a same-origin header.
-      // Never call /api; that path may target the PAPER backend.
-      const response = await fetch("/local-replay/simulation/wedge", {
-        method: "POST", cache: "no-store", signal: controller.signal,
-        headers: { "Content-Type": "application/json", "X-Local-Simulation": "wedge" },
-        body: JSON.stringify(request),
-      });
-      const raw: unknown = await response.json();
-      if (seq !== generation.current || controller.signal.aborted) return;
-      if (!response.ok) {
-        const x = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
-        throw new Error(typeof x.error === "string" ? x.error : "Локальный прогон заблокирован");
-      }
-      const result = parseWedgeResult(raw);
-      const window = validateInclusiveWindow(request.start_utc, request.end_utc_inclusive);
-      if (result.symbol !== request.symbol || result.requested_minutes !== window.minutes) {
-        throw new Error("Отчёт не соответствует выбранному тикеру или периоду");
-      }
-      const payload = raw as Record<string, unknown>;
-      const replay = parseReplayDocument(payload.replay);
-      const candles = replay.events.filter(e => e.kind === "CANDLE_CLOSED");
-      if (replay.demo || replay.mode !== "STRATEGY" || replay.symbol !== request.symbol ||
-          replay.timeframe !== "5m" ||
-          replay.market_data_source !== "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M" ||
-          replay.simulation_run_id !== payload.simulation_run_id ||
-          !candles.length || replay.events.filter(e =>
-            e.kind === "ENTRY_FILLED" || e.kind === "EXIT_FILLED").length !== result.virtual_fills ||
-          candles[0].candle!.start_ms < window.startMs ||
-          candles.at(-1)!.candle!.end_ms > window.endExclusiveMs) {
-        throw new Error("Свечи и виртуальные сделки не совпадают с выбранным прогоном");
-      }
-      onSimulationReady(replay);
-      setReport(result);
-    } catch (error) {
+      const result = await streamWedge(
+        request, controller.signal,
+        replay => {
+          if (seq === generation.current && !controller.signal.aborted)
+            onSimulationReady(replay); // Show first verified M5 without waiting for the end.
+        },
+        (runId, events) => {
+          if (seq === generation.current && !controller.signal.aborted)
+            onSimulationAppend(runId, events);
+        },
+      );
       if (seq === generation.current && !controller.signal.aborted)
-        setRunError(error instanceof Error ? error.message : "Симуляция недоступна");
+        setReport(result);
+    } catch (error) {
+      if (seq === generation.current && !controller.signal.aborted) {
+        onSimulationFailed();
+        setRunError(error instanceof Error ? error.message : "Поток SIMULATION недоступен");
+      }
     } finally {
       if (requestController.current === controller) {
         requestController.current = null; running.current = false;
         setLoading(false); onSimulationBusy(false);
       }
     }
-  }, [onSimulationReady, onSimulationBusy]);
+  }, [onSimulationReady, onSimulationAppend, onSimulationFailed, onSimulationBusy]);
 
   useEffect(() => {
     if (playRequestId > 0 && preparedRun.current)

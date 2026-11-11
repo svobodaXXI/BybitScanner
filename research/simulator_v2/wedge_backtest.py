@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from research.historical_market_replay import Candle
 from research.simulator_v2.cache import _checksum, _rows
@@ -199,6 +199,7 @@ def run_cached_wedge_trade_range(
     taker_fee_rate: Decimal = Decimal("0.0006"),
     maker_fee_rate: Decimal = Decimal("0.0002"),
     capture_replay: bool = False,
+    on_replay_events: Callable[[list[dict[str, object]]], None] | None = None,
 ) -> WedgeBacktestResult:
     """Offline Bybit public-trade M1 with an exact inclusive minute cutoff.
 
@@ -261,6 +262,7 @@ def run_cached_wedge_trade_range(
     recorder = WedgeVisualReplay(
         run_id=simulation_run_id, symbol=symbol,
         start_ms=start_ms, end_ms=end_exclusive,
+        on_events=on_replay_events,
     ) if capture_replay else None
     result = run_verified_wedge_chunks(
         session, cut_to_selected_end(),

@@ -108,7 +108,10 @@ def local_simulation_status() -> dict[str, object]:
     return result
 
 
-def run_local_simulation(request_data: object) -> dict[str, object]:
+def run_local_simulation(
+    request_data: object, *,
+    on_stream: Callable[[str, dict[str, object]], None] | None = None,
+) -> dict[str, object]:
     """Only original Wedge / SIMULATION on known local public M1 cache.
 
     Does not download anything, import production Scanner/Robot runtimes,
@@ -166,11 +169,22 @@ def run_local_simulation(request_data: object) -> dict[str, object]:
         **request_data,
         "scanner": profile["scanner"], "risk": profile["risk"],
     }
+    if on_stream is not None:
+        on_stream("start", {
+            "simulation_run_id": configuration["simulation_run_id"],
+            "symbol": configuration["symbol"],
+            "start_utc": configuration["start_utc"],
+            "end_utc_inclusive": configuration["end_utc_inclusive"],
+        })
     result = run_from_time_machine_config(
         config=configuration, manifest=manifest,
         cache_dir=SIM_DATA / "m1-cache",
         latest_closed_boundary_ms=latest,
         capture_replay=True,
+        on_replay_events=(
+            (lambda events: on_stream("events", {"events": events}))
+            if on_stream is not None else None
+        ),
     )
     payload = result.to_payload()
     payload["risk_terms_source"] = profile["risk"]["terms_source"]
@@ -357,9 +371,14 @@ def handler_factory(static_dir: Path = STATIC_DIR,
             if not self._trusted_host():
                 self._error(403, "Local Wedge SIMULATION only")
                 return
-            if urlsplit(self.path).path != "/local-replay/simulation/wedge":
+            path = urlsplit(self.path).path
+            if path not in (
+                "/local-replay/simulation/wedge",
+                "/local-replay/simulation/wedge-stream",
+            ):
                 self._error(405, "Only local SIMULATION Wedge POST is supported")
                 return
+            streaming = path.endswith("/wedge-stream")
             address = f"http://127.0.0.1:{self.server.server_address[1]}"
             local = f"http://localhost:{self.server.server_address[1]}"
             if (self.headers.get("Origin") not in (address, local)
@@ -381,13 +400,46 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 return
             try:
                 data = json.loads(self.rfile.read(length))
-                result = run_local_simulation(data)
-                body = json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")
-                self._send(200, body, "application/json; charset=utf-8")
+                if streaming:
+                    # Streaming is a *single* original Wedge session, not
+                    # per-day backtests or independent trading decisions.
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("X-Accel-Buffering", "no")
+                    self.end_headers()
+
+                    def emit(kind: str, fields: dict[str, object]) -> None:
+                        frame = json.dumps(
+                            {"type": kind, **fields}, ensure_ascii=False, allow_nan=False,
+                            separators=(",", ":"),
+                        ).encode("utf-8") + b"\n"
+                        self.wfile.write(frame)
+                        self.wfile.flush()
+
+                    try:
+                        result = run_local_simulation(data, on_stream=emit)
+                        replay = result.pop("replay")
+                        emit("complete", {
+                            "report": result,
+                            "source_id": replay["source_id"],
+                            "event_count": len(replay["events"]),
+                        })
+                    except (ValueError, TypeError, KeyError, FileNotFoundError, ImportError, OSError) as exc:
+                        emit("error", {"error": str(exc)[:250]})
+                    except Exception:
+                        emit("error", {"error": "SIMULATION aborted; no completed report"})
+                else:
+                    result = run_local_simulation(data)
+                    body = json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")
+                    self._send(200, body, "application/json; charset=utf-8")
             except (ValueError, TypeError, KeyError, FileNotFoundError, ImportError, OSError) as exc:
-                self._error(422, str(exc)[:250])
+                if not streaming:
+                    self._error(422, str(exc)[:250])
             except Exception:
-                self._error(500, "SIMULATION aborted; no completed report")
+                if not streaming:
+                    self._error(500, "SIMULATION aborted; no completed report")
             finally:
                 SIM_LOCK.release()
 

@@ -152,7 +152,7 @@ try {
   // checksum and original Robot integration are independently Python-tested.
   simEnabled = true;
   const posted = [];
-  await page.route("**/local-replay/simulation/wedge", async route => {
+  await page.route("**/local-replay/simulation/wedge-stream", async route => {
     const data = route.request();
     posted.push({
       url: data.url(), method: data.method(),
@@ -161,9 +161,7 @@ try {
     });
     // Allow browser to assert the old DEMO is removed while computing.
     await new Promise(resolve => setTimeout(resolve, 300));
-    await route.fulfill({
-      status: 200, contentType: "application/json",
-      body: JSON.stringify({
+    const fixture = {
         namespace: "SIMULATION", symbol: "BTCUSDT",
         simulation_run_id: "browser_wedge_test",
         replay: {
@@ -202,7 +200,20 @@ try {
         virtual_fills: 2, stop_exits: 0, take_exits: 1,
         realized_net_pnl: "3.71", unrealized_pnl: "0", total_net_pnl: "3.71",
         total_fees: "0.29", return_percent: "0.371", max_drawdown_percent: "0.1",
-      }),
+    };
+    const { replay, ...report } = fixture;
+    const frames = [
+      { type: "start", simulation_run_id: fixture.simulation_run_id,
+        symbol: fixture.symbol, start_utc: "2026-10-01T12:34",
+        end_utc_inclusive: "2026-10-02T05:21" },
+      { type: "events", events: replay.events.slice(0, 1) },
+      { type: "events", events: replay.events.slice(1) },
+      { type: "complete", report, source_id: fixture.source_id,
+        event_count: replay.events.length },
+    ];
+    await route.fulfill({
+      status: 200, contentType: "application/x-ndjson; charset=utf-8",
+      body: frames.map(frame => JSON.stringify(frame)).join("\n") + "\n",
     });
   });
   await page.reload({ waitUntil: "networkidle" });
@@ -243,6 +254,7 @@ try {
   assert.equal(posted.length, 1);
   assert.equal(posted[0].method, "POST");
   assert.equal(posted[0].header, "wedge");
+  assert.match(posted[0].url, /\/local-replay\/simulation\/wedge-stream$/);
   assert.deepEqual(posted[0].body, {
     symbol: "BTCUSDT", start_utc: "2026-10-01T12:34",
     end_utc_inclusive: "2026-10-02T05:21",
