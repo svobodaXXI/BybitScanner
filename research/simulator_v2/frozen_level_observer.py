@@ -82,8 +82,7 @@ class NativeFrozenLevelScanner:
                 or (self._last_minute_close is not None
                     and frame.minute.start_ms != self._last_minute_close)):
             raise ValueError("native level Scanner requires next committed M1 of same run")
-        self._last_minute_close = frame.virtual_time_ms
-        observations: list[FrozenLevelObservation] = []
+        # Validate BOTH sources before changing the observer's minute cursor.
         sources = [("1", frame.minute)]
         if frame.newly_closed_5m is not None:
             bar = frame.newly_closed_5m
@@ -91,6 +90,12 @@ class NativeFrozenLevelScanner:
                     or bar.end_ms != frame.virtual_time_ms):
                 raise ValueError("only verified fully closed UTC M5 can enter native Scanner")
             sources.append(("5", bar))
+        for tf, bar in sources:
+            prior = self._history[tf]
+            if prior and prior[-1].end_ms != bar.start_ms:
+                raise ValueError("gap or overlap in native Scanner source timeframe")
+        self._last_minute_close = frame.virtual_time_ms
+        observations: list[FrozenLevelObservation] = []
         for tf, bar in sources:
             prior = self._history[tf]
             if prior and prior[-1].end_ms != bar.start_ms:
