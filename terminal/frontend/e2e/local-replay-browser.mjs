@@ -515,6 +515,27 @@ try {
     realized_price_pnl_usdt: "-0.9", known_execution_fees_usdt: "0.1",
     pnl_usdt: "-1.0", pnl_basis: "REALIZED_PRICE_MINUS_EXECUTION_FEES",
     replay_evidence: "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
+    setup_context: {
+      status: "EXACT_D2_LINK", source: "TRADING_DIARY_D2",
+      consistency: "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER",
+      geometry_status: "NOT_EXPORTED",
+      decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+      setup: {
+        setup_instance_id: "setup-1", setup_id: "candidate-42", symbol: "BTCUSDT",
+        direction: "LONG", timeframe: "5m", pattern: "Falling Wedge",
+        strategy_version: "v1", entry_mode: "breakout_retest",
+        origin: "ROBOT", created_at_ms: t + 300000, has_feature_snapshot_ref: true,
+      },
+      order_plan_id: "plan-1", linked_at_ms: t + 330000,
+      decisions: [
+        { decision_event_id: "strategy-1", kind: "STRATEGY", previous_state: null,
+          next_state: "APPROVED", reason_code: "STRATEGY_OK", controller: "ROBOT",
+          origin: "ROBOT", occurred_at_ms: t + 301000 },
+        { decision_event_id: "risk-1", kind: "RISK", previous_state: "APPROVED",
+          next_state: "APPROVED", reason_code: "RISK_OK", controller: "ROBOT",
+          origin: "ROBOT", occurred_at_ms: t + 302000 },
+      ],
+    },
     execution_allocations: [
       { execution_id: "exec-1", order_id: "order-1", order_side: "Buy",
         execution_price: "100.12345678", allocated_quantity: "2", allocated_fee: "0.05",
@@ -532,6 +553,12 @@ try {
   await factNote.waitFor();
   assert.match(await factNote.innerText(), /Кружки на закрытых свечах/);
   assert.match(await factNote.innerText(), /JSON без криптографической подписи/);
+  assert.match(await factNote.innerText(), /Falling Wedge · 5m · версия v1/);
+  assert.match(await factNote.innerText(), /геометрия не экспортирована/);
+  const d2Journal = page.getByRole("region", { name: "Наблюдения PAPER D2" });
+  assert.match(await d2Journal.innerText(), /STRATEGY_OK/);
+  assert.match(await d2Journal.innerText(), /RISK_OK/);
+  assert.match(await d2Journal.innerText(), /не полный журнал Robot/);
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0",
@@ -539,9 +566,12 @@ try {
   await page.getByRole("button", { name: "В начало" }).click();
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "0");
+  await page.waitForFunction(() => !document.querySelector('[aria-label="Наблюдения PAPER D2"]'));
+  assert.doesNotMatch(await factNote.innerText(), /Falling Wedge/);
   await page.getByRole("button", { name: "Пуск", exact: true }).click();
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
+  assert.match(await d2Journal.innerText(), /RISK_OK/);
   await page.getByRole("button", { name: "Пауза", exact: true }).click();
   await page.getByRole("button", { name: "Убрать факты PAPER" }).click();
   await page.waitForFunction(() =>
