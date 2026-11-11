@@ -652,13 +652,18 @@ export function ReplayPage() {
     };
   }, []);
 
+  // Keep the requested candle cadence independent of network packet arrivals.
+  // A batch may contain many verified bars, but each timer tick reveals ONE M5.
+  // A stalled Scanner frontier costs no playback time: never catch up in a burst.
+  const availableEvents = useRef(document.events);
+  availableEvents.current = document.events;
   useEffect(() => {
     if (!playing) return;
     const timer = window.setInterval(() => {
-      setCursor((current) => nextClosedCandleCursor(document.events, current));
-    }, Math.max(16, Math.floor(1000 / rate)));
+      setCursor(current => nextClosedCandleCursor(availableEvents.current, current));
+    }, Math.max(16, 1000 / rate));
     return () => window.clearInterval(timer);
-  }, [playing, rate, document.events]);
+  }, [playing, rate]);
 
   useEffect(() => {
     // Do not stop when playback reaches the still-growing verified frontier.
