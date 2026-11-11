@@ -420,5 +420,118 @@ class ClosedEpisodeFactsTests(unittest.TestCase):
 
 
 
+
+class EpisodeD2ContextReadOnlyTests(unittest.TestCase):
+    def _linked_store(self, path):
+        from terminal.diary.decision_models import (
+            SetupInstanceId, SetupInstanceRecord, DecisionEventId, DecisionEventKind,
+            DecisionEventRecord, OrderPlanId, OrderPlanRecord, TradeEpisodeSetupLink,
+        )
+        from terminal.diary.decision_store import DiaryDecisionStore
+        from terminal.domain.models import Controller
+
+        instance = SetupInstanceId("setup-robot")
+        setup = SetupInstanceRecord(
+            setup_instance_id=instance, symbol=Symbol("BTCUSDT"),
+            timeframe="5m", pattern="Falling Wedge", direction=PositionSide.LONG,
+            strategy_version="v1", setup_id="candidate-42", hypothesis_id=None,
+            entry_mode="breakout_retest", origin=Origin.ROBOT, created_at_ms=100,
+        )
+        with DiaryDecisionStore.open(path) as store:
+            store.create_setup_instance(setup)
+            for key, kind, stamp in [
+                ("strategy-1", DecisionEventKind.STRATEGY, 110),
+                ("risk-1", DecisionEventKind.RISK, 120),
+            ]:
+                store.append_decision_event(DecisionEventRecord(
+                    decision_event_id=DecisionEventId(key), setup_instance_id=instance,
+                    kind=kind, previous_state="PENDING", next_state="APPROVED",
+                    reason_code=key.upper().replace("-", "_") + "_OK",
+                    origin=Origin.ROBOT, controller=Controller.ROBOT,
+                    strategy_version="v1", hypothesis_id=None, setup_id="candidate-42",
+                    entry_mode="breakout_retest", feature_snapshot_ref="feature-ref",
+                    risk_snapshot_ref="risk-ref" if kind is DecisionEventKind.RISK else None,
+                    order_plan_id=None, occurred_at_ms=stamp,
+                ))
+            store.create_order_plan(OrderPlanRecord(
+                order_plan_id=OrderPlanId("plan-1"), setup_instance_id=instance,
+                strategy_decision_event_id=DecisionEventId("strategy-1"),
+                risk_decision_event_id=DecisionEventId("risk-1"),
+                trading_account_id=TradingAccountId("paper"),
+                symbol=Symbol("BTCUSDT"), side=PositionSide.LONG, created_at_ms=130,
+            ))
+            store.link_trade_episode(TradeEpisodeSetupLink(
+                trade_episode_id=TradeEpisodeId("te_" + "a"*24),
+                setup_instance_id=instance, order_plan_id=OrderPlanId("plan-1"),
+                linked_at_ms=140,
+            ))
+
+    def test_missing_d2_store_does_not_initialize_database_or_guess_signal(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from terminal.diary.episode_context import project_episode_d2_context_read_only as read
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "not-created.sqlite3"
+            result = read(path, trade_episode_id="te_" + "a"*24, account_id="paper",
+                          symbol="BTCUSDT", side="LONG", opening_controller="ROBOT")
+            self.assertEqual(result["status"], "D2_STORE_ABSENT")
+            self.assertEqual(result["geometry_status"], "NOT_EXPORTED")
+            self.assertFalse(path.exists())
+
+    def test_exact_link_exposes_only_observed_d2_setup_decisions_without_writes(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from terminal.diary.episode_context import project_episode_d2_context_read_only as read
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "diary.sqlite3"
+            self._linked_store(path)
+            before_bytes = path.read_bytes()
+            before_mtime = path.stat().st_mtime_ns
+            args = dict(account_id="paper", symbol="BTCUSDT", side="LONG",
+                        opening_controller="ROBOT")
+            result = read(path, trade_episode_id="te_" + "a"*24, **args)
+            self.assertEqual(result["status"], "EXACT_D2_LINK")
+            self.assertEqual(result["setup"]["setup_id"], "candidate-42")
+            self.assertEqual(result["setup"]["pattern"], "Falling Wedge")
+            self.assertEqual(result["setup"]["timeframe"], "5m")
+            self.assertEqual(result["setup"]["strategy_version"], "v1")
+            self.assertTrue(result["setup"]["has_feature_snapshot_ref"])
+            self.assertEqual(result["geometry_status"], "NOT_EXPORTED")
+            self.assertEqual([e["kind"] for e in result["decisions"]], ["STRATEGY", "RISK"])
+            self.assertEqual([e["reason_code"] for e in result["decisions"]],
+                             ["STRATEGY_1_OK", "RISK_1_OK"])
+            self.assertEqual(result["decision_scope"], "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG")
+            self.assertNotIn("geometry", result)
+            self.assertNotIn("robot_runtime_events", result)
+            self.assertEqual(path.read_bytes(), before_bytes)
+            self.assertEqual(path.stat().st_mtime_ns, before_mtime)
+
+            absent = read(path, trade_episode_id="te_" + "b"*24, **args)
+            self.assertEqual(absent["status"], "NO_EXACT_EPISODE_LINK")
+            for patch in [
+                {"symbol": "ETHUSDT"}, {"side": "SHORT"},
+                {"opening_controller": "MANUAL"},
+            ]:
+                mismatch = read(path, trade_episode_id="te_" + "a"*24, **{**args, **patch})
+                self.assertEqual(mismatch["status"], "CONFLICTING_D2_LINK")
+                self.assertNotIn("setup", mismatch)
+                self.assertNotIn("decisions", mismatch)
+            with self.assertRaises(ValueError):
+                read(path, trade_episode_id="te_" + "a"*24, **{**args, "account_id": "main"})
+
+    def test_invalid_d2_is_unavailable_without_changing_execution_facts(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from terminal.diary.episode_context import project_episode_d2_context_read_only as read
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken.sqlite3"
+            path.write_bytes(b"not sqlite3")
+            result = read(path, trade_episode_id="te_" + "a"*24, account_id="paper",
+                          symbol="BTCUSDT", side="LONG", opening_controller="ROBOT")
+            self.assertEqual(result["status"], "EVIDENCE_UNAVAILABLE")
+            self.assertEqual(path.read_bytes(), b"not sqlite3")
+
+
+
 if __name__ == "__main__":
     unittest.main()
