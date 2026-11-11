@@ -147,6 +147,31 @@ export type ReplayDmi = {
   adx_smoothing: number;
   points: ReplayDmiPoint[];
 };
+/** Local research observations from ORIGINAL native detectors on closed public M5.
+ * Not executable Scanner approvals, Robot decisions, orders or fills.
+ */
+export type PublicScannerObservation = {
+  strategy: "WEDGE_RISING" | "WEDGE_FALLING" | "IKIGAI_BOX";
+  timeframe: "5m";
+  pattern: "Falling Wedge" | "Rising Wedge" | "Ikigai Box";
+  signal_id: string;
+  available_at_ms: number;
+  source_candle_start_ms: number;
+  close_price: number;
+  status: "FILTER_APPROVED" | "FILTER_REJECTED" | "CONFIRMED_STRUCTURE_ONLY";
+  reason: string;
+  score?: number;
+  side?: "LONG" | "SHORT";
+  box_start_ms?: number;
+  box_end_ms?: number;
+  box_low?: number;
+  box_high?: number;
+};
+export type PublicScannerResearch = {
+  scope: "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION";
+  detectors: PublicScannerObservation["strategy"][];
+  configuration: "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX";
+};
 export type ReplayDocument = {
   source: "SIMULATION";
   simulation_run_id: string;
@@ -169,6 +194,8 @@ export type ReplayDocument = {
   /** Closed H1 evidence before the visible replay; never counted as playhead candles. */
   context_1h?: ReplayCandle[];
   dmi_5m?: ReplayDmi;
+  scanner_research?: PublicScannerResearch;
+  scanner_observations?: PublicScannerObservation[];
 };
 /** Counterfactual first-touch observations; NEVER simulated fills or trade results. */
 export type H017FirstTouch = "TARGET_FIRST" | "STOP_FIRST" | "BOTH_SAME_M5" | "UNRESOLVED";
@@ -844,6 +871,79 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     });
     dmi_5m = { source: "SIMULATION", timeframe: "5m", di_length, adx_smoothing, points: verifiedPoints };
   }
+  let scanner_research: PublicScannerResearch | undefined;
+  let scanner_observations: PublicScannerObservation[] | undefined;
+  if (object.scanner_research !== undefined || object.scanner_observations !== undefined) {
+    if (mode !== "MARKET_ONLY" || object.demo === true ||
+        object.market_data_source !== "BYBIT_PUBLIC_KLINE" ||
+        !Array.isArray(object.scanner_observations) ||
+        object.scanner_observations.length > 512 || events.length > 288)
+      throw new Error("Неверный источник исследовательского Scanner");
+    const settings = record(object.scanner_research);
+    const choices = settings.detectors;
+    const supported = ["WEDGE_RISING", "WEDGE_FALLING", "IKIGAI_BOX"];
+    if (settings.scope !== "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION" ||
+        settings.configuration !== "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX" ||
+        !Array.isArray(choices) || choices.length === 0 || choices.length > 3 ||
+        new Set(choices).size !== choices.length ||
+        choices.some(choice => !supported.includes(choice as string)))
+      throw new Error("Неподтверждённый выбор локального детектора");
+    const detectors = choices as PublicScannerObservation["strategy"][];
+    const sourceBars = new Map(events.filter(e => e.kind === "CANDLE_CLOSED")
+      .map(e => [e.candle!.start_ms, e.candle!] as const));
+    const observed = new Set<string>();
+    let lastAvailable = -1;
+    scanner_observations = object.scanner_observations.map(raw => {
+      const o = record(raw);
+      const strategy = o.strategy as PublicScannerObservation["strategy"];
+      const at = positiveInteger(o.available_at_ms, "scanner.available_at_ms");
+      const sourceStart = positiveInteger(o.source_candle_start_ms, "scanner.source_candle");
+      const bar = sourceBars.get(sourceStart);
+      const price = safeNumber(o.close_price, "scanner.close_price");
+      if (!detectors.includes(strategy) || o.timeframe !== "5m" ||
+          !bar || bar.end_ms !== at || at < lastAvailable ||
+          price !== bar.close || price <= 0 ||
+          typeof o.signal_id !== "string" || o.signal_id.length > 150 ||
+          typeof o.reason !== "string" || o.reason.length > 240)
+        throw new Error("Scanner observation не соответствует закрытой M5");
+      lastAvailable = at;
+      const key = strategy + ":" + o.signal_id;
+      if (observed.has(key)) throw new Error("Дубликат Scanner observation");
+      observed.add(key);
+      if (strategy === "IKIGAI_BOX") {
+        const begin = positiveInteger(o.box_start_ms, "box.start_ms");
+        const end = positiveInteger(o.box_end_ms, "box.end_ms");
+        const low = safeNumber(o.box_low, "box.low");
+        const high = safeNumber(o.box_high, "box.high");
+        if (o.pattern !== "Ikigai Box" || o.status !== "CONFIRMED_STRUCTURE_ONLY" ||
+            !/^5m:(LONG|SHORT):[0-9]+:[0-9]+$/.test(o.signal_id) ||
+            (o.side !== "LONG" && o.side !== "SHORT") ||
+            !sourceBars.has(begin) || !sourceBars.has(end) || begin > end ||
+            end >= at || low <= 0 || high < low || o.score !== undefined)
+          throw new Error("Неверная подтверждённая Box-геометрия");
+        return { strategy, timeframe: "5m" as const, pattern: "Ikigai Box" as const,
+          signal_id: o.signal_id, available_at_ms: at, source_candle_start_ms: sourceStart,
+          close_price: price, status: "CONFIRMED_STRUCTURE_ONLY" as const,
+          reason: o.reason, side: o.side, box_start_ms: begin, box_end_ms: end,
+          box_low: low, box_high: high };
+      }
+      const expectedPattern = strategy === "WEDGE_FALLING" ? "Falling Wedge" : "Rising Wedge";
+      const score = safeNumber(o.score, "wedge.score");
+      if (o.pattern !== expectedPattern ||
+          o.status !== "FILTER_APPROVED" && o.status !== "FILTER_REJECTED" ||
+          !/^[0-9]+:[0-9]+$/.test(o.signal_id) ||
+          !(score >= 0 && score <= 100) ||
+          o.side !== undefined || o.box_start_ms !== undefined ||
+          o.box_end_ms !== undefined || o.box_low !== undefined ||
+          o.box_high !== undefined)
+        throw new Error("Неверное исходное наблюдение клина");
+      return { strategy, timeframe: "5m" as const, pattern: expectedPattern,
+        signal_id: o.signal_id, available_at_ms: at, source_candle_start_ms: sourceStart,
+        close_price: price, status: o.status, reason: o.reason, score };
+    });
+    scanner_research = { scope: "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
+      detectors, configuration: "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX" };
+  }
   return {
     source: "SIMULATION", simulation_run_id: id, events, demo: object.demo === true,
     ...(mode ? { mode } : {}),
@@ -862,6 +962,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     ...(geometry_warmup_hours !== undefined ? { geometry_warmup_hours } : {}),
     ...(context_1h ? { context_1h } : {}),
     ...(dmi_5m ? { dmi_5m } : {}),
+    ...(scanner_research ? { scanner_research, scanner_observations } : {}),
   };
 }
 
