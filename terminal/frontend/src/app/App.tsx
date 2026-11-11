@@ -25,7 +25,7 @@ import {
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
 import { appendRetrospectiveCandles, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
-import type { OwnerChartDraft, OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
+import type { OwnerChartDraftV3, OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
 import type { PaperOpenPosition } from "../contracts/trading";
@@ -1446,7 +1446,7 @@ export function App() {
               tickSize={null}
               editorMode={ownerChartCandles !== null}
               ownerChartMode={ownerChartCandles !== null}
-              onSubmitOwnerChart={ownerChartCandles ? async (draft: OwnerChartDraft) => {
+              onSubmitOwnerChart={ownerChartCandles ? async (draft: OwnerChartDraftV3) => {
                 const response = await fetch("/api/workspace/owner-unscanned-signal", {
                   method: "POST", credentials: "same-origin",
                   headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft),
@@ -1457,6 +1457,8 @@ export function App() {
                     !/^[0-9a-f]{64}$/.test(record.proposal_id) ||
                     record?.source_kind !== "OWNER_CHART_UNVERIFIED" ||
                     record?.submission?.pattern !== draft.pattern ||
+                    record?.submission?.formation_movement !== draft.formation_movement ||
+                    record?.submission?.schema_version !== 3 ||
                     record?.submission?.idempotency_key !== draft.idempotency_key ||
                     record?.candidate_created !== false || record?.robot_candidate_id !== null ||
                     record?.assessment?.decision !== "AWAITING_OFFLINE_REPLAY")
