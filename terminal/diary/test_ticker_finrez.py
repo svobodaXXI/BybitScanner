@@ -533,5 +533,109 @@ class EpisodeD2ContextReadOnlyTests(unittest.TestCase):
 
 
 
+
+class EpisodeOriginalGeometryReadOnlyTests(unittest.TestCase):
+    def _source(self, candidate_id):
+        return {
+            "schema_version": 1,
+            "signal_id": candidate_id, "symbol": "BTCUSDT", "timeframe": "5m",
+            "bars": [
+                {"open_time_ms": 100, "open": 101.0, "high": 103.0,
+                 "low": 99.0, "close": 100.0},
+                {"open_time_ms": 200, "open": 100.0, "high": 102.0,
+                 "low": 98.0, "close": 101.0},
+            ],
+            "boundaries": [
+                {"boundary_id": "frozen-lower", "kind": "segment", "anchors": [
+                    {"bar_open_time_ms": 100, "price": 99.5},
+                    {"bar_open_time_ms": 200, "price": 99.8},
+                ]},
+            ],
+        }
+
+    @staticmethod
+    def _context(candidate_id):
+        return {
+            "status": "EXACT_D2_LINK", "source": "TRADING_DIARY_D2",
+            "geometry_status": "NOT_EXPORTED",
+            "decision_scope": "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+            "setup": {
+                "setup_id": candidate_id, "symbol": "BTCUSDT", "timeframe": "5m",
+                "pattern": "Falling Wedge", "origin": "ROBOT",
+                "created_at_ms": 300,
+            },
+        }
+
+    def test_only_exact_hash_checked_archived_detector_geometry_is_exported(self):
+        import os
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+        from signal_archive import record_original_signal
+        from terminal.diary.episode_context import attach_verified_original_geometry
+
+        with TemporaryDirectory() as root, patch.dict(
+            os.environ, {"BYBITSCANNER_SIGNAL_ARCHIVE_DIR": root}
+        ):
+            candidate = "candidate-42"
+            self.assertTrue(record_original_signal(
+                candidate, symbol="BTCUSDT", timeframe="5m",
+                pattern="Falling Wedge", text="source",
+                image_bytes=b"immutable-original-image",
+                sent_at_ms=350, geometry_snapshot=self._source(candidate),
+            ))
+            archive = Path(root)
+            before = {
+                p.name: (p.read_bytes(), p.stat().st_mtime_ns)
+                for p in archive.iterdir()
+            }
+            result = attach_verified_original_geometry(
+                self._context(candidate), symbol="BTCUSDT", opened_at_ms=500,
+            )
+            self.assertEqual(result["geometry_status"], "ORIGINAL_ARCHIVE_HASH_VERIFIED")
+            original = result["original_geometry"]
+            self.assertEqual(original["signal_id"], candidate)
+            self.assertEqual(original["snapshot"], self._source(candidate))
+            self.assertEqual(original["linkage_basis"], "D2_SETUP_ID_EQUALS_ARCHIVED_CANDIDATE_ID")
+            self.assertEqual(original["integrity"], "LOCAL_ARCHIVE_HASH_ONLY_NOT_CRYPTOGRAPHIC_PROOF")
+            self.assertNotIn("corrected_boundaries", original)
+            self.assertNotIn("robot_runtime_decisions", original)
+            self.assertEqual(before, {
+                p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in archive.iterdir()
+            })
+
+            # A missing D2 link is never inferred from a ticker, archive or time.
+            missing = {"status": "NO_EXACT_EPISODE_LINK", "geometry_status": "NOT_EXPORTED"}
+            self.assertEqual(
+                attach_verified_original_geometry(missing, symbol="BTCUSDT", opened_at_ms=500),
+                missing,
+            )
+            wrong = self._context(candidate)
+            wrong["setup"]["pattern"] = "Rising Wedge"
+            self.assertEqual(
+                attach_verified_original_geometry(wrong, symbol="BTCUSDT", opened_at_ms=500)[
+                    "geometry_status"
+                ], "NOT_EXPORTED",
+            )
+            self.assertEqual(
+                attach_verified_original_geometry(
+                    self._context(candidate), symbol="ETHUSDT", opened_at_ms=500,
+                )["geometry_status"], "NOT_EXPORTED",
+            )
+            self.assertEqual(
+                attach_verified_original_geometry(
+                    self._context(candidate), symbol="BTCUSDT", opened_at_ms=300,
+                )["geometry_status"], "NOT_EXPORTED",
+            )
+
+            # The frozen byte hash must be checked by the canonical archive reader.
+            frozen = next(archive.glob("*.geometry.json"))
+            frozen.write_bytes(frozen.read_bytes() + b" ")
+            self.assertEqual(
+                attach_verified_original_geometry(
+                    self._context(candidate), symbol="BTCUSDT", opened_at_ms=500,
+                )["geometry_status"], "NOT_EXPORTED",
+            )
+
 if __name__ == "__main__":
     unittest.main()
