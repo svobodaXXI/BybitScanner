@@ -671,6 +671,7 @@ export function ReplayPage() {
 
   const total = document.events.length;
   const progress = Math.round(100 * cursor / total);
+  const playbackComplete = !simulationGraphPending && total > 0 && cursor >= total;
   const seekPoints = useMemo(() => {
     const result = [0];
     for (let i = 0; i < document.events.length; i++) {
@@ -962,7 +963,6 @@ export function ReplayPage() {
         <div>
           <h1>Машина времени</h1>
         </div>
-        <span className="replay-badge">SIMULATION ONLY</span>
       </header>
 
       <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol}
@@ -1151,12 +1151,17 @@ export function ReplayPage() {
             <button type="button" aria-pressed={timeframe === "1h"}
               onClick={() => setTimeframe("1h")}>H1</button>
             <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
+        <button type="button" className="replay-player-button" title="В начало"
+          aria-label="В начало" disabled={simulationGraphPending}
+          onClick={() => { setPlaying(false); setCursor(0); }}>
+          <PlayerIcon name="beginning" />
+        </button>
         <button type="button" className="replay-player-button"
-          title={playing ? "Пауза" : "Пуск"} aria-label={playing ? "Пауза" : "Пуск"}
-          disabled={simulationGraphPending && (runLoading || !preparedRun)}
+          title={playbackComplete ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
+          aria-label={playbackComplete ? "Прогон завершён" : playing ? "Пауза" : "Пуск"}
+          disabled={(simulationGraphPending && (runLoading || !preparedRun)) || playbackComplete}
           onClick={() => {
             if (simulationGraphPending) { setPlayRequestId(id => id + 1); return; }
-            if (cursor === total) setCursor(0);
             setPlaying(s => !s);
           }}>
           <PlayerIcon name={playing ? "pause" : "play"} />
@@ -1171,11 +1176,6 @@ export function ReplayPage() {
             setPlaying(false);
             setCursor((current) => nextClosedCandleCursor(document.events, current));
           }} disabled={simulationGraphPending || cursor >= total}><PlayerIcon name="forward" /></button>
-        <button type="button" className="replay-player-button" title="В начало"
-          aria-label="В начало" disabled={simulationGraphPending}
-          onClick={() => { setPlaying(false); setCursor(0); }}>
-          <PlayerIcon name="beginning" />
-        </button>
         <input className="replay-seek" type="range" min={0} max={seekPoints.length - 1}
                 step={1} value={simulationGraphPending ? 0 : seekIndex}
                 disabled={simulationGraphPending} aria-label="Перемотка воспроизведения"
