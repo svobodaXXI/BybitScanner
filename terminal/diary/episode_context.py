@@ -137,3 +137,78 @@ def project_episode_d2_context_read_only(
         # An optional observational store must not turn corrupt evidence into
         # apparently proven context, nor suppress proven execution facts.
         return _unproven("EVIDENCE_UNAVAILABLE")
+
+
+def attach_verified_original_geometry(
+    setup_context: dict[str, object], *, symbol: str, opened_at_ms: int,
+) -> dict[str, object]:
+    """Optionally attach an EXACT archived detector snapshot, never refitted rays.
+
+    D2 setup_id is accepted as the archived candidate id ONLY when the
+    immutable Telegram source record independently agrees on that exact id,
+    symbol, timeframe and pattern. Archive hashes prove intact source bytes,
+    not causality of Robot decisions or a cryptographic signature.
+    """
+    if setup_context.get("status") != "EXACT_D2_LINK":
+        return setup_context
+    setup = setup_context.get("setup")
+    if not isinstance(setup, dict) or setup.get("origin") != "ROBOT":
+        return setup_context
+    candidate_id = setup.get("setup_id")
+    if (not isinstance(candidate_id, str) or not candidate_id
+            or len(candidate_id) > 128
+            or type(opened_at_ms) is not int or opened_at_ms <= 0):
+        return setup_context
+
+    # Reuse archive's existing original-image and canonical geometry checks.
+    # Both only read files and never access live price, Robot, PAPER or MAIN.
+    from signal_archive import load_frozen_signal_geometry, load_original_signal
+    from signal_geometry_snapshot import validate_snapshot
+
+    meta = load_original_signal([candidate_id])
+    if meta is None:
+        return setup_context
+    if (meta.get("candidate_id") != candidate_id
+            or meta.get("symbol") != symbol or setup.get("symbol") != symbol
+            or meta.get("timeframe") != setup.get("timeframe")
+            or meta.get("pattern") != setup.get("pattern")):
+        return setup_context
+    sent_ms = meta.get("sent_at_ms")
+    if (type(sent_ms) is not int or sent_ms < 0 or sent_ms > opened_at_ms
+            or sent_ms > setup.get("created_at_ms", -1)):
+        return setup_context
+
+    frozen = load_frozen_signal_geometry(candidate_id)
+    if frozen is None:
+        return setup_context
+    try:
+        _, digest = validate_snapshot(
+            frozen, candidate_id=candidate_id,
+            symbol=symbol, timeframe=str(setup["timeframe"]),
+        )
+    except (ValueError, TypeError, KeyError):
+        return setup_context
+    if digest != meta.get("geometry_sha256"):
+        return setup_context
+    bars = frozen.get("bars")
+    if (not isinstance(bars, list) or not bars
+            or type(bars[-1].get("open_time_ms")) is not int
+            or bars[-1]["open_time_ms"] > sent_ms):
+        return setup_context
+
+    # Export observational geometry as-is. Do not mix with corrected owner
+    # geometry, simulated Scanner lines, nor inferred decision chronology.
+    return {
+        **setup_context,
+        "geometry_status": "ORIGINAL_ARCHIVE_HASH_VERIFIED",
+        "original_geometry": {
+            "schema": "BYBITSCANNER_ARCHIVED_SIGNAL_GEOMETRY_V1",
+            "source": "ORIGINAL_TELEGRAM_SIGNAL_ARCHIVE",
+            "linkage_basis": "D2_SETUP_ID_EQUALS_ARCHIVED_CANDIDATE_ID",
+            "integrity": "LOCAL_ARCHIVE_HASH_ONLY_NOT_CRYPTOGRAPHIC_PROOF",
+            "signal_id": candidate_id,
+            "sent_at_ms": sent_ms,
+            "sha256": digest,
+            "snapshot": frozen,
+        },
+    }
