@@ -64,7 +64,10 @@ try {
   });
   await page.goto(localUrl, { waitUntil: "networkidle" });
   await page.getByRole("heading", { name: "Машина времени" }).waitFor();
-  assert.match(await page.locator("body").innerText(), /SIMULATION ONLY/);
+  assert.equal(await page.locator(".replay-badge").count(), 0,
+    "no SIMULATION ONLY header badge");
+  assert.equal(await page.locator(".replay-run-heading span").count(), 0,
+    "no redundant local simulation/ticker banner");
   assert.equal(await page.locator(".replay-run-disclaimer").count(), 0,
     "no permanent strategy explanation beneath setup controls");
   assert.equal(await page.locator('.replay-note[aria-label="Ожидание нового графика"]').count(), 0,
@@ -237,7 +240,8 @@ try {
     "old synthetic chart must not be displayed after Apply");
   assert.equal(await page.locator(".replay-chart-pending").count(), 1);
   await appliedPlay.click(); // The one and only command to start the run.
-  await page.getByRole("status", { name: "Ожидание нового графика" }).waitFor();
+  assert.equal(await page.getByRole("status", { name: "Ожидание нового графика" }).count(), 0,
+    "removed pre-run explanation must remain absent during playback");
   assert.equal(await readySetup.getByRole("status", { name: "Результаты виртуального прогона" }).count(), 0,
     "future PnL must not be shown before the playhead reaches the last candle");
   await page.waitForFunction(() => {
@@ -275,8 +279,13 @@ try {
   // never in the file-import row above the chart.
   const controlBar = page.getByRole("group", { name: "Таймфрейм графика" });
   const playbackBar = controlBar.getByRole("group", { name: "Управление воспроизведением" });
-  for (const [caption, symbol] of [["Пуск", "play"], ["Шаг назад", "backward"],
-      ["Шаг вперёд", "forward"], ["В начало", "beginning"]]) {
+  const actualOrder = await playbackBar.locator("button.replay-player-button").evaluateAll(
+    buttons => buttons.map(button => button.getAttribute("aria-label")),
+  );
+  assert.deepEqual(actualOrder, ["В начало", "Пуск", "Шаг назад", "Шаг вперёд"],
+    "approved player order must be stable");
+  for (const [caption, symbol] of [["В начало", "beginning"], ["Пуск", "play"],
+      ["Шаг назад", "backward"], ["Шаг вперёд", "forward"]]) {
     const button = playbackBar.getByRole("button", { name: caption, exact: true });
     assert.equal(await button.count(), 1);
     assert.equal((await button.innerText()).trim(), "");
@@ -346,7 +355,12 @@ try {
   assert.match(await page.locator("body").innerText(), /64 \/ 1 \/ 1/);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "2");
   assert.equal(await page.locator(".replay-chart .series-markers").count(), 0);
+  const completedPlay = page.getByRole("button", { name: "Прогон завершён" });
+  assert.equal(await completedPlay.count(), 1);
+  assert.equal(await completedPlay.isDisabled(), true,
+    "completed playback cannot restart without returning to the beginning");
   await page.getByRole("button", { name: "В начало" }).click();
+  assert.equal(await page.getByRole("button", { name: "Пуск", exact: true }).isDisabled(), false);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
 
   // Public history response is mocked at the HTTP boundary. A separate Python
