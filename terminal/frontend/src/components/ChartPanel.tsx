@@ -1103,7 +1103,7 @@ export function ChartPanel({
                 setExtensionPending(true);
                 setExtensionStatus("Загружаются следующие закрытые свечи…");
                 void onExtendEditorHistory()
-                  .then(() => setExtensionStatus("Поздние свечи добавлены для ретроспективной разметки."))
+                  .then(() => setExtensionStatus("Поздние свечи добавлены"))
                   .catch((error) => setExtensionStatus(
                     `Не удалось получить поздние свечи: ${error instanceof Error ? error.message : "ошибка"}`,
                   ))
@@ -1116,7 +1116,6 @@ export function ChartPanel({
               onClick={() => onShowCurrentEditorChart?.()}>
               Показать актуальный график
             </button>}
-            {retrospectiveContext && <small>Ретроспективный обзор: до {new Date(retrospectiveContext.asOfMs).toLocaleString("ru-RU")}. Будущие свечи не считаются известными исходному Scanner.</small>}
             {extensionStatus && <output role="status" aria-live="polite">{extensionStatus}</output>}
             {!ownerChartMode && <button type="button" disabled={extensionPending || reviewPending || proposalPending}
               aria-pressed={newSignalMode} onClick={switchSignalDrawingMode}>
@@ -1136,7 +1135,6 @@ export function ChartPanel({
                   onClick={() => void submitOwnerProposal()}>
                   {proposalPending ? "Сохранение…" : ownerChartMode ? "Сохранить в «Мои сигналы»" : "Передать на оценку Robot"}
                 </button>
-                <small>{ownerChartMode ? "Нарисуй два луча. Пример сохранится для офлайн-проверки Сканера; торговля не запускается." : "Исходные линии — пунктир. Нарисуй два новых луча; оценка не разрешает торговлю."}</small>
                 {proposalStatus && <output role="status" aria-live="polite">{proposalStatus}</output>}
               </>
             ) : (
