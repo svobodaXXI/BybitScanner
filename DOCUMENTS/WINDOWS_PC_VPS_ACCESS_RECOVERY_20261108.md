@@ -37,6 +37,27 @@ This is an **additional public IPv4 address, not an API endpoint or API key**:
 6. One live, non-restarting interface address addition `ip addr add 212.193.14.116/24 dev ens3` succeeded. PowerShell SSH using the existing PC key to `root@212.193.14.116` returned exit 0, before Netplan persistence.
 7. Netplan file was backed up; one addresses-list addition; `netplan generate` passed. No network restart; follow-up PowerShell via SSH alias returned exit 0. VPS Manager read-only action returned exit 0. Codex Desktop alias lookup remains the only outstanding local tool/access proof.
 
+## 2026-11-11 — SSH banner timeout during blocked PAPER update: PC fast path
+
+**Trigger and outcome (observed, not a durable recovery):**
+- An approved one-shot monolith targeting `0879f0c490d5612461f0eeb353b0473b167a8361` returned `BLOCKED: Gitless_switch_unproven:ResumeBlocked:PAPER_unit_not_stopped`. Before that attempt the confirmed installed SHA was `82f141e2c52f834af291a97f564253cf4ea605e9`; **post-blocker installed SHA is unproven**. Preflight reported 116 Flat/synced positions, no unfinished orders/commands/obligations, Scanner/Robot STOPPED, Autopilot OFF. These are **preflight snapshots only**, not post-blocker proof.
+- Codex attempts to `212.193.14.116` got SSH banner timeout (exit 255). A probe via old `83.217.213.181` once returned `SSH_OK` / expected hostname / exit 0; two subsequent Codex post-blocker snapshots timed out before remote execution.
+- On the Windows **desktop PC** (`C:\Users\svobo`), the owner **disabled Happ/VPN**, then a direct PowerShell OpenSSH probe to the **old** IP `83.217.213.181` using existing key `bybitscanner_vdsina_gateway_20261030` returned `SSH_OK`, `v3286418.hosted-by-vdsina.ru`, exit 0. **The next read-only multi-command snapshot failed during SSH banner exchange (exit 255) before execution.** Therefore VPN-off restored *one connection*, **not stable SSH**, and no post-blocker systemd/journal/receipt facts were obtained.
+- No further STOP/restart/deploy/recovery/SQL was attempted. The root cause of `PAPER_unit_not_stopped` remains **UNKNOWN**.
+
+**Fast route when Codex reports SSH banner timeout (owner PC only, after checking current route):**
+1. Do **not** treat banner timeout as an SSH key failure, failed release, or authorization to run monolith/STOP again. Before VNC, if normal remote access is blocked, consider one bounded **VPN-off** check from the *existing* PowerShell environment and trusted old IP/key (only with the owner's direct action; changing VPN can affect other work). Preserve `StrictHostKeyChecking=yes`, do not read/copy private-key contents or change SSH config.
+2. Known successful read-only probe:
+   ```powershell
+   ssh -i "$env:USERPROFILE\.ssh\bybitscanner_vdsina_gateway_20261030" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ConnectionAttempts=1 root@83.217.213.181 'echo SSH_OK; hostname'; "SSH_EXIT_CODE=$LASTEXITCODE"
+   ```
+3. A single `SSH_OK` proves **that connection only**. An immediately subsequent banner timeout means `SSH_TRANSPORT_BLOCKED`, **not** `VPS_RECOVERED`. Do not start repeated SSH retries, switch host keys, alter routes/netplan, restart sshd, reboot, or issue STOP. If remote execution becomes reliably available, read-only snapshot **first**: four `UNITS` from `tools.vps_systemd_unit_prepare` (including MAIN), `ActiveState` and `MainPID`, protected release identity, listeners, install journal and receipts. Distinguish the exact unit and cause before considering any separately authorized mutation.
+4. VNC/provider console is the fallback if transport remains blocked; use it only for a minimal read-only observation. No owner request for repeated serial diagnostic loops.
+
+**Code boundary:** `tools.vps_gitless_release_activate._stopped` checks all four `UNITS` are `inactive|failed` and `MainPID=0`; `tools.vps_release_resume` has a similarly strict gate. `PAPER_unit_not_stopped` alone does **not** tell which unit, whether a genuine active process, systemd transition, or check race. The installed release and protected journal must be observed before any next action.
+
+**Authority:** This is a transport incident note and a single-entry troubleshooting route, not proof of deployment, fix of monolith or permission for production/trading changes. Fail closed on unproven PAPER state; LIVE remains prohibited.
+
 ## Routing and safety rules for future chats
 
 - **Default PC workflow:** Codex Desktop already open, BybitScanner project selected. Do **not** tell the owner to run `codex` in PowerShell or reinstall Codex. For GitHub tasks use the GitHub connector/PR workflow; for authorized VPS work use verified Codex bridge if proven, or existing PowerShell SSH alias on PC as fallback. No arbitrary VNC/manual juggling unless a specific SSH failure makes it necessary.
