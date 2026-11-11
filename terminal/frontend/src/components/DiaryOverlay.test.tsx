@@ -755,7 +755,10 @@ describe("shared statistics trade action standard", () => {
     expect((await screen.findAllByRole("button", { name: "Подробности сделки" })).length).toBe(2);
     const replay = screen.getAllByRole("button", { name: "Открыть сделку в Симуляторе" });
     expect(replay).toHaveLength(2);
-    replay.forEach((button) => expect(button).toBeDisabled());
+    replay.forEach((button) => {
+      expect(button).toBeEnabled();
+      expect(button).toHaveAttribute("title", expect.stringContaining("Скачать проверенные факты"));
+    });
     expect(screen.getByText(/PnL -1,82 USDT/)).toHaveAttribute("title", "-1.81622186");
   });
 });
