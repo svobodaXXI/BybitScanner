@@ -619,7 +619,14 @@ try {
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
 
-  assert.deepEqual(errors, [], "Browser runtime errors: " + errors.join("; "));
+  // The deliberate HTTP 502 fixture triggers exactly one browser
+  // "Failed to load resource" console message. Permit ONLY that observed
+  // response, never unrelated JS/runtime or additional network failures.
+  const public502 = "Failed to load resource: the server responded with a status of 502 (Bad Gateway)";
+  assert.equal(errors.filter(message => message === public502).length, 1,
+    "exactly one intentional failed public-market request");
+  assert.deepEqual(errors.filter(message => message !== public502), [],
+    "Unexpected browser runtime errors: " + errors.join("; "));
   assert.ok(requests.every((u) => {
     const parsed = new URL(u);
     return parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
