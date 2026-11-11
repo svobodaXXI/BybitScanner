@@ -17,6 +17,8 @@ export const marketApiRoutes = {
   diaryTrades: "/api/diary/trades",
   diaryTickerFinrez: (accountId: string, owner: "MANUAL" | "ROBOT", period: "TODAY" | "ALL") =>
     `/api/diary/ticker-finrez?account_id=${encodeURIComponent(accountId)}&owner=${owner}&period=${period}`,
+  diaryEpisodeFacts: (accountId: string, owner: "MANUAL" | "ROBOT", episodeId: string, revision: number) =>
+    `/api/diary/episode-facts?account_id=${encodeURIComponent(accountId)}&owner=${owner}&trade_episode_id=${encodeURIComponent(episodeId)}&source_revision=${revision}`,
   diarySetups: "/api/diary/setups",
   diaryStatistics: "/api/diary/statistics",
   diaryScopedStatistics: (accountId: string, owner: "MANUAL" | "ROBOT") =>
