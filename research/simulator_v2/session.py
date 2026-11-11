@@ -18,6 +18,7 @@ from research.simulator_v2.virtual_account import VirtualAccount, VirtualAccount
 from research.simulator_v2.virtual_exchange import MarketRequest, LimitRequest, ProtectedLimitRequest, VirtualExchange
 from research.simulator_v2.reused_geometry import ReadOnlyReusedGeometry
 from research.simulator_v2.wedge_observer import ReadOnlyWedgeScanner, WedgeScannerConfig
+from research.simulator_v2.ikigai_observer import ReadOnlyIkigaiScanner, IkigaiScannerConfig
 from research.simulator_v2.wedge_robot_observer import ReadOnlyWedgeRobot, SimWedgeRobotConfig
 from research.simulator_v2.wedge_risk_preflight import SimWedgeRiskSettings, UnsubmittedProtectedWedgePreview
 
@@ -35,6 +36,7 @@ class VirtualReplaySession:
         maker_fee_rate: Decimal = Decimal("0.0002"),
         enable_reused_geometry: bool = False,
         wedge_scanner_config: WedgeScannerConfig | None = None,
+        ikigai_scanner_config: IkigaiScannerConfig | None = None,
         wedge_robot_config: SimWedgeRobotConfig | None = None,
         wedge_risk_settings: SimWedgeRiskSettings | None = None,
     ) -> None:
@@ -47,6 +49,8 @@ class VirtualReplaySession:
             ReadOnlyWedgeScanner(wedge_scanner_config)
             if wedge_scanner_config is not None else None
         )
+        self.ikigai_scanner = (ReadOnlyIkigaiScanner(ikigai_scanner_config)
+                               if ikigai_scanner_config is not None else None)
         if wedge_robot_config is not None and self.wedge_scanner is None:
             raise ValueError("SIMULATION Wedge Robot requires original Wedge Scanner stage")
         if wedge_risk_settings is not None:
@@ -75,8 +79,8 @@ class VirtualReplaySession:
         self.timeline = IsolatedTimeline(
             simulation_run_id=simulation_run_id, symbol=symbol,
             scanner=(self._on_readonly_scanner_stage
-                     if self.reused_geometry is not None or self.wedge_scanner is not None
-                     else None),
+                     if (self.reused_geometry is not None or self.wedge_scanner is not None
+                         or self.ikigai_scanner is not None) else None),
             robot=(self.wedge_robot.observe_staged
                    if self.wedge_robot is not None else None),
             exchange=self._on_closed_exchange_stage,
@@ -91,6 +95,8 @@ class VirtualReplaySession:
             self.reused_geometry.observe_staged(frame, staged)
         if self.wedge_scanner is not None:
             self.wedge_scanner.observe_staged(frame, staged)
+        if self.ikigai_scanner is not None:
+            self.ikigai_scanner.observe_staged(frame, staged)
         return ()
 
     def _on_closed_exchange_stage(
@@ -135,6 +141,8 @@ class VirtualReplaySession:
                 self.reused_geometry.discard_failed_m1()
             if self.wedge_scanner is not None:
                 self.wedge_scanner.discard_failed_m1()
+            if self.ikigai_scanner is not None:
+                self.ikigai_scanner.discard_failed_m1()
             if self.wedge_robot is not None:
                 self.wedge_robot.discard_failed_m1()
             raise
@@ -142,6 +150,8 @@ class VirtualReplaySession:
             self.reused_geometry.commit_after_m1()
         if self.wedge_scanner is not None:
             self.wedge_scanner.commit_after_m1(frame)
+        if self.ikigai_scanner is not None:
+            self.ikigai_scanner.commit_after_m1(frame)
         if self.wedge_robot is not None:
             self.wedge_robot.commit_after_m1()
         if self.timeline.virtual_time_ms != self.exchange.virtual_time_ms:
