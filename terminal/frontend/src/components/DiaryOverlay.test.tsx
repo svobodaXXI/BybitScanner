@@ -750,7 +750,7 @@ describe("shared statistics trade action standard", () => {
         closed_episodes: [sharedDeal, robotDeal],
       }), { status: 200 }),
     );
-    render(<DiaryOverlay onClose={() => {}} initialSection="DEALS"
+    render(<DiaryOverlay accountKey="paper" onClose={() => {}} initialSection="DEALS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} />);
     expect((await screen.findAllByRole("button", { name: "Подробности сделки" })).length).toBe(2);
     const replay = screen.getAllByRole("button", { name: "Открыть сделку в Симуляторе" });
