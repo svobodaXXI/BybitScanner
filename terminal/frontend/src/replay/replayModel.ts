@@ -1021,6 +1021,52 @@ export function nextClosedCandleCursor(events: readonly ReplayEvent[], cursor: n
   return index;
 }
 
+/** Replay frame boundaries belong to the selected visible timeframe.
+ * M5: one closed market candle, including same-timestamp trade receipts.
+ * H1: only 12 contiguous, aligned, fully closed M5 candles form a step.
+ * Never advance into a partial hour or a streaming action beyond its close.
+ * M1/15s remain disabled until original, verified finer source events exist.
+ */
+export function replayFrameCursors(
+  events: readonly ReplayEvent[], timeframe: "5m" | "1h",
+): number[] {
+  const hourlyCloses = timeframe === "1h"
+    ? new Set(completeHourlyCandles(events.flatMap(event =>
+      event.kind === "CANDLE_CLOSED" && event.candle ? [event.candle] : [],
+    )).map(candle => candle.end_ms))
+    : null;
+  const points = [0];
+  for (let index = 0; index < events.length; index++) {
+    const event = events[index];
+    if (event.kind !== "CANDLE_CLOSED" || !event.candle ||
+        (hourlyCloses && !hourlyCloses.has(event.candle.end_ms))) continue;
+    let next = index + 1;
+    while (next < events.length && events[next].time_ms === event.time_ms) next++;
+    points.push(next);
+    index = next - 1;
+  }
+  return points;
+}
+
+/** Last completed frame at or before the current cursor (also after TF switch). */
+export function replayFrameIndex(points: readonly number[], cursor: number): number {
+  let low = 0, high = points.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (points[middle] <= cursor) low = middle;
+    else high = middle - 1;
+  }
+  return low;
+}
+
+/** One step adds/removes exactly one visible closed candle of the active TF. */
+export function replayStepCursor(
+  points: readonly number[], cursor: number, direction: -1 | 1,
+): number {
+  const frame = replayFrameIndex(points, cursor);
+  return points[Math.max(0, Math.min(points.length - 1, frame + direction))];
+}
+
 /** The UI receives ONLY the prefix requested by the virtual-time playhead. */
 export function visibleReplay(events: readonly ReplayEvent[], cursor: number): VisibleReplay {
   const shown = events.slice(0, Math.max(0, Math.min(Math.floor(cursor), events.length)));
