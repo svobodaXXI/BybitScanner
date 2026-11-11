@@ -48,6 +48,7 @@ export type ReplayEvent = {
   kind: ReplayKind;
   time_ms: number;
   candle?: ReplayCandle;
+  dmi?: ReplayDmiPoint;
   trade_id?: string;
   candidate_id?: string;
   pattern?: "Falling Wedge" | "Rising Wedge";
@@ -292,6 +293,26 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     } else if (e.candle !== undefined) {
       throw new Error("Будущая OHLC в событии исполнения недопустима");
     }
+    let dmi: ReplayDmiPoint | undefined;
+    if (e.dmi !== undefined) {
+      if (kind !== "CANDLE_CLOSED" || mode !== "STRATEGY" || object.demo === true)
+        throw new Error("Недостоверный ADX в торговом событии");
+      const point = record(e.dmi);
+      if (point.time_ms !== time_ms) throw new Error("ADX доступен раньше закрытия M5");
+      const parseValue = (value: unknown): number | null => {
+        if (value === null) return null;
+        const n = safeNumber(value, "DMI");
+        if (n < 0 || n > 100) throw new Error("DMI вне диапазона");
+        return n;
+      };
+      const plus_di = parseValue(point.plus_di);
+      const minus_di = parseValue(point.minus_di);
+      const adx = parseValue(point.adx);
+      if ((plus_di === null) !== (minus_di === null) ||
+          (adx !== null && plus_di === null))
+        throw new Error("Неверная последовательность DMI");
+      dmi = { time_ms, plus_di, minus_di, adx };
+    }
     const side = e.side;
     if (side !== undefined && side !== "LONG" && side !== "SHORT") {
       throw new Error("Неверная сторона сделки");
@@ -328,6 +349,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     return {
       source: "SIMULATION", simulation_run_id: id, kind, sequence, time_ms,
       ...(candle ? { candle } : {}),
+      ...(dmi ? { dmi } : {}),
       ...(side ? { side } : {}),
       ...(trade_id ? { trade_id } : {}),
       ...(isWedge ? { candidate_id: candidate_id as string,
@@ -1544,10 +1566,13 @@ export function visibleH017CandidateStudy(
   );
 }
 
-/** For MARKET_ONLY, DMI has exactly one observation per completed 5m candle. */
+/** All DMI samples are stamped only on fully committed M5 closes. */
 export function visibleDmi(document: ReplayDocument, closedCandles: number): ReplayDmiPoint[] {
-  if (!document.dmi_5m || (document.mode !== "MARKET_ONLY" && document.demo !== true)) return [];
-  return document.dmi_5m.points.slice(
-    0, Math.max(0, Math.min(Math.floor(closedCandles), document.dmi_5m.points.length)),
-  );
+  const count = Math.max(0, Math.floor(closedCandles));
+  if (document.mode === "STRATEGY" && !document.demo) {
+    return document.events.filter(e => e.kind === "CANDLE_CLOSED")
+      .slice(0, count).flatMap(e => e.dmi ? [e.dmi] : []);
+  }
+  if (!document.dmi_5m || (document.mode !== "MARKET_ONLY" && !document.demo)) return [];
+  return document.dmi_5m.points.slice(0, Math.min(count, document.dmi_5m.points.length));
 }

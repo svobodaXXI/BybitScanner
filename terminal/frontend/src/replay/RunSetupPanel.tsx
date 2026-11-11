@@ -319,14 +319,11 @@ export function RunSetupPanel({
           <input aria-label="Виртуальный депозит" type="text" inputMode="decimal"
             value={balance} onChange={e => setBalance(e.target.value)} />
         </label>
-        <span>Риск, шаг цены и перевод 1 WV в контракты берутся только из локального профиля SIMULATION.</span>
+
       </div>
       <div className="replay-run-footer">
-        <span data-selected-strategies={active.join(",")}>
-          Выбрано компонентов: {active.length}. {selection.mirror ? "Mirror включён." : "Mirror выключен."}
-        </span>
-        <span>{loading ? "Проверка M1 и расчёт виртуального прогона…" :
-          "Применить тикер и период → ▶ Пуск на графике"}</span>
+        <span data-selected-strategies={active.join(",")} aria-hidden="true" />
+        {loading && <span>Проверка M1 и расчёт виртуального прогона…</span>}
       </div>
       {!wedgesOnly && active.length > 0 &&
         <p className="replay-run-error" role="status">

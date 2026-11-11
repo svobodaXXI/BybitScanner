@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Callable
 
 from research.historical_market_replay import Candle
+from research.wilder_dmi import WilderDmi
 from research.simulator_v2.session import VirtualReplaySession
 
 FIVE_MIN_MS = 300_000
@@ -24,6 +25,7 @@ class WedgeVisualReplay:
         self.start_ms = start_ms
         self.end_ms = end_ms
         self._bar: list[Candle] = []
+        self._dmi = WilderDmi(timeframe_ms=FIVE_MIN_MS)
         self._items: list[dict[str, object]] = []
         self._order_count = 0
         self._decision_count = 0
@@ -168,8 +170,21 @@ class WedgeVisualReplay:
             self._bar.append(minute)
             if len(self._bar) == 5:
                 bars = self._bar
+                completed = Candle(
+                    start_ms=bars[0].start_ms, interval_ms=FIVE_MIN_MS,
+                    open=bars[0].open, high=max(c.high for c in bars),
+                    low=min(c.low for c in bars), close=bars[-1].close,
+                    volume=sum((c.volume for c in bars), 0),
+                )
+                dmi = self._dmi.observe_closed(completed)
                 self._items.append({
                     "kind": "CANDLE_CLOSED", "time_ms": bars[-1].end_ms,
+                    "dmi": {
+                        "time_ms": dmi.time_ms,
+                        "plus_di": float(dmi.plus_di) if dmi.plus_di is not None else None,
+                        "minus_di": float(dmi.minus_di) if dmi.minus_di is not None else None,
+                        "adx": float(dmi.adx) if dmi.adx is not None else None,
+                    },
                     "candle": {
                         "start_ms": bars[0].start_ms, "end_ms": bars[-1].end_ms,
                         "open": float(bars[0].open),

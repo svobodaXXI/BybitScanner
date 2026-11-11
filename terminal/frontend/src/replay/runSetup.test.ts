@@ -28,6 +28,12 @@ describe("local one-symbol strategy setup (no trading)", () => {
     expect(withoutBox.selected).not.toContain("IKIGAI_BOX");
     expect(toggleMirror(withoutBox, false).selected).toEqual(["H1_TREND"]);
   });
+  it("selects Ikigai without enabling Mirror, but Mirror enables Ikigai", () => {
+    const isolated = toggleStrategy(clearAll(), "IKIGAI_BOX", true);
+    expect(isolated.mirror).toBe(false);
+    expect(isolated.selected).toEqual(["IKIGAI_BOX"]);
+    expect(toggleMirror(clearAll(), true).selected).toContain("IKIGAI_BOX");
+  });
   it("lets owner isolate wedges without activating Mirror or other patterns", () => {
     expect(onlyWedges()).toEqual({
       mirror: false, selected: ["WEDGE_RISING", "WEDGE_FALLING"],

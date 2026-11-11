@@ -51,7 +51,8 @@ export function toggleStrategy(current: RunSelection, id: StrategyId, enabled: b
   if (enabled) ids.add(id);
   else ids.delete(id);
   return {
-    mirror: current.mirror || (enabled && MIRROR_OPTIONS.some(x => x.id === id)),
+    // Ikigai can be selected independently; Mirror still preselects it as a bundle.
+    mirror: current.mirror || (enabled && id !== "IKIGAI_BOX" && MIRROR_OPTIONS.some(x => x.id === id)),
     selected: ALL_SELECTABLE.filter(option => ids.has(option)),
   };
 }
