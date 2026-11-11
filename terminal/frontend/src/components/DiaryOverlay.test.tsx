@@ -479,7 +479,7 @@ describe("Closed deals / exact episode index", () => {
       render(<DiaryOverlay accountKey="paper:export" initialSection="DEALS"
         statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
       fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
-      expect(screen.getByRole("status")).toHaveTextContent("Исходные факты PAPER");
+      expect(screen.getByRole("status")).toHaveTextContent("исходные факты PAPER");
       fireEvent.click(screen.getByRole("button", { name: "Скачать JSON исполнений" }));
       await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
         `/api/diary/episode-facts?account_id=paper&owner=ROBOT&trade_episode_id=${episodeId}&source_revision=3`,
