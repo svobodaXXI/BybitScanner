@@ -29,6 +29,7 @@ from terminal.api.models import (
     PaperStopMutationResult,
 )
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
+from terminal.application.box_protection_finalizer import finalize_box_protection_obligation
 from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
 from terminal.domain.models import (
     Category, Execution, ExecutionDedupKey, ExecutionId, Notional, OrderId,
@@ -532,8 +533,7 @@ class ConnectedSimulationRobot:
             )
 
     def _apply_stop_fill(self, fill: VirtualFill) -> None:
-        """Use the production Box protection finalizer on virtual evidence."""
-        from terminal.runtime.paper_runtime import PaperRuntime
+        """Use the shared production Box finalizer on virtual evidence."""
 
         symbol = Symbol(self.session.account.symbol)
         trade = self._store.get_open_robot_trade_for_symbol(self.account_id, symbol)
@@ -598,11 +598,8 @@ class ConnectedSimulationRobot:
         ))
         if execution is None:
             raise SimulationExecutionNotConnected("virtual STOP execution was not durable")
-        # The finalizer is the same production evidence gate used by PAPER;
-        # only its store dependency is needed for the Box branch.
-        PaperRuntime._finalize_paper_protection_obligation(
-            SimpleNamespace(store=self._store), obligation, trade, execution,
-            now_ms=minute.end_ms,
+        finalize_box_protection_obligation(
+            self._store, obligation, trade, now_ms=minute.end_ms,
         )
 
     def after_committed_minute(self) -> None:
