@@ -6,7 +6,7 @@ import "./DiaryOverlay.css";
 export type DiarySection = "FINREZ" | "PATTERNS" | "DEALS" | "TRADES" | "SETUPS" | "STATISTICS" | "MIRROR";
 export type DiaryAccountMenuProps = Pick<ComponentProps<typeof AccountMenu>,
   "workspaceProjection" | "mode" | "selectedAccountId" | "onSelectAccount" | "modeAccountError">;
-type FinrezPeriod = "TODAY" | "ALL";
+type FinrezPeriod = "DAY" | "WEEK" | "MONTH" | "YEAR" | "ALL";
 type DiaryFilter = "ALL" | "OPEN" | "CLOSED" | "ATTENTION";
 type SetupFilter = "ALL" | "ATTENTION";
 
@@ -795,7 +795,7 @@ export function DiaryOverlay({
   const [setups, setSetups] = useState<DiarySetup[]>([]);
   const [statistics, setStatistics] = useState<DiaryStatistics | null>(null);
   const [finrez, setFinrez] = useState<FinrezResponse | null>(null);
-  const [finrezPeriod, setFinrezPeriod] = useState<FinrezPeriod>("TODAY");
+  const [finrezPeriod, setFinrezPeriod] = useState<FinrezPeriod>("DAY");
   const [mirrorLevels, setMirrorLevels] = useState<MirrorLevelRow[]>([]);
   const [tradeFilter, setTradeFilter] = useState<DiaryFilter>("ALL");
   const [setupFilter, setSetupFilter] = useState<SetupFilter>("ALL");
@@ -991,8 +991,13 @@ export function DiaryOverlay({
         <div className="diary-navigation">
           {(section === "FINREZ" || section === "PATTERNS" || section === "DEALS") ? (
             <nav className="diary-period-nav" aria-label="Период статистики">
-              <button aria-pressed={finrezPeriod === "TODAY"} type="button" onClick={() => setFinrezPeriod("TODAY")}>Сегодня</button>
-              <button aria-pressed={finrezPeriod === "ALL"} type="button" onClick={() => setFinrezPeriod("ALL")}>Всё время</button>
+              {([
+                ["DAY", "День"], ["WEEK", "Неделя"],
+                ["MONTH", "Месяц"], ["YEAR", "Год"], ["ALL", "Всё время"],
+              ] as const).map(([period, label]) => (
+                <button key={period} aria-pressed={finrezPeriod === period} type="button"
+                  onClick={() => setFinrezPeriod(period)}>{label}</button>
+              ))}
             </nav>
           ) : null}
           <nav className="diary-primary-nav" aria-label="Разделы статистики">
