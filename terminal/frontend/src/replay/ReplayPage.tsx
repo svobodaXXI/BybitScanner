@@ -1144,12 +1144,12 @@ export function ReplayPage() {
             <strong className="replay-chart-symbol" aria-label="Тикер графика">
               {document.symbol?.replace(/USDT$/, "") || "—"}
             </strong>
-            <button type="button" disabled title="Нет проверенной минутной истории в потоке графика">M1</button>
-            <button type="button" disabled title="Нет исходной ленты сделок для 15-секундного графика">15с</button>
-            <button type="button" aria-pressed={timeframe === "5m"}
-              onClick={() => setTimeframe("5m")}>M5</button>
             <button type="button" aria-pressed={timeframe === "1h"}
               onClick={() => setTimeframe("1h")}>H1</button>
+            <button type="button" aria-pressed={timeframe === "5m"}
+              onClick={() => setTimeframe("5m")}>M5</button>
+            <button type="button" disabled title="Нет проверенной минутной истории в потоке графика">M1</button>
+            <button type="button" disabled title="Нет исходной ленты сделок для 15-секундного графика">15с</button>
             <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
         <button type="button" className="replay-player-button" title="В начало"
           aria-label="В начало" disabled={simulationGraphPending}
