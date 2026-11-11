@@ -35,6 +35,29 @@ const market = (symbol = "BTCUSDT", length = 10): ReplayDocument => ({
   })),
 });
 
+
+const linkedD2 = {
+  status: "EXACT_D2_LINK", source: "TRADING_DIARY_D2",
+  consistency: "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER",
+  geometry_status: "NOT_EXPORTED",
+  decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+  setup: {
+    setup_instance_id: "setup-1", setup_id: "candidate-42", symbol: "BTCUSDT",
+    direction: "LONG", timeframe: "5m", pattern: "Falling Wedge",
+    strategy_version: "v1", entry_mode: "breakout_retest",
+    origin: "ROBOT", created_at_ms: t + 300_000, has_feature_snapshot_ref: true,
+  },
+  order_plan_id: "plan-1", linked_at_ms: t + 330_000,
+  decisions: [
+    { decision_event_id: "strategy-1", kind: "STRATEGY", previous_state: null,
+      next_state: "APPROVED", reason_code: "STRATEGY_OK", controller: "ROBOT",
+      origin: "ROBOT", occurred_at_ms: t + 301_000 },
+    { decision_event_id: "risk-1", kind: "RISK", previous_state: "APPROVED",
+      next_state: "APPROVED", reason_code: "RISK_OK", controller: "ROBOT",
+      origin: "ROBOT", occurred_at_ms: t + 302_000 },
+  ],
+};
+
 describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
   it("preserves exact execution prices and maps them only onto real closed M5", () => {
     const facts = parsePaperEpisodeFacts(source);
@@ -107,6 +130,39 @@ describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
     expect(() => parsePaperEpisodeFacts({
       ...source, execution_allocations: [source.execution_allocations[0]],
     })).toThrow();
+  });
+
+  it("reads exact D2 setup and decision observations as optional non-executable context", () => {
+    const imported = parsePaperEpisodeFacts({ ...source, setup_context: linkedD2 });
+    expect(imported.setup_context?.status).toBe("EXACT_D2_LINK");
+    if (imported.setup_context?.status !== "EXACT_D2_LINK") throw new Error("missing D2");
+    expect(imported.setup_context.setup.setup_id).toBe("candidate-42");
+    expect(imported.setup_context.setup.timeframe).toBe("5m");
+    expect(imported.setup_context.decisions.map(e => e.reason_code))
+      .toEqual(["STRATEGY_OK", "RISK_OK"]);
+    expect(imported.setup_context.geometry_status).toBe("NOT_EXPORTED");
+    expect(imported.execution_allocations).toHaveLength(2); // never mixed with D2.
+    expect(parsePaperEpisodeFacts(source).setup_context).toBeUndefined();
+    const missing = parsePaperEpisodeFacts({ ...source, setup_context: {
+      status: "NO_EXACT_EPISODE_LINK", source: "TRADING_DIARY_D2",
+      geometry_status: "NOT_EXPORTED", decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+    } });
+    expect(missing.setup_context?.status).toBe("NO_EXACT_EPISODE_LINK");
+  });
+
+  it("rejects contradictory, unauthenticated or future-leaking D2 claims", () => {
+    for (const invalid of [
+      { ...linkedD2, status: "NO_EXACT_EPISODE_LINK" },
+      { ...linkedD2, geometry_status: "FULL_SNAPSHOT" },
+      { ...linkedD2, consistency: "ATOMIC_WITH_PAPER" },
+      { ...linkedD2, setup: { ...linkedD2.setup, symbol: "ETHUSDT" } },
+      { ...linkedD2, setup: { ...linkedD2.setup, origin: "TERMINAL_MANUAL" } },
+      { ...linkedD2, decisions: linkedD2.decisions.slice(0, 1) },
+      { ...linkedD2, decisions: [linkedD2.decisions[1], linkedD2.decisions[0]] },
+      { ...linkedD2, decisions: [
+        linkedD2.decisions[0], { ...linkedD2.decisions[1], reason_code: "" },
+      ] },
+    ]) expect(() => parsePaperEpisodeFacts({ ...source, setup_context: invalid })).toThrow();
   });
 
   it("accepts scientific Decimal text without changing the original amount", () => {
