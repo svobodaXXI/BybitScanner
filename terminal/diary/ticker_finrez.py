@@ -178,6 +178,109 @@ def _classified_finrez_episodes(
     )
 
 
+class EpisodeFactsNotFound(StatisticsScopeError):
+    """Episode cannot be established in the requested controller scope."""
+
+
+class EpisodeFactsSourceChanged(StatisticsScopeError):
+    """The statistics index has changed since the selected episode was listed."""
+
+
+def project_paper_closed_episode_facts(
+    snapshot: PaperSourceSnapshot, *, account_id: str, owner: str,
+    trade_episode_id: str, source_revision: int, now_ms: int,
+) -> dict[str, object]:
+    """Export only persisted fill evidence, by exact, controller-proven episode ID.
+
+    Reuses the Finrez classifier; does NOT synthesize strategy decisions, candle
+    history, order-intent chronology, exchange fills or Simulator PnL.
+    """
+    if account_id != "paper" or owner not in {"ROBOT", "MANUAL"}:
+        raise ValueError("unsupported_episode_scope")
+    if not isinstance(trade_episode_id, str) or (
+        len(trade_episode_id) != 27
+        or not trade_episode_id.startswith("te_")
+        or any(ch not in "0123456789abcdef" for ch in trade_episode_id[3:])
+    ):
+        raise ValueError("invalid_trade_episode_id")
+    if type(source_revision) is not int or source_revision < 1:
+        raise ValueError("invalid_source_revision")
+    if snapshot.source_revision != source_revision:
+        raise EpisodeFactsSourceChanged("source_revision_changed")
+    robot, manual, assisted, joint, _, _ = _classified_finrez_episodes(
+        snapshot, account_id=account_id, period="ALL", now_ms=now_ms,
+    )
+    eligible: list[tuple[TradeEpisode, str]] = [
+        (episode, owner) for episode in (robot if owner == "ROBOT" else manual)
+    ]
+    if owner == "ROBOT":
+        eligible.extend((episode, "ROBOT_MANUAL_CLOSE") for episode in assisted)
+    eligible.extend((episode, "JOINT_MANAGEMENT") for episode in joint)
+    matches = [(e, cohort) for e, cohort in eligible if e.trade_episode_id.value == trade_episode_id]
+    if len(matches) != 1:
+        raise EpisodeFactsNotFound("episode_not_in_controller_scope")
+    episode, cohort = matches[0]
+    if not episode.is_closed or episode.closed_at_ms is None:
+        raise EpisodeFactsNotFound("episode_not_closed")
+
+    # Source-consistent execution facts were read in the SAME SQLite snapshot
+    # as the allocations and controller origins; never join a later DB read.
+    evidence = {}
+    for execution in snapshot.executions:
+        key = execution.dedup_key
+        if key.trading_account_id != TradingAccountId(account_id):
+            raise StatisticsScopeError("cross_account_execution_evidence")
+        if key in evidence and evidence[key] != execution:
+            raise StatisticsScopeError("conflicting_execution_evidence")
+        evidence[key] = execution
+    if not evidence:
+        raise StatisticsScopeError("execution_evidence_not_available")
+    allocations: list[dict[str, object]] = []
+    total_fees = Decimal("0")
+    for item in episode.allocations:
+        execution = evidence.get(item.execution_key)
+        controller = ORIGINS.get(snapshot.origins.get(item.execution_key))
+        if (execution is None or controller is None
+                or execution.symbol != episode.position_key.symbol
+                or execution.exchange_timestamp_ms != item.occurred_at_ms
+                or execution.quantity.value < item.quantity):
+            raise StatisticsScopeError("episode_execution_evidence_mismatch")
+        total_fees += item.fee
+        allocations.append({
+            "execution_id": item.execution_key.exec_id.value,
+            "order_id": execution.order_id.value,
+            "order_side": execution.side.value,
+            "execution_price": str(execution.price.value),
+            "allocated_quantity": str(item.quantity),
+            "allocated_fee": str(item.fee),
+            "occurred_at_ms": item.occurred_at_ms,
+            "allocation_role": item.role.value,
+            "controller": controller,
+        })
+    if len(allocations) != len(episode.allocations) or total_fees != episode.execution_fees:
+        raise StatisticsScopeError("episode_allocation_fees_mismatch")
+    return {
+        "schema": "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
+        "namespace": "PAPER_READ_ONLY",
+        "source": "PAPER_EXECUTIONS_ATTRIBUTED",
+        "source_revision": snapshot.source_revision,
+        "account_id": account_id,
+        "owner": owner,
+        "cohort": cohort,
+        "trade_episode_id": trade_episode_id,
+        "symbol": episode.position_key.symbol.value,
+        "side": episode.side.value,
+        "opened_at_ms": episode.opened_at_ms,
+        "closed_at_ms": episode.closed_at_ms,
+        "realized_price_pnl_usdt": str(episode.realized_price_pnl),
+        "known_execution_fees_usdt": str(episode.execution_fees),
+        "pnl_usdt": str(episode.realized_price_pnl - episode.execution_fees),
+        "pnl_basis": "REALIZED_PRICE_MINUS_EXECUTION_FEES",
+        "replay_evidence": "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
+        "execution_allocations": allocations,
+    }
+
+
 def project_paper_ticker_pnl(
     snapshot: PaperSourceSnapshot, *, account_id: str, owner: str,
     period: str, now_ms: int,
