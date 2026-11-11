@@ -760,6 +760,7 @@ export function ReplayPage() {
   async function loadPaperFacts(file?: File) {
     if (!file) return;
     setPlaying(false);
+    setPaperFacts(null); // Invalid replacement must not leave previous PAPER marks displayed.
     try {
       if (file.size > 4 * 1024 * 1024)
         throw new Error("JSON PAPER больше 4 МБ");
