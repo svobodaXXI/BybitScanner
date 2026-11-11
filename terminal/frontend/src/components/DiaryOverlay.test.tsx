@@ -405,11 +405,11 @@ describe("Closed deals / exact episode index", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const row = await screen.findByRole("button", { name: /BTCUSDT/ });
     expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("Робот + ручное управление");
-    expect(row).toHaveTextContent("-4.8 USDT");
+    expect(row).toHaveTextContent("-4.80 USDT");
     fireEvent.click(row);
     expect(screen.getByText("robot-episode-42")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("не воспроизведение");
-    expect(screen.queryByRole("button", { name: /Открыть в Симуляторе/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("не повторная торговля");
+    expect(screen.getAllByRole("button", { name: /В Симулятор/ }).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: /К сделкам/ }));
     expect(await screen.findByRole("button", { name: /BTCUSDT/ })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
@@ -479,7 +479,7 @@ describe("Closed deals / exact episode index", () => {
       render(<DiaryOverlay accountKey="paper:export" initialSection="DEALS"
         statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
       fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
-      expect(screen.getByRole("status")).toHaveTextContent("только реальные зарегистрированные исполнения");
+      expect(screen.getByRole("status")).toHaveTextContent("Исходные факты PAPER");
       fireEvent.click(screen.getByRole("button", { name: "Скачать JSON исполнений" }));
       await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
         `/api/diary/episode-facts?account_id=paper&owner=ROBOT&trade_episode_id=${episodeId}&source_revision=3`,
