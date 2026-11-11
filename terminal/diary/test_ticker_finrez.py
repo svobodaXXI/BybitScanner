@@ -213,6 +213,72 @@ class FinrezMixedControllerTests(unittest.TestCase):
             {"symbol": "BTCUSDT", "pnl_usdt": "4.7", "trade_count": 1},
         ])
 
+
+    def test_closed_episode_locators_are_controller_proven_and_not_automatic_replay(self):
+        pure, pure_origins = _scoped_episode("robot", "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        assisted, assisted_origins = _scoped_episode("assisted", "ETHUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.TERMINAL_MANUAL),
+        ])
+        joint, joint_origins = _scoped_episode("joint", "XRPUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT),
+            (AllocationRole.INCREASE, Origin.TERMINAL_MANUAL),
+            (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        manual, manual_origins = _scoped_episode("manual", "SOLUSDT", [
+            (AllocationRole.OPEN, Origin.TERMINAL_MANUAL),
+            (AllocationRole.CLOSE, Origin.TERMINAL_MANUAL),
+        ])
+        unknown, _ = _scoped_episode("unknown", "DOGEUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        source = PaperSourceSnapshot(15, (pure, assisted, joint, manual, unknown), {
+            **pure_origins, **assisted_origins, **joint_origins, **manual_origins,
+        })
+        robot = project_paper_ticker_pnl(
+            source, account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
+        )
+        rows = robot["closed_episodes"]
+        self.assertEqual({r["trade_episode_id"]: r["cohort"] for r in rows}, {
+            "robot": "ROBOT",
+            "assisted": "ROBOT_MANUAL_CLOSE",
+            "joint": "JOINT_MANAGEMENT",
+        })
+        self.assertEqual([r["trade_episode_id"] for r in rows], sorted(
+            r["trade_episode_id"] for r in rows
+        ))  # same close time: stable ID ordering
+        self.assertTrue(all(r["replay_evidence"] == "EPISODE_INDEX_ONLY" for r in rows))
+        self.assertEqual(rows[0]["execution_count"], 2)
+        self.assertEqual(rows[0]["pnl_usdt"], "4.8")
+        self.assertNotIn("unknown", [r["trade_episode_id"] for r in rows])
+        self.assertNotIn("manual", [r["trade_episode_id"] for r in rows])
+        self.assertEqual(robot["attribution_coverage"]["status"], "PARTIAL")
+
+        terminal = project_paper_ticker_pnl(
+            source, account_id="paper", owner="MANUAL", period="ALL", now_ms=_ms(9, 12),
+        )
+        self.assertEqual({r["trade_episode_id"]: r["cohort"] for r in terminal["closed_episodes"]}, {
+            "manual": "MANUAL", "joint": "JOINT_MANAGEMENT",
+        })
+
+    def test_closed_episode_locators_respect_close_time_and_preserve_exact_pnl(self):
+        old, origins_old = _scoped_episode(
+            "yesterday", "BTCUSDT",
+            [(AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT)],
+            opened_at=_ms(8, 23, 50), closed_at=_ms(8, 23, 59),
+        )
+        current, origins_current = _scoped_episode(
+            "today", "BTCUSDT",
+            [(AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT)],
+        )
+        source = PaperSourceSnapshot(12, (old, current), {**origins_old, **origins_current})
+        today = project_paper_ticker_pnl(
+            source, account_id="paper", owner="ROBOT", period="TODAY", now_ms=_ms(9, 12),
+        )
+        self.assertEqual([r["trade_episode_id"] for r in today["closed_episodes"]], ["today"])
+        self.assertEqual(today["closed_episodes"][0]["pnl_usdt"], "4.8")
+
     def test_other_mixed_ownership_remains_blocked(self):
         cases = [
             [(AllocationRole.OPEN, Origin.TERMINAL_MANUAL), (AllocationRole.CLOSE, Origin.ROBOT)],
