@@ -69,6 +69,8 @@ import {
 import { TradingControlButton } from "../interactions/useTradingControlActivation";
 import { normalizeLimitDraftPrice } from "../orders/limitDraft";
 
+const NO_EDITOR_DRAWINGS: readonly DrawingObject[] = [];
+
 const PRICE_SCALE_WIDTH_FALLBACK = 64,
   TIME_SCALE_HEIGHT = 30,
   BASE_TIME = 1_700_000_000;
@@ -148,8 +150,8 @@ export function ChartPanel({
   readOnly = false,
   robotTradeMarkers = [],
   editorMode = false,
-  referenceDrawings = [],
-  editableSeedDrawings = [],
+  referenceDrawings = NO_EDITOR_DRAWINGS,
+  editableSeedDrawings = NO_EDITOR_DRAWINGS,
   signalIdentity = null,
   originalPattern = null,
   snapshotRevision = null,
