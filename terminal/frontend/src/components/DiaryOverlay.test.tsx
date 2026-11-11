@@ -435,10 +435,6 @@ describe("Closed deals / exact episode index", () => {
       { ...robotDeal, pnl_usdt: "NaN" },
     ];
     for (const invalid of violations) {
-      const { unmount } = render(<DiaryOverlay accountKey={"paper:" + invalid.cohort + invalid.closed_at_ms}
-        initialSection="DEALS" statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-      // Explicitly install mocked response only after constructing the known case.
-      unmount();
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
         ...finrezResponse, closed_episodes: [invalid],
       }), { status: 200 })));
