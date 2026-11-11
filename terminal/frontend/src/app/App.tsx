@@ -129,6 +129,7 @@ export function App() {
     savedReviewNote: string | null;
   } | null>(null);
   const [frozenGeometryStatus, setFrozenGeometryStatus] = useState<"loading" | "unavailable" | "ready">("loading");
+  const [showCurrentEditorChart, setShowCurrentEditorChart] = useState(false);
   useEffect(() => {
     const link = launchLink;
     if (!link || !link.signalId) return;
@@ -1432,6 +1433,33 @@ export function App() {
                 : "Линии исходного сигнала вне текущих свечей или таймфрейм не совпадает."}
         </output>
       ) : null}
+      {mode === "EDITOR" && showCurrentEditorChart && frozenSignal && (
+        <div className="editor-current-chart-overlay" role="dialog"
+          aria-modal="true" aria-label="Актуальный график">
+          <div className="editor-current-chart-toolbar">
+            <strong>Актуальный график · {launchLink?.symbol ?? market.book.symbol} · {timeframe}</strong>
+            <button type="button" onClick={() => setShowCurrentEditorChart(false)}>
+              Вернуться к сигналу
+            </button>
+          </div>
+          {market.book.symbol === (launchLink?.symbol ?? market.book.symbol)
+            && market.candles.length > 0 ? (
+            <ChartPanel
+              key={`editor-current:${market.book.symbol}:${timeframe}`}
+              candles={market.candles}
+              tickSize={market.tickSize}
+              symbol={market.book.symbol}
+              timeframe={timeframe}
+              readOnly
+            />
+          ) : (
+            <output role="status">
+              Актуальные свечи выбранного инструмента пока недоступны.
+              Исторический сигнал сохранён без изменений.
+            </output>
+          )}
+        </div>
+      )}
       <section className="workspace-grid" aria-label="Trading workspace">
         <div
           className={`workspace-market-row ${mode !== "EDITOR" && marketSidePanelOpen ? "side-panel-open" : "side-panel-closed"}`}
@@ -1448,6 +1476,8 @@ export function App() {
           candles={mode === "EDITOR" && frozenSignal ? frozenSignal.candles : market.candles}
           editorMode={mode === "EDITOR"}
           onEditorNavigate={setMode}
+          onShowCurrentEditorChart={mode === "EDITOR" && frozenSignal
+            ? () => setShowCurrentEditorChart(true) : undefined}
           retrospectiveContext={mode === "EDITOR" ? frozenSignal?.context ?? null : null}
           onExtendEditorHistory={mode === "EDITOR" && frozenSignal ? async () => {
             const current = frozenSignal;
