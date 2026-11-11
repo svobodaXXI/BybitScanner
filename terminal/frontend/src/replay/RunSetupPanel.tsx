@@ -20,7 +20,7 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
   { id: "WEEK", name: "1 неделя" },
 ];
 
-/** Local-only Wedge execution via loopback: never production /api or PAPER. */
+/** Native Wedge/Box Scanner+Robot via one isolated loopback SIMULATION adapter. */
 export function RunSetupPanel({
   symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
   onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
@@ -68,7 +68,7 @@ export function RunSetupPanel({
   }, [start, end]);
   const active = ALL_SELECTABLE.filter(id => selection.selected.includes(id));
   const mirrorSelected = MIRROR_OPTIONS.filter(x => selection.selected.includes(x.id)).length;
-  const wedgesOnly = runnableWedgeSelection(selection);
+  const runnableNative = runnableWedgeSelection(selection);
 
   // The chart is another VIEW of the same checked selection. Never
   // let public MARKET_ONLY geometry disregard the owner's strategy choices.
@@ -331,9 +331,10 @@ export function RunSetupPanel({
         <span data-selected-strategies={active.join(",")} aria-hidden="true" />
         {loading && <span>Проверка M1 и расчёт виртуального прогона…</span>}
       </div>
-      {!wedgesOnly && active.length > 0 &&
+      {!runnableNative && active.length > 0 &&
         <p className="replay-run-error" role="status">
-          Отмеченные стратегии сохранены как выбор, но торговый запуск пока поддерживает только два клина.
+          Торговый запуск: два клина вместе или Ikigai Box отдельно.
+          Остальные выбранные стратегии ещё не подключены к изолированному Robot.
         </p>}
       {statusError && <p role="status" className="replay-run-error">{statusError}</p>}
       {status && !status.can_attempt &&
@@ -352,10 +353,17 @@ export function RunSetupPanel({
           нереализованный: {report.unrealized_pnl} USDT</span>
         <span>Суммарный PnL: {report.total_net_pnl} USDT ·
           доходность: {report.return_percent}% · просадка: {report.max_drawdown_percent}%</span>
-        <span>Обнаружено клиньев: {report.scanner_wedge_observations} ·
-          ретестов: {report.robot_retests_in_period} ·
-          LIMIT: {report.submitted_protected_limits} ·
-          исполнений: {report.virtual_fills} · STOP: {report.stop_exits} · TAKE: {report.take_exits}</span>
+        {report.scenario_type === "ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION"
+          ? <span>Ikigai Box: найдено {report.scanner_box_observations} ·
+              допущено Robot {report.admitted_box_candidates} ·
+              исполнено входов {report.box_entry_fills} ·
+              всех исполнений {report.virtual_fills} ·
+              STOP: {report.stop_exits} · TAKE: {report.take_exits}</span>
+          : <span>Клинья: найдено {report.scanner_wedge_observations} ·
+              ретестов {report.robot_retests_in_period} ·
+              LIMIT: {report.submitted_protected_limits} ·
+              исполнений: {report.virtual_fills} · STOP: {report.stop_exits} ·
+              TAKE: {report.take_exits}</span>}
         <small>Модель OHLC, не фактические биржевые исполнения. Параметры риска — локальные исследовательские допущения.</small>
       </section>}
     </section>
