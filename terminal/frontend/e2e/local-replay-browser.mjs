@@ -417,12 +417,32 @@ try {
   let publicMarketAttempts = 0;
   await page.route("**/local-replay/history?*", async (route) => {
     publicMarketAttempts++;
+    const requested = new URL(route.request().url()).searchParams.get("strategies")?.split(",") ?? [];
+    assert.ok(requested.includes("WEDGE_FALLING") && requested.includes("WEDGE_RISING"),
+      "the checked native Wedge detectors must reach loopback");
+    const observed = requested.includes("IKIGAI_BOX") ? [{
+      strategy: "IKIGAI_BOX", timeframe: "5m", pattern: "Ikigai Box",
+      signal_id: "5m:LONG:" + (t + 3*300000) + ":" + (t + 7*300000),
+      available_at_ms: t + 33*300000, source_candle_start_ms: t + 32*300000,
+      close_price: 101, status: "CONFIRMED_STRUCTURE_ONLY",
+      reason: "No Robot Box order admission or risk authorization",
+      side: "LONG", box_start_ms: t + 8*300000,
+      box_end_ms: t + 11*300000, box_low: 98, box_high: 102,
+    }] : [];
     await route.fulfill(publicMarketAttempts === 1 ? {
       status: 502, contentType: "text/plain",
       body: "Public Bybit history unavailable; nothing was simulated",
     } : {
       status: 200, contentType: "application/json",
-      body: JSON.stringify(history),
+      body: JSON.stringify({
+        ...history,
+        scanner_research: {
+          scope: "PUBLIC_M5_OBSERVATIONS_NO_ROBOT_EXECUTION",
+          detectors: requested,
+          configuration: "RESEARCH_HUNTER_SCORE50_NATIVE_WEDGE_AND_BOX",
+        },
+        scanner_observations: observed,
+      }),
     });
   });
   const bounds = page.getByRole("region", { name: "Настройка стратегий и периода" });
@@ -441,6 +461,7 @@ try {
   assert.match(await marketError.innerText(), /архив M1 и профиль риска/);
   assert.equal(await page.locator(".replay-chart-shell").count(), 0,
     "failed public market download cannot resurrect old market candles");
+  await bounds.getByRole("checkbox", { name: "Ikigai Box" }).check();
   await bounds.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
   await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
   assert.equal(publicMarketAttempts, 2);
@@ -466,7 +487,19 @@ try {
   // Scanner was NOT invoked by this public Bybit M5 GET.
   const strategyNote = page.getByRole("status", { name: "Статус выбранных стратегий" });
   assert.match(await strategyNote.innerText(), /Трендовые H1\/M5 выключены/);
-  assert.match(await strategyNote.innerText(), /клинья здесь не искались/);
+  assert.match(await strategyNote.innerText(), /Оригинальные локальные детекторы M5 проверены/);
+  assert.match(await strategyNote.innerText(), /1 Ikigai Box/);
+  assert.match(await page.getByRole("status", { name: "Результат Scanner M5" }).innerText(),
+    /1 из 1/);
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleScannerObservations === "1");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
+  await page.getByRole("button", { name: "В начало" }).click();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleScannerObservations === "0");
+  await page.getByRole("button", { name: "Пуск", exact: true }).click();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleScannerObservations === "1");
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visibleGeometry === "0");
   assert.equal(await overlay.getAttribute("data-painted-geometry"), "0");
