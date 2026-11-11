@@ -530,7 +530,7 @@ def record_owner_chart_proposal(payload: dict, *, directory=None, now_ms: int | 
 
 def list_owner_chart_training_examples(pattern: str, *, directory=None) -> list[dict]:
     """Category-filtered, read-only examples for offline Scanner replay."""
-    if pattern not in OWNER_CHART_PATTERNS:
+    if pattern not in OWNER_CHART_PATTERNS | OWNER_CHART_V3_PATTERNS:
         raise OwnerSignalProposalError("unsupported_proposed_pattern")
     root = proposal_directory(directory)
     if not root.exists():
