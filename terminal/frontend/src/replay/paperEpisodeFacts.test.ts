@@ -58,6 +58,28 @@ const linkedD2 = {
   ],
 };
 
+
+const originalArchive = {
+  schema: "BYBITSCANNER_ARCHIVED_SIGNAL_GEOMETRY_V1",
+  source: "ORIGINAL_TELEGRAM_SIGNAL_ARCHIVE",
+  linkage_basis: "D2_SETUP_ID_EQUALS_ARCHIVED_CANDIDATE_ID",
+  integrity: "LOCAL_ARCHIVE_HASH_ONLY_NOT_CRYPTOGRAPHIC_PROOF",
+  signal_id: "candidate-42", sent_at_ms: t + 350_000, sha256: "a".repeat(64),
+  snapshot: {
+    schema_version: 1, signal_id: "candidate-42", symbol: "BTCUSDT", timeframe: "5m",
+    bars: [
+      { open_time_ms: t, open: 100, high: 102, low: 98, close: 101 },
+      { open_time_ms: t + 300_000, open: 101, high: 103, low: 100, close: 102 },
+    ],
+    boundaries: [
+      { boundary_id: "lower", kind: "segment", anchors: [
+        { bar_open_time_ms: t, price: 99 },
+        { bar_open_time_ms: t + 300_000, price: 100 },
+      ] },
+    ],
+  },
+};
+
 describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
   it("preserves exact execution prices and maps them only onto real closed M5", () => {
     const facts = parsePaperEpisodeFacts(source);
@@ -148,6 +170,53 @@ describe("PAPER episode facts are display-only, never SIMULATION fills", () => {
       geometry_status: "NOT_EXPORTED", decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
     } });
     expect(missing.setup_context?.status).toBe("NO_EXACT_EPISODE_LINK");
+  });
+
+  it("parses only exact archived frozen geometry separately from virtual candle geometry", () => {
+    const sourceD2 = {
+      ...linkedD2, geometry_status: "ORIGINAL_ARCHIVE_HASH_VERIFIED",
+      original_geometry: originalArchive,
+    };
+    const imported = parsePaperEpisodeFacts({ ...source, setup_context: sourceD2 });
+    expect(imported.setup_context?.geometry_status).toBe("ORIGINAL_ARCHIVE_HASH_VERIFIED");
+    if (imported.setup_context?.status !== "EXACT_D2_LINK") throw new Error("missing D2");
+    expect(imported.setup_context.original_geometry?.boundaries[0].anchors).toEqual([
+      { bar_open_time_ms: t, price: 99 },
+      { bar_open_time_ms: t + 300_000, price: 100 },
+    ]);
+    const history = market();
+    const events = JSON.stringify(history.events);
+    expect(matchPaperFactsToMarket(imported, history).status).toBe("MATCHED");
+    expect(JSON.stringify(history.events)).toBe(events); // no simulated strategy mutation
+  });
+
+  it("rejects unlinked, mismatched, future and corrupted original source geometry", () => {
+    const d2 = {
+      ...linkedD2, geometry_status: "ORIGINAL_ARCHIVE_HASH_VERIFIED",
+      original_geometry: originalArchive,
+    };
+    for (const invalid of [
+      { ...d2, original_geometry: { ...originalArchive, signal_id: "different" } },
+      { ...d2, original_geometry: { ...originalArchive, sent_at_ms: source.closed_at_ms + 1 } },
+      { ...d2, original_geometry: { ...originalArchive, sha256: "garbage" } },
+      { ...d2, original_geometry: { ...originalArchive, snapshot: {
+        ...originalArchive.snapshot, symbol: "ETHUSDT",
+      } } },
+      { ...d2, original_geometry: { ...originalArchive, snapshot: {
+        ...originalArchive.snapshot, boundaries: [{
+          boundary_id: "bad", kind: "ray", anchors: [
+            { bar_open_time_ms: t + 90_000, price: 99 },
+            { bar_open_time_ms: t + 300_000, price: 100 },
+          ],
+        }],
+      } } },
+      { ...d2, original_geometry: undefined },
+      { ...linkedD2, original_geometry: originalArchive },
+      { status: "NO_EXACT_EPISODE_LINK", source: "TRADING_DIARY_D2",
+        geometry_status: "ORIGINAL_ARCHIVE_HASH_VERIFIED",
+        decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+        original_geometry: originalArchive },
+    ]) expect(() => parsePaperEpisodeFacts({ ...source, setup_context: invalid })).toThrow();
   });
 
   it("rejects contradictory, unauthenticated or future-leaking D2 claims", () => {
