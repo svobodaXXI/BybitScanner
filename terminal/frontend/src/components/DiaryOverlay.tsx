@@ -645,7 +645,7 @@ export function DiaryOverlay({
             || typeof row.pnl_usdt !== "string" || !row.pnl_usdt.trim()
             || !Number.isFinite(Number(row.pnl_usdt))
             || !Number.isSafeInteger(row.trade_count) || row.trade_count < 1
-          ))
+          )
           || !Array.isArray(result.joint_management)
           || result.joint_management.some((row, index) =>
             typeof row.symbol !== "string" || !row.symbol
