@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
-  type ReplayDocument, type ReplayEvent,
+  type ReplayDocument, type ReplayEvent, type PublicScannerObservation,
 } from "./replayModel";
 import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
 import {
@@ -69,10 +69,11 @@ function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
     <path d={PLAYER_PATHS[name]} />
   </svg>;
 }
-function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
+function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrategies, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
   document: ReplayDocument; cursor: number; paperOverlay: PaperOverlay;
-  paperFacts: PaperEpisodeFacts | null; showTrendGeometry: boolean; showDebug: boolean; timeframe: "5m" | "1h";
+  paperFacts: PaperEpisodeFacts | null; selectedStrategies: readonly string[];
+  showTrendGeometry: boolean; showDebug: boolean; timeframe: "5m" | "1h";
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
   onDrawingsChange: (next: DrawingObject[]) => void;
   onSelectDrawing: (id: string | null) => void;
@@ -462,7 +463,43 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeom
         context.stroke();
         paintedPaper++;
       }
+      // Real native Scanner research on public, CLOSED M5 only: small
+      // outlined markers, never ENTRY_SIGNAL/Robot order/fill triangles.
+      let paintedScanner = 0;
+      const revealedScanner = document.mode === "MARKET_ONLY" &&
+        shown.lastTimeMs !== null
+          ? (document.scanner_observations ?? []).filter(item =>
+              selectedStrategies.includes(item.strategy) &&
+              item.available_at_ms <= shown.lastTimeMs!)
+          : [];
+      for (const item of revealedScanner) {
+        const stamp = timeframe === "1h"
+          ? Math.floor(item.source_candle_start_ms / 3_600_000) * 3_600_000
+          : item.source_candle_start_ms;
+        if (!displayCandles.some(bar => bar.start_ms === stamp)) continue;
+        const x = api.timeScale().timeToCoordinate((stamp / 1000) as UTCTimestamp);
+        const y = candleSeries.priceToCoordinate(item.close_price);
+        if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y) ||
+            x < 8 || x > priceWidth - 8 || y < 8 || y > paneHeight - 8) continue;
+        context.beginPath();
+        const isBox = item.strategy === "IKIGAI_BOX";
+        if (isBox) {
+          context.rect(x - 6, y - 6, 12, 12);
+        } else {
+          context.moveTo(x, y - 7);
+          context.lineTo(x + 7, y);
+          context.lineTo(x, y + 7);
+          context.lineTo(x - 7, y);
+          context.closePath();
+        }
+        context.strokeStyle = item.status === "FILTER_REJECTED"
+          ? "#f39b7e" : isBox ? "#4ce0bd" : "#d4b3ff";
+        context.lineWidth = 2;
+        context.stroke();
+        paintedScanner++;
+      }
       context.restore();
+      canvas.dataset.visibleScannerObservations = String(paintedScanner);
       canvas.dataset.visibleFills = String(rendered);
       canvas.dataset.visiblePaperFills = String(paintedPaper);
       canvas.dataset.visibleOriginalGeometry = String(paintedOriginal);
@@ -478,7 +515,7 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeom
     // Chart recalculates pixel coordinates after updating series/timescale.
     const redrawId = requestAnimationFrame(() => renderExecutions.current());
     return () => cancelAnimationFrame(redrawId);
-  }, [shown, document, cursor, paperOverlay, paperFacts, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, showTrendGeometry, showDebug, timeframe, displayCandles, earlyGeometry]);
+  }, [shown, document, cursor, paperOverlay, paperFacts, observedDmi, observedTouches, blueRiskPreviews, priorBreaks, selectedStrategies, showTrendGeometry, showDebug, timeframe, displayCandles, earlyGeometry]);
 
   // The editable layer reuses the terminal's drawing tools, but stores its X
   // anchors in absolute UTC M5 slots rather than indices of the selected TF.
@@ -505,7 +542,7 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, showTrendGeom
         <div className="replay-chart" ref={container}
           aria-label="Свечной график и нижняя панель ADX DMI" />
         <canvas ref={executionCanvas} className="replay-execution-overlay"
-          aria-hidden="true" data-visible-fills="0" data-visible-paper-fills="0" data-visible-original-geometry="0" data-visible-observations="0" data-visible-blue-risk="0" />
+          aria-hidden="true" data-visible-fills="0" data-visible-scanner-observations="0" data-visible-paper-fills="0" data-visible-original-geometry="0" data-visible-observations="0" data-visible-blue-risk="0" />
         {pricePaneHeight > 0 && displayCandles.length > 0 &&
           <div className={`replay-drawing-layer tool-${drawingTool}`} style={{ height: pricePaneHeight }}
             data-drawing-count={drawings.length}>
@@ -588,6 +625,12 @@ export function ReplayPage() {
     return () => window.clearInterval(ticker);
   }, [runLoading]);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
+  const scannerObservations = useMemo(() =>
+    document.mode === "MARKET_ONLY" && shown.lastTimeMs !== null
+      ? (document.scanner_observations ?? []).filter(o =>
+          selectedStrategies.selected.includes(o.strategy) &&
+          o.available_at_ms <= shown.lastTimeMs!)
+      : [], [document, shown.lastTimeMs, selectedStrategies]);
   const journal = useMemo(() => (document.demo ? [] : document.events.slice(0, cursor))
     .filter(event => event.kind !== "CANDLE_CLOSED").map(event => {
       const fmt = (value: string) => {
@@ -852,7 +895,8 @@ export function ReplayPage() {
     }
   }
 
-  async function loadLocalHistory(selectedSymbol: string, selectedStart: string, selectedEnd: string) {
+  async function loadLocalHistory(selectedSymbol: string, selectedStart: string, selectedEnd: string,
+    choices: readonly string[]) {
     bundledRequest.current?.abort(); bundledRequest.current = null;
     historyRequest.current?.abort();
     const controller = new AbortController();
@@ -873,6 +917,9 @@ export function ReplayPage() {
         start: new Date(window.startMs).toISOString().slice(0, 10),
         end: new Date(window.endExclusiveMs).toISOString().slice(0, 10),
       });
+      const native = choices.filter(item =>
+        item === "WEDGE_FALLING" || item === "WEDGE_RISING" || item === "IKIGAI_BOX");
+      if (native.length > 0) query.set("strategies", native.join(","));
       // Only the loopback Python viewer implements this research-only GET.
       // Never call /api: Vite's /api proxy belongs to the main PAPER backend.
       const response = await fetch("/local-replay/history?" + query.toString(), {
@@ -1019,9 +1066,20 @@ export function ReplayPage() {
         {" "}{showTrendGeometry
           ? "Трендовые H1/M5 выбраны: жёлтые H1 и синие M5 — исследовательская геометрия, не торговые сигналы."
           : "Трендовые H1/M5 выключены: их линии и приор скрыты."}
-        {" "}{showSelectedWedges
-          ? "Клинья выбраны, но публичный M5-просмотр не запускает Scanner: клинья здесь не искались. Для торгового прогона нужны проверенные M1 и профиль риска."
-          : "Клинья не выбраны и в публичном M5-просмотре не искались."}
+        {" "}{document.scanner_research
+          ? `Оригинальные локальные детекторы M5 проверены: ${document.scanner_observations?.filter(o => o.strategy.startsWith("WEDGE_")).length ?? 0} клиньев и ${document.scanner_observations?.filter(o => o.strategy === "IKIGAI_BOX").length ?? 0} Ikigai Box (включая отфильтрованные кандидаты). Маркеры показываются после закрытия свечи; Robot здесь не торгует.`
+          : showSelectedWedges
+            ? "Клинья выбраны, но оригинальный Scanner ещё не запускался."
+            : "Клинья не выбраны и в публичном M5-просмотре не искались."}
+      </p>}
+      {document.mode === "MARKET_ONLY" && document.scanner_research && <p
+        className="replay-note" role="status" aria-label="Результат Scanner M5">
+        Локальный Scanner по закрытым M5 · найдено и раскрыто к текущему моменту:
+        {" "}{scannerObservations.length} из {document.scanner_observations?.length ?? 0}.
+        {scannerObservations.length === 0
+          ? " Пока нет подтверждённых наблюдений исходных детекторов."
+          : " Ромб — клин; квадрат — Ikigai Box. Розовый — отказ фильтра."}
+        {" "}Исследовательский режим, без Robot/PnL и исполнения.
       </p>}
       <details className="replay-diagnostics">
         <summary>Диагностика</summary>
@@ -1166,7 +1224,8 @@ export function ReplayPage() {
                   "График нового прогона появится после нажатия ▶"}
               </div>
             : <ReplayChart document={document} cursor={cursor} paperOverlay={paperOverlay}
-                paperFacts={paperFacts} showTrendGeometry={showTrendGeometry}
+                paperFacts={paperFacts} selectedStrategies={selectedStrategies.selected}
+                showTrendGeometry={showTrendGeometry}
                 showDebug={showDebug} timeframe={timeframe}
                 drawings={drawings} selectedId={selectedDrawing} drawingTool={drawingTool}
                 onDrawingsChange={setDrawings} onSelectDrawing={setSelectedDrawing}
@@ -1175,7 +1234,19 @@ export function ReplayPage() {
         <aside className="replay-events" aria-label="Журнал событий">
           <h2>Журнал событий</h2>
           <div className="replay-events-list" aria-live="off">
-            {journal.length === 0 && <p>Ожидаю события Scanner и Robot</p>}
+            {document.mode === "MARKET_ONLY" && document.scanner_research &&
+              scannerObservations.map((item: PublicScannerObservation) => (
+              <div className="replay-events-item" key={item.strategy + item.signal_id}>
+                <strong>{item.pattern === "Ikigai Box"
+                  ? "Ikigai Box" : item.pattern === "Falling Wedge" ? "Нисходящий клин" : "Восходящий клин"}</strong>
+                <span>{new Date(item.available_at_ms).toLocaleTimeString("ru-RU", { timeZone: "UTC" })} UTC
+                  {" · "}{item.status === "FILTER_APPROVED" ? "фильтр принят"
+                    : item.status === "FILTER_REJECTED" ? "фильтр отказал" : "структура подтверждена"}
+                  {" · "}{item.reason}
+                </span>
+              </div>))}
+            {journal.length === 0 && document.mode !== "MARKET_ONLY" &&
+              <p>Ожидаю события Scanner и Robot</p>}
             {paperDecisionObservations.length > 0 && (
               <section aria-label="Наблюдения PAPER D2" className="replay-d2-observations">
                 <strong>Подтверждённые наблюдения D2 · не полный журнал Robot</strong>
