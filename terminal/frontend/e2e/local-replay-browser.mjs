@@ -500,6 +500,10 @@ try {
   await page.getByRole("button", { name: "Пуск", exact: true }).click();
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visibleScannerObservations === "1");
+  // A detection at the 33rd close precedes the end of the 40-bar replay.
+  // Continue to the final CLOSED M5 before verifying 100% playback.
+  await page.waitForFunction(() =>
+    document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow") === "100");
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visibleGeometry === "0");
   assert.equal(await overlay.getAttribute("data-painted-geometry"), "0");
