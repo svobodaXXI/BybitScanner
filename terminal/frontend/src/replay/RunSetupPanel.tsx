@@ -36,7 +36,7 @@ export function RunSetupPanel({
   onSimulationReady: (replay: ReplayDocument) => void;
   onSimulationAppend: (runId: string, events: ReplayEvent[]) => void;
   onSimulationFailed: () => void;
-  onPublicHistoryRequest: (symbol: string, start: string, endInclusive: string) => void;
+  onPublicHistoryRequest: (symbol: string, start: string, endInclusive: string, selected: readonly StrategyId[]) => void;
   publicHistoryLoading: boolean;
   onStrategySelectionChange: (selection: RunSelection) => void;
 }) {
@@ -315,7 +315,7 @@ export function RunSetupPanel({
             </p>}
           <div className="replay-run-public-history">
             <button type="button" disabled={publicHistoryLoading || !parsed.window}
-              onClick={() => onPublicHistoryRequest(symbol, start, end)}>
+              onClick={() => onPublicHistoryRequest(symbol, start, end, selection.selected)}>
               {publicHistoryLoading ? "Загружаю историю…" : "Загрузить Bybit (без сделок)"}
             </button>
           </div>
