@@ -214,3 +214,48 @@ def test_unscanned_owner_chart_http_is_separate_from_scanner_archive(monkeypatch
         server.shutdown()
         worker.join(timeout=3)
         server.server_close()
+
+
+def test_unscanned_ikigai_box_archives_fibonacci_direction_without_robot_candidate(tmp_path):
+    from owner_signal_proposal import (
+        record_owner_chart_proposal, list_owner_chart_training_examples,
+    )
+    payload = _owner_chart_payload()
+    payload.update(
+        schema_version=2, pattern="Ikigai Box", direction="SHORT",
+        proposed_boundaries=[{
+            "id": "first_impulse_fibonacci", "type": "fibonacci",
+            "anchors": [
+                {"bar_open_time_ms": 10 * 300_000, "price": 95.0},
+                {"bar_open_time_ms": 15 * 300_000, "price": 108.0},
+            ],
+        }],
+    )
+    first = record_owner_chart_proposal(
+        payload, directory=tmp_path, now_ms=121 * 300_000,
+    )
+    assert first["submission"]["direction"] == "SHORT"
+    assert first["submission"]["proposed_boundaries"] == payload["proposed_boundaries"]
+    assert first["owner_source_snapshot"]["boundaries"][0]["kind"] == "fibonacci"
+    assert first["candidate_created"] is False
+    assert first["robot_candidate_id"] is None
+    assert first["assessment"]["decision"] == "AWAITING_OFFLINE_REPLAY"
+    assert list_owner_chart_training_examples("Ikigai Box", directory=tmp_path) == [first]
+    assert record_owner_chart_proposal(
+        payload, directory=tmp_path, now_ms=121 * 300_000,
+    ) == first
+
+    bad = {**payload, "direction": "LONG",
+           "idempotency_key": "ikigai-invalid-dir-000001"}
+    with pytest.raises(OwnerSignalProposalError, match="impulse_direction"):
+        record_owner_chart_proposal(
+            bad, directory=tmp_path, now_ms=121 * 300_000,
+        )
+    fake = {**payload, "proposed_boundaries": [{
+        **payload["proposed_boundaries"][0], "type": "rectangle",
+    }], "idempotency_key": "ikigai-invalid-rect-0001"}
+    with pytest.raises(OwnerSignalProposalError, match="invalid_owner_chart_geometry"):
+        record_owner_chart_proposal(
+            fake, directory=tmp_path, now_ms=121 * 300_000,
+        )
+    assert len(list(tmp_path.rglob("*.json"))) == 1
