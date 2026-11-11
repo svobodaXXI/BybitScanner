@@ -143,8 +143,8 @@ class WedgeVisualReplay:
                 net = gross - original.fee - receipt.fee
                 entry_notional = original.price * original.quantity
                 financials = {
-                    "net_usdt": str(net),
-                    "pnl_percent": str(net * 100 / entry_notional),
+                    "net_usdt": format(net, "f"),
+                    "pnl_percent": format(net * 100 / entry_notional, "f"),
                 }
             self._items.append({
                 "kind": "ENTRY_FILLED" if entry else "EXIT_FILLED",

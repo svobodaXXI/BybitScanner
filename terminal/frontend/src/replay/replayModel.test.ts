@@ -176,7 +176,7 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(report.actions.map(item => item.event_id)).toEqual(
       report.actions.map(item => `${item.simulation_run_id}:${item.sequence}`),
     );
-    expect(report.actions[0]).toMatchObject({ side: "LONG", comment: "Сигнал LONG" });
+    expect(report.actions[0]).toMatchObject({ side: "LONG", comment: "LIMIT по ретесту LONG" });
     expect(report.actions[1]).toMatchObject({ side: "LONG", comment: "Вход LONG" });
     expect(report.actions[2]).toMatchObject({ reason: "DEMO_EXIT", comment: "Выход DEMO_EXIT" });
     const original = JSON.stringify(report);
