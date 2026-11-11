@@ -196,6 +196,86 @@ def run_local_simulation(
 
 
 
+def read_verified_episode_market(*, symbol: str, start_ms: int, end_ms: int) -> dict[str, object]:
+    """Read-only projection of PINNED local M1 through the existing timeline.
+
+    Accepts only precise M5-aligned UTC times; no remote GET, Robot, PAPER
+    ledger or simulation orders. An incomplete archived M5 is never drawn.
+    Called only for owner-selected immutable episode facts.
+    """
+    m5 = FIVE_MINUTES_MS
+    max_window = 7 * 86_400_000
+    if (not isinstance(symbol, str) or not SYMBOL_RE.fullmatch(symbol)
+            or type(start_ms) is not int or type(end_ms) is not int
+            or start_ms < 0 or start_ms % m5 or end_ms % m5
+            or not 0 < end_ms - start_ms <= max_window):
+        raise ValueError("expected one symbol and a bounded M5-aligned UTC episode window")
+    from research.simulator_v2.wedge_cli import MAX_MANIFEST_BYTES, parse_manifest
+    from research.simulator_v2.history import last_closed_m1_boundary_ms
+    from research.simulator_v2.trade_range import (
+        _ordered_proofs, iter_pinned_trade_chunks,
+    )
+    from research.simulator_v2.timeline import IsolatedTimeline
+
+    manifest_path = SIM_DATA / "manifest.json"
+    cache_dir = SIM_DATA / "m1-cache"
+    if (SIM_DATA.is_symlink() or manifest_path.is_symlink()
+            or cache_dir.is_symlink() or not manifest_path.is_file()
+            or not cache_dir.is_dir()):
+        raise ValueError("verified local M1 archive is unavailable")
+    raw = manifest_path.read_bytes()
+    if len(raw) > MAX_MANIFEST_BYTES:
+        raise ValueError("local archive manifest exceeds limit")
+    latest = last_closed_m1_boundary_ms()
+    manifest_symbol, proofs = parse_manifest(
+        json.loads(raw), latest_closed_boundary_ms=latest,
+    )
+    if symbol != manifest_symbol:
+        raise ValueError("episode symbol differs from pinned local M1 source")
+    source_id, archive_start, archive_end = _ordered_proofs(
+        proofs, symbol=symbol, latest_closed_boundary_ms=latest,
+    )
+    if not (archive_start <= start_ms < end_ms <= archive_end and end_ms <= latest):
+        raise ValueError("episode has no complete verified local M1 history")
+    day_ms = 86_400_000
+    first = (start_ms - archive_start) // day_ms
+    last = (end_ms - archive_start + day_ms - 1) // day_ms
+    selected = proofs[first:last]
+    run_id = "episode_market_" + token_hex(9)
+    timeline = IsolatedTimeline(simulation_run_id=run_id, symbol=symbol)
+    events: list[dict[str, object]] = []
+    for chunk in iter_pinned_trade_chunks(
+        cache_dir=cache_dir, symbol=symbol, proofs=selected,
+        latest_closed_boundary_ms=latest,
+    ):
+        for minute in chunk.candles:
+            if minute.start_ms >= end_ms:
+                break
+            frame = timeline.step(minute)
+            bar = frame.newly_closed_5m
+            if bar is None or not (start_ms <= bar.start_ms and bar.end_ms <= end_ms):
+                continue
+            events.append({
+                "source": "SIMULATION", "simulation_run_id": run_id,
+                "sequence": len(events) + 1, "kind": "CANDLE_CLOSED",
+                "time_ms": bar.end_ms,
+                "candle": {
+                    "start_ms": bar.start_ms, "end_ms": bar.end_ms,
+                    "open": float(bar.open), "high": float(bar.high),
+                    "low": float(bar.low), "close": float(bar.close),
+                    "volume": float(bar.volume),
+                },
+            })
+    if len(events) != (end_ms - start_ms) // m5:
+        raise ValueError("episode M5 history incomplete; no candle substitution")
+    return {
+        "source": "SIMULATION", "simulation_run_id": run_id,
+        "symbol": symbol, "mode": "MARKET_ONLY", "demo": False,
+        "timeframe": "5m", "market_data_source": "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M",
+        "source_id": source_id, "events": events,
+    }
+
+
 def fetch_public_klines(symbol: str, interval: str, limit: int, *, end_ms: int):
     """Public read-only exchange adapter; deliberately no signed/private APIs."""
     if not SYMBOL_RE.fullmatch(symbol) or interval != "5":
@@ -334,6 +414,38 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                     200, json.dumps(info, ensure_ascii=False).encode("utf-8"),
                     "application/json; charset=utf-8",
                 )
+                return
+            if url.path == "/local-replay/simulation/pinned-market":
+                if (self.headers.get("Sec-Fetch-Site") == "cross-site"
+                        or self.headers.get("Origin") not in (
+                            None, "", f"http://127.0.0.1:{self.server.server_address[1]}",
+                            f"http://localhost:{self.server.server_address[1]}",
+                        )):
+                    self._error(403, "Same-origin read-only M1 archive only")
+                    return
+                try:
+                    params = parse_qs(url.query, strict_parsing=True)
+                    if set(params) != {"symbol", "start_ms", "end_ms"} or any(
+                        len(value) != 1 for value in params.values()
+                    ):
+                        raise ValueError("expected symbol/start_ms/end_ms")
+                    result = read_verified_episode_market(
+                        symbol=params["symbol"][0],
+                        start_ms=int(params["start_ms"][0]),
+                        end_ms=int(params["end_ms"][0]),
+                    )
+                    body = json.dumps(result, ensure_ascii=False, allow_nan=False,
+                                      separators=(",", ":")).encode("utf-8")
+                    if len(body) > MAX_RESPONSE_BYTES:
+                        self._error(413, "episode history exceeds bounded response")
+                        return
+                    self._send(200, body, "application/json; charset=utf-8")
+                except (ValueError, TypeError, OSError, OverflowError) as exc:
+                    self._error(422, str(exc)[:250])
+                except (ImportError, ModuleNotFoundError):
+                    self._error(503, "Verified local archive engine unavailable")
+                except Exception:
+                    self._error(503, "Verified local episode history unavailable")
                 return
             if url.path == "/local-replay/bundled":
                 # One immutable PUBLIC, MARKET_ONLY archive shipped with the
