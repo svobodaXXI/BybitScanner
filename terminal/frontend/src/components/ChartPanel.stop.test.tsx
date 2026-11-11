@@ -4,6 +4,9 @@ import { ChartPanel } from "./ChartPanel";
 
 const seriesSetData = vi.hoisted(() => vi.fn());
 
+// jsdom has no 2D canvas; this test asserts ChartPanel state and series updates.
+vi.mock("../chart/DrawingOverlay", () => ({ DrawingOverlay: () => null }));
+
 vi.mock("lightweight-charts", () => ({
   CandlestickSeries: {},
   ColorType: { Solid: "Solid" },
