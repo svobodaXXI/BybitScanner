@@ -19,7 +19,7 @@ class IkigaiIsolationTests(unittest.TestCase):
         session = VirtualReplaySession(
             simulation_run_id="ikigai", symbol="BTCUSDT",
             initial_balance=D("1000"),
-            ikigai_scanner_config=IkigaiScannerConfig(window_bars=50),
+            ikigai_scanner_config=IkigaiScannerConfig(window_bars=50, timeframes=("5m",)),
         )
         for i in range(159):
             session.step(m1(i))
@@ -34,6 +34,24 @@ class IkigaiIsolationTests(unittest.TestCase):
         self.assertEqual(session.account.fills, ())
         self.assertEqual(session.exchange.events, ())
         self.assertEqual(session.ikigai_scanner.observations, ())
+
+    def test_m1_and_m5_use_same_detector_at_distinct_closes(self):
+        session = VirtualReplaySession(
+            simulation_run_id="both_tfs", symbol="BTCUSDT",
+            initial_balance=D("1000"),
+            ikigai_scanner_config=IkigaiScannerConfig(window_bars=50),
+        )
+        with patch("research.simulator_v2.ikigai_observer.detect_ikigai_box",
+                   return_value=None) as detect:
+            for i in range(160):
+                session.step(m1(i))
+            # M1: first evaluation on its 32nd closed minute; M5: first
+            # evaluation on the 32nd closed 5m, at the 160th minute.
+            self.assertEqual(detect.call_count, (160 - 31) + 1)
+            self.assertEqual([len(c.args[0]) for c in detect.call_args_list[-2:]],
+                             [50, 32])
+            self.assertEqual(session.ikigai_scanner.observations, ())
+            self.assertEqual(session.exchange.events, ())
 
     def test_rejects_invalid_lookback(self):
         for value in (0, 5001, True):
