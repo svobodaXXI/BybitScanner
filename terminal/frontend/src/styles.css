@@ -300,6 +300,11 @@ button {
 .editor-correction-export output {
   flex-basis: 100%;
 }
+.editor-correction-export .editor-review-success {
+  color: #43d67b;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
 
 .drawing-tools-panel {
   grid-column: 1;

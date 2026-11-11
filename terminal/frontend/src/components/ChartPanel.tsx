@@ -53,7 +53,7 @@ import {
   TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR,
   visibleRobotTradeMarkers, type RobotTradeMarker,
 } from "../chart/robotTradeMarkers";
-import { buildEditorGeometryReview, compareEditorRayChanges, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
+import { buildEditorGeometryReview, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
 import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
 import { buildOwnerChartDraft, buildOwnerSignalDraft, type OwnerChartDraft, type OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
@@ -297,21 +297,10 @@ export function ChartPanel({
   const [proposalPattern, setProposalPattern] = useState<OwnerSignalDraft["pattern"]>("Falling Wedge");
   const [proposalNote, setProposalNote] = useState("");
   const [proposalPending, setProposalPending] = useState(false);
-  const [proposalStatus, setProposalStatus] = useState("");
+  const [, setProposalStatus] = useState("");
   const [extensionPending, setExtensionPending] = useState(false);
-  const [extensionStatus, setExtensionStatus] = useState("");
+  const [, setExtensionStatus] = useState("");
   const proposalToken = useRef<{ content: string; key: string } | null>(null);
-  const rayComparison = useMemo(() => {
-    if (!editorMode || !signalIdentity || !referenceDrawings.length) return null;
-    try {
-      return compareEditorRayChanges({
-        referenceDrawings, editableDrawings: drawings, frozenCandles: candles,
-      });
-    } catch {
-      // Incomplete/stale coordinates must never produce misleading deltas.
-      return null;
-    }
-  }, [editorMode, signalIdentity, referenceDrawings, drawings, candles]);
   const [reviewLabel, setReviewLabel] = useState<GeometryReviewDraft["label"]>(
     savedReviewLabel ?? "GEOMETRY_CORRECTED",
   );
@@ -320,9 +309,6 @@ export function ChartPanel({
   const [reviewNote, setReviewNote] = useState(savedReviewNote ?? "");
   const [reviewPending, setReviewPending] = useState(false);
   const [reviewStatus, setReviewStatus] = useState("");
-  const [savedReceipt, setSavedReceipt] = useState<{
-    reviewId: string; label: GeometryReviewDraft["label"];
-  } | null>(null);
   const reviewEditSequence = useRef(0);
   const [reviewDirty, setReviewDirty] = useState(() =>
     Boolean(editorMode && signalIdentity && (
@@ -346,14 +332,6 @@ export function ChartPanel({
     previousReviewAsOf.current = current;
     if (previous !== current && current !== null && !newSignalMode) markReviewEdited();
   }, [retrospectiveContext?.asOfMs, newSignalMode, markReviewEdited]);
-  const latestReceipt = savedReceipt ?? (savedReviewId && savedReviewLabel
-    ? { reviewId: savedReviewId, label: savedReviewLabel } : null);
-  const reviewVerdicts: Record<GeometryReviewDraft["label"], string> = {
-    CONFIRMED: "Верный сигнал",
-    GEOMETRY_CORRECTED: "Исправлена геометрия",
-    FALSE_POSITIVE: "Ложный сигнал",
-    UNCERTAIN: "Неоднозначно",
-  };
   const submitToken = useRef<{ content: string; key: string } | null>(null);
   const saveCorrection = async () => {
     if (newSignalMode) return;
@@ -375,16 +353,15 @@ export function ChartPanel({
       const submittedSequence = reviewEditSequence.current;
       setReviewPending(true);
       setReviewStatus("Сохранение исправления…");
-      const receipt = await onSaveGeometryReview({
+      await onSaveGeometryReview({
         ...draft, note, idempotency_key: submitToken.current.key,
       });
-      setSavedReceipt(receipt);
       if (submittedSequence === reviewEditSequence.current) {
         setReviewDirty(false);
-        setReviewStatus("Исправление сохранено в дневнике обратной связи. Scanner автоматически не менялся.");
+        setReviewStatus(reviewLabel === "GEOMETRY_CORRECTED" ? "Исправлена геометрия" : "");
       } else {
         setReviewDirty(true);
-        setReviewStatus("Отзыв сохранён, но изменения после отправки ещё не сохранены.");
+        setReviewStatus("");
       }
     } catch (error) {
       setReviewStatus(`Не удалось сохранить: ${error instanceof Error ? error.message : "неизвестная ошибка"}`);
@@ -1116,7 +1093,6 @@ export function ChartPanel({
               onClick={() => onShowCurrentEditorChart?.()}>
               Показать актуальный график
             </button>}
-            {extensionStatus && <output role="status" aria-live="polite">{extensionStatus}</output>}
             {!ownerChartMode && <button type="button" disabled={extensionPending || reviewPending || proposalPending}
               aria-pressed={newSignalMode} onClick={switchSignalDrawingMode}>
               {newSignalMode ? "Вернуться к исправлению" : "Создать новый сигнал"}
@@ -1135,7 +1111,6 @@ export function ChartPanel({
                   onClick={() => void submitOwnerProposal()}>
                   {proposalPending ? "Сохранение…" : ownerChartMode ? "Сохранить в «Мои сигналы»" : "Передать на оценку Robot"}
                 </button>
-                {proposalStatus && <output role="status" aria-live="polite">{proposalStatus}</output>}
               </>
             ) : (
               <>
@@ -1157,30 +1132,15 @@ export function ChartPanel({
               onChange={(event) => { setReviewNote(event.target.value); markReviewEdited(); }}
             />
             <button type="button" disabled={reviewPending || !snapshotRevision || !barsSha256 || !onSaveGeometryReview}
+              title={reviewStatus.startsWith("Не удалось сохранить:") ? reviewStatus : undefined}
               onClick={() => void saveCorrection()}>
-              {reviewPending ? "Сохранение…" : "Передать исправление"}
+              {reviewPending ? "Сохранение…" : reviewStatus.startsWith("Не удалось сохранить:") ? "Не удалось сохранить" : "Передать исправление"}
             </button>
-            {latestReceipt && (
-              <span>
-                Сохранённый отзыв: {latestReceipt.reviewId.slice(0, 12)}
-                {" · "}{reviewVerdicts[latestReceipt.label]}
-                {reviewDirty ? " (предыдущая версия)" : ""}
-              </span>
-            )}
-            {reviewDirty && <output aria-label="Несохранённый отзыв">Новые изменения не сохранены</output>}
-            {reviewLabel === "GEOMETRY_CORRECTED" && rayComparison && (
-              <output aria-label="Сравнение линий Scanner и исправления">
-                {rayComparison.map((ray) => (
-                  <span key={ray.boundaryId}>
-                    {ray.boundaryId}: Δ точка 1 {ray.anchorChanges[0].priceShiftPercent.toFixed(2)}%
-                    {ray.anchorChanges.length === 2 && (
-                      <>; Δ точка 2 {ray.anchorChanges[1].priceShiftPercent.toFixed(2)}%; Δ наклон {ray.slopeDeltaPerHour.toPrecision(3)}/ч</>
-                    )}{" "}
-                  </span>
-                ))}
+            {reviewStatus === "Исправлена геометрия" && !reviewDirty && (
+              <output className="editor-review-success" role="status" aria-live="polite">
+                Исправлена геометрия
               </output>
             )}
-            {reviewStatus && <output role="status" aria-live="polite">{reviewStatus}</output>}
               </>
             )}
           </div>
