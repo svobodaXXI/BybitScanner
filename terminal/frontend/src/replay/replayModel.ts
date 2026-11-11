@@ -318,7 +318,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     const net_usdt = e.net_usdt;
     const pnl_percent = e.pnl_percent;
     if (net_usdt !== undefined || pnl_percent !== undefined) {
-      const decimal = /^[+-]?(?:0|[1-9]\\d*)(?:\\.\\d+)?$/;
+      const decimal = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/;
       if (kind !== "EXIT_FILLED" ||
           typeof net_usdt !== "string" || typeof pnl_percent !== "string" ||
           !decimal.test(net_usdt) || !decimal.test(pnl_percent) ||

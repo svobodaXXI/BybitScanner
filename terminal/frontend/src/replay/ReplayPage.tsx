@@ -499,7 +499,7 @@ export function ReplayPage() {
     return () => window.clearInterval(ticker);
   }, [runLoading]);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
-  const journal = useMemo(() => document.events.slice(0, cursor)
+  const journal = useMemo(() => (document.demo ? [] : document.events.slice(0, cursor))
     .filter(event => event.kind !== "CANDLE_CLOSED").map(event => {
       const fmt = (value: string) => {
         const number = Number(value);
