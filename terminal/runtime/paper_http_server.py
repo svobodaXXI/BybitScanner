@@ -56,7 +56,9 @@ from terminal.api.models import (
 from terminal.domain.models import OrderSide
 from terminal.domain.models import Price, Quantity, Symbol, TradingAccountId
 from terminal.diary.models import DiaryEnvironment
-from terminal.diary.episode_context import project_episode_d2_context_read_only
+from terminal.diary.episode_context import (
+    attach_verified_original_geometry, project_episode_d2_context_read_only,
+)
 from terminal.diary.presentation import project_trade_episode_list
 from terminal.diary.service import TradeEpisodeReadService
 from terminal.diary.setup_runtime import decision_store_path, project_setup_store
@@ -3367,11 +3369,15 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 # The optional D2 setup/decision database is independent from
                 # PAPER. It is read only by exact episode ID, never initialized.
                 # Its lack of a link is explicitly NOT proof of a Robot signal.
-                projection["setup_context"] = project_episode_d2_context_read_only(
+                d2_context = project_episode_d2_context_read_only(
                     getattr(self.server, "diary_setup_store_path", None),
                     trade_episode_id=episode_id, account_id="paper",
                     symbol=projection["symbol"], side=projection["side"],
                     opening_controller=projection["execution_allocations"][0]["controller"],
+                )
+                projection["setup_context"] = attach_verified_original_geometry(
+                    d2_context, symbol=projection["symbol"],
+                    opened_at_ms=projection["opened_at_ms"],
                 )
             except EpisodeFactsSourceChanged:
                 self._json_response(409, {"ok": False, "error": "episode_facts_source_changed"})
