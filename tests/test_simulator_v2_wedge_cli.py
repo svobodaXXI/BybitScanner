@@ -110,22 +110,38 @@ class TimeMachineWedgeConfigTests(unittest.TestCase):
         manifest = provenance(fake_proofs())
         wrong = selection()
         for strategies in (
-            [], ["IKIGAI_BOX"], ["MIRROR_LEVELS"],
+            [], ["MIRROR_LEVELS"],
             ["WEDGE_FALLING", "IKIGAI_BOX"],
             ["WEDGE_FALLING", "WEDGE_FALLING"],
             ["ALL"], ["H1_TREND", "WEDGE_RISING"],
         ):
             with self.subTest(strategies=strategies), self.assertRaisesRegex(
-                ValueError, "only actually implemented",
+                ValueError, "only implemented|cannot share",
             ):
                 run_from_time_machine_config(
                     config={**wrong, "selected_strategies": strategies},
                     manifest=manifest,cache_dir=Path("sim-test-cache"),
                     latest_closed_boundary_ms=BOUNDARY,
                 )
+
+    def test_box_only_dispatches_native_box_runner(self):
+        manifest = provenance(fake_proofs())
+        with patch(
+            "research.simulator_v2.wedge_cli.run_cached_box_trade_range",
+            return_value="NATIVE_BOX",
+        ) as runner:
+            result = run_from_time_machine_config(
+                config={**selection(), "selected_strategies": ["IKIGAI_BOX"]},
+                manifest=manifest, cache_dir=Path("sim-test-cache"),
+                latest_closed_boundary_ms=BOUNDARY,
+            )
+        self.assertEqual(result, "NATIVE_BOX")
+        self.assertEqual(runner.call_args.kwargs["terms"].working_quantity, D("1"))
+        self.assertEqual(runner.call_args.kwargs["scanner_config"].timeframes,
+                         ("1m", "5m"))
         with self.assertRaisesRegex(ValueError, "selected symbol differs"):
             run_from_time_machine_config(
-                config={**wrong, "symbol":"ETHUSDT"},
+                config={**selection(), "symbol":"ETHUSDT"},
                 manifest=manifest, cache_dir=Path("sim-test-cache"),
                 latest_closed_boundary_ms=BOUNDARY,
             )

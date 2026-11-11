@@ -69,8 +69,14 @@
 `robot_entry_limit.build_initial_retest_limit` и штатные
 функции риска/защиты, но воспроизведение кандидатов организует
 локальный `ReadOnlyWedgeRobot`, а не полный `RobotBreakoutMonitor`.
-Box пока имеет оригинальный detector и неисполняемый native P1..P4 preview,
-но ещё не имеет многозаявочного виртуального Robot lifecycle.
+Box вызывает оригинальный detector и planner, затем штатный
+`RobotBreakoutMonitor` на отдельном `simulation:<run-id>` SQLite ledger.
+Единственный `VirtualExchange` принимает его P1–P4/MARKET/EXIT/STOP команды,
+возвращает receipts в тот же ownership/protection lifecycle и считает комиссии
+и Net PnL через общий `VirtualAccount`. OHLC исполняет не более одного слоя за
+закрытую M1, поэтому недоказанная внутриминутная хронология не синтезируется;
+остальные GTC сохраняются. Box-only endpoint/stream разрешён, а совместный
+Box+Wedge owner на одном символе пока блокируется до общей portfolio-admission.
 Оба маршрута НЕ признавать эквивалентными production Robot, пока
 не доказана связь с общими механизмами ownership/protection/fill.
 Существующий Wedge не переписывать новым FSM: добавить недостающую

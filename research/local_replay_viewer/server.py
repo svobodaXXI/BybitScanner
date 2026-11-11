@@ -100,7 +100,7 @@ def local_simulation_status() -> dict[str, object]:
         "python_dependencies_available": deps, "archive_files_present": data,
         "wedge_risk_profile_present": risk,
         "can_attempt": engine and deps and data and risk,
-        "supported_strategies": ["WEDGE_FALLING", "WEDGE_RISING"],
+        "supported_strategies": ["WEDGE_FALLING", "WEDGE_RISING", "IKIGAI_BOX"],
         "archive_validation": "RECHECKED_ON_RUN_NOT_CLAIMED_READY",
     }
     if archive_hint is not None:
@@ -112,7 +112,7 @@ def run_local_simulation(
     request_data: object, *,
     on_stream: Callable[[str, dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
-    """Only original Wedge / SIMULATION on known local public M1 cache.
+    """Original Wedge or Ikigai Box on known local public M1 cache.
 
     Does not download anything, import production Scanner/Robot runtimes,
     accept arbitrary file paths, or write to any exchange/PAPER ledger.
@@ -129,9 +129,12 @@ def run_local_simulation(
         raise ValueError("invalid local wedge run field")
     selected = request_data["selected_strategies"]
     if (not isinstance(selected, list) or not selected or len(selected) > 2
-            or any(s not in ("WEDGE_RISING", "WEDGE_FALLING") for s in selected)
+            or any(s not in ("WEDGE_RISING", "WEDGE_FALLING", "IKIGAI_BOX")
+                   for s in selected)
             or len(set(selected)) != len(selected)):
-        raise ValueError("only implemented Rising/Falling Wedge may trade")
+        raise ValueError("only implemented Wedge or Ikigai Box may trade")
+    if "IKIGAI_BOX" in selected and len(selected) != 1:
+        raise ValueError("Ikigai Box currently requires an isolated one-strategy run")
 
     status = local_simulation_status()
     if not status["can_attempt"]:

@@ -5,7 +5,11 @@ from decimal import Decimal
 from research.historical_market_replay import Candle
 from research.simulator_v2.timeline import MINUTE_MS
 from research.simulator_v2.virtual_account import VirtualAccount
-from research.simulator_v2.virtual_exchange import MarketRequest, VirtualExchange
+from research.simulator_v2.virtual_exchange import (
+    MarketRequest,
+    RobotStopRequest,
+    VirtualExchange,
+)
 
 D = Decimal
 
@@ -117,6 +121,46 @@ class VirtualExchangeTests(unittest.TestCase):
         self.assertFalse(hasattr(exchange, "client"))
         with self.assertRaises(ValueError):
             VirtualExchange(account=exchange.account, taker_fee_rate=D("-0.01"))
+
+    def test_native_robot_markets_fill_one_per_minute_and_stop_has_priority(self):
+        exchange = self.setup_exchange(initial=D("10000"), fee=D("0.001"))
+        exchange.on_closed_minute(bar(0))
+        first = MarketRequest("robot-market-1", "BUY", D("1"))
+        second = MarketRequest("robot-market-2", "BUY", D("1"))
+        exchange.submit_robot_market(first, submitted_at_ms=MINUTE_MS)
+        exchange.submit_robot_market(second, submitted_at_ms=MINUTE_MS)
+
+        exchange.on_closed_minute(bar(
+            1, opening="100", highest="104", lowest="99", closing="101",
+        ))
+        self.assertEqual([fill.fill_id for fill in exchange.last_minute_fills], [
+            "robot-market-1_fill",
+        ])
+        self.assertEqual(exchange.robot_markets, (second,))
+        exchange.synchronize_robot_stop(
+            RobotStopRequest("robot-stop-1", "LONG", D("95")),
+            synchronized_at_ms=2 * MINUTE_MS,
+        )
+
+        exchange.on_closed_minute(bar(
+            2, opening="94", highest="96", lowest="90", closing="93",
+        ))
+        self.assertEqual([fill.fill_id for fill in exchange.last_minute_fills], [
+            "robot-stop-1_fill",
+        ])
+        self.assertEqual(exchange.robot_markets, ())
+        self.assertIsNone(exchange.robot_stop)
+        snapshot = exchange.account.snapshot(as_of_ms=3 * MINUTE_MS, mark_price=D("94"))
+        self.assertEqual(snapshot.position_quantity, D("0"))
+        self.assertEqual(
+            [(event.order_id, event.kind) for event in exchange.events],
+            [
+                ("robot-market-1", "SUBMITTED"),
+                ("robot-market-2", "SUBMITTED"),
+                ("robot-market-1", "FILLED"),
+                ("robot-stop-1", "STOP_FILLED"),
+            ],
+        )
 
 
 if __name__ == "__main__":

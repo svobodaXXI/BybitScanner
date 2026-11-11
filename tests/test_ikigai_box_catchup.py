@@ -69,6 +69,8 @@ class BoxCatchupPlanningTests(unittest.TestCase):
         data["anchors"] = {"a_price": "90", "b_price": "100"}
         data["fibonacci"] = {"f1": "100", "f1618": "108", "f2618": "120"}
         data["plan"]["direction"] = "SHORT"
+        data["plan"]["frozen_f1"] = "100"
+        data["plan"]["frozen_f1618"] = "108"
         data["plan"]["limit_prices"] = ["106", "106.8", "107.6", "108.4"]
         data["plan"]["take_price"] = "100.8"
         data["plan"]["stop_price"] = "110.4"

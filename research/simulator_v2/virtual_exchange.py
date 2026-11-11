@@ -7,8 +7,11 @@ OHLC fill assumption, NOT proof of venue queue priority or real execution.
 LIMIT fills occur at their stated limit price, never a fictitious improvement.
 A marketable opening uses taker fees; intrabar limit fill uses maker fees.
 
-Only one pending order or one protected position, full fills, one-way
-position, no leverage, depth, partial fills or real trading endpoints.
+The legacy single-order seam remains for Wedge.  The native Robot seam may
+hold several already-owned GTC LIMITs for one symbol (Box P1..P4 and their
+paired exits); it still makes no strategy, sizing or protection decision.
+Full fills, one-way position, no leverage, depth, partial fills or real
+trading endpoints.
 Protected STOP/TAKE execute pessimistically on ambiguous closed M1 candles:
 STOP takes precedence over TAKE and gap STOP executes at OPEN. When entry and
 STOP hit in one bar, both receipts commit atomically. Intrabar TAKE on an
@@ -95,6 +98,36 @@ class ProtectedLimitRequest:
 
 
 @dataclass(frozen=True)
+class RobotLimitRequest:
+    """One native Robot-owned GTC LIMIT projected into the virtual venue."""
+
+    entry: LimitRequest
+    reduce_only: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.entry, LimitRequest) or type(self.reduce_only) is not bool:
+            raise TypeError("exact Robot LIMIT and reduce-only flag required")
+
+
+@dataclass(frozen=True)
+class RobotStopRequest:
+    """Current native Robot STOP projection; quantity follows actual position."""
+
+    order_id: str
+    position_side: str
+    stop_price: Decimal
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.order_id, str) or not IDENTITY.fullmatch(self.order_id):
+            raise ValueError("invalid virtual STOP identity")
+        if self.position_side not in ("LONG", "SHORT"):
+            raise ValueError("virtual STOP needs LONG or SHORT position side")
+        if (not isinstance(self.stop_price, Decimal)
+                or not self.stop_price.is_finite() or self.stop_price <= 0):
+            raise ValueError("positive finite virtual STOP required")
+
+
+@dataclass(frozen=True)
 class OrderEvent:
     order_id: str
     kind: str  # SUBMITTED, AMENDED, CANCELLED, FILLED
@@ -142,6 +175,9 @@ class VirtualExchange:
         self._active_protection: ProtectedLimitRequest | None = None
         self._last_minute_fills: tuple[VirtualFill, ...] = ()
         self._last_minute_order_events: tuple[OrderEvent, ...] = ()
+        self._robot_limits: dict[str, tuple[RobotLimitRequest, int]] = {}
+        self._robot_markets: dict[str, tuple[MarketRequest, int]] = {}
+        self._robot_stop: RobotStopRequest | None = None
 
     @property
     def virtual_time_ms(self) -> int | None:
@@ -149,7 +185,13 @@ class VirtualExchange:
 
     @property
     def pending(self) -> MarketRequest | LimitRequest | None:
-        return self._pending[0] if self._pending is not None else None
+        if self._pending is not None:
+            return self._pending[0]
+        if self._robot_markets:
+            return next(iter(self._robot_markets.values()))[0]
+        if self._robot_limits:
+            return next(iter(self._robot_limits.values()))[0].entry
+        return None
 
     @property
     def events(self) -> tuple[OrderEvent, ...]:
@@ -166,6 +208,202 @@ class VirtualExchange:
     @property
     def last_minute_order_events(self) -> tuple[OrderEvent, ...]:
         return self._last_minute_order_events
+
+    @property
+    def robot_limits(self) -> tuple[RobotLimitRequest, ...]:
+        return tuple(item[0] for item in self._robot_limits.values())
+
+    @property
+    def robot_markets(self) -> tuple[MarketRequest, ...]:
+        return tuple(item[0] for item in self._robot_markets.values())
+
+    @property
+    def robot_stop(self) -> RobotStopRequest | None:
+        return self._robot_stop
+
+    def submit_robot_market(
+        self, request: MarketRequest, *, submitted_at_ms: int,
+    ) -> None:
+        """Queue a native Robot MARKET for the next historical M1 OPEN."""
+        if not isinstance(request, MarketRequest):
+            raise TypeError("MarketRequest required")
+        if (self._last_close_ms is None or submitted_at_ms != self._last_close_ms
+                or self._pending is not None or self._active_protection is not None):
+            raise ValueError("Robot MARKET requires latest committed native-Robot M1")
+        if request.order_id in self._seen_order_ids:
+            if request.order_id in self._robot_markets:
+                return
+            raise ValueError("native Robot MARKET identity already retired")
+        self._seen_order_ids.add(request.order_id)
+        self._robot_markets[request.order_id] = (request, submitted_at_ms)
+        self._events.append(OrderEvent(
+            request.order_id, "SUBMITTED", submitted_at_ms, order_type="MARKET",
+        ))
+
+    def synchronize_robot_limits(
+        self, requests: tuple[RobotLimitRequest, ...], *, synchronized_at_ms: int,
+    ) -> None:
+        """Mirror the native Robot's durable active-order projection.
+
+        Orders absent from the new projection are cancelled; unchanged orders
+        retain their original submission minute and therefore cannot be made
+        artificially younger or older by repeated Robot reconciliation.
+        """
+        if self._pending is not None or self._active_protection is not None:
+            raise ValueError("legacy and native Robot exchange modes cannot mix")
+        if (self._last_close_ms is None or synchronized_at_ms != self._last_close_ms
+                or not isinstance(requests, tuple)):
+            raise ValueError("Robot LIMIT sync requires latest committed M1")
+        incoming: dict[str, RobotLimitRequest] = {}
+        for item in requests:
+            if not isinstance(item, RobotLimitRequest):
+                raise TypeError("RobotLimitRequest tuple required")
+            if item.entry.order_id in incoming:
+                raise ValueError("duplicate native Robot LIMIT identity")
+            incoming[item.entry.order_id] = item
+        for order_id, (prior, _submitted) in self._robot_limits.items():
+            current = incoming.get(order_id)
+            if current is not None and current != prior:
+                raise ValueError("native Robot LIMIT changed without durable amendment")
+        next_limits: dict[str, tuple[RobotLimitRequest, int]] = {}
+        for order_id, item in incoming.items():
+            if order_id in self._robot_limits:
+                next_limits[order_id] = self._robot_limits[order_id]
+            else:
+                if order_id in self._seen_order_ids:
+                    raise ValueError("native Robot order identity already retired")
+                next_limits[order_id] = (item, synchronized_at_ms)
+                self._seen_order_ids.add(order_id)
+                self._events.append(OrderEvent(
+                    order_id, "SUBMITTED", synchronized_at_ms, order_type="LIMIT",
+                ))
+        for order_id in self._robot_limits.keys() - next_limits.keys():
+            self._events.append(OrderEvent(
+                order_id, "CANCELLED", synchronized_at_ms, order_type="LIMIT",
+            ))
+        self._robot_limits = next_limits
+
+    def synchronize_robot_stop(
+        self, request: RobotStopRequest | None, *, synchronized_at_ms: int,
+    ) -> None:
+        if self._pending is not None or self._active_protection is not None:
+            raise ValueError("legacy and native Robot exchange modes cannot mix")
+        if self._last_close_ms is None or synchronized_at_ms != self._last_close_ms:
+            raise ValueError("Robot STOP sync requires latest committed M1")
+        self._robot_stop = request
+
+    @staticmethod
+    def _limit_resolution(request: LimitRequest, minute: Candle) -> tuple[Decimal, Decimal] | None:
+        buy = request.side == "BUY"
+        marketable = minute.open <= request.limit_price if buy else minute.open >= request.limit_price
+        through = minute.low < request.limit_price if buy else minute.high > request.limit_price
+        if not (marketable or through):
+            return None
+        return request.limit_price, Decimal(1 if marketable else 0)
+
+    def _match_native_robot(
+        self, minute: Candle,
+    ) -> tuple[list[VirtualFill], list[OrderEvent]]:
+        receipts: list[VirtualFill] = []
+        events: list[OrderEvent] = []
+        snapshot = self.account.snapshot(
+            as_of_ms=minute.start_ms, mark_price=minute.open,
+        )
+        position = snapshot.position_quantity
+        stop = self._robot_stop
+        if position and stop is not None:
+            is_long = position > 0
+            if (stop.position_side == "LONG") != is_long:
+                raise ValueError("native Robot STOP side conflicts with virtual position")
+            hit = minute.low <= stop.stop_price if is_long else minute.high >= stop.stop_price
+            if hit:
+                gap = minute.open <= stop.stop_price if is_long else minute.open >= stop.stop_price
+                price = minute.open if gap else stop.stop_price
+                receipts.append(VirtualFill(
+                    self.account.simulation_run_id, self.account.symbol,
+                    stop.order_id + "_fill", minute.end_ms,
+                    "SELL" if is_long else "BUY", abs(position), price,
+                    price * abs(position) * self.taker_fee_rate,
+                ))
+                events.append(OrderEvent(
+                    stop.order_id, "STOP_FILLED", minute.end_ms, order_type="STOP",
+                ))
+                self._robot_stop = None
+                self._robot_limits = {}
+                self._robot_markets = {}
+                return receipts, events
+
+        if self._robot_markets:
+            order_id, (request, submitted_at) = next(iter(self._robot_markets.items()))
+            if submitted_at > minute.start_ms:
+                raise ValueError("native Robot MARKET cannot fill before submission")
+            receipts.append(VirtualFill(
+                self.account.simulation_run_id, self.account.symbol,
+                order_id + "_fill", minute.end_ms, request.side, request.quantity,
+                minute.open, minute.open * request.quantity * self.taker_fee_rate,
+            ))
+            events.append(OrderEvent(
+                order_id, "FILLED", minute.end_ms, order_type="MARKET",
+            ))
+            self._robot_markets.pop(order_id)
+            # Closed OHLC cannot prove a chronology for several queued Robot
+            # actions.  As with crossed grid LIMITs, commit only one fill per
+            # M1 and leave the rest pending for a later historical OPEN.
+            return receipts, events
+
+        eligible_entries: list[tuple[str, RobotLimitRequest, Decimal, Decimal]] = []
+        eligible_exits: list[tuple[str, RobotLimitRequest, Decimal, Decimal]] = []
+        for order_id, (owned, submitted_at) in self._robot_limits.items():
+            if submitted_at > minute.start_ms:
+                raise ValueError("native Robot LIMIT cannot execute before submission")
+            resolution = self._limit_resolution(owned.entry, minute)
+            if resolution is None:
+                continue
+            price, marketable = resolution
+            target = eligible_exits if owned.reduce_only else eligible_entries
+            target.append((order_id, owned, price, marketable))
+
+        # P1..P4 are adverse layers: a LONG buys high-to-low, a SHORT sells
+        # low-to-high.  This is venue ordering only; prices came from Robot.
+        eligible_entries.sort(
+            key=lambda item: item[2], reverse=(eligible_entries[0][1].entry.side == "BUY")
+            if eligible_entries else False,
+        )
+        # A closed OHLC bar proves that every crossed level was visited, but
+        # not a venue fill chronology for several resting orders.  Commit at
+        # most the first adverse grid layer per M1 and leave the rest GTC.
+        # This is conservative, causal, and gives the native ownership journal
+        # one strictly later closed-market event for every subsequent layer.
+        selected = eligible_entries[:1]
+        if not selected:
+            # Never award a TAKE on a candle that also established/top-upped
+            # exposure: OHLC cannot prove TAKE happened after that entry.
+            eligible_exits.sort(key=lambda item: item[0])
+            selected = eligible_exits[:1]
+        projected = position
+        for order_id, owned, price, marketable in selected:
+            request = owned.entry
+            quantity = request.quantity
+            signed = quantity if request.side == "BUY" else -quantity
+            if owned.reduce_only:
+                if not projected or projected * signed >= 0:
+                    raise ValueError("reduce-only Robot LIMIT cannot add exposure")
+                quantity = min(quantity, abs(projected))
+                signed = quantity if request.side == "BUY" else -quantity
+            projected += signed
+            fee_rate = self.taker_fee_rate if marketable else self.maker_fee_rate
+            receipts.append(VirtualFill(
+                self.account.simulation_run_id, self.account.symbol,
+                order_id + "_fill", minute.end_ms, request.side, quantity, price,
+                price * quantity * fee_rate,
+            ))
+            events.append(OrderEvent(
+                order_id, "FILLED", minute.end_ms, order_type="LIMIT",
+            ))
+            self._robot_limits.pop(order_id, None)
+            if owned.reduce_only and projected == 0:
+                break
+        return receipts, events
 
     def submit(self, request: MarketRequest, *, submitted_at_ms: int) -> None:
         if not isinstance(request, MarketRequest):
@@ -311,7 +549,11 @@ class VirtualExchange:
         next_pending_protection = self._pending_protection
         next_active_protection = self._active_protection
 
-        if next_active_protection is not None:
+        if self._robot_limits or self._robot_markets or self._robot_stop is not None:
+            if next_pending is not None or next_active_protection is not None:
+                raise ValueError("legacy and native Robot exchange modes cannot mix")
+            receipts, new_events = self._match_native_robot(minute)
+        elif next_active_protection is not None:
             if next_pending is not None:
                 raise ValueError("protected position and pending entry cannot coexist")
             resolution = self._protective_exit(

@@ -219,7 +219,7 @@ class LoopbackServerTests(unittest.TestCase):
                 self.assertFalse(info["can_attempt"])
                 self.assertFalse(info["archive_files_present"])
                 self.assertFalse(info["wedge_risk_profile_present"])
-                with self.assertRaisesRegex(ValueError, "только|only|клин|Wedge"):
+                with self.assertRaisesRegex(ValueError, "отсутствует"):
                     local.run_local_simulation({
                         "symbol": "BTCUSDT",
                         "start_utc": "2026-10-01T00:00",

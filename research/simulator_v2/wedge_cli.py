@@ -1,4 +1,4 @@
-"""CLI/JSON boundary for existing Time Machine Wedge-only offline SIMULATION.
+"""CLI/JSON boundary for Time Machine Wedge/Ikigai Box offline SIMULATION.
 
 Inputs are untrusted *configuration*, NOT trading authorization.
 All market candles are read from preverified Bybit PUBLIC TRADE-derived cache;
@@ -21,6 +21,11 @@ from research.simulator_v2.wedge_backtest import (
 from research.simulator_v2.wedge_observer import WedgeScannerConfig
 from research.simulator_v2.wedge_robot_observer import SimWedgeRobotConfig
 from research.simulator_v2.wedge_risk_preflight import SimWedgeRiskSettings
+from research.simulator_v2.box_backtest import (
+    BoxBacktestResult, run_cached_box_trade_range,
+)
+from research.simulator_v2.ikigai_observer import IkigaiScannerConfig
+from research.simulator_v2.ikigai_plan_preview import BoxSimulationRiskTerms
 
 PROFILE_SCHEMA = "TIME_MACHINE_WEDGE_SIMULATION_V1"
 MANIFEST_SCHEMA = "SIMULATOR_V2_PUBLIC_TRADES_DERIVED_M1_RANGE_V1"
@@ -32,6 +37,7 @@ RISK_FIELDS = (
 SELECTABLE = {
     "WEDGE_FALLING": "Falling Wedge",
     "WEDGE_RISING": "Rising Wedge",
+    "IKIGAI_BOX": "IKIGAI_BOX",
 }
 MAX_CONFIG_BYTES = 24_000
 MAX_MANIFEST_BYTES = 125_000
@@ -128,12 +134,12 @@ def run_from_time_machine_config(
     cache_dir: Path, latest_closed_boundary_ms: int,
     capture_replay: bool = False,
     on_replay_events: Callable[[list[dict[str, object]]], None] | None = None,
-) -> WedgeBacktestResult:
-    """Only currently implemented wedges; unknown strategies fail closed."""
+) -> WedgeBacktestResult | BoxBacktestResult:
+    """Dispatch one proven native strategy family into the shared exchange."""
     if not isinstance(config, Mapping) or (
         config.get("schema") != PROFILE_SCHEMA or config.get("namespace") != "SIMULATION"
     ):
-        raise ValueError("invalid local Wedge SIMULATION config schema")
+        raise ValueError("invalid local strategy SIMULATION config schema")
     symbol, proofs = parse_manifest(
         manifest, latest_closed_boundary_ms=latest_closed_boundary_ms,
     )
@@ -143,8 +149,13 @@ def run_from_time_machine_config(
     if not isinstance(selected, list) or not selected or any(
         not isinstance(x, str) or x not in SELECTABLE for x in selected
     ) or len(set(selected)) != len(selected):
-        raise ValueError("only actually implemented rising/falling wedges can trade")
-    patterns = frozenset(SELECTABLE[s] for s in selected)
+        raise ValueError("only implemented Wedge or Ikigai Box may trade")
+    box_selected = "IKIGAI_BOX" in selected
+    if box_selected and len(selected) != 1:
+        raise ValueError("Box and Wedge cannot share one symbol owner in the same run yet")
+    patterns = frozenset(
+        SELECTABLE[s] for s in selected if s != "IKIGAI_BOX"
+    )
     scanner = config.get("scanner")
     risk = config.get("risk")
     if not isinstance(scanner, dict) or not isinstance(risk, dict):
@@ -172,6 +183,31 @@ def run_from_time_machine_config(
     end_ms = parse_utc_minute(config.get("end_utc_inclusive"))
     if not isinstance(cache_dir, Path) or cache_dir.is_symlink():
         raise ValueError("dedicated local SIMULATION cache directory required")
+    if box_selected:
+        return run_cached_box_trade_range(
+            cache_dir=cache_dir, symbol=symbol, proofs=proofs,
+            latest_closed_boundary_ms=latest_closed_boundary_ms,
+            simulation_run_id=config["simulation_run_id"],
+            initial_balance=_decimal_string(config.get("initial_balance"), "initial_balance"),
+            start_ms=start_ms, end_inclusive_ms=end_ms,
+            scanner_config=IkigaiScannerConfig(
+                window_bars=scanner_config.window_bars,
+            ),
+            terms=BoxSimulationRiskTerms(
+                tick_size=settings.tick_size,
+                working_quantity=settings.contracts_per_working_volume,
+                quantity_step=settings.quantity_step,
+                minimum_quantity=settings.minimum_quantity,
+                maximum_notional_usdt=settings.max_notional_usdt,
+                maximum_loss_usdt=settings.max_risk_usdt,
+                entry_fee_rate=settings.entry_fee_rate,
+                exit_fee_rate=settings.exit_fee_rate,
+                adverse_stop_slippage_per_unit=Decimal("0"),
+                additional_cost_allowance_usdt=Decimal("0"),
+            ),
+            capture_replay=capture_replay,
+            on_replay_events=on_replay_events,
+        )
     return run_cached_wedge_trade_range(
         cache_dir=cache_dir, symbol=symbol, proofs=proofs,
         latest_closed_boundary_ms=latest_closed_boundary_ms,
@@ -190,7 +226,7 @@ def run_from_time_machine_config(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Offline local Wedge-only Bybit public-trade research; NO PAPER/LIVE",
+        description="Offline local Wedge/Box Bybit public-trade research; NO PAPER/LIVE",
     )
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--manifest", required=True, type=Path)
