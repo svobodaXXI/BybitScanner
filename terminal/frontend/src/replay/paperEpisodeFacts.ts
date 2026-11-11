@@ -131,7 +131,8 @@ function parseD2Context(
       row.consistency !== "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER")
     throw new Error("Неизвестная согласованность D2-снимка");
   const setup = object(row.setup);
-  const expectedOrigin = openingController === "ROBOT" ? "ROBOT" : "TERMINAL_MANUAL";
+  const expectedOrigin: "ROBOT" | "TERMINAL_MANUAL" =
+    openingController === "ROBOT" ? "ROBOT" : "TERMINAL_MANUAL";
   if (setup.symbol !== symbol || setup.direction !== side ||
       setup.origin !== expectedOrigin || typeof setup.has_feature_snapshot_ref !== "boolean"
       || !Array.isArray(row.decisions) || row.decisions.length < 2 ||
