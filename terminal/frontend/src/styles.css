@@ -3876,6 +3876,18 @@ button {
   .workspace-editor .workspace-market-row {
     min-height: 0;
   }
+  /* Keep review/actions below the drawing area. The toolbar and controls
+     must not occupy the same mobile grid cell. */
+  .workspace-editor .chart-content-row {
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .workspace-editor .editor-correction-export {
+    grid-row: 2;
+    align-self: stretch;
+    margin: 0.35rem 0 0;
+    max-height: 32vh;
+    overflow-y: auto;
+  }
   .workspace-editor .chart-stage,
   .workspace-editor .chart-engine {
     min-height: 0;
