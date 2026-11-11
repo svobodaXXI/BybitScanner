@@ -504,3 +504,15 @@
 .diary-trade-icon:not(:disabled):focus-visible {
   border-color: #859bb1;
 }
+
+.diary-execution-price-chart {
+  display: block;
+  width: 100%;
+  max-width: 34rem;
+  height: auto;
+  margin: 0.35rem 0;
+  color: #e0b45b;
+  background: #10151b;
+  border: 1px solid #27313b;
+  border-radius: 0.3rem;
+}
