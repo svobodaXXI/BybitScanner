@@ -25,7 +25,7 @@ import {
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
 import { appendRetrospectiveCandles, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
-import type { OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
+import type { OwnerChartDraft, OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
 import type { PaperOpenPosition } from "../contracts/trading";
@@ -113,6 +113,7 @@ export function App() {
   const [robotMarkers, setRobotMarkers] = useState<{
     symbol: string; tradeId: string; markers: RobotTradeMarker[]; origin: RobotPositionOrigin | null;
   } | null>(null);
+  const [ownerChartCandles, setOwnerChartCandles] = useState<Candle[] | null>(null);
   const [frozenSignal, setFrozenSignal] = useState<{
     candles: Candle[];
     sourceCandles: Candle[];
@@ -1444,15 +1445,37 @@ export function App() {
             </div>
           ) : (
           <ChartPanel
-          key={mode === "EDITOR" && frozenSignal ? `frozen:${frozenSignal.signalId}:${frozenSignal.savedReviewId ?? "initial"}` : `${market.book.symbol}:${timeframe}:${mode}`}
-          candles={mode === "EDITOR" && frozenSignal ? frozenSignal.candles : market.candles}
+          key={mode === "EDITOR" && ownerChartCandles ? `owner-chart:${market.book.symbol}:${timeframe}:${ownerChartCandles.at(-1)?.time}` : mode === "EDITOR" && frozenSignal ? `frozen:${frozenSignal.signalId}:${frozenSignal.savedReviewId ?? "initial"}` : `${market.book.symbol}:${timeframe}:${mode}`}
+          candles={mode === "EDITOR" && ownerChartCandles ? ownerChartCandles : mode === "EDITOR" && frozenSignal ? frozenSignal.candles : market.candles}
           editorMode={mode === "EDITOR"}
+          ownerChartMode={mode === "EDITOR" && ownerChartCandles !== null}
           onEditorNavigate={setMode}
-          retrospectiveContext={mode === "EDITOR" ? frozenSignal?.context ?? null : null}
-          onExtendEditorHistory={mode === "EDITOR" && frozenSignal ? async () => {
+          onShowCurrentChart={mode === "EDITOR" && !ownerChartCandles ? () => {
+            const intervals: Record<string, number> = {
+              "1": 60_000, "1m": 60_000, "5": 300_000, "5m": 300_000,
+              "15": 900_000, "15m": 900_000, "60": 3_600_000,
+              "1h": 3_600_000, "D": 86_400_000, "1d": 86_400_000,
+            };
+            const period = intervals[timeframe];
+            if (!period) throw new Error("Таймфрейм не поддерживается");
+            const current = Date.now();
+            const closed = market.candles.filter((bar) => {
+              const at = Date.parse(bar.time);
+              return Number.isSafeInteger(at) && at >= 0 &&
+                at % period === 0 && at + period <= current;
+            }).slice(-120);
+            if (closed.length < 20 || closed.some((bar, i) => i > 0 &&
+                Date.parse(bar.time) !== Date.parse(closed[i - 1].time) + period))
+              throw new Error("Недостаточно непрерывных закрытых свечей для примера");
+            setOwnerChartCandles(closed.map((bar) => ({ ...bar })));
+          } : undefined}
+          onReturnToSourceChart={mode === "EDITOR" && ownerChartCandles && frozenSignal
+            ? () => setOwnerChartCandles(null) : undefined}
+          retrospectiveContext={mode === "EDITOR" && !ownerChartCandles ? frozenSignal?.context ?? null : null}
+          onExtendEditorHistory={mode === "EDITOR" && frozenSignal && !ownerChartCandles ? async () => {
             const current = frozenSignal;
             const response = await fetch(
-              `/api/workspace/signal-geometry/continuation?signal_id=${encodeURIComponent(current.signalId)}`,
+              `/api/workspace/signal-geometry/continuation?signal_id=${encodeURIComponent(current.signalId)}${current.context ? `&after_ms=${current.context.asOfMs}` : ""}`,
               { credentials: "same-origin" },
             );
             const data = await response.json();
@@ -1486,19 +1509,19 @@ export function App() {
             );
           } : undefined}
           referenceDrawings={mode === "EDITOR"
-            ? frozenSignal?.referenceDrawings ?? []
+            ? ownerChartCandles ? [] : frozenSignal?.referenceDrawings ?? []
             : mode === "AUTOPILOT" ? (robotPosition
                 ? robotGeometry.drawings ?? [] : terminalSignalDrawings ?? [])
               : mode === "TERMINAL" ? terminalSignalDrawings ?? [] : []}
-          editableSeedDrawings={mode === "EDITOR" ? frozenSignal?.editableDrawings ?? [] : []}
-          signalIdentity={mode === "EDITOR" ? frozenSignal?.signalId ?? null : null}
-          originalPattern={mode === "EDITOR" ? frozenSignal?.originalPattern ?? null : null}
-          snapshotRevision={mode === "EDITOR" ? frozenSignal?.snapshotRevision ?? null : null}
-          barsSha256={mode === "EDITOR" ? frozenSignal?.barsSha256 ?? null : null}
-          savedReviewId={mode === "EDITOR" ? frozenSignal?.savedReviewId ?? null : null}
-          savedReviewLabel={mode === "EDITOR" ? frozenSignal?.savedReviewLabel ?? null : null}
-          savedReviewNote={mode === "EDITOR" ? frozenSignal?.savedReviewNote ?? null : null}
-          onSubmitOwnerSignal={mode === "EDITOR" && frozenSignal ? async (
+          editableSeedDrawings={mode === "EDITOR" && !ownerChartCandles ? frozenSignal?.editableDrawings ?? [] : []}
+          signalIdentity={mode === "EDITOR" && !ownerChartCandles ? frozenSignal?.signalId ?? null : null}
+          originalPattern={mode === "EDITOR" && !ownerChartCandles ? frozenSignal?.originalPattern ?? null : null}
+          snapshotRevision={mode === "EDITOR" && !ownerChartCandles ? frozenSignal?.snapshotRevision ?? null : null}
+          barsSha256={mode === "EDITOR" && !ownerChartCandles ? frozenSignal?.barsSha256 ?? null : null}
+          savedReviewId={mode === "EDITOR" && !ownerChartCandles ? frozenSignal?.savedReviewId ?? null : null}
+          savedReviewLabel={mode === "EDITOR" && !ownerChartCandles ? frozenSignal?.savedReviewLabel ?? null : null}
+          savedReviewNote={mode === "EDITOR" && !ownerChartCandles ? frozenSignal?.savedReviewNote ?? null : null}
+          onSubmitOwnerSignal={mode === "EDITOR" && frozenSignal && !ownerChartCandles ? async (
             proposal: OwnerSignalDraft,
           ) => {
             if (proposal.signal_id !== frozenSignal.signalId ||
@@ -1532,7 +1555,32 @@ export function App() {
               reason: record.assessment.reason,
             };
           } : undefined}
-          onSaveGeometryReview={mode === "EDITOR" && frozenSignal ? async (
+          onSubmitOwnerChart={mode === "EDITOR" && ownerChartCandles ? async (
+            draft: OwnerChartDraft,
+          ) => {
+            const response = await fetch("/api/workspace/owner-unscanned-signal", {
+              method: "POST", credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(draft),
+            });
+            const result = await response.json();
+            const record = result.proposal;
+            if (!response.ok || result.ok !== true ||
+                typeof record?.proposal_id !== "string" ||
+                !/^[0-9a-f]{64}$/.test(record.proposal_id) ||
+                record?.source_kind !== "OWNER_CHART_UNVERIFIED" ||
+                record?.submission?.pattern !== draft.pattern ||
+                record?.submission?.idempotency_key !== draft.idempotency_key ||
+                record?.candidate_created !== false || record?.robot_candidate_id !== null ||
+                record?.assessment?.decision !== "AWAITING_OFFLINE_REPLAY")
+              throw new Error(result.error || "Не подтверждено сохранение пользовательского примера");
+            return {
+              proposalId: record.proposal_id,
+              decision: record.assessment.decision,
+              reason: record.assessment.reason,
+            };
+          } : undefined}
+          onSaveGeometryReview={mode === "EDITOR" && frozenSignal && !ownerChartCandles ? async (
             review: GeometryReviewDraft & { note: string; idempotency_key: string },
           ) => {
             if (review.signal_id !== frozenSignal.signalId
@@ -1585,9 +1633,9 @@ export function App() {
             }
             throw new Error(`${failure ?? "Нет подтверждения"}; запись не подтверждена, повторите сохранение`);
           } : undefined}
-          tickSize={mode === "EDITOR" && frozenSignal ? null : market.tickSize}
-          symbol={mode === "EDITOR" && frozenSignal ? launchLink?.symbol ?? market.book.symbol : market.book.symbol}
-          timeframe={mode === "EDITOR" && frozenSignal ? launchLink?.timeframe ?? timeframe : timeframe}
+          tickSize={mode === "EDITOR" ? null : market.tickSize}
+          symbol={mode === "EDITOR" && frozenSignal && !ownerChartCandles ? launchLink?.symbol ?? market.book.symbol : market.book.symbol}
+          timeframe={mode === "EDITOR" && frozenSignal && !ownerChartCandles ? launchLink?.timeframe ?? timeframe : timeframe}
           activeLimitOrders={
             mode === "TERMINAL" && currentPaperState?.ok ? currentPaperState.active_limit_orders :
             mode === "AUTOPILOT" && robotPosition && currentPaperState?.ok ? currentPaperState.active_limit_orders : []

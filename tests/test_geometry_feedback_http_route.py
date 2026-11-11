@@ -107,3 +107,40 @@ def test_geometry_feedback_owner_route_roundtrip_without_paper_db(monkeypatch, t
         server.shutdown()
         worker.join(timeout=3)
         server.server_close()
+
+
+def test_editor_continuation_uses_last_revealed_candle(monkeypatch, source):
+    import retrospective_signal_bars
+    import signal_archive
+
+    seen = []
+    monkeypatch.setattr(signal_archive, "load_frozen_signal_geometry",
+                        lambda signal_id: source if signal_id == source["signal_id"] else None)
+
+    def fetch(snapshot, *, after_ms=None):
+        assert snapshot is source
+        seen.append(after_ms)
+        return 601000, [
+            {"open_time_ms": 601000, "open": 11.0, "high": 12.0,
+             "low": 10.0, "close": 11.0}
+        ]
+
+    monkeypatch.setattr(retrospective_signal_bars, "fetch_closed_extension", fetch)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    url = (f"http://127.0.0.1:{server.server_address[1]}"
+           "/api/workspace/signal-geometry/continuation?signal_id=" + source["signal_id"])
+    try:
+        with urlopen(url, timeout=3) as response:
+            assert json.load(response)["as_of_ms"] == 601000
+        with urlopen(url + "&after_ms=601000", timeout=3) as response:
+            assert json.load(response)["ok"] is True
+        assert seen == [None, 601000]
+        with pytest.raises(HTTPError) as exc:
+            urlopen(url + "&after_ms=invalid", timeout=3)
+        assert exc.value.code == 400
+    finally:
+        server.shutdown()
+        worker.join(timeout=3)
+        server.server_close()

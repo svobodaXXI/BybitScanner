@@ -14,6 +14,7 @@ from signal_geometry_snapshot import canonical_bytes, validate_snapshot
 
 TF_MS = {"1": 60_000, "5": 300_000, "15": 900_000, "60": 3_600_000, "D": 86_400_000}
 MAX_EXTENSION_BARS = 1000
+PAGE_EXTENSION_BARS = 30  # Each owner click reveals only 30 newly closed candles.
 
 
 class RetrospectiveBarsError(ValueError):
@@ -78,12 +79,14 @@ def validate_extension(snapshot: dict, bars: list[dict], as_of_ms: int) -> list[
 
 
 def fetch_closed_extension(
-    snapshot: dict, *, as_of_ms: int | None = None, session=None, now_ms: int | None = None,
+    snapshot: dict, *, as_of_ms: int | None = None, after_ms: int | None = None,
+    session=None, now_ms: int | None = None,
 ) -> tuple[int, list[dict]]:
-    """Fetch only closed, contiguous continuation candles from Bybit linear REST.
+    """Fetch verified continuation, 30 new candles per owner click.
 
-    A single capped page deliberately fails closed if the original signal is
-    older than the available one-page context. No silent truncation/no gaps.
+    The response includes the whole original-to-cutoff continuation so that
+    the existing archive/review hashes and immutable source seam stay valid.
+    Explicit as_of_ms still revalidates previously saved review context.
     """
     try:
         period = TF_MS[str(snapshot["timeframe"])]
@@ -96,7 +99,22 @@ def fetch_closed_extension(
         raise RetrospectiveBarsError("invalid_source_snapshot") from exc
     current = int(time.time() * 1000) if now_ms is None else now_ms
     last_closed_open = (current // period - 1) * period
-    cutoff = last_closed_open if as_of_ms is None else as_of_ms
+    if as_of_ms is not None and after_ms is not None:
+        raise RetrospectiveBarsError("invalid_retrospective_cutoff")
+    if as_of_ms is None:
+        previous = last if after_ms is None else after_ms
+        if (type(previous) is not int or previous < last
+                or previous > last_closed_open or (previous - last) % period != 0):
+            raise RetrospectiveBarsError("invalid_retrospective_cutoff")
+        capacity = min(MAX_EXTENSION_BARS, 2000 - len(snapshot["bars"]))
+        if capacity < 1 or previous >= last + capacity * period:
+            raise RetrospectiveBarsError("retrospective_range_too_large")
+        cutoff = min(last_closed_open, previous + PAGE_EXTENSION_BARS * period,
+                     last + capacity * period)
+        if cutoff <= previous:
+            raise RetrospectiveBarsError("no_new_closed_retrospective_bars")
+    else:
+        cutoff = as_of_ms
     if (type(cutoff) is not int or cutoff > last_closed_open or cutoff <= last
             or (cutoff - last) % period != 0):
         raise RetrospectiveBarsError("invalid_retrospective_cutoff")
