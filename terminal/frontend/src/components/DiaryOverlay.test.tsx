@@ -773,8 +773,8 @@ describe("shared statistics trade action standard", () => {
           occurred_at_ms: 1_793_001_950_000 },
       ],
     };
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (url: string) =>
-      new Response(JSON.stringify(url.includes("episode-facts") ? facts :
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      new Response(JSON.stringify(String(input).includes("episode-facts") ? facts :
         { ...finrezResponse, closed_episodes: [deal] }), { status: 200 }));
     render(<DiaryOverlay accountKey="paper:chart" initialSection="DEALS"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
