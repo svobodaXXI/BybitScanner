@@ -71,7 +71,7 @@ def index_closed_episodes(
         rows.append({
             "trade_episode_id": episode.trade_episode_id.value,
             "symbol": episode.position_key.symbol.value,
-            "side": episode.side.value,
+            "side": episode.side.value.upper(),
             "opened_at_ms": episode.opened_at_ms,
             "closed_at_ms": episode.closed_at_ms,
             "pnl_usdt": str(episode.realized_price_pnl - episode.execution_fees),
@@ -269,7 +269,7 @@ def project_paper_closed_episode_facts(
         "cohort": cohort,
         "trade_episode_id": trade_episode_id,
         "symbol": episode.position_key.symbol.value,
-        "side": episode.side.value,
+        "side": episode.side.value.upper(),
         "opened_at_ms": episode.opened_at_ms,
         "closed_at_ms": episode.closed_at_ms,
         "realized_price_pnl_usdt": str(episode.realized_price_pnl),
