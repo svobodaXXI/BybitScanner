@@ -164,14 +164,16 @@ test("frozen Editor geometry reviews source even when browser draft storage is b
   // The toolbar is initially empty of undo history; clicking Undo must
   // not claim that the unchanged Scanner geometry is an unsaved review.
   await page.getByRole("button", { name: "Undo drawing" }).click();
-  await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
+  await expect(page.locator(".editor-review-success")).toHaveCount(0);
   await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("CONFIRMED");
   await save.click();
-  await expect(page.getByText(/Не удалось сохранить: Сервер не подтвердил точное сохранение отзыва/)).toBeVisible();
-  await expect(page.getByText(/Сохранённый отзыв:/)).toHaveCount(0);
-  await save.click();
-  await expect(page.getByText(/Исправление сохранено в дневнике обратной связи/)).toBeVisible();
-  await expect(page.getByText(/Сохранённый отзыв: c{12}.*Верный сигнал/)).toBeVisible();
+  const rejected = page.getByRole("button", { name: "Не удалось сохранить" });
+  await expect(rejected).toHaveAttribute("title", /Сервер не подтвердил точное сохранение отзыва/);
+  await expect(page.locator(".editor-review-success")).toHaveCount(0);
+  await rejected.click();
+  // Successful confirmation of an unmodified signal must not claim geometry was corrected.
+  await expect(page.getByRole("button", { name: "Передать исправление" })).toBeVisible();
+  await expect(page.locator(".editor-review-success")).toHaveCount(0);
   expect(posted).toHaveLength(2);
   expect(posted[0].idempotency_key).toBe(posted[1].idempotency_key);
   expect(posted[0]).toMatchObject({
@@ -342,13 +344,14 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
     const upper = raw ? JSON.parse(raw).drawings.find((item: { id: string }) => item.id === "editable:upper") : null;
     return upper?.anchors[0] ?? null;
   }, startKey)).not.toEqual({ logical: 0, price: 115 });
-  await expect(page.getByLabel("Сравнение линий Scanner и исправления")).toContainText("Δ точка 1");
-  await expect(page.getByLabel("Несохранённый отзыв")).toContainText("Новые изменения не сохранены");
+  // Diagnostics and stale/unsaved helper text were intentionally removed from the owner UI.
+  await expect(page.getByLabel("Сравнение линий Scanner и исправления")).toHaveCount(0);
+  await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
   // "Confirmed" cannot silently discard an already moved Scanner boundary.
   await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("CONFIRMED");
   await page.getByRole("button", { name: "Передать исправление" }).click();
-  await expect(page.locator(".editor-correction-export output[role=status]").last())
-    .toContainText("Линии изменены");
+  await expect(page.getByRole("button", { name: "Не удалось сохранить" }))
+    .toHaveAttribute("title", /Линии изменены/);
   expect(writes).toBe(0);
   await page.getByRole("combobox", { name: "Оценка сигнала" }).selectOption("GEOMETRY_CORRECTED");
   const noteField = page.getByRole("textbox", { name: "Комментарий к исправлению" });
@@ -362,16 +365,14 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
     return raw ? JSON.parse(raw).drawings.map((item: { id: string }) => item.id) : [];
   }, startKey)).toEqual(["editable:upper", "editable:lower"]);
   await page.getByRole("button", { name: "Передать исправление" }).click();
-  await expect(page.locator(".editor-correction-export output[role=status]").last())
-    .toContainText("Исправление сохранено в дневнике обратной связи");
+  await expect(page.locator(".editor-review-success")).toHaveText("Исправлена геометрия");
   expect(writes).toBe(1);
-  await expect(page.getByText(/Сохранённый отзыв: d{12}.*Исправлена геометрия/)).toBeVisible();
   await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
   // Changing the review AFTER the server's confirmation must not imply that
   // the newly edited note has already been saved with the old geometry.
   await page.getByRole("textbox", { name: "Комментарий к исправлению" }).fill("New note after receipt");
-  await expect(page.getByLabel("Несохранённый отзыв")).toContainText("Новые изменения не сохранены");
-  await expect(page.getByText(/Сохранённый отзыв: d{12}.*предыдущая версия/)).toBeVisible();
+  await expect(page.locator(".editor-review-success")).toHaveCount(0);
+  await expect(page.getByText(/Сохранённый отзыв:/)).toHaveCount(0);
   expect(writes).toBe(1);
 
   // A stale local review cache must not override the authoritative persisted
@@ -391,7 +392,7 @@ test("Editor saved correction survives a fresh open with original Scanner rays u
   await expect(page.getByLabel("Несохранённый отзыв")).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "Комментарий к исправлению" }))
     .toHaveValue("Upper anchor corrected after candle close");
-  await expect(page.getByText(/Сохранённый отзыв: d{12}.*Исправлена геометрия/)).toBeVisible();
+  await expect(page.locator(".editor-review-success")).toHaveCount(0);
   await expect.poll(() => page.evaluate((id) => {
     const savedKey = `bybitscanner:editor-drawings:v1:BTCUSDT:5m:${id}:review-${"d".repeat(64)}`;
     const raw = localStorage.getItem(savedKey);

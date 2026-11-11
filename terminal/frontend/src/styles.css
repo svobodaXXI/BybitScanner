@@ -352,23 +352,27 @@ button {
 .chart-candle-close {
   position: absolute;
   z-index: 4;
-  right: 0.18rem;
-  min-width: 3.2rem;
-  padding: 1px 3px;
-  border-radius: 0.18rem;
+  right: 0;
+  box-sizing: border-box;
+  width: var(--chart-price-scale-width, 64px);
+  min-width: 0;
+  padding: 2px;
+  border-radius: 2px;
   background: #1d4825;
   color: #e9ffec;
-  font-size: 0.68rem;
+  font-size: 12px;
+  font-weight: 500;
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
   text-align: center;
   pointer-events: none;
   white-space: nowrap;
+  overflow: hidden;
 }
 .chart-candle-close.stale {
   background: #453224;
   color: #ffdcaa;
-  font-size: 0.58rem;
+  font-size: 10px;
 }
 
 .drawing-tools-panel {
@@ -3767,7 +3771,7 @@ button {
   align-self: stretch;
   margin: 0.35rem 0 0;
   padding-right: 2.9rem;
-  max-height: 31vh;
+  max-height: 42dvh;
   overflow-y: auto;
 }
 .workspace-market-row {
@@ -3890,7 +3894,7 @@ button {
     grid-row: 2;
     align-self: stretch;
     margin: 0.35rem 0 0;
-    max-height: 32vh;
+    max-height: 42dvh;
     overflow-y: auto;
   }
   .workspace-editor .chart-stage,

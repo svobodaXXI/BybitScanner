@@ -1480,19 +1480,33 @@ export function App() {
               Вернуться к сигналу
             </button>
             {!ownerChartCandles && <button type="button" onClick={() => {
-              const periods: Record<string, number> = { "1": 60000, "5": 300000, "15": 900000, "60": 3600000, "D": 86400000 };
+              const periods: Record<string, number> = {
+                "1": 60000, "1m": 60000, "5": 300000, "5m": 300000,
+                "15": 900000, "15m": 900000, "60": 3600000, "1h": 3600000,
+                "D": 86400000, "1d": 86400000,
+              };
               const period = periods[timeframe];
               const now = Date.now();
+              // Freeze the most recent contiguous CLOSED run. Earlier missing
+              // candles must not block 20+ valid recent bars, and gaps may
+              // never be silently bridged in a stored owner example.
               const closed = market.candles.filter(bar => {
                 const at = Date.parse(bar.time);
-                return period && Number.isSafeInteger(at) && at >= 0 && at % period === 0 && at + period <= now;
-              }).slice(-120);
-              if (closed.length < 20 || closed.some((bar, i) => i > 0 && Date.parse(bar.time) !== Date.parse(closed[i - 1].time) + period)) {
-                setOwnerChartError("Нужно не менее 20 непрерывных закрытых свечей");
+                return period && Number.isSafeInteger(at) && at >= 0 &&
+                  at % period === 0 && at + period <= now;
+              });
+              const recent: typeof closed = [];
+              for (let i = closed.length - 1; i >= 0 && recent.length < 120; i--) {
+                const current = closed[i];
+                if (recent.length && Date.parse(recent[0].time) - Date.parse(current.time) !== period) break;
+                recent.unshift(current);
+              }
+              if (recent.length < 20) {
+                setOwnerChartError(`Для разметки нужно 20 непрерывных закрытых свечей; сейчас доступно ${recent.length}. Дождитесь загрузки полной истории.`);
                 return;
               }
               setOwnerChartError("");
-              setOwnerChartCandles(closed.map(bar => ({ ...bar })));
+              setOwnerChartCandles(recent.map(bar => ({ ...bar })));
             }}>Разметить свой сигнал</button>}
             {ownerChartError && <output role="status">{ownerChartError}</output>}
           </div>
