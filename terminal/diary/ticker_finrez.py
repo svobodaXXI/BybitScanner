@@ -18,7 +18,9 @@ from terminal.domain.models import TradingAccountId
 
 _MSK = ZoneInfo("Europe/Moscow")
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
-_PERIODS = frozenset({"TODAY", "ALL"})
+# Calendar periods use Moscow time, the same business clock as legacy TODAY.
+# TODAY is retained as a backwards-compatible API alias for DAY.
+_PERIODS = frozenset({"TODAY", "DAY", "WEEK", "MONTH", "YEAR", "ALL"})
 
 
 def period_start_ms(*, period: str, now_ms: int) -> int:
@@ -27,8 +29,15 @@ def period_start_ms(*, period: str, now_ms: int) -> int:
     if period == "ALL":
         return 0
     msk_now = (_EPOCH + timedelta(milliseconds=now_ms)).astimezone(_MSK)
-    msk_midnight = msk_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    return int((msk_midnight.astimezone(timezone.utc) - _EPOCH).total_seconds() * 1000)
+    start = msk_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == "WEEK":
+        # Monday 00:00 MSK, not a rolling seven-day window.
+        start -= timedelta(days=start.weekday())
+    elif period == "MONTH":
+        start = start.replace(day=1)
+    elif period == "YEAR":
+        start = start.replace(month=1, day=1)
+    return int((start.astimezone(timezone.utc) - _EPOCH).total_seconds() * 1000)
 
 
 def aggregate_ticker_pnl(
