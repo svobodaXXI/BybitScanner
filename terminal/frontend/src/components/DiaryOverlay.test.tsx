@@ -750,6 +750,43 @@ describe("shared statistics trade action standard", () => {
     expect(displayTradePnl("NaN")).toBe("—");
   });
 
+  it("draws only matched execution prices without inventing candles", async () => {
+    const episodeId = "te_" + "d".repeat(24);
+    const deal = {
+      trade_episode_id: episodeId, symbol: "BTCUSDT", side: "LONG",
+      opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+      pnl_usdt: "1.2378", execution_count: 2,
+      cohort: "ROBOT", replay_evidence: "EPISODE_INDEX_ONLY",
+    };
+    const facts = {
+      ok: true, schema: "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
+      namespace: "PAPER_READ_ONLY", source: "PAPER_EXECUTIONS_ATTRIBUTED",
+      account_id: "paper", owner: "ROBOT", source_revision: 3,
+      trade_episode_id: episodeId, symbol: "BTCUSDT", side: "LONG",
+      cohort: "ROBOT", opened_at_ms: deal.opened_at_ms,
+      closed_at_ms: deal.closed_at_ms, pnl_usdt: deal.pnl_usdt,
+      replay_evidence: "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
+      execution_allocations: [
+        { execution_id: "fill-a", execution_price: "101.259",
+          occurred_at_ms: 1_793_001_010_000 },
+        { execution_id: "fill-b", execution_price: "101.985",
+          occurred_at_ms: 1_793_001_950_000 },
+      ],
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url: string) =>
+      new Response(JSON.stringify(url.includes("episode-facts") ? facts :
+        { ...finrezResponse, closed_episodes: [deal] }), { status: 200 }));
+    render(<DiaryOverlay accountKey="paper:chart" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const magnifier = await screen.findByRole("button", { name: "Подробности сделки" });
+    fireEvent.click(magnifier);
+    expect(await screen.findByRole("img", {
+      name: "Фактические цены исполнений сделки по времени",
+    })).toBeInTheDocument();
+    expect(screen.getByText("График цен исполнений · не свечной график")).toBeInTheDocument();
+    expect(screen.getByText(/Это не воспроизведение/)).toBeInTheDocument();
+  });
+
   it("shares the two-button layout with other account scopes without changing raw PnL", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       ...tradesResponse, active_account_id: "bybit-main", environment: "LIVE",
