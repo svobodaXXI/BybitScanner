@@ -26,10 +26,23 @@ export type D2DecisionObservation = {
   origin: "ROBOT" | "TERMINAL_MANUAL" | "EXTERNAL";
   occurred_at_ms: number;
 };
+export type OriginalBoundary = {
+  boundary_id: string;
+  kind: "ray" | "segment" | "horizontal" | "horizontal-ray";
+  anchors: { bar_open_time_ms: number; price: number }[];
+};
+export type PaperOriginalGeometry = {
+  signal_id: string;
+  sent_at_ms: number;
+  sha256: string;
+  boundaries: OriginalBoundary[];
+};
+
 export type PaperD2Context =
   | {
     status: "EXACT_D2_LINK";
-    geometry_status: "NOT_EXPORTED";
+    geometry_status: "NOT_EXPORTED" | "ORIGINAL_ARCHIVE_HASH_VERIFIED";
+    original_geometry?: PaperOriginalGeometry;
     decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG";
     setup: {
       setup_instance_id: string; setup_id: string; symbol: string;
@@ -111,16 +124,91 @@ function d2Text(value: unknown, label: string): string {
   return raw;
 }
 
+function parseOriginalGeometry(
+  raw: unknown, setup: { setup_id: string; symbol: string; timeframe: string },
+  openedAt: number,
+): PaperOriginalGeometry {
+  const record = object(raw);
+  if (record.schema !== "BYBITSCANNER_ARCHIVED_SIGNAL_GEOMETRY_V1"
+      || record.source !== "ORIGINAL_TELEGRAM_SIGNAL_ARCHIVE"
+      || record.linkage_basis !== "D2_SETUP_ID_EQUALS_ARCHIVED_CANDIDATE_ID"
+      || record.integrity !== "LOCAL_ARCHIVE_HASH_ONLY_NOT_CRYPTOGRAPHIC_PROOF"
+      || record.signal_id !== setup.setup_id
+      || typeof record.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(record.sha256))
+    throw new Error("Архивная геометрия не соответствует доказанному сигналу");
+  const sentAt = time(record.sent_at_ms, "source sent");
+  if (sentAt > openedAt) throw new Error("Исходный сигнал появился после исполнения");
+  const snapshot = object(record.snapshot);
+  if (snapshot.schema_version !== 1 || snapshot.signal_id !== setup.setup_id
+      || snapshot.symbol !== setup.symbol || String(snapshot.timeframe) !== setup.timeframe
+      || !Array.isArray(snapshot.bars) || snapshot.bars.length < 2
+      || snapshot.bars.length > 2000 || !Array.isArray(snapshot.boundaries)
+      || !snapshot.boundaries.length || snapshot.boundaries.length > 16)
+    throw new Error("Невалидная идентичность исходного окна геометрии");
+  const barTimes = new Set<number>();
+  let previous = -1;
+  for (const rawBar of snapshot.bars) {
+    const bar = object(rawBar);
+    const stamp = time(bar.open_time_ms, "source candle");
+    const vals = [bar.open, bar.high, bar.low, bar.close];
+    if (stamp <= previous || stamp > sentAt ||
+        vals.some(v => typeof v !== "number" || !Number.isFinite(v) || v <= 0) ||
+        (bar.high as number) < (bar.low as number) ||
+        (bar.open as number) < (bar.low as number) ||
+        (bar.open as number) > (bar.high as number) ||
+        (bar.close as number) < (bar.low as number) ||
+        (bar.close as number) > (bar.high as number))
+      throw new Error("Повреждённые свечи архивного оригинала");
+    previous = stamp;
+    barTimes.add(stamp);
+  }
+  const allowed: Record<string, number> = {
+    ray: 2, segment: 2, horizontal: 1, "horizontal-ray": 1,
+  };
+  const ids = new Set<string>();
+  const boundaries: OriginalBoundary[] = [];
+  for (const rawLine of snapshot.boundaries) {
+    const line = object(rawLine);
+    const boundaryId = id(line.boundary_id, "boundary_id");
+    const need = allowed[line.kind as string];
+    if (boundaryId.length > 128 || ids.has(boundaryId) || !need ||
+        !Array.isArray(line.anchors) || line.anchors.length !== need)
+      throw new Error("Неизвестная граница архивного оригинала");
+    ids.add(boundaryId);
+    let prev = -1;
+    const anchors = line.anchors.map((rawAnchor: unknown) => {
+      const a = object(rawAnchor);
+      const at = time(a.bar_open_time_ms, "boundary anchor");
+      if (!barTimes.has(at) || at <= prev || typeof a.price !== "number" ||
+          !Number.isFinite(a.price) || a.price <= 0)
+        throw new Error("Граница не подтверждена исходной свечой");
+      prev = at;
+      return { bar_open_time_ms: at, price: a.price };
+    });
+    boundaries.push({
+      boundary_id: boundaryId,
+      kind: line.kind as OriginalBoundary["kind"],
+      anchors,
+    });
+  }
+  return {
+    signal_id: setup.setup_id, sent_at_ms: sentAt,
+    sha256: record.sha256, boundaries,
+  };
+}
+
 function parseD2Context(
   source: unknown, symbol: string, side: "LONG" | "SHORT",
-  openingController: "ROBOT" | "MANUAL",
+  openingController: "ROBOT" | "MANUAL", openedAt: number,
 ): PaperD2Context {
   const row = object(source);
-  if (row.source !== "TRADING_DIARY_D2" || row.geometry_status !== "NOT_EXPORTED"
+  if (row.source !== "TRADING_DIARY_D2"
+      || !["NOT_EXPORTED", "ORIGINAL_ARCHIVE_HASH_VERIFIED"].includes(row.geometry_status as string)
       || row.decision_scope !== D2_REASON)
     throw new Error("Неизвестное происхождение D2-связи");
   if (D2_UNPROVEN.has(row.status as string)) {
-    if (row.setup !== undefined || row.decisions !== undefined)
+    if (row.setup !== undefined || row.decisions !== undefined ||
+        row.original_geometry !== undefined || row.geometry_status !== "NOT_EXPORTED")
       throw new Error("Недоказанная D2-связь содержит вымышленные события");
     return {
       status: row.status as Exclude<PaperD2Context["status"], "EXACT_D2_LINK">,
@@ -183,8 +271,14 @@ function parseD2Context(
   if (!events.some(e => e.kind === "STRATEGY") ||
       !events.some(e => e.kind === "RISK"))
     throw new Error("Отсутствуют доказанные решения стратегии и риска");
+  if (row.geometry_status === "NOT_EXPORTED" && row.original_geometry !== undefined)
+    throw new Error("Недоказанная архивная геометрия");
+  const original = row.geometry_status === "ORIGINAL_ARCHIVE_HASH_VERIFIED"
+    ? parseOriginalGeometry(row.original_geometry, details, openedAt) : undefined;
   return {
-    status: "EXACT_D2_LINK", geometry_status: "NOT_EXPORTED",
+    status: "EXACT_D2_LINK",
+    geometry_status: original ? "ORIGINAL_ARCHIVE_HASH_VERIFIED" : "NOT_EXPORTED",
+    ...(original ? { original_geometry: original } : {}),
     decision_scope: D2_REASON, setup: details, decisions: events,
   };
 }
@@ -272,7 +366,7 @@ export function parsePaperEpisodeFacts(input: unknown): PaperEpisodeFacts {
     symbol: f.symbol, side: f.side, opened_at_ms: opened, closed_at_ms: closed,
     pnl_usdt: pnl, execution_allocations: allocations,
     ...(f.setup_context !== undefined ? {
-      setup_context: parseD2Context(f.setup_context, f.symbol, f.side, first.controller),
+      setup_context: parseD2Context(f.setup_context, f.symbol, f.side, first.controller, opened),
     } : {}),
   };
 }
