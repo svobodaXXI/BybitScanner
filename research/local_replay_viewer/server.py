@@ -27,6 +27,9 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE if (HERE / "research").is_dir() else HERE.parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+import local_update
 
 from research.export_historical_replay import (
     build_market_only_document, parse_date_utc, SYMBOL_RE,
@@ -42,6 +45,7 @@ MAX_RESPONSE_BYTES = 2_000_000
 # browser nor HTTP input may supply arbitrary filesystem paths.
 SIM_DATA = HERE / "simulator-v2-data"
 SIM_LOCK = threading.Lock()
+UPDATE_CHECK_LOCK = threading.Lock()
 MAX_SIM_REQUEST_BYTES = 4_096
 MAX_SIM_CONFIG_BYTES = 12_000
 
@@ -325,6 +329,14 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 self._error(403, "Local viewer only")
                 return
             url = urlsplit(self.path)
+            if url.path == "/local-replay/app-version":
+                if (url.query or self.headers.get("Sec-Fetch-Site") == "cross-site"):
+                    self._error(403, "Local app version only")
+                    return
+                from local_update import installed_build
+                self._send(200, json.dumps(installed_build(HERE)).encode("utf-8"),
+                           "application/json; charset=utf-8")
+                return
             if url.path == "/local-replay/simulation/status":
                 if url.query or self.headers.get("Sec-Fetch-Site") == "cross-site":
                     self._error(403, "Local SIMULATION only")
@@ -426,6 +438,30 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 self._error(403, "Local Wedge SIMULATION only")
                 return
             path = urlsplit(self.path).path
+            if path == "/local-replay/update/check":
+                from local_update import check_github_release, installed_build
+                port = self.server.server_address[1]
+                if (urlsplit(self.path).query
+                    or self.headers.get("Origin") not in (
+                        f"http://127.0.0.1:{port}", f"http://localhost:{port}",
+                    )
+                    or self.headers.get("Sec-Fetch-Site") == "cross-site"
+                    or self.headers.get("X-Local-Update-Check") != "1"
+                    or self.headers.get("Content-Length") not in (None, "0")):
+                    self._error(403, "Explicit local update check only")
+                    return
+                if not UPDATE_CHECK_LOCK.acquire(blocking=False):
+                    self._error(409, "Update check already active")
+                    return
+                try:
+                    installed = installed_build(HERE)
+                    sha = installed["installed_sha"]
+                    result = check_github_release(sha if isinstance(sha, str) else None)
+                    self._send(200, json.dumps(result).encode("utf-8"),
+                               "application/json; charset=utf-8")
+                finally:
+                    UPDATE_CHECK_LOCK.release()
+                return
             if path not in (
                 "/local-replay/simulation/wedge",
                 "/local-replay/simulation/wedge-stream",

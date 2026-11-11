@@ -20,6 +20,7 @@ import { chartLogicalAtTime, drawingLogicalToTime, timeAtChartLogical, timeToDra
 import { RunSetupPanel } from "./RunSetupPanel";
 import { validateInclusiveWindow, makeWedgeRunRequest, formatRunCoordinates, onlyWedges, type RunSelection } from "./runSetup";
 type WedgeRunRequest = ReturnType<typeof makeWedgeRunRequest>;
+import { AppVersionControl } from "./AppVersionControl";
 import "./replay.css";
 
 // The replay tools share the terminal's compact icon-first interaction, with
@@ -962,6 +963,7 @@ export function ReplayPage() {
       <header className="replay-header">
         <div>
           <h1>Машина времени</h1>
+          <AppVersionControl />
         </div>
       </header>
 

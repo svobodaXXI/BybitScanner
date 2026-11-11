@@ -22,6 +22,7 @@ on:
       - "tests/test_historical_dmi.py"
       - "tests/test_historical_trend_geometry.py"
       - "tests/test_historical_local_replay_server.py"
+      - "tests/test_machine_time_local_update.py"
       - "tests/test_historical_demo_dmi_fixture.py"
       - ".github/workflows/historical-market-replay.yml"
       - "terminal/frontend/src/replay/**"
@@ -46,7 +47,9 @@ jobs:
         with:
           python-version: "3.11"
       - name: Verify isolated replay and causal timeframe tests
-        run: python -m unittest discover -s tests -p 'test_historical_*.py' -v
+        run: |
+          python -m unittest discover -s tests -p 'test_historical_*.py' -v
+          python -m unittest discover -s tests -p 'test_machine_time_*.py' -v
 
   standalone-replay-viewer:
     runs-on: ubuntu-latest
@@ -64,7 +67,7 @@ jobs:
       - name: Install locked frontend dependencies
         run: npm ci
       - name: Validate standalone replay model and Telegram-style execution markers
-        run: npm run test -- src/replay/replayModel.test.ts src/replay/executionMarkers.test.ts src/replay/runSetup.test.ts
+        run: npm run test -- src/replay/replayModel.test.ts src/replay/executionMarkers.test.ts src/replay/runSetup.test.ts src/replay/AppVersionControl.test.tsx
       - name: Build main terminal without experimental simulator
         run: |
           npm run build
@@ -75,6 +78,8 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/machine-time/research"
           cp ../../research/local_replay_viewer/server.py "$RUNNER_TEMP/machine-time/server.py"
+          cp ../../research/local_replay_viewer/local_update.py "$RUNNER_TEMP/machine-time/local_update.py"
+          MACHINE_TIME_SOURCE_SHA="$(git rev-parse HEAD)" python -c 'import hashlib,json,os,pathlib; root=pathlib.Path(os.environ["RUNNER_TEMP"])/"machine-time"; source=os.environ["MACHINE_TIME_SOURCE_SHA"]; assert len(source)==40; (root/"machine-time-build.json").write_text(json.dumps({"schema":"MACHINE_TIME_BUILD_V1","source_sha":source,"server_sha256":hashlib.sha256((root/"server.py").read_bytes()).hexdigest()},sort_keys=True)+"\n",encoding="utf-8")'
           cp ../../research/local_replay_viewer/START_LOCAL.cmd "$RUNNER_TEMP/machine-time/START_LOCAL.cmd"
           cp ../../research/local_replay_viewer/README.txt "$RUNNER_TEMP/machine-time/README.txt"
           cp ../../research/local_replay_viewer/smoke_package.py "$RUNNER_TEMP/machine-time/smoke_package.py"
