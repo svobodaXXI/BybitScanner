@@ -545,6 +545,25 @@ try {
         occurred_at_ms: t + 7 * 300000 + 2000, allocation_role: "CLOSE", controller: "ROBOT" },
     ],
   };
+  episodeFacts.setup_context.geometry_status = "ORIGINAL_ARCHIVE_HASH_VERIFIED";
+  episodeFacts.setup_context.original_geometry = {
+    schema: "BYBITSCANNER_ARCHIVED_SIGNAL_GEOMETRY_V1",
+    source: "ORIGINAL_TELEGRAM_SIGNAL_ARCHIVE",
+    linkage_basis: "D2_SETUP_ID_EQUALS_ARCHIVED_CANDIDATE_ID",
+    integrity: "LOCAL_ARCHIVE_HASH_ONLY_NOT_CRYPTOGRAPHIC_PROOF",
+    signal_id: "candidate-42", sent_at_ms: t + 350000, sha256: "a".repeat(64),
+    snapshot: {
+      schema_version: 1, signal_id: "candidate-42", symbol: "BTCUSDT", timeframe: "5m",
+      bars: [
+        { open_time_ms: t, open: 100, high: 102, low: 98, close: 101 },
+        { open_time_ms: t + 300000, open: 101, high: 103, low: 100, close: 102 },
+      ],
+      boundaries: [{ boundary_id: "lower", kind: "segment", anchors: [
+        { bar_open_time_ms: t, price: 99 },
+        { bar_open_time_ms: t + 300000, price: 100 },
+      ] }],
+    },
+  };
   await page.getByLabel("Импорт JSON сделки PAPER").setInputFiles({
     name: "episode-facts.json", mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(episodeFacts)),
@@ -554,28 +573,34 @@ try {
   assert.match(await factNote.innerText(), /Кружки на закрытых свечах/);
   assert.match(await factNote.innerText(), /JSON без криптографической подписи/);
   assert.match(await factNote.innerText(), /Falling Wedge · 5m · версия v1/);
-  assert.match(await factNote.innerText(), /геометрия не экспортирована/);
+  assert.match(await factNote.innerText(), /архивная исходная геометрия/);
   const d2Journal = page.getByRole("region", { name: "Наблюдения PAPER D2" });
   assert.match(await d2Journal.innerText(), /STRATEGY_OK/);
   assert.match(await d2Journal.innerText(), /RISK_OK/);
   assert.match(await d2Journal.innerText(), /не полный журнал Robot/);
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleOriginalGeometry === "1");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0",
     "a PAPER imported observation never becomes a SIMULATION fill");
   await page.getByRole("button", { name: "В начало" }).click();
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "0");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-original-geometry"), "0");
   await page.waitForFunction(() => !document.querySelector('[aria-label="Наблюдения PAPER D2"]'));
   assert.doesNotMatch(await factNote.innerText(), /Falling Wedge/);
   await page.getByRole("button", { name: "Пуск", exact: true }).click();
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "2");
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleOriginalGeometry === "1");
   assert.match(await d2Journal.innerText(), /RISK_OK/);
   await page.getByRole("button", { name: "Пауза", exact: true }).click();
   await page.getByRole("button", { name: "Убрать факты PAPER" }).click();
   await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "0");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-original-geometry"), "0");
 
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
