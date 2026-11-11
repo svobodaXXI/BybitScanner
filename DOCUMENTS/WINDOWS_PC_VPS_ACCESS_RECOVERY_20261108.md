@@ -81,3 +81,19 @@ This is an **additional public IPv4 address, not an API endpoint or API key**:
 - Expensive extra IPv4 continues billing at 6.30 RUB/day until cancelled; deleting it before routing and dependent services are migrated may remove working access. Owner approval required for any cancellation/change.
 
 This record documents observed access recovery. It does not supersede `AGENTS.md`, owning safety specifications, or future actual host evidence.
+
+
+## 2026-11-12 — laptop SSH succeeds with Happ/VPN enabled; PC route comparison pending
+
+**Observed on laptop (owner-supplied PowerShell output):**
+- Windows laptop uses its **own** existing private key `$env:USERPROFILE\.ssh\bybitscanner_laptop`; do not copy that key to the PC or expose its contents.
+- With the owner reporting Happ/VPN **enabled**, one direct OpenSSH probe to `root@83.217.213.181` with `-i`, `IdentitiesOnly=yes`, `PasswordAuthentication=no`, `StrictHostKeyChecking=yes`, `ConnectTimeout=10`, and `ConnectionAttempts=1` returned `SSH_OK`, hostname `v3286418.hosted-by-vdsina.ru`, and `SSH_EXIT_CODE=0`.
+- An earlier probe to the **additional** IP `212.193.14.116:22` timed out; do not interpret that timeout as a key/auth failure or proof that the additional IP is permanently unusable.
+- Codex Desktop could not use the Windows SSH agent (agent permission denied), then reported `Permission denied (publickey,password)`; **that Codex execution context is not equivalent** to direct owner PowerShell. No VPS operation was performed in that Codex attempt.
+- This confirms **one successful laptop connection during an enabled VPN session**, not the mechanism (split-tunneling, routing rules, application exemptions, network path) that permitted it and not durable connectivity under all VPN states.
+
+**PC follow-up — reuse the working *approach*, not the laptop credential:**
+1. On the PC, preserve the existing `bybitscanner_vdsina_gateway_20261030` SSH private key and trusted host-key checks. First compare the Happ/VPN configuration and route for `83.217.213.181` against the laptop; verify whether a direct SSH probe succeeds *with Happ/VPN enabled*. This is a read-only comparison, not permission to alter network settings.
+2. Earlier PC evidence: with Happ/VPN **off**, direct PowerShell SSH to the old IP succeeded; with Happ/VPN **on**, SSH banner exchange timed out. The precise VPN routing discrepancy is **not yet established**. Do not assert a proven VPN bypass or automatically copy VPN configuration.
+3. If an actual routing difference is found, propose the **smallest PC-only scoped routing/split-tunnel adjustment**, only with owner approval. Do not change VPS Netplan, DNS, gateway, `sshd`, `authorized_keys`, host-key validation, or either private key. Recheck one SSH probe in the same VPN state after any approved PC change.
+4. The VPS release, PAPER DB, trading state, STOP/TAKE, and service runtime remain entirely outside this connectivity comparison. A successful `SSH_OK` never substitutes for authorized install preflight.
