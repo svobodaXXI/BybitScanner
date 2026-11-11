@@ -591,6 +591,79 @@ export function ReplayPage() {
     }
     return currentSymbol.current === archiveSymbol;
   }, []);
+  // A selected Statistics episode is transferred only after an explicit
+  // owner click, via a nonce-bound Window.postMessage from the opener.
+  // The URL fragment holds identity only, never private fill data.
+  // Actual PAPER fills remain read-only and separate from virtual orders.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const episodeId = params.get("episode");
+    const nonce = params.get("nonce");
+    const sourceOrigin = params.get("source_origin");
+    if (!episodeId && !nonce && !sourceOrigin) return;
+    if (!episodeId || !/^te_[0-9a-f]{24}$/.test(episodeId) ||
+        !nonce || !/^[0-9a-f]{32}$/.test(nonce) ||
+        !sourceOrigin || !/^https?:\\/\\/[^/?#]+$/.test(sourceOrigin)) {
+      setError("Неверный адрес выбранного эпизода из Статистики");
+      return;
+    }
+    const opener = window.opener;
+    if (!opener) {
+      setError("Связь со Статистикой недоступна. Импортируйте JSON фактов сделки вручную.");
+      return;
+    }
+    let received = false;
+    const receive = (event: MessageEvent) => {
+      if (received || event.source !== opener || event.origin !== sourceOrigin ||
+          !event.data || typeof event.data !== "object") return;
+      const value = event.data as Record<string, unknown>;
+      if (value.type !== "BYBITSCANNER_EPISODE_FACTS" ||
+          value.nonce !== nonce || value.trade_episode_id !== episodeId) return;
+      received = true;
+      window.removeEventListener("message", receive);
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      void (async () => {
+        try {
+          const facts = parsePaperEpisodeFacts(value.facts);
+          if (facts.trade_episode_id !== episodeId)
+            throw new Error("ID фактов сделки не совпадает с выбранным");
+          setPaperFacts(facts);
+          onPasteSymbol(facts.symbol);
+          const m5 = 300_000;
+          const start = Math.floor(facts.opened_at_ms / m5) * m5;
+          // At a boundary a fill belongs to the NEW M5, never the old bar.
+          const end = (Math.floor(facts.closed_at_ms / m5) + 1) * m5;
+          if (end - start > 7 * 86_400_000)
+            throw new Error("Эпизод длиннее 7 дней: импортируйте подходящую историю отдельно");
+          const query = new URLSearchParams({
+            symbol: facts.symbol, start_ms: String(start), end_ms: String(end),
+          });
+          const response = await fetch("/local-replay/simulation/pinned-market?" + query,
+            { cache: "no-store" });
+          if (!response.ok) {
+            const reason = (await response.json().catch(() => ({}))) as { error?: string };
+            throw new Error(reason.error || "Локальная подтверждённая история сделки недоступна");
+          }
+          const archive = parseReplayDocument(await response.json() as unknown);
+          if (matchPaperFactsToMarket(facts, archive).status !== "MATCHED")
+            throw new Error("Исходный M1-архив не покрывает все реальные исполнения сделки");
+          setDocument(archive);
+          setSimulationGraphPending(false);
+          setPreparedRun(false);
+          setPlaying(false); setCursor(0);
+          setFileLabel("Фактический PAPER эпизод " + episodeId + " · проверенная локальная история");
+          setError(null);
+        } catch (failure) {
+          setError(failure instanceof Error ? failure.message : "Нет проверенной истории эпизода");
+        }
+      })();
+    };
+    window.addEventListener("message", receive);
+    opener.postMessage({
+      type: "BYBITSCANNER_SIMULATOR_READY", trade_episode_id: episodeId, nonce,
+    }, sourceOrigin);
+    return () => window.removeEventListener("message", receive);
+  }, [onPasteSymbol]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const historyRequest = useRef<AbortController | null>(null);
   const bundledRequest = useRef<AbortController | null>(null);
