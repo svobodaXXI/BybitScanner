@@ -78,6 +78,45 @@ def test_server_extension_rejects_gap_open_bar_and_unbounded_request():
         fetch_closed_extension(snap, as_of_ms=1_500_000, session=FakeHttp(), now_ms=1_500_000)
 
 
+def test_old_signal_can_advance_20_closed_candles_per_click():
+    snap = _snapshot("source-original:" + "d" * 24)
+    last = snap["bars"][-1]["open_time_ms"]
+    period = 300_000
+    now = last + 2000 * period
+
+    class FakeResponse:
+        def __init__(self, bars):
+            self.bars = bars
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return {"retCode": 0, "result": {"list": self.bars}}
+
+    class FakeHttp:
+        def get(self, url, *, params, timeout):
+            assert params["start"] == last + period
+            assert params["end"] == last + params["limit"] * period
+            bars = [
+                [str(last + n * period), "10", "11", "9", "10"]
+                for n in range(params["limit"], 0, -1)
+            ]
+            return FakeResponse(bars)
+
+    first_cutoff, first = fetch_closed_extension(
+        snap, session=FakeHttp(), now_ms=now,
+    )
+    assert first_cutoff == last + 20 * period
+    assert len(first) == 20
+    second_cutoff, second = fetch_closed_extension(
+        snap, after_ms=first_cutoff, session=FakeHttp(), now_ms=now,
+    )
+    assert second_cutoff == last + 40 * period
+    assert second[:20] == first and len(second) == 40
+    with pytest.raises(RetrospectiveBarsError, match="invalid_retrospective_cutoff"):
+        fetch_closed_extension(snap, after_ms=first_cutoff + 1,
+                               session=FakeHttp(), now_ms=now)
+
+
 def test_corrected_anchor_may_use_later_candle_without_changing_original_archive(tmp_path):
     signal_id = "source-original:" + "b" * 24
     snapshot = _snapshot(signal_id)

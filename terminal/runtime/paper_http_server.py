@@ -3393,16 +3393,23 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             from retrospective_signal_bars import (
                 RetrospectiveBarsError, extension_digest, fetch_closed_extension,
             )
-            ids = parse_qs(parsed.query).get("signal_id", [])
-            if len(ids) != 1 or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", ids[0]):
-                self._json_response(400, {"ok": False, "error": "signal_id_required"})
+            params = parse_qs(parsed.query)
+            ids = params.get("signal_id", [])
+            after = params.get("after_ms", [])
+            if (set(params) - {"signal_id", "after_ms"} or len(ids) != 1
+                    or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", ids[0])
+                    or len(after) > 1
+                    or (after and not re.fullmatch(r"[0-9]{1,16}", after[0]))):
+                self._json_response(400, {"ok": False, "error": "invalid_continuation_request"})
                 return
             snapshot = load_frozen_signal_geometry(ids[0])
             if snapshot is None:
                 self._json_response(404, {"ok": False, "error": "source_geometry_not_found"})
                 return
             try:
-                as_of_ms, extra = fetch_closed_extension(snapshot)
+                as_of_ms, extra = fetch_closed_extension(
+                    snapshot, after_ms=int(after[0]) if after else None,
+                )
             except RetrospectiveBarsError as exc:
                 self._json_response(409 if str(exc) != "retrospective_history_unavailable" else 503,
                                     {"ok": False, "error": str(exc)})

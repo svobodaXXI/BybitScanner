@@ -1452,7 +1452,7 @@ export function App() {
           onExtendEditorHistory={mode === "EDITOR" && frozenSignal ? async () => {
             const current = frozenSignal;
             const response = await fetch(
-              `/api/workspace/signal-geometry/continuation?signal_id=${encodeURIComponent(current.signalId)}`,
+              `/api/workspace/signal-geometry/continuation?signal_id=${encodeURIComponent(current.signalId)}${current.context ? `&after_ms=${current.context.asOfMs}` : ""}`,
               { credentials: "same-origin" },
             );
             const data = await response.json();
