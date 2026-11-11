@@ -1,0 +1,43 @@
+/* Local Replay-only run configuration. Never included in main Terminal build. */
+.replay-run-setup { background: #141d28; border: 1px solid #314258; border-radius: 10px; padding: 13px; margin-bottom: 12px; color: #ecf3fc; }
+.replay-run-heading { display: flex; gap: 8px 20px; flex-wrap: wrap; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+.replay-run-heading strong { font-size: 15px; }
+.replay-run-heading span { color: #9fb4cc; font-size: 12px; }
+.replay-run-layout { display: grid; grid-template-columns: minmax(275px, 1.35fr) minmax(270px, 1fr); gap: 12px; }
+.replay-run-setup fieldset { min-width: 0; margin: 0; padding: 10px; border: 1px solid #33475f; border-radius: 8px; }
+.replay-run-setup legend { color: #a9c2dd; padding: 0 5px; font-size: 13px; font-weight: 600; }
+.replay-run-setup button { background: #23354a; border: 1px solid #47617f; border-radius: 6px; color: #e8f0fa; padding: 6px 9px; font: inherit; cursor: pointer; }
+.replay-run-setup button:hover:not(:disabled) { background: #315174; }
+.replay-run-setup button:disabled { opacity: .55; cursor: not-allowed; }
+.replay-run-check { display: flex; align-items: center; gap: 7px; color: #dae4f2; cursor: pointer; min-height: 29px; }
+.replay-run-check input, .replay-run-planned input { accent-color: #7bb7ef; width: 16px; height: 16px; flex-shrink: 0; }
+.replay-run-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 2px 0 10px; }
+.replay-run-mirror { border: 1px solid #4a6280; border-radius: 7px; background: #17273b; overflow: hidden; }
+.replay-run-mirror-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 10px; }
+.replay-run-mirror-top button { font-size: 12px; }
+.replay-run-components { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); padding: 5px 12px 10px 27px; border-top: 1px solid #2d4765; column-gap: 10px; }
+.replay-run-independent { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); padding-top: 10px; column-gap: 10px; }
+.replay-run-independent > span { grid-column: 1 / -1; color: #9fb4cc; font-size: 12px; margin-bottom: 4px; }
+.replay-run-planned { color: #9fb4cc; font-size: 12px; border-top: 1px solid #31445e; margin-top: 9px; padding-top: 8px; }
+.replay-run-planned summary { cursor: pointer; }
+.replay-run-planned label { display: block; opacity: .65; padding: 4px; }
+.replay-run-dates { display: flex; flex-direction: column; gap: 11px; }
+.replay-run-dates > label { display: grid; gap: 6px; color: #9eb2cb; font-size: 12px; }
+.replay-run-dates input { min-width: 0; width: 100%; padding: 10px; background: #0e1927; color: #f0f6ff; border: 1px solid #47617f; border-radius: 6px; font-size: 14px; color-scheme: dark; }
+.replay-run-presets { display: flex; flex-wrap: wrap; gap: 7px; }
+.replay-run-presets button[aria-pressed="true"] { background: #285f84; border-color: #8ec5ed; }
+.replay-run-summary { color: #bed2e8; font-size: 12px; margin: 0; }
+.replay-run-error { color: #ffb3bf; font-size: 12px; margin: 0; }
+.replay-run-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; }
+.replay-run-footer > span { font-size: 12px; color: #bed1e4; }
+.replay-run-disclaimer { font-size: 12px; color: #cbb889; border-top: 1px solid #33475f; padding-top: 10px; margin: 10px 0 0; }
+@media (max-width: 850px) { .replay-run-layout { grid-template-columns: 1fr; } }
+@media (max-width: 530px) { .replay-run-components, .replay-run-independent { grid-template-columns: 1fr; } }
+
+.replay-run-account { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px; padding-top: 12px; }
+.replay-run-account label { display: grid; gap: 4px; color: #bed1e4; font-size: 12px; }
+.replay-run-account input { width: 145px; max-width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid #47617f; background: #0e1927; color: #f0f6ff; font-size: 14px; }
+.replay-run-account > span { flex: 1; color: #9fb4cc; font-size: 12px; }
+.replay-run-result { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding: 12px; border: 1px solid #4d6d85; border-radius: 8px; color: #dbeafb; font-size: 12px; }
+.replay-run-result strong { font-size: 14px; }
+.replay-run-result small { color: #cbb889; }

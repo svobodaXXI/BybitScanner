@@ -1,0 +1,175 @@
+/** Pure configuration for a single-symbol, LOCAL SIMULATION-only replay.
+ * This selects intended research components. It does NOT admit trading.
+ */
+export type StrategyId =
+  | "NAKED_RETURN" | "NAKED_RETEST" | "MIRROR_LEVELS"
+  | "WEDGE_RISING" | "WEDGE_FALLING" | "IKIGAI_BOX"
+  | "H1_TREND" | "L_SHAPE" | "TRIANGLE";
+
+export type StrategyOption = { id: StrategyId; label: string };
+export const MIRROR_OPTIONS: readonly StrategyOption[] = [
+  { id: "NAKED_RETURN", label: "Голая свеча — возврат" },
+  { id: "NAKED_RETEST", label: "Голая свеча — ретест" },
+  { id: "MIRROR_LEVELS", label: "Зеркальные уровни" },
+  { id: "WEDGE_RISING", label: "Восходящий клин" },
+  { id: "WEDGE_FALLING", label: "Нисходящий клин" },
+  { id: "IKIGAI_BOX", label: "Ikigai Box" },
+];
+export const OTHER_OPTIONS: readonly StrategyOption[] = [
+  { id: "H1_TREND", label: "Трендовые H1/M5" },
+  { id: "L_SHAPE", label: "L-shape" },
+  { id: "TRIANGLE", label: "Triangle" },
+];
+export const PLANNED_OPTIONS = [
+  "Двойная вершина", "Двойное дно",
+  "Голова и плечи", "Перевёрнутая голова и плечи",
+  "Разворотные свечные формации (общий признак)",
+] as const;
+export const ALL_SELECTABLE = [...MIRROR_OPTIONS, ...OTHER_OPTIONS].map(x => x.id);
+
+export type RunSelection = {
+  mirror: boolean;
+  selected: readonly StrategyId[];
+};
+export function selectAll(): RunSelection {
+  return { mirror: true, selected: [...ALL_SELECTABLE] };
+}
+export function clearAll(): RunSelection {
+  return { mirror: false, selected: [] };
+}
+export function toggleMirror(current: RunSelection, enabled: boolean): RunSelection {
+  const ids = new Set(current.selected);
+  for (const option of MIRROR_OPTIONS) {
+    if (enabled) ids.add(option.id);
+    else ids.delete(option.id);
+  }
+  return { mirror: enabled, selected: ALL_SELECTABLE.filter(id => ids.has(id)) };
+}
+export function toggleStrategy(current: RunSelection, id: StrategyId, enabled: boolean): RunSelection {
+  if (!ALL_SELECTABLE.includes(id)) throw new Error("Unsupported strategy");
+  const ids = new Set(current.selected);
+  if (enabled) ids.add(id);
+  else ids.delete(id);
+  return {
+    mirror: current.mirror || (enabled && MIRROR_OPTIONS.some(x => x.id === id)),
+    selected: ALL_SELECTABLE.filter(option => ids.has(option)),
+  };
+}
+export function onlyWedges(): RunSelection {
+  return { mirror: false, selected: ["WEDGE_RISING", "WEDGE_FALLING"] };
+}
+export function isAllSelected(selection: RunSelection): boolean {
+  return selection.mirror && ALL_SELECTABLE.every(id => selection.selected.includes(id));
+}
+
+// datetime-local strings are treated as UTC wall clock, NEVER browser local timezone.
+// A "month" preset is the agreed 30-day test interval; 3 months is 90 days.
+export type PeriodPreset = "DAY" | "WEEK" | "MONTH" | "THREE_MONTHS";
+const PRESET_DAYS: Record<PeriodPreset, number> = {
+  DAY: 1, WEEK: 7, MONTH: 30, THREE_MONTHS: 90,
+};
+export function parseUtcMinute(value: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) throw new Error("Укажите дату, час и минуту UTC");
+  const [year, month, day, hour, minute] = match.slice(1).map(Number);
+  const time = Date.UTC(year, month - 1, day, hour, minute);
+  const iso = new Date(time).toISOString().slice(0, 16);
+  if (!Number.isFinite(time) || iso !== value) throw new Error("Некорректная дата или время UTC");
+  return time;
+}
+export function presetEndInclusive(start: string, preset: PeriodPreset): string {
+  const time = parseUtcMinute(start);
+  return new Date(time + (PRESET_DAYS[preset] * 1440 - 1) * 60_000).toISOString().slice(0, 16);
+}
+export function validateInclusiveWindow(start: string, endInclusive: string): {
+  startMs: number; endExclusiveMs: number; minutes: number;
+} {
+  const startMs = parseUtcMinute(start);
+  const end = parseUtcMinute(endInclusive);
+  if (end < startMs) throw new Error("Конец прогона раньше начала");
+  const endExclusiveMs = end + 60_000;
+  if (!Number.isSafeInteger(endExclusiveMs)) throw new Error("Время за пределами допустимого диапазона");
+  return { startMs, endExclusiveMs, minutes: (endExclusiveMs - startMs) / 60_000 };
+}
+
+
+/** Only these two original Wedge Scanner/Robot detectors exist in local mode. */
+export const RUNNABLE_WEDGE_IDS = ["WEDGE_RISING", "WEDGE_FALLING"] as const;
+export function runnableWedgeSelection(selection: RunSelection): boolean {
+  return selection.selected.length > 0 && selection.selected.every(
+    id => RUNNABLE_WEDGE_IDS.some(wedge => wedge === id),
+  );
+}
+export function makeWedgeRunRequest(
+  selection: RunSelection, symbol: string, start: string,
+  endInclusive: string, initialBalance: string,
+): {
+  symbol: string; start_utc: string; end_utc_inclusive: string;
+  selected_strategies: StrategyId[]; initial_balance: string;
+} {
+  if (!runnableWedgeSelection(selection)) {
+    throw new Error("Пока доступны только восходящий и нисходящий клинья");
+  }
+  const { minutes } = validateInclusiveWindow(start, endInclusive);
+  if (minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
+  const ticker = symbol.trim().toUpperCase();
+  if (!/^[A-Z0-9]{2,25}USDT$/.test(ticker)) throw new Error("Укажите один USDT-тикер");
+  if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(initialBalance) ||
+      !(Number(initialBalance) > 0) || !Number.isFinite(Number(initialBalance))) {
+    throw new Error("Укажите положительный виртуальный депозит");
+  }
+  return {
+    symbol: ticker, start_utc: start, end_utc_inclusive: endInclusive,
+    selected_strategies: [...selection.selected], initial_balance: initialBalance,
+  };
+}
+
+export type LocalWedgeStatus = {
+  namespace: "SIMULATION";
+  can_attempt: boolean;
+  wedge_engine_available: boolean;
+  python_dependencies_available: boolean;
+  archive_files_present: boolean;
+  wedge_risk_profile_present: boolean;
+};
+export function parseWedgeStatus(raw: unknown): LocalWedgeStatus {
+  if (!raw || typeof raw !== "object") throw new Error("Недостоверный статус симулятора");
+  const x = raw as Record<string, unknown>;
+  if (x.namespace !== "SIMULATION" ||
+      ["can_attempt", "wedge_engine_available", "python_dependencies_available",
+       "archive_files_present", "wedge_risk_profile_present"].some(k => typeof x[k] !== "boolean")) {
+    throw new Error("Неверный ответ локального SIMULATION");
+  }
+  return x as LocalWedgeStatus;
+}
+
+export type LocalWedgeResult = {
+  namespace: "SIMULATION"; symbol: string; scenario_type: string;
+  requested_minutes: number; scanner_wedge_observations: number;
+  robot_retests_in_period: number; submitted_protected_limits: number;
+  virtual_fills: number; stop_exits: number; take_exits: number;
+  realized_net_pnl: string; unrealized_pnl: string; total_net_pnl: string;
+  total_fees: string; return_percent: string; max_drawdown_percent: string;
+  risk_terms_status: string; source_id: string;
+};
+export function parseWedgeResult(raw: unknown): LocalWedgeResult {
+  if (!raw || typeof raw !== "object") throw new Error("Недостоверный отчёт SIMULATION");
+  const x = raw as Record<string, unknown>;
+  if (x.namespace !== "SIMULATION" ||
+      x.scenario_type !== "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION" ||
+      x.risk_terms_status !== "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED") {
+    throw new Error("Отчёт не соответствует локальному прогону клиньев");
+  }
+  for (const key of ["symbol", "source_id", "realized_net_pnl", "unrealized_pnl",
+    "total_net_pnl", "total_fees", "return_percent", "max_drawdown_percent"]) {
+    if (typeof x[key] !== "string") throw new Error("В отчёте отсутствует " + key);
+  }
+  for (const key of ["requested_minutes", "scanner_wedge_observations",
+    "robot_retests_in_period", "submitted_protected_limits", "virtual_fills",
+    "stop_exits", "take_exits"]) {
+    if (!Number.isSafeInteger(x[key]) || (x[key] as number) < 0) {
+      throw new Error("Неверное количество событий в отчёте");
+    }
+  }
+  return x as LocalWedgeResult;
+}
