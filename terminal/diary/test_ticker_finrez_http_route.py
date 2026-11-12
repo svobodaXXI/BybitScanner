@@ -286,6 +286,18 @@ def test_simulator_bridge_http_contract_has_no_trading_runtime_dependency():
         assert request(url + "poll?device_id=owner-pc&viewer_running=0", token=secret)[1]["state"] == "IDLE"
         assert request(url + "request", body={"episode_id": episode},
                        request_origin="https://attacker.test")[0] == 403
+        # Owner-authenticated /pair never exposes a trading credential and
+        # never creates a device slot when the existing config is absent.
+        assert request(url + "pair", body={"device_id": "owner-pc"},
+                       request_origin="https://evil.test")[0] == 403
+        assert request(url + "pair", body={"device_id": "unconfigured"},
+                       request_origin=origin)[0] == 503
+        code, pairing = request(url + "pair", body={"device_id": "owner-pc"},
+                                request_origin=origin)
+        assert code == 200 and pairing["token"] == secret
+        assert pairing["device_id"] == "owner-pc"
+        assert request(url + "pair", body={"device_id": "owner-pc", "cmd": "run"},
+                       request_origin=origin)[0] == 400
         code, queued = request(url + "request", body={"episode_id": episode},
                                request_origin=origin)
         assert code == 200 and queued["state"] == "QUEUED"
