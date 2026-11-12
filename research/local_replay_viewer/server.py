@@ -181,9 +181,20 @@ def run_local_simulation(
             "start_utc": configuration["start_utc"],
             "end_utc_inclusive": configuration["end_utc_inclusive"],
         })
+    # Optional owner-installed historical prints: fixed local directory,
+    # never a browser-provided path. The pinned raw checksum is verified by
+    # Simulator V2 before any evidence is accepted. Box remains unchanged.
+    flow_archive_dir = None
+    if "IKIGAI_BOX" not in selected:
+        raw_folder = SIM_DATA / "raw-trades"
+        if raw_folder.exists() or raw_folder.is_symlink():
+            if raw_folder.is_symlink() or not raw_folder.is_dir():
+                raise ValueError("unsafe local raw taker archive directory")
+            flow_archive_dir = raw_folder
     result = run_from_time_machine_config(
         config=configuration, manifest=manifest,
         cache_dir=SIM_DATA / "m1-cache",
+        flow_archive_dir=flow_archive_dir,
         latest_closed_boundary_ms=latest,
         capture_replay=True,
         on_replay_events=(
