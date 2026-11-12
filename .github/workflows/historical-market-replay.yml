@@ -90,6 +90,7 @@ jobs:
           cp ../../pivots.py ../../confirmation.py ../../scanner_geometry_cursor.py "$RUNNER_TEMP/machine-time/"
           cp ../../robot_state_machine.py ../../robot_entry_limit.py ../../robot_protection.py ../../robot_l_shape.py ../../retest_account_risk.py ../../retest_campaign.py "$RUNNER_TEMP/machine-time/"
           cp ../../mirror_retest_robot.py ../../mirror_retest_observer.py ../../mirror_retest_robot_bridge.py ../../retest_calibration.py ../../robot_failure_diagnostics.py ../../robot_market_confirmation.py ../../robot_partial_fill.py ../../robot_candidate_store.py "$RUNNER_TEMP/machine-time/"
+          cp ../../robot_entry_flow_evidence.py "$RUNNER_TEMP/machine-time/"
           mkdir -p "$RUNNER_TEMP/machine-time/terminal/api" "$RUNNER_TEMP/machine-time/terminal/domain" "$RUNNER_TEMP/machine-time/terminal/application" "$RUNNER_TEMP/machine-time/terminal/paper" "$RUNNER_TEMP/machine-time/terminal/market_data" "$RUNNER_TEMP/machine-time/terminal/persistence"
           cp ../../terminal/api/models.py "$RUNNER_TEMP/machine-time/terminal/api/"
           cp ../../terminal/domain/models.py ../../terminal/domain/states.py "$RUNNER_TEMP/machine-time/terminal/domain/"
