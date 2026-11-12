@@ -68,7 +68,6 @@ class SymbolContext:
     created_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
     _update_listeners: dict[str, Callable[[str], None]] = field(default_factory=dict)
     _disconnect_listeners: dict[str, Callable[[int, str], None]] = field(default_factory=dict)
-    _trade_listeners: dict[str, Callable[[dict, int], None]] = field(default_factory=dict)
     _listener_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def add_update_listener(self, name: str, callback: Callable[[str], None]) -> None:
@@ -106,35 +105,13 @@ class SymbolContext:
         with self._listener_lock:
             self._disconnect_listeners.pop(name, None)
 
-    def add_trade_listener(self, name: str, callback: Callable[[dict, int], None]) -> None:
-        """Optional local read-only consumer of applied native publicTrade frames."""
-        if not name or not callable(callback):
-            raise ValueError("trade listener name/callback required")
-        with self._listener_lock:
-            if name in self._trade_listeners:
-                raise ValueError("duplicate trade listener")
-            self._trade_listeners[name] = callback
-
-    def remove_trade_listener(self, name: str) -> None:
-        with self._listener_lock:
-            self._trade_listeners.pop(name, None)
-
-    def _dispatch_trade(self, message: dict, received_at_ms: int) -> None:
-        with self._listener_lock:
-            listeners = tuple(self._trade_listeners.values())
-        for listener in listeners:
-            try:
-                listener(message, received_at_ms)
-            except Exception:
-                LOGGER.exception("Symbol context read-only trade listener failed; symbol=%s", self.symbol)
-
     def has_update_listeners(self) -> bool:
         with self._listener_lock:
             return bool(self._update_listeners)
 
     def has_listeners(self) -> bool:
         with self._listener_lock:
-            return bool(self._update_listeners or self._disconnect_listeners or self._trade_listeners)
+            return bool(self._update_listeners or self._disconnect_listeners)
 
     def _dispatch_update(self, book_update_id: str) -> None:
         with self._listener_lock:
@@ -192,7 +169,6 @@ class SymbolContext:
         with self._listener_lock:
             self._update_listeners.clear()
             self._disconnect_listeners.clear()
-            self._trade_listeners.clear()
         self.public_orderbook.set_update_consumer(None)
         self.public_orderbook.close()
         self.public_trades.close()
@@ -418,8 +394,6 @@ class MarketDataHub:
             else:
                 context.trades_subscription_state = "SUBSCRIBED"
                 context.trade_bootstrap_complete = True
-                if context._trade_listeners:
-                    context._dispatch_trade(message, int(time.time() * 1000))
             context.last_error = None
 
     def _apply_subscription_ack(self, message: dict) -> None:
