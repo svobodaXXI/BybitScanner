@@ -6,6 +6,7 @@ on:
     paths:
       - "mirror_scanner.py"
       - "mirror_levels/levels.py"
+      - "mirror_levels/tracker.py"
       - "tests/test_mirror_levels.py"
       - "geometry/broadening.py"
       - "tests/test_broadening_detector.py"
@@ -63,6 +64,7 @@ jobs:
         run: >-
           python -m py_compile
           mirror_scanner.py
+          mirror_levels/tracker.py
           geometry/broadening.py
           tests/test_broadening_detector.py
           geometry/reversal_patterns.py
@@ -94,7 +96,7 @@ jobs:
       - name: Check authoritative Scanner pass progress after MIRROR
         run: python -m unittest -v tests.test_scanner_pass_progress tests.test_horn_scanner
       - name: Verify owner-approved MIRROR levels and exact-linked legacy audit
-        run: python -m pytest -q tests/test_mirror_levels.py -k "owner_mirror_source_policy or legacy_frozen or historical_mirror_audit"
+        run: python -m pytest -q tests/test_mirror_levels.py -k "owner_mirror_source_policy or legacy_frozen or historical_mirror_audit or research_mirror"
       - name: Verify causal wick-extremum supersession
         run: python -m pytest -q tests/test_mirror_scanner_integration.py -k "extremum or wick_sweep or persisted_standalone_handoff"
       - name: Full synthetic MIRROR standalone PAPER E2E and regression suite
