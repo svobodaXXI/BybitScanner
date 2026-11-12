@@ -312,17 +312,6 @@ export function App() {
       return null;
     }
   }, [launchLink, frozenSignal, tradingSymbol, timeframe, ownerChartCandles, currentSignalOverlay]);
-  // Telegram signal provenance is independent of the selected PAPER/MAIN account.
-  // Only draw exact frozen anchors on matching *current* candles, never on
-  // an unrelated symbol/interval or an approximate historical bar.
-  const terminalSignalDrawings = useMemo(() => {
-    // Observational signal rays are read-only in Terminal. They cannot
-    // become Autopilot/Robot trading signals or overwrite account drawings.
-    const eligible = launchLink?.mode === "TERMINAL"
-      ? mode === "TERMINAL" || mode === "AUTOPILOT"
-      : launchLink?.mode === "EDITOR" && mode === "TERMINAL";
-    return eligible ? currentSignalOverlay : null;
-  }, [mode, launchLink, currentSignalOverlay]);
   const { paperState, pendingActions } = usePaperTrading(tradingSymbol);
   const accountWorkspace = useAccountWorkspace(tradingSymbol);
   const modeAccountSelection = useModeAccountSelection();
@@ -335,6 +324,22 @@ export function App() {
       ? scopedProjection(mode, selectedModeAccountId,
           accountWorkspace.projection, modeAccountSelection.mainProjection)
       : null;
+  // A Telegram signal is not evidence of another account's geometry.
+  // Reuse the linked rays in Terminal only when its selected account is the
+  // same explicitly scoped account as the Editor source view.
+  const terminalSignalDrawings = useMemo(() => {
+    const eligible = launchLink?.mode === "TERMINAL"
+      ? mode === "TERMINAL" || mode === "AUTOPILOT"
+      : launchLink?.mode === "EDITOR" && mode === "TERMINAL";
+    if (!eligible || !currentSignalOverlay || accountWorkspace.switching ||
+        !modeAccountSelection.ready || modeAccountSelection.pendingMode === mode ||
+        !accountProjection?.account_id ||
+        accountProjection.account_id !== accountWorkspace.projection?.account_id)
+      return null;
+    return currentSignalOverlay;
+  }, [mode, launchLink, currentSignalOverlay, accountWorkspace.switching,
+      accountWorkspace.projection?.account_id, modeAccountSelection.ready,
+      modeAccountSelection.pendingMode, accountProjection?.account_id]);
   const mutationsAllowed = !accountWorkspace.switching
     && accountProjection?.provider === "PAPER"
     && accountProjection.environment === "PAPER"
