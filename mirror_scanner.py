@@ -376,6 +376,7 @@ def _entry_terms(level: MirrorLevel, record: Mapping[str, Any], candle: Mapping[
         "potential_percent": str(abs(target - reference) / reference * 100),
         "reward_risk": str(rr),
         "level_id": level.level_id, "level_timeframe": level.timeframe, "level_source": level.source,
+        "level_side": level.side, "level_breakout_direction": breakout["direction"],
         "level_pattern": level.pattern, "level_breakout_close_ms": int(breakout["close_time_ms"]),
         "confirmation": {"kind": confirmation_kind, "timeframe": timeframe,
                          **{key: candle[key] for key in ("open_time_ms", "close_time_ms", "open", "high", "low",
