@@ -397,6 +397,11 @@ def _standalone_confirmations(level: MirrorLevel, record: dict[str, Any], frames
             or record.get("status") != STATUS_UNTESTED):
         return []
     breakout = record["naked_retest"]["breakout"]
+    # This native helper is also reused by the local Simulator. Never allow a
+    # legacy wrong-side candidate to become a confirmation there.
+    from mirror_levels.levels import mirror_breakout_allowed
+    if not mirror_breakout_allowed(level, breakout):
+        return []
     direction = breakout["campaign_direction"]
     price = level.boundary.price_at(int(breakout["close_time_ms"]))
     cursors = record.setdefault("entry_cursors", {})
