@@ -79,6 +79,10 @@ from terminal.application.paper_close_all_report import (
 )
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
 from terminal.application.box_protection_finalizer import finalize_box_protection_obligation
+from terminal.application.non_box_protection_finalizer import (
+    robot_entry_fees as shared_non_box_robot_entry_fees,
+    finalize_non_box_protection_obligation,
+)
 from terminal.application.ikigai_box_catchup import (
     build_box_manual_close_market_plan,
     durable_box_market_intent,
@@ -3408,133 +3412,25 @@ class PaperRuntime:
         return self._finalize_paper_protection_obligation(obligation, trade, execution, now_ms=now_ms)
 
     def _robot_entry_fees(self, trade: RobotTradeRecord) -> Decimal | None:
-        """Fees of the trade's own Robot entry executions, or None if unproven.
-
-        CR-PAPER-PROTECTION-LIFECYCLE-001 sections 21.2/22.6: correlate only the
-        candidate's own entry order identities -- never symbol-wide executions,
-        which may include manual or unrelated fills -- and require them to sum
-        to the attested entry quantity.
-        """
-        candidate = self.store.get_robot_candidate(trade.candidate_id)
-        if (
-            candidate is None
-            or candidate.robot_state is None
-            or trade.entry_path not in {"LIMIT", "MARKET"}
-            or trade.entry_quantity is None
-        ):
-            return None
-        try:
-            order_ids = robot_entry_order_ids(
-                self.store, trade.trading_account_id, candidate,
-                candidate.robot_state.get("execution") or {}, entry_path=trade.entry_path,
-            )
-        except RobotBreakoutMonitorError:
-            return None
-        entry_side = OrderSide.BUY if trade.direction == "LONG" else OrderSide.SELL
-        fills = tuple(
-            fill
-            for order_id in order_ids
-            for fill in self.store.load_executions_for_order(trade.trading_account_id, order_id)
-        )
-        if (
-            not fills
-            or any(fill.symbol != trade.symbol or fill.side is not entry_side for fill in fills)
-            or sum((fill.quantity.value for fill in fills), Decimal("0")) != trade.entry_quantity
-        ):
-            return None
-        return sum((fill.fee for fill in fills), Decimal("0"))
+        """Original candidate-owned fee correlation shared with local SIMULATION."""
+        return shared_non_box_robot_entry_fees(self.store, trade)
 
     def _finalize_paper_protection_obligation(
         self, obligation: PaperProtectionObligationRecord, trade: RobotTradeRecord,
         execution: Execution, *, now_ms: int,
     ) -> PaperProtectionObligationRecord:
-        """Call close_robot_trade() from proven execution/position evidence
-        and resolve the obligation, only once FLAT is itself proven.
-
-        Deterministic from durable evidence alone (the obligation's own
-        recorded execution plus the trade's own recorded entry), so a restart
-        between execution and finalization reproduces the exact same close
-        evidence and close_robot_trade()'s own idempotent replay guard
-        (matching evidence -> no-op) makes this safe to repeat.
-        """
+        """Close from durable FLAT only; Box uses its own shared finalizer."""
         position_key = PositionKey(trade.trading_account_id, Category.LINEAR, trade.symbol, 0)
         position = self.store.get_position_projection(position_key)
         if position is None or position.side is not PositionSide.FLAT:
-            # Our own exec is recorded but FLAT is not yet proven: leave
-            # DISPATCHING for reconciliation rather than finalize from an
-            # unproven position state.
             return obligation
         if trade.pattern == "IKIGAI_BOX":
             return finalize_box_protection_obligation(
                 self.store, obligation, trade, now_ms=now_ms,
             )
-
-        if trade.entry_quantity is None:
-            # Reached only if an exec was somehow recorded for a trade
-            # lacking the ownership attestation (e.g. resuming a lifecycle
-            # dispatched before this gate existed): missing attestation
-            # fails closed here too, not only at the pre-execute gate.
-            LOGGER.error(
-                "Robot protection finalize cannot prove entry attestation; "
-                "leaving for reconciliation; obligation=%s trade_id=%s",
-                obligation.obligation_id, trade.trade_id,
-            )
-            return obligation
-        exit_price = execution.price.value
-        exit_quantity = execution.quantity.value
-        entry_fees = self._robot_entry_fees(trade)
-        if entry_fees is None:
-            # Unproven entry correlation keeps the previous exit-only total
-            # rather than guessing; the close itself must still finalize.
-            LOGGER.error(
-                "Robot protection finalize cannot prove entry fees; recording exit fee only; "
-                "obligation=%s trade_id=%s",
-                obligation.obligation_id, trade.trade_id,
-            )
-            entry_fees = Decimal("0")
-        fees_costs_usdt = entry_fees + execution.fee
-        expected_side = PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
-        if expected_side is PositionSide.LONG:
-            realized_pnl_usdt = exit_quantity * (exit_price - trade.average_entry)
-        else:
-            realized_pnl_usdt = exit_quantity * (trade.average_entry - exit_price)
-        # Owner-frozen convention (CR-PAPER-PROTECTION-LIFECYCLE-001 section 12):
-        # actual_entry_notional_usdt is the attested Robot-owned entry
-        # quantity (trade.entry_quantity, proven -- not merely assumed --
-        # equal to the aggregate at dispatch time by the ownership gate
-        # above) times the actual average entry price; never the closing
-        # execution/aggregate quantity, and never actual_wv, which is a WV
-        # fraction, not a USDT notional.
-        actual_entry_notional_usdt = trade.entry_quantity * trade.average_entry
-        if actual_entry_notional_usdt <= 0:
-            LOGGER.error(
-                "Robot protection close cannot prove a positive entry notional; "
-                "leaving for reconciliation; obligation=%s trade_id=%s",
-                obligation.obligation_id, trade.trade_id,
-            )
-            return obligation
-        realized_pnl_pct = (
-            (realized_pnl_usdt - fees_costs_usdt) / actual_entry_notional_usdt * 100
+        return finalize_non_box_protection_obligation(
+            self.store, obligation, trade, execution, now_ms=now_ms,
         )
-        self.store.close_robot_trade(
-            trade.trade_id,
-            exit_time_ms=execution.exchange_timestamp_ms,
-            exit_price=exit_price,
-            exit_reason=obligation.winning_leg,
-            realized_pnl_usdt=realized_pnl_usdt,
-            realized_pnl_pct=realized_pnl_pct,
-            fees_costs_usdt=fees_costs_usdt,
-            updated_at_ms=now_ms,
-        )
-        if obligation.status == "DISPATCHING":
-            obligation = self.store.transition_paper_protection_obligation(
-                obligation.obligation_id,
-                expected_status="DISPATCHING",
-                next_status="RESOLVED",
-                expected_version=obligation.version,
-                updated_at_ms=now_ms,
-            )
-        return obligation
 
     def paper_state(self, symbol: str) -> dict[str, object]:
         normalized_symbol = symbol.strip().upper()
