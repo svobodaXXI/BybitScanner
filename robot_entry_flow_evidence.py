@@ -148,3 +148,101 @@ def compare_flow_windows(
         sell_absorption_candidate=(sell_fading and bid_refill) if bid_refill is not None else None,
         buy_absorption_candidate=(buy_fading and ask_refill) if ask_refill is not None else None,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class TakerPrint:
+    """One exchange execution; NOT evidence of one independent market order."""
+
+    symbol: str
+    trade_id: str
+    event_ms: int
+    side: str
+    price: Decimal
+    size_base: Decimal
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.symbol, str) or not self.symbol.endswith("USDT")
+                or not self.symbol.isalnum() or not isinstance(self.trade_id, str)
+                or not self.trade_id or type(self.event_ms) is not int
+                or self.event_ms < 0 or self.side not in ("Buy", "Sell")):
+            raise ValueError("invalid Bybit public execution identity/time/side")
+        for field in ("price", "size_base"):
+            value = getattr(self, field)
+            if not isinstance(value, Decimal) or not value.is_finite() or value <= ZERO:
+                raise ValueError(f"{field} must be positive finite Decimal")
+
+    @property
+    def notional_usdt(self) -> Decimal:
+        return self.price * self.size_base
+
+
+def normalize_bybit_taker_print(raw: dict, *, layout: str) -> TakerPrint:
+    """Normalize native Bybit publicTrade or daily public trade CSV, preserving taker side.
+
+    The caller owns snapshot/reconnect integrity and authoritative provenance.
+    History without a side cannot be used to infer buy/sell activity.
+    """
+    from decimal import InvalidOperation, ROUND_FLOOR
+
+    if not isinstance(raw, dict) or layout not in ("WS_PUBLIC_TRADE", "PUBLIC_TRADE_ARCHIVE"):
+        raise ValueError("explicit Bybit public-trade layout required")
+    if layout == "WS_PUBLIC_TRADE":
+        fields = ("s", "i", "T", "S", "p", "v")
+        if any(field not in raw for field in fields) or type(raw["T"]) is not int:
+            raise ValueError("malformed Bybit WebSocket public trade")
+        event_ms = raw["T"]
+        values = (raw["s"], raw["i"], raw["S"], raw["p"], raw["v"])
+    else:
+        fields = ("symbol", "trdMatchID", "timestamp", "side", "price", "size")
+        if any(field not in raw for field in fields):
+            raise ValueError("public archive lacks required execution side")
+        try:
+            stamp = Decimal(str(raw["timestamp"]))
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            raise ValueError("invalid Bybit archive execution timestamp") from exc
+        if not stamp.is_finite() or stamp < ZERO:
+            raise ValueError("invalid Bybit archive execution timestamp")
+        event_ms = int((stamp * 1000).to_integral_value(rounding=ROUND_FLOOR))
+        values = (raw["symbol"], raw["trdMatchID"], raw["side"], raw["price"], raw["size"])
+    try:
+        price, size = (Decimal(str(value)) for value in values[3:])
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise ValueError("invalid Bybit execution price or quantity") from exc
+    return TakerPrint(str(values[0]), str(values[1]), event_ms, str(values[2]), price, size)
+
+
+def aggregate_taker_prints(
+    prints: tuple[TakerPrint, ...], *, symbol: str, start_ms: int, end_ms: int,
+) -> FlowWindow | None:
+    """Aggregate only already available, verified, time-ordered prints into one window.
+
+    Empty intervals yield UNKNOWN (None), not synthetic zero flow or prices.
+    The caller must establish that the exchange subscription/archive has no gaps.
+    """
+    if (type(start_ms) is not int or type(end_ms) is not int
+            or start_ms < 0 or end_ms <= start_ms or not symbol):
+        raise ValueError("invalid symbol or causal observation interval")
+    if not isinstance(prints, tuple) or any(not isinstance(p, TakerPrint) for p in prints):
+        raise TypeError("normalized tuple of public executions required")
+    if not prints:
+        return None
+    seen: set[str] = set()
+    last_ms = -1
+    buy, sell = ZERO, ZERO
+    for trade in prints:
+        if (trade.symbol != symbol or trade.trade_id in seen
+                or not start_ms <= trade.event_ms < end_ms
+                or trade.event_ms < last_ms):
+            raise ValueError("foreign, duplicate, unordered or future execution")
+        seen.add(trade.trade_id)
+        last_ms = trade.event_ms
+        if trade.side == "Buy":
+            buy += trade.notional_usdt
+        else:
+            sell += trade.notional_usdt
+    return FlowWindow(
+        start_ms=start_ms, end_ms=end_ms,
+        start_price=prints[0].price, end_price=prints[-1].price,
+        buy_notional_usdt=buy, sell_notional_usdt=sell,
+    )
