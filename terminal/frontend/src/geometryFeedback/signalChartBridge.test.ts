@@ -95,6 +95,8 @@ describe("verified same-signal geometry on current and Terminal charts", () => {
     ]);
     expect(projected[0].style.color).toBe("#8195aa");
     expect(projected[2].style.color).toBe("#e0b45b");
+    expect(projected[2].referenceStroke).toBe("solid");
+    expect(projected[0].referenceStroke).toBeUndefined();
     expect(projected[2].anchors[1].price).toBe(15);
     expect(projected.every(d => d.locked && !d.hidden)).toBe(true);
     expect(correction[0].locked).toBe(false);
