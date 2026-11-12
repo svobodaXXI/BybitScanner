@@ -3,7 +3,8 @@
 One Scanner pass, per symbol and timeframe, on the snapshot the Scanner already
 fetched (its newest, possibly open candle excluded):
 
-    pattern boundaries of this snapshot (Wedge / Triangle geometry, HORN, Ikigai Box, L-shape)
+    owner-approved pattern boundaries (realization side of Wedge / Triangle,
+    L-shape) and independent confirmed swing levels; HORN/Box never originate MIRROR
   + confirmed swing zones (``mirror_levels.swing``)
   -> one deduplicated ``LevelRegistry`` per symbol/timeframe (repeated scans and
      several sources of one real level reconcile into the first registered level)
