@@ -24,7 +24,7 @@ import {
 } from "../marketData/workspaceSwitch";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
-import { appendRetrospectiveCandles, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
+import { appendRetrospectiveCandles, projectVerifiedSignalOverlay, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
 import type { OwnerChartDraft, OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
@@ -282,25 +282,47 @@ export function App() {
   );
   const market = useMarketData();
   const tradingSymbol = market.book.symbol;
+  // Keep verified Scanner source rays and saved Editor corrections in the
+  // current-candle view of the SAME linked signal/symbol/timeframe. Never
+  // reinterpret a source pivot using a nearby candle or another ticker.
+  const currentSignalOverlay = useMemo(() => {
+    if (!launchLink?.signalId || !frozenSignal
+        || tradingSymbol !== launchLink.symbol || timeframe !== launchLink.timeframe)
+      return null;
+    try {
+      return projectVerifiedSignalOverlay(
+        frozenSignal.sourceBoundaries, frozenSignal.candles,
+        frozenSignal.editableDrawings, market.candles,
+      );
+    } catch {
+      return null; // The current feed may not contain the archived pivot candles.
+    }
+  }, [launchLink, frozenSignal, tradingSymbol, timeframe, market.candles]);
+  const editorCurrentOverlay = useMemo(() => {
+    if (!launchLink?.signalId || !frozenSignal
+        || tradingSymbol !== launchLink.symbol || timeframe !== launchLink.timeframe)
+      return null;
+    if (!ownerChartCandles) return currentSignalOverlay;
+    try {
+      return projectVerifiedSignalOverlay(
+        frozenSignal.sourceBoundaries, frozenSignal.candles,
+        frozenSignal.editableDrawings, ownerChartCandles,
+      );
+    } catch {
+      return null;
+    }
+  }, [launchLink, frozenSignal, tradingSymbol, timeframe, ownerChartCandles, currentSignalOverlay]);
   // Telegram signal provenance is independent of the selected PAPER/MAIN account.
   // Only draw exact frozen anchors on matching *current* candles, never on
   // an unrelated symbol/interval or an approximate historical bar.
   const terminalSignalDrawings = useMemo(() => {
-    // Keep the verified Editor source rays on manual Terminal navigation only.
-    // Editor-origin geometry cannot become an Autopilot/Robot trading signal.
+    // Observational signal rays are read-only in Terminal. They cannot
+    // become Autopilot/Robot trading signals or overwrite account drawings.
     const eligible = launchLink?.mode === "TERMINAL"
       ? mode === "TERMINAL" || mode === "AUTOPILOT"
       : launchLink?.mode === "EDITOR" && mode === "TERMINAL";
-    if (!eligible
-        || !launchLink?.signalId || !frozenSignal
-        || tradingSymbol !== launchLink.symbol || timeframe !== launchLink.timeframe)
-      return null;
-    try {
-      return projectSignalGeometry(frozenSignal.sourceBoundaries, market.candles).referenceDrawings;
-    } catch {
-      return null; // Missing historical anchor: no fabricated live geometry.
-    }
-  }, [mode, launchLink, frozenSignal, tradingSymbol, timeframe, market.candles]);
+    return eligible ? currentSignalOverlay : null;
+  }, [mode, launchLink, currentSignalOverlay]);
   const { paperState, pendingActions } = usePaperTrading(tradingSymbol);
   const accountWorkspace = useAccountWorkspace(tradingSymbol);
   const modeAccountSelection = useModeAccountSelection();
@@ -1446,6 +1468,7 @@ export function App() {
               tickSize={null}
               editorMode={ownerChartCandles !== null}
               ownerChartMode={ownerChartCandles !== null}
+              referenceDrawings={editorCurrentOverlay ?? []}
               onSubmitOwnerChart={ownerChartCandles ? async (draft: OwnerChartDraft) => {
                 const response = await fetch("/api/workspace/owner-unscanned-signal", {
                   method: "POST", credentials: "same-origin",
