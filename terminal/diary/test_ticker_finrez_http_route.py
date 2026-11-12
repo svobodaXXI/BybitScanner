@@ -275,14 +275,21 @@ def test_simulator_bridge_http_contract_has_no_trading_runtime_dependency():
 
     try:
         url = "/api/diary/simulator-bridge/"
-        assert request(url + "poll?device_id=owner-pc")[0] == 403
-        assert request(url + "poll?device_id=owner-pc", token=secret)[1]["state"] == "IDLE"
+        for malformed in (
+            "poll?device_id=owner-pc",
+            "poll?device_id=owner-pc&viewer_running=yes",
+            "poll?device_id=owner-pc&viewer_running=0&extra=1",
+            "poll?device_id=owner-pc&viewer_running=0&viewer_running=1",
+        ):
+            assert request(url + malformed, token=secret)[0] == 400
+        assert request(url + "poll?device_id=owner-pc&viewer_running=0")[0] == 403
+        assert request(url + "poll?device_id=owner-pc&viewer_running=0", token=secret)[1]["state"] == "IDLE"
         assert request(url + "request", body={"episode_id": episode},
                        request_origin="https://attacker.test")[0] == 403
         code, queued = request(url + "request", body={"episode_id": episode},
                                request_origin=origin)
         assert code == 200 and queued["state"] == "QUEUED"
-        code, job = request(url + "poll?device_id=owner-pc", token=secret)
+        code, job = request(url + "poll?device_id=owner-pc&viewer_running=0", token=secret)
         assert code == 200 and job["episode_id"] == episode
         assert job["request_id"] == queued["request_id"]
         assert request(url + "ack", body={
@@ -294,7 +301,7 @@ def test_simulator_bridge_http_contract_has_no_trading_runtime_dependency():
         code, status = request(url + "status", body={"request_id": queued["request_id"]},
                                request_origin=origin)
         assert code == 200 and status["state"] == "LAUNCHED"
-        assert request(url + "poll?device_id=owner-pc", token=secret)[1]["state"] == "IDLE"
+        assert request(url + "poll?device_id=owner-pc&viewer_running=0", token=secret)[1]["state"] == "IDLE"
     finally:
         server.shutdown()
         server.server_close()
