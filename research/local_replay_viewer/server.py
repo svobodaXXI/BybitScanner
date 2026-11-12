@@ -49,6 +49,39 @@ MAX_SIM_CONFIG_BYTES = 12_000
 LOCAL_VIEWER_PORT = 48765
 
 
+def trusted_statistics_origin() -> str | None:
+    """Read an independently installed exact HTTPS origin, NEVER the episode URL.
+
+    This small local owner-controlled config belongs to the SIMULATION app,
+    not to the remote Statistics opener. A missing, ambiguous, malformed or
+    symlinked config disables automatic handoff; manual JSON import still works.
+    No wildcard, scheme downgrade, credentials, path or origin inference.
+    """
+    path = SIM_DATA / "trusted-statistics-origin.txt"
+    if SIM_DATA.is_symlink() or path.is_symlink() or not path.is_file():
+        return None
+    try:
+        with path.open("rb") as source:
+            raw = source.read(258)
+        if not raw or len(raw) > 257:
+            return None
+        value = raw.decode("ascii").removesuffix("\n")
+        if (not value or len(value) > 256 or value.strip() != value
+                or any(char in value for char in ("*", "\\", "\r", "\n"))):
+            return None
+        parsed = urlsplit(value)
+        if (parsed.scheme != "https" or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.path or parsed.query or parsed.fragment
+                or value != f"https://{parsed.netloc}"):
+            return None
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            return None
+        return value
+    except (OSError, ValueError, UnicodeError):
+        return None
+
+
 def local_simulation_status() -> dict[str, object]:
     """Discovery only; files/checksums are validated again on each run."""
     try:
@@ -409,6 +442,22 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 self._error(403, "Local viewer only")
                 return
             url = urlsplit(self.path)
+            if url.path == "/local-replay/simulation/trusted-statistics-origin":
+                address = f"http://127.0.0.1:{self.server.server_address[1]}"
+                localhost = f"http://localhost:{self.server.server_address[1]}"
+                if (url.query or self.headers.get("Sec-Fetch-Site") == "cross-site"
+                        or self.headers.get("Origin") not in (None, "", address, localhost)):
+                    self._error(403, "Same-origin trusted Statistics configuration only")
+                    return
+                origin = trusted_statistics_origin()
+                if origin is None:
+                    self._error(503, "Trusted Statistics origin is not configured locally")
+                    return
+                body = json.dumps({
+                    "schema": "LOCAL_TRUSTED_STATISTICS_ORIGIN_V1", "origin": origin,
+                }, separators=(",", ":")).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+                return
             if url.path == "/local-replay/simulation/status":
                 if url.query or self.headers.get("Sec-Fetch-Site") == "cross-site":
                     self._error(403, "Local SIMULATION only")
