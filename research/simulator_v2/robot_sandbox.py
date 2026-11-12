@@ -235,7 +235,7 @@ class _SimulationActionExecutor:
             quantity = (notional / price // step) * step
         except (ValueError, TypeError, KeyError, ArithmeticError) as exc:
             raise SimulationExecutionNotConnected("MIRROR virtual sizing unavailable") from exc
-        if (notional <= 0 or notional.is_finite() or not quantity.is_finite()
+        if (notional <= 0 or not notional.is_finite() or not quantity.is_finite()
                 or quantity < self.owner.terms.minimum_quantity
                 or quantity * price > self.owner.terms.maximum_notional_usdt):
             raise SimulationExecutionNotConnected("MIRROR virtual size outside instrument limits")
