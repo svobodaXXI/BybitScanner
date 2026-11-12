@@ -4,7 +4,7 @@
 export type StrategyId =
   | "NAKED_RETURN" | "NAKED_RETEST" | "MIRROR_LEVELS"
   | "WEDGE_RISING" | "WEDGE_FALLING" | "IKIGAI_BOX"
-  | "H1_TREND" | "L_SHAPE" | "TRIANGLE";
+  | "H1_TREND" | "L_SHAPE" | "TRIANGLE" | "IMPULSE_FLOW";
 
 export type StrategyOption = { id: StrategyId; label: string };
 export const MIRROR_OPTIONS: readonly StrategyOption[] = [
@@ -15,6 +15,7 @@ export const MIRROR_OPTIONS: readonly StrategyOption[] = [
   { id: "WEDGE_FALLING", label: "Нисходящий клин" },
 ];
 export const OTHER_OPTIONS: readonly StrategyOption[] = [
+  { id: "IMPULSE_FLOW", label: "Охота за импульсом · поток сделок" },
   { id: "IKIGAI_BOX", label: "Ikigai Box" },
   { id: "H1_TREND", label: "Трендовые H1/M5" },
   { id: "L_SHAPE", label: "L-shape" },
@@ -45,12 +46,15 @@ export function toggleMirror(current: RunSelection, enabled: boolean): RunSelect
   }
   // Mirror includes Ikigai, but standalone Ikigai is not a Mirror dependency.
   // Disabling Mirror never erases the independent Ikigai selection.
-  if (enabled) ids.add("IKIGAI_BOX");
+  if (enabled) { ids.add("IKIGAI_BOX"); ids.delete("IMPULSE_FLOW"); }
   return { mirror: enabled, selected: ALL_SELECTABLE.filter(id => ids.has(id)) };
 }
 export function toggleStrategy(current: RunSelection, id: StrategyId, enabled: boolean): RunSelection {
   if (!ALL_SELECTABLE.includes(id)) throw new Error("Unsupported strategy");
+  if (enabled && id === "IMPULSE_FLOW")
+    return { mirror: false, selected: ["IMPULSE_FLOW"] };
   const ids = new Set(current.selected);
+  if (enabled && id !== "IMPULSE_FLOW") ids.delete("IMPULSE_FLOW");
   if (enabled) ids.add(id);
   else ids.delete(id);
   return {
@@ -175,9 +179,10 @@ export type OiFilterMode = "OFF" | "RISING" | "FALLING";
 /** Only these two original Wedge Scanner/Robot detectors exist in local mode. */
 export const RUNNABLE_WEDGE_IDS = ["WEDGE_RISING", "WEDGE_FALLING"] as const;
 export function runnableWedgeSelection(selection: RunSelection): boolean {
-  return selection.selected.length > 0 && selection.selected.every(
-    id => RUNNABLE_WEDGE_IDS.some(wedge => wedge === id),
-  );
+  return (selection.selected.length === 1 && selection.selected[0] === "IMPULSE_FLOW") ||
+    (selection.selected.length > 0 && selection.selected.every(
+      id => RUNNABLE_WEDGE_IDS.some(wedge => wedge === id),
+    ));
 }
 export function makeWedgeRunRequest(
   selection: RunSelection, symbol: string, start: string,
@@ -188,7 +193,7 @@ export function makeWedgeRunRequest(
   oi_mode?: OiFilterMode;
 } {
   if (!runnableWedgeSelection(selection)) {
-    throw new Error("Пока доступны только восходящий и нисходящий клинья");
+    throw new Error("Доступны клинья или отдельная стратегия охоты за импульсом");
   }
   const { minutes } = validateInclusiveWindow(start, endInclusive);
   if (minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
@@ -242,6 +247,7 @@ export function parseWedgeStatus(raw: unknown): LocalWedgeStatus {
 
 export type LocalWedgeResult = {
   namespace: "SIMULATION"; symbol: string; scenario_type: string;
+  impulse_signals?: number;
   requested_minutes: number; scanner_wedge_observations: number;
   robot_retests_in_period: number; submitted_protected_limits: number;
   virtual_fills: number; stop_exits: number; take_exits: number;
@@ -252,11 +258,14 @@ export type LocalWedgeResult = {
 export function parseWedgeResult(raw: unknown): LocalWedgeResult {
   if (!raw || typeof raw !== "object") throw new Error("Недостоверный отчёт SIMULATION");
   const x = raw as Record<string, unknown>;
+  const impulse = x.scenario_type === "IMPULSE_FLOW_SHARED_ROBOT_PROTECTED_VIRTUAL_SIMULATION";
   if (x.namespace !== "SIMULATION" ||
-      x.scenario_type !== "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION" ||
+      (!impulse && x.scenario_type !== "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION") ||
       x.risk_terms_status !== "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED") {
-    throw new Error("Отчёт не соответствует локальному прогону клиньев");
+    throw new Error("Отчёт не соответствует локальному прогону Robot");
   }
+  if (impulse && (!Number.isSafeInteger(x.impulse_signals) || (x.impulse_signals as number) < 0))
+    throw new Error("Нет проверенного числа импульсных сигналов");
   for (const key of ["symbol", "source_id", "realized_net_pnl", "unrealized_pnl",
     "total_net_pnl", "total_fees", "return_percent", "max_drawdown_percent"]) {
     if (typeof x[key] !== "string") throw new Error("В отчёте отсутствует " + key);
