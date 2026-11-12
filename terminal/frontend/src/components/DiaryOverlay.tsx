@@ -357,15 +357,19 @@ function Value({ value }: { value: string | null | undefined }) {
   return <span>{value ?? "—"}</span>;
 }
 
-/** User-initiated Windows protocol; never grants VPS remote-execution rights.
- * A successful click does NOT prove the local Simulator accepted the campaign.
- * The immutable episode ID is copied first, including when no handler exists.
+/** Owner click routes only a typed ID: local Windows link or paired VPS relay.
+ * Neither path transfers PAPER facts or implies a complete historical replay.
  */
 function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
   episodeId: string; allowLocalLaunch: boolean;
 }) {
   const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
   async function requestLaunch() {
+    if (busy) return;
+    setBusy(true);
+    // Clipboard permission belongs to the initial owner click, not an HTTP
+    // response. Even when unavailable, display the exact ID for manual copy.
     let copied: Promise<boolean>;
     try {
       copied = typeof navigator.clipboard?.writeText === "function"
@@ -374,31 +378,74 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
     } catch {
       copied = Promise.resolve(false);
     }
-    const canLaunch = allowLocalLaunch
-      && /^te_[0-9a-f]{24}$/.test(episodeId)
-      && /\bWindows\b/i.test(navigator.userAgent);
-    if (canLaunch) {
-      // Only one typed locator. The registered local Python adapter ignores
-      // commands/files/hosts; no fact data or source authority enters the URL.
-      const link = document.createElement("a");
-      link.href = "bybitscanner-simulator://open?episode=" + episodeId;
-      link.rel = "noopener noreferrer";
-      link.target = "_blank";
-      document.body.appendChild(link);
-      try { link.click(); } finally { link.remove(); }
+    const allowed = allowLocalLaunch && /^te_[0-9a-f]{24}$/.test(episodeId);
+    const onWindows = /\bWindows\b/i.test(navigator.userAgent);
+    const suffix = (await copied)
+      ? " Идентификатор скопирован."
+      : " Автоматическое копирование ID недоступно.";
+    try {
+      if (allowed && onWindows) {
+        // Windows per-user handler only; never pass a host, shell or file path.
+        const link = document.createElement("a");
+        link.href = "bybitscanner-simulator://open?episode=" + episodeId;
+        link.rel = "noopener noreferrer";
+        link.target = "_blank";
+        document.body.appendChild(link);
+        try { link.click(); } finally { link.remove(); }
+        setNotice("Запрос открытия утилиты отправлен Windows. Результат пока не подтверждён." + suffix);
+      } else if (allowed) {
+        // Same-origin HTTPS owner UI. Nginx controls owner access; the relay
+        // independently checks Origin. The paired PC supplies a separate
+        // scoped token when it contacts the VPS (never given to this page).
+        const response = await fetch("/api/diary/simulator-bridge/request", {
+          method: "POST", credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ episode_id: episodeId }),
+        });
+        if (!response.ok) throw new Error("simulator_bridge_unavailable");
+        const result: unknown = await response.json();
+        const receipt = result as Record<string, unknown>;
+        if (!result || typeof result !== "object" || receipt.ok !== true
+          || receipt.state !== "QUEUED" || typeof receipt.request_id !== "string"
+          || !/^[0-9a-f]{32}$/.test(receipt.request_id))
+          throw new Error("invalid_simulator_bridge_receipt");
+        setNotice("Запрос передан подключённому устройству. Проверяю подтверждение." + suffix);
+        let state = "QUEUED";
+        for (let attempt = 0; attempt < 8; attempt++) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
+          const check = await fetch("/api/diary/simulator-bridge/status", {
+            method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ request_id: receipt.request_id }),
+          });
+          if (!check.ok) throw new Error("simulator_bridge_status_unavailable");
+          const raw: unknown = await check.json();
+          const status = raw as Record<string, unknown>;
+          if (!raw || typeof raw !== "object" || status.ok !== true
+            || status.request_id !== receipt.request_id
+            || !["QUEUED", "DELIVERED", "LAUNCHED", "FAILED", "EXPIRED"].includes(String(status.state)))
+            throw new Error("invalid_simulator_bridge_status");
+          state = String(status.state);
+          if (state === "LAUNCHED" || state === "FAILED" || state === "EXPIRED") break;
+        }
+        if (state === "LAUNCHED")
+          setNotice("Локальная утилита подтвердила запрос открытия. Полная история ещё не передана." + suffix);
+        else
+          setNotice("Нет подтверждения открытия Симулятора на ПК или ноутбуке." + suffix);
+      } else {
+        setNotice("Автоматический запуск этой сделки недоступен." + suffix);
+      }
+    } catch {
+      setNotice("Нет доступа к локальному Симулятору или адаптеру VPS." + suffix);
+    } finally {
+      setBusy(false);
     }
-    const copiedOk = await copied;
-    setNotice(
-      (canLaunch
-        ? "Запрос открытия отправлен Windows. Результат запуска пока не подтверждён."
-        : "Нет прямого доступа к локальному Симулятору на этом устройстве.")
-      + (copiedOk ? " Идентификатор скопирован." : " Не удалось скопировать ID автоматически.")
-    );
   }
   return (
     <div className="diary-simulator-launch">
-      <button className="diary-detail-back" type="button" onClick={() => void requestLaunch()}>
-        Открыть в Симуляторе
+      <button className="diary-detail-back" type="button" disabled={busy}
+        onClick={() => void requestLaunch()}>
+        {busy ? "Проверяю Симулятор…" : "Открыть в Симуляторе"}
       </button>
       {notice ? <p className="diary-finrez-coverage" role="status">{notice} ID: {episodeId}</p> : null}
     </div>
