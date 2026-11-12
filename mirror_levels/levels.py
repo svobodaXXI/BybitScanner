@@ -83,6 +83,28 @@ def mirror_level_allowed(level: "MirrorLevel") -> bool:
     return not level.is_horizontal
 
 
+def mirror_frozen_entry_allowed(terms: Mapping[str, Any] | None) -> bool:
+    """Reject legacy/unproven MIRROR Robot handoffs at the final frozen-terms gate.
+
+    Historic snapshots lack the new immutable side/direction provenance: refuse
+    them rather than treating a stale candidate as a newly authorized source.
+    """
+    if not isinstance(terms, Mapping):
+        return False
+    level_id = terms.get("level_id")
+    source, pattern = terms.get("level_source"), terms.get("level_pattern")
+    side, direction = terms.get("level_side"), terms.get("level_breakout_direction")
+    if not isinstance(level_id, str) or not level_id.startswith("lvl-"):
+        return False
+    if side not in SIDES or direction != ("UP" if side == SIDE_UPPER else "DOWN"):
+        return False
+    if source == SOURCE_SWING_ZONE:
+        return pattern is None
+    if source != SOURCE_PATTERN_BOUNDARY:
+        return False
+    return side in MIRROR_PATTERN_SIDES.get(pattern, ())
+
+
 def mirror_breakout_allowed(level: "MirrorLevel", breakout: Mapping[str, Any] | None) -> bool:
     """Only outward naked breakouts of an authorized boundary may trade.
 
