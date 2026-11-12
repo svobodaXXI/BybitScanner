@@ -225,6 +225,10 @@ class NativeMirrorSimulatorIntakeTests(unittest.TestCase):
             mirror_one_filled_trade_per_campaign=True,
         ) as robot:
             self.populate(session, robot)
+            # This focused intake test supplies a manually constructed Scanner
+            # state. Stop the separate automatic observer before injecting it;
+            # the real-market E2E independently exercises full automatic scan.
+            robot._auto_mirror_scanner = None
             candidate_id = robot.admit_mirror(state, entry_id=entry_id)
             key = robot._mirror_campaign_key(
                 state["standalone_entries"][0]["terms"],
