@@ -793,5 +793,71 @@ class SimulatorLaunchRelayTests(unittest.TestCase):
                                       fetch_site="same-origin")["state"], "EXPIRED")
 
 
+def test_simulator_bridge_http_contract_has_no_trading_runtime_dependency():
+    """Exercise real handler, not just relay helpers, with a loopback test server."""
+    import json
+    import threading
+    from http.server import ThreadingHTTPServer
+    from urllib.error import HTTPError
+    from urllib.request import Request, urlopen
+
+    from terminal.diary.simulator_launch_relay import SimulatorLaunchRelay
+    from terminal.runtime.paper_http_server import PaperHttpHandler
+
+    episode = "te_" + "a" * 24
+    secret = "A" * 64
+    origin = "https://statistics.example.test"
+    relay = SimulatorLaunchRelay(origin=origin, devices={"owner-pc": secret})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.simulator_launch_relay = relay
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def request(path, *, body=None, token="", request_origin=""):
+        headers = {}
+        if token:
+            headers["X-BybitScanner-Simulator-Device-Token"] = token
+        if request_origin:
+            headers["Origin"] = request_origin
+            headers["Sec-Fetch-Site"] = "same-origin"
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        url = f"http://127.0.0.1:{server.server_address[1]}{path}"
+        req = Request(url, data=(json.dumps(body).encode() if body is not None else None),
+                      headers=headers)
+        try:
+            with urlopen(req, timeout=3) as response:
+                return response.status, json.load(response)
+        except HTTPError as exc:
+            return exc.code, json.load(exc)
+
+    try:
+        url = "/api/diary/simulator-bridge/"
+        assert request(url + "poll?device_id=owner-pc")[0] == 403
+        assert request(url + "poll?device_id=owner-pc", token=secret)[1]["state"] == "IDLE"
+        assert request(url + "request", body={"episode_id": episode},
+                       request_origin="https://attacker.test")[0] == 403
+        code, queued = request(url + "request", body={"episode_id": episode},
+                               request_origin=origin)
+        assert code == 200 and queued["state"] == "QUEUED"
+        code, job = request(url + "poll?device_id=owner-pc", token=secret)
+        assert code == 200 and job["episode_id"] == episode
+        assert job["request_id"] == queued["request_id"]
+        assert request(url + "ack", body={
+            "device_id": "owner-pc", "request_id": job["request_id"], "launched": True,
+        })[0] == 403
+        assert request(url + "ack", body={
+            "device_id": "owner-pc", "request_id": job["request_id"], "launched": True,
+        }, token=secret)[1]["state"] == "LAUNCHED"
+        code, status = request(url + "status", body={"request_id": queued["request_id"]},
+                               request_origin=origin)
+        assert code == 200 and status["state"] == "LAUNCHED"
+        assert request(url + "poll?device_id=owner-pc", token=secret)[1]["state"] == "IDLE"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
 if __name__ == "__main__":
     unittest.main()
