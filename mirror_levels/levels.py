@@ -46,6 +46,37 @@ SIDE_UPPER = "upper"
 SIDE_LOWER = "lower"
 SIDES = frozenset({SIDE_UPPER, SIDE_LOWER})
 
+# Only these pattern boundaries may originate a MIRROR breakout. The Box may
+# confirm an existing campaign but never originate its level; HORN is separate.
+MIRROR_PATTERN_SIDES = {
+    "Rising Wedge": frozenset({SIDE_LOWER}),
+    "Falling Wedge": frozenset({SIDE_UPPER}),
+    "Triangle Compression": SIDES,
+    "L-shape": SIDES,
+}
+
+
+def mirror_level_allowed(level: "MirrorLevel") -> bool:
+    """Fail-closed common source gate for Scanner, Robot and local Simulator.
+
+    Persisted pre-fix levels are checked here too; do not trust their candidate
+    flag or a matching price to silently grant a forbidden source.
+    """
+    if not isinstance(level, MirrorLevel):
+        return False
+    if level.source == SOURCE_SWING_ZONE:
+        return level.pattern is None and level.is_horizontal
+    if level.source != SOURCE_PATTERN_BOUNDARY:
+        return False
+    sides = MIRROR_PATTERN_SIDES.get(level.pattern)
+    if sides is None or level.side not in sides:
+        return False
+    if level.pattern == "L-shape":
+        return level.is_horizontal
+    return not level.is_horizontal
+
+
+
 TIMEFRAME_MS = {"1": 60_000, "5": 300_000, "15": 900_000, "60": 3_600_000, "240": 14_400_000}
 
 PRICE_DIGITS = 12
