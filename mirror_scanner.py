@@ -212,7 +212,8 @@ def collect_levels(symbol: str, timeframe: str, candles, *, wedge_result=None,
         print(f"{symbol:<15} {timeframe}m MIRROR Box source skipped: {type(error).__name__}")
 
     out += list(swing_levels(closed_rows(closed, timeframe), symbol=symbol, timeframe=timeframe))
-    return out
+    from mirror_levels.levels import mirror_level_allowed
+    return [level for level in out if mirror_level_allowed(level)]
 
 
 def _source_entry(level: MirrorLevel) -> dict[str, Any]:
@@ -602,6 +603,24 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                             "merged_level_id": level.level_id, "source": level.source,
                             "pattern": level.pattern})
 
+    # Historic persisted levels are untrusted after a source-policy change.
+    # Keep their evidence but remove candidate eligibility and unsent alerts.
+    from mirror_levels.levels import mirror_level_allowed
+    for level_id, record in records.items():
+        level = registry.levels.get(level_id)
+        if level is not None and not mirror_level_allowed(level):
+            record.update(candidate=False, robot=None, lifecycle=LIFECYCLE_REJECTED,
+                          rejection="mirror_source_policy_revoked")
+            state["pending_notifications"][:] = [
+                item for item in state["pending_notifications"] if item.get("level_id") != level_id
+            ]
+    for entry in state.get("standalone_entries") or ():
+        if entry.get("handoff") == "PENDING":
+            entry_level_id = str(entry.get("entry_id") or "").split("@", 1)[0]
+            level = registry.levels.get(entry_level_id)
+            if level is None or not mirror_level_allowed(level):
+                entry["handoff"] = "OFF"
+
     gaps = detect_fvgs(rows, symbol=symbol, timeframe=timeframe)
     pending = state["pending_notifications"]
     entries = state.setdefault("standalone_entries", [])
@@ -753,6 +772,14 @@ def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) 
     handed = []
     for entry in state.get("standalone_entries") or ():
         if entry.get("handoff") != "PENDING":
+            continue
+        # Recheck at the final handoff, including persisted pre-fix entries.
+        from mirror_levels.levels import LevelRegistry, mirror_level_allowed
+        registry = LevelRegistry.from_dict(state["registry"])
+        level_id = str(entry.get("entry_id") or "").split("@", 1)[0]
+        if not mirror_level_allowed(registry.levels.get(level_id)):
+            entry["handoff"] = "OFF"
+            save_state(state, root)
             continue
         snapshot = _standalone_snapshot(symbol, entry["terms"])
         timeframe = entry["terms"]["source_timeframe"]
