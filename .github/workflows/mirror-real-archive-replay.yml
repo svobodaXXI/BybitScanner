@@ -77,12 +77,13 @@ jobs:
         run: >-
           python -m research.simulator_v2.mirror_real_archive_probe
           --archive ICNTUSDT2026-11-07.csv.gz
-          --report mirror-real-icnt-20261107.json
+          --report mirror-real-icnt-campaign-comparison-20261107.json
+          --compare-one-fill
       - name: Upload report only (never the large source archive)
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: mirror-real-icnt-20261107
-          path: mirror-real-icnt-20261107.json
+          name: mirror-real-icnt-campaign-comparison-20261107
+          path: mirror-real-icnt-campaign-comparison-20261107.json
           if-no-files-found: error
           retention-days: 7
