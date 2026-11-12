@@ -365,6 +365,57 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
 }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pairingBusy, setPairingBusy] = useState(false);
+  const [pairingUrl, setPairingUrl] = useState<string | null>(null);
+  const [pairingNotice, setPairingNotice] = useState("");
+
+  async function preparePairing(deviceId: "owner-pc" | "owner-laptop") {
+    if (pairingBusy || !allowLocalLaunch) return;
+    setPairingBusy(true); setPairingUrl(null); setPairingNotice("");
+    try {
+      // Owner-authenticated HTTPS request, never an unauthenticated device
+      // endpoint. Existing provisioned device slot; no new enrollment state.
+      const response = await fetch("/api/diary/simulator-bridge/pair", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: deviceId }),
+      });
+      if (!response.ok) throw new Error("pairing_unavailable");
+      const raw: unknown = await response.json();
+      const pair = raw as Record<string, unknown>;
+      if (!raw || typeof raw !== "object" || pair.ok !== true
+          || pair.device_id !== deviceId || typeof pair.token !== "string"
+          || !/^[A-Za-z0-9_-]{48,256}$/.test(pair.token))
+        throw new Error("pairing_invalid_response");
+      setPairingUrl("bybitscanner-simulator://pair?device_id="
+        + encodeURIComponent(deviceId) + "&token=" + encodeURIComponent(pair.token));
+      setPairingNotice("Ключ подготовлен. Нажмите «Подтвердить подключение» на этом компьютере.");
+    } catch {
+      setPairingNotice("Подключение пока недоступно. Обычный запуск Симулятора и копирование ID работают.");
+    } finally {
+      setPairingBusy(false);
+    }
+  }
+
+  function openPairingLink() {
+    if (!pairingUrl) return;
+    // Native protocol must open synchronously after this owner click. The
+    // local app verifies the device key against its pre-pinned HTTPS origin.
+    try {
+      const link = document.createElement("a");
+      link.href = pairingUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      document.body.appendChild(link);
+      try { link.click(); } finally { link.remove(); }
+      setPairingNotice("Запрос сопряжения передан Windows. Успешное подключение пока не подтверждено.");
+    } catch {
+      setPairingNotice("Не удалось открыть локальный адаптер. Копирование ID остаётся доступным.");
+    } finally {
+      setPairingUrl(null);
+    }
+  }
+
   async function requestLaunch() {
     if (busy) return;
     setBusy(true);
@@ -461,6 +512,17 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
         {busy ? "Проверяю Симулятор…" : "Открыть в Симуляторе"}
       </button>
       {notice ? <p className="diary-finrez-coverage" role="status">{notice} ID: {episodeId}</p> : null}
+      {allowLocalLaunch && /\\bWindows\\b/i.test(navigator.userAgent) ? (
+        <div className="diary-simulator-pairing">
+          <button type="button" className="diary-detail-back" disabled={pairingBusy}
+            onClick={() => void preparePairing("owner-pc")}>Связать ПК</button>
+          <button type="button" className="diary-detail-back" disabled={pairingBusy}
+            onClick={() => void preparePairing("owner-laptop")}>Связать ноутбук</button>
+          {pairingUrl ? <button type="button" className="diary-detail-back"
+            onClick={openPairingLink}>Подтвердить подключение</button> : null}
+          {pairingNotice ? <p className="diary-finrez-coverage" role="status">{pairingNotice}</p> : null}
+        </div>
+      ) : null}
     </div>
   );
 }
