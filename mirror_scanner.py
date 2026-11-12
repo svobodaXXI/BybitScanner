@@ -768,21 +768,57 @@ def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) 
     """
 
     from pattern_robot_integration import is_robot_executable_signal, prepare_robot_handoff
+    from mirror_levels.levels import (
+        LevelRegistry, mirror_breakout_allowed, mirror_frozen_entry_allowed, mirror_level_allowed,
+    )
 
+    registry = LevelRegistry.from_dict(state["registry"])
     handed = []
     for entry in state.get("standalone_entries") or ():
         if entry.get("handoff") != "PENDING":
             continue
-        # Recheck at the final handoff, including persisted pre-fix entries.
-        from mirror_levels.levels import LevelRegistry, mirror_level_allowed
-        registry = LevelRegistry.from_dict(state["registry"])
+        # Old persisted entries are untrusted even if their level still exists.
+        # Recheck the live candidate, native breakout and all frozen provenance
+        # before any Robot handoff; no ticker/price inference or resurrection.
         level_id = str(entry.get("entry_id") or "").split("@", 1)[0]
-        if not mirror_level_allowed(registry.levels.get(level_id)):
+        level = registry.levels.get(level_id)
+        record = state["records"].get(level_id)
+        terms = entry.get("terms")
+        breakout = ((record.get("naked_retest") or {}).get("breakout")
+                    if isinstance(record, Mapping) else None)
+        confirmation = terms.get("confirmation") if isinstance(terms, Mapping) else None
+        authorized = (
+            mirror_level_allowed(level)
+            and level.symbol == symbol
+            and isinstance(record, Mapping)
+            and record.get("candidate") is True
+            and record.get("lifecycle") == LIFECYCLE_TRACKING
+            and record.get("status") == STATUS_UNTESTED
+            and record.get("rejection") is None
+            and mirror_breakout_allowed(level, breakout)
+            and isinstance(terms, Mapping)
+            and mirror_frozen_entry_allowed(terms)
+            and isinstance(confirmation, Mapping)
+            and type(confirmation.get("close_time_ms")) is int
+            and terms.get("level_id") == level_id
+            and terms.get("level_timeframe") == level.timeframe
+            and terms.get("level_source") == level.source
+            and terms.get("level_pattern") == level.pattern
+            and terms.get("level_side") == level.side
+            and terms.get("level_breakout_direction") == breakout.get("direction")
+            and terms.get("level_breakout_close_ms") == breakout.get("close_time_ms")
+            and terms.get("direction") == breakout.get("campaign_direction")
+            and terms.get("source_timeframe") in CONFIRMATION_TIMEFRAMES
+            and entry.get("entry_id") == (
+                f"{level_id}@{terms.get('source_timeframe')}@{confirmation['close_time_ms']}"
+            )
+        )
+        if not authorized:
             entry["handoff"] = "OFF"
             save_state(state, root)
             continue
-        snapshot = _standalone_snapshot(symbol, entry["terms"])
-        timeframe = entry["terms"]["source_timeframe"]
+        snapshot = _standalone_snapshot(symbol, terms)
+        timeframe = terms["source_timeframe"]
         if not is_robot_executable_signal(snapshot, timeframe=timeframe):
             entry["handoff"] = "OFF"
             save_state(state, root)
