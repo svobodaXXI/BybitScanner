@@ -369,6 +369,22 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
   const [pairingUrl, setPairingUrl] = useState<string | null>(null);
   const [pairingNotice, setPairingNotice] = useState("");
 
+  function copyEpisodeId() {
+    // Copy only the visible identifier. No network request or protocol launch.
+    try {
+      if (typeof navigator.clipboard?.writeText !== "function") {
+        setNotice("Копирование недоступно. Выделите ID вручную: " + episodeId);
+        return;
+      }
+      void navigator.clipboard.writeText(episodeId).then(
+        () => setNotice("ID сделки скопирован: " + episodeId),
+        () => setNotice("Копирование недоступно. Выделите ID вручную: " + episodeId),
+      );
+    } catch {
+      setNotice("Копирование недоступно. Выделите ID вручную: " + episodeId);
+    }
+  }
+
   async function preparePairing(deviceId: "owner-pc" | "owner-laptop") {
     if (pairingBusy || !allowLocalLaunch) return;
     setPairingBusy(true); setPairingUrl(null); setPairingNotice("");
@@ -510,6 +526,9 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
       <button className="diary-detail-back" type="button" disabled={busy}
         onClick={() => void requestLaunch()}>
         {busy ? "Проверяю Симулятор…" : "Открыть в Симуляторе"}
+      </button>
+      <button className="diary-detail-back" type="button" onClick={copyEpisodeId}>
+        Скопировать ID
       </button>
       {notice ? <p className="diary-finrez-coverage" role="status">{notice} ID: {episodeId}</p> : null}
       {allowLocalLaunch && /\bWindows\b/i.test(navigator.userAgent) ? (
