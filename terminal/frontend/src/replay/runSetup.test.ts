@@ -154,7 +154,18 @@ describe("local one-symbol strategy setup (no trading)", () => {
     });
     expect(() => makeWedgeRunRequest(
       selectAll(), "BTCUSDT", "2026-10-01T12:34", "2026-10-08T12:33", "1000",
-    )).toThrow(/подключены/);
+    )).toThrow(/нельзя смешивать/);
+    const levels = ["L_SHAPE", "DOUBLE_TOP", "DOUBLE_BOTTOM"] as const;
+    let levelSelection = clearAll();
+    for (const id of levels) levelSelection = toggleStrategy(levelSelection, id, true);
+    expect(runnableWedgeSelection(levelSelection)).toBe(true);
+    expect(makeWedgeRunRequest(levelSelection, "BTCUSDT",
+      "2026-10-01T12:34", "2026-10-08T12:33", "1000").selected_strategies)
+      .toEqual(levels);
+    expect(runnableWedgeSelection(toggleStrategy(levelSelection, "IKIGAI_BOX", true)))
+      .toBe(false);
+    expect(runnableWedgeSelection(toggleStrategy(levelSelection, "WEDGE_RISING", true)))
+      .toBe(false);
     expect(() => makeWedgeRunRequest(
       onlyWedges(), "BTCUSDT", "2026-10-01T00:00", "2026-12-31T00:00", "1000",
     )).toThrow(/90/);
@@ -205,6 +216,23 @@ describe("local one-symbol strategy setup (no trading)", () => {
     };
     expect(parseWedgeResult(box).scenario_type)
       .toBe("ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION");
+    const nativeLevels = {
+      ...report,
+      scenario_type: "ORIGINAL_FROZEN_LEVEL_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION",
+      scanner_wedge_observations: undefined,
+      robot_retests_in_period: undefined,
+      scanner_level_observations: 2, native_robot_confirmations: 1,
+      submitted_protected_limits: 1, skipped_busy_entries: 0,
+      rejected_risk_entries: 0, virtual_fills: 2,
+    };
+    expect(parseWedgeResult(nativeLevels).scenario_type)
+      .toBe("ORIGINAL_FROZEN_LEVEL_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION");
+    expect(() => parseWedgeResult({
+      ...nativeLevels, native_robot_confirmations: -1,
+    })).toThrow();
+    expect(() => parseWedgeResult({
+      ...nativeLevels, namespace: "PAPER",
+    })).toThrow();
     expect(() => parseWedgeResult({ ...box, box_entry_fills: 3 })).toThrow(/Box/);
     expect(() => parseWedgeResult({ ...box, scanner_box_observations: -1 })).toThrow();
     expect(() => parseWedgeResult({ ...box, requested_minutes: undefined })).toThrow();
