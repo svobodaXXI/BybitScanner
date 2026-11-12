@@ -24,6 +24,20 @@ export type AutopilotModeState = {
   version: number;
 };
 
+export type RobotRuntimeState = {
+  mode: string;
+  recoveryStatus: string;
+};
+
+/** Exact canonical PAPER Robot state; day trade totals are not a runtime indicator. */
+export async function loadRobotRuntimeState(): Promise<RobotRuntimeState> {
+  const body = await getJson(marketApiRoutes.robotState);
+  if (typeof body.mode !== "string" || !body.mode ||
+      typeof body.recovery_status !== "string" || !body.recovery_status)
+    throw new Error("Canonical Robot state unavailable");
+  return { mode: body.mode, recoveryStatus: body.recovery_status };
+}
+
 export type RuntimeHealth = {
   backendOnline: boolean;
   robotAdmissionReady: boolean | null;
