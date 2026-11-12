@@ -1,8 +1,8 @@
-"""Causal, read-only market-flow evidence shared by Robot and local replay.
+"""Causal market-flow features and optional PAPER entry gate for shared Robot.
 
-This is a research feature layer, NOT an entry gate, order plan or executor.
-Inputs are pre-aggregated immutable windows from an integrity-checked feed.
-No thresholds are calibrated from a single historical winner.
+Simulation and Robot reuse the same pure entry rule; only the existing PAPER
+or virtual-exchange executor may create orders after its own risk/admission.
+No numeric thresholds are calibrated from a single historical winner.
 """
 from __future__ import annotations
 
@@ -86,6 +86,7 @@ class FlowTransition:
     current_delta_fraction: Decimal | None
     current_price_change_bps: Decimal
     buy_wave_accelerating: bool
+    sell_wave_accelerating: bool
     sell_impact_fading: bool
     buy_impact_fading: bool
     bid_refill_observed: bool | None
@@ -117,6 +118,11 @@ def compare_flow_windows(
         and now > before and current.buy_notional_usdt > previous.buy_notional_usdt
         and current.price_change_bps > ZERO
     )
+    sell_wave = (
+        before is not None and now is not None and now < ZERO
+        and now < before and current.sell_notional_usdt > previous.sell_notional_usdt
+        and current.price_change_bps < ZERO
+    )
     sell_fading = (
         before is not None and now is not None and before < ZERO and now < ZERO
         and current.sell_notional_usdt >= previous.sell_notional_usdt
@@ -141,12 +147,32 @@ def compare_flow_windows(
         current_delta_fraction=now,
         current_price_change_bps=current.price_change_bps,
         buy_wave_accelerating=buy_wave,
+        sell_wave_accelerating=sell_wave,
         sell_impact_fading=sell_fading,
         buy_impact_fading=buy_fading,
         bid_refill_observed=bid_refill,
         ask_refill_observed=ask_refill,
         sell_absorption_candidate=(sell_fading and bid_refill) if bid_refill is not None else None,
         buy_absorption_candidate=(buy_fading and ask_refill) if ask_refill is not None else None,
+    )
+
+
+def permits_paper_entry(direction: str, transition: FlowTransition | None) -> bool:
+    """Research option for existing protected PAPER/virtual Robot entries.
+
+    A completed, source-validated flow transition is required: no history,
+    opposite pressure or unsupported direction cannot authorize an entry.
+    This pure policy produces no trade, bypass, stop or alternate executor.
+    """
+    if direction not in ("LONG", "SHORT"):
+        raise ValueError("known Robot entry direction required")
+    if transition is None:
+        return False
+    if not isinstance(transition, FlowTransition):
+        raise TypeError("completed shared Robot flow transition required")
+    return (
+        transition.buy_wave_accelerating if direction == "LONG"
+        else transition.sell_wave_accelerating
     )
 
 
