@@ -53,6 +53,16 @@ The same module now also normalizes **native Bybit WebSocket `publicTrade`** and
 
 Existing `research/wilder_dmi.py` owns causal H-017 DMI crosses. Reuse it; do not implement a second ADX. The same applies to existing historical trade cache/replay and Robot risk/execution mechanics. RSI, OI, liquidation semantics, repetitive-size tests and source-health windows are additional independent factors, **not yet wired** to the primitive.
 
+## 2026-11-12 — causal replay observation slice
+
+The Robot-owned `CompletedFlowObserver` compares only adjacent completed trade windows from the same source and stores a single prior window (bounded memory). Empty data, missing intervals or source changes make the next comparison UNKNOWN. The observation time is the actual declared availability time, not automatically the market window close.
+
+`research/simulator_v2/session.py` now exposes optional `observe_committed_taker_prints()` and `latest_entry_flow`. The adapter can observe authentic archived taker executions **after a committed M1**, but it never reconstructs taker side from a candle, auto-generates orders, changes Robot entry logic, or alters the SIMULATION event journal. The historical archive provider must explicitly supply a complete, validated trade set for each minute and preserve its source identity; **the existing default candle-only Simulator does not yet feed this optional port automatically**.
+
+One illustrative read-only local replay of the user-provided ICNT research ZIP (whose upstream original raw files are not independently present here) produced: at 14:02 MSK ~30,331 USDT buys with -13.8 bps intra-minute price movement (no buy-wave signal); 14:10 ~23,642 USDT buys with +38.1 bps (buy-wave observation); 14:15 ~45,226 USDT buys with +62.1 bps (buy-wave observation). These are retrospective, source-limited observations, not calibrated thresholds, causal proof or validated trading entries.
+
+Targeted shared-core unit tests cover chronological rejection, missing windows, source rotation, delayed availability and no-flow state. Simulator-specific integration tests have been added; real source adapter wiring, full repository CI, live Hub read-only observation and out-of-sample testing remain separate unproven steps. No VPS/PAPER runtime authority is implied.
+
 ## Shortest dependent delivery path
 
 1. **This slice:** publish the pure common flow observation and focused unit tests; no runtime integration or new numeric policy thresholds.
