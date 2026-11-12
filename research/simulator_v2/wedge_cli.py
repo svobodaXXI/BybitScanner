@@ -162,7 +162,7 @@ def run_from_time_machine_config(
     if (box_selected and len(selected) != 1) or (
         level_selected and len(level_selected) != len(selected)
     ):
-        raise ValueError("native Robot families need separate single-owner symbol runs")
+        raise ValueError("native Robot families cannot share one symbol owner in the same run")
     patterns = frozenset(
         SELECTABLE[s] for s in selected if s != "IKIGAI_BOX"
     )
