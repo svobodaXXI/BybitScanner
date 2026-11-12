@@ -755,8 +755,11 @@ export function ReplayPage() {
             ". Кандидат принят. Ожидается пробой"; break;
         case "WEDGE_BREAKOUT": message = "Пробой подтверждён. Ожидается ретест"; break;
         case "WEDGE_RETEST": message = "Ретест подтверждён"; break;
-        case "ENTRY_SIGNAL": message = "Выставлен LIMIT после ретеста"; break;
-        case "ENTRY_FILLED": message = "Позиция открыта, вход по ретесту"; break;
+        case "ENTRY_SIGNAL": message = (event.strategy_id === "L_SHAPE"
+          ? "L-shape" : event.strategy_id === "DOUBLE_TOP" ? "Двойная вершина"
+          : event.strategy_id === "DOUBLE_BOTTOM" ? "Двойное дно" : "Robot") +
+          ": выставлен защищённый LIMIT после подтверждения"; break;
+        case "ENTRY_FILLED": message = "Позиция открыта: подтверждённое виртуальное исполнение"; break;
         case "EXIT_FILLED":
           message = "Позиция закрыта (" +
             (event.reason === "STOP" ? "STOP" : event.reason === "TAKE" ? "TAKE" : "выход") +
