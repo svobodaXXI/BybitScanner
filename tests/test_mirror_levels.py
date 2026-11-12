@@ -29,7 +29,7 @@ from mirror_levels.levels import (
 )
 from mirror_levels.swing import confirmed_pivots, swing_levels
 from mirror_levels.tracker import (
-    STATUS_RETESTED, STATUS_UNTESTED, STATUS_WAITING, track,
+    STATUS_RETESTED, STATUS_UNTESTED, STATUS_WAITING, track, replay_research_mirror_level,
 )
 from mirror_retest_observer import boundaries_from_candidate_snapshot
 from retest_calibration import causal_atr_series
@@ -472,3 +472,76 @@ def test_historical_mirror_audit_legacy_frozen_terms_never_guess_missing_side():
         **legacy, "level_source": "unknown", "level_pattern": "HORN",
     }) == MIRROR_AUDIT_UNPROVEN
     assert audit_historical_mirror_frozen_terms(None) == MIRROR_AUDIT_UNPROVEN
+
+
+def test_research_mirror_replay_uses_native_breakout_retest_without_future_candles():
+    level = flat(1.0, 1)
+    candles = [
+        {**bar(1, 0.98, 0.99, 0.97, 0.985), "closed": True},
+        {**bar(2, 0.99, 1.02, 0.985, 1.015), "closed": True},
+        {**bar(3, 1.015, 1.03, 1.01, 1.025), "closed": True},
+        {**bar(4, 1.025, 1.03, 0.999, 1.02), "closed": True},
+    ]
+    early = replay_research_mirror_level(level, candles[:1])
+    broken = replay_research_mirror_level(level, candles[:2])
+    retested = replay_research_mirror_level(level, candles)
+    native = track(level, candles)
+    assert early["status"] == STATUS_WAITING and early["breakout"] is None
+    assert broken["status"] == STATUS_UNTESTED and broken["first_retest"] is None
+    assert retested["status"] == STATUS_RETESTED
+    assert retested["breakout"] == native["naked_retest"]["breakout"]
+    assert retested["first_retest"] == native["naked_retest"]["retest"]
+    assert retested["observation_only"] is True
+    # No trading, order identity, balance or Robot admission is produced.
+    assert set(retested) == {
+        "level_id", "status", "breakout", "first_retest", "observation_only",
+    }
+
+
+def test_research_mirror_replay_enforces_native_source_and_direction_policy():
+    candle = {**bar(1, 1.03, 1.04, 0.97, 0.98), "closed": True}
+    allowed = line_level(
+        symbol="TESTUSDT", timeframe="1", pattern="Rising Wedge", side="lower",
+        first=(0, 1.0), second=(M, 1.01), confirmed_at_ms=M,
+    )
+    assert replay_research_mirror_level(allowed, [candle])["status"] == STATUS_UNTESTED
+    wrong_side = line_level(
+        symbol="TESTUSDT", timeframe="1", pattern="Rising Wedge", side="upper",
+        first=(0, 1.0), second=(M, 1.01), confirmed_at_ms=M,
+    )
+    for forbidden in (
+        wrong_side,
+        line_level(
+            symbol="TESTUSDT", timeframe="1", pattern="Broadening", side="lower",
+            first=(0, 1.0), second=(M, 1.01), confirmed_at_ms=M,
+        ),
+        horizontal_level(
+            symbol="TESTUSDT", timeframe="1", source=SOURCE_PATTERN_BOUNDARY,
+            pattern="IKIGAI_BOX", side="lower", price=1.0,
+            anchor_time_ms=0, confirmed_at_ms=M,
+        ),
+    ):
+        result = replay_research_mirror_level(forbidden, [candle])
+        assert result["status"] == "SOURCE_POLICY_REJECTED"
+        assert result["breakout"] is None and result["first_retest"] is None
+
+    # The native tracker can record a real DOWN breakout of an upper swing,
+    # but it is not the owner-approved outward MIRROR campaign direction.
+    upper = flat(1.0, 1)
+    opposite = {**bar(1, 1.02, 1.03, 0.98, 0.99), "closed": True}
+    rejected = replay_research_mirror_level(upper, [opposite])
+    assert rejected["status"] == "BREAKOUT_POLICY_REJECTED"
+    assert rejected["breakout"] is None
+
+
+@pytest.mark.parametrize("broken_history", [
+    [],
+    [{**bar(2, 0.98, 0.99, 0.97, 0.985), "closed": True}],  # missing first candle
+    [{**bar(1, 0.98, 0.99, 0.97, 0.985), "closed": False}],  # still open
+    [{**bar(1, 0.98, 0.99, 0.97, 0.985), "closed": True},
+     {**bar(3, 1.01, 1.02, 1.0, 1.015), "closed": True}],  # gap
+    [{**bar(1, 0.98, 0.99, 0.97, 0.985, step=5*M), "closed": True}],
+])
+def test_research_mirror_replay_fails_closed_on_unproven_market_history(broken_history):
+    with pytest.raises(ValueError):
+        replay_research_mirror_level(flat(1.0, 1), broken_history)
