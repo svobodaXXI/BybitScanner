@@ -68,9 +68,9 @@ def finalize_non_box_protection_obligation(
             or trade.trade_id != obligation.trade_id
             or trade.trading_account_id != obligation.trading_account_id
             or trade.symbol != obligation.symbol
-            or obligation.winning_leg not in {"STOP", "TAKE"}
+            or obligation.winning_leg not in {"STOP", "TAKE", "EMERGENCY_CLOSE"}
             or obligation.status != "DISPATCHING"
-            or execution.dedup_key.execution_id != obligation.exec_id
+            or execution.dedup_key.exec_id != obligation.exec_id
             or execution.order_id != obligation.order_id
             or execution.dedup_key.trading_account_id != trade.trading_account_id
             or execution.symbol != trade.symbol):
