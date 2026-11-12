@@ -157,23 +157,105 @@ def compare_flow_windows(
     )
 
 
-def permits_paper_entry(direction: str, transition: FlowTransition | None) -> bool:
-    """Research option for existing protected PAPER/virtual Robot entries.
+OI_INTERVAL_MS = 300_000
+OI_MAX_AGE_MS = 600_000
+OI_MODES = frozenset(("OFF", "RISING", "FALLING"))
 
-    A completed, source-validated flow transition is required: no history,
-    opposite pressure or unsupported direction cannot authorize an entry.
-    This pure policy produces no trade, bypass, stop or alternate executor.
+
+@dataclass(frozen=True, slots=True)
+class OpenInterestPoint:
+    """5m historical exchange total open interest, *not* directional exposure."""
+
+    timestamp_ms: int
+    open_interest_base: Decimal
+
+    def __post_init__(self) -> None:
+        if (type(self.timestamp_ms) is not int or self.timestamp_ms < 0
+                or self.timestamp_ms % OI_INTERVAL_MS):
+            raise ValueError("invalid aligned 5m open-interest timestamp")
+        if (not isinstance(self.open_interest_base, Decimal)
+                or not self.open_interest_base.is_finite()
+                or self.open_interest_base <= ZERO):
+            raise ValueError("open interest must be positive finite Decimal")
+
+    @property
+    def known_at_ms(self) -> int:
+        # Conservative history rule: do NOT use an interval-start API stamp
+        # until the full exchange interval could have closed.
+        return self.timestamp_ms + OI_INTERVAL_MS
+
+
+@dataclass(frozen=True, slots=True)
+class OpenInterestChange:
+    known_at_ms: int
+    change_pct: Decimal
+    direction: str
+
+
+def open_interest_asof(
+    points: tuple[OpenInterestPoint, ...], *, decision_ms: int,
+) -> OpenInterestChange | None:
+    """Use last TWO completed contiguous 5m periods, rejecting stale/future OI.
+
+    The actual API publication time is not retained in most daily historical
+    snapshots: this is a conservative simulation availability assumption.
+    OI does NOT tell whether a LONG or SHORT was opened/closed.
+    """
+    if type(decision_ms) is not int or decision_ms < 0:
+        raise ValueError("invalid OI decision time")
+    if not isinstance(points, tuple) or any(
+        not isinstance(p, OpenInterestPoint) for p in points
+    ):
+        raise TypeError("verified OI point tuple required")
+    previous_stamp = -OI_INTERVAL_MS
+    known: list[OpenInterestPoint] = []
+    for point in points:
+        if point.timestamp_ms <= previous_stamp:
+            raise ValueError("OI samples must be ordered without duplicates")
+        previous_stamp = point.timestamp_ms
+        if point.known_at_ms <= decision_ms:
+            known.append(point)
+    if len(known) < 2:
+        return None
+    older, latest = known[-2:]
+    if (latest.timestamp_ms - older.timestamp_ms != OI_INTERVAL_MS
+            or decision_ms - latest.known_at_ms > OI_MAX_AGE_MS):
+        return None
+    change_pct = (latest.open_interest_base / older.open_interest_base - 1) * 100
+    direction = "RISING" if change_pct > 0 else "FALLING" if change_pct < 0 else "FLAT"
+    return OpenInterestChange(latest.known_at_ms, change_pct, direction)
+
+
+def permits_paper_entry(
+    direction: str, transition: FlowTransition | None, *,
+    oi_mode: str = "OFF", oi: OpenInterestChange | None = None,
+) -> bool:
+    """Single Robot research entry predicate for protected virtual trades.
+
+    OI filters are opt-in experimental cohorts: they never replace the
+    original Scanner->Robot retest, risk check, protection or execution.
     """
     if direction not in ("LONG", "SHORT"):
         raise ValueError("known Robot entry direction required")
+    if oi_mode not in OI_MODES:
+        raise ValueError("invalid experimental OI gate")
     if transition is None:
         return False
     if not isinstance(transition, FlowTransition):
         raise TypeError("completed shared Robot flow transition required")
-    return (
+    wave = (
         transition.buy_wave_accelerating if direction == "LONG"
         else transition.sell_wave_accelerating
     )
+    if not wave or oi_mode == "OFF":
+        return wave
+    if oi is None:
+        return False
+    if not isinstance(oi, OpenInterestChange):
+        raise TypeError("confirmed historical OI change required")
+    if oi.known_at_ms > transition.known_at_ms:
+        raise ValueError("OI lookahead before Robot decision")
+    return oi.direction == oi_mode
 
 
 @dataclass(frozen=True, slots=True)
