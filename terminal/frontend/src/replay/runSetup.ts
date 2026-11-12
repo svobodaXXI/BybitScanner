@@ -4,7 +4,7 @@
 export type StrategyId =
   | "NAKED_RETURN" | "NAKED_RETEST" | "MIRROR_LEVELS"
   | "WEDGE_RISING" | "WEDGE_FALLING" | "IKIGAI_BOX"
-  | "H1_TREND" | "L_SHAPE" | "TRIANGLE";
+  | "H1_TREND" | "L_SHAPE" | "DOUBLE_TOP" | "DOUBLE_BOTTOM" | "TRIANGLE";
 
 export type StrategyOption = { id: StrategyId; label: string };
 export const MIRROR_OPTIONS: readonly StrategyOption[] = [
@@ -18,11 +18,12 @@ export const OTHER_OPTIONS: readonly StrategyOption[] = [
   { id: "IKIGAI_BOX", label: "Ikigai Box" },
   { id: "H1_TREND", label: "Трендовые H1/M5" },
   { id: "L_SHAPE", label: "L-shape" },
+  { id: "DOUBLE_TOP", label: "Двойная вершина" },
+  { id: "DOUBLE_BOTTOM", label: "Двойное дно" },
   { id: "TRIANGLE", label: "Triangle" },
 ];
 export const PLANNED_OPTIONS = [
-  "Двойная вершина", "Двойное дно",
-  "Голова и плечи", "Перевёрнутая голова и плечи",
+   "Голова и плечи", "Перевёрнутая голова и плечи",
   "Разворотные свечные формации (общий признак)",
 ] as const;
 export const ALL_SELECTABLE = [...MIRROR_OPTIONS, ...OTHER_OPTIONS].map(x => x.id);
@@ -178,12 +179,16 @@ export function validateInclusiveWindow(start: string, endInclusive: string): {
  * other checked strategies or create a second Robot for the same symbol.
  */
 export const RUNNABLE_WEDGE_IDS = ["WEDGE_RISING", "WEDGE_FALLING"] as const;
-export const RUNNABLE_NATIVE_IDS = [...RUNNABLE_WEDGE_IDS, "IKIGAI_BOX"] as const;
+export const RUNNABLE_LEVEL_IDS = ["L_SHAPE", "DOUBLE_TOP", "DOUBLE_BOTTOM"] as const;
+export const RUNNABLE_NATIVE_IDS = [...RUNNABLE_WEDGE_IDS, "IKIGAI_BOX", ...RUNNABLE_LEVEL_IDS] as const;
 export function runnableWedgeSelection(selection: RunSelection): boolean {
-  return selection.selected.length === 1 && selection.selected[0] === "IKIGAI_BOX" ||
-    selection.selected.length > 0 && selection.selected.every(
+  return (selection.selected.length === 1 && selection.selected[0] === "IKIGAI_BOX") ||
+    (selection.selected.length > 0 && selection.selected.every(
       id => RUNNABLE_WEDGE_IDS.some(wedge => wedge === id),
-    );
+    )) ||
+    (selection.selected.length > 0 && selection.selected.every(
+      id => RUNNABLE_LEVEL_IDS.some(level => level === id),
+    ));
 }
 export function makeWedgeRunRequest(
   selection: RunSelection, symbol: string, start: string,
@@ -193,7 +198,7 @@ export function makeWedgeRunRequest(
   selected_strategies: StrategyId[]; initial_balance: string;
 } {
   if (!runnableWedgeSelection(selection)) {
-    throw new Error("Торговый прогон доступен для клиньев или отдельно Ikigai Box. Остальные стратегии ещё не подключены к изолированному Robot.");
+    throw new Error("Торговый прогон: клинья, отдельно Ikigai Box либо L-shape/двойные экстремумы. Разные семейства нельзя смешивать в одном прогоне.");
   }
   const { minutes } = validateInclusiveWindow(start, endInclusive);
   if (minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
@@ -257,13 +262,19 @@ export type LocalWedgeResult = {
   scenario_type: "ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION";
   scanner_box_observations: number; admitted_box_candidates: number;
   box_entry_fills: number;
+} | {
+  scenario_type: "ORIGINAL_FROZEN_LEVEL_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION";
+  scanner_level_observations: number; native_robot_confirmations: number;
+  submitted_protected_limits: number; skipped_busy_entries: number;
+  rejected_risk_entries: number;
 });
 export function parseWedgeResult(raw: unknown): LocalWedgeResult {
   if (!raw || typeof raw !== "object") throw new Error("Недостоверный отчёт SIMULATION");
   const x = raw as Record<string, unknown>;
   const isBox = x.scenario_type === "ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION";
+  const isLevel = x.scenario_type === "ORIGINAL_FROZEN_LEVEL_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION";
   if (x.namespace !== "SIMULATION" ||
-      (!isBox && x.scenario_type !== "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION") ||
+      (!isBox && !isLevel && x.scenario_type !== "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION") ||
       x.risk_terms_status !== "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED") {
     throw new Error("Отчёт не соответствует оригинальному локальному Scanner/Robot");
   }
@@ -274,7 +285,9 @@ export function parseWedgeResult(raw: unknown): LocalWedgeResult {
   for (const key of ["requested_minutes", "virtual_fills", "stop_exits", "take_exits",
     ...(isBox
       ? ["scanner_box_observations", "admitted_box_candidates", "box_entry_fills"]
-      : ["scanner_wedge_observations", "robot_retests_in_period", "submitted_protected_limits"])]) {
+      : isLevel
+        ? ["scanner_level_observations", "native_robot_confirmations", "submitted_protected_limits", "skipped_busy_entries", "rejected_risk_entries"]
+        : ["scanner_wedge_observations", "robot_retests_in_period", "submitted_protected_limits"])]) {
     if (!Number.isSafeInteger(x[key]) || (x[key] as number) < 0) {
       throw new Error("Неверное количество событий в отчёте");
     }
