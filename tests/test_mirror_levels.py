@@ -22,7 +22,8 @@ from mirror_levels.levels import (
     SOURCE_PATTERN_BOUNDARY, SOURCE_SWING_ZONE, LevelRegistry, MirrorLevel, MirrorLevelError,
     horizontal_level, level_identity, levels_from_geometry, levels_from_horn_event,
     mirror_level_allowed, mirror_frozen_entry_allowed,
-    audit_historical_mirror_source, MIRROR_AUDIT_ALLOWED, MIRROR_AUDIT_REVOKED,
+    audit_historical_mirror_source, audit_historical_mirror_frozen_terms,
+    MIRROR_AUDIT_ALLOWED, MIRROR_AUDIT_REVOKED,
     MIRROR_AUDIT_UNPROVEN,
     levels_from_ikigai_box, levels_from_l_shape, levels_from_wedge_candidate, line_level,
 )
@@ -427,3 +428,47 @@ def test_historical_mirror_audit_needs_exact_episode_level_link_and_native_break
                                                  "anchor_price": 100.0}})
     # from_dict still checks that boundary ID matches level ID.
     assert audit(forged) == MIRROR_AUDIT_UNPROVEN
+
+
+def test_historical_mirror_audit_legacy_frozen_terms_never_guess_missing_side():
+    # Old immutable Robot candidates can prove a globally banned source,
+    # but their earlier frozen contract did not include level side/direction.
+    legacy = {
+        "level_id": "lvl-0123456789abcdef01234567",
+        "level_source": SOURCE_PATTERN_BOUNDARY,
+        "level_pattern": "IKIGAI_BOX",
+    }
+    assert audit_historical_mirror_frozen_terms(legacy) == MIRROR_AUDIT_REVOKED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_pattern": "Broadening",
+    }) == MIRROR_AUDIT_REVOKED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_pattern": "Rising Wedge",
+    }) == MIRROR_AUDIT_UNPROVEN
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_pattern": "Rising Wedge",
+        "level_side": "upper", "level_breakout_direction": "UP",
+    }) == MIRROR_AUDIT_REVOKED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_pattern": "Rising Wedge",
+        "level_side": "lower", "level_breakout_direction": "DOWN",
+    }) == MIRROR_AUDIT_ALLOWED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_pattern": "Triangle Compression",
+        "level_side": "upper", "level_breakout_direction": "UP",
+    }) == MIRROR_AUDIT_ALLOWED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_pattern": "Falling Wedge",
+        "level_side": "upper", "level_breakout_direction": "DOWN",
+    }) == MIRROR_AUDIT_REVOKED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_source": SOURCE_SWING_ZONE, "level_pattern": None,
+    }) == MIRROR_AUDIT_UNPROVEN
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_source": SOURCE_SWING_ZONE, "level_pattern": None,
+        "level_side": "upper", "level_breakout_direction": "UP",
+    }) == MIRROR_AUDIT_ALLOWED
+    assert audit_historical_mirror_frozen_terms({
+        **legacy, "level_source": "unknown", "level_pattern": "HORN",
+    }) == MIRROR_AUDIT_UNPROVEN
+    assert audit_historical_mirror_frozen_terms(None) == MIRROR_AUDIT_UNPROVEN
