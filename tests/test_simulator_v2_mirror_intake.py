@@ -18,6 +18,7 @@ from research.simulator_v2.robot_sandbox import (
     ConnectedSimulationRobot, SimulationExecutionNotConnected,
 )
 from research.simulator_v2.session import VirtualReplaySession
+from terminal.domain.models import Symbol
 
 FIVE = 300_000
 MINUTE = 60_000
@@ -145,6 +146,115 @@ class NativeMirrorSimulatorIntakeTests(unittest.TestCase):
                              ("BUY", D("105.22"), D("2"), False))
             with self.assertRaisesRegex(SimulationExecutionNotConnected, "active"):
                 robot.admit_mirror(state, entry_id=entry_id)
+
+    def _closed_m1(self, index, *, op, high, low, close):
+        return Candle(
+            start_ms=index * MINUTE, interval_ms=MINUTE,
+            open=D(op), high=D(high), low=D(low), close=D(close),
+            volume=D("1"),
+        )
+
+    def _admitted_for_trade(self, run_id):
+        session = self.session(run_id)
+        state, entry_id = native_scanner_state()
+        robot = self.robot(session)
+        self.populate(session, robot)
+        candidate_id = robot.admit_mirror(state, entry_id=entry_id)
+        return session, robot, state, entry_id, candidate_id
+
+    def _filled_mirror(self, session, robot, candidate_id):
+        # The confirmation closed at 40m; native LIMIT is durable only then.
+        # The first venue-eligible price is the following 40-41m closed M1.
+        session.step(self._closed_m1(
+            40, op="105.2", high="105.4", low="105", close="105.2",
+        ))
+        robot.after_committed_minute()
+        trade = robot._store.get_open_robot_trade_for_symbol(
+            robot.account_id, Symbol(SYMBOL),
+        )
+        self.assertIsNotNone(trade)
+        self.assertEqual((trade.pattern, trade.candidate_id, trade.direction),
+                         ("MIRROR", candidate_id, "LONG"))
+        self.assertEqual((trade.entry_quantity, trade.average_entry),
+                         (D("2"), D("105.22")))
+        self.assertIsNotNone(session.exchange.robot_stop)
+        self.assertIsNotNone(session.exchange.robot_take)
+        snapshot = session.account.snapshot(
+            as_of_ms=session.virtual_time_ms, mark_price=D("105.2"),
+        )
+        self.assertEqual(snapshot.position_quantity, D("2"))
+        return trade
+
+    def _assert_mirror_closed(self, session, robot, trade, *, reason, price):
+        closed = robot._store.get_robot_trade(trade.trade_id)
+        self.assertEqual((closed.exit_reason, closed.exit_price), (reason, D(price)))
+        self.assertIsNotNone(closed.exit_time_ms)
+        expected_gross = (D(price) - D("105.22")) * D("2")
+        entry_fee = D("105.22") * D("2") * D("0.0006")
+        exit_fee = D(price) * D("2") * D("0.0006")
+        self.assertEqual(closed.realized_pnl_usdt, expected_gross)
+        self.assertEqual(closed.fees_costs_usdt, entry_fee + exit_fee)
+        self.assertEqual(
+            closed.realized_pnl_pct,
+            (expected_gross - entry_fee - exit_fee) / (D("105.22") * D("2")) * 100,
+        )
+        snap = session.account.snapshot(
+            as_of_ms=session.virtual_time_ms, mark_price=D(price),
+        )
+        self.assertEqual(snap.position_quantity, D("0"))
+        self.assertEqual(snap.realized_gross_pnl, expected_gross)
+        self.assertEqual(snap.fees, entry_fee + exit_fee)
+        self.assertEqual(snap.realized_net_pnl, expected_gross - entry_fee - exit_fee)
+        self.assertEqual(snap.applied_fills, 2)
+        obligation = robot._store.get_paper_protection_obligation_for_trade(trade.trade_id)
+        self.assertEqual((obligation.status, obligation.winning_leg), ("RESOLVED", reason))
+        self.assertTrue(robot.can_admit)
+        self.assertIsNone(session.exchange.robot_stop)
+        self.assertIsNone(session.exchange.robot_take)
+        self.assertEqual(session.exchange.robot_limits, ())
+        self.assertEqual(robot._store.get_robot_candidate(trade.candidate_id).status, "CLOSED")
+
+    def test_native_mirror_take_closes_with_actual_fees_net_pnl_and_no_replay(self):
+        session, robot, state, entry_id, candidate_id = self._admitted_for_trade("mirror_take_e2e")
+        with robot:
+            trade = self._filled_mirror(session, robot, candidate_id)
+            session.step(self._closed_m1(
+                41, op="105.2", high="111", low="105", close="110",
+            ))
+            robot.after_committed_minute()
+            self._assert_mirror_closed(session, robot, trade, reason="TAKE", price="110")
+            self.assertEqual(session.exchange.last_minute_order_events[0].kind, "TAKE_FILLED")
+            session.step(self._closed_m1(
+                42, op="110", high="111", low="109.5", close="110.5",
+            ))
+            robot.after_committed_minute()
+            self.assertEqual(len(session.account.fills), 2)
+            with self.assertRaisesRegex(ValueError, "duplicate"):
+                robot.admit_mirror(state, entry_id=entry_id)
+
+    def test_native_mirror_stop_gap_closes_at_worse_open_with_actual_fees(self):
+        session, robot, _state, _entry_id, candidate_id = self._admitted_for_trade("mirror_stop_e2e")
+        with robot:
+            trade = self._filled_mirror(session, robot, candidate_id)
+            session.step(self._closed_m1(
+                41, op="102", high="103", low="100", close="101",
+            ))
+            robot.after_committed_minute()
+            self._assert_mirror_closed(session, robot, trade, reason="STOP", price="102")
+            self.assertEqual(session.exchange.last_minute_order_events[0].kind, "STOP_FILLED")
+
+    def test_native_mirror_stop_wins_ambiguous_same_candle(self):
+        session, robot, _state, _entry_id, candidate_id = self._admitted_for_trade("mirror_stop_first")
+        with robot:
+            trade = self._filled_mirror(session, robot, candidate_id)
+            stop = session.exchange.robot_stop.stop_price
+            session.step(self._closed_m1(
+                41, op="105.2", high="112", low="100", close="106",
+            ))
+            robot.after_committed_minute()
+            self._assert_mirror_closed(
+                session, robot, trade, reason="STOP", price=str(stop),
+            )
 
     def test_forbidden_source_and_future_confirmation_never_create_order(self):
         session = self.session("mirror_native_rejected")
