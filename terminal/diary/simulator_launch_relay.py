@@ -97,6 +97,22 @@ class SimulatorLaunchRelay:
             raise RelayInvalid("simulator_bridge_configuration_invalid")
         return cls(origin=origin, devices=devices)
 
+    def pairing_credentials(self, *, device_id: str,
+                            request_origin: str, fetch_site: str) -> dict[str, str]:
+        """Owner-only, existing preprovisioned device: no enrollment store.
+
+        The HTTP route MUST remain behind Nginx's owner auth. This never
+        creates credentials, changes PAPER, or permits arbitrary commands.
+        """
+        if request_origin != self.origin or fetch_site != "same-origin":
+            raise RelayForbidden("relay_origin_not_authorized")
+        if not isinstance(device_id, str) or not DEVICE_ID.fullmatch(device_id):
+            raise RelayInvalid("invalid_pairing_device")
+        token = self._devices.get(device_id)
+        if token is None:
+            raise RelayUnavailable("simulator_pairing_device_not_configured")
+        return {"device_id": device_id, "token": token}
+
     def _authenticated(self, device: str, token: str) -> bool:
         secret = self._devices.get(device)
         return (bool(secret) and isinstance(token, str)
