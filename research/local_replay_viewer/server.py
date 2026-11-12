@@ -136,7 +136,10 @@ def local_simulation_status() -> dict[str, object]:
         "python_dependencies_available": deps, "archive_files_present": data,
         "wedge_risk_profile_present": risk,
         "can_attempt": engine and deps and data and risk,
-        "supported_strategies": ["WEDGE_FALLING", "WEDGE_RISING", "IKIGAI_BOX"],
+        "supported_strategies": [
+            "WEDGE_FALLING", "WEDGE_RISING", "IKIGAI_BOX",
+            "L_SHAPE", "DOUBLE_TOP", "DOUBLE_BOTTOM",
+        ],
         "archive_validation": "RECHECKED_ON_RUN_NOT_CLAIMED_READY",
     }
     if archive_hint is not None:
@@ -148,7 +151,7 @@ def run_local_simulation(
     request_data: object, *,
     on_stream: Callable[[str, dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
-    """Original Wedge or Ikigai Box on known local public M1 cache.
+    """Original Wedge, Box or native frozen levels on known local public M1 cache.
 
     Does not download anything, import production Scanner/Robot runtimes,
     accept arbitrary file paths, or write to any exchange/PAPER ledger.
@@ -164,13 +167,17 @@ def run_local_simulation(
     ):
         raise ValueError("invalid local wedge run field")
     selected = request_data["selected_strategies"]
-    if (not isinstance(selected, list) or not selected or len(selected) > 2
-            or any(s not in ("WEDGE_RISING", "WEDGE_FALLING", "IKIGAI_BOX")
-                   for s in selected)
+    native_level_ids = frozenset({"L_SHAPE", "DOUBLE_TOP", "DOUBLE_BOTTOM"})
+    supported = native_level_ids | {"WEDGE_RISING", "WEDGE_FALLING", "IKIGAI_BOX"}
+    if (not isinstance(selected, list) or not selected or len(selected) > 3
+            or any(not isinstance(s, str) or s not in supported for s in selected)
             or len(set(selected)) != len(selected)):
-        raise ValueError("only implemented Wedge or Ikigai Box may trade")
-    if "IKIGAI_BOX" in selected and len(selected) != 1:
-        raise ValueError("Ikigai Box currently requires an isolated one-strategy run")
+        raise ValueError("only implemented native Scanner/Robot families may trade")
+    level_selected = set(selected) & native_level_ids
+    if ("IKIGAI_BOX" in selected and len(selected) != 1) or (
+        level_selected and len(level_selected) != len(selected)
+    ):
+        raise ValueError("each native Robot family requires one single-owner run")
 
     status = local_simulation_status()
     if not status["can_attempt"]:
