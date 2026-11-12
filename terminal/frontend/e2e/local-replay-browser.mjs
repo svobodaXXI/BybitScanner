@@ -743,6 +743,31 @@ try {
     return parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
   }), "Viewer must not contact VPS/PAPER/external accounts");
   assert.ok(requests.every((u) => !new URL(u).pathname.startsWith("/api")), "No PAPER API requests");
+  // A URL fragment claiming ANY HTTPS origin is NOT trusted. The opener
+  // handshake must be gated by the independently installed local origin.
+  const forged = await browser.newPage();
+  await forged.route("**/local-replay/simulation/trusted-statistics-origin", async route => {
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({
+        schema: "LOCAL_TRUSTED_STATISTICS_ORIGIN_V1",
+        origin: "https://stats.example.com",
+      }),
+    });
+  });
+  const forgedParams = new URLSearchParams({
+    episode: "te_" + "a".repeat(24),
+    nonce: "b".repeat(32),
+    source_origin: "https://evil.example",
+  });
+  await forged.goto(localUrl + "#" + forgedParams, { waitUntil: "networkidle" });
+  await forged.getByText(/Переход из Статистики заблокирован: доверенный HTTPS-адрес/).waitFor();
+  assert.equal(await forged.getByLabel("Импорт JSON сделки PAPER").count(), 1,
+    "untrusted opener can never disable the manual read-only JSON fallback");
+  assert.equal(await forged.locator('[aria-label="PAPER факты сделки"]').count(), 0,
+    "forged opener must not inject PAPER facts");
+  await forged.close();
+
   console.log("LOCAL_REPLAY_BROWSER_OK (real Chromium, local server, chart, controls, isolated market-only data)");
   console.log("UI screenshot: " + join(screenshotDir, "machine-time-browser.png"));
 } finally {
