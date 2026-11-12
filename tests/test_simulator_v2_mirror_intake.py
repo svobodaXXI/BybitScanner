@@ -229,7 +229,7 @@ class NativeMirrorSimulatorIntakeTests(unittest.TestCase):
             ))
             robot.after_committed_minute()
             self.assertEqual(len(session.account.fills), 2)
-            with self.assertRaisesRegex(ValueError, "duplicate"):
+            with self.assertRaisesRegex(ValueError, "exact committed close"):
                 robot.admit_mirror(state, entry_id=entry_id)
 
     def test_native_mirror_stop_gap_closes_at_worse_open_with_actual_fees(self):
