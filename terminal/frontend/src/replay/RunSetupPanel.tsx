@@ -349,7 +349,7 @@ export function RunSetupPanel({
       </div>
       {!wedgesOnly && active.length > 0 &&
         <p className="replay-run-error" role="status">
-          Отмеченные стратегии сохранены как выбор, но торговый запуск пока поддерживает только два клина.
+          Отмеченные стратегии сохранены, но виртуальная торговля поддерживает клинья или отдельную охоту за импульсом.
         </p>}
       {statusError && <p role="status" className="replay-run-error">{statusError}</p>}
       {status && !status.can_attempt &&
@@ -368,8 +368,9 @@ export function RunSetupPanel({
           нереализованный: {report.unrealized_pnl} USDT</span>
         <span>Суммарный PnL: {report.total_net_pnl} USDT ·
           доходность: {report.return_percent}% · просадка: {report.max_drawdown_percent}%</span>
-        <span>Обнаружено клиньев: {report.scanner_wedge_observations} ·
-          ретестов: {report.robot_retests_in_period} ·
+        <span>{report.scenario_type === "IMPULSE_FLOW_SHARED_ROBOT_PROTECTED_VIRTUAL_SIMULATION"
+          ? <>Обнаружено импульсов: {report.impulse_signals ?? 0} · </>
+          : <>Обнаружено клиньев: {report.scanner_wedge_observations} · ретестов: {report.robot_retests_in_period} · </>}
           LIMIT: {report.submitted_protected_limits} ·
           исполнений: {report.virtual_fills} · STOP: {report.stop_exits} · TAKE: {report.take_exits}</span>
         <small>Модель OHLC, не фактические биржевые исполнения. Параметры риска — локальные исследовательские допущения.</small>
