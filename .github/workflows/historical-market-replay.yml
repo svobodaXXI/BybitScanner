@@ -77,6 +77,7 @@ jobs:
           cp ../../research/local_replay_viewer/server.py "$RUNNER_TEMP/machine-time/server.py"
           cp ../../research/local_replay_viewer/START_LOCAL.cmd "$RUNNER_TEMP/machine-time/START_LOCAL.cmd"
           cp ../../research/local_replay_viewer/protocol_launcher.py "$RUNNER_TEMP/machine-time/protocol_launcher.py"
+          cp ../../research/local_replay_viewer/launch_bridge_agent.py "$RUNNER_TEMP/machine-time/launch_bridge_agent.py"
           cp ../../research/local_replay_viewer/README.txt "$RUNNER_TEMP/machine-time/README.txt"
           cp ../../research/local_replay_viewer/smoke_package.py "$RUNNER_TEMP/machine-time/smoke_package.py"
           cp ../../research/local_replay_viewer/box_lifecycle_smoke.py "$RUNNER_TEMP/machine-time/box_lifecycle_smoke.py"
@@ -155,6 +156,8 @@ jobs:
           python -B server.py --check
           python -B protocol_launcher.py --register
           if ($LASTEXITCODE -ne 0) { throw 'Simulator protocol registration failed' }
+          python -B launch_bridge_agent.py --install-if-configured
+          if ($LASTEXITCODE -ne 0) { throw 'Unconfigured paired adapter should remain inert' }
           $handler = (Get-Item 'HKCU:\Software\Classes\bybitscanner-simulator\shell\open\command').GetValue('')
           if (-not $handler.Contains('protocol_launcher.py') -or -not $handler.EndsWith(' "%1"')) {
             throw 'Simulator protocol handler missing exact script or fixed URI parameter'
