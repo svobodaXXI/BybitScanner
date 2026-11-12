@@ -1507,7 +1507,7 @@ export function App() {
             {editorCurrentOverlay === null && <output role="status">
               Линии сигнала не показаны: его опорных свечей нет в текущей истории.
               Приблизительная разметка не создаётся.
-            </output>
+            </output>}
             <button type="button" onClick={() => { setShowCurrentEditorChart(false); setOwnerChartCandles(null); setOwnerChartError(""); }}>
               Вернуться к сигналу
             </button>
