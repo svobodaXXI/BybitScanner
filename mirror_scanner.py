@@ -178,10 +178,8 @@ def collect_levels(symbol: str, timeframe: str, candles, *, wedge_result=None,
             {"parent_pattern": pattern,
              "parent_formation_id": wedge_result.get("scanner_formation_id")})
 
-    if isinstance(horn_observation, Mapping):
-        out += _with_parent(levels_from_horn_event(horn_observation),
-                            {"parent_pattern": "Broadening",
-                             "parent_formation_id": horn_observation.get("identity")})
+    # HORN/Broadening has a separate trading strategy, never a MIRROR origin.
+    # Keep horn_observation in the caller interface for backwards compatibility.
 
     try:
         formation = (l_shape_observation or {}).get("formation")
@@ -198,19 +196,8 @@ def collect_levels(symbol: str, timeframe: str, candles, *, wedge_result=None,
     except Exception as error:
         print(f"{symbol:<15} {timeframe}m MIRROR L-shape source skipped: {type(error).__name__}")
 
-    try:
-        from geometry.ikigai_box import detect_ikigai_box
-        box = detect_ikigai_box(closed) if (box_source_enabled() if box_source is None else box_source) else None
-        if box is not None:
-            out += _with_parent(
-                levels_from_ikigai_box(symbol=symbol, timeframe=timeframe, formation=box,
-                                       candle_times_ms=closed_times),
-                {"parent_pattern": "IKIGAI_BOX",
-                 "parent_formation_id": f"ikigai_box:{box.direction}:"
-                                        f"{closed_times[int(box.box_start_index)]}"})
-    except Exception as error:
-        print(f"{symbol:<15} {timeframe}m MIRROR Box source skipped: {type(error).__name__}")
-
+    # Box may confirm an existing MIRROR campaign but neither box edge is a
+    # MIRROR origin. Do not run its detector for level collection.
     out += list(swing_levels(closed_rows(closed, timeframe), symbol=symbol, timeframe=timeframe))
     from mirror_levels.levels import mirror_level_allowed
     return [level for level in out if mirror_level_allowed(level)]
