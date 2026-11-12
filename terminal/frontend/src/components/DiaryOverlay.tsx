@@ -422,7 +422,10 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
         setNotice("Запрос передан подключённому устройству. Проверяю подтверждение." + suffix);
         let state = "QUEUED";
         for (let attempt = 0; attempt < 8; attempt++) {
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
+          // Check once immediately: an already connected adapter may have
+          // acknowledged the job. Only subsequent checks need a delay.
+          if (attempt > 0)
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
           const check = await fetch("/api/diary/simulator-bridge/status", {
             method: "POST", credentials: "same-origin",
             headers: { "Content-Type": "application/json" },
