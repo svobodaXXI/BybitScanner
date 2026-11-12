@@ -731,6 +731,31 @@ class SimulatorLaunchRelayTests(unittest.TestCase):
             with self.assertRaises(RelayForbidden):
                 relay.enqueue(episode, request_origin=origin, fetch_site=site)
 
+    def test_owner_only_pairing_returns_preconfigured_device_without_writes(self):
+        from terminal.diary.simulator_launch_relay import (
+            RelayForbidden, RelayInvalid, RelayUnavailable,
+        )
+        relay, _, token = self.make_relay()
+        with self.assertRaises(RelayForbidden):
+            relay.pairing_credentials(device_id="owner-pc", request_origin="https://evil.test",
+                                      fetch_site="same-origin")
+        with self.assertRaises(RelayForbidden):
+            relay.pairing_credentials(device_id="owner-pc", request_origin=relay.origin,
+                                      fetch_site="cross-site")
+        with self.assertRaises(RelayInvalid):
+            relay.pairing_credentials(device_id="../../pc", request_origin=relay.origin,
+                                      fetch_site="same-origin")
+        with self.assertRaises(RelayUnavailable):
+            relay.pairing_credentials(device_id="other-device", request_origin=relay.origin,
+                                      fetch_site="same-origin")
+        self.assertEqual(relay.pairing_credentials(
+            device_id="owner-pc", request_origin=relay.origin, fetch_site="same-origin",
+        ), {"device_id": "owner-pc", "token": token})
+        # Issuing an owner pairing response cannot enqueue a launch or mark
+        # a PC online: a real token-bound device poll remains mandatory.
+        self.assertEqual(relay._requests, {})
+        self.assertEqual(relay._last_seen, {})
+
     def test_typed_single_use_ack_and_expiration(self):
         from terminal.diary.simulator_launch_relay import (
             RelayInvalid, RelayUnavailable,
