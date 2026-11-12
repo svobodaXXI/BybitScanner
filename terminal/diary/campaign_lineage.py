@@ -174,6 +174,22 @@ def prove_robot_campaign_episodes(
         if episode_id in seen_episodes:
             _deny("campaign_episode_reused")
         seen_episodes.add(episode_id)
+        # Preserve full exact-Decimal execution provenance in the hashed
+        # result; neither an aggregate PnL nor a ticker/time match is enough.
+        allocations = []
+        for allocation in episode.allocations:
+            execution = execution_by_id[allocation.execution_key.exec_id.value]
+            allocations.append({
+                "execution_id": execution.dedup_key.exec_id.value,
+                "order_id": execution.order_id.value,
+                "order_side": execution.side.value,
+                "execution_price": str(execution.price.value),
+                "allocated_quantity": str(allocation.quantity),
+                "allocated_fee": str(allocation.fee),
+                "occurred_at_ms": allocation.occurred_at_ms,
+                "allocation_role": allocation.role.value,
+                "controller": "ROBOT",
+            })
         mapped.append({
             "attempt_index": index,
             "candidate_id": candidate,
@@ -184,7 +200,10 @@ def prove_robot_campaign_episodes(
             "closed_at_ms": episode.closed_at_ms,
             "exit_reason": winner["winning_leg"],
             "exit_execution_id": exit_exec_id,
+            "realized_price_pnl_usdt": str(episode.realized_price_pnl),
+            "known_execution_fees_usdt": str(episode.execution_fees),
             "pnl_usdt": str(episode.realized_price_pnl - episode.execution_fees),
+            "execution_allocations": allocations,
         })
         previous_stop_exec = exit_exec_id
         previous_winner = winner["winning_leg"]
