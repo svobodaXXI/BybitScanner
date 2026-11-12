@@ -1,12 +1,12 @@
 """Exact-ID regressions for read-only Robot campaign lineage proof."""
 from __future__ import annotations
 
-import copy
 import unittest
 from decimal import Decimal
 
 from terminal.diary.campaign_lineage import (
     CampaignLineageUnproven, prove_robot_campaign_episodes,
+    project_selected_paper_campaign,
 )
 from terminal.diary.models import (
     AllocationRole, DiaryEnvironment, ExecutionAllocation,
@@ -114,6 +114,38 @@ class CampaignProofTests(unittest.TestCase):
         self.assertEqual(len(result["source_sha256"]), 64)
         self.assertNotIn("candles", result)
         self.assertNotIn("robot_decisions", result)
+
+    def test_selected_episode_resolves_only_exact_campaign(self):
+        evidence = fixture()
+        source = evidence["snapshot"]
+        source = PaperSourceSnapshot(
+            source.source_revision, source.episodes, source.origins,
+            source.executions,
+            campaign_evidence={
+                "campaigns": (evidence["campaign"],),
+                "attempts": tuple(evidence["attempts"]),
+                "trades": tuple(evidence["trades"]),
+                "entry_ownership": tuple(evidence["entry_ownership"]),
+                "obligations": tuple(evidence["obligations"]),
+            },
+        )
+        document = project_selected_paper_campaign(
+            source, account_id="paper", owner="ROBOT",
+            trade_episode_id=evidence["trade_episode_id"], source_revision=5,
+        )
+        self.assertEqual(document["campaign_id"], "camp-1")
+        self.assertEqual([a["execution_id"] for a in document["trade_episodes"][1]["execution_allocations"]],
+                         ["open-2", "close-2"])
+        self.assertEqual(document["trade_episodes"][1]["known_execution_fees_usdt"], "0.2")
+        self.assertEqual(document["trade_episodes"][1]["execution_allocations"][1]["order_id"], "exit-2")
+
+    def test_selected_episode_requires_source_evidence_not_proximity(self):
+        evidence = fixture()
+        with self.assertRaisesRegex(CampaignLineageUnproven, "campaign_source_evidence_unavailable"):
+            project_selected_paper_campaign(
+                evidence["snapshot"], account_id="paper", owner="ROBOT",
+                trade_episode_id=evidence["trade_episode_id"], source_revision=5,
+            )
 
     def test_rejects_stale_revision_and_cross_account(self):
         for patch in ({"source_revision": 4}, {"account_id": "main"}):
