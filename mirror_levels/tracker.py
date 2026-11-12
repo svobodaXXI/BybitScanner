@@ -107,3 +107,55 @@ def track(level: MirrorLevel, candles: Sequence[Mapping], *, record: Mapping[str
     out["previous_close"] = previous_close
     out["status"] = STATUS_DATA_BLOCKED if state.get("data_blocked") else _STATUS[state["phase"]]
     return out
+
+
+def replay_research_mirror_level(
+    level: MirrorLevel, closed_candles: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Read-only historical boundary observation for a local Simulator caller.
+
+    Reuses the native MIRROR tracker and source/direction gates. The caller
+    supplies a previously confirmed native level and complete CLOSED candles
+    starting at its first usable candle; this does not detect patterns,
+    assign Scanner candidate eligibility, authorize trades or submit orders.
+    Missing initial coverage, gaps and incomplete candles fail closed.
+    """
+    from mirror_levels.levels import (
+        mirror_breakout_allowed, mirror_level_allowed, timeframe_ms,
+    )
+
+    if not mirror_level_allowed(level):
+        return {"level_id": getattr(level, "level_id", None),
+                "status": "SOURCE_POLICY_REJECTED", "breakout": None,
+                "first_retest": None, "observation_only": True}
+    if not isinstance(closed_candles, Sequence) or not closed_candles:
+        raise ValueError("MIRROR research requires closed candle history")
+    step = timeframe_ms(level.timeframe)
+    cursor = None
+    record = new_record(level)
+    for row in closed_candles:
+        if not isinstance(row, Mapping) or row.get("closed") is not True:
+            raise ValueError("MIRROR research requires authoritative closed candles")
+        opened, closed = row.get("open_time_ms"), row.get("close_time_ms")
+        if (type(opened) is not int or type(closed) is not int
+                or opened < 0 or opened % step != 0 or closed - opened != step):
+            raise ValueError("MIRROR research requires aligned native-timeframe candles")
+        if cursor is None:
+            if opened < level.confirmed_at_ms or opened - level.confirmed_at_ms >= step:
+                raise ValueError("MIRROR research missing first usable candle")
+        elif opened != cursor:
+            raise ValueError("MIRROR research candle gap or overlap")
+        record = track(level, (row,), record=record)
+        if record["status"] == STATUS_DATA_BLOCKED:
+            raise ValueError("MIRROR research history gap")
+        cursor = closed
+    breakout = record["naked_retest"].get("breakout")
+    if breakout is not None and not mirror_breakout_allowed(level, breakout):
+        return {"level_id": level.level_id, "status": "BREAKOUT_POLICY_REJECTED",
+                "breakout": None, "first_retest": None, "observation_only": True}
+    return {
+        "level_id": level.level_id, "status": record["status"],
+        "breakout": breakout,
+        "first_retest": record["naked_retest"].get("retest"),
+        "observation_only": True,
+    }
