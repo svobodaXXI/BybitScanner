@@ -215,6 +215,27 @@ describe("standalone SIMULATION viewer contract", () => {
     })).toThrow();
   });
 
+  it("preserves native level origin only on a proven SIMULATION LIMIT", () => {
+    const base = syntheticReplay();
+    const withStrategy = {
+      ...base, events: base.events.map(event =>
+        event.kind === "ENTRY_SIGNAL" ? { ...event, strategy_id: "DOUBLE_TOP" } : event),
+    };
+    const parsed = parseReplayDocument(withStrategy);
+    expect(parsed.events.find(event => event.kind === "ENTRY_SIGNAL")?.strategy_id)
+      .toBe("DOUBLE_TOP");
+    expect(() => parseReplayDocument({
+      ...withStrategy,
+      events: withStrategy.events.map(event =>
+        event.kind === "ENTRY_SIGNAL" ? { ...event, strategy_id: "MIRROR_LEVELS" } : event),
+    })).toThrow(/стратегия/);
+    expect(() => parseReplayDocument({
+      ...withStrategy,
+      events: withStrategy.events.map(event =>
+        event.kind === "ENTRY_FILLED" ? { ...event, strategy_id: "DOUBLE_TOP" } : event),
+    })).toThrow(/стратегия/);
+  });
+
   it("shows only completed candles and fills revealed at the current cursor", () => {
     const doc = syntheticReplay();
     expect(doc.source).toBe("SIMULATION");
