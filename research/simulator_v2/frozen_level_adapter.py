@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import Any, Mapping
 
 import robot_l_shape
+import robot_protection
 from retest_account_risk import position_worst_case_loss_usdt
 from terminal.api.models import VolumeUnit
 from research.simulator_v2.virtual_exchange import LimitRequest, ProtectedLimitRequest
@@ -90,10 +91,16 @@ def preview_native_frozen_level(
             or quantity * entry > settings.max_notional_usdt):
         raise FrozenLevelSimulationBlocked("virtual quantity/notional gate denied 1 WV")
 
-    stop = robot_l_shape.preferred_stop(
-        snapshot, terms, tick_size=settings.tick_size,
-    )
-    take = terms.target
+    # The production Robot applies the same 1.5% limited_stop through
+    # build_l_shape_protection_plan, not the raw frozen structural extreme.
+    # This is an unsubmitted pure plan, never a PAPER/Bybit mutation.
+    try:
+        protection = robot_protection.build_l_shape_protection_plan(
+            candidate, state, average_entry=entry, tick_size=settings.tick_size,
+        )
+    except robot_protection.RobotProtectionError as exc:
+        raise FrozenLevelSimulationBlocked("native Robot protection unavailable") from exc
+    stop, take = protection.stop_price, protection.take_price
     if not (stop < entry < take if terms.direction == "LONG" else take < entry < stop):
         raise FrozenLevelSimulationBlocked("original STOP/TAKE do not straddle entry")
     worst_loss = position_worst_case_loss_usdt(
