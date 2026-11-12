@@ -28,6 +28,8 @@ from terminal.api.models import (
     CommandResult, CommandResultStatus, PaperLimitMutationResult,
     PaperStopMutationResult,
 )
+from mirror_retest_robot import ATTACHED, SCANNER_SOURCE, STRATEGY_ID, mirror_record
+import robot_l_shape
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
 from terminal.application.box_protection_finalizer import finalize_box_protection_obligation
 from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
@@ -184,10 +186,84 @@ class _SimulationActionExecutor:
     def __init__(self, owner: "ConnectedSimulationRobot") -> None:
         self.owner = owner
 
-    def create_limit(self, _request):
-        raise SimulationExecutionNotConnected("non-Box LIMIT is outside this Box adapter")
+    def create_limit(self, request):
+        """Persist only the shared Robot's *attached* MIRROR 1-WV entry.
 
-    amend_limit = create_limit
+        Box still uses its native atomic grid path. This is the other native
+        LIMIT port, not a strategy engine or a shortcut into PAPER execution.
+        The original Robot must first freeze and attach the MIRROR campaign.
+        """
+        self.owner._require_open()
+        source_id = self.owner._source_candidate_id
+        record = (self.owner._store.get_robot_candidate(source_id)
+                  if source_id is not None else None)
+        if (record is None or record.trading_account_id != self.owner.account_id
+                or record.symbol.value != self.owner.session.account.symbol
+                or record.status != "APPROVED" or record.robot_state is None
+                or not robot_l_shape.is_mirror_snapshot(record.signal_snapshot)):
+            raise SimulationExecutionNotConnected(
+                "native MIRROR LIMIT lacks a run-owned approved candidate"
+            )
+        execution = record.robot_state.get("execution")
+        attached = mirror_record(execution)
+        frozen = record.signal_snapshot.get("mirror_entry")
+        if (not isinstance(attached, dict) or attached.get("decision") != ATTACHED
+                or attached.get("mode") != "STANDALONE"
+                or attached.get("strategy_id") != STRATEGY_ID
+                or attached.get("source") != SCANNER_SOURCE
+                or not isinstance(frozen, dict)
+                or attached.get("mirror_level_id") != frozen.get("level_id")):
+            raise SimulationExecutionNotConnected(
+                "native MIRROR campaign attachment is not proven"
+            )
+        native_request = robot_l_shape.build_initial_retest_limit(
+            {"candidate_id": record.candidate_id, "status": record.status,
+             "signal_snapshot": record.signal_snapshot},
+            record.robot_state, tick_size=self.owner._tick_size,
+        ).request
+        if request != native_request:
+            raise SimulationExecutionNotConnected(
+                "MIRROR LIMIT does not match the original Robot plan"
+            )
+        # The native policy has already frozen the 1-WV USDT amount and its
+        # R0 decision. Apply the one instrument step from the local profile;
+        # never silently enlarge a rounded quantity or fall back to a Box size.
+        try:
+            notional = Decimal(str(attached["one_wv_usdt"]))
+            price = request.limit_price
+            step = self.owner.terms.quantity_step
+            quantity = (notional / price // step) * step
+        except (ValueError, TypeError, KeyError, ArithmeticError) as exc:
+            raise SimulationExecutionNotConnected("MIRROR virtual sizing unavailable") from exc
+        if (notional <= 0 or notional.is_finite() or not quantity.is_finite()
+                or quantity < self.owner.terms.minimum_quantity
+                or quantity * price > self.owner.terms.maximum_notional_usdt):
+            raise SimulationExecutionNotConnected("MIRROR virtual size outside instrument limits")
+        digest = hashlib.sha256(
+            f"{self.owner.account_id.value}\\0{request.client_action_id.value}".encode()
+        ).hexdigest()[:32]
+        order_id = OrderId("simulation-limit-" + digest)
+        fingerprint = hashlib.sha256(
+            f"{request.symbol}\\0{request.side.value}\\0{price}\\0{quantity}".encode()
+        ).hexdigest()
+        order, created = self.owner._store.create_paper_limit(
+            client_action_id=request.client_action_id.value,
+            request_fingerprint=fingerprint,
+            order_id=order_id, order_link_id=order_id.value,
+            trading_account_id=self.owner.account_id,
+            symbol=Symbol(request.symbol), side=request.side,
+            price=price, quantity=quantity,
+            created_at_ms=self.owner.virtual_clock_ms(), robot_entry=True,
+        )
+        return PaperLimitMutationResult(
+            request.client_action_id.value, CommandResultStatus.COMPLETED,
+            "created" if created else "already_exists", order.order_id.value,
+        )
+
+    def amend_limit(self, _request):
+        raise SimulationExecutionNotConnected(
+            "native non-Box LIMIT amendment has no verified virtual adapter"
+        )
 
     def cancel_limit(self, request):
         order, changed = self.owner._store.cancel_paper_limit(
