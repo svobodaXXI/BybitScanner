@@ -234,3 +234,89 @@ def prove_robot_campaign_episodes(
         result, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
     ).encode("utf-8")).hexdigest()
     return result
+
+
+
+def project_selected_paper_campaign(
+    snapshot: PaperSourceSnapshot, *, account_id: str, owner: str,
+    trade_episode_id: str, source_revision: int,
+) -> dict[str, object]:
+    """Resolve a selected Diary episode to a fully proven, closed Robot campaign.
+
+    Box entry ownership is the only currently supported exact entry join.
+    Missing campaign or other native strategy provenance stays unavailable,
+    rather than grouping all same-ticker episodes into one replay.
+    """
+    if account_id != "paper" or owner != "ROBOT":
+        _deny("campaign_robot_paper_scope_required")
+    if type(source_revision) is not int or source_revision != snapshot.source_revision:
+        _deny("campaign_source_revision_changed")
+    evidence = snapshot.campaign_evidence
+    required = {"campaigns", "attempts", "trades", "entry_ownership", "obligations"}
+    if evidence is None or set(evidence) != required:
+        _deny("campaign_source_evidence_unavailable")
+    selected = _one(
+        [episode for episode in snapshot.episodes
+         if episode.trade_episode_id.value == trade_episode_id],
+        "campaign_selected_episode_unavailable",
+    )
+    if selected.closed_at_ms is None:
+        _deny("campaign_selected_episode_not_closed")
+    # This exact entry order is the only identity key used to discover the
+    # campaign. Symbol/timing proximity never creates membership.
+    execution_by_id = {
+        item.dedup_key.exec_id.value: item for item in snapshot.executions
+        if item.dedup_key.trading_account_id.value == "paper"
+    }
+    opening_order_ids = {
+        execution_by_id[allocation.execution_key.exec_id.value].order_id.value
+        for allocation in selected.allocations
+        if allocation.role in {AllocationRole.OPEN, AllocationRole.INCREASE}
+        and allocation.execution_key.exec_id.value in execution_by_id
+    }
+    if not opening_order_ids:
+        _deny("campaign_selected_entry_missing")
+    candidates = {
+        row["candidate_id"] for row in evidence["entry_ownership"]
+        if row.get("trading_account_id") == "paper"
+        and row.get("role") == "ENTRY"
+        and row.get("order_id") in opening_order_ids
+    }
+    candidate = _one([{"id": x} for x in candidates],
+                     "campaign_entry_candidate_missing_or_ambiguous")["id"]
+    attempt = _one([
+        row for row in evidence["attempts"] if row.get("candidate_id") == candidate
+        and row.get("trading_account_id") == "paper"
+    ], "campaign_selected_attempt_unproven")
+    campaign = _one([
+        row for row in evidence["campaigns"]
+        if row.get("campaign_id") == attempt.get("campaign_id")
+        and row.get("trading_account_id") == "paper"
+    ], "campaign_selected_campaign_unproven")
+    attempts = [
+        row for row in evidence["attempts"]
+        if row.get("campaign_id") == campaign["campaign_id"]
+        and row.get("trading_account_id") == "paper"
+    ]
+    candidate_ids = {row.get("candidate_id") for row in attempts}
+    trades = [
+        row for row in evidence["trades"]
+        if row.get("candidate_id") in candidate_ids
+        and row.get("trading_account_id") == "paper"
+    ]
+    trade_ids = {row.get("trade_id") for row in trades}
+    return prove_robot_campaign_episodes(
+        snapshot, account_id=account_id, trade_episode_id=trade_episode_id,
+        source_revision=source_revision, campaign=campaign, attempts=attempts,
+        trades=trades,
+        entry_ownership=[
+            row for row in evidence["entry_ownership"]
+            if row.get("candidate_id") in candidate_ids
+            and row.get("trading_account_id") == "paper"
+        ],
+        obligations=[
+            row for row in evidence["obligations"]
+            if row.get("trade_id") in trade_ids
+            and row.get("trading_account_id") == "paper"
+        ],
+    )
