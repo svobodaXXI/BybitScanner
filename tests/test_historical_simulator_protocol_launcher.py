@@ -32,6 +32,22 @@ class SimulatorProtocolTests(unittest.TestCase):
             with self.subTest(uri=uri), self.assertRaises(ValueError):
                 adapter.parse_open_uri(uri)
 
+    def test_pair_uri_accepts_only_existing_slot_and_narrow_token(self):
+        pairing = "bybitscanner-simulator://pair?device_id=owner-pc&token=" + "A" * 64
+        self.assertEqual(adapter.parse_pair_uri(pairing), ("owner-pc", "A" * 64))
+        for bad in (
+            pairing + "&command=calc.exe",
+            pairing + "#frag",
+            pairing + "&token=" + "A" * 64,
+            pairing.replace("owner-pc", "../../other"),
+            pairing.replace("pair?", "pair/run?"),
+            pairing.replace("A" * 64, "SHORT"),
+            pairing.replace("bybitscanner-simulator", "http"),
+            "bybitscanner-simulator://pair?device_id=owner-pc",
+        ):
+            with self.subTest(uri=bad), self.assertRaises(ValueError):
+                adapter.parse_pair_uri(bad)
+
     def test_valid_uri_launches_only_fixed_application(self):
         with patch.object(adapter, "launch_local_viewer") as launch:
             self.assertEqual(adapter.main([GOOD_URI]), 0)
