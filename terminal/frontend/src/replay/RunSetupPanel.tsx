@@ -7,7 +7,7 @@ import {
   parseRunCoordinates, formatRunDuration,
   selectAll, toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeStatus, runnableWedgeSelection,
-  type PeriodPreset, type PeriodIncrement, type RunSelection, type StrategyId,
+  type PeriodPreset, type PeriodIncrement, type RunSelection, type StrategyId, type OiFilterMode,
   type LocalWedgeResult, type LocalWedgeStatus,
 } from "./runSetup";
 import "./runSetup.css";
@@ -48,6 +48,7 @@ export function RunSetupPanel({
   const [preset, setPreset] = useState<PeriodPreset | null>("DAY");
   const [openMirror, setOpenMirror] = useState(true);
   const [balance, setBalance] = useState("1000");
+  const [oiMode, setOiMode] = useState<OiFilterMode>("OFF");
   const [status, setStatus] = useState<LocalWedgeStatus | null>(null);
   const [statusError, setStatusError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -183,7 +184,7 @@ export function RunSetupPanel({
       const coords = value.trim() ? parseRunCoordinates(value) :
         { symbol, start_utc: start, end_utc_inclusive: end };
       const request = makeWedgeRunRequest(
-        selection, coords.symbol, coords.start_utc, coords.end_utc_inclusive, balance,
+        selection, coords.symbol, coords.start_utc, coords.end_utc_inclusive, balance, oiMode,
       );
       requestController.current?.abort();
       requestController.current = null;
@@ -333,7 +334,14 @@ export function RunSetupPanel({
           <input aria-label="Виртуальный депозит" type="text" inputMode="decimal"
             value={balance} onChange={e => setBalance(e.target.value)} />
         </label>
-
+        <label>Открытый интерес (OI · 5 мин)
+          <select aria-label="Фильтр OI" value={oiMode}
+            onChange={e => setOiMode(e.target.value as OiFilterMode)}>
+            <option value="OFF">Без фильтра</option>
+            <option value="RISING">OI растёт</option>
+            <option value="FALLING">OI снижается</option>
+          </select>
+        </label>
       </div>
       <div className="replay-run-footer">
         <span data-selected-strategies={active.join(",")} aria-hidden="true" />
