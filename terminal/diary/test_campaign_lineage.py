@@ -223,6 +223,8 @@ def test_campaign_sqlite_reader_uses_actual_production_table_definitions(tmp_pat
     db = tmp_path / "fixture-paper.sqlite3"
     con = sqlite3.connect(db)
     try:
+        con.execute("PRAGMA foreign_keys=ON")
+        assert con.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         # Minimal unmodified existing Diary source tables, then the canonical
         # production DDL for every campaign join (including their constraints).
         con.executescript("""
@@ -239,7 +241,8 @@ def test_campaign_sqlite_reader_uses_actual_production_table_definitions(tmp_pat
             );
         """)
         for table in (
-            "robot_trades", "box_order_ownership", "robot_reentry_campaigns",
+            "robot_candidates", "box_attempt_ownership", "robot_trades",
+            "box_order_ownership", "robot_reentry_campaigns",
             "robot_reentry_attempts", "paper_protection_obligations",
         ):
             ddl = next(
@@ -271,6 +274,21 @@ def test_campaign_sqlite_reader_uses_actual_production_table_definitions(tmp_pat
                     "command_id": f"command-{exec_id}", "trading_account_id": "paper",
                     "exchange_order_id": oid, "origin": "robot", "controller": "robot",
                 })
+            candidate_snapshot = '{"id":"candidate-' + str(index) + '"}'
+            insert("robot_candidates", {
+                "candidate_id": f"candidate-{index}", "trading_account_id": "paper",
+                "symbol": "BTCUSDT", "status": "APPROVED",
+                "signal_snapshot_json": candidate_snapshot,
+                "snapshot_sha256": hashlib.sha256(candidate_snapshot.encode()).hexdigest(),
+                "robot_state_json": None, "state_revision": 0,
+                "approved_at_ms": opened - 100, "updated_at_ms": opened - 100,
+            })
+            insert("box_attempt_ownership", {
+                "candidate_id": f"candidate-{index}", "trading_account_id": "paper",
+                "symbol": "BTCUSDT", "attempt": 1,
+                "baseline_position_version": 1, "baseline_time_ms": opened - 100,
+                "baseline_execution_count": 0, "baseline_execution_hash": "b" * 64,
+            })
             insert("box_order_ownership", {
                 "trading_account_id": "paper", "order_id": f"entry-{index}",
                 "candidate_id": f"candidate-{index}", "role": "ENTRY", "slot": 1,
