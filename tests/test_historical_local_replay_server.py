@@ -352,13 +352,21 @@ class LocalTakerShadowEntryTests(unittest.TestCase):
                 "selected_strategies": ["WEDGE_FALLING"],
                 "initial_balance": "1000",
             }
+            # The local HTTP test must not import Scanner dependencies or
+            # pretend to test the real research engine (its own CI does that).
+            from types import ModuleType
+            from unittest.mock import Mock
+            stub = ModuleType("research.simulator_v2.wedge_cli")
+            stub.MAX_MANIFEST_BYTES = 125_000
+            stub.parse_manifest = Mock()
+            runner = Mock()
+            runner.return_value.to_payload.return_value = {"namespace": "SIMULATION"}
+            stub.run_from_time_machine_config = runner
             with (
                 patch.object(local, "SIM_DATA", root),
                 patch.object(local, "local_simulation_status", return_value={"can_attempt": True}),
-                patch("research.simulator_v2.wedge_cli.parse_manifest"),
-                patch("research.simulator_v2.wedge_cli.run_from_time_machine_config") as runner,
+                patch.dict("sys.modules", {"research.simulator_v2.wedge_cli": stub}),
             ):
-                runner.return_value.to_payload.return_value = {"namespace": "SIMULATION"}
                 response = local.run_local_simulation(params)
                 self.assertEqual(response["namespace"], "SIMULATION")
                 self.assertEqual(
