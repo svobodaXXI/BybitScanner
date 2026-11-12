@@ -1044,6 +1044,10 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
         return 0
     if not state["pending_notifications"]:
         return 0
+    # Production load_state validates the registry; older isolated delivery
+    # tests substitute a minimal stub state without one.
+    registry = LevelRegistry.from_dict(state["registry"]) if "registry" in state else None
+    from mirror_levels.levels import mirror_breakout_allowed
     rows = {row["level_id"]: row for row in project_state(state)}
     sent = 0
     for item in list(state["pending_notifications"]):
@@ -1059,8 +1063,16 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
             _MIRROR_SEND_NEXT_AT = time.monotonic() + _MIRROR_SEND_MIN_GAP_SEC
         row = rows.get(item["level_id"])
         delivered: bool | str
+        record = state["records"].get(item["level_id"])
+        breakout = ((record.get("naked_retest") or {}).get("breakout")
+                    if isinstance(record, Mapping) else None)
+        level = registry.levels.get(item["level_id"]) if registry is not None else None
         if row is None:
             delivered = "level_missing"
+        elif registry is not None and not mirror_breakout_allowed(level, breakout):
+            # A queued pre-policy chart is not sufficient authority to send
+            # a forbidden MIRROR origin. Retire it without rendering/Telegram.
+            delivered = "mirror_source_policy_revoked"
         elif not getattr(config, "TELEGRAM_ENABLED", False):
             delivered = "telegram_disabled"
         else:
