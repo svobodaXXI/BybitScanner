@@ -67,6 +67,7 @@ from terminal.diary.scoped_statistics_archive import (
     StatisticsScopeError, load_latest_scoped_statistics_read_only,
 )
 from terminal.diary.scoped_statistics_reporter import load_paper_source_snapshot
+from terminal.diary.campaign_lineage import CampaignLineageUnproven, project_selected_paper_campaign
 from terminal.diary.ticker_finrez import (
     EpisodeFactsNotFound, EpisodeFactsSourceChanged,
     project_paper_closed_episode_facts, project_paper_ticker_pnl,
@@ -3391,6 +3392,48 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             except Exception:
                 LOGGER.exception("Closed episode facts projection unavailable")
                 self._json_response(503, {"ok": False, "error": "episode_facts_evidence_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
+        if parsed.path == "/api/diary/campaign-lineage":
+            # Proven, read-only Robot campaign genealogy only. Does not
+            # claim to provide historical decisions, geometry or candles.
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            if (set(params) != {"account_id", "owner", "trade_episode_id", "source_revision"}
+                    or any(len(v) != 1 for v in params.values())
+                    or params["owner"][0] not in {"ROBOT", "MANUAL"}):
+                self._json_response(400, {"ok": False, "error": "campaign_lineage_scope_required"})
+                return
+            if params["account_id"][0] != "paper" or params["owner"][0] != "ROBOT":
+                self._json_response(404, {"ok": False, "error": "campaign_lineage_scope_unavailable"})
+                return
+            episode_id, revision = params["trade_episode_id"][0], params["source_revision"][0]
+            if (len(episode_id) != 27 or not episode_id.startswith("te_")
+                    or any(char not in "0123456789abcdef" for char in episode_id[3:])
+                    or not 1 <= len(revision) <= 20 or not revision.isascii()
+                    or not revision.isdecimal() or revision[0] == "0"):
+                self._json_response(400, {"ok": False, "error": "campaign_lineage_identity_invalid"})
+                return
+            try:
+                snapshot = load_paper_source_snapshot(
+                    self.server.diary_source_db_path, include_campaign_evidence=True,
+                )
+                projection = project_selected_paper_campaign(
+                    snapshot, account_id="paper", owner="ROBOT",
+                    trade_episode_id=episode_id, source_revision=int(revision),
+                )
+            except CampaignLineageUnproven:
+                # Missing entry ownership / historical reentry is not a
+                # fabricated empty campaign or a plausible ticker-based join.
+                self._json_response(409, {"ok": False, "error": "campaign_lineage_unproven"})
+                return
+            except (StatisticsScopeError, ValueError):
+                self._json_response(503, {"ok": False, "error": "campaign_lineage_source_unavailable"})
+                return
+            except Exception:
+                LOGGER.exception("Verified campaign lineage unavailable")
+                self._json_response(503, {"ok": False, "error": "campaign_lineage_source_unavailable"})
                 return
             self._json_response(200, {"ok": True, **projection})
             return
