@@ -601,25 +601,46 @@ export function ReplayPage() {
     const nonce = params.get("nonce");
     const sourceOrigin = params.get("source_origin");
     if (!episodeId && !nonce && !sourceOrigin) return;
-    let trustedOrigin = false;
-    try {
-      const url = new URL(sourceOrigin || "");
-      trustedOrigin = (url.protocol === "https:" || url.protocol === "http:") &&
-        url.origin === sourceOrigin;
-    } catch { /* An invalid foreign URL can never become the authority. */ }
     if (!episodeId || !/^te_[0-9a-f]{24}$/.test(episodeId) ||
-        !nonce || !/^[0-9a-f]{32}$/.test(nonce) || !trustedOrigin) {
+        !nonce || !/^[0-9a-f]{32}$/.test(nonce) || !sourceOrigin) {
       setError("Неверный адрес выбранного эпизода из Статистики");
       return;
     }
-    const opener = window.opener;
-    if (!opener) {
-      setError("Связь со Статистикой недоступна. Импортируйте JSON фактов сделки вручную.");
-      return;
-    }
-    let received = false;
-    const receive = (event: MessageEvent) => {
-      if (received || event.source !== opener || event.origin !== sourceOrigin ||
+    // The fragment is attacker-supplied routing data, NOT a trust authority.
+    // Only the independently installed local Simulator configuration can
+    // authorize the exact Statistics HTTPS origin. No insecure fallback.
+    let cancelled = false;
+    let listener: ((event: MessageEvent) => void) | null = null;
+    void (async () => {
+      let trustedOrigin: string;
+      try {
+        const response = await fetch("/local-replay/simulation/trusted-statistics-origin",
+          { cache: "no-store" });
+        if (!response.ok) throw new Error("trusted origin not installed");
+        const config = await response.json() as { schema?: unknown; origin?: unknown };
+        if (config.schema !== "LOCAL_TRUSTED_STATISTICS_ORIGIN_V1" ||
+            typeof config.origin !== "string" ||
+            config.origin !== sourceOrigin ||
+            new URL(config.origin).protocol !== "https:" ||
+            new URL(config.origin).origin !== config.origin)
+          throw new Error("untrusted Statistics origin");
+        trustedOrigin = config.origin;
+      } catch {
+        if (!cancelled) setError(
+          "Переход из Статистики заблокирован: доверенный HTTPS-адрес не совпадает " +
+          "с локальной настройкой или не настроен. Импортируйте JSON сделки вручную.",
+        );
+        return;
+      }
+      if (cancelled) return;
+      const opener = window.opener;
+      if (!opener) {
+        setError("Связь со Статистикой недоступна. Импортируйте JSON фактов сделки вручную.");
+        return;
+      }
+      let received = false;
+      const receive = (event: MessageEvent) => {
+      if (received || event.source !== opener || event.origin !== trustedOrigin ||
           !event.data || typeof event.data !== "object") return;
       const value = event.data as Record<string, unknown>;
       if (value.type !== "BYBITSCANNER_EPISODE_FACTS" ||
@@ -669,11 +690,16 @@ export function ReplayPage() {
         }
       })();
     };
-    window.addEventListener("message", receive);
-    opener.postMessage({
-      type: "BYBITSCANNER_SIMULATOR_READY", trade_episode_id: episodeId, nonce,
-    }, sourceOrigin);
-    return () => window.removeEventListener("message", receive);
+      listener = receive;
+      window.addEventListener("message", listener);
+      opener.postMessage({
+        type: "BYBITSCANNER_SIMULATOR_READY", trade_episode_id: episodeId, nonce,
+      }, trustedOrigin);
+    })();
+    return () => {
+      cancelled = true;
+      if (listener) window.removeEventListener("message", listener);
+    };
   }, [onPasteSymbol]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const historyRequest = useRef<AbortController | null>(null);
