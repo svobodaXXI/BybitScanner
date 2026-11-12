@@ -71,6 +71,14 @@ For weak local computers the first slice caps the focused in-memory tape at **20
 
 At each eligible **committed historical M1**, `VirtualReplaySession.observe_committed_taker_prints()` is called automatically. The original Wedge Scanner and Robot remain the only trading-decision modules; the flow observer cannot authorize, cancel or execute any trade. The existing simulation result adds an `entry_flow_shadow` section only when the explicit real tape is enabled: observed adjacent windows and candidate buy-wave / sell-impact-fading timestamps. No flow evidence is manufactured for missing/invalid source data. Integration tests exercise the original replay runner, hash mismatch, invalid side, missing minute and the bounded budget. Live Hub/Robot input wiring remains **not implemented**.
 
+## 2026-11-12 — optional local publicTrade SHADOW hook
+
+The **existing** `MarketDataHub` already owns a single Bybit public WebSocket and the source `SymbolContext`. An opt-in `add_trade_listener` now allows **read-only** delivery of original, successfully applied `publicTrade` packets without another subscription, extra service, order ownership or additional market-stream polling. Listener failures cannot abort the authoritative dispatch and existing listeners/disconnect ownership remain unchanged.
+
+`research/robot_entry_flow_live.py:LocalRobotFlowShadow` can be **explicitly attached** to one already-subcribed context. It feeds the same Robot-owned `CompletedFlowObserver`, retaining only a bounded current minute and one previous completed window. It quarantines the first (possibly partial) minute after attach and reconnect, rejects duplicates, invalid side, stale/future timestamps, overlong frames, oversized minutes and disconnected/degraded streams, and publishes a transition only after the next minute's source frame establishes the prior minute has closed. Disconnect and gaps reset continuity. This is a **local opt-in analytical interface, not active Scanner/Robot startup wiring**: no local or VPS runtime has been started, reconfigured or deployed in this PR.
+
+Important limitation: even a healthy public WebSocket **cannot attest a complete exchange execution history** if messages are silently lost. All such observations carry `OBSERVED_WS_FRAMES_NOT_COMPLETE_EXCHANGE_TAPE` semantics. Therefore they are SHADOW research only, **not** permissions to trade and not substitutes for pinned offline source proof, OI, liquidation events or confirmed price/stop execution. Do not use them to alter canonical Scanner/Robot admission or strategy policy until independent evidence and provenance checks justify a separately reviewed design.
+
 ## Shortest dependent delivery path
 
 1. **This slice:** publish the pure common flow observation and focused unit tests; no runtime integration or new numeric policy thresholds.
