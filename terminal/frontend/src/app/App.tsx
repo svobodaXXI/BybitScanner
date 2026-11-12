@@ -24,7 +24,7 @@ import {
 } from "../marketData/workspaceSwitch";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
-import { appendRetrospectiveCandles, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
+import { appendRetrospectiveCandles, projectVerifiedSignalOverlay, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
 import type { OwnerChartDraft, OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import { matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
@@ -282,25 +282,36 @@ export function App() {
   );
   const market = useMarketData();
   const tradingSymbol = market.book.symbol;
-  // Telegram signal provenance is independent of the selected PAPER/MAIN account.
-  // Only draw exact frozen anchors on matching *current* candles, never on
-  // an unrelated symbol/interval or an approximate historical bar.
-  const terminalSignalDrawings = useMemo(() => {
-    // Keep the verified Editor source rays on manual Terminal navigation only.
-    // Editor-origin geometry cannot become an Autopilot/Robot trading signal.
-    const eligible = launchLink?.mode === "TERMINAL"
-      ? mode === "TERMINAL" || mode === "AUTOPILOT"
-      : launchLink?.mode === "EDITOR" && mode === "TERMINAL";
-    if (!eligible
-        || !launchLink?.signalId || !frozenSignal
+  // Keep verified Scanner source rays and saved Editor corrections in the
+  // current-candle view of the SAME linked signal/symbol/timeframe. Never
+  // reinterpret a source pivot using a nearby candle or another ticker.
+  const currentSignalOverlay = useMemo(() => {
+    if (!launchLink?.signalId || !frozenSignal
         || tradingSymbol !== launchLink.symbol || timeframe !== launchLink.timeframe)
       return null;
     try {
-      return projectSignalGeometry(frozenSignal.sourceBoundaries, market.candles).referenceDrawings;
+      return projectVerifiedSignalOverlay(
+        frozenSignal.sourceBoundaries, frozenSignal.candles,
+        frozenSignal.editableDrawings, market.candles,
+      );
     } catch {
-      return null; // Missing historical anchor: no fabricated live geometry.
+      return null; // The current feed may not contain the archived pivot candles.
     }
-  }, [mode, launchLink, frozenSignal, tradingSymbol, timeframe, market.candles]);
+  }, [launchLink, frozenSignal, tradingSymbol, timeframe, market.candles]);
+  const editorCurrentOverlay = useMemo(() => {
+    if (!launchLink?.signalId || !frozenSignal
+        || tradingSymbol !== launchLink.symbol || timeframe !== launchLink.timeframe)
+      return null;
+    if (!ownerChartCandles) return currentSignalOverlay;
+    try {
+      return projectVerifiedSignalOverlay(
+        frozenSignal.sourceBoundaries, frozenSignal.candles,
+        frozenSignal.editableDrawings, ownerChartCandles,
+      );
+    } catch {
+      return null;
+    }
+  }, [launchLink, frozenSignal, tradingSymbol, timeframe, ownerChartCandles, currentSignalOverlay]);
   const { paperState, pendingActions } = usePaperTrading(tradingSymbol);
   const accountWorkspace = useAccountWorkspace(tradingSymbol);
   const modeAccountSelection = useModeAccountSelection();
@@ -313,6 +324,22 @@ export function App() {
       ? scopedProjection(mode, selectedModeAccountId,
           accountWorkspace.projection, modeAccountSelection.mainProjection)
       : null;
+  // A Telegram signal is not evidence of another account's geometry.
+  // Reuse the linked rays in Terminal only when its selected account is the
+  // same explicitly scoped account as the Editor source view.
+  const terminalSignalDrawings = useMemo(() => {
+    const eligible = launchLink?.mode === "TERMINAL"
+      ? mode === "TERMINAL" || mode === "AUTOPILOT"
+      : launchLink?.mode === "EDITOR" && mode === "TERMINAL";
+    if (!eligible || !currentSignalOverlay || accountWorkspace.switching ||
+        !modeAccountSelection.ready || modeAccountSelection.pendingMode === mode ||
+        !accountProjection?.account_id ||
+        accountProjection.account_id !== accountWorkspace.projection?.account_id)
+      return null;
+    return currentSignalOverlay;
+  }, [mode, launchLink, currentSignalOverlay, accountWorkspace.switching,
+      accountWorkspace.projection?.account_id, modeAccountSelection.ready,
+      modeAccountSelection.pendingMode, accountProjection?.account_id]);
   const mutationsAllowed = !accountWorkspace.switching
     && accountProjection?.provider === "PAPER"
     && accountProjection.environment === "PAPER"
@@ -1446,6 +1473,7 @@ export function App() {
               tickSize={null}
               editorMode={ownerChartCandles !== null}
               ownerChartMode={ownerChartCandles !== null}
+              referenceDrawings={editorCurrentOverlay ?? []}
               onSubmitOwnerChart={ownerChartCandles ? async (draft: OwnerChartDraft) => {
                 const response = await fetch("/api/workspace/owner-unscanned-signal", {
                   method: "POST", credentials: "same-origin",
@@ -1476,6 +1504,10 @@ export function App() {
           )}
           <div className="editor-current-chart-toolbar">
             <strong>Актуальный график · {launchLink?.symbol ?? market.book.symbol} · {timeframe}</strong>
+            {editorCurrentOverlay === null && <output role="status">
+              Линии сигнала не показаны: его опорных свечей нет в текущей истории.
+              Приблизительная разметка не создаётся.
+            </output>}
             <button type="button" onClick={() => { setShowCurrentEditorChart(false); setOwnerChartCandles(null); setOwnerChartError(""); }}>
               Вернуться к сигналу
             </button>

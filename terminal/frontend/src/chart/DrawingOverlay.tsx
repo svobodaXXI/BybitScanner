@@ -153,7 +153,8 @@ export function DrawingOverlay({
         .filter((p): p is Point => p !== null);
       if (!points.length) continue;
       const isReference = referenceDrawings.includes(drawing);
-      if (isReference) ctx.setLineDash([6, 4]);
+      const dashedReference = isReference && drawing.referenceStroke !== "solid";
+      if (dashedReference) ctx.setLineDash([6, 4]);
       ctx.strokeStyle = drawing.style.color;
       ctx.fillStyle = drawing.style.color;
       ctx.lineWidth = drawing.style.lineWidth;
@@ -220,7 +221,7 @@ export function DrawingOverlay({
           b.y - 8,
         );
       }
-      if (isReference) ctx.setLineDash([]);
+      if (dashedReference) ctx.setLineDash([]);
       if (!isReference && drawing.id === selectedId) {
         for (const p of points) {
           ctx.beginPath();

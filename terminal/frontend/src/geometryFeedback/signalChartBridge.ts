@@ -1,6 +1,6 @@
 import type { Candle } from "../contracts/marketData";
 import type { DrawingObject } from "../chart/drawingModel";
-import type { TimestampDrawing } from "./geometryReviewDraft";
+import { isValidCachedEditorDraft, serializeReviewDrawings, type TimestampDrawing } from "./geometryReviewDraft";
 
 const expectedAnchorCount = (type: DrawingObject["type"]) =>
   ["horizontal", "horizontal-ray", "vertical"].includes(type) ? 1 : 2;
@@ -58,6 +58,42 @@ export function projectSignalGeometry(
     locked: false,
   }));
   return { referenceDrawings, editableDrawings };
+}
+
+
+/**
+ * Display the original Scanner rays and the owner's last verified/saved
+ * correction on another chart of the same signal, as read-only overlays.
+ * Preserve exact UTC anchor candles and prices; never snap to a nearby
+ * candle, extrapolate from a ticker name, or store these lines as trades.
+ *
+ * The caller must check signal ID, symbol and timeframe. A missing source
+ * candle fails closed instead of shifting rays to a different bar.
+ */
+export function projectVerifiedSignalOverlay(
+  source: readonly TimestampDrawing[],
+  signalCandles: readonly Candle[],
+  reviewedDrawings: readonly DrawingObject[],
+  chartCandles: readonly Candle[],
+): DrawingObject[] {
+  const frozenReference = projectSignalGeometry(source, signalCandles).referenceDrawings;
+  if (!isValidCachedEditorDraft(reviewedDrawings, frozenReference, signalCandles))
+    throw new Error("Unverified source/correction geometry");
+  const reference = projectSignalGeometry(source, chartCandles).referenceDrawings;
+  const corrected = projectSignalGeometry(
+    serializeReviewDrawings(reviewedDrawings, signalCandles), chartCandles,
+  ).referenceDrawings;
+  // Both layers are observations, not editable signal submissions on the
+  // current chart. Keep the distinct original/editable styles and IDs.
+  return [
+    ...reference,
+    ...corrected.map((line, index) => ({
+      ...line,
+      style: { ...reviewedDrawings[index].style },
+      referenceStroke: "solid" as const,
+      locked: true,
+    })),
+  ];
 }
 
 
