@@ -1174,6 +1174,16 @@ export function ReplayPage() {
               : " · D2: исходный setup появится после его подтверждённого времени на графике"
         )}
       </p>}
+      {paperFacts?.owner === "ROBOT" && paperSetupContext?.status === "EXACT_D2_LINK" &&
+        paperSetupVisible && paperSetupContext.setup.pattern.toUpperCase() === "MIRROR" && (
+        <p className="replay-note" role="status" aria-label="Предупреждение об исторической стратегии Mirror">
+          ⚠ Mirror: правила источников уровней изменены. В фактах этого эпизода
+          отсутствуют доказанные источник уровня, его сторона и направление пробоя.
+          Нельзя установить, торговался ли сигнал по отменённой границе.
+          Эпизод доступен только для исторического просмотра; не считать его
+          подтверждённым примером действующей стратегии Mirror.
+        </p>
+      )}
       <section className="replay-meta" aria-label="Состояние симулятора">
         <div><span>Источник</span><strong>{fileLabel}</strong></div>
         <div><span>Время рынка</span><strong>{simulationGraphPending ? "До начала прогона" :
