@@ -240,6 +240,48 @@ class LoopbackServerTests(unittest.TestCase):
             self.assertEqual(code, 403)
             self.assertEqual(calls, [])
 
+    def test_statistics_origin_is_local_pinned_and_untrusted_sources_fail_closed(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(local, "SIM_DATA", root), self.running_server() as (port, calls):
+                endpoint = "/local-replay/simulation/trusted-statistics-origin"
+                status, _, _ = self.call(port, "GET", endpoint)
+                self.assertEqual(status, 503, "no owner configuration must deny handoff")
+                status, _, _ = self.call(port, "GET", endpoint + "?source_origin=https://evil.example")
+                self.assertEqual(status, 403, "fragment/query cannot supply trust authority")
+                trust = root / "trusted-statistics-origin.txt"
+                for invalid in (
+                    "https://*.example.com", "http://stats.example.com",
+                    "https://stats.example.com/unsafe", "https://stats.example.com?x=1",
+                    "https://user:pass@stats.example.com", "https://stats.example.com:bad",
+                    "https://stats.example.com\nhttps://evil.example",
+                ):
+                    trust.write_text(invalid, encoding="utf-8")
+                    status, _, _ = self.call(port, "GET", endpoint)
+                    self.assertEqual(status, 503, f"unsafe origin {invalid!r} accepted")
+                trust.write_text("https://stats.example.com\n", encoding="ascii")
+                status, body, headers = self.call(port, "GET", endpoint)
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(body), {
+                    "schema": "LOCAL_TRUSTED_STATISTICS_ORIGIN_V1",
+                    "origin": "https://stats.example.com",
+                })
+                self.assertEqual(headers["Cache-Control"], "no-store")
+                for host, extra in (
+                    ("untrusted.example", {}),
+                    (None, {"Origin": "https://evil.example"}),
+                    (None, {"Sec-Fetch-Site": "cross-site"}),
+                ):
+                    status, _, _ = self.call(
+                        port, "GET", endpoint, host=host, extra_headers=extra,
+                    )
+                    self.assertEqual(status, 403)
+                trust.unlink()
+                trust.symlink_to(root / "external-origin.txt")
+                status, _, _ = self.call(port, "GET", endpoint)
+                self.assertEqual(status, 503, "symlink must not import external trust")
+                self.assertEqual(calls, [])
+
     def test_history_is_get_only_without_paper_side_effects(self):
         with self.running_server() as (port, calls):
             path = "/local-replay/history?symbol=BTCUSDT&start=2026-01-01&end=2026-01-02"
