@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from robot_entry_flow_evidence import CompletedFlowObserver, FlowTransition, TakerPrint
+from robot_entry_flow_evidence import CompletedFlowObserver, FlowTransition, TakerPrint, ImpulseProtectedPlan
 from research.historical_market_replay import Candle
 from research.simulator_v2.timeline import (
     IsolatedTimeline, MinuteFrame, SimulationEvent, StageFact, StepBlocked,
@@ -295,6 +295,41 @@ class VirtualReplaySession:
         )
         self.exchange.submit_protected_limit(
             request, submitted_at_ms=self.virtual_time_ms,
+        )
+
+    def submit_protected_impulse(self, plan: ImpulseProtectedPlan) -> None:
+        """Execute a pure Robot impulse plan through the EXISTING virtual venue.
+
+        Unlike the wedge-retest method, this accepts only the dedicated
+        checked shared Robot signal/plan from the most recent committed M1.
+        It does not create any PAPER or LIVE order authority.
+        """
+        if not isinstance(plan, ImpulseProtectedPlan):
+            raise TypeError("shared Robot protected impulse plan required")
+        if self.timeline.paused_stage is not None or (
+            self.virtual_time_ms is None
+            or self.timeline.virtual_time_ms != self.exchange.virtual_time_ms
+            or plan.signal.known_at_ms != self.virtual_time_ms
+        ):
+            raise StepBlocked("uncommitted or stale impulse plan forbidden")
+        if self._last_committed_minute is None or (
+            self._last_committed_minute.end_ms != self.virtual_time_ms
+        ):
+            raise StepBlocked("impulse must follow a committed closed M1")
+        if self.account.snapshot(
+            as_of_ms=self.virtual_time_ms, mark_price=plan.entry_price,
+        ).position_quantity != 0:
+            raise ValueError("virtual impulse account must be flat")
+        # The shared Robot plan has checked worst-loss and fee-aware minimum
+        # RR. The same venue executes STOP-first, not an alternate matcher.
+        entry = LimitRequest(
+            order_id=f"IMPULSE_{self.virtual_time_ms}",
+            side="BUY" if plan.signal.direction == "LONG" else "SELL",
+            quantity=plan.quantity, limit_price=plan.entry_price,
+        )
+        self.exchange.submit_protected_limit(
+            ProtectedLimitRequest(entry, plan.stop_price, plan.take_price),
+            submitted_at_ms=self.virtual_time_ms,
         )
 
     def amend_limit(self, request: LimitRequest) -> None:
