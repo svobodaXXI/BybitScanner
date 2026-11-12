@@ -137,12 +137,14 @@ def run_local_simulation(
         raise ValueError("invalid local wedge run field")
     selected = request_data["selected_strategies"]
     if (not isinstance(selected, list) or not selected or len(selected) > 2
-            or any(s not in ("WEDGE_RISING", "WEDGE_FALLING", "IKIGAI_BOX")
+            or any(s not in ("WEDGE_RISING", "WEDGE_FALLING", "IKIGAI_BOX", "IMPULSE_FLOW")
                    for s in selected)
             or len(set(selected)) != len(selected)):
         raise ValueError("only implemented Wedge or Ikigai Box may trade")
     if "IKIGAI_BOX" in selected and len(selected) != 1:
         raise ValueError("Ikigai Box currently requires an isolated one-strategy run")
+    if "IMPULSE_FLOW" in selected and len(selected) != 1:
+        raise ValueError("Impulse flow requires one isolated virtual strategy")
 
     status = local_simulation_status()
     if not status["can_attempt"]:
