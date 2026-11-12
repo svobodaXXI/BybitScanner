@@ -387,6 +387,20 @@ class LocalVirtualTradeEntryTests(unittest.TestCase):
                     runner.call_args.kwargs["config"]["oi_mode"], "RISING",
                 )
                 runner.reset_mock()
+                local.run_local_simulation({
+                    **params, "selected_strategies": ["IMPULSE_FLOW"], "oi_mode": "FALLING",
+                })
+                self.assertEqual(
+                    runner.call_args.kwargs["config"]["selected_strategies"],
+                    ["IMPULSE_FLOW"],
+                )
+                self.assertEqual(runner.call_args.kwargs["flow_archive_dir"], root / "raw-trades")
+                runner.reset_mock()
+                with self.assertRaisesRegex(ValueError, "one isolated"):
+                    local.run_local_simulation({
+                        **params, "selected_strategies": ["IMPULSE_FLOW", "WEDGE_FALLING"],
+                    })
+                runner.assert_not_called()
                 # Box does not silently use the Wedge-only research tape.
                 local.run_local_simulation({
                     **params, "selected_strategies": ["IKIGAI_BOX"],
