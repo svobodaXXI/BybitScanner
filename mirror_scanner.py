@@ -560,6 +560,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
     records: dict[str, dict[str, Any]] = state["records"]
     journal: list[dict[str, Any]] = []
     base = {"symbol": symbol, "timeframe": timeframe}
+    from mirror_levels.levels import mirror_level_allowed, mirror_breakout_allowed
 
     for level in sorted(collect_levels(symbol, timeframe, candles, wedge_result=wedge_result,
                                        horn_observation=horn_observation,
@@ -600,7 +601,6 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
 
     # Historic persisted levels are untrusted after a source-policy change.
     # Keep their evidence but remove candidate eligibility and unsent alerts.
-    from mirror_levels.levels import mirror_level_allowed, mirror_breakout_allowed
     for level_id, record in records.items():
         level = registry.levels.get(level_id)
         breakout = (record.get("naked_retest") or {}).get("breakout")
