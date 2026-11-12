@@ -22,6 +22,8 @@ SCHEME = "bybitscanner-simulator"
 PORT = 48765
 HERE = Path(__file__).resolve().parent
 EPISODE_RE = re.compile(r"te_[0-9a-f]{24}\Z")
+DEVICE_RE = re.compile(r"[a-z][a-z0-9_-]{1,31}\Z")
+PAIR_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{48,256}\Z")
 
 
 def parse_open_uri(value: str) -> str:
@@ -40,6 +42,24 @@ def parse_open_uri(value: str) -> str:
     if not EPISODE_RE.fullmatch(episode_id):
         raise ValueError("invalid episode ID")
     return episode_id
+
+
+def parse_pair_uri(value: str) -> tuple[str, str]:
+    """No origin, arbitrary URL, shell argument or pathname is trusted."""
+    if not isinstance(value, str) or len(value) > 450:
+        raise ValueError("invalid simulator pairing link length")
+    url = urlsplit(value)
+    if (url.scheme != SCHEME or url.netloc != "pair" or url.path
+            or url.fragment or not url.query or url.username is not None
+            or url.password is not None):
+        raise ValueError("unsupported simulator pairing link")
+    params = parse_qs(url.query, strict_parsing=True, keep_blank_values=True)
+    if set(params) != {"device_id", "token"} or any(len(v) != 1 for v in params.values()):
+        raise ValueError("invalid simulator pairing fields")
+    device, token = params["device_id"][0], params["token"][0]
+    if not DEVICE_RE.fullmatch(device) or not PAIR_TOKEN_RE.fullmatch(token):
+        raise ValueError("invalid simulator pairing identity")
+    return device, token
 
 
 def register_windows_protocol() -> None:
@@ -114,6 +134,18 @@ def main(argv: list[str] | None = None) -> int:
     if len(args) != 1:
         return 2
     try:
+        if args[0].startswith(SCHEME + "://pair"):
+            device, token = parse_pair_uri(args[0])
+            if os.name != "nt":
+                return 2
+            # The existing local trusted-statistics-origin.txt is the only
+            # HTTPS trust anchor. Pairing cannot change or infer its value.
+            if __package__:
+                from .launch_bridge_agent import pair_device
+            else:
+                from launch_bridge_agent import pair_device
+            pair_device(device, token)
+            return 0
         episode = parse_open_uri(args[0])
         launch_local_viewer(episode)
         return 0
