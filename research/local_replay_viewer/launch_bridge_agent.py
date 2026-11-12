@@ -126,10 +126,13 @@ def poll_once(config: dict[str, str], *, opener=None, launch=launch_local_viewer
     except (OSError, ValueError):
         pass
     # ACK never contains a file, command, URL, credentials or PAPER data.
-    _send(config, path="/api/diary/simulator-bridge/ack", body={
+    ack = _send(config, path="/api/diary/simulator-bridge/ack", body={
         "device_id": config["device_id"], "request_id": request_id,
         "launched": opened,
     }, opener=opener)
+    if (set(ack) != {"ok", "state"}
+            or ack["state"] != ("LAUNCHED" if opened else "FAILED")):
+        raise AgentConfigError("simulator_bridge_ack_unproven")
     return "OPEN_REQUESTED" if opened else "OPEN_FAILED"
 
 
