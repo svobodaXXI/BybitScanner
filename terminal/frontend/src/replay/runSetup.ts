@@ -193,7 +193,7 @@ export function makeWedgeRunRequest(
   oi_mode?: OiFilterMode;
 } {
   if (!runnableWedgeSelection(selection)) {
-    throw new Error("Доступны клинья или отдельная стратегия охоты за импульсом");
+    throw new Error("Пока доступны только клинья или отдельная охота за импульсом");
   }
   const { minutes } = validateInclusiveWindow(start, endInclusive);
   if (minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
