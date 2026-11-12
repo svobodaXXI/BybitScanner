@@ -154,7 +154,12 @@ jobs:
         run: |
           python -B server.py --check
           python -B protocol_launcher.py --register
-          python -c "import winreg; from pathlib import Path; from protocol_launcher import SCHEME; k=winreg.OpenKey(winreg.HKEY_CURRENT_USER, f'Software\\Classes\\{SCHEME}\\shell\\open\\command'); command=winreg.QueryValueEx(k, '')[0]; assert str(Path('protocol_launcher.py').resolve()) in command and '\"%1\"' in command; print('LOCAL_PROTOCOL_REGISTERED_HKCU_ONLY')"
+          if ($LASTEXITCODE -ne 0) { throw 'Simulator protocol registration failed' }
+          $handler = (Get-Item 'HKCU:\Software\Classes\bybitscanner-simulator\shell\open\command').GetValue('')
+          if (-not $handler.Contains('protocol_launcher.py') -or -not $handler.EndsWith(' "%1"')) {
+            throw 'Simulator protocol handler missing exact script or fixed URI parameter'
+          }
+          Write-Output 'LOCAL_PROTOCOL_REGISTERED_HKCU_ONLY'
           python -B smoke_package.py
           python -c "from research.simulator_v2.wedge_cli import run_from_time_machine_config; from research.simulator_v2.wedge_observer import WedgeScannerConfig; import pandas; print('LOCAL_WEDGE_ENGINE_PACKAGE_IMPORT_OK')"
           python -B box_lifecycle_smoke.py
