@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from robot_entry_flow_evidence import CompletedFlowObserver, FlowTransition, TakerPrint
 from research.historical_market_replay import Candle
 from research.simulator_v2.timeline import (
     IsolatedTimeline, MinuteFrame, SimulationEvent, StageFact, StepBlocked,
@@ -75,6 +76,7 @@ class VirtualReplaySession:
             initial_balance=initial_balance,
         )
         self._last_committed_minute: Candle | None = None
+        self._entry_flow_observer = CompletedFlowObserver(symbol=symbol, window_ms=60_000)
         self.exchange = VirtualExchange(
             account=self.account, taker_fee_rate=taker_fee_rate,
             maker_fee_rate=maker_fee_rate,
@@ -139,6 +141,31 @@ class VirtualReplaySession:
     def last_committed_minute(self) -> Candle | None:
         """Only the exact closed M1 whose full shared timeline committed."""
         return self._last_committed_minute
+
+    @property
+    def latest_entry_flow(self) -> FlowTransition | None:
+        """Read-only market-flow evidence; never affects virtual admission."""
+        return self._entry_flow_observer.last_transition
+
+    def observe_committed_taker_prints(
+        self, prints: tuple[TakerPrint, ...], *, source_id: str,
+    ) -> FlowTransition | None:
+        """Optional SIMULATION observer of authentic prints for the last CLOSED M1.
+
+        This is an input adapter for the SAME Robot-owned flow evidence module.
+        The caller must prove completeness/provenance of the historical tape;
+        market-only M1 data cannot be re-labelled as taker executions. No
+        virtual orders, protected entry policy or journal are modified.
+        """
+        minute = self._last_committed_minute
+        if (minute is None or self.timeline.paused_stage is not None
+                or self.timeline.virtual_time_ms != self.exchange.virtual_time_ms
+                or self.timeline.virtual_time_ms != minute.end_ms):
+            raise StepBlocked("closed, committed M1 required before flow observation")
+        return self._entry_flow_observer.observe_closed(
+            prints, start_ms=minute.start_ms, end_ms=minute.end_ms,
+            observed_at_ms=minute.end_ms, source_id=source_id,
+        )
 
     def step(self, minute: Candle) -> VirtualAccountSnapshot:
         if self.timeline.virtual_time_ms != self.exchange.virtual_time_ms:
