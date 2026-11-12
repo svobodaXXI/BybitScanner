@@ -760,6 +760,67 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
             "standalone_handoffs": handed}
 
 
+def verified_standalone_snapshot(
+    symbol: str, state: Mapping[str, Any], entry: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Pure native Scanner authorization gate shared with local SIMULATION.
+
+    No handoff, network, order or persistence. Source and frozen confirmation
+    must still be the exact live, untested, owner-approved MIRROR campaign.
+    """
+    from pattern_robot_integration import is_robot_executable_signal
+    from mirror_levels.levels import (
+        LevelRegistry, mirror_breakout_allowed, mirror_frozen_entry_allowed,
+        mirror_level_allowed,
+    )
+
+    if (not isinstance(state, Mapping) or state.get("symbol") != symbol
+            or state.get("state_version") != STATE_VERSION
+            or not isinstance(entry, Mapping)
+            or not isinstance(state.get("records"), Mapping)):
+        return None
+    registry = LevelRegistry.from_dict(state["registry"])
+    level_id = str(entry.get("entry_id") or "").split("@", 1)[0]
+    level = registry.levels.get(level_id)
+    record = state["records"].get(level_id)
+    terms = entry.get("terms")
+    breakout = ((record.get("naked_retest") or {}).get("breakout")
+                if isinstance(record, Mapping) else None)
+    confirmation = terms.get("confirmation") if isinstance(terms, Mapping) else None
+    authorized = (
+        mirror_level_allowed(level)
+        and level.symbol == symbol
+        and isinstance(record, Mapping)
+        and record.get("candidate") is True
+        and record.get("lifecycle") == LIFECYCLE_TRACKING
+        and record.get("status") == STATUS_UNTESTED
+        and record.get("rejection") is None
+        and mirror_breakout_allowed(level, breakout)
+        and isinstance(terms, Mapping)
+        and mirror_frozen_entry_allowed(terms)
+        and isinstance(confirmation, Mapping)
+        and type(confirmation.get("close_time_ms")) is int
+        and terms.get("level_id") == level_id
+        and terms.get("level_timeframe") == level.timeframe
+        and terms.get("level_source") == level.source
+        and terms.get("level_pattern") == level.pattern
+        and terms.get("level_side") == level.side
+        and terms.get("level_breakout_direction") == breakout.get("direction")
+        and terms.get("level_breakout_close_ms") == breakout.get("close_time_ms")
+        and terms.get("direction") == breakout.get("campaign_direction")
+        and terms.get("source_timeframe") in CONFIRMATION_TIMEFRAMES
+        and entry.get("entry_id") == (
+            f"{level_id}@{terms.get('source_timeframe')}@{confirmation['close_time_ms']}"
+        )
+    )
+    if not authorized:
+        return None
+    snapshot = _standalone_snapshot(symbol, terms)
+    return (snapshot if is_robot_executable_signal(
+        snapshot, timeframe=terms["source_timeframe"],
+    ) else None)
+
+
 def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) -> list[str]:
     """Hand each new standalone entry to the common Robot handoff at most once.
 
@@ -767,62 +828,18 @@ def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) 
     handed again (a duplicate candidate could spend the campaign twice). Flag off -> ``OFF`` (observation).
     """
 
-    from pattern_robot_integration import is_robot_executable_signal, prepare_robot_handoff
-    from mirror_levels.levels import (
-        LevelRegistry, mirror_breakout_allowed, mirror_frozen_entry_allowed, mirror_level_allowed,
-    )
+    from pattern_robot_integration import prepare_robot_handoff
 
-    registry = LevelRegistry.from_dict(state["registry"])
     handed = []
     for entry in state.get("standalone_entries") or ():
         if entry.get("handoff") != "PENDING":
             continue
-        # Old persisted entries are untrusted even if their level still exists.
-        # Recheck the live candidate, native breakout and all frozen provenance
-        # before any Robot handoff; no ticker/price inference or resurrection.
-        level_id = str(entry.get("entry_id") or "").split("@", 1)[0]
-        level = registry.levels.get(level_id)
-        record = state["records"].get(level_id)
-        terms = entry.get("terms")
-        breakout = ((record.get("naked_retest") or {}).get("breakout")
-                    if isinstance(record, Mapping) else None)
-        confirmation = terms.get("confirmation") if isinstance(terms, Mapping) else None
-        authorized = (
-            mirror_level_allowed(level)
-            and level.symbol == symbol
-            and isinstance(record, Mapping)
-            and record.get("candidate") is True
-            and record.get("lifecycle") == LIFECYCLE_TRACKING
-            and record.get("status") == STATUS_UNTESTED
-            and record.get("rejection") is None
-            and mirror_breakout_allowed(level, breakout)
-            and isinstance(terms, Mapping)
-            and mirror_frozen_entry_allowed(terms)
-            and isinstance(confirmation, Mapping)
-            and type(confirmation.get("close_time_ms")) is int
-            and terms.get("level_id") == level_id
-            and terms.get("level_timeframe") == level.timeframe
-            and terms.get("level_source") == level.source
-            and terms.get("level_pattern") == level.pattern
-            and terms.get("level_side") == level.side
-            and terms.get("level_breakout_direction") == breakout.get("direction")
-            and terms.get("level_breakout_close_ms") == breakout.get("close_time_ms")
-            and terms.get("direction") == breakout.get("campaign_direction")
-            and terms.get("source_timeframe") in CONFIRMATION_TIMEFRAMES
-            and entry.get("entry_id") == (
-                f"{level_id}@{terms.get('source_timeframe')}@{confirmation['close_time_ms']}"
-            )
-        )
-        if not authorized:
+        snapshot = verified_standalone_snapshot(symbol, state, entry)
+        if snapshot is None:
             entry["handoff"] = "OFF"
             save_state(state, root)
             continue
-        snapshot = _standalone_snapshot(symbol, terms)
-        timeframe = terms["source_timeframe"]
-        if not is_robot_executable_signal(snapshot, timeframe=timeframe):
-            entry["handoff"] = "OFF"
-            save_state(state, root)
-            continue
+        timeframe = snapshot["mirror_entry"]["source_timeframe"]
         entry["handoff"] = "SENT"
         save_state(state, root)
         result = prepare_robot_handoff(snapshot, timeframe=timeframe, enabled=True)
