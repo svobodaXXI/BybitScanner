@@ -192,7 +192,7 @@ class SymbolContext:
         with self._listener_lock:
             self._update_listeners.clear()
             self._disconnect_listeners.clear()
-        self._trade_listeners.clear()
+            self._trade_listeners.clear()
         self.public_orderbook.set_update_consumer(None)
         self.public_orderbook.close()
         self.public_trades.close()
