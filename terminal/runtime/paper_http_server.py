@@ -4071,6 +4071,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         if path in {
             "/api/diary/simulator-bridge/request",
             "/api/diary/simulator-bridge/status",
+            "/api/diary/simulator-bridge/pair",
             "/api/diary/simulator-bridge/ack",
         }:
             # Owner-facing routes rely on existing Nginx owner authentication
@@ -4098,6 +4099,15 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     payload = self._payload({"request_id"})
                     result = relay.status(
                         payload["request_id"],
+                        request_origin=self.headers.get("Origin", ""),
+                        fetch_site=self.headers.get("Sec-Fetch-Site", ""),
+                    )
+                elif path.endswith("/pair"):
+                    # Nginx owner-auth must protect this route exactly as
+                    # request/status. No device token is provisioned on VPS.
+                    payload = self._payload({"device_id"})
+                    result = relay.pairing_credentials(
+                        device_id=payload["device_id"],
                         request_origin=self.headers.get("Origin", ""),
                         fetch_site=self.headers.get("Sec-Fetch-Site", ""),
                     )
