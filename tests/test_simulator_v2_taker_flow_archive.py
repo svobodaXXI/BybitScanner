@@ -25,7 +25,7 @@ SYMBOL = "BTCUSDT"
 def config(cache, proofs, archive=None):
     return dict(
         cache_dir=cache, symbol=SYMBOL, proofs=proofs,
-        latest_closed_boundary_ms=END, simulation_run_id="tape-shadow",
+        latest_closed_boundary_ms=END, simulation_run_id="tape-paper",
         initial_balance=D("1000"),
         start_ms=START + 120 * M, end_inclusive_ms=START + 123 * M,
         scanner_config=WedgeScannerConfig(window_bars=50, mode="hunter", min_score=50),
@@ -38,7 +38,7 @@ def config(cache, proofs, archive=None):
 
 
 class PinnedTakerFlowReplayTests(TestCase):
-    def test_reversed_raw_archive_auto_feeds_shared_robot_observer_without_orders(self):
+    def test_reversed_raw_archive_feeds_shared_robot_virtual_entry_filter(self):
         with TemporaryDirectory() as td:
             root = Path(td)
             archive = root / "raw"
@@ -67,10 +67,10 @@ class PinnedTakerFlowReplayTests(TestCase):
             with patch.object(ReadOnlyWedgeScanner, "_evaluate", return_value=None):
                 result = run_cached_wedge_trade_range(**config(cache, proofs, archive))
             report = result.to_payload()
-            observed = report["entry_flow_shadow"]
-            self.assertEqual(observed["observed_windows"], 3)
-            self.assertIn(START + 122*M, observed["buy_wave_times_ms"])
-            self.assertEqual(observed["trade_authority"], "NONE")
+            entry = report["paper_flow_entry"]
+            self.assertEqual(entry["execution"], "EXISTING_PROTECTED_VIRTUAL_EXCHANGE")
+            self.assertEqual(entry["oi_mode"], "OFF")
+            self.assertEqual(entry["permitted_retests"], 0)
             self.assertEqual(result.report.virtual_fills, 0)
             self.assertEqual(result.report.total_net_pnl, D("0"))
 
@@ -80,7 +80,7 @@ class PinnedTakerFlowReplayTests(TestCase):
                 without_raw = run_cached_wedge_trade_range(
                     **config(cache, proofs, None),
                 )
-            self.assertNotIn("entry_flow_shadow", without_raw.to_payload())
+            self.assertNotIn("paper_flow_entry", without_raw.to_payload())
             self.assertEqual(without_raw.report, result.report)
             with self.assertRaisesRegex(ValueError, "missing or unsafe"):
                 run_cached_wedge_trade_range(**config(cache, proofs, archive))
