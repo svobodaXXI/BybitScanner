@@ -597,6 +597,22 @@ export function ReplayPage() {
   // Actual PAPER fills remain read-only and separate from virtual orders.
   useEffect(() => {
     const params = new URLSearchParams(window.location.hash.slice(1));
+    const locator = params.get("locator");
+    if (locator !== null) {
+      // Windows protocol launch carries an ID only, never historical PAPER
+      // facts. No opener = no trusted postMessage; do not infer a campaign.
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      setPlaying(false);
+      setPaperFacts(null);
+      if (!/^te_[0-9a-f]{24}$/.test(locator) || params.size !== 1) {
+        setError("Неверный идентификатор сделки из локального запускателя");
+      } else {
+        setFileLabel("ID сделки из Статистики: " + locator);
+        setError("Симулятор открыт по ID. Полная цепочка сделки ещё не передана: " +
+          "для просмотра фактов импортируйте проверенный JSON; свечи и решения не подставляются.");
+      }
+      return;
+    }
     const episodeId = params.get("episode");
     const nonce = params.get("nonce");
     const sourceOrigin = params.get("source_origin");
