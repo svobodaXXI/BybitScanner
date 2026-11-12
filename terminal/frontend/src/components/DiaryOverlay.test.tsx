@@ -746,6 +746,8 @@ describe("Statistics full-width account/close header", () => {
     expect(header.nextElementSibling).toBe(heading);
     expect(heading).toHaveTextContent("Терминал");
     expect(heading).toHaveTextContent("Статистика");
+    expect(heading.children).toHaveLength(2);
+    expect(heading.firstElementChild?.nextElementSibling).toBe(heading.querySelector("h2"));
     expect(heading).not.toHaveTextContent("раздельная статистика");
     expect(accountControl).toHaveClass("account-switch-button");
     expect(accountControl.querySelectorAll(".account-switch-key")).toHaveLength(1);
@@ -760,7 +762,7 @@ describe("Statistics full-width account/close header", () => {
 });
 
 describe("Statistics source headings", () => {
-  it("shows Автопилот above Статистика for the robot scope, without a duplicated account caption", async () => {
+  it("shows Автопилот and Статистика next to each other in the shared compact heading", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(finrezResponse), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(<DiaryOverlay accountKey="paper:robot" initialSection="FINREZ"
@@ -768,6 +770,8 @@ describe("Statistics source headings", () => {
     const heading = container.querySelector(".diary-context-heading")!;
     expect(heading.querySelector("p")).toHaveTextContent("Автопилот");
     expect(heading.querySelector("h2")).toHaveTextContent("Статистика");
+    expect(heading.children).toHaveLength(2);
+    expect(heading.firstElementChild?.nextElementSibling).toBe(heading.querySelector("h2"));
     expect(heading).not.toHaveTextContent("PAPER");
     expect(heading).not.toHaveTextContent("раздельная статистика");
     await screen.findByText("ETHUSDT");
