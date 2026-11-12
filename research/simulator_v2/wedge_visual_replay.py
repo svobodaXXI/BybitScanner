@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Callable
 
 from research.historical_market_replay import Candle
+from robot_entry_flow_evidence import ImpulseProtectedPlan
 from research.wilder_dmi import WilderDmi
 from research.simulator_v2.session import VirtualReplaySession
 
@@ -19,6 +20,7 @@ class WedgeVisualReplay:
     def __init__(
         self, *, run_id: str, symbol: str, start_ms: int, end_ms: int,
         on_events: Callable[[list[dict[str, object]]], None] | None = None,
+        impulse_plans: dict[str, ImpulseProtectedPlan] | None = None,
     ):
         self.run_id = run_id
         self.symbol = symbol
@@ -34,6 +36,7 @@ class WedgeVisualReplay:
         self._m5 = 0
         self._last_released_trade_events = 0
         self._on_events = on_events
+        self._impulse_plans = impulse_plans
         self._emitted = 0
         self._event_order = {
             "CANDLE_CLOSED": 0, "WEDGE_ACCEPTED": 1, "WEDGE_BREAKOUT": 2,
@@ -72,9 +75,9 @@ class WedgeVisualReplay:
         ):
             raise ValueError("visual replay changed SIMULATION identity")
         robot = session.wedge_robot
-        if robot is None:
-            raise ValueError("visual replay requires the original Wedge Robot")
-        decisions = robot.decisions
+        if robot is None and self._impulse_plans is None:
+            raise ValueError("visual replay requires committed Wedge or impulse Robot")
+        decisions = robot.decisions if robot is not None else ()
         if len(decisions) < self._decision_count:
             raise ValueError("Robot decisions went backwards")
         for decision in decisions[self._decision_count:]:
@@ -100,20 +103,32 @@ class WedgeVisualReplay:
         for order in orders[self._order_count:]:
             if order.kind != "SUBMITTED" or order.order_type != "LIMIT":
                 continue
-            robot = session.wedge_robot
             if robot is None:
-                raise ValueError("visual replay requires original Wedge Robot")
-            preview = next((
-                p for p in robot.risk_previews
-                if p.request.order_id == order.order_id
-            ), None)
-            if preview is None:
-                raise ValueError("unproved LIMIT submitted without Robot risk preview")
+                # Impulse order must match a committed shared Robot plan.
+                plan = (self._impulse_plans or {}).get(order.order_id)
+                if plan is None or plan.signal.known_at_ms != order.virtual_time_ms:
+                    raise ValueError("impulse LIMIT lacks committed Robot risk plan")
+                side, price, stop, take = (
+                    plan.signal.direction, plan.entry_price,
+                    plan.stop_price, plan.take_price,
+                )
+            else:
+                preview = next((
+                    p for p in robot.risk_previews
+                    if p.request.order_id == order.order_id
+                ), None)
+                if preview is None:
+                    raise ValueError("unproved LIMIT submitted without Robot risk preview")
+                side = "LONG" if preview.request.side == "BUY" else "SHORT"
+                price, stop, take = (
+                    preview.request.limit_price, preview.stop_price,
+                    preview.take_price,
+                )
             self._items.append({
                 "kind": "ENTRY_SIGNAL", "time_ms": order.virtual_time_ms,
-                "side": "LONG" if preview.request.side == "BUY" else "SHORT",
-                "price": float(preview.request.limit_price),
-                "stop": float(preview.stop_price), "take": float(preview.take_price),
+                "side": side,
+                "price": float(price),
+                "stop": float(stop), "take": float(take),
                 "trade_id": f"SIMULATION:{self.run_id}:{order.order_id}",
             })
         self._order_count = len(orders)
