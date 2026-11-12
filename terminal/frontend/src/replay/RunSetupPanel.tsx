@@ -4,7 +4,7 @@ import { streamWedge } from "./streamWedge";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, PLANNED_OPTIONS,
   clearAll, isAllSelected, onlyWedges, onlyBox, presetEndInclusive, adjustInclusiveWindow,
-  parseRunCoordinates, formatRunDuration,
+  parseRunCoordinates, parseEpisodeLocator, formatRunDuration,
   selectAll, toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeStatus, runnableWedgeSelection,
   type PeriodPreset, type PeriodIncrement, type RunSelection, type StrategyId,
@@ -22,13 +22,14 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
 
 /** Native Wedge/Box Scanner+Robot via one isolated loopback SIMULATION adapter. */
 export function RunSetupPanel({
-  symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
+  symbol, onArchiveSymbol, onPasteSymbol, onEpisodeLocator, onSimulationStart, onSimulationReady,
   onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
   onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange,
 }: {
   symbol: string;
   onArchiveSymbol: (archiveSymbol: string) => boolean;
   onPasteSymbol: (symbol: string) => void;
+  onEpisodeLocator: (episodeId: string) => void;
   onSimulationStart: (request: WedgeRunRequest) => void;
   onSimulationBusy: (busy: boolean) => void;
   playRequestId: number;
@@ -183,6 +184,21 @@ export function RunSetupPanel({
   };
   const applyCoordinates = (value: string) => {
     try {
+      const episodeId = parseEpisodeLocator(value);
+      if (episodeId !== null) {
+        // Do not let a previously prepared virtual strategy run survive a
+        // switch to a PAPER episode ID with no verified market history.
+        requestController.current?.abort();
+        requestController.current = null;
+        running.current = false;
+        generation.current++;
+        preparedRun.current = null;
+        onSimulationBusy(false);
+        setLoading(false); setReport(null); setRunError("");
+        setCoordinateText(episodeId); setCoordinateError("");
+        onEpisodeLocator(episodeId);
+        return;
+      }
       const coords = value.trim() ? parseRunCoordinates(value) :
         { symbol, start_utc: start, end_utc_inclusive: end };
       const request = makeWedgeRunRequest(
@@ -278,9 +294,9 @@ export function RunSetupPanel({
         <fieldset className="replay-run-dates">
           <legend>Исторический период · UTC</legend>
           <div className="replay-run-coordinates">
-            <label>Вставить тикер и даты · UTC
+            <label>Вставить тикер и даты · UTC или ID сделки
               <input aria-label="Координаты прогона" type="text" value={coordinateText}
-                placeholder="XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59"
+                placeholder="XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59 или te_..."
                 onChange={e => { setCoordinateText(e.target.value); setCoordinateError(""); }} />
             </label>
             <div className="replay-run-coordinate-actions">
