@@ -793,9 +793,13 @@ const dealLabels: Record<ClosedEpisodeLocator["cohort"], string> = {
   JOINT_MANAGEMENT: "Робот + ручное управление",
 };
 
-function ClosedDealsView({ report }: { report: FinrezResponse }) {
+function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
+  report: FinrezResponse; symbolFilter: string | null; onClearSymbolFilter: () => void;
+}) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const deals = useMemo(() => report.closed_episodes ?? [], [report.closed_episodes]);
+  const deals = useMemo(() => (report.closed_episodes ?? []).filter((deal) =>
+    symbolFilter === null || deal.symbol === symbolFilter,
+  ), [report.closed_episodes, symbolFilter]);
   const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
@@ -935,6 +939,12 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
   }
   return (
     <div className="diary-detail" aria-label="Закрытые сделки по эпизодам">
+      {symbolFilter !== null ? (
+        <div className="diary-finrez-filter">
+          <button type="button" className="diary-detail-back" onClick={onClearSymbolFilter}>← Все сделки</button>
+          <span>Сделки по {symbolFilter}</span>
+        </div>
+      ) : null}
       {report.attribution_coverage.status === "PARTIAL" ? (
         <p className="diary-finrez-coverage" role="status">
           История неполная: исключено {report.attribution_coverage.excluded_unattributed_episode_count} эпизодов
@@ -972,7 +982,9 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
   );
 }
 
-function FinrezView({ report }: { report: FinrezResponse }) {
+function FinrezView({ report, onSelectTicker }: {
+  report: FinrezResponse; onSelectTicker: (symbol: string) => void;
+}) {
   return (
     <div className="diary-finrez" aria-label="Финансовый результат по тикерам">
       <p className="diary-finrez-basis">
@@ -996,12 +1008,14 @@ function FinrezView({ report }: { report: FinrezResponse }) {
       ) : (
         <div className="diary-finrez-list">
           {report.tickers.map((ticker) => (
-            <div className="diary-finrez-row" key={ticker.symbol}>
+            <button type="button" className="diary-finrez-row diary-finrez-row-action"
+                key={ticker.symbol} aria-label={`Показать сделки по ${ticker.symbol}`}
+                title="Показать отдельные сделки по тикеру" onClick={() => onSelectTicker(ticker.symbol)}>
               <strong>{ticker.symbol}</strong>
               <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
-                {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{ticker.pnl_usdt} USDT
+                {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{displayTradePnl(ticker.pnl_usdt)} USDT
               </span>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -1014,12 +1028,14 @@ function FinrezView({ report }: { report: FinrezResponse }) {
           </p>
           <div className="diary-finrez-list">
             {report.manual_interventions.map((ticker) => (
-              <div className="diary-finrez-row" key={ticker.symbol}>
+              <button type="button" className="diary-finrez-row diary-finrez-row-action"
+                key={ticker.symbol} aria-label={`Показать сделки по ${ticker.symbol}`}
+                title="Показать отдельные сделки по тикеру" onClick={() => onSelectTicker(ticker.symbol)}>
                 <strong>{ticker.symbol}</strong>
                 <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
-                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{ticker.pnl_usdt} USDT
+                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{displayTradePnl(ticker.pnl_usdt)} USDT
                 </span>
-              </div>
+              </button>
             ))}
           </div>
         </section>
@@ -1033,12 +1049,14 @@ function FinrezView({ report }: { report: FinrezResponse }) {
           </p>
           <div className="diary-finrez-list">
             {report.joint_management.map((ticker) => (
-              <div className="diary-finrez-row" key={ticker.symbol}>
+              <button type="button" className="diary-finrez-row diary-finrez-row-action"
+                key={ticker.symbol} aria-label={`Показать сделки по ${ticker.symbol}`}
+                title="Показать отдельные сделки по тикеру" onClick={() => onSelectTicker(ticker.symbol)}>
                 <strong>{ticker.symbol}</strong>
                 <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
-                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{ticker.pnl_usdt} USDT
+                  {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{displayTradePnl(ticker.pnl_usdt)} USDT
                 </span>
-              </div>
+              </button>
             ))}
           </div>
         </section>
@@ -1070,6 +1088,7 @@ export function DiaryOverlay({
   const [statistics, setStatistics] = useState<DiaryStatistics | null>(null);
   const [finrez, setFinrez] = useState<FinrezResponse | null>(null);
   const [finrezPeriod, setFinrezPeriod] = useState<FinrezPeriod>("DAY");
+  const [finrezSymbolFilter, setFinrezSymbolFilter] = useState<string | null>(null);
   const [mirrorLevels, setMirrorLevels] = useState<MirrorLevelRow[]>([]);
   const [tradeFilter, setTradeFilter] = useState<DiaryFilter>("ALL");
   const [setupFilter, setSetupFilter] = useState<SetupFilter>("ALL");
@@ -1270,14 +1289,14 @@ export function DiaryOverlay({
                 ["MONTH", "Месяц"], ["YEAR", "Год"], ["ALL", "Всё время"],
               ] as const).map(([period, label]) => (
                 <button key={period} aria-pressed={finrezPeriod === period} type="button"
-                  onClick={() => setFinrezPeriod(period)}>{label}</button>
+                  onClick={() => { setFinrezSymbolFilter(null); setFinrezPeriod(period); }}>{label}</button>
               ))}
             </nav>
           ) : null}
           <nav className="diary-primary-nav" aria-label="Разделы статистики">
-            <button aria-current={section === "FINREZ" || section === "STATISTICS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("FINREZ"); }} type="button">Финрез</button>
+            <button aria-current={section === "FINREZ" || section === "STATISTICS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setFinrezSymbolFilter(null); setSection("FINREZ"); }} type="button">Финрез</button>
             <button aria-current={section === "PATTERNS" || section === "SETUPS" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("PATTERNS"); }} type="button">Паттерны</button>
-            <button aria-current={section === "DEALS" || section === "TRADES" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setSection("DEALS"); }} type="button">Сделки</button>
+            <button aria-current={section === "DEALS" || section === "TRADES" ? "page" : undefined} onClick={() => { setSelectedTradeId(null); setFinrezSymbolFilter(null); setSection("DEALS"); }} type="button">Сделки</button>
           </nav>
           {!selectedTrade && (section === "TRADES" || section === "SETUPS") ? (
             <div className="diary-filter-bar" aria-label={section === "TRADES" ? "Фильтры сделок" : "Фильтры сетапов"}>
@@ -1302,10 +1321,12 @@ export function DiaryOverlay({
             </div>
           ) : null}
 
-          {!loading && !loadError && !selectedTrade && section === "FINREZ" && finrez ? <FinrezView report={finrez} /> : null}
+          {!loading && !loadError && !selectedTrade && section === "FINREZ" && finrez ? <FinrezView report={finrez}
+            onSelectTicker={(symbol) => { setFinrezSymbolFilter(symbol); setSection("DEALS"); }} /> : null}
           {!loading && !loadError && !selectedTrade && section === "PATTERNS" ? <p className="diary-state">Паттерны — второй этап после визуальной приёмки «Финреза»</p> : null}
           {!loading && !loadError && !selectedTrade && section === "DEALS" && finrez ? (
-            <ClosedDealsView key={`${finrez.account_id}:${finrez.owner}:${finrez.period}:${finrez.source_revision}`} report={finrez} />
+            <ClosedDealsView key={`${finrez.account_id}:${finrez.owner}:${finrez.period}:${finrez.source_revision}:${finrezSymbolFilter ?? "ALL"}`}
+              report={finrez} symbolFilter={finrezSymbolFilter} onClearSymbolFilter={() => setFinrezSymbolFilter(null)} />
           ) : null}
           {!loading && !loadError && selectedTrade ? <TradeDetailsView trade={selectedTrade} onBack={() => { setRequestedTradeMissing(false); setSelectedTradeId(null); }} /> : null}
           {!loading && !loadError && requestedTradeMissing && section === "TRADES" ? <p className="diary-state">Сделка недоступна в текущем дневнике</p> : null}
