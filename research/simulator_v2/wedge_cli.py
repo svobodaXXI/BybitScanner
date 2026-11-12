@@ -239,6 +239,92 @@ def run_from_time_machine_config(
     )
 
 
+
+def compare_oi_virtual_runs(
+    *, config: Mapping[str, Any], manifest: Mapping[str, Any],
+    cache_dir: Path, latest_closed_boundary_ms: int,
+    flow_archive_dir: Path, oi_history_path: Path,
+) -> dict[str, object]:
+    """Three sequential virtual Robot runs against EXACTLY the same pinned tape.
+
+    Reuses the original Scanner/Robot, protected LIMIT, STOP/TAKE, fees and
+    exchange. No alternate policy or order executor is added. This function
+    NEVER fetches or repairs historical data and requires both authentic
+    selected raw trades and a source-labeled local 5m OI file.
+    """
+    from research.simulator_v2.virtual_account import IDENTITY
+
+    if (not isinstance(config, Mapping)
+            or not isinstance(config.get("simulation_run_id"), str)
+            or not IDENTITY.fullmatch(config["simulation_run_id"])
+            or len(config["simulation_run_id"]) > 85):
+        raise ValueError("safe base virtual run identity required")
+    if (not isinstance(flow_archive_dir, Path) or flow_archive_dir.is_symlink()
+            or not flow_archive_dir.is_dir()
+            or not isinstance(oi_history_path, Path) or oi_history_path.is_symlink()
+            or not oi_history_path.is_file()):
+        raise ValueError("three-way virtual comparison requires local raw tape and 5m OI")
+    source_key = None
+    common_oi_sha = None
+    cohorts = []
+    for mode in ("OFF", "RISING", "FALLING"):
+        candidate = run_from_time_machine_config(
+            config={
+                **config,
+                "oi_mode": mode,
+                "simulation_run_id": f"{config['simulation_run_id']}_oi_{mode.lower()}",
+            },
+            manifest=manifest, cache_dir=cache_dir,
+            latest_closed_boundary_ms=latest_closed_boundary_ms,
+            flow_archive_dir=flow_archive_dir, oi_history_path=oi_history_path,
+        )
+        if not isinstance(candidate, WedgeBacktestResult):
+            raise ValueError("three-way OI research requires original Wedge Robot")
+        report = candidate.report
+        if not candidate.paper_flow_gate_enabled or report.namespace != "SIMULATION":
+            raise ValueError("comparison requires genuine protected virtual Robot entries")
+        identity = (
+            report.symbol, report.source_id, report.chunk_sha256,
+            report.first_open_ms, report.last_closed_ms, report.initial_balance,
+            candidate.requested_start_ms, candidate.requested_end_inclusive_ms,
+            candidate.archive_proofs,
+        )
+        if source_key is None:
+            source_key = identity
+        elif identity != source_key:
+            raise ValueError("OI cohorts used different source, period or virtual balance")
+        sha = candidate.paper_oi_sha256
+        if mode != "OFF":
+            if not sha or (common_oi_sha is not None and sha != common_oi_sha):
+                raise ValueError("OI cohorts used missing or mismatched OI history")
+            common_oi_sha = sha
+        cohorts.append({
+            "oi_mode": mode,
+            "simulation_run_id": report.simulation_run_id,
+            "virtual_fills": report.virtual_fills,
+            "submitted_protected_limits": candidate.submitted_protected_limits,
+            "stop_exits": candidate.stop_exits, "take_exits": candidate.take_exits,
+            "oi_rejected_retests": candidate.paper_oi_rejected_retests,
+            "flow_rejected_retests": candidate.paper_flow_rejected_retests,
+            "total_fees": str(report.total_fees),
+            "total_net_pnl": str(report.total_net_pnl),
+            "return_percent": str(report.return_percent),
+            "max_drawdown_percent": str(report.max_drawdown_percent),
+            "open_position_quantity": str(report.final_position_quantity),
+            "pending_protection": candidate.pending_protection,
+        })
+    return {
+        "namespace": "SIMULATION",
+        "mode": "THREE_WAY_PROTECTED_VIRTUAL_OI_COMPARISON",
+        "symbol": source_key[0], "trade_source_id": source_key[1],
+        "oi_source_sha256": common_oi_sha,
+        "requested_start_ms": source_key[6],
+        "requested_end_inclusive_ms": source_key[7],
+        "cohorts": cohorts,
+        "claim": "RESEARCH_ONLY_NO_PROVEN_PROFITABILITY",
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Offline local Wedge/Box Bybit public-trade research; NO PAPER/LIVE",
@@ -251,21 +337,33 @@ def main() -> None:
     parser.add_argument("--oi-history-csv", type=Path, default=None,
                         help="local {SYMBOL}.csv from historical Bybit 5m OI")
     parser.add_argument("--oi-mode", choices=sorted(OI_MODES), default="OFF")
+    parser.add_argument("--compare-oi", action="store_true",
+                        help="run OFF, RISING and FALLING with the SAME virtual Robot and source")
     args = parser.parse_args()
     from research.simulator_v2.history import last_closed_m1_boundary_ms
     try:
         config = _read_json(args.config, max_bytes=MAX_CONFIG_BYTES)
         manifest = _read_json(args.manifest, max_bytes=MAX_MANIFEST_BYTES)
-        result = run_from_time_machine_config(
-            config={**config, "oi_mode": args.oi_mode}, manifest=manifest,
-            cache_dir=args.cache_dir,
-            latest_closed_boundary_ms=last_closed_m1_boundary_ms(),
-            flow_archive_dir=args.flow_archive_dir,
-            oi_history_path=args.oi_history_csv,
-        )
+        if args.compare_oi:
+            if args.oi_mode != "OFF":
+                raise ValueError("compare-oi selects all three OI modes itself")
+            payload = compare_oi_virtual_runs(
+                config=config, manifest=manifest, cache_dir=args.cache_dir,
+                latest_closed_boundary_ms=last_closed_m1_boundary_ms(),
+                flow_archive_dir=args.flow_archive_dir,
+                oi_history_path=args.oi_history_csv,
+            )
+        else:
+            result = run_from_time_machine_config(
+                config={**config, "oi_mode": args.oi_mode}, manifest=manifest,
+                cache_dir=args.cache_dir,
+                latest_closed_boundary_ms=last_closed_m1_boundary_ms(),
+                flow_archive_dir=args.flow_archive_dir,
+                oi_history_path=args.oi_history_csv,
+            )
+            payload = result.to_payload()
     except (ValueError, FileNotFoundError, TypeError, KeyError) as exc:
         parser.error(f"BLOCKED: {exc}")
-    payload = result.to_payload()
     payload["risk_terms_source"] = config["risk"]["terms_source"]
     payload["risk_terms_status"] = "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED"
     print(json.dumps(payload, sort_keys=True, ensure_ascii=False))
