@@ -21,7 +21,7 @@ from mirror_levels.imbalance import (
 from mirror_levels.levels import (
     SOURCE_PATTERN_BOUNDARY, SOURCE_SWING_ZONE, LevelRegistry, MirrorLevel, MirrorLevelError,
     horizontal_level, level_identity, levels_from_geometry, levels_from_horn_event,
-    mirror_level_allowed,
+    mirror_level_allowed, mirror_frozen_entry_allowed,
     levels_from_ikigai_box, levels_from_l_shape, levels_from_wedge_candidate, line_level,
 )
 from mirror_levels.swing import confirmed_pivots, swing_levels
@@ -367,3 +367,25 @@ def test_owner_mirror_source_policy_blocks_wrong_wedge_sides_box_horn_and_unknow
         symbol="X", timeframe="5", source=SOURCE_SWING_ZONE,
         pattern="HORN", side="upper", price=101.0,
         anchor_time_ms=M, confirmed_at_ms=2 * M))
+
+
+def test_legacy_frozen_mirror_entries_cannot_bypass_new_robot_gate():
+    valid = {
+        "level_id": "lvl-0123456789abcdef01234567",
+        "level_source": SOURCE_PATTERN_BOUNDARY,
+        "level_pattern": "Rising Wedge",
+        "level_side": "lower",
+        "level_breakout_direction": "DOWN",
+    }
+    assert mirror_frozen_entry_allowed(valid)
+    assert not mirror_frozen_entry_allowed({**valid, "level_side": "upper"})
+    assert not mirror_frozen_entry_allowed({**valid, "level_breakout_direction": "UP"})
+    assert not mirror_frozen_entry_allowed({**valid, "level_pattern": "IKIGAI_BOX"})
+    assert not mirror_frozen_entry_allowed({**valid, "level_pattern": "Broadening"})
+    assert not mirror_frozen_entry_allowed({k: v for k, v in valid.items()
+                                            if k != "level_side"})
+    assert mirror_frozen_entry_allowed({
+        **valid, "level_source": SOURCE_SWING_ZONE,
+        "level_pattern": None, "level_side": "upper",
+        "level_breakout_direction": "UP",
+    })
