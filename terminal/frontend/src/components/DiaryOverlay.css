@@ -124,15 +124,18 @@
 }
 
 .diary-context-heading {
-  display: grid;
-  gap: 0.12rem;
-  padding: 0.55rem 0.7rem 0.5rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.35rem 0.7rem;
   border-bottom: 1px solid #27313b;
 }
 
 .diary-context-heading p,
 .diary-context-heading h2 {
   margin: 0;
+  white-space: nowrap;
 }
 
 .diary-context-heading p {
