@@ -21,6 +21,7 @@ from research.simulator_v2.cache import _checksum, _rows
 from research.simulator_v2.history import HistoryChunk, MINUTE_MS
 from research.simulator_v2.report import ReplayReport, run_verified_chunks
 from research.simulator_v2.session import VirtualReplaySession
+from research.simulator_v2.taker_flow_archive import pinned_taker_minutes
 from research.simulator_v2.trade_range import (
     TradeDayProof, _ordered_proofs, iter_pinned_trade_chunks,
 )
@@ -45,6 +46,10 @@ class WedgeBacktestResult:
     pending_protection: bool
     archive_proofs: tuple[TradeDayProof, ...] = ()
     replay_document: dict[str, object] | None = None
+    flow_observed_windows: int = 0
+    flow_buy_wave_times_ms: tuple[int, ...] = ()
+    flow_sell_fading_times_ms: tuple[int, ...] = ()
+    flow_tape_enabled: bool = False
     namespace: str = "SIMULATION"
 
     def to_payload(self) -> dict[str, object]:
@@ -67,6 +72,12 @@ class WedgeBacktestResult:
                 for proof in self.archive_proofs
             ],
             "execution_model": "SIMULATION_OHLC_STOP_FIRST_NOT_REAL_BYBIT_FILLS",
+            **({"entry_flow_shadow": {
+                "observed_windows": self.flow_observed_windows,
+                "buy_wave_times_ms": list(self.flow_buy_wave_times_ms),
+                "sell_impact_fading_times_ms": list(self.flow_sell_fading_times_ms),
+                "trade_authority": "NONE",
+            }} if self.flow_tape_enabled else {}),
         }
 
 
@@ -87,6 +98,7 @@ def run_verified_wedge_chunks(
     *,
     start_ms: int, end_inclusive_ms: int,
     visual_recorder: WedgeVisualReplay | None = None,
+    flow_on_close: Callable[[VirtualReplaySession, Candle], object] | None = None,
 ) -> WedgeBacktestResult:
     """Trade ONLY after native Scanner→Robot retest and native risk preview.
 
@@ -101,10 +113,21 @@ def run_verified_wedge_chunks(
             or session.wedge_robot.risk_settings is None):
         raise ValueError("original Wedge Scanner/Robot and explicit virtual risk terms required")
     skipped_busy = submitted = 0
+    flow_observed = 0
+    buy_waves: list[int] = []
+    sell_fading: list[int] = []
     consumed_preview_ids: set[str] = set()
 
     def on_close(active: VirtualReplaySession, candle: Candle) -> None:
-        nonlocal submitted, skipped_busy
+        nonlocal submitted, skipped_busy, flow_observed
+        if flow_on_close is not None and start_ms <= candle.start_ms < end_exclusive:
+            observation = flow_on_close(active, candle)
+            if observation is not None:
+                flow_observed += 1
+                if observation.buy_wave_accelerating:
+                    buy_waves.append(observation.known_at_ms)
+                if observation.sell_impact_fading:
+                    sell_fading.append(observation.known_at_ms)
         if candle.start_ms < start_ms:
             return
         if candle.end_ms >= end_exclusive:
@@ -185,6 +208,10 @@ def run_verified_wedge_chunks(
             e.kind == "TAKE_FILLED" for e in session.exchange.events
         ),
         pending_protection=session.exchange.active_protection is not None,
+        flow_observed_windows=flow_observed,
+        flow_buy_wave_times_ms=tuple(buy_waves),
+        flow_sell_fading_times_ms=tuple(sell_fading),
+        flow_tape_enabled=flow_on_close is not None,
     )
 
 
@@ -200,6 +227,7 @@ def run_cached_wedge_trade_range(
     maker_fee_rate: Decimal = Decimal("0.0002"),
     capture_replay: bool = False,
     on_replay_events: Callable[[list[dict[str, object]]], None] | None = None,
+    flow_archive_dir: Path | None = None,
 ) -> WedgeBacktestResult:
     """Offline Bybit public-trade M1 with an exact inclusive minute cutoff.
 
@@ -264,10 +292,30 @@ def run_cached_wedge_trade_range(
         start_ms=start_ms, end_ms=end_exclusive,
         on_events=on_replay_events,
     ) if capture_replay else None
+    flow_callback = None
+    if flow_archive_dir is not None:
+        # The optional read-only tape comes from exactly the same pinned
+        # raw day files as the immutable M1 cache. No network or substitute.
+        tape = pinned_taker_minutes(
+            archive_dir=flow_archive_dir, symbol=symbol, proofs=selected_proofs,
+            start_ms=start_ms, end_ms=end_exclusive,
+            latest_closed_boundary_ms=latest_closed_boundary_ms,
+        )
+        source_id, _, _ = _ordered_proofs(
+            selected_proofs, symbol=symbol,
+            latest_closed_boundary_ms=latest_closed_boundary_ms,
+        )
+
+        def flow_callback(active: VirtualReplaySession, minute: Candle):
+            return active.observe_committed_taker_prints(
+                tape[minute.start_ms], source_id=source_id,
+            )
+
     result = run_verified_wedge_chunks(
         session, cut_to_selected_end(),
         start_ms=start_ms, end_inclusive_ms=end_inclusive_ms,
         visual_recorder=recorder,
+        flow_on_close=flow_callback,
     )
     replay = recorder.document(
         source_id=result.report.source_id, expected_fills=result.report.virtual_fills,
