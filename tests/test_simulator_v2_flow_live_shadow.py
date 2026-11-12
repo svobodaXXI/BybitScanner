@@ -83,6 +83,27 @@ class LocalFlowShadowTests(unittest.TestCase):
         self.assertIsNone(shadow.latest_transition)
         shadow.close()
 
+    def test_long_reconnect_gap_quarantines_first_received_minute(self):
+        ctx = FakeContext()
+        shadow = LocalRobotFlowShadow(ctx, started_at_ms=0)
+        ctx.emit([print_at("a", MINUTE_MS+10, "Sell", "1", "100")], MINUTE_MS+20)
+        ctx.disconnect()
+        ctx.ready()
+        # First received minute after a long break is never trusted.
+        ctx.emit([print_at("rejoined", 10*MINUTE_MS+10, "Buy", "1", "1000")],
+                 10*MINUTE_MS+20)
+        ctx.emit([print_at("b", 11*MINUTE_MS+10, "Sell", "1", "100")],
+                 11*MINUTE_MS+20)
+        ctx.emit([print_at("c", 12*MINUTE_MS+10, "Buy", "1", "300"),
+                  print_at("d", 12*MINUTE_MS+20, "Buy", "1.01", "100")],
+                 12*MINUTE_MS+30)
+        self.assertIsNone(shadow.latest_transition)
+        ctx.emit([print_at("e", 13*MINUTE_MS+10, "Buy", "1", "10")],
+                 13*MINUTE_MS+20)
+        self.assertTrue(shadow.latest_transition.buy_wave_accelerating)
+        self.assertEqual(shadow.observed_windows, 1)
+        shadow.close()
+
     def test_invalid_duplicate_and_big_packet_quarantine_unknown(self):
         ctx = FakeContext()
         shadow = LocalRobotFlowShadow(ctx, started_at_ms=0)
