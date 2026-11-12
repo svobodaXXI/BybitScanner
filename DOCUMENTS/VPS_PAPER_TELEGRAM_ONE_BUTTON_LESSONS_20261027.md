@@ -114,3 +114,27 @@ ssh -i "$env:USERPROFILE\.ssh\bybitscanner_laptop" -o IdentitiesOnly=yes -o Pass
 **Компромисс:** `ssh-agent` упрощает подключение, но делает загруженный административный ключ доступным приложениям в контексте текущей учётной записи Windows. Автозапуск и возможное сохранение записи ключа после перезагрузки расширяют время доступности: включать только на доверенном защищённом ПК. Для максимально строгой безопасности оставить ручной ввод passphrase. Никакие пароли/секреты не публиковать.
 
 **Обязательный маршрут обслуживания (владелец подтвердил 05.11):** (1) ChatGPT самостоятельно использует GitHub для кода, PR, CI, проектной диагностики и доступных GitHub-мосту фактов; GitHub-доступ к репозиторию *не равен* произвольному доступу к живому VPS. (2) Для живого VPS при необходимости — одна цель и один ограниченный запрос существующему Codex/VPS-каналу с результатом и доказательством; рутинные чтения выполняет агент, а не владелец вручную. (3) **Только при конкретном подтверждённом блокере** этих маршрутов предложить владельцу прямой PowerShell SSH по уже проверенному `bybitscanner_laptop`, с минимальным числом команд. (4) VNC только если SSH недоступен. Не заставлять владельца повторять ключевые проверки, пересылать цепочки диагностик или заново восстанавливать уже рабочие ключи. Логин под root не отменяет project/owner authorization и fail-closed PAPER/LIVE ограничения.
+
+## 7. 10.11.2026 — SSH-блокер монолита: Windows-ноутбук
+
+**Подтверждено:** ноутбук `C:\Users\SVOBODA21` (не старый ПК `svobo`), VPS `212.193.14.116`, пользователь `root`, ключ `.ssh\bybitscanner_laptop` (ED25519; fingerprint `SHA256:NcIbbPki11WrAx0RjjtAuUnY/bsgsnou2Syp6fNRRc0`). После ввода *локальной* passphrase сервер ответил `Server accepts key` → `Authenticated ... using publickey`; `SSH_EXIT_CODE=0` для команды `true`. Первопричина прежнего `Permission denied` **не установлена**; ключи и VPS для успешного подключения не изменялись. Профиль старого ПК — [отдельно](WINDOWS_PC_VPS_ACCESS_RECOVERY_20261108.md).
+
+**Резервная проверка доступа** из PowerShell именно на ноутбуке (если штатный VPS-исполнитель недоступен):
+
+```powershell
+$key = Join-Path $env:USERPROFILE '.ssh\bybitscanner_laptop'
+ssh -i $key -o IdentitiesOnly=yes -o PasswordAuthentication=no -o StrictHostKeyChecking=yes root@212.193.14.116 'true'
+'SSH_EXIT_CODE=' + $LASTEXITCODE
+```
+
+**Если `SSH_BLOCKED`:** транспорт/banner timeout — проверять сеть; host-key error — сверять ключ сервера по доверенному каналу; `Permission denied` — *один* повтор с `-vvv` к той же команде: нет `Offering public key` → выбор локального ключа; есть `Offering`, но нет `Server accepts key` → сервер не принял предъявленный ключ; есть `Server accepts key`, но нет `Authenticated` → исследовать подписание/passphrase. `BatchMode=yes` без заранее загруженного `ssh-agent` мешает вводу passphrase. Не использовать restricted `paper-actions-only`, не отключать проверку host key, не заменять ключи/`authorized_keys` по догадке.
+
+**Монолит:** только `Authenticated` и exit 0 снимают **SSH-блокер**, но не доказывают установленный Backend/Frontend SHA, состояние сервисов или готовность PAPER. После подключения — отдельный разрешённый READ-ONLY preflight. Для frontend-only публикации штатный установщик требует *точного совпадения* установленного Backend SHA и исходного SHA bundle; иначе `BLOCKED`. Восстановление доступа не разрешает STOP/restart/deploy, изменение PAPER DB, Scanner/Robot/Autopilot или LIVE. Ограничения и маршрут исполнителя уже определены в §6; не дублировать их.
+
+## 8. 10.11.2026 — ложный Gitless `tracked_content_mismatch`
+
+**Факт:** `inspect_staged_release` вернул `installed_release_unproven → tracked_content_mismatch`, поскольку диагностика импортировала `tools` из `/var/lib/bybitscanner-stage-git-44255865`, а `tools.vps_release_identity.ROOT` по умолчанию указывал на staging. Manifest установленного `e13ac5e3…` релиза сравнивался с файлами целевого `44255865…` релиза. Независимая проверка **явного** `/opt/BybitScanner` подтвердила совпадение всех Git blob hashes; STOP и install не выполнялись.
+
+**Правило для монолита:** до любого STOP запускать `tools.paper_maintenance` с рабочим каталогом `/opt/BybitScanner` и установленным Python; проверять, что источник импортированного `tools.vps_release_identity` и его `ROOT` действительно `/opt/BybitScanner` (а не staging через `PYTHONPATH`/`sys.path`). Staging передавать только аргументом `--staged-gitless-editor-only`. При несовпадении происхождения модулей — `BLOCKED` **до STOP**, не трактовать это как порчу установленного релиза; не переписывать manifest или файлы для обхода.
+
+**На будущее:** отдельная проверка module/ROOT provenance с отличимой причиной блокировки; это требование к следующей доработке монолита, **не** утверждение, что такая автоматическая проверка уже реализована.
