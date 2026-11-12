@@ -336,7 +336,7 @@ class LoopbackServerTests(unittest.TestCase):
 
 
 
-class LocalTakerShadowEntryTests(unittest.TestCase):
+class LocalVirtualTradeEntryTests(unittest.TestCase):
     def test_fixed_local_archive_opt_in_passes_only_to_wedge(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -376,6 +376,15 @@ class LocalTakerShadowEntryTests(unittest.TestCase):
                 self.assertEqual(
                     runner.call_args.kwargs["config"]["selected_strategies"],
                     ["WEDGE_FALLING"],
+                )
+                runner.reset_mock()
+                local.run_local_simulation({**params, "oi_mode": "RISING"})
+                self.assertEqual(
+                    runner.call_args.kwargs["oi_history_path"],
+                    root / "oi-history" / "BTCUSDT.csv",
+                )
+                self.assertEqual(
+                    runner.call_args.kwargs["config"]["oi_mode"], "RISING",
                 )
                 runner.reset_mock()
                 # Box does not silently use the Wedge-only research tape.
