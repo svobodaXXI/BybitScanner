@@ -119,11 +119,17 @@ def run_local_simulation(
     Does not download anything, import production Scanner/Robot runtimes,
     accept arbitrary file paths, or write to any exchange/PAPER ledger.
     """
-    if not isinstance(request_data, dict) or set(request_data) != {
+    required = {
         "symbol", "start_utc", "end_utc_inclusive",
         "selected_strategies", "initial_balance",
-    }:
+    }
+    if (not isinstance(request_data, dict)
+            or not required <= set(request_data)
+            or not set(request_data) <= required | {"oi_mode"}):
         raise ValueError("expected exact local wedge run selection")
+    oi_mode = request_data.get("oi_mode", "OFF")
+    if oi_mode not in ("OFF", "RISING", "FALLING"):
+        raise ValueError("invalid OI entry filter")
     if any(
         not isinstance(request_data[k], str) or not 1 <= len(request_data[k]) <= 40
         for k in ("symbol", "start_utc", "end_utc_inclusive", "initial_balance")
@@ -191,10 +197,17 @@ def run_local_simulation(
             if raw_folder.is_symlink() or not raw_folder.is_dir():
                 raise ValueError("unsafe local raw taker archive directory")
             flow_archive_dir = raw_folder
+    # Fixed, symbol-bound local historical OI source; browser cannot choose
+    # arbitrary paths or activate production feeds.
+    oi_history_path = (
+        SIM_DATA / "oi-history" / (configuration["symbol"] + ".csv")
+        if oi_mode != "OFF" else None
+    )
     result = run_from_time_machine_config(
         config=configuration, manifest=manifest,
         cache_dir=SIM_DATA / "m1-cache",
         flow_archive_dir=flow_archive_dir,
+        oi_history_path=oi_history_path,
         latest_closed_boundary_ms=latest,
         capture_replay=True,
         on_replay_events=(
