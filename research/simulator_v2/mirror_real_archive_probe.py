@@ -45,7 +45,11 @@ TERMS = BoxSimulationRiskTerms(
 )
 
 
-def run_real_trade_day(archive: Path) -> dict[str, object]:
+def run_real_trade_day(
+    archive: Path, *, one_filled_trade_per_campaign: bool = False,
+) -> dict[str, object]:
+    if type(one_filled_trade_per_campaign) is not bool:
+        raise TypeError("explicit local comparison option must be boolean")
     if not isinstance(archive, Path) or archive.is_symlink() or not archive.is_file():
         raise ValueError("existing regular Bybit public trades archive required")
     end = int(datetime(2026, 11, 8, tzinfo=timezone.utc).timestamp() * 1000)
@@ -58,7 +62,11 @@ def run_real_trade_day(archive: Path) -> dict[str, object]:
         raise ValueError("derived M1 SHA/day coverage mismatch")
 
     session = VirtualReplaySession(
-        simulation_run_id="icnt_20261107_native_mirror_real_v1",
+        simulation_run_id=(
+            "icnt_20261107_native_mirror_one_fill"
+            if one_filled_trade_per_campaign
+            else "icnt_20261107_native_mirror_real_v1"
+        ),
         symbol=SYMBOL, initial_balance=Decimal("1000"),
         taker_fee_rate=Decimal("0.0006"),
         maker_fee_rate=Decimal("0.0002"),
@@ -71,6 +79,7 @@ def run_real_trade_day(archive: Path) -> dict[str, object]:
         mirror_working_volume_usdt=Decimal("250"),
         mirror_risk_limit_usdt=Decimal("100"),
         mirror_auto_scan=True,
+        mirror_one_filled_trade_per_campaign=one_filled_trade_per_campaign,
     ) as robot:
         for candle in chunk.candles:
             session.step(candle)
@@ -184,6 +193,9 @@ def run_real_trade_day(archive: Path) -> dict[str, object]:
             "native_mirror_levels": len(state["registry"].get("levels") or {}),
             "native_confirmations": len(signal_rows),
             "native_robot_candidates": len(candidates),
+            "experiment_one_filled_trade_per_campaign": one_filled_trade_per_campaign,
+            "experiment_suppressed_confirmations": len(robot.mirror_experiment_suppressed),
+            "experiment_suppressed_entry_ids": list(robot.mirror_experiment_suppressed),
             "virtual_fills": len(session.account.fills),
             "trades_with_attested_entry": len(trades),
             "trades_closed": len(closed_trades),
@@ -216,12 +228,61 @@ def run_real_trade_day(archive: Path) -> dict[str, object]:
         }
 
 
+def compare_campaign_fill_limit(archive: Path) -> dict[str, object]:
+    """Paired full independent historical replays, not post-hoc PnL deletion."""
+    original = run_real_trade_day(archive, one_filled_trade_per_campaign=False)
+    restricted = run_real_trade_day(archive, one_filled_trade_per_campaign=True)
+    for key in ("archive_sha256", "derived_m1_sha256", "closed_m1",
+                "native_mirror_levels", "native_confirmations"):
+        if original[key] != restricted[key]:
+            raise RuntimeError(f"comparison diverged before native Robot execution: {key}")
+    if original["experiment_suppressed_confirmations"] != 0:
+        raise RuntimeError("baseline MIRROR auto path was not unchanged")
+    count_by_campaign: dict[tuple[str, int], int] = {}
+    for trade in restricted["trades"]:
+        if trade["entry_time_ms"] is None:
+            continue
+        frozen = trade["frozen_entry"]
+        key = frozen["level_id"], frozen["level_breakout_close_ms"]
+        count_by_campaign[key] = count_by_campaign.get(key, 0) + 1
+    if any(count > 1 for count in count_by_campaign.values()):
+        raise RuntimeError("experimental one-filled-trade invariant violated")
+    if not original["trades"] or not restricted["trades"]:
+        raise RuntimeError("real-data comparison has no common first executed trade")
+    first_fields = ("entry_time_ms", "exit_time_ms", "direction",
+                    "entry_price", "exit_price", "exit_reason", "entry_quantity",
+                    "realized_pnl_gross_usdt", "fees_usdt", "pnl_percent_net")
+    if any(original["trades"][0][key] != restricted["trades"][0][key]
+           for key in first_fields):
+        raise RuntimeError("experiment changed the original first fill or protection")
+    if (original["trades"][0]["frozen_entry"]["level_id"]
+            != restricted["trades"][0]["frozen_entry"]["level_id"]):
+        raise RuntimeError("first native MIRROR source level unexpectedly changed")
+    original_pnl = Decimal(original["total_net_pnl_usdt"])
+    restricted_pnl = Decimal(restricted["total_net_pnl_usdt"])
+    return {
+        "schema": "MIRROR_REAL_CAMPAIGN_ONE_FILL_COMPARISON_V1",
+        "trade_source_sha256": original["archive_sha256"],
+        "derived_m1_sha256": original["derived_m1_sha256"],
+        "baseline": original,
+        "first_filled_trade_only": restricted,
+        "delta_net_pnl_usdt": str(restricted_pnl - original_pnl),
+        "suppressed_confirmations": restricted["experiment_suppressed_confirmations"],
+        "note": (
+            "Pure SIMULATION hypothesis, risk/fees hypothetical; two "
+            "independent native Scanner/Robot replays over identical verified M1."
+        ),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Real public trade archive MIRROR SIMULATION")
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--compare-one-fill", action="store_true")
     args = parser.parse_args()
-    report = run_real_trade_day(args.archive)
+    report = (compare_campaign_fill_limit(args.archive)
+              if args.compare_one_fill else run_real_trade_day(args.archive))
     if args.report.exists() or args.report.is_symlink():
         raise ValueError("report destination must not overwrite user-owned data")
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -229,14 +290,29 @@ def main() -> None:
         json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
-    print("MIRROR_REAL_TRADES_REPLAY_PROVENANCE_OK")
-    for field in (
-        "symbol", "closed_m1", "native_mirror_levels",
-        "native_confirmations", "native_robot_candidates",
-        "virtual_fills", "trades_closed", "total_net_pnl_usdt",
-        "max_drawdown_percent", "runtime_seconds", "peak_rss_mib_linux",
-    ):
-        print(f"{field}={report[field]}", flush=True)
+    print("MIRROR_REAL_TRADES_COMPARISON_OK" if args.compare_one_fill
+          else "MIRROR_REAL_TRADES_REPLAY_PROVENANCE_OK")
+    if args.compare_one_fill:
+        for name in ("baseline", "first_filled_trade_only"):
+            item = report[name]
+            print(
+                f"{name}: fills={item['virtual_fills']}"
+                f" closed={item['trades_closed']}"
+                f" net_usdt={item['total_net_pnl_usdt']}"
+                f" confirmed={item['native_confirmations']}"
+                f" suppressed={item['experiment_suppressed_confirmations']}"
+                f" seconds={item['runtime_seconds']}",
+                flush=True,
+            )
+        print(f"delta_net_pnl_usdt={report['delta_net_pnl_usdt']}", flush=True)
+    else:
+        for field in (
+            "symbol", "closed_m1", "native_mirror_levels",
+            "native_confirmations", "native_robot_candidates",
+            "virtual_fills", "trades_closed", "total_net_pnl_usdt",
+            "max_drawdown_percent", "runtime_seconds", "peak_rss_mib_linux",
+        ):
+            print(f"{field}={report[field]}", flush=True)
 
 
 if __name__ == "__main__":
