@@ -170,3 +170,66 @@ def test_episode_facts_route_rejects_invalid_scope_and_exports_only_one_selected
         thread.join(timeout=2)
 
 
+
+
+
+def test_campaign_lineage_route_requires_exact_scope_and_refuses_unproven_history(
+    tmp_path: Path, monkeypatch,
+):
+    from terminal.diary.campaign_lineage import CampaignLineageUnproven
+
+    source = tmp_path / "missing-paper.sqlite3"
+    calls = []
+    episode = "te_" + "a" * 24
+
+    def read_source(path, *, include_campaign_evidence=False):
+        assert path == source and include_campaign_evidence is True
+        calls.append("read")
+        return object()
+
+    def project(snapshot, *, account_id, owner, trade_episode_id, source_revision):
+        assert account_id == "paper" and owner == "ROBOT"
+        assert trade_episode_id == episode
+        calls.append(("project", source_revision))
+        if source_revision == 7:
+            raise CampaignLineageUnproven("no_exact_entry_owner")
+        return {
+            "schema": "BYBITSCANNER_PAPER_CAMPAIGN_LINEAGE_V1",
+            "namespace": "PAPER_READ_ONLY",
+            "account_id": account_id,
+            "source_revision": source_revision,
+            "campaign_id": "camp-proven",
+            "trade_episodes": [{"trade_episode_id": episode}],
+        }
+
+    monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", read_source)
+    monkeypatch.setattr(paper_http_server, "project_selected_paper_campaign", project)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.diary_source_db_path = source
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        root = f"http://127.0.0.1:{server.server_address[1]}/api/diary/campaign-lineage"
+        valid = f"?account_id=paper&owner=ROBOT&trade_episode_id={episode}"
+        for query, expected in [
+            ("", 400),
+            (valid + "&source_revision=0", 400),
+            (valid + "&source_revision=01", 400),
+            (valid + "&source_revision=8&source_revision=9", 400),
+            (valid.replace("account_id=paper", "account_id=main") + "&source_revision=8", 404),
+            (valid.replace("owner=ROBOT", "owner=MANUAL") + "&source_revision=8", 404),
+        ]:
+            status, _ = _get(root + query)
+            assert status == expected
+        assert not calls  # invalid identities never reach the PAPER reader.
+        status, result = _get(root + valid + "&source_revision=8")
+        assert status == 200 and result["campaign_id"] == "camp-proven"
+        assert result["schema"] == "BYBITSCANNER_PAPER_CAMPAIGN_LINEAGE_V1"
+        status, result = _get(root + valid + "&source_revision=7")
+        assert (status, result["error"]) == (409, "campaign_lineage_unproven")
+        assert calls == ["read", ("project", 8), "read", ("project", 7)]
+        assert not source.exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
