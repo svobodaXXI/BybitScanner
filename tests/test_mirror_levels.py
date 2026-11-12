@@ -22,6 +22,8 @@ from mirror_levels.levels import (
     SOURCE_PATTERN_BOUNDARY, SOURCE_SWING_ZONE, LevelRegistry, MirrorLevel, MirrorLevelError,
     horizontal_level, level_identity, levels_from_geometry, levels_from_horn_event,
     mirror_level_allowed, mirror_frozen_entry_allowed,
+    audit_historical_mirror_source, MIRROR_AUDIT_ALLOWED, MIRROR_AUDIT_REVOKED,
+    MIRROR_AUDIT_UNPROVEN,
     levels_from_ikigai_box, levels_from_l_shape, levels_from_wedge_candidate, line_level,
 )
 from mirror_levels.swing import confirmed_pivots, swing_levels
@@ -389,3 +391,39 @@ def test_legacy_frozen_mirror_entries_cannot_bypass_new_robot_gate():
         "level_pattern": None, "level_side": "upper",
         "level_breakout_direction": "UP",
     })
+
+
+def test_historical_mirror_audit_needs_exact_episode_level_link_and_native_breakout():
+    allowed = line_level(
+        symbol="XUSDT", timeframe="5", pattern="Rising Wedge", side="lower",
+        first=(0, 100), second=(M, 101), confirmed_at_ms=2 * M,
+    )
+    revoked = line_level(
+        symbol="XUSDT", timeframe="5", pattern="Rising Wedge", side="upper",
+        first=(0, 110), second=(M, 111), confirmed_at_ms=2 * M,
+    )
+    breakout = {"open_time_ms": 2 * M, "close_time_ms": 3 * M, "direction": "DOWN"}
+    def audit(level, event=breakout, **overrides):
+        return audit_historical_mirror_source(
+            level=level, breakout=event,
+            linked_level_id=overrides.get("linked_level_id", level.level_id),
+            linked_symbol=overrides.get("linked_symbol", level.symbol),
+            linked_breakout_close_ms=overrides.get("linked_breakout_close_ms", 3 * M),
+        )
+    assert audit(allowed) == MIRROR_AUDIT_ALLOWED
+    assert audit(revoked) == MIRROR_AUDIT_REVOKED
+    assert audit(allowed, {**breakout, "direction": "UP"}) == MIRROR_AUDIT_REVOKED
+    assert audit(allowed, linked_level_id=revoked.level_id) == MIRROR_AUDIT_UNPROVEN
+    assert audit(allowed, linked_symbol="OTHERUSDT") == MIRROR_AUDIT_UNPROVEN
+    assert audit(allowed, linked_breakout_close_ms=4 * M) == MIRROR_AUDIT_UNPROVEN
+    assert audit(allowed, {**breakout, "open_time_ms": M}) == MIRROR_AUDIT_UNPROVEN
+    assert audit(allowed, {**breakout, "direction": "UNKNOWN"}) == MIRROR_AUDIT_UNPROVEN
+    assert audit_historical_mirror_source(
+        level=None, breakout=breakout, linked_level_id=None,
+        linked_breakout_close_ms=3 * M, linked_symbol="XUSDT",
+    ) == MIRROR_AUDIT_UNPROVEN
+    forged = MirrorLevel.from_dict({**allowed.to_dict(), "level_id": "lvl-forged",
+                                    "boundary": {**allowed.to_dict()["boundary"],
+                                                 "anchor_price": 100.0}})
+    # from_dict still checks that boundary ID matches level ID.
+    assert audit(forged) == MIRROR_AUDIT_UNPROVEN
