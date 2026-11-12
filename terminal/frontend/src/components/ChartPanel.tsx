@@ -359,7 +359,7 @@ export function ChartPanel({
       });
       if (submittedSequence === reviewEditSequence.current) {
         setReviewDirty(false);
-        setReviewStatus(reviewLabel === "GEOMETRY_CORRECTED" ? "Исправлена геометрия" : "");
+        setReviewStatus(reviewLabel === "GEOMETRY_CORRECTED" ? "Исправление сохранено" : "");
       } else {
         setReviewDirty(true);
         setReviewStatus("");
@@ -1163,9 +1163,9 @@ export function ChartPanel({
               onClick={() => void saveCorrection()}>
               {reviewPending ? "Сохранение…" : reviewStatus.startsWith("Не удалось сохранить:") ? "Не удалось сохранить" : "Передать исправление"}
             </button>
-            {reviewStatus === "Исправлена геометрия" && !reviewDirty && (
+            {reviewStatus === "Исправление сохранено" && !reviewDirty && (
               <output className="editor-review-success" role="status" aria-live="polite">
-                Исправлена геометрия
+                Исправление сохранено
               </output>
             )}
               </>
