@@ -134,6 +134,7 @@ def run_from_time_machine_config(
     cache_dir: Path, latest_closed_boundary_ms: int,
     capture_replay: bool = False,
     on_replay_events: Callable[[list[dict[str, object]]], None] | None = None,
+    flow_archive_dir: Path | None = None,
 ) -> WedgeBacktestResult | BoxBacktestResult:
     """Dispatch one proven native strategy family into the shared exchange."""
     if not isinstance(config, Mapping) or (
@@ -183,7 +184,13 @@ def run_from_time_machine_config(
     end_ms = parse_utc_minute(config.get("end_utc_inclusive"))
     if not isinstance(cache_dir, Path) or cache_dir.is_symlink():
         raise ValueError("dedicated local SIMULATION cache directory required")
+    if flow_archive_dir is not None and (
+        not isinstance(flow_archive_dir, Path) or flow_archive_dir.is_symlink()
+    ):
+        raise ValueError("explicit safe local taker archive directory required")
     if box_selected:
+        if flow_archive_dir is not None:
+            raise ValueError("trade-flow shadow observation is supported only for Wedge")
         return run_cached_box_trade_range(
             cache_dir=cache_dir, symbol=symbol, proofs=proofs,
             latest_closed_boundary_ms=latest_closed_boundary_ms,
@@ -221,6 +228,7 @@ def run_from_time_machine_config(
         risk_settings=settings,
         capture_replay=capture_replay,
         on_replay_events=on_replay_events,
+        flow_archive_dir=flow_archive_dir,
     )
 
 
@@ -231,6 +239,8 @@ def main() -> None:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--cache-dir", required=True, type=Path)
+    parser.add_argument("--flow-archive-dir", type=Path, default=None,
+                        help="optional pinned raw Bybit trades for Wedge SHADOW observations")
     args = parser.parse_args()
     from research.simulator_v2.history import last_closed_m1_boundary_ms
     try:
@@ -240,6 +250,7 @@ def main() -> None:
             config=config, manifest=manifest,
             cache_dir=args.cache_dir,
             latest_closed_boundary_ms=last_closed_m1_boundary_ms(),
+            flow_archive_dir=args.flow_archive_dir,
         )
     except (ValueError, FileNotFoundError, TypeError, KeyError) as exc:
         parser.error(f"BLOCKED: {exc}")
