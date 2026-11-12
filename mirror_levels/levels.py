@@ -8,11 +8,15 @@ breakout and first-retest mechanics stay the existing, tested ones) with
 provenance: symbol, timeframe, source, pattern, side, anchors, when the level
 became known (``confirmed_at_ms``) and a deterministic ``level_id``.
 
-Sources (adapters below, no new pattern detector):
-- ``pattern_boundary``: Wedge (``mirror_retest_observer.boundaries_from_candidate_snapshot``),
-  any engine geometry with index-based ``upper_line``/``lower_line`` (Triangle,
-  Broadening/HORN, channels), Ikigai Box ``box_high``/``box_low``, L-shape ``breakout_level``;
-- ``swing_zone``: confirmed pivot zones without any recognised pattern (``mirror_levels.swing``).
+Trading eligibility is a separate owner-approved fail-closed policy:
+- Rising Wedge: lower line, naked breakout DOWN only; Falling Wedge: upper
+  line, naked breakout UP only; Triangle Compression: upper/UP or lower/DOWN;
+- L-shape: its horizontal breakout line, upper/UP or lower/DOWN;
+- confirmed swing extrema: upper/UP or lower/DOWN, no parent pattern;
+- Broadening/HORN, Ikigai Box edges, unknown sources and wrong-side breakouts
+  are never MIRROR origins. Box may confirm an existing MIRROR campaign.
+Legacy adapters may still parse historical evidence, but no trade admission
+may bypass ``mirror_level_allowed`` and ``mirror_breakout_allowed``.
 
 Causality: ``Boundary.as_of_time_ms`` is the close time of the candle at which
 the source could know the level (pattern decision candle, pivot confirmation
