@@ -105,7 +105,8 @@ def run_real_trade_day(archive: Path) -> dict[str, object]:
             if not isinstance(frozen, dict) or not isinstance(frozen.get("confirmation"), dict):
                 raise ValueError("native frozen MIRROR entry evidence unavailable")
             level_id = frozen.get("level_id")
-            registry_level = state["registry"]["levels"].get(level_id)
+            registry_level = next((item for item in state["registry"]["levels"]
+                                   if item.get("level_id") == level_id), None)
             record = state["records"].get(level_id)
             if registry_level is None or record is None:
                 raise ValueError("frozen MIRROR source level provenance missing")
