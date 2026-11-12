@@ -342,7 +342,12 @@ class ConnectedSimulationRobot:
         mirror_working_volume_usdt: Decimal | None = None,
         mirror_risk_limit_usdt: Decimal | None = None,
         mirror_auto_scan: bool = False,
+        mirror_one_filled_trade_per_campaign: bool = False,
     ) -> None:
+        if type(mirror_one_filled_trade_per_campaign) is not bool:
+            raise TypeError("experimental MIRROR one-fill gate requires a boolean")
+        if mirror_one_filled_trade_per_campaign and not mirror_auto_scan:
+            raise ValueError("experimental MIRROR gate requires automatic local replay")
         if type(mirror_auto_scan) is not bool:
             raise TypeError("local MIRROR auto scan requires an explicit boolean")
         enabled_mirror = (
@@ -376,6 +381,9 @@ class ConnectedSimulationRobot:
         self._closed = False
         self._source_candidate_id: str | None = None
         self._source_candidate_ids: list[str] = []
+        self._mirror_one_fill_experiment = mirror_one_filled_trade_per_campaign
+        self._mirror_consumed_campaigns: set[tuple[str, int]] = set()
+        self._mirror_experiment_suppressed: list[str] = []
         self._completed_market_ids: set[str] = set()
         self._temporary = TemporaryDirectory(prefix="bybitscanner-simulation-box-")
         self._store_path = Path(self._temporary.name) / "simulation.sqlite3"
@@ -540,6 +548,39 @@ class ConnectedSimulationRobot:
             "accepted_pending", "awaiting next closed historical M1",
         )
 
+    @staticmethod
+    def _mirror_campaign_key(frozen: dict) -> tuple[str, int]:
+        """Frozen source level + historical breakout, never wall-clock or price."""
+        level = frozen.get("level_id")
+        breakout = frozen.get("level_breakout_close_ms")
+        if not isinstance(level, str) or not level or type(breakout) is not int:
+            raise SimulationExecutionNotConnected(
+                "MIRROR campaign identity is missing from frozen confirmation"
+            )
+        return level, breakout
+
+    def _mark_mirror_filled_campaign(self) -> None:
+        """Use the native *durable fill/trade*, not a mere submitted signal."""
+        if not self._mirror_one_fill_experiment:
+            return
+        candidate_id = self._source_candidate_id
+        if candidate_id is None:
+            return
+        candidate = self._store.get_robot_candidate(candidate_id)
+        if candidate is None or not robot_l_shape.is_mirror_snapshot(candidate.signal_snapshot):
+            return
+        trade = self._store.get_robot_trade("robot-trade-" + candidate_id)
+        if trade is None or trade.entry_quantity is None or trade.entry_quantity <= 0:
+            return  # Unfilled signal does not consume the experiment's slot.
+        frozen = candidate.signal_snapshot.get("mirror_entry")
+        if not isinstance(frozen, dict):
+            raise SimulationExecutionNotConnected("filled MIRROR lacks frozen source")
+        self._mirror_consumed_campaigns.add(self._mirror_campaign_key(frozen))
+
+    @property
+    def mirror_experiment_suppressed(self) -> tuple[str, ...]:
+        return tuple(self._mirror_experiment_suppressed)
+
     def admit_mirror(self, source_state: dict, *, entry_id: str) -> str:
         """Admit one exact native Scanner confirmation to the private Robot.
 
@@ -570,6 +611,12 @@ class ConnectedSimulationRobot:
         )
         if snapshot is None:
             raise ValueError("native MIRROR source or confirmation was revoked")
+        if (self._mirror_one_fill_experiment
+                and self._mirror_campaign_key(snapshot["mirror_entry"])
+                in self._mirror_consumed_campaigns):
+            raise SimulationExecutionNotConnected(
+                "experimental MIRROR campaign already has an attested entry fill"
+            )
         close_ms = snapshot["mirror_entry"]["confirmation"]["close_time_ms"]
         if close_ms != self.virtual_clock_ms():
             raise ValueError("MIRROR admission requires its exact committed close")
@@ -862,6 +909,7 @@ class ConnectedSimulationRobot:
                     self._apply_fill(fill, event.order_id)
             if not any(event.kind in {"STOP_FILLED", "TAKE_FILLED"} for event in events):
                 self._monitor.process_authoritative_fill(self.session.account.symbol)
+                self._mark_mirror_filled_campaign()
         self._drive_robot()
         self._synchronize_exchange()
         if self._auto_mirror_scanner is not None:
@@ -873,12 +921,22 @@ class ConnectedSimulationRobot:
                     "simultaneous native MIRROR confirmations have no proven priority"
                 )
             if discovered and self.can_admit:
-                self.admit_mirror(
-                    mirror_scanner.load_state(
-                        self.session.account.symbol, "5", self._mirror_root,
-                    ),
-                    entry_id=discovered[0],
+                source_state = mirror_scanner.load_state(
+                    self.session.account.symbol, "5", self._mirror_root,
                 )
+                entry_id = discovered[0]
+                if self._mirror_one_fill_experiment:
+                    entries = source_state.get("standalone_entries") or ()
+                    matching = [x for x in entries if x.get("entry_id") == entry_id]
+                    if len(matching) != 1 or not isinstance(matching[0].get("terms"), dict):
+                        raise SimulationExecutionNotConnected(
+                            "experimental MIRROR candidate identity is ambiguous"
+                        )
+                    campaign = self._mirror_campaign_key(matching[0]["terms"])
+                    if campaign in self._mirror_consumed_campaigns:
+                        self._mirror_experiment_suppressed.append(entry_id)
+                        return
+                self.admit_mirror(source_state, entry_id=entry_id)
 
     def _synchronize_exchange(self) -> None:
         if self._source_candidate_id is None:
