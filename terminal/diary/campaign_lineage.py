@@ -172,6 +172,19 @@ def prove_robot_campaign_episodes(
                 continue
             if episode.closed_at_ms != exit_execution.exchange_timestamp_ms:
                 continue
+            # A closing fill may reverse a position: the Diary then allocates
+            # only part of that execution to this episode. Such a fill must
+            # not certify a completed Robot STOP/TAKE campaign. Require exact
+            # immutable quantity, fee and time for every allocation instead.
+            if any(
+                (execution_by_id.get(item.execution_key.exec_id.value) is None
+                 or execution_by_id[item.execution_key.exec_id.value].quantity.value != item.quantity
+                 or execution_by_id[item.execution_key.exec_id.value].fee != item.fee
+                 or execution_by_id[item.execution_key.exec_id.value].exchange_timestamp_ms
+                    != item.occurred_at_ms)
+                for item in alloc
+            ):
+                continue
             eligible.append(episode)
         episode = _one(eligible, "campaign_episode_link_missing_or_ambiguous")
         episode_id = episode.trade_episode_id.value
