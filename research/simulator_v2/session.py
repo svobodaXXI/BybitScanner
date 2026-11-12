@@ -75,6 +75,7 @@ class VirtualReplaySession:
             initial_balance=initial_balance,
         )
         self._last_committed_minute: Candle | None = None
+        self._last_committed_frame: MinuteFrame | None = None
         self.exchange = VirtualExchange(
             account=self.account, taker_fee_rate=taker_fee_rate,
             maker_fee_rate=maker_fee_rate,
@@ -140,6 +141,11 @@ class VirtualReplaySession:
         """Only the exact closed M1 whose full shared timeline committed."""
         return self._last_committed_minute
 
+    @property
+    def last_committed_frame(self) -> MinuteFrame | None:
+        """Exact M1/M5 frame, published only after the shared timeline commits."""
+        return self._last_committed_frame
+
     def step(self, minute: Candle) -> VirtualAccountSnapshot:
         if self.timeline.virtual_time_ms != self.exchange.virtual_time_ms:
             raise StepBlocked("SIMULATION clocks disagree; no new M1 is permitted")
@@ -166,6 +172,7 @@ class VirtualReplaySession:
         if self.timeline.virtual_time_ms != self.exchange.virtual_time_ms:
             raise StepBlocked("SIMULATION clocks diverged; stop this replay")
         self._last_committed_minute = minute
+        self._last_committed_frame = frame
         return self.account.snapshot(
             as_of_ms=minute.end_ms, mark_price=minute.close,
         )
