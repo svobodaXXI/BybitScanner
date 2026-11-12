@@ -119,7 +119,7 @@ afterEach(() => {
 });
 
 describe("Autopilot compact first screen", () => {
-  it("shows only the day result and trade count, without unrelated status labels", async () => {
+  it("shows the daily trade history separately from canonical Robot and autotrading status", async () => {
     mockFetch(healthyRoutes);
     render(<AutopilotFirstScreen now={() => NOW} />);
     expect(await screen.findByText("+2.50 USDT")).toBeInTheDocument();
