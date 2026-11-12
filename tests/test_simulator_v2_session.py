@@ -115,12 +115,13 @@ class VirtualReplaySessionTests(unittest.TestCase):
             TakerPrint("ICNTUSDT", "b", 60010, "Buy", D("100"), D("3")),
             TakerPrint("ICNTUSDT", "c", 60020, "Buy", D("101"), D("2")),
         )
+        journal_after_second_close = session.events
         result = session.observe_committed_taker_prints(second, source_id="archive-sha")
         self.assertTrue(result.buy_wave_accelerating)
         self.assertEqual(result.known_at_ms, 2 * MINUTE_MS)
         self.assertEqual(session.latest_entry_flow, result)
         self.assertEqual(session.account.fills, ())
-        self.assertEqual(session.events, journal + session.events[len(journal):])
+        self.assertEqual(session.events, journal_after_second_close)
         self.assertTrue(all(event.source == "MARKET" for event in session.events))
 
     def test_flow_observation_refuses_uncommitted_or_duplicate_minute(self):
