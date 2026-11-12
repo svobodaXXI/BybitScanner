@@ -23,6 +23,7 @@ from research.simulator_v2.ikigai_plan_preview import BoxSimulationPreview, BoxS
 from research.simulator_v2.virtual_account import VirtualFill
 from research.simulator_v2.virtual_exchange import (
     LimitRequest, MarketRequest, RobotLimitRequest, RobotStopRequest,
+    RobotTakeRequest,
 )
 from terminal.api.models import (
     CommandResult, CommandResultStatus, PaperLimitMutationResult,
@@ -37,6 +38,9 @@ import mirror_scanner
 import robot_l_shape
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
 from terminal.application.box_protection_finalizer import finalize_box_protection_obligation
+from terminal.application.non_box_protection_finalizer import (
+    finalize_non_box_protection_obligation,
+)
 from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
 from terminal.domain.models import (
     Category, Execution, ExecutionDedupKey, ExecutionId, Notional, OrderId,
@@ -441,6 +445,7 @@ class ConnectedSimulationRobot:
             and not self.session.exchange.robot_limits
             and not self.session.exchange.robot_markets
             and self.session.exchange.robot_stop is None
+            and self.session.exchange.robot_take is None
         )
 
     def ownership_roles(self) -> dict[str, str]:
@@ -726,17 +731,28 @@ class ConnectedSimulationRobot:
                 updated_at_ms=fill.virtual_time_ms,
             )
 
-    def _apply_stop_fill(self, fill: VirtualFill) -> None:
-        """Use the shared production Box finalizer on virtual evidence."""
+    def _apply_protection_fill(self, fill: VirtualFill, winning_leg: str) -> None:
+        """Finalize STOP/TAKE through the same durable native Robot proof."""
+        if winning_leg not in {"STOP", "TAKE"}:
+            raise SimulationExecutionNotConnected("invalid native protective leg")
 
         symbol = Symbol(self.session.account.symbol)
         trade = self._store.get_open_robot_trade_for_symbol(self.account_id, symbol)
         key = PositionKey(self.account_id, Category.LINEAR, symbol, 0)
         protection = self._store.get_protection_projection(key)
         position = self._store.get_position_projection(key)
-        if (trade is None or protection is None or protection.stop_loss is None
+        trigger = (
+            protection.stop_loss if winning_leg == "STOP"
+            else protection.take_profit
+        ) if protection is not None else None
+        if (trade is None or protection is None or trigger is None
                 or position is None or position.side is PositionSide.FLAT
-                or self._source_candidate_id is None):
+                or self._source_candidate_id is None
+                or trade.candidate_id != self._source_candidate_id
+                or trade.pattern not in {"IKIGAI_BOX", "MIRROR"}
+                or trade.entry_quantity != fill.quantity
+                or position.quantity.value != fill.quantity):
+
             raise SimulationExecutionNotConnected(
                 "native Robot STOP lacks durable trade/protection ownership"
             )
@@ -746,7 +762,7 @@ class ConnectedSimulationRobot:
         sequence = minute.end_ms // 60_000
         obligation, _ = self._store.latch_paper_protection_obligation(
             trade_id=trade.trade_id, protection_version=protection.version,
-            winning_leg="STOP", trigger_price=protection.stop_loss,
+            winning_leg=winning_leg, trigger_price=trigger,
             observed_exit_price=fill.price, observed_quantity=fill.quantity,
             market_event_id=(
                 f"simulation:{self.session.account.simulation_run_id}:{minute.end_ms}"
@@ -758,27 +774,29 @@ class ConnectedSimulationRobot:
             observed_bid_price=fill.price, observed_ask_price=fill.price,
             latched_at_ms=minute.end_ms,
         )
-        self._store.reserve_box_order_identity(
-            self._source_candidate_id, order_id=obligation.order_id,
-            role="EXIT", slot=0,
-        )
-        for owner in self._store.load_box_order_ownership(self._source_candidate_id):
-            if owner.order_id == obligation.order_id:
-                continue
-            limit = self._store.get_paper_limit(owner.order_id.value, self.account_id)
-            if limit is None or limit.status in {"filled", "cancelled"}:
-                continue
-            digest = hashlib.sha256(
-                f"{self._source_candidate_id}\0simulation-stop-cancel\0{owner.order_id.value}".encode()
-            ).hexdigest()[:32]
-            self._store.cancel_paper_limit(
-                client_action_id=f"box-close-cancel-{digest}",
-                request_fingerprint=hashlib.sha256(
-                    f"{symbol.value}\0{owner.order_id.value}".encode()
-                ).hexdigest(),
-                order_id=owner.order_id, trading_account_id=self.account_id,
-                updated_at_ms=minute.end_ms,
+        if trade.pattern == "IKIGAI_BOX":
+            self._store.reserve_box_order_identity(
+                self._source_candidate_id, order_id=obligation.order_id,
+                role="EXIT", slot=0,
             )
+            for owner in self._store.load_box_order_ownership(self._source_candidate_id):
+                if owner.order_id == obligation.order_id:
+                    continue
+                limit = self._store.get_paper_limit(owner.order_id.value, self.account_id)
+                if limit is None or limit.status in {"filled", "cancelled"}:
+                    continue
+                digest = hashlib.sha256(
+                    f"{self._source_candidate_id}\0simulation-stop-cancel\0{owner.order_id.value}".encode()
+                ).hexdigest()[:32]
+                self._store.cancel_paper_limit(
+                    client_action_id=f"box-close-cancel-{digest}",
+                    request_fingerprint=hashlib.sha256(
+                        f"{symbol.value}\0{owner.order_id.value}".encode()
+                    ).hexdigest(),
+                    order_id=owner.order_id, trading_account_id=self.account_id,
+                    updated_at_ms=minute.end_ms,
+                )
+    
         obligation = self._store.transition_paper_protection_obligation(
             obligation.obligation_id, expected_status="TRIGGERED",
             next_status="DISPATCHING", expected_version=obligation.version,
@@ -792,9 +810,21 @@ class ConnectedSimulationRobot:
         ))
         if execution is None:
             raise SimulationExecutionNotConnected("virtual STOP execution was not durable")
-        finalize_box_protection_obligation(
-            self._store, obligation, trade, now_ms=minute.end_ms,
-        )
+        if trade.pattern == "IKIGAI_BOX":
+            resolved = finalize_box_protection_obligation(
+                self._store, obligation, trade, now_ms=minute.end_ms,
+            )
+        else:
+            resolved = finalize_non_box_protection_obligation(
+                self._store, obligation, trade, execution,
+                now_ms=minute.end_ms, require_entry_fees=True,
+            )
+            if resolved.status == "RESOLVED":
+                self._store.clear_paper_protection_for_flat(key)
+        if resolved.status != "RESOLVED":
+            raise SimulationExecutionNotConnected(
+                "native Robot protection close lacks complete durable economics"
+            )
 
     def after_committed_minute(self) -> None:
         """Return this minute's exchange receipts to the native Robot once."""
@@ -814,11 +844,11 @@ class ConnectedSimulationRobot:
             raise RuntimeError("SIMULATION exchange receipt mismatch")
         if fills:
             for fill, event in zip(fills, events):
-                if event.kind == "STOP_FILLED":
-                    self._apply_stop_fill(fill)
+                if event.kind in {"STOP_FILLED", "TAKE_FILLED"}:
+                    self._apply_protection_fill(fill, event.order_type)
                 else:
                     self._apply_fill(fill, event.order_id)
-            if not any(event.kind == "STOP_FILLED" for event in events):
+            if not any(event.kind in {"STOP_FILLED", "TAKE_FILLED"} for event in events):
                 self._monitor.process_authoritative_fill(self.session.account.symbol)
         self._drive_robot()
         self._synchronize_exchange()
@@ -856,6 +886,16 @@ class ConnectedSimulationRobot:
             )
         self.session.exchange.synchronize_robot_stop(
             stop, synchronized_at_ms=self.virtual_clock_ms(),
+        )
+        take = None
+        if (projection is not None and projection.side is not PositionSide.FLAT
+                and protection is not None and protection.take_profit is not None):
+            digest = hashlib.sha256(self._source_candidate_id.encode()).hexdigest()[:32]
+            take = RobotTakeRequest(
+                "robottake_" + digest, projection.side.name, protection.take_profit,
+            )
+        self.session.exchange.synchronize_robot_take(
+            take, synchronized_at_ms=self.virtual_clock_ms(),
         )
 
     def close(self) -> None:
