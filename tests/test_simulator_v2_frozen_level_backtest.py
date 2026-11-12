@@ -98,8 +98,9 @@ class NativeLevelHistoricalRunTests(unittest.TestCase):
         self.assertEqual(payload["virtual_fills"], 2)
         self.assertEqual(payload["stop_exits"], 1)
         self.assertEqual(payload["take_exits"], 0)
-        expected = (D("94.48") - D("96.5")) - (
-            D("94.48") + D("96.5")
+        native_stop = D("94.48") * D("1.015")  # original Robot limited_stop
+        expected = (D("94.48") - native_stop) - (
+            D("94.48") + native_stop
         ) * D("0.0006")
         self.assertEqual(result.report.realized_net_pnl, expected)
         self.assertLess(result.report.realized_net_pnl, 0)
