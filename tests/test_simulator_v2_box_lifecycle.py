@@ -14,9 +14,11 @@ from research.simulator_v2.box_backtest import run_verified_box_chunks
 from research.simulator_v2.box_visual_replay import BoxVisualReplay
 from research.simulator_v2.cache import _checksum, _rows
 from research.simulator_v2.history import HistoryChunk
-from research.simulator_v2.robot_sandbox import ConnectedSimulationRobot
+from research.simulator_v2.robot_sandbox import ConnectedSimulationRobot, SimulationExecutionNotConnected
+import robot_l_shape
+from mirror_retest_robot import ATTACHED, SCANNER_SOURCE, STRATEGY_ID
 from research.simulator_v2.session import VirtualReplaySession
-from terminal.domain.models import TradingAccountId
+from terminal.domain.models import Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import SQLiteStore
 from tests.test_box_plan_persistence import snapshot
 
@@ -82,6 +84,67 @@ class NativeBoxSimulationLifecycleTests(unittest.TestCase):
                    return_value=formation()):
             session.step(candle(31))
         return session
+
+    def test_native_mirror_limit_uses_same_private_robot_ledger_and_exchange(self):
+        """One native MIRROR LIMIT, no alternate trading engine or PAPER account."""
+        session = self._detected_session("native_mirror_limit")
+        with ConnectedSimulationRobot(
+            session, tick_size=D("0.01"), terms=terms(),
+        ) as robot:
+            frozen = {
+                "direction": "LONG", "source_timeframe": "5",
+                "breakout_time_ms": 1_500_000,
+                "reference": "100", "target": "110", "stop": "99",
+                "structural_stop": "99", "stop_kind": "FORMATION_EXTREME",
+                "potential_percent": "10", "reward_risk": "4",
+                "level_id": "lvl-local-native", "level_timeframe": "5",
+                "level_source": "pattern_boundary", "level_pattern": "Falling Wedge",
+                "level_side": "upper", "level_breakout_direction": "UP",
+                "confirmation": {"kind": "ENGULFING", "timeframe": "5",
+                                 "close_time_ms": 1_800_000},
+            }
+            candidate = {"candidate_id": "local-mirror-1", "status": "APPROVED",
+                         "signal_snapshot": {"symbol": "BTCUSDT", "pattern": "MIRROR",
+                                             "mirror_entry": frozen}}
+            state, _ = robot_l_shape.initialize_state(candidate)
+            state["execution"] = {"mirror": {
+                "strategy_id": STRATEGY_ID, "decision": ATTACHED,
+                "mode": "STANDALONE", "source": SCANNER_SOURCE,
+                "mirror_level_id": frozen["level_id"], "one_wv_usdt": "250",
+            }}
+            now = robot.virtual_clock_ms()
+            with self.assertRaisesRegex(SimulationExecutionNotConnected, "run-owned"):
+                plan = robot_l_shape.build_initial_retest_limit(
+                    candidate, state, tick_size=D("0.01"))
+                robot._executor.create_limit(plan.request)
+            record, created = robot._store.create_robot_candidate(
+                candidate_id=candidate["candidate_id"],
+                trading_account_id=robot.account_id, symbol=Symbol("BTCUSDT"),
+                status="APPROVED", signal_snapshot=candidate["signal_snapshot"],
+                approved_at_ms=now, updated_at_ms=now,
+            )
+            self.assertTrue(created)
+            robot._store.save_robot_candidate_state(
+                record.candidate_id, status="APPROVED", robot_state=state,
+                expected_revision=record.state_revision, updated_at_ms=now,
+            )
+            robot._source_candidate_id = record.candidate_id
+            first = robot._executor.create_limit(plan.request)
+            second = robot._executor.create_limit(plan.request)
+            self.assertEqual(first.order_id, second.order_id)
+            self.assertEqual(second.reason_code, "already_exists")
+            robot._synchronize_exchange()
+            self.assertEqual(len(session.exchange.robot_limits), 1)
+            order = session.exchange.robot_limits[0]
+            self.assertEqual((order.request.side, order.request.price, order.request.quantity),
+                             ("BUY", D("100.02"), D("2")))
+            self.assertFalse(order.reduce_only)
+            self.assertEqual(robot._store.get_paper_limit(first.order_id, robot.account_id).quantity,
+                             D("2"))
+            with self.assertRaisesRegex(SimulationExecutionNotConnected, "does not match"):
+                robot._executor.create_limit(replace(plan.request, symbol="ETHUSDT"))
+            with self.assertRaisesRegex(SimulationExecutionNotConnected, "amendment"):
+                robot._executor.amend_limit(None)
 
     def test_p1_p4_take_fees_net_pnl_and_remaining_grid_semantics(self):
         session = self._detected_session("native_box_cycle")
