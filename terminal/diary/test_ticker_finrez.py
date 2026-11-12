@@ -662,5 +662,16 @@ class EpisodeOriginalGeometryReadOnlyTests(unittest.TestCase):
                 )["geometry_status"], "NOT_EXPORTED",
             )
 
+def test_campaign_lineage_proof_regressions():
+    """Keep new exact-ID proof cases inside the existing mandatory Diary CI gate."""
+    from terminal.diary.test_campaign_lineage import CampaignProofTests
+
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(CampaignProofTests)
+    result = unittest.TestResult()
+    suite.run(result)
+    assert result.testsRun >= 8
+    assert result.wasSuccessful(), (result.failures, result.errors)
+
+
 if __name__ == "__main__":
     unittest.main()
