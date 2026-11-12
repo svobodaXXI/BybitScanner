@@ -345,8 +345,8 @@ export function RunSetupPanel({
       </div>
       {!runnableNative && active.length > 0 &&
         <p className="replay-run-error" role="status">
-          Торговый запуск: два клина вместе или Ikigai Box отдельно.
-          Остальные выбранные стратегии ещё не подключены к изолированному Robot.
+          Торговый запуск: клинья, отдельно Ikigai Box или L-shape и двойные экстремумы.
+          Разные семейства нельзя смешивать в одном виртуальном счёте.
         </p>}
       {statusError && <p role="status" className="replay-run-error">{statusError}</p>}
       {status && !status.can_attempt &&
@@ -371,11 +371,18 @@ export function RunSetupPanel({
               исполнено входов {report.box_entry_fills} ·
               всех исполнений {report.virtual_fills} ·
               STOP: {report.stop_exits} · TAKE: {report.take_exits}</span>
+          : report.scenario_type === "ORIGINAL_FROZEN_LEVEL_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION"
+          ? <span>L-shape / двойные экстремумы: сигналов Scanner {report.scanner_level_observations} ·
+              подтверждений Robot {report.native_robot_confirmations} ·
+              LIMIT: {report.submitted_protected_limits} ·
+              занято/заблокировано: {report.skipped_busy_entries}/{report.rejected_risk_entries} ·
+              исполнений: {report.virtual_fills} · STOP: {report.stop_exits} ·
+              TAKE: {report.take_exits}</span>
           : <span>Клинья: найдено {report.scanner_wedge_observations} ·
               ретестов {report.robot_retests_in_period} ·
               LIMIT: {report.submitted_protected_limits} ·
               исполнений: {report.virtual_fills} · STOP: {report.stop_exits} ·
-              TAKE: {report.take_exits}</span>}
+              TAKE: {report.take_exits}</span>
         <small>Модель OHLC, не фактические биржевые исполнения. Параметры риска — локальные исследовательские допущения.</small>
       </section>}
     </section>
