@@ -120,6 +120,10 @@ def run_real_trade_day(
             if registry_level is None or record is None:
                 raise ValueError("frozen MIRROR source level provenance missing")
             confirmation_ms = frozen["confirmation"]["close_time_ms"]
+            # A counterfactual may end with an open virtual position; preserve
+            # its causal evidence only up to the verified archive boundary.
+            exit_boundary_ms = (trade.exit_time_ms if trade.exit_time_ms is not None
+                                else chunk.end_ms)
             def m1_view(item):
                 return {
                     "open_time_ms": item.start_ms, "close_time_ms": item.end_ms,
@@ -129,14 +133,14 @@ def run_real_trade_day(
             surrounding_m1 = [
                 m1_view(c) for c in chunk.candles
                 if confirmation_ms - 3 * 60_000 <= c.end_ms
-                <= trade.exit_time_ms + 60_000
+                <= exit_boundary_ms + 60_000
             ]
             nearby_m5 = [
                 {key: value for key, value in row.items()
                  if key in ("open_time_ms", "close_time_ms", "open", "high", "low", "close")}
                 for row in m5
                 if confirmation_ms - 12 * 300_000 <= row["close_time_ms"]
-                <= trade.exit_time_ms + 300_000
+                <= exit_boundary_ms + 300_000
             ]
             trades.append({
                 "candidate_id": candidate_id,
