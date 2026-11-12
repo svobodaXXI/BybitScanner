@@ -107,8 +107,11 @@ class FrozenLevelNativeScannerTests(unittest.TestCase):
             as_of_ms=session.virtual_time_ms, mark_price=D("94"),
         )
         self.assertEqual(snapshot.position_quantity, D(0))
-        expected = (D("94.48") - D("96.5")) - (
-            D("94.48") + D("96.5")
+        # Use the same 1.5% production Robot protection policy as live PAPER.
+        native_stop = D("94.48") * D("1.015")
+        self.assertEqual(protected.stop_price, native_stop)
+        expected = (D("94.48") - native_stop) - (
+            D("94.48") + native_stop
         ) * D("0.0006")
         self.assertEqual(snapshot.realized_net_pnl, expected)
         self.assertLess(snapshot.realized_net_pnl, 0)
