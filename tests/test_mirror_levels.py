@@ -30,6 +30,7 @@ from mirror_levels.levels import (
 from mirror_levels.swing import confirmed_pivots, swing_levels
 from mirror_levels.tracker import (
     STATUS_RETESTED, STATUS_UNTESTED, STATUS_WAITING, track, replay_research_mirror_level,
+    replay_local_simulation_mirror,
 )
 from mirror_retest_observer import boundaries_from_candidate_snapshot
 from retest_calibration import causal_atr_series
@@ -545,3 +546,91 @@ def test_research_mirror_replay_enforces_native_source_and_direction_policy():
 def test_research_mirror_replay_fails_closed_on_unproven_market_history(broken_history):
     with pytest.raises(ValueError):
         replay_research_mirror_level(flat(1.0, 1), broken_history)
+
+
+def test_local_simulation_mirror_replays_real_closed_m5_feed_without_trades():
+    """The actual SIMULATION M1 timeline supplies native closed M5 to Mirror."""
+    from decimal import Decimal
+    from research.historical_market_replay import Candle
+    from research.simulator_v2.timeline import IsolatedTimeline
+
+    level = horizontal_level(
+        symbol="TESTUSDT", timeframe="5", source=SOURCE_SWING_ZONE,
+        pattern=None, side="upper", price=100, anchor_time_ms=0,
+        confirmed_at_ms=0,
+    )
+    timeline = IsolatedTimeline(simulation_run_id="mirror_fixture", symbol="TESTUSDT")
+    m5 = []
+    for i in range(15):
+        if i < 5:
+            o, c = 99, 99
+        elif i < 10:
+            o, c = ((99, 100.5), (100.5, 101), (101, 101.5),
+                    (101.5, 102), (102, 102))[i - 5]
+        else:
+            o, c = ((102, 102), (102, 101.5), (101.5, 101.3),
+                    (101.3, 101.1), (101.1, 101.2))[i - 10]
+        low = 99.8 if i == 12 else min(o, c) - 0.3
+        minute = Candle(
+            start_ms=i * M, interval_ms=M,
+            open=Decimal(str(o)), high=Decimal(str(max(o, c) + 0.3)),
+            low=Decimal(str(low)), close=Decimal(str(c)), volume=Decimal("1"),
+        )
+        frame = timeline.step(minute)
+        if frame.newly_closed_5m is not None:
+            m5.append(frame.newly_closed_5m)
+            result = replay_local_simulation_mirror(
+                simulation_run_id="mirror_fixture", symbol="TESTUSDT",
+                level=level, closed_bars=tuple(m5),
+            )
+            assert result["namespace"] == "SIMULATION"
+            assert result["observation_only"] is True
+            if len(m5) == 1:
+                assert result["status"] == STATUS_WAITING
+                assert result["breakout"] is None
+            elif len(m5) == 2:
+                assert result["status"] == STATUS_UNTESTED
+                assert result["breakout"]["direction"] == "UP"
+                assert result["first_retest"] is None
+            else:
+                assert result["status"] == STATUS_RETESTED
+                assert result["first_retest"]["contact"] == "PROVEN"
+    assert len(m5) == 3
+    assert {event.source for event in timeline.events} == {"MARKET"}
+    assert timeline.virtual_time_ms == 15 * M
+
+
+def test_local_simulation_mirror_rejects_wrong_identity_source_and_history():
+    from decimal import Decimal
+    from research.historical_market_replay import Candle
+
+    level = horizontal_level(
+        symbol="TESTUSDT", timeframe="5", source=SOURCE_SWING_ZONE,
+        pattern=None, side="upper", price=100, anchor_time_ms=0,
+        confirmed_at_ms=0,
+    )
+    def candle(start=0, step=5*M):
+        return Candle(
+            start_ms=start, interval_ms=step,
+            open=Decimal("99"), high=Decimal("99.5"),
+            low=Decimal("98.5"), close=Decimal("99"), volume=Decimal("1"),
+        )
+    def observe(source=level, bars=None, **overrides):
+        return replay_local_simulation_mirror(
+            simulation_run_id=overrides.get("run", "mirror_fixture"),
+            symbol=overrides.get("symbol", "TESTUSDT"),
+            level=source, closed_bars=(candle(),) if bars is None else bars,
+        )
+    for kwargs in ({"run": "bad run"}, {"symbol": "OTHERUSDT"},
+                   {"bars": ()}, {"bars": (candle(step=M),)},
+                   {"bars": (object(),)}, {"bars": (candle(0), candle(10 * M))}):
+        with pytest.raises(ValueError):
+            observe(**kwargs)
+    invalid = horizontal_level(
+        symbol="TESTUSDT", timeframe="5", source=SOURCE_PATTERN_BOUNDARY,
+        pattern="IKIGAI_BOX", side="upper", price=100,
+        anchor_time_ms=0, confirmed_at_ms=0,
+    )
+    forbidden = observe(source=invalid)
+    assert forbidden["status"] == "SOURCE_POLICY_REJECTED"
+    assert forbidden["breakout"] is None
