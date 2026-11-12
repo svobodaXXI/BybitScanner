@@ -71,8 +71,33 @@ class FinrezRankingTests(unittest.TestCase):
             {"symbol": "ETHUSDT", "pnl_usdt": "-1.2", "trade_count": 1},
         ])
 
+    def test_calendar_periods_use_moscow_boundaries(self):
+        now = _ms(12, 12)  # Thursday 12 Nov 2026
+        self.assertEqual(period_start_ms(period="DAY", now_ms=now), _ms(12, 0))
+        self.assertEqual(period_start_ms(period="TODAY", now_ms=now), _ms(12, 0))
+        self.assertEqual(period_start_ms(period="WEEK", now_ms=now), _ms(9, 0))
+        self.assertEqual(period_start_ms(period="MONTH", now_ms=now),
+                         int(datetime(2026, 11, 1, tzinfo=_MSK).timestamp() * 1000))
+        self.assertEqual(period_start_ms(period="YEAR", now_ms=now),
+                         int(datetime(2026, 1, 1, tzinfo=_MSK).timestamp() * 1000))
+        self.assertEqual(period_start_ms(period="ALL", now_ms=now), 0)
+
+    def test_all_calendar_periods_filter_by_actual_episode_close_time(self):
+        now = _ms(12, 12)
+        rows = [
+            _episode("BTCUSDT", "1", "0", _ms(12, 2)),
+            _episode("BTCUSDT", "2", "0", _ms(9, 0)),
+            _episode("BTCUSDT", "4", "0", _ms(8, 23)),
+        ]
+        expected = {"DAY": ("1", 1), "WEEK": ("3", 2),
+                    "MONTH": ("7", 3), "YEAR": ("7", 3), "ALL": ("7", 3)}
+        for period, (pnl, count) in expected.items():
+            _, ranked = aggregate_ticker_pnl(rows, period=period, now_ms=now)
+            self.assertEqual(ranked, [{"symbol": "BTCUSDT",
+                                       "pnl_usdt": pnl, "trade_count": count}])
+
     def test_rejects_unknown_period_and_negative_time(self):
-        for period, now in [("WEEK", _ms(9, 12)), ("TODAY", -1)]:
+        for period, now in [("UNKNOWN", _ms(9, 12)), ("TODAY", -1)]:
             with self.assertRaises(ValueError):
                 period_start_ms(period=period, now_ms=now)
 
@@ -636,6 +661,224 @@ class EpisodeOriginalGeometryReadOnlyTests(unittest.TestCase):
                     self._context(candidate), symbol="BTCUSDT", opened_at_ms=500,
                 )["geometry_status"], "NOT_EXPORTED",
             )
+
+def test_campaign_lineage_proof_regressions():
+    """Keep new exact-ID proof cases inside the existing mandatory Diary CI gate."""
+    from terminal.diary.test_campaign_lineage import CampaignProofTests
+
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(CampaignProofTests)
+    result = unittest.TestResult()
+    suite.run(result)
+    assert result.testsRun >= 8
+    assert result.wasSuccessful(), (result.failures, result.errors)
+
+
+
+def test_campaign_sqlite_schema_regression(tmp_path):
+    from terminal.diary.test_campaign_lineage import (
+        test_campaign_sqlite_reader_uses_actual_production_table_definitions,
+    )
+    test_campaign_sqlite_reader_uses_actual_production_table_definitions(tmp_path)
+
+
+class SimulatorLaunchRelayTests(unittest.TestCase):
+    """Paired-device relay cannot grant trading, shell, or arbitrary URL access."""
+
+    def make_relay(self):
+        from terminal.diary.simulator_launch_relay import SimulatorLaunchRelay
+
+        tick = [100.0]
+        token = "A" * 64
+        relay = SimulatorLaunchRelay(
+            origin="https://stats.example.test",
+            devices={"owner-pc": token, "owner-laptop": "B" * 64},
+            clock=lambda: tick[0],
+        )
+        return relay, tick, token
+
+    def test_disabled_without_secret_config_and_rejects_invalid_config(self):
+        from terminal.diary.simulator_launch_relay import SimulatorLaunchRelay, RelayInvalid
+        from unittest.mock import patch
+
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_SIMULATOR_BRIDGE_ORIGIN": "",
+            "BYBITSCANNER_SIMULATOR_BRIDGE_DEVICES_JSON": "",
+        }):
+            self.assertIsNone(SimulatorLaunchRelay.from_environment())
+        with self.assertRaises(RelayInvalid):
+            SimulatorLaunchRelay(origin="http://wrong.test", devices={"pc": "A" * 64})
+        with self.assertRaises(RelayInvalid):
+            SimulatorLaunchRelay(origin="https://stats.example.test", devices={
+                "pc": "A" * 64, "laptop": "A" * 64,
+            })
+
+    def test_rejects_unpaired_device_bad_token_and_cross_origin_request(self):
+        from terminal.diary.simulator_launch_relay import RelayForbidden, RelayUnavailable
+        relay, _, token = self.make_relay()
+        episode = "te_" + "a" * 24
+        with self.assertRaises(RelayForbidden):
+            relay.poll(device="owner-pc", token="Z" * 64)
+        with self.assertRaises(RelayForbidden):
+            relay.poll(device="unknown", token=token)
+        with self.assertRaises(RelayUnavailable):
+            relay.enqueue(episode, request_origin="https://stats.example.test",
+                          fetch_site="same-origin")
+        self.assertEqual(relay.poll(device="owner-pc", token=token)["state"], "IDLE")
+        for origin, site in [
+            ("https://evil.test", "same-origin"), ("https://stats.example.test", "cross-site"),
+            ("", "same-origin"),
+        ]:
+            with self.assertRaises(RelayForbidden):
+                relay.enqueue(episode, request_origin=origin, fetch_site=site)
+
+    def test_owner_only_pairing_returns_preconfigured_device_without_writes(self):
+        from terminal.diary.simulator_launch_relay import (
+            RelayForbidden, RelayInvalid, RelayUnavailable,
+        )
+        relay, _, token = self.make_relay()
+        with self.assertRaises(RelayForbidden):
+            relay.pairing_credentials(device_id="owner-pc", request_origin="https://evil.test",
+                                      fetch_site="same-origin")
+        with self.assertRaises(RelayForbidden):
+            relay.pairing_credentials(device_id="owner-pc", request_origin=relay.origin,
+                                      fetch_site="cross-site")
+        with self.assertRaises(RelayInvalid):
+            relay.pairing_credentials(device_id="../../pc", request_origin=relay.origin,
+                                      fetch_site="same-origin")
+        with self.assertRaises(RelayUnavailable):
+            relay.pairing_credentials(device_id="other-device", request_origin=relay.origin,
+                                      fetch_site="same-origin")
+        self.assertEqual(relay.pairing_credentials(
+            device_id="owner-pc", request_origin=relay.origin, fetch_site="same-origin",
+        ), {"device_id": "owner-pc", "token": token})
+        # Issuing an owner pairing response cannot enqueue a launch or mark
+        # a PC online: a real token-bound device poll remains mandatory.
+        self.assertEqual(relay._requests, {})
+        self.assertEqual(relay._last_seen, {})
+
+    def test_typed_single_use_ack_and_expiration(self):
+        from terminal.diary.simulator_launch_relay import (
+            RelayInvalid, RelayUnavailable,
+        )
+        relay, tick, token = self.make_relay()
+        relay.poll(device="owner-pc", token=token)
+        episode = "te_" + "a" * 24
+        for wrong in ["BTCUSDT", "te_" + "A" * 24, episode + ";powershell"]:
+            with self.assertRaises(RelayInvalid):
+                relay.enqueue(wrong, request_origin=relay.origin, fetch_site="same-origin")
+        receipt = relay.enqueue(episode, request_origin=relay.origin, fetch_site="same-origin")
+        self.assertEqual(receipt["state"], "QUEUED")
+        with self.assertRaises(RelayUnavailable):
+            relay.enqueue(episode, request_origin=relay.origin, fetch_site="same-origin")
+        command = relay.poll(device="owner-pc", token=token)
+        self.assertEqual(command["episode_id"], episode)
+        self.assertEqual(command["request_id"], receipt["request_id"])
+        self.assertEqual(relay.poll(device="owner-pc", token=token)["state"], "IDLE")
+        self.assertEqual(
+            relay.acknowledge(device="owner-pc", token=token,
+                              request_id=command["request_id"], launched=True)["state"],
+            "LAUNCHED",
+        )
+        with self.assertRaises(RelayInvalid):
+            relay.acknowledge(device="owner-pc", token=token,
+                              request_id=command["request_id"], launched=True)
+        self.assertEqual(relay.status(receipt["request_id"],
+                                     request_origin=relay.origin, fetch_site="same-origin")["state"],
+                         "LAUNCHED")
+        tick[0] += 13
+        with self.assertRaises(RelayUnavailable):
+            relay.enqueue(episode, request_origin=relay.origin, fetch_site="same-origin")
+
+    def test_other_device_cannot_ack_or_read_unrelated_queue(self):
+        from terminal.diary.simulator_launch_relay import RelayInvalid
+        relay, _, token = self.make_relay()
+        relay.poll(device="owner-pc", token=token)
+        relay.poll(device="owner-laptop", token="B" * 64)
+        # Latest heartbeat tie is deterministic; owner-pc is lexically later.
+        receipt = relay.enqueue("te_" + "b" * 24,
+                                request_origin=relay.origin, fetch_site="same-origin")
+        self.assertEqual(relay.poll(device="owner-laptop", token="B" * 64)["state"], "IDLE")
+        with self.assertRaises(RelayInvalid):
+            relay.acknowledge(device="owner-laptop", token="B" * 64,
+                              request_id=receipt["request_id"], launched=True)
+        relay.poll(device="owner-pc", token=token)
+        self.assertEqual(relay.acknowledge(device="owner-pc", token=token,
+                                          request_id=receipt["request_id"],
+                                          launched=False)["state"], "FAILED")
+
+    def test_prefers_already_running_simulator_over_more_recent_idle_pc(self):
+        from terminal.diary.simulator_launch_relay import RelayInvalid
+        relay, tick, pc_token = self.make_relay()
+        relay.poll(device="owner-pc", token=pc_token, viewer_running=True)
+        tick[0] += 1
+        relay.poll(device="owner-laptop", token="B" * 64, viewer_running=False)
+        receipt = relay.enqueue("te_" + "d" * 24,
+                                request_origin=relay.origin, fetch_site="same-origin")
+        assert relay.poll(device="owner-laptop", token="B" * 64,
+                          viewer_running=False)["state"] == "IDLE"
+        delivered = relay.poll(device="owner-pc", token=pc_token, viewer_running=True)
+        assert delivered["request_id"] == receipt["request_id"]
+        assert delivered["state"] == "OPEN_EPISODE"
+        with self.assertRaises(RelayInvalid):
+            relay.poll(device="owner-pc", token=pc_token, viewer_running="true")
+
+    def test_falls_back_to_most_recent_connected_device_if_all_viewers_closed(self):
+        relay, tick, pc_token = self.make_relay()
+        relay.poll(device="owner-pc", token=pc_token, viewer_running=False)
+        tick[0] += 1
+        relay.poll(device="owner-laptop", token="B" * 64, viewer_running=False)
+        receipt = relay.enqueue("te_" + "e" * 24,
+                                request_origin=relay.origin, fetch_site="same-origin")
+        assert relay.poll(device="owner-pc", token=pc_token,
+                          viewer_running=False)["state"] == "IDLE"
+        # The last heartbeat from PC must not steal a request already assigned
+        # to the laptop while a different device awaits delivery.
+        delivered = relay.poll(device="owner-laptop", token="B" * 64,
+                               viewer_running=False)
+        assert delivered["request_id"] == receipt["request_id"]
+
+    def test_unacknowledged_delivery_expires_and_is_not_redelivered(self):
+        relay, tick, token = self.make_relay()
+        relay.poll(device="owner-pc", token=token)
+        receipt = relay.enqueue("te_" + "c" * 24,
+                                request_origin=relay.origin, fetch_site="same-origin")
+        self.assertEqual(relay.poll(device="owner-pc", token=token)["state"], "OPEN_EPISODE")
+        tick[0] += 36
+        self.assertEqual(relay.poll(device="owner-pc", token=token)["state"], "IDLE")
+        self.assertEqual(relay.status(receipt["request_id"], request_origin=relay.origin,
+                                      fetch_site="same-origin")["state"], "EXPIRED")
+
+
+def test_simulator_bridge_ingress_exposes_only_token_scoped_device_calls():
+    """Source ingress must keep owner requests behind existing auth sidecar."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2]
+              / "deploy/terminal_ingress/nginx-authenticated.conf").read_text(
+                  encoding="utf-8"
+              )
+    # Exact-match locations are more specific than the protected /api/ prefix.
+    # The only owner-auth exemptions accept outbound device polling and ACK.
+    for suffix, method in (("poll", "GET"), ("ack", "POST")):
+        location = f"location = /api/diary/simulator-bridge/{suffix} {{"
+        assert source.count(location) == 1
+        block = source.split(location, 1)[1].split("\n    }", 1)[0]
+        assert f"limit_except {method} {{ deny all; }}" in block
+        assert "proxy_pass http://127.0.0.1:8765;" in block
+        assert 'proxy_set_header Cookie "";' in block
+        assert 'proxy_set_header Authorization "";' in block
+        assert "auth_request off;" not in block  # no parent-wide override
+    for owner_only in ("request", "status"):
+        assert f"location = /api/diary/simulator-bridge/{owner_only}" not in source
+    protected = source.split("location /api/ {", 1)[1].split("\n    }", 1)[0]
+    assert "auth_request /_auth;" in protected
+    assert "proxy_pass http://127.0.0.1:8765;" in protected
+    legacy = (Path(__file__).resolve().parents[2]
+              / "deploy/nginx/bybitscanner.conf").read_text(encoding="utf-8")
+    forbidden = legacy.split("location ^~ /api/diary/simulator-bridge/ {", 1)
+    assert len(forbidden) == 2
+    assert "return 404;" in forbidden[1].split("\n    }", 1)[0]
+
 
 if __name__ == "__main__":
     unittest.main()

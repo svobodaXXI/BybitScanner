@@ -67,6 +67,7 @@ from terminal.diary.scoped_statistics_archive import (
     StatisticsScopeError, load_latest_scoped_statistics_read_only,
 )
 from terminal.diary.scoped_statistics_reporter import load_paper_source_snapshot
+from terminal.diary.campaign_lineage import CampaignLineageUnproven, project_selected_paper_campaign
 from terminal.diary.ticker_finrez import (
     EpisodeFactsNotFound, EpisodeFactsSourceChanged,
     project_paper_closed_episode_facts, project_paper_ticker_pnl,
@@ -3086,6 +3087,36 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
 
+        if parsed.path == "/api/diary/simulator-bridge/poll":
+            # A paired local device initiates an outbound GET. No Nginx owner
+            # credentials or trading secrets are shared with the device.
+            from terminal.diary.simulator_launch_relay import (
+                RelayForbidden, RelayInvalid,
+            )
+            relay = getattr(self.server, "simulator_launch_relay", None)
+            if relay is None:
+                self._json_response(503, {"ok": False, "error": "simulator_bridge_disabled"})
+                return
+            try:
+                params = parse_qs(parsed.query, keep_blank_values=True)
+                if (set(params) != {"device_id", "viewer_running"}
+                        or any(len(values) != 1 for values in params.values())
+                        or params["viewer_running"][0] not in {"0", "1"}):
+                    raise RelayInvalid("invalid_simulator_device")
+                event = relay.poll(
+                    device=params["device_id"][0],
+                    token=self.headers.get("X-BybitScanner-Simulator-Device-Token", ""),
+                    viewer_running=params["viewer_running"][0] == "1",
+                )
+            except RelayForbidden:
+                self._json_response(403, {"ok": False, "error": "simulator_device_unauthorized"})
+                return
+            except RelayInvalid:
+                self._json_response(400, {"ok": False, "error": "invalid_simulator_device"})
+                return
+            self._json_response(200, {"ok": True, **event})
+            return
+
         if parsed.path == OPERATOR_DIAGNOSTICS_PATH:
             if not self._operator_authorized():
                 self._json_response(403, {"ok": False, "error": "operator_unauthorized"})
@@ -3315,7 +3346,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             params = parse_qs(parsed.query, keep_blank_values=True)
             if (set(params) != {"account_id", "owner", "period"}
                     or any(len(values) != 1 for values in params.values())
-                    or params["period"][0] not in {"TODAY", "ALL"}
+                    or params["period"][0] not in {"TODAY", "DAY", "WEEK", "MONTH", "YEAR", "ALL"}
                     or params["owner"][0] not in {"MANUAL", "ROBOT"}):
                 self._json_response(400, {"ok": False, "error": "finrez_scope_required"})
                 return
@@ -3391,6 +3422,48 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             except Exception:
                 LOGGER.exception("Closed episode facts projection unavailable")
                 self._json_response(503, {"ok": False, "error": "episode_facts_evidence_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
+        if parsed.path == "/api/diary/campaign-lineage":
+            # Proven, read-only Robot campaign genealogy only. Does not
+            # claim to provide historical decisions, geometry or candles.
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            if (set(params) != {"account_id", "owner", "trade_episode_id", "source_revision"}
+                    or any(len(v) != 1 for v in params.values())
+                    or params["owner"][0] not in {"ROBOT", "MANUAL"}):
+                self._json_response(400, {"ok": False, "error": "campaign_lineage_scope_required"})
+                return
+            if params["account_id"][0] != "paper" or params["owner"][0] != "ROBOT":
+                self._json_response(404, {"ok": False, "error": "campaign_lineage_scope_unavailable"})
+                return
+            episode_id, revision = params["trade_episode_id"][0], params["source_revision"][0]
+            if (len(episode_id) != 27 or not episode_id.startswith("te_")
+                    or any(char not in "0123456789abcdef" for char in episode_id[3:])
+                    or not 1 <= len(revision) <= 20 or not revision.isascii()
+                    or not revision.isdecimal() or revision[0] == "0"):
+                self._json_response(400, {"ok": False, "error": "campaign_lineage_identity_invalid"})
+                return
+            try:
+                snapshot = load_paper_source_snapshot(
+                    self.server.diary_source_db_path, include_campaign_evidence=True,
+                )
+                projection = project_selected_paper_campaign(
+                    snapshot, account_id="paper", owner="ROBOT",
+                    trade_episode_id=episode_id, source_revision=int(revision),
+                )
+            except CampaignLineageUnproven:
+                # Missing entry ownership / historical reentry is not a
+                # fabricated empty campaign or a plausible ticker-based join.
+                self._json_response(409, {"ok": False, "error": "campaign_lineage_unproven"})
+                return
+            except (StatisticsScopeError, ValueError):
+                self._json_response(503, {"ok": False, "error": "campaign_lineage_source_unavailable"})
+                return
+            except Exception:
+                LOGGER.exception("Verified campaign lineage unavailable")
+                self._json_response(503, {"ok": False, "error": "campaign_lineage_source_unavailable"})
                 return
             self._json_response(200, {"ok": True, **projection})
             return
@@ -3995,6 +4068,69 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path in {
+            "/api/diary/simulator-bridge/request",
+            "/api/diary/simulator-bridge/status",
+            "/api/diary/simulator-bridge/pair",
+            "/api/diary/simulator-bridge/ack",
+        }:
+            # Owner-facing routes rely on existing Nginx owner authentication
+            # AND pinned same-origin browser checks. Device ACK has its own
+            # independent token and never receives PAPER or operator authority.
+            from terminal.diary.simulator_launch_relay import (
+                RelayForbidden, RelayInvalid, RelayUnavailable,
+            )
+            relay = getattr(self.server, "simulator_launch_relay", None)
+            if relay is None:
+                self._json_response(503, {"ok": False, "error": "simulator_bridge_disabled"})
+                return
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 1 <= size <= 320:
+                    raise RelayInvalid("invalid_simulator_bridge_payload_size")
+                if path.endswith("/request"):
+                    payload = self._payload({"episode_id"})
+                    result = relay.enqueue(
+                        payload["episode_id"],
+                        request_origin=self.headers.get("Origin", ""),
+                        fetch_site=self.headers.get("Sec-Fetch-Site", ""),
+                    )
+                elif path.endswith("/status"):
+                    payload = self._payload({"request_id"})
+                    result = relay.status(
+                        payload["request_id"],
+                        request_origin=self.headers.get("Origin", ""),
+                        fetch_site=self.headers.get("Sec-Fetch-Site", ""),
+                    )
+                elif path.endswith("/pair"):
+                    # Nginx owner-auth must protect this route exactly as
+                    # request/status. No device token is provisioned on VPS.
+                    payload = self._payload({"device_id"})
+                    result = relay.pairing_credentials(
+                        device_id=payload["device_id"],
+                        request_origin=self.headers.get("Origin", ""),
+                        fetch_site=self.headers.get("Sec-Fetch-Site", ""),
+                    )
+                else:
+                    payload = self._payload({"device_id", "request_id", "launched"})
+                    result = relay.acknowledge(
+                        device=payload["device_id"],
+                        token=self.headers.get("X-BybitScanner-Simulator-Device-Token", ""),
+                        request_id=payload["request_id"], launched=payload["launched"],
+                    )
+            except RelayForbidden:
+                self._json_response(403, {"ok": False, "error": "simulator_bridge_unauthorized"})
+                return
+            except RelayUnavailable as exc:
+                self._json_response(503, {"ok": False, "error": str(exc)})
+                return
+            except (RelayInvalid, ValueError, TypeError, KeyError,
+                    json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_simulator_bridge_request"})
+                return
+            self._json_response(200, {"ok": True, **result})
+            return
+
         if path == "/api/workspace/owner-unscanned-signal":
             # Standalone, untrusted owner chart evidence in the existing
             # append-only proposal archive. No Scanner or Robot admission.
@@ -5190,6 +5326,16 @@ def main() -> None:
 
         server.operator_token = os.environ.get("BYBITSCANNER_OPERATOR_TOKEN", "").strip()
         server.autopilot_owner_token = os.environ.get(AUTOPILOT_OWNER_TOKEN_ENV, "").strip()
+        from terminal.diary.simulator_launch_relay import (
+            SimulatorLaunchRelay, RelayInvalid,
+        )
+        try:
+            server.simulator_launch_relay = SimulatorLaunchRelay.from_environment()
+        except RelayInvalid:
+            # An invalid optional research relay must never prevent the
+            # protected PAPER runtime from starting or force a STOP.
+            LOGGER.warning("Optional simulator launch relay disabled: configuration invalid")
+            server.simulator_launch_relay = None
         server.runtime = runtime
         server.market_data = market_data
         server.robot_protection_coverage = robot_protection_coverage
