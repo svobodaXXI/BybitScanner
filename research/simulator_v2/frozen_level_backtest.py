@@ -105,6 +105,10 @@ class FrozenLevelVisualReplay:
         if self.start_ms <= at_ms < self.end_ms:
             self._items.append({
                 "kind": "ENTRY_SIGNAL", "time_ms": at_ms,
+                "strategy_id": {
+                    "L-shape": "L_SHAPE", "Double Top": "DOUBLE_TOP",
+                    "Double Bottom": "DOUBLE_BOTTOM",
+                }[preview.pattern],
                 "side": preview.direction, "price": float(order.limit_price),
                 "stop": float(preview.protected.stop_price),
                 "take": float(preview.protected.take_price),
