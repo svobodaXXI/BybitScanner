@@ -768,7 +768,6 @@ def verified_standalone_snapshot(
     No handoff, network, order or persistence. Source and frozen confirmation
     must still be the exact live, untested, owner-approved MIRROR campaign.
     """
-    from pattern_robot_integration import is_robot_executable_signal
     from mirror_levels.levels import (
         LevelRegistry, mirror_breakout_allowed, mirror_frozen_entry_allowed,
         mirror_level_allowed,
@@ -815,10 +814,10 @@ def verified_standalone_snapshot(
     )
     if not authorized:
         return None
-    snapshot = _standalone_snapshot(symbol, terms)
-    return (snapshot if is_robot_executable_signal(
-        snapshot, timeframe=terms["source_timeframe"],
-    ) else None)
+    # This is source validity, not trading permission. Production still
+    # checks is_robot_executable_signal (owner flag) before handoff; the local
+    # SIMULATION adapter has its own explicit isolated risk-profile selection.
+    return _standalone_snapshot(symbol, terms)
 
 
 def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) -> list[str]:
@@ -828,7 +827,7 @@ def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) 
     handed again (a duplicate candidate could spend the campaign twice). Flag off -> ``OFF`` (observation).
     """
 
-    from pattern_robot_integration import prepare_robot_handoff
+    from pattern_robot_integration import is_robot_executable_signal, prepare_robot_handoff
 
     handed = []
     for entry in state.get("standalone_entries") or ():
@@ -840,6 +839,10 @@ def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) 
             save_state(state, root)
             continue
         timeframe = snapshot["mirror_entry"]["source_timeframe"]
+        if not is_robot_executable_signal(snapshot, timeframe=timeframe):
+            entry["handoff"] = "OFF"
+            save_state(state, root)
+            continue
         entry["handoff"] = "SENT"
         save_state(state, root)
         result = prepare_robot_handoff(snapshot, timeframe=timeframe, enabled=True)
