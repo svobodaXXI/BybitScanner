@@ -8,7 +8,7 @@ Economics are *illustrative* until verified instrument terms are supplied.
 from __future__ import annotations
 
 import argparse
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -29,6 +29,13 @@ EXPECTED_ARCHIVE_SHA256 = (
 EXPECTED_DERIVED_M1_SHA256 = (
     "cd8c8544fb9adecf3b090a39b4f234eef004f7fbfab055e1134f6b31c1b43a1c"
 )
+# Allow only two independently verified public source archives. The second
+# day's derived M1 checksum is emitted by this reproducible import and both
+# counterfactual runs must prove exactly the same M1 digest.
+ARCHIVE_SHA256_BY_DAY = {
+    date(2026, 11, 7): EXPECTED_ARCHIVE_SHA256,
+    date(2026, 11, 8): "797a84c3483f894b4041159ea6a8d2ef7e3377fbc6aac46b5fed28da357d3e6d",
+}
 # Explicitly hypothetical local size/tick assumptions; not actual Bybit
 # instrument specs and not evidence of profitable deployable trading.
 TERMS = BoxSimulationRiskTerms(
@@ -47,25 +54,29 @@ TERMS = BoxSimulationRiskTerms(
 
 def run_real_trade_day(
     archive: Path, *, one_filled_trade_per_campaign: bool = False,
+    utc_day: date = DAY,
 ) -> dict[str, object]:
+    if type(utc_day) is not date or utc_day not in ARCHIVE_SHA256_BY_DAY:
+        raise ValueError("unapproved real-trades research UTC day")
     if type(one_filled_trade_per_campaign) is not bool:
         raise TypeError("explicit local comparison option must be boolean")
     if not isinstance(archive, Path) or archive.is_symlink() or not archive.is_file():
         raise ValueError("existing regular Bybit public trades archive required")
-    end = int(datetime(2026, 11, 8, tzinfo=timezone.utc).timestamp() * 1000)
+    end = int(datetime.combine(utc_day + timedelta(days=1),
+                               datetime.min.time(), tzinfo=timezone.utc).timestamp() * 1000)
     chunk, archive_sha = parse_local_trade_day(
-        archive, symbol=SYMBOL, utc_day=DAY, latest_closed_boundary_ms=end,
+        archive, symbol=SYMBOL, utc_day=utc_day, latest_closed_boundary_ms=end,
     )
-    if archive_sha != EXPECTED_ARCHIVE_SHA256:
+    if archive_sha != ARCHIVE_SHA256_BY_DAY[utc_day]:
         raise ValueError("archive SHA mismatch; never substitute a different source")
-    if chunk.sha256 != EXPECTED_DERIVED_M1_SHA256 or len(chunk.candles) != 1440:
+    if (len(chunk.candles) != 1440 or
+            (utc_day == DAY and chunk.sha256 != EXPECTED_DERIVED_M1_SHA256)):
         raise ValueError("derived M1 SHA/day coverage mismatch")
 
     session = VirtualReplaySession(
         simulation_run_id=(
-            "icnt_20261107_native_mirror_one_fill"
-            if one_filled_trade_per_campaign
-            else "icnt_20261107_native_mirror_real_v1"
+            f"icnt_{utc_day:%Y%m%d}_native_mirror_"
+            + ("one_fill" if one_filled_trade_per_campaign else "original")
         ),
         symbol=SYMBOL, initial_balance=Decimal("1000"),
         taker_fee_rate=Decimal("0.0006"),
@@ -187,7 +198,7 @@ def run_real_trade_day(
             "simulated_only": True,
             "source": "BYBIT_PUBLIC_TRADES_DERIVED_M1_NOT_OFFICIAL_KLINE",
             "symbol": SYMBOL,
-            "utc_day": DAY.isoformat(),
+            "utc_day": utc_day.isoformat(),
             "archive_sha256": archive_sha,
             "derived_m1_sha256": chunk.sha256,
             "closed_m1": len(chunk.candles),
@@ -232,10 +243,16 @@ def run_real_trade_day(
         }
 
 
-def compare_campaign_fill_limit(archive: Path) -> dict[str, object]:
+def compare_campaign_fill_limit(
+    archive: Path, *, utc_day: date = DAY,
+) -> dict[str, object]:
     """Paired full independent historical replays, not post-hoc PnL deletion."""
-    original = run_real_trade_day(archive, one_filled_trade_per_campaign=False)
-    restricted = run_real_trade_day(archive, one_filled_trade_per_campaign=True)
+    original = run_real_trade_day(
+        archive, one_filled_trade_per_campaign=False, utc_day=utc_day,
+    )
+    restricted = run_real_trade_day(
+        archive, one_filled_trade_per_campaign=True, utc_day=utc_day,
+    )
     for key in ("archive_sha256", "derived_m1_sha256", "closed_m1",
                 "native_mirror_levels", "native_confirmations"):
         if original[key] != restricted[key]:
@@ -251,21 +268,23 @@ def compare_campaign_fill_limit(archive: Path) -> dict[str, object]:
         count_by_campaign[key] = count_by_campaign.get(key, 0) + 1
     if any(count > 1 for count in count_by_campaign.values()):
         raise RuntimeError("experimental one-filled-trade invariant violated")
-    if not original["trades"] or not restricted["trades"]:
-        raise RuntimeError("real-data comparison has no common first executed trade")
-    first_fields = ("entry_time_ms", "exit_time_ms", "direction",
-                    "entry_price", "exit_price", "exit_reason", "entry_quantity",
-                    "realized_pnl_gross_usdt", "fees_usdt", "pnl_percent_net")
-    if any(original["trades"][0][key] != restricted["trades"][0][key]
-           for key in first_fields):
-        raise RuntimeError("experiment changed the original first fill or protection")
-    if (original["trades"][0]["frozen_entry"]["level_id"]
-            != restricted["trades"][0]["frozen_entry"]["level_id"]):
-        raise RuntimeError("first native MIRROR source level unexpectedly changed")
+    if bool(original["trades"]) != bool(restricted["trades"]):
+        raise RuntimeError("experiment changed whether the first trade filled")
+    if original["trades"]:
+        first_fields = ("entry_time_ms", "exit_time_ms", "direction",
+                        "entry_price", "exit_price", "exit_reason", "entry_quantity",
+                        "realized_pnl_gross_usdt", "fees_usdt", "pnl_percent_net")
+        if any(original["trades"][0][key] != restricted["trades"][0][key]
+               for key in first_fields):
+            raise RuntimeError("experiment changed the original first fill or protection")
+        if (original["trades"][0]["frozen_entry"]["level_id"]
+                != restricted["trades"][0]["frozen_entry"]["level_id"]):
+            raise RuntimeError("first native MIRROR source level unexpectedly changed")
     original_pnl = Decimal(original["total_net_pnl_usdt"])
     restricted_pnl = Decimal(restricted["total_net_pnl_usdt"])
     return {
         "schema": "MIRROR_REAL_CAMPAIGN_ONE_FILL_COMPARISON_V1",
+        "utc_day": utc_day.isoformat(),
         "trade_source_sha256": original["archive_sha256"],
         "derived_m1_sha256": original["derived_m1_sha256"],
         "baseline": original,
@@ -283,10 +302,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Real public trade archive MIRROR SIMULATION")
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--utc-day", default=DAY.isoformat(),
+                        choices=tuple(sorted(d.isoformat() for d in ARCHIVE_SHA256_BY_DAY)))
     parser.add_argument("--compare-one-fill", action="store_true")
     args = parser.parse_args()
-    report = (compare_campaign_fill_limit(args.archive)
-              if args.compare_one_fill else run_real_trade_day(args.archive))
+    selected_day = date.fromisoformat(args.utc_day)
+    report = (compare_campaign_fill_limit(args.archive, utc_day=selected_day)
+              if args.compare_one_fill
+              else run_real_trade_day(args.archive, utc_day=selected_day))
     if args.report.exists() or args.report.is_symlink():
         raise ValueError("report destination must not overwrite user-owned data")
     args.report.parent.mkdir(parents=True, exist_ok=True)
