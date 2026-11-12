@@ -143,3 +143,36 @@ class PublicTakerBridgeTests(TestCase):
         self.assertTrue(result.buy_wave_accelerating)
         with self.assertRaises(ValueError):
             compare_flow_windows(first, second, decision_ms=1999)
+
+
+class CompletedFlowObserverTests(TestCase):
+    def test_consecutive_live_windows_then_delayed_decision(self):
+        from robot_entry_flow_evidence import CompletedFlowObserver, TakerPrint
+        obs = CompletedFlowObserver(symbol="ICNTUSDT", window_ms=1000)
+        one = TakerPrint("ICNTUSDT", "a", 100, "Sell", D("1"), D("100"))
+        two = TakerPrint("ICNTUSDT", "b", 1010, "Buy", D("1.01"), D("300"))
+        three = TakerPrint("ICNTUSDT", "c", 1020, "Buy", D("1.02"), D("100"))
+        self.assertIsNone(obs.observe_closed((one,), start_ms=0, end_ms=1000, observed_at_ms=1000, source_id="ws1"))
+        result = obs.observe_closed((two, three), start_ms=1000, end_ms=2000, observed_at_ms=2150, source_id="ws1")
+        self.assertTrue(result.buy_wave_accelerating)
+        self.assertEqual(result.known_at_ms, 2150)
+
+    def test_missing_window_and_source_change_are_unknown(self):
+        from robot_entry_flow_evidence import CompletedFlowObserver, TakerPrint
+        obs = CompletedFlowObserver(symbol="ICNTUSDT", window_ms=1000)
+        p = lambda id, ts: TakerPrint("ICNTUSDT", id, ts, "Buy", D("1"), D("10"))
+        obs.observe_closed((p("a",100),),start_ms=0,end_ms=1000,observed_at_ms=1000,source_id="a")
+        self.assertIsNone(obs.observe_closed((),start_ms=1000,end_ms=2000,observed_at_ms=2000,source_id="a"))
+        self.assertIsNone(obs.observe_closed((p("b",2100),),start_ms=2000,end_ms=3000,observed_at_ms=3000,source_id="a"))
+        self.assertIsNone(obs.observe_closed((p("c",3100),),start_ms=3000,end_ms=4000,observed_at_ms=4000,source_id="b"))
+        self.assertIsNone(obs.observe_closed((p("d",5100),),start_ms=5000,end_ms=6000,observed_at_ms=6000,source_id="b"))
+
+    def test_invalid_window_does_not_advance(self):
+        from robot_entry_flow_evidence import CompletedFlowObserver, TakerPrint
+        obs = CompletedFlowObserver(symbol="ICNTUSDT",window_ms=1000)
+        p = TakerPrint("ICNTUSDT","a",100,"Buy",D("1"),D("10"))
+        with self.assertRaises(ValueError):
+            obs.observe_closed((p,),start_ms=0,end_ms=1000,observed_at_ms=999,source_id="a")
+        self.assertIsNone(obs.observe_closed((p,),start_ms=0,end_ms=1000,observed_at_ms=1000,source_id="a"))
+        with self.assertRaises(ValueError):
+            obs.observe_closed((p,),start_ms=0,end_ms=1000,observed_at_ms=1000,source_id="a")
