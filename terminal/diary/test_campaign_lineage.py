@@ -205,3 +205,124 @@ class CampaignProofTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+def test_campaign_sqlite_reader_uses_actual_production_table_definitions(tmp_path):
+    """Offline SQLite fixture: real schema DDL, exact IDs, no paper DB writes."""
+    import hashlib
+    import sqlite3
+    from terminal.diary.scoped_statistics_reporter import load_paper_source_snapshot
+    from terminal.persistence.schema import SCHEMA_STATEMENTS
+
+    db = tmp_path / "fixture-paper.sqlite3"
+    con = sqlite3.connect(db)
+    try:
+        # Minimal unmodified existing Diary source tables, then the canonical
+        # production DDL for every campaign join (including their constraints).
+        con.executescript("""
+            CREATE TABLE paper_accounts (trading_account_id TEXT PRIMARY KEY);
+            INSERT INTO paper_accounts VALUES ('paper');
+            CREATE TABLE executions (
+                trading_account_id TEXT, category TEXT, exec_id TEXT,
+                order_id TEXT, symbol TEXT, side TEXT, price TEXT,
+                quantity TEXT, fee TEXT, exchange_timestamp_ms INTEGER
+            );
+            CREATE TABLE trading_commands (
+                command_id TEXT, trading_account_id TEXT, exchange_order_id TEXT,
+                origin TEXT, controller TEXT
+            );
+        """)
+        for table in (
+            "robot_trades", "box_order_ownership", "robot_reentry_campaigns",
+            "robot_reentry_attempts", "paper_protection_obligations",
+        ):
+            ddl = next(
+                statement for statement in SCHEMA_STATEMENTS
+                if statement.lstrip().startswith(f"CREATE TABLE {table} (")
+            )
+            con.execute(ddl)
+        def insert(table, fields):
+            keys = tuple(fields)
+            con.execute(
+                f"INSERT INTO {table} ({', '.join(keys)}) VALUES "
+                + "(" + ",".join("?" for _ in keys) + ")",
+                tuple(fields.values()),
+            )
+        for index, opened, closed, exit_reason in (
+            (1, 1000, 1100, "STOP"), (2, 1200, 1300, "TAKE"),
+        ):
+            for role, stamp, side, oid, exec_id in (
+                ("OPEN", opened, "Buy", f"entry-{index}", f"open-{index}"),
+                ("CLOSE", closed, "Sell", f"exit-{index}", f"close-{index}"),
+            ):
+                insert("executions", {
+                    "trading_account_id": "paper", "category": "linear",
+                    "exec_id": exec_id, "order_id": oid, "symbol": "BTCUSDT",
+                    "side": side, "price": "100" if role == "OPEN" else "101",
+                    "quantity": "1", "fee": "0.1", "exchange_timestamp_ms": stamp,
+                })
+                insert("trading_commands", {
+                    "command_id": f"command-{exec_id}", "trading_account_id": "paper",
+                    "exchange_order_id": oid, "origin": "robot", "controller": "robot",
+                })
+            insert("box_order_ownership", {
+                "trading_account_id": "paper", "order_id": f"entry-{index}",
+                "candidate_id": f"candidate-{index}", "role": "ENTRY", "slot": 1,
+            })
+            insert("robot_trades", {
+                "trade_id": f"trade-{index}", "trading_account_id": "paper",
+                "candidate_id": f"candidate-{index}", "symbol": "BTCUSDT",
+                "direction": "LONG", "pattern": "Box", "source_timeframe": "5m",
+                "signal_time_ms": opened - 100, "entry_time_ms": opened,
+                "entry_path": "LIMIT", "actual_wv": "0.5",
+                "average_entry": "100", "stop_price": "99", "take_price": "101",
+                "exit_time_ms": closed, "exit_price": "101",
+                "exit_reason": exit_reason, "realized_pnl_usdt": "0.8",
+                "realized_pnl_pct": "0.8", "fees_costs_usdt": "0.2",
+                "version": 1, "created_at_ms": opened, "updated_at_ms": closed,
+            })
+            insert("paper_protection_obligations", {
+                "obligation_id": f"ob-{index}", "trade_id": f"trade-{index}",
+                "trading_account_id": "paper", "symbol": "BTCUSDT",
+                "protection_version": 1, "winning_leg": exit_reason,
+                "trigger_price": "99", "observed_exit_price": "101",
+                "observed_quantity": "1", "market_event_id": f"m-{index}",
+                "source_received_at_ms": closed, "latched_at_ms": closed,
+                "order_id": f"exit-{index}", "exec_id": f"close-{index}",
+                "status": "RESOLVED", "version": 1, "updated_at_ms": closed,
+            })
+        insert("robot_reentry_campaigns", {
+            "trading_account_id": "paper", "campaign_id": "campaign-1",
+            "symbol": "BTCUSDT", "direction": "LONG",
+            "first_candidate_id": "candidate-1",
+            "frozen_thesis_sha256": "a" * 64,
+            "original_risk_budget_usdt": "10", "created_at_ms": 900,
+        })
+        for index, stamp, previous in ((1, 900, None), (2, 1150, "close-1")):
+            insert("robot_reentry_attempts", {
+                "trading_account_id": "paper", "campaign_id": "campaign-1",
+                "attempt_index": index, "candidate_id": f"candidate-{index}",
+                "reserved_risk_usdt": "1", "previous_stop_exec_id": previous,
+                "reserved_at_ms": stamp,
+            })
+        con.commit()
+    finally:
+        con.close()
+
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+    snapshot = load_paper_source_snapshot(db, include_campaign_evidence=True)
+    assert snapshot.source_revision == 5
+    assert len(snapshot.episodes) == 2
+    assert snapshot.campaign_evidence is not None
+    response = project_selected_paper_campaign(
+        snapshot, account_id="paper", owner="ROBOT",
+        trade_episode_id=snapshot.episodes[1].trade_episode_id.value,
+        source_revision=5,
+    )
+    assert response["schema"] == "BYBITSCANNER_PAPER_CAMPAIGN_LINEAGE_V1"
+    assert response["campaign_id"] == "campaign-1"
+    assert len(response["trade_episodes"]) == 2
+    assert response["trade_episodes"][0]["execution_allocations"][0]["order_id"] == "entry-1"
+    assert response["trade_episodes"][1]["execution_allocations"][-1]["order_id"] == "exit-2"
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before
