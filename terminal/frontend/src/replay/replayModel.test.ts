@@ -219,7 +219,10 @@ describe("standalone SIMULATION viewer contract", () => {
     const base = syntheticReplay();
     const withStrategy = {
       ...base, events: base.events.map(event =>
-        event.kind === "ENTRY_SIGNAL" ? { ...event, strategy_id: "DOUBLE_TOP" } : event),
+        event.kind === "ENTRY_SIGNAL" ? {
+          ...event, strategy_id: "DOUBLE_TOP",
+          trade_id: "SIMULATION:" + base.simulation_run_id + ":native_test",
+        } : event),
     };
     const parsed = parseReplayDocument(withStrategy);
     expect(parsed.events.find(event => event.kind === "ENTRY_SIGNAL")?.strategy_id)
