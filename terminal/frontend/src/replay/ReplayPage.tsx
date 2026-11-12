@@ -602,8 +602,10 @@ export function ReplayPage() {
       // Windows protocol launch carries an ID only, never historical PAPER
       // facts. No opener = no trusted postMessage; do not infer a campaign.
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
-      setPlaying(false);
+      setPlaying(false); setCursor(0);
       setPaperFacts(null);
+      setSimulationGraphPending(true);
+      setPreparedRun(false);
       if (!/^te_[0-9a-f]{24}$/.test(locator) || params.size !== 1) {
         setError("Неверный идентификатор сделки из локального запускателя");
       } else {
@@ -858,6 +860,20 @@ export function ReplayPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const paperFileInput = useRef<HTMLInputElement>(null);
 
+  const onEpisodeLocator = useCallback((episodeId: string) => {
+    // A copied episode ID is a locator only. Never reuse candles or a
+    // virtual-run request from the previously selected market period.
+    bundledRequest.current?.abort(); bundledRequest.current = null;
+    historyRequest.current?.abort(); historyRequest.current = null;
+    setHistoryLoading(false); setPlaying(false); setCursor(0);
+    setPaperFacts(null); setRunLoading(false);
+    setSimulationGraphPending(true); setPreparedRun(false);
+    setFileLabel("ID сделки из Статистики: " + episodeId);
+    setError("ID принят. Для полной истории нужна проверенная цепочка кампании; " +
+      "пока импортируйте подтверждённый JSON сделки вручную.");
+    setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+  }, []);
+
   const onSimulationStart = useCallback((request: WedgeRunRequest) => {
     // A new ticker/date must never inherit old candles or demonstration fills.
     bundledRequest.current?.abort(); bundledRequest.current = null;
@@ -1086,7 +1102,8 @@ export function ReplayPage() {
       </header>
 
       <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol}
-        onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
+        onPasteSymbol={onPasteSymbol} onEpisodeLocator={onEpisodeLocator}
+        onSimulationStart={onSimulationStart}
         onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
         onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
         playRequestId={playRequestId} showReport={!simulationGraphPending && !runLoading && cursor >= total}
