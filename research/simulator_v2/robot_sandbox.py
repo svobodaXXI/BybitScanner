@@ -748,10 +748,12 @@ class ConnectedSimulationRobot:
         if (trade is None or protection is None or trigger is None
                 or position is None or position.side is PositionSide.FLAT
                 or self._source_candidate_id is None
-                or trade.candidate_id != self._source_candidate_id
                 or trade.pattern not in {"IKIGAI_BOX", "MIRROR"}
-                or trade.entry_quantity != fill.quantity
-                or position.quantity.value != fill.quantity):
+                or (trade.pattern == "MIRROR" and (
+                    trade.candidate_id != self._source_candidate_id
+                    or trade.entry_quantity != fill.quantity
+                    or position.quantity.value != fill.quantity
+                ))):
 
             raise SimulationExecutionNotConnected(
                 "native Robot STOP lacks durable trade/protection ownership"
