@@ -293,10 +293,39 @@ export function displayTradePnl(value: string | null | undefined): string {
   }).format(numeric);
 }
 
-/** Same action placement and icons for every statistics account/owner scope.
- * The film control is disabled until exact replay evidence is available;
- * an execution-facts export must never be misrepresented as a full replay.
- */
+/** The filmstrip carries only a typed ID, never a claimed full replay. */
+function requestSimulatorLocator(episodeId: string, onNotice: (message: string) => void) {
+  if (!/^te_[0-9a-f]{24}$/.test(episodeId)) {
+    onNotice("Нет подтверждённого ID формата te_… для локального Симулятора.");
+    return;
+  }
+  try {
+    if (/\bWindows\b/i.test(navigator.userAgent)) {
+      const link = document.createElement("a");
+      link.href = "bybitscanner-simulator://open?episode=" + episodeId;
+      link.rel = "noopener noreferrer";
+      link.target = "_blank";
+      document.body.appendChild(link);
+      try { link.click(); } finally { link.remove(); }
+      onNotice("Windows получила запрос открыть Симулятор по ID " + episodeId
+        + ". Свечи и решения не переданы; результат запуска не подтверждён.");
+    } else {
+      const clipboard = navigator.clipboard;
+      if (typeof clipboard?.writeText !== "function") {
+        onNotice("Скопируйте ID вручную для Симулятора: " + episodeId);
+      } else {
+        void clipboard.writeText(episodeId).then(
+          () => onNotice("ID сделки скопирован для Симулятора: " + episodeId),
+          () => onNotice("Скопируйте ID вручную для Симулятора: " + episodeId),
+        );
+      }
+    }
+  } catch {
+    onNotice("Не удалось передать ID автоматически. Скопируйте: " + episodeId);
+  }
+}
+
+/** Same action placement and icons for every statistics account/owner scope. */
 function TradeActionButtons({ onDetails, onReplay }: {
   onDetails: () => void;
   onReplay?: () => void;
@@ -311,8 +340,8 @@ function TradeActionButtons({ onDetails, onReplay }: {
       </button>
       <button type="button" className="diary-trade-icon"
         aria-label="Открыть сделку в Симуляторе" title={onReplay
-          ? "Скачать проверенные факты для импорта в локальный Симулятор; свечи отдельно"
-          : "Нужен проверенный исторический пакет; сделку нельзя воспроизводить без него"}
+          ? "Открыть локальный Симулятор по ID без передачи свечей и решений"
+          : "Для открытия по ID нужен подтверждённый PAPER episode te_…"}
         disabled={!onReplay} onClick={onReplay}>
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <rect x="3.5" y="3" width="17" height="18" rx="1.5" />
@@ -803,6 +832,7 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
   const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
+  const [filmNotice, setFilmNotice] = useState("");
 
   const [executionPoints, setExecutionPoints] = useState<TradeExecutionPoint[]>([]);
   useEffect(() => {
@@ -929,7 +959,8 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
           onClick={() => void downloadFacts(selected)}>
           {downloading ? "Выгружаю факты…" : "Скачать JSON исполнений"}
         </button>
-        {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
+        {filmNotice ? <p className="diary-finrez-coverage" role="status">{filmNotice}</p> : null}
+      {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
         <p className="diary-finrez-basis" role="status">
           Это не воспроизведение. JSON содержит только реальные зарегистрированные исполнения. Свечи, решения робота
           и полное воспроизведение в локальном Симуляторе пока не подключены.
@@ -969,14 +1000,16 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
                 <span>Исполнений: {deal.execution_count}</span>
               </div>
               </button>
-              <TradeActionButtons onDetails={() => setSelectedId(deal.trade_episode_id)} />
+              <TradeActionButtons onDetails={() => setSelectedId(deal.trade_episode_id)}
+                onReplay={/^te_[0-9a-f]{24}$/.test(deal.trade_episode_id) && report.account_id === "paper"
+                  ? () => requestSimulatorLocator(deal.trade_episode_id, setFilmNotice) : undefined} />
             </div>
           ))}
         </div>
       )}
       {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
       <p className="diary-finrez-basis">
-        Киноплёнка будет открывать локальный Симулятор после подтверждения исторических свечей и решений. Пока доступен экспорт только фактических исполнений из карточки сделки.
+        Киноплёнка передаёт в локальный Симулятор только ID сделки. История свечей и решения робота автоматически не загружаются. Фактические исполнения доступны через JSON в карточке сделки.
       </p>
     </div>
   );
@@ -1097,6 +1130,7 @@ export function DiaryOverlay({
   const [accountId, setAccountId] = useState("");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
+  const [tradeFilmNotice, setTradeFilmNotice] = useState("");
   const [requestedTradeMissing, setRequestedTradeMissing] = useState(false);
   const initialTradeRequest = useRef<string | null>(initialTradeEpisodeId);
   const requestSequence = useRef(0);
@@ -1333,6 +1367,9 @@ export function DiaryOverlay({
           {!loading && !loadError && !requestedTradeMissing && !selectedTrade && section === "TRADES" && visibleTrades.length === 0 ? <p className="diary-state">Нет сделок в этом фильтре</p> : null}
           {!loading && !loadError && !selectedTrade && section === "SETUPS" && visibleSetups.length === 0 ? <p className="diary-state">Нет сетапов в этом фильтре</p> : null}
 
+          {tradeFilmNotice && section === "TRADES" && !selectedTrade
+            ? <p className="diary-finrez-coverage" role="status">{tradeFilmNotice}</p> : null}
+
           {!loading && !loadError && !requestedTradeMissing && !selectedTrade && section === "TRADES" && visibleTrades.length > 0 ? (
             <div className="diary-trades-list">
               {visibleTrades.map((trade) => (
@@ -1357,7 +1394,9 @@ export function DiaryOverlay({
                   </div>
                   {trade.controller_origin ? <small>Источник: {trade.controller_origin}</small> : null}
                 </button>
-                <TradeActionButtons onDetails={() => setSelectedTradeId(trade.trade_episode_id)} />
+                <TradeActionButtons onDetails={() => setSelectedTradeId(trade.trade_episode_id)}
+                  onReplay={trade.environment === "PAPER" && /^te_[0-9a-f]{24}$/.test(trade.trade_episode_id)
+                    ? () => requestSimulatorLocator(trade.trade_episode_id, setTradeFilmNotice) : undefined} />
                 </div>
               ))}
             </div>
