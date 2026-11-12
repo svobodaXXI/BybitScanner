@@ -1,0 +1,88 @@
+name: MIRROR real public archive SIMULATION (one day)
+
+# Separate from fast offline CI: this one research check downloads a single
+# public immutable 21 MB trade archive. Never touches PAPER or LIVE.
+on:
+  pull_request:
+    paths:
+      - "research/simulator_v2/mirror_real_archive_probe.py"
+      - ".github/workflows/mirror-real-archive-replay.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-real-icnt-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verified-real-history:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.number == 1024
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install original offline Scanner policy imports
+        run: >-
+          python -m pip install
+          requests==2.34.2
+          PySocks==1.7.1
+          websocket-client==1.9.0
+          pandas==3.0.5
+          numpy==2.5.1
+          matplotlib==3.11.1
+          mplfinance==0.12.10b0
+          six==1.17.0
+      - name: Fetch exact publicly archived ICNT trades with bounded bytes
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python - <<'PY'
+          from hashlib import sha256
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+          url = ("https://public.bybit.com/trading/ICNTUSDT/"
+                 "ICNTUSDT2026-11-07.csv.gz")
+          sha = "6d81de558d1b4c1fe8c43caa8e1cdd9c1211feffcae3325dfff9909e999bcec8"
+          archive = Path("ICNTUSDT2026-11-07.csv.gz")
+          total = 0
+          digest = sha256()
+          with urlopen(Request(url, headers={
+              "User-Agent": "BybitScanner-SimulatorV2-Research/1.0",
+          }), timeout=45) as response:
+              if response.geturl() != url:
+                  raise ValueError("unapproved public archive redirect")
+              with archive.open("xb") as output:
+                  while True:
+                      part = response.read(1024 * 1024)
+                      if not part:
+                          break
+                      total += len(part)
+                      if total > 128_000_000:
+                          raise ValueError("public archive exceeds bounded bytes")
+                      digest.update(part)
+                      output.write(part)
+          if digest.hexdigest() != sha:
+              raise ValueError("archive differs from owner-provided exact provenance")
+          print("ICNT_REAL_ARCHIVE_SHA256_OK", total, digest.hexdigest())
+          PY
+      - name: Run exact native Scanner and Robot on real closed M1/M5
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONUNBUFFERED: "1"
+        run: >-
+          python -m research.simulator_v2.mirror_real_archive_probe
+          --archive ICNTUSDT2026-11-07.csv.gz
+          --report mirror-real-icnt-20261107.json
+      - name: Upload report only (never the large source archive)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirror-real-icnt-20261107
+          path: mirror-real-icnt-20261107.json
+          if-no-files-found: error
+          retention-days: 7
