@@ -13,6 +13,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
+import webbrowser
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
@@ -73,22 +75,31 @@ def viewer_is_running() -> bool:
         return False
 
 
-def launch_local_viewer() -> None:
+def launch_local_viewer(episode_id: str) -> None:
+    if not EPISODE_RE.fullmatch(episode_id):
+        raise ValueError("invalid episode ID")
     if os.name != "nt":
         raise OSError("Windows-only local launch")
-    if viewer_is_running():
-        return
-    server = HERE / "server.py"
-    if not server.is_file() or server.is_symlink():
-        raise OSError("local simulator server missing")
-    # Explicit argv; no shell, no remote command interpreter or VPS access.
-    subprocess.Popen(
-        [sys.executable, "-B", str(server), "--no-browser"],
-        cwd=str(HERE), stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
-        close_fds=True,
-    )
+    if not viewer_is_running():
+        server = HERE / "server.py"
+        if not server.is_file() or server.is_symlink():
+            raise OSError("local simulator server missing")
+        # Explicit argv; no shell, no remote command interpreter or VPS access.
+        subprocess.Popen(
+            [sys.executable, "-B", str(server), "--no-browser"],
+            cwd=str(HERE), stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+            close_fds=True,
+        )
+        for _ in range(24):
+            if viewer_is_running():
+                break
+            time.sleep(0.25)
+        else:
+            raise OSError("local simulator did not become available")
+    # Locator only. Never place PAPER fills or original decisions in the URL.
+    webbrowser.open(f"http://127.0.0.1:{PORT}/replay.html#locator={episode_id}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -102,8 +113,8 @@ def main(argv: list[str] | None = None) -> int:
     if len(args) != 1:
         return 2
     try:
-        parse_open_uri(args[0])
-        launch_local_viewer()
+        episode = parse_open_uri(args[0])
+        launch_local_viewer(episode)
         return 0
     except (OSError, ValueError):
         return 2
