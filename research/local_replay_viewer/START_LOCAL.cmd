@@ -23,6 +23,7 @@ if errorlevel 1 (
   if errorlevel 1 goto :viewer
 )
 ".wedge-python\Scripts\python.exe" -B protocol_launcher.py --register >nul 2>nul
+".wedge-python\Scripts\python.exe" -B launch_bridge_agent.py --install-if-configured >nul 2>nul
 ".wedge-python\Scripts\python.exe" -B server.py
 if errorlevel 1 pause
 goto :end
@@ -31,6 +32,7 @@ goto :end
 where py >nul 2>nul
 if not errorlevel 1 (
   py -3 -B protocol_launcher.py --register >nul 2>nul
+  py -3 -B launch_bridge_agent.py --install-if-configured >nul 2>nul
   py -3 -B server.py
   if errorlevel 1 pause
   goto :end
@@ -38,6 +40,7 @@ if not errorlevel 1 (
 where python >nul 2>nul
 if not errorlevel 1 (
   python -B protocol_launcher.py --register >nul 2>nul
+  python -B launch_bridge_agent.py --install-if-configured >nul 2>nul
   python -B server.py
   if errorlevel 1 pause
   goto :end
