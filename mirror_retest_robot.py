@@ -15,8 +15,10 @@ to an active MIRROR RETEST campaign and, if so, how the *existing* Box exit mach
   (network candles, account risk) is only needed to attach a campaign and to advance the retest.
 
 Campaign sources: the frozen boundaries of the symbol's Wedge Robot candidates and the live Scanner MIRROR candidates
-(``mirror_scanner``: fresh, confident naked breakout of a still untested level of any source -- Wedge / Triangle,
-HORN, L-shape, Ikigai Box, swing zone). Either way the Robot replays the boundary itself on closed 5m candles; a Scanner
+(``mirror_scanner``: only owner-approved realization-side Wedge / Triangle,
+L-shape and confirmed swing extrema). HORN, Ikigai Box edges, wrong-side
+breakouts and previously persisted revoked levels cannot attach. The Robot
+replays the boundary itself on closed 5m candles; a Scanner
 candidate only names the level and must agree with that replay (direction; same breakout candle on 5m).
 
 Enable: ``BYBITSCANNER_MIRROR_RETEST_ROBOT=1`` (anything else = off, the Box Robot is unchanged).
