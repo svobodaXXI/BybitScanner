@@ -901,16 +901,21 @@ class ConnectedSimulationRobot:
         events = self.session.exchange.last_minute_order_events
         if len(fills) != len(events):
             raise RuntimeError("SIMULATION exchange receipt mismatch")
+        new_entry_fill = bool(fills) and not any(
+            event.kind in {"STOP_FILLED", "TAKE_FILLED"} for event in events
+        )
         if fills:
             for fill, event in zip(fills, events):
                 if event.kind in {"STOP_FILLED", "TAKE_FILLED"}:
                     self._apply_protection_fill(fill, event.order_type)
                 else:
                     self._apply_fill(fill, event.order_id)
-            if not any(event.kind in {"STOP_FILLED", "TAKE_FILLED"} for event in events):
+            if new_entry_fill:
                 self._monitor.process_authoritative_fill(self.session.account.symbol)
-                self._mark_mirror_filled_campaign()
         self._drive_robot()
+        if new_entry_fill:
+            # Native Robot may attest an entry only during this drive.
+            self._mark_mirror_filled_campaign()
         self._synchronize_exchange()
         if self._auto_mirror_scanner is not None:
             discovered = self._auto_mirror_scanner.observe_committed(
