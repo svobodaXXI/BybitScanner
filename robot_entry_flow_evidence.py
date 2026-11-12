@@ -409,3 +409,126 @@ class CompletedFlowObserver:
         self._last_end_ms = end_ms
         self.last_transition = transition
         return transition
+
+
+# Explicit, offline-first IMPULSE_FLOW Scanner/Robot research hypothesis.
+# 3R is a fixed UNCALIBRATED take target; it has not been fitted to ICNT.
+IMPULSE_RESEARCH_TARGET_R = Decimal("3")
+
+
+@dataclass(frozen=True, slots=True)
+class ImpulseSignal:
+    """Causal closed-M1 source signal; never a trade or order authorization."""
+    direction: str
+    known_at_ms: int
+    closed_price: Decimal
+    structural_extreme: Decimal
+
+
+def recognize_impulse_signal(
+    transition: FlowTransition | None, *, closed_at_ms: int,
+    candle_open: Decimal, candle_close: Decimal,
+    candle_low: Decimal, candle_high: Decimal,
+) -> ImpulseSignal | None:
+    """Shared Scanner impulse recognition from consecutive actual taker windows.
+
+    Only the just-committed OHLC candle and a transition known at its close
+    are used. No estimated L2, unclosed OI or future highs/lows may qualify.
+    """
+    if type(closed_at_ms) is not int or closed_at_ms < 0:
+        raise ValueError("invalid completed Scanner minute")
+    for price in (candle_open, candle_close, candle_low, candle_high):
+        if not isinstance(price, Decimal) or not price.is_finite() or price <= ZERO:
+            raise ValueError("finite original closed-M1 OHLC required")
+    if not candle_low <= min(candle_open, candle_close) <= max(candle_open, candle_close) <= candle_high:
+        raise ValueError("invalid completed Scanner OHLC geometry")
+    if transition is None:
+        return None
+    if not isinstance(transition, FlowTransition) or transition.known_at_ms != closed_at_ms:
+        raise ValueError("only same-close authenticated flow may identify an impulse")
+    if transition.buy_wave_accelerating and candle_close > candle_open:
+        return ImpulseSignal("LONG", closed_at_ms, candle_close, candle_low)
+    if transition.sell_wave_accelerating and candle_close < candle_open:
+        return ImpulseSignal("SHORT", closed_at_ms, candle_close, candle_high)
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class ImpulseProtectedPlan:
+    """Shared Robot policy output, projected into the existing virtual exchange."""
+    signal: ImpulseSignal
+    entry_price: Decimal
+    stop_price: Decimal
+    take_price: Decimal
+    quantity: Decimal
+    projected_net_rr: Decimal
+    worst_case_loss_usdt: Decimal
+
+
+def plan_impulse_protected_entry(
+    signal: ImpulseSignal, *, tick_size: Decimal, quantity: Decimal,
+    max_notional_usdt: Decimal, max_risk_usdt: Decimal,
+    entry_fee_rate: Decimal, exit_fee_rate: Decimal,
+    quantity_step: Decimal, minimum_quantity: Decimal,
+) -> ImpulseProtectedPlan:
+    """One Robot-owned LIMIT/STOP/TAKE policy, no separate matching engine.
+
+    Reuses production Robot stop, fee-aware RR and worst-case risk math.
+    Not an official Bybit contract-terms attestation; local-only assumption.
+    """
+    from decimal import ROUND_CEILING, ROUND_FLOOR
+    from robot_protection import (
+        structural_stop, post_fill_net_rr, min_entry_rr,
+    )
+    from retest_account_risk import position_worst_case_loss_usdt
+
+    if not isinstance(signal, ImpulseSignal) or signal.direction not in ("LONG", "SHORT"):
+        raise ValueError("committed shared Robot impulse signal required")
+    for label, value in (
+        ("tick_size", tick_size), ("quantity", quantity),
+        ("max_notional_usdt", max_notional_usdt), ("max_risk_usdt", max_risk_usdt),
+        ("quantity_step", quantity_step), ("minimum_quantity", minimum_quantity),
+    ):
+        if not isinstance(value, Decimal) or not value.is_finite() or value <= ZERO:
+            raise ValueError(f"positive finite {label} required")
+    for label, value in (("entry_fee_rate", entry_fee_rate), ("exit_fee_rate", exit_fee_rate)):
+        if not isinstance(value, Decimal) or not value.is_finite() or not ZERO <= value < Decimal("1"):
+            raise ValueError(f"valid {label} required")
+    if quantity < minimum_quantity or quantity % quantity_step:
+        raise ValueError("virtual impulse quantity violates attested step/minimum")
+    direction = signal.direction
+    # A BUY LIMIT is never rounded above the last closed price; SELL below.
+    round_entry = ROUND_FLOOR if direction == "LONG" else ROUND_CEILING
+    entry = (signal.closed_price / tick_size).to_integral_value(rounding=round_entry) * tick_size
+    if entry <= ZERO or entry * quantity > max_notional_usdt:
+        raise ValueError("local Robot impulse notional budget exceeded")
+    stop = structural_stop(
+        direction, average_entry=entry, structural_extreme=signal.structural_extreme,
+        tick_size=tick_size,
+    )
+    stop_round = ROUND_FLOOR if direction == "LONG" else ROUND_CEILING
+    stop = (stop / tick_size).to_integral_value(rounding=stop_round) * tick_size
+    risk_distance = abs(entry - stop)
+    if risk_distance <= ZERO:
+        raise ValueError("impulse has no protective STOP distance")
+    target_raw = (entry + risk_distance * IMPULSE_RESEARCH_TARGET_R
+                  if direction == "LONG"
+                  else entry - risk_distance * IMPULSE_RESEARCH_TARGET_R)
+    take_round = ROUND_CEILING if direction == "LONG" else ROUND_FLOOR
+    take = (target_raw / tick_size).to_integral_value(rounding=take_round) * tick_size
+    if take <= ZERO:
+        raise ValueError("impulse TAKE is not a positive tradable price")
+    worst_loss = position_worst_case_loss_usdt(
+        direction=direction, quantity=quantity, entry_price=entry,
+        stop_price=stop, fee_rate=max(entry_fee_rate, exit_fee_rate),
+    )
+    if worst_loss is None or worst_loss > max_risk_usdt:
+        raise ValueError("protected impulse loss exceeds local Robot risk budget")
+    fee = entry * quantity * entry_fee_rate
+    rr = post_fill_net_rr(
+        direction, average_entry=entry, quantity=quantity, entry_fee=fee,
+        stop_price=stop, take_price=take, exit_fee_rate=exit_fee_rate,
+    )
+    if not rr.is_finite() or rr < min_entry_rr():
+        raise ValueError("protected impulse net RR below shared Robot floor")
+    return ImpulseProtectedPlan(signal, entry, stop, take, quantity, rr, worst_loss)
