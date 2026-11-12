@@ -28,7 +28,12 @@ from terminal.api.models import (
     CommandResult, CommandResultStatus, PaperLimitMutationResult,
     PaperStopMutationResult,
 )
-from mirror_retest_robot import ATTACHED, SCANNER_SOURCE, STRATEGY_ID, mirror_record
+from mirror_retest_robot import (
+    ATTACHED, SCANNER_SOURCE, STRATEGY_ID, PAPER_FEE_RATE,
+    STOP_SLIPPAGE_FRACTION, MirrorRobotPolicy, mirror_record,
+)
+from research.simulator_v2.mirror_candles import LocalMirrorClosedCandles
+import mirror_scanner
 import robot_l_shape
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
 from terminal.application.box_protection_finalizer import finalize_box_protection_obligation
@@ -329,11 +334,31 @@ class ConnectedSimulationRobot:
     def __init__(
         self, session: VirtualReplaySession, *, tick_size: Decimal,
         terms: BoxSimulationRiskTerms,
+        mirror_working_volume_usdt: Decimal | None = None,
+        mirror_risk_limit_usdt: Decimal | None = None,
     ) -> None:
-        if not isinstance(session, VirtualReplaySession) or session.ikigai_scanner is None:
-            raise TypeError("native Ikigai Scanner SIMULATION session required")
+        enabled_mirror = (
+            mirror_working_volume_usdt is not None
+            or mirror_risk_limit_usdt is not None
+        )
+        if not isinstance(session, VirtualReplaySession):
+            raise TypeError("original SIMULATION session required")
+        if session.ikigai_scanner is None and not enabled_mirror:
+            raise TypeError("native Ikigai Scanner or explicit MIRROR profile required")
         if not isinstance(terms, BoxSimulationRiskTerms) or terms.tick_size != tick_size:
-            raise ValueError("one explicit Box SIMULATION instrument profile required")
+            raise ValueError("one explicit SIMULATION instrument profile required")
+        if enabled_mirror:
+            if (not isinstance(mirror_working_volume_usdt, Decimal)
+                    or not mirror_working_volume_usdt.is_finite()
+                    or mirror_working_volume_usdt <= 0
+                    or mirror_working_volume_usdt > terms.maximum_notional_usdt
+                    or not isinstance(mirror_risk_limit_usdt, Decimal)
+                    or not mirror_risk_limit_usdt.is_finite()
+                    or mirror_risk_limit_usdt <= 0
+                    or mirror_risk_limit_usdt > session.account.initial_balance):
+                raise ValueError("explicit bounded local MIRROR WV and risk limit required")
+        if session.wedge_robot is not None:
+            raise ValueError("duplicate research Wedge Robot cannot own native simulation")
         self.session = session
         self.terms = terms
         self.account_id = TradingAccountId("simulation:" + session.account.simulation_run_id)
@@ -344,6 +369,23 @@ class ConnectedSimulationRobot:
         self._completed_market_ids: set[str] = set()
         self._temporary = TemporaryDirectory(prefix="bybitscanner-simulation-box-")
         self._store_path = Path(self._temporary.name) / "simulation.sqlite3"
+        self._mirror_root = Path(self._temporary.name) / "mirror_levels"
+        self._mirror_source = (
+            LocalMirrorClosedCandles(session.account.symbol)
+            if enabled_mirror else None
+        )
+        self._mirror_policy = (
+            MirrorRobotPolicy(
+                candles=self._mirror_source,
+                account_risk_limit_usdt=lambda _now: mirror_risk_limit_usdt,
+                quantity_step=lambda symbol: self._quantity_step_for(symbol),
+                fee_rate=max(PAPER_FEE_RATE, session.exchange.taker_fee_rate,
+                             session.exchange.maker_fee_rate),
+                stop_slippage_fraction=STOP_SLIPPAGE_FRACTION,
+                scanner_root=self._mirror_root,
+                one_wv_usdt=lambda: mirror_working_volume_usdt,
+            ) if enabled_mirror else None
+        )
         self._store = SQLiteStore.open(
             self._store_path, allow_simulation_box_accounts=True,
         )
@@ -369,6 +411,8 @@ class ConnectedSimulationRobot:
             arm_entry_coverage=lambda symbol: symbol == self.session.account.symbol,
             release_entry_coverage=lambda _symbol: None,
             incident_dir=Path(self._temporary.name) / "incidents",
+            mirror_policy=self._mirror_policy,
+            mirror_standalone_enabled=(lambda: True) if enabled_mirror else None,
         )
 
     def _require_open(self) -> None:
@@ -381,6 +425,11 @@ class ConnectedSimulationRobot:
         self._require_open()
         if self._source_candidate_id is None:
             return True
+        source = self._store.get_robot_candidate(self._source_candidate_id)
+        if (source is not None
+                and robot_l_shape.is_mirror_snapshot(source.signal_snapshot)
+                and source.status in ("APPROVED", "OPEN")):
+            return False
         symbol = Symbol(self.session.account.symbol)
         if self._store.get_open_robot_trade_for_symbol(self.account_id, symbol) is not None:
             return False
@@ -414,6 +463,10 @@ class ConnectedSimulationRobot:
         if symbol != self.session.account.symbol:
             raise ValueError("cross-symbol SIMULATION Robot request")
         return self._tick_size
+
+    def _quantity_step_for(self, symbol: str) -> Decimal:
+        self._tick_size_for(symbol)
+        return self.terms.quantity_step
 
     def closed_m1_for_robot(self, symbol: str):
         self._tick_size_for(symbol)
@@ -471,6 +524,71 @@ class ConnectedSimulationRobot:
             request.client_action_id.value, CommandResultStatus.ACCEPTED_PENDING,
             "accepted_pending", "awaiting next closed historical M1",
         )
+
+    def admit_mirror(self, source_state: dict, *, entry_id: str) -> str:
+        """Admit one exact native Scanner confirmation to the private Robot.
+
+        The Scanner's original source/reversal gate is reused verbatim.
+        The independently replayed *committed* M5 campaign remains mandatory
+        for native Robot R0 attachment and LIMIT submission. No PAPER path.
+        """
+        self._require_open()
+        if self._mirror_source is None or self._mirror_policy is None:
+            raise SimulationExecutionNotConnected(
+                "local MIRROR profile was not explicitly selected"
+            )
+        if not self.can_admit:
+            raise SimulationExecutionNotConnected("existing native Robot owner is active")
+        if (not isinstance(source_state, dict)
+                or source_state.get("timeframe") != "5"
+                or source_state.get("symbol") != self.session.account.symbol
+                or not isinstance(entry_id, str)):
+            raise ValueError("local MIRROR source identity mismatch")
+        entries = [
+            x for x in source_state.get("standalone_entries", ())
+            if isinstance(x, dict) and x.get("entry_id") == entry_id
+        ]
+        if len(entries) != 1:
+            raise ValueError("exact native MIRROR confirmation is absent or ambiguous")
+        snapshot = mirror_scanner.verified_standalone_snapshot(
+            self.session.account.symbol, source_state, entries[0],
+        )
+        if snapshot is None:
+            raise ValueError("native MIRROR source or confirmation was revoked")
+        close_ms = snapshot["mirror_entry"]["confirmation"]["close_time_ms"]
+        if close_ms != self.virtual_clock_ms():
+            raise ValueError("MIRROR admission requires its exact committed close")
+        # A bounded feed without the level's original M5 is not a reliable
+        # replay. Never manufacture a new active campaign from later candles.
+        from mirror_levels.levels import LevelRegistry
+        level = LevelRegistry.from_dict(source_state["registry"]).levels[
+            snapshot["mirror_entry"]["level_id"]
+        ]
+        first_cursor = level.confirmed_at_ms - level.confirmed_at_ms % 300_000
+        if not self._mirror_source.closed_candles(
+            entry_id, self.session.account.symbol, first_cursor,
+        ):
+            raise ValueError("MIRROR source history is not yet proven")
+        digest = hashlib.sha256(
+            f"{self.account_id.value}\\0{entry_id}".encode()
+        ).hexdigest()[:32]
+        candidate_id = "simulation-mirror-" + digest
+        if self._store.get_robot_candidate(candidate_id) is not None:
+            raise ValueError("duplicate local MIRROR candidate")
+        # The local private Scanner state is the same format the native
+        # MIRROR policy reads. It never uses the production Scanner state.
+        mirror_scanner.save_state(source_state, root=self._mirror_root)
+        self._store.create_robot_candidate(
+            candidate_id=candidate_id, trading_account_id=self.account_id,
+            symbol=Symbol(self.session.account.symbol), status="APPROVED",
+            signal_snapshot=snapshot, approved_at_ms=close_ms,
+            updated_at_ms=close_ms,
+        )
+        self._source_candidate_id = candidate_id
+        self._source_candidate_ids.append(candidate_id)
+        self._drive_robot()
+        self._synchronize_exchange()
+        return candidate_id
 
     def admit(self, observation: IkigaiObservation) -> BoxSimulationPreview:
         self._require_open()
@@ -681,6 +799,15 @@ class ConnectedSimulationRobot:
     def after_committed_minute(self) -> None:
         """Return this minute's exchange receipts to the native Robot once."""
         self._require_open()
+        if self._mirror_source is not None:
+            minute = self.session.last_committed_minute
+            if minute is None:
+                raise SimulationExecutionNotConnected(
+                    "MIRROR source lacks a committed M1"
+                )
+            self._mirror_source.append_committed(
+                minute, committed_time_ms=self.virtual_clock_ms(),
+            )
         fills = self.session.exchange.last_minute_fills
         events = self.session.exchange.last_minute_order_events
         if len(fills) != len(events):
