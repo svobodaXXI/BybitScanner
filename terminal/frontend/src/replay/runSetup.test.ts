@@ -154,6 +154,21 @@ describe("local one-symbol strategy setup (no trading)", () => {
       onlyWedges(), "BTCUSDT", "2026-10-01T00:00", "2026-10-01T00:00", "0",
     )).toThrow(/депозит/);
   });
+  it("adds 5m OI filter only for an explicitly selected virtual-trading cohort", () => {
+    const basic = makeWedgeRunRequest(
+      onlyWedges(), "BTCUSDT", "2026-10-01T00:00", "2026-10-01T01:00", "1000",
+    );
+    expect(basic).not.toHaveProperty("oi_mode");
+    const rising = makeWedgeRunRequest(
+      onlyWedges(), "BTCUSDT", "2026-10-01T00:00", "2026-10-01T01:00", "1000", "RISING",
+    );
+    expect(rising.oi_mode).toBe("RISING");
+    const falling = makeWedgeRunRequest(
+      onlyWedges(), "BTCUSDT", "2026-10-01T00:00", "2026-10-01T01:00", "1000", "FALLING",
+    );
+    expect(falling.oi_mode).toBe("FALLING");
+  });
+
   it("never trusts non-SIMULATION responses or fabricated PnL", () => {
     const status = {
       namespace: "SIMULATION", can_attempt: true,
