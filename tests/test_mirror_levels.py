@@ -21,6 +21,7 @@ from mirror_levels.imbalance import (
 from mirror_levels.levels import (
     SOURCE_PATTERN_BOUNDARY, SOURCE_SWING_ZONE, LevelRegistry, MirrorLevel, MirrorLevelError,
     horizontal_level, level_identity, levels_from_geometry, levels_from_horn_event,
+    mirror_level_allowed,
     levels_from_ikigai_box, levels_from_l_shape, levels_from_wedge_candidate, line_level,
 )
 from mirror_levels.swing import confirmed_pivots, swing_levels
@@ -336,3 +337,33 @@ def test_real_fvg_detection_has_prefix_parity():
         assert detect_fvgs(candles[:cut], symbol="DRIFTUSDT", timeframe="1") == tuple(
             gap for gap in full if gap.formed_at_ms <= horizon)
     assert replay(full[0], candles)["phase"] in {PHASE_UNTOUCHED, PHASE_EDGE, PHASE_PARTIAL, PHASE_FULL}
+
+
+def test_owner_mirror_source_policy_blocks_wrong_wedge_sides_box_horn_and_unknown():
+    def ray(pattern, side):
+        return line_level(symbol="X", timeframe="5", pattern=pattern, side=side,
+                          first=(0, 100.0), second=(M, 101.0), confirmed_at_ms=2 * M)
+
+    allowed = (("Rising Wedge", "lower"), ("Falling Wedge", "upper"),
+               ("Triangle Compression", "upper"), ("Triangle Compression", "lower"))
+    denied = (("Rising Wedge", "upper"), ("Falling Wedge", "lower"),
+              ("Broadening", "upper"), ("Broadening", "lower"),
+              ("HORN", "upper"), ("IKIGAI_BOX", "upper"),
+              ("IKIGAI_BOX", "lower"), ("unknown", "lower"))
+    assert all(mirror_level_allowed(ray(*item)) for item in allowed)
+    assert all(not mirror_level_allowed(ray(*item)) for item in denied)
+    l_shape = horizontal_level(symbol="X", timeframe="5", source=SOURCE_PATTERN_BOUNDARY,
+                               pattern="L-shape", side="upper", price=101.0,
+                               anchor_time_ms=M, confirmed_at_ms=2 * M)
+    swing = horizontal_level(symbol="X", timeframe="5", source=SOURCE_SWING_ZONE,
+                             pattern=None, side="lower", price=101.0,
+                             anchor_time_ms=M, confirmed_at_ms=2 * M)
+    assert mirror_level_allowed(l_shape) and mirror_level_allowed(swing)
+    assert not mirror_level_allowed(horizontal_level(
+        symbol="X", timeframe="5", source=SOURCE_PATTERN_BOUNDARY,
+        pattern="IKIGAI_BOX", side="lower", price=101.0,
+        anchor_time_ms=M, confirmed_at_ms=2 * M))
+    assert not mirror_level_allowed(horizontal_level(
+        symbol="X", timeframe="5", source=SOURCE_SWING_ZONE,
+        pattern="HORN", side="upper", price=101.0,
+        anchor_time_ms=M, confirmed_at_ms=2 * M))
