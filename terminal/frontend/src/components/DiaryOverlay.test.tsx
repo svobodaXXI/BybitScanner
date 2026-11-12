@@ -783,8 +783,8 @@ describe("Finrez first-screen UI", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     expect(screen.getByRole("dialog", { name: "Статистика" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "День" })).toHaveAttribute("aria-pressed", "true");
-    expect(await screen.findByText("+7.2 USDT")).toBeInTheDocument();
-    expect(screen.getByText("-2.5 USDT")).toBeInTheDocument();
+    expect(await screen.findByText("+7,20 USDT")).toBeInTheDocument();
+    expect(screen.getByText("-2,50 USDT")).toBeInTheDocument();
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=DAY");
     for (const [label, period] of [["Неделя", "WEEK"], ["Месяц", "MONTH"], ["Год", "YEAR"]] as const) {
@@ -800,6 +800,38 @@ describe("Finrez first-screen UI", () => {
     expect(await screen.findByText(/Паттерны — второй этап/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
     expect(await screen.findByText(/Нет подтверждённых закрытых сделок/)).toBeInTheDocument();
+  });
+
+  it("rounds ticker PnL and opens only that ticker's confirmed episodes on click", async () => {
+    const btc = {
+      trade_episode_id: "te_" + "a".repeat(24), symbol: "BTCUSDT", side: "LONG",
+      opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+      pnl_usdt: "-2.5012345678", execution_count: 2,
+      cohort: "ROBOT", replay_evidence: "EPISODE_INDEX_ONLY",
+    };
+    const eth = { ...btc, trade_episode_id: "te_" + "b".repeat(24), symbol: "ETHUSDT" };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse,
+      tickers: [
+        { symbol: "BTCUSDT", pnl_usdt: "-2.5012345678", trade_count: 1 },
+        { symbol: "ETHUSDT", pnl_usdt: "7.2012345678", trade_count: 1 },
+      ],
+      closed_episodes: [btc, eth],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:finrez-filter" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText("+7,20 USDT")).toBeInTheDocument();
+    expect(screen.getByText("-2,50 USDT")).toBeInTheDocument();
+    expect(screen.queryByText(/2\.5012345678/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Показать сделки по BTCUSDT" }));
+    expect(await screen.findByText("Сделки по BTCUSDT")).toBeInTheDocument();
+    expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
+    expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Подробности сделки" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "← Все сделки" }));
+    expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
+    expect(screen.queryByText("Сделки по BTCUSDT")).not.toBeInTheDocument();
   });
 
   it("never shows foreign-account ranking or silently falls back to manual", async () => {
@@ -822,7 +854,7 @@ describe("Finrez first-screen UI", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     expect(await screen.findByRole("region", { name: "Ручные закрытия сделок робота" })).toBeInTheDocument();
     expect(screen.getByText("Робот · ручное вмешательство")).toBeInTheDocument();
-    expect(screen.getByText("-4.5 USDT")).toBeInTheDocument();
+    expect(screen.getByText("-4,50 USDT")).toBeInTheDocument();
     expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
     expect(screen.getByText(/В PnL полностью роботизированных сделок не включён/)).toBeInTheDocument();
   });
@@ -878,7 +910,7 @@ describe("Finrez first-screen UI", () => {
     const current = render(<DiaryOverlay accountKey="paper:joint-robot" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const section = await screen.findByRole("region", { name: "Совместно управляемые сделки" });
-    expect(section).toHaveTextContent("-11.4 USDT");
+    expect(section).toHaveTextContent("-11,40 USDT");
     expect(section).toHaveTextContent("не складывайте его дважды");
     expect(screen.getByText("Нет закрытых сделок этого типа за выбранный период")).toBeInTheDocument();
     current.rerender(<DiaryOverlay accountKey="paper:joint-manual" initialSection="FINREZ"
@@ -886,8 +918,8 @@ describe("Finrez first-screen UI", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/diary/ticker-finrez?account_id=paper&owner=MANUAL&period=DAY",
     ));
-    expect(await screen.findByRole("region", { name: "Совместно управляемые сделки" })).toHaveTextContent("-11.4 USDT");
-    expect(screen.getAllByText("-11.4 USDT")).toHaveLength(1);
+    expect(await screen.findByRole("region", { name: "Совместно управляемые сделки" })).toHaveTextContent("-11,40 USDT");
+    expect(screen.getAllByText("-11,40 USDT")).toHaveLength(1);
   });
 
   it("rejects a missing or invalid shared-management contract", async () => {
