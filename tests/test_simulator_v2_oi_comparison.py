@@ -21,6 +21,8 @@ def candidate(*, mode: str, run_id: str, source: str = "PINNED_SOURCE"):
         virtual_fills=2 if mode != "FALLING" else 0,
         total_fees=Decimal("0.1") if mode != "FALLING" else Decimal("0"),
         total_net_pnl=Decimal("3.8") if mode != "FALLING" else Decimal("0"),
+        realized_net_pnl=Decimal("3.8") if mode != "FALLING" else Decimal("0"),
+        unrealized_pnl=Decimal("0"),
         return_percent=Decimal("0.38") if mode != "FALLING" else Decimal("0"),
         max_drawdown_percent=Decimal("0.2") if mode != "FALLING" else Decimal("0"),
         final_position_quantity=Decimal("0"),
