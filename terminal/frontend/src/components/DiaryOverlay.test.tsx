@@ -994,6 +994,40 @@ describe("shared statistics trade action standard", () => {
     expect(screen.getByText(/Это не воспроизведение/)).toBeInTheDocument();
   });
 
+  it("filmstrip opens local Simulator with exact PAPER ID, without requiring candle history", async () => {
+    const episodeId = "te_" + "c".repeat(24);
+    const clicked: string[] = [];
+    const copy = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      clipboard: { writeText: copy },
+    });
+    const a = vi.spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        clicked.push(this.getAttribute("href") || "");
+      });
+    try {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        ...finrezResponse,
+        closed_episodes: [{
+          trade_episode_id: episodeId, symbol: "BTCUSDT", side: "LONG",
+          opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+          pnl_usdt: "-2.501234567", execution_count: 2,
+          cohort: "ROBOT", replay_evidence: "EPISODE_INDEX_ONLY",
+        }],
+      }), { status: 200 })));
+      render(<DiaryOverlay accountKey="paper:film" initialSection="DEALS"
+        statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+      const film = await screen.findByRole("button", { name: "Открыть сделку в Симуляторе" });
+      expect(film).toBeEnabled();
+      fireEvent.click(film);
+      expect(clicked).toEqual(["bybitscanner-simulator://open?episode=" + episodeId]);
+      expect(screen.getByRole("status")).toHaveTextContent("Свечи и решения не переданы");
+    } finally {
+      a.mockRestore();
+    }
+  });
+
   it("shares the two-button layout with other account scopes without changing raw PnL", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       ...tradesResponse, active_account_id: "bybit-main", environment: "LIVE",
