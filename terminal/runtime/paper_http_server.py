@@ -3099,11 +3099,14 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 return
             try:
                 params = parse_qs(parsed.query, keep_blank_values=True)
-                if set(params) != {"device_id"} or len(params["device_id"]) != 1:
+                if (set(params) != {"device_id", "viewer_running"}
+                        or any(len(values) != 1 for values in params.values())
+                        or params["viewer_running"][0] not in {"0", "1"}):
                     raise RelayInvalid("invalid_simulator_device")
                 event = relay.poll(
                     device=params["device_id"][0],
                     token=self.headers.get("X-BybitScanner-Simulator-Device-Token", ""),
+                    viewer_running=params["viewer_running"][0] == "1",
                 )
             except RelayForbidden:
                 self._json_response(403, {"ok": False, "error": "simulator_device_unauthorized"})
