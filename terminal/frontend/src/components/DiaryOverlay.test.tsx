@@ -662,6 +662,11 @@ describe("Closed deals / exact episode index", () => {
       ));
       await waitFor(() => expect(click).toHaveBeenCalledOnce());
       expect(URLWithBlobs.createObjectURL).toHaveBeenCalledOnce();
+      expect(await screen.findByRole("button", { name: "Скопировать JSON" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Скопировать JSON" }));
+      expect(await screen.findByRole("textbox", { name: "Проверенный JSON сделки" })).toHaveValue(
+        JSON.stringify(payload, null, 2) + "\n",
+      );
     } finally {
       click.mockRestore();
     }
