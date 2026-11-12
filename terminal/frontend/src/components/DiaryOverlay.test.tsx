@@ -417,6 +417,55 @@ describe("Closed deals / exact episode index", () => {
     );
   });
 
+  it("copies selected episode ID with explicit unavailable notice on another device", async () => {
+    const copy = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { userAgent: "Android", clipboard: { writeText: copy } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse, closed_episodes: [robotDeal],
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Открыть в Симуляторе" }));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith(robotDeal.trade_episode_id));
+    expect(await screen.findByText(/Нет прямого доступа к локальному Симулятору/)).toHaveTextContent(
+      "Идентификатор скопирован.",
+    );
+  });
+
+  it("uses only typed Windows URI locator, with no PAPER data in launch URL", async () => {
+    const episodeId = "te_" + "a".repeat(24);
+    const copy = vi.fn().mockResolvedValue(undefined);
+    const launches: string[] = [];
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      clipboard: { writeText: copy },
+    });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        launches.push(this.getAttribute("href") || "");
+      });
+    try {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+        ...finrezResponse,
+        closed_episodes: [{ ...robotDeal, trade_episode_id: episodeId }],
+      }), { status: 200 })));
+      render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+        statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+      fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Открыть в Симуляторе" }));
+      await waitFor(() => expect(launches).toEqual([
+        "bybitscanner-simulator://open?episode=" + episodeId,
+      ]));
+      expect(copy).toHaveBeenCalledWith(episodeId);
+      expect(await screen.findByText(/Запрос открытия отправлен Windows/)).toHaveTextContent(
+        "Результат запуска пока не подтверждён.",
+      );
+    } finally {
+      anchorClick.mockRestore();
+    }
+  });
+
   it("blocks missing episode contract on an older backend instead of inventing deals", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ...finrezResponse, closed_episodes: undefined,
