@@ -134,6 +134,71 @@ class NativeMirrorAutomaticTests(TestCase):
             self.assertEqual(len(session.account.fills), 2)
             self.assertTrue(robot.can_admit)
 
+    def test_native_one_minute_confirmation_auto_admits_before_next_m5(self):
+        session, robot, levels = self.new_run("mirror_auto_m1")
+        with robot, patch.object(mirror_scanner, "collect_levels", levels), (
+            patch("pattern_robot_integration.prepare_robot_handoff",
+                  side_effect=AssertionError("PAPER handoff forbidden"))
+        ):
+            # M5 breakout just finished. No future M1 from the current group.
+            for i in range(35 * 5):
+                session.step(candle(i))
+                robot.after_committed_minute()
+            self.assertFalse(session.exchange.robot_limits)
+            self.assertEqual(robot._auto_mirror_scanner._scanned_m5_close, 35 * FIVE)
+            formation = (
+                minute(175, op="105", high="105.1", low="104.4", close="104.6"),
+                minute(176, op="104.5", high="105.3", low="104.4", close="105.2"),
+                minute(177, op="105.2", high="105.5", low="105.1", close="105.4"),
+            )
+            for index, row in enumerate(formation):
+                session.step(row)
+                robot.after_committed_minute()
+                if index < 2:
+                    self.assertFalse(session.exchange.robot_limits)
+            self.assertEqual(session.virtual_time_ms, 178 * MINUTE)
+            limits = session.exchange.robot_limits
+            self.assertEqual(len(limits), 1)
+            self.assertEqual((limits[0].entry.side, limits[0].entry.limit_price),
+                             ("BUY", D("105.42")))
+            session.step(minute(
+                178, op="105.4", high="105.6", low="105.2", close="105.4",
+            ))
+            robot.after_committed_minute()
+            trade = robot._store.get_open_robot_trade_for_symbol(
+                robot.account_id, Symbol(SYMBOL),
+            )
+            self.assertIsNotNone(trade)
+            session.step(minute(
+                179, op="105.4", high="111", low="105.2", close="110",
+            ))
+            robot.after_committed_minute()
+            closed = robot._store.get_robot_trade(trade.trade_id)
+            self.assertEqual((closed.pattern, closed.exit_reason, closed.exit_price),
+                             ("MIRROR", "TAKE", D("110")))
+            self.assertEqual(
+                closed.realized_pnl_usdt - closed.fees_costs_usdt,
+                session.account.snapshot(
+                    as_of_ms=session.virtual_time_ms, mark_price=D("110"),
+                ).realized_net_pnl,
+            )
+
+    def test_intram5_first_retest_blocks_later_one_minute_entry(self):
+        session, robot, levels = self.new_run("mirror_auto_m1_retest")
+        with robot, patch.object(mirror_scanner, "collect_levels", levels):
+            for i in range(35 * 5):
+                session.step(candle(i))
+                robot.after_committed_minute()
+            for row in (
+                minute(175, op="105", high="110.1", low="104.4", close="104.6"),
+                minute(176, op="104.5", high="105.3", low="104.4", close="105.2"),
+                minute(177, op="105.2", high="105.5", low="105.1", close="105.4"),
+            ):
+                session.step(row)
+                robot.after_committed_minute()
+            self.assertFalse(session.exchange.robot_limits)
+            self.assertFalse(robot._source_candidate_ids)
+
     def test_offline_auto_scan_requires_explicit_private_risk_profile(self):
         session = VirtualReplaySession(
             simulation_run_id="mirror_auto_reject", symbol=SYMBOL,
