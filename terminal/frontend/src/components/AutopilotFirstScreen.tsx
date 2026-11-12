@@ -381,11 +381,16 @@ export function AutopilotFirstScreen({
       </div>
 
 
-      <div className="autopilot-trade-origin" aria-label="Происхождение выбранной сделки">
-        <strong>Основание открытой сделки</strong>
-        {!verifiedPosition ? (
-          <small>Выберите позицию робота через «Все открытые позиции»</small>
-        ) : !verifiedOrigin ? (
+      {!verifiedPosition ? (
+        <p className="autopilot-trade-origin-empty" role="status">
+          {positions.status === "ready"
+            ? positions.value.length === 0 ? "Нет открытых позиций" : "Выберите позицию Робота"
+            : positions.status === "error" ? "Позиции недоступны" : "Загрузка позиций…"}
+        </p>
+      ) : (
+        <div className="autopilot-trade-origin" aria-label="Происхождение выбранной сделки">
+          <strong>Основание открытой сделки</strong>
+          {!verifiedOrigin ? (
           <small>Происхождение сигнала не подтверждено</small>
         ) : (
           <dl>
@@ -405,8 +410,9 @@ export function AutopilotFirstScreen({
             ) : null}
             <div><dt>Кандидат</dt><dd className="autopilot-origin-id">{verifiedOrigin.candidate_id}</dd></div>
           </dl>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       <nav className="autopilot-utility-stack" aria-label="Панель управления Роботом">
         <button className="workspace-nav-button" type="button" aria-label="Подробности сделки" title="Подробности сделки"

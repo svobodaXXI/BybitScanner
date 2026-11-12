@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RobotManagerPanel } from "./RobotManagerPanel";
 
-function mockRobotApi(stopResponse: { ok: boolean; error?: string }, afterStop = "ROBOT_STOPPED") {
+function mockRobotApi(stopResponse: { ok: boolean; error?: string }, afterStop = "ROBOT_STOPPED", failedGet: string | null = null) {
   let robot = "ROBOT_RUNNING";
   let recovery = "READY";
   const replies: Record<string, Record<string, unknown>> = {
@@ -23,6 +23,7 @@ function mockRobotApi(stopResponse: { ok: boolean; error?: string }, afterStop =
         headers: { "Content-Type": "application/json" },
       }));
     }
+    if (url === failedGet) return Promise.resolve(new Response(JSON.stringify({ ok: false }), { status: 503 }));
     const body = url === "/api/robot/state"
       ? { ok: true, mode: robot, recovery_status: recovery }
       : replies[url];
@@ -57,6 +58,18 @@ describe("RobotManagerPanel", () => {
     expect(await screen.findByText(/BLOCKED: stop_robot is rejected while OPEN Robot trades remain/)).toBeInTheDocument();
     expect(request.mock.calls.filter((call) => call[1]?.method === "POST").map((call) => call[0])).toEqual(["/api/robot/stop"]);
     expect(screen.getByText("ROBOT_RUNNING / READY")).toBeInTheDocument();
+  });
+
+  it("preserves available Robot diagnosis when Scanner fails and disables every mutation", async () => {
+    const request = mockRobotApi({ ok: true }, "ROBOT_STOPPED", "/api/scanner/status");
+    render(<RobotManagerPanel onClose={() => {}} />);
+    expect(await screen.findByText("ROBOT_RUNNING / READY")).toBeInTheDocument();
+    expect(screen.getByText("Недоступны источники: Scanner")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Диагностика неполная");
+    for (const name of ["Запустить Robot", "Отключить автовходы", "Остановить Robot"]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    expect(request.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(0);
   });
 
   it("does not offer stop when Robot state is unknown", async () => {

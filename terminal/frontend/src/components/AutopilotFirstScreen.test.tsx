@@ -170,6 +170,21 @@ describe("Autopilot compact first screen", () => {
     expect(await screen.findByText("+2.50 USDT")).toBeInTheDocument();
   });
 
+  it("collapses unselected origin and distinguishes no positions from an unverified selection", async () => {
+    mockFetch({ ...healthyRoutes, "/api/open-positions": { ok: true, account_id: "paper", positions: [] } });
+    render(<AutopilotFirstScreen now={() => NOW} />);
+    expect(await screen.findByText("Нет открытых позиций")).toHaveClass("autopilot-trade-origin-empty");
+    expect(screen.queryByText("Основание открытой сделки")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Происхождение выбранной сделки")).not.toBeInTheDocument();
+  });
+
+  it("does not call a failed position inventory empty", async () => {
+    mockFetch("offline");
+    render(<AutopilotFirstScreen now={() => NOW} />);
+    expect(await screen.findByText("Позиции недоступны")).toHaveClass("autopilot-trade-origin-empty");
+    expect(screen.queryByText("Нет открытых позиций")).not.toBeInTheDocument();
+  });
+
   it("does not attribute an unverified position to the Robot", async () => {
     mockFetch(healthyRoutes);
     render(<AutopilotFirstScreen now={() => NOW} />);
