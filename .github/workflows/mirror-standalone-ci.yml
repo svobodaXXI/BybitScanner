@@ -96,6 +96,6 @@ jobs:
       - name: Verify owner-approved MIRROR levels and exact-linked legacy audit
         run: python -m pytest -q tests/test_mirror_levels.py -k "owner_mirror_source_policy or legacy_frozen or historical_mirror_audit"
       - name: Verify causal wick-extremum supersession
-        run: python -m pytest -q tests/test_mirror_scanner_integration.py -k "extremum or wick_sweep"
+        run: python -m pytest -q tests/test_mirror_scanner_integration.py -k "extremum or wick_sweep or persisted_standalone_handoff"
       - name: Full synthetic MIRROR standalone PAPER E2E and regression suite
         run: python -m unittest -v tests.test_pattern_freshness tests.test_mirror_standalone_paper_e2e
