@@ -411,6 +411,88 @@ def test_unreadable_state_is_never_overwritten_and_skips_the_symbol(root, fixed_
     assert events[-1]["event"] == "mirror_state_unreadable"
 
 
+def test_persisted_standalone_handoff_requires_current_breakout_and_frozen_provenance(
+    root, config_stub, monkeypatch,
+):
+    """Saved entries cannot bypass source policy after a restart or later retest."""
+    import copy
+    from types import SimpleNamespace
+    import pattern_robot_integration as integration
+    from mirror_levels.levels import LevelRegistry
+
+    step = 5 * M
+    level = horizontal_level(
+        symbol="TESTUSDT", timeframe="5", source=SOURCE_SWING_ZONE,
+        pattern=None, side="lower", price=100.0,
+        anchor_time_ms=0, confirmed_at_ms=2 * step,
+    )
+    registry = LevelRegistry()
+    registry.add(level)
+    breakout = {
+        "direction": "DOWN", "campaign_direction": "LONG",
+        "open_time_ms": 3 * step, "close_time_ms": 4 * step,
+    }
+    confirmation_close_ms = 6 * step
+    terms = {
+        "direction": "LONG", "source_timeframe": "5",
+        "level_id": level.level_id, "level_timeframe": "5",
+        "level_source": SOURCE_SWING_ZONE, "level_pattern": None,
+        "level_side": "lower", "level_breakout_direction": "DOWN",
+        "level_breakout_close_ms": breakout["close_time_ms"],
+        "confirmation": {"close_time_ms": confirmation_close_ms},
+    }
+    entry_id = f"{level.level_id}@5@{confirmation_close_ms}"
+    state = ms.empty_state("TESTUSDT", "5")
+    state["registry"] = registry.to_dict()
+    state["records"] = {level.level_id: {
+        "candidate": True, "lifecycle": ms.LIFECYCLE_TRACKING,
+        "status": STATUS_UNTESTED, "rejection": None,
+        "naked_retest": {"breakout": breakout},
+    }}
+    state["standalone_entries"] = [{"entry_id": entry_id, "terms": terms,
+                                   "handoff": "PENDING", "candidate_id": None}]
+    attempted = []
+    monkeypatch.setattr(integration, "is_robot_executable_signal", lambda *_a, **_k: True)
+    monkeypatch.setattr(integration, "prepare_robot_handoff",
+                        lambda snapshot, **_kw: (
+                            attempted.append(snapshot),
+                            SimpleNamespace(candidate_id="fake-candidate"),
+                        )[1])
+
+    valid = copy.deepcopy(state)
+    assert ms._hand_off_standalone_entries("TESTUSDT", valid, root) == ["fake-candidate"]
+    assert valid["standalone_entries"][0]["handoff"] == "HANDED"
+    assert attempted[0]["mirror_entry"]["level_id"] == level.level_id
+
+    for defect in (
+        "forbidden_pattern", "wrong_side", "wrong_breakout", "forged_close",
+        "forged_entry_id", "retested", "no_candidate", "missing_record",
+    ):
+        attempted.clear()
+        bad = copy.deepcopy(state)
+        item = bad["standalone_entries"][0]
+        if defect == "forbidden_pattern":
+            item["terms"]["level_pattern"] = "IKIGAI_BOX"
+        elif defect == "wrong_side":
+            item["terms"]["level_side"] = "upper"
+        elif defect == "wrong_breakout":
+            bad["records"][level.level_id]["naked_retest"]["breakout"]["direction"] = "UP"
+        elif defect == "forged_close":
+            item["terms"]["level_breakout_close_ms"] += step
+        elif defect == "forged_entry_id":
+            item["entry_id"] = f"{level.level_id}@5@{confirmation_close_ms + step}"
+        elif defect == "retested":
+            bad["records"][level.level_id].update(
+                status=STATUS_RETESTED, lifecycle=ms.LIFECYCLE_DONE)
+        elif defect == "no_candidate":
+            bad["records"][level.level_id]["candidate"] = False
+        else:
+            del bad["records"][level.level_id]
+        assert ms._hand_off_standalone_entries("TESTUSDT", bad, root) == [], defect
+        assert item["handoff"] == "OFF", defect
+        assert attempted == [], defect
+
+
 # --- Telegram / Terminal surfaces ---------------------------------------------------------------------
 
 @pytest.fixture
