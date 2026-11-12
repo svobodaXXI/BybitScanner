@@ -76,7 +76,9 @@ class SimulatorLaunchRelay:
         self._devices = dict(devices)
         self._clock = clock
         self._lock = Lock()
-        self._last_seen: dict[str, float] = {}
+        # Device heartbeat tracks only loopback viewer readiness, not any
+        # machine identity, process list, filesystem path or trading state.
+        self._last_seen: dict[str, tuple[float, bool]] = {}
         self._requests: dict[str, _Request] = {}
 
     @classmethod
@@ -118,13 +120,15 @@ class SimulatorLaunchRelay:
         with self._lock:
             now = self._clock()
             self._trim(now)
-            online = [(when, device) for device, when in self._last_seen.items()
+            online = [(running, when, device)
+                      for device, (when, running) in self._last_seen.items()
                       if now - when <= ONLINE_SECONDS]
             if not online:
                 raise RelayUnavailable("no_connected_simulator_adapter")
-            # Most recently contacted paired local device; never select an
-            # arbitrary host, URL, command, username or filesystem path.
-            device = max(online)[1]
+            # Prefer a paired device already running the local viewer.
+            # If neither viewer is open, launch on the most recently seen
+            # device. No arbitrary host, URL or path can be selected.
+            device = max(online)[2]
             if any(r.device_id == device and r.state in {"QUEUED", "DELIVERED"}
                    for r in self._requests.values()):
                 raise RelayUnavailable("simulator_adapter_busy")
@@ -132,13 +136,16 @@ class SimulatorLaunchRelay:
             self._requests[rid] = _Request(rid, device, episode_id, now)
             return {"request_id": rid, "state": "QUEUED"}
 
-    def poll(self, *, device: str, token: str) -> dict[str, str]:
+    def poll(self, *, device: str, token: str,
+             viewer_running: bool = False) -> dict[str, str]:
+        if type(viewer_running) is not bool:
+            raise RelayInvalid("invalid_local_viewer_heartbeat")
         if not self._authenticated(device, token):
             raise RelayForbidden("simulator_device_unauthorized")
         with self._lock:
             now = self._clock()
             self._trim(now)
-            self._last_seen[device] = now
+            self._last_seen[device] = (now, viewer_running)
             queued = [r for r in self._requests.values()
                       if r.device_id == device and r.state == "QUEUED"]
             if not queued:
