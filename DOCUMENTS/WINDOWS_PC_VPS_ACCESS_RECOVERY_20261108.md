@@ -71,6 +71,19 @@ This is an **additional public IPv4 address, not an API endpoint or API key**:
 
 **Authority and current status:** the owner separately authorized one bounded continuation of SHA `0879f0c4...` after READ-ONLY preflight, **without STOP replay**, preserving PAPER DB/trading state; Scanner/Robot/Autopilot not to run, LIVE forbidden. As of this documentation revision, **continuation has not been executed or accepted**. Any outcome must be appended from actual command evidence, not inferred.
 
+## 2026-11-11 — EDITOR_ONLY actually restored after an interrupted STOP-confirmed install
+
+**Observed outcome via owner's trusted PowerShell SSH, with Happ/VPN off:**
+1. One owner-authorized bounded `deploy_staged_editor_only` continuation passed `READ_ONLY_PREFLIGHT_OK` and returned `BLOCKED: editor_only_freeze_unproven:ValueError`, SSH exit 2. **Do not replay** this operation: the Gitless file switch may have committed before that postcondition refusal.
+2. Next *read-only* snapshot proved `INSTALLED_SHA=0879f0c490d5612461f0eeb353b0473b167a8361`, target journal exists, `editor-ready` absent at that instant, `_durable_editor_freeze(...)=OK`, and all four tracked units inactive/PID 0. The original ValueError was not reproduced; **its underlying cause remains unproven**, not automatically a race.
+3. A separately approved `--resume-installed-editor-only` command was *not executed*: its Python wrapper first ran read-only `check_resume`, which returned `ResumeBlocked PAPER_unit_not_stopped`, SSH exit 2. This is a legitimate stopped-only guard: do not restart any already-running worker.
+4. Immediate read-only `systemctl show` then showed Backend active PID `2824933`, Telegram active PID `2824959`, MAIN active PID `2824993`; PAPER start inactive/PID 0. **Who started the three workers between the snapshots has not been established**. Avoid asserting the refused resume command started them.
+5. Final read-only verification on installed target SHA: `verify_release=0879f0c490d5612461f0eeb353b0473b167a8361`, `PAPER_FREEZE=OK`, `_editor_runtime_ready(target, identity)=True`, `(journal / "editor-ready").is_file()=True`, SSH exit 0. **EDITOR_ONLY runtime proven ready**. Receipt existence was observed, not an independent cryptographic/ownership attestation in that final probe. Owner browser/UI acceptance remains separate. This does not authorize trading or prove Scanner/Robot/PAPER_Auto is running (PAPER start was inactive in the last unit snapshot).
+
+**Fast path on future `PAPER_unit_not_stopped` after a protected install:** Before any retry, get a *single read-only observation* of exact installed release, four loaded unit states/PIDs, protected journal/receipt, durable PAPER freeze and `_editor_runtime_ready`. If Backend/Telegram/MAIN have already started and runtime-ready is true, **report operational readiness; do not run the stopped-only resume or STOP again**. If workers are active but not ready, fail closed; do not infer a safe restart. Use only existing verified protected mechanisms for any separately approved mutation. No SQL, manual service restarts or unapproved LIVE.
+
+**Monolith simplification:** PR #1012 merged into stable at `489e67b8bc147aefff59495db2b72e978949e31f` (new flag `--continue-confirmed-stop-only`). **Do not assume that flag is on VPS**: installed SHA in this incident is the earlier `0879f0c4...`. The proven completion here is runtime EDITOR_ONLY, not deployment of current stable.
+
 ## Routing and safety rules for future chats
 
 - **Default PC workflow:** Codex Desktop already open, BybitScanner project selected. Do **not** tell the owner to run `codex` in PowerShell or reinstall Codex. For GitHub tasks use the GitHub connector/PR workflow; for authorized VPS work use verified Codex bridge if proven, or existing PowerShell SSH alias on PC as fallback. No arbitrary VNC/manual juggling unless a specific SSH failure makes it necessary.
