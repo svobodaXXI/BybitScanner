@@ -118,6 +118,51 @@ def mirror_breakout_allowed(level: "MirrorLevel", breakout: Mapping[str, Any] | 
 
 
 
+# A historical policy classification does not attest that an execution belongs
+# to this level: the read-only Diary must first prove that exact episode link.
+MIRROR_AUDIT_ALLOWED = "ALLOWED_BY_CURRENT_POLICY"
+MIRROR_AUDIT_REVOKED = "REVOKED_BY_CURRENT_POLICY"
+MIRROR_AUDIT_UNPROVEN = "SOURCE_OR_EPISODE_LINK_UNPROVEN"
+
+
+def audit_historical_mirror_source(
+    *,
+    level: "MirrorLevel" | None,
+    breakout: Mapping[str, Any] | None,
+    linked_level_id: str | None,
+    linked_breakout_close_ms: int | None,
+    linked_symbol: str | None,
+) -> str:
+    """Audit an *exact-linked* native level/breakout; never infer a trade link.
+
+    The caller must source linked_* from the same durable Robot candidate or
+    campaign as the historical episode, not from matching ticker/time alone.
+    Neither a generic D2 setup nor unrelated archive geometry is that proof.
+    """
+    if not isinstance(level, MirrorLevel) or not isinstance(breakout, Mapping):
+        return MIRROR_AUDIT_UNPROVEN
+    if not isinstance(linked_symbol, str) or linked_symbol != level.symbol:
+        return MIRROR_AUDIT_UNPROVEN
+    if not isinstance(linked_level_id, str) or linked_level_id != level.level_id:
+        return MIRROR_AUDIT_UNPROVEN
+    if level.level_id != level_identity(
+        symbol=level.symbol, timeframe=level.timeframe, source=level.source,
+        pattern=level.pattern, side=level.side, anchors=level.anchors,
+    ):
+        return MIRROR_AUDIT_UNPROVEN
+    open_ms, close_ms = breakout.get("open_time_ms"), breakout.get("close_time_ms")
+    if (type(open_ms) is not int or type(close_ms) is not int
+            or type(linked_breakout_close_ms) is not int
+            or open_ms < level.confirmed_at_ms or close_ms <= open_ms
+            or close_ms != linked_breakout_close_ms
+            or breakout.get("direction") not in ("UP", "DOWN")):
+        return MIRROR_AUDIT_UNPROVEN
+    return (
+        MIRROR_AUDIT_ALLOWED if mirror_breakout_allowed(level, breakout)
+        else MIRROR_AUDIT_REVOKED
+    )
+
+
 TIMEFRAME_MS = {"1": 60_000, "5": 300_000, "15": 900_000, "60": 3_600_000, "240": 14_400_000}
 
 PRICE_DIGITS = 12
