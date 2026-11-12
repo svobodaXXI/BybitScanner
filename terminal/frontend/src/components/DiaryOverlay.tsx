@@ -959,8 +959,7 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
           onClick={() => void downloadFacts(selected)}>
           {downloading ? "Выгружаю факты…" : "Скачать JSON исполнений"}
         </button>
-        {filmNotice ? <p className="diary-finrez-coverage" role="status">{filmNotice}</p> : null}
-      {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
+        {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
         <p className="diary-finrez-basis" role="status">
           Это не воспроизведение. JSON содержит только реальные зарегистрированные исполнения. Свечи, решения робота
           и полное воспроизведение в локальном Симуляторе пока не подключены.
@@ -1007,6 +1006,7 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
           ))}
         </div>
       )}
+      {filmNotice ? <p className="diary-finrez-coverage" role="status">{filmNotice}</p> : null}
       {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
       <p className="diary-finrez-basis">
         Киноплёнка передаёт в локальный Симулятор только ID сделки. История свечей и решения робота автоматически не загружаются. Фактические исполнения доступны через JSON в карточке сделки.
