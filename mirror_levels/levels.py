@@ -73,7 +73,22 @@ def mirror_level_allowed(level: "MirrorLevel") -> bool:
         return False
     if level.pattern == "L-shape":
         return level.is_horizontal
+    # A triangle side may be horizontal; both sides are owner-approved.
+    if level.pattern == "Triangle Compression":
+        return True
     return not level.is_horizontal
+
+
+def mirror_breakout_allowed(level: "MirrorLevel", breakout: Mapping[str, Any] | None) -> bool:
+    """Only outward naked breakouts of an authorized boundary may trade.
+
+    The opposite direction is a separate event, never a MIRROR realization.
+    """
+    return (
+        mirror_level_allowed(level)
+        and isinstance(breakout, Mapping)
+        and breakout.get("direction") == (("UP" if level.side == SIDE_UPPER else "DOWN"))
+    )
 
 
 
