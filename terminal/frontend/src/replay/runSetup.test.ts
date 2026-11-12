@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, clearAll, isAllSelected,
   onlyWedges, onlyBox, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, adjustInclusiveWindow,
-  parseRunCoordinates, formatRunCoordinates, formatRunDuration, selectAll,
+  parseRunCoordinates, parseEpisodeLocator, formatRunCoordinates, formatRunDuration, selectAll,
   toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
 } from "./runSetup";
@@ -120,6 +120,17 @@ describe("local one-symbol strategy setup (no trading)", () => {
       "XRPUSDT | 2026-09-11T00:00 | 2026-09-12T00:00 | EXTRA",
       "XRPUSDT | 2026-01-01T00:00 | 2026-04-02T00:00",
     ]) expect(() => parseRunCoordinates(value)).toThrow();
+  });
+  it("recognizes only an exact Diary episode ID, never treating it as ticker coordinates", () => {
+    const id = "te_" + "a".repeat(24);
+    expect(parseEpisodeLocator(id)).toBe(id);
+    expect(parseEpisodeLocator("  " + id + "  ")).toBe(id);
+    expect(parseEpisodeLocator("XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59")).toBeNull();
+    expect(parseEpisodeLocator("ETHUSDT")).toBeNull();
+    for (const bad of ["te_" + "a".repeat(23), "te_" + "A".repeat(24),
+      "te_../etc/passwd", id + "|BTCUSDT", id + "&trade=1", "te_"]) {
+      expect(() => parseEpisodeLocator(bad)).toThrow(/ID сделки/);
+    }
   });
   it("handles year and leap-day boundaries without local timezone dependence", () => {
     expect(presetEndInclusive("2024-02-29T23:59", "DAY")).toBe("2024-03-01T23:58");
