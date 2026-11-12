@@ -3,6 +3,7 @@ import unittest
 from decimal import Decimal
 
 from research.historical_market_replay import Candle
+from robot_entry_flow_evidence import TakerPrint
 from research.simulator_v2.session import VirtualReplaySession
 from research.simulator_v2.timeline import MINUTE_MS, StepBlocked
 from research.simulator_v2.virtual_exchange import MarketRequest
@@ -98,6 +99,46 @@ class VirtualReplaySessionTests(unittest.TestCase):
             session.step(bar(2))
         self.assertEqual(session.virtual_time_ms, MINUTE_MS)
         self.assertEqual(session.account.fills, ())
+
+    def test_reuses_robot_flow_evidence_without_virtual_orders(self):
+        session = VirtualReplaySession(
+            simulation_run_id="flow", symbol="ICNTUSDT", initial_balance=D("1000"),
+        )
+        session.step(bar(0))
+        first = (TakerPrint("ICNTUSDT", "a", 50, "Sell", D("100"), D("1")),)
+        journal = session.events
+        self.assertIsNone(session.observe_committed_taker_prints(first, source_id="archive-sha"))
+        self.assertEqual(session.events, journal)
+        self.assertIsNone(session.latest_entry_flow)
+        session.step(bar(1))
+        second = (
+            TakerPrint("ICNTUSDT", "b", 60010, "Buy", D("100"), D("3")),
+            TakerPrint("ICNTUSDT", "c", 60020, "Buy", D("101"), D("2")),
+        )
+        result = session.observe_committed_taker_prints(second, source_id="archive-sha")
+        self.assertTrue(result.buy_wave_accelerating)
+        self.assertEqual(result.known_at_ms, 2 * MINUTE_MS)
+        self.assertEqual(session.latest_entry_flow, result)
+        self.assertEqual(session.account.fills, ())
+        self.assertEqual(session.events, journal + session.events[len(journal):])
+        self.assertTrue(all(event.source == "MARKET" for event in session.events))
+
+    def test_flow_observation_refuses_uncommitted_or_duplicate_minute(self):
+        session = VirtualReplaySession(
+            simulation_run_id="flow-gap", symbol="ICNTUSDT", initial_balance=D("1000"),
+        )
+        one = (TakerPrint("ICNTUSDT", "a", 50, "Buy", D("100"), D("1")),)
+        with self.assertRaises(StepBlocked):
+            session.observe_committed_taker_prints(one, source_id="raw")
+        session.step(bar(0))
+        self.assertIsNone(session.observe_committed_taker_prints(one, source_id="raw"))
+        with self.assertRaises(ValueError):
+            session.observe_committed_taker_prints(one, source_id="raw")
+        session.step(bar(1))
+        self.assertIsNone(session.observe_committed_taker_prints((), source_id="raw"))
+        session.step(bar(2))
+        next_print = (TakerPrint("ICNTUSDT", "b", 120010, "Buy", D("100"), D("1")),)
+        self.assertIsNone(session.observe_committed_taker_prints(next_print, source_id="raw"))
 
     def test_no_robot_strategy_or_network_client(self):
         session = VirtualReplaySession(
