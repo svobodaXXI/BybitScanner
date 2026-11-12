@@ -214,3 +214,36 @@
 .autopilot-utility-stack { grid-column: 2; grid-row: 1 / span 2; }
 .autopilot-summary { grid-column: 1 / -1; grid-row: 3; display: flex; flex-wrap: wrap; flex-direction: row; gap: 0.8rem 1.4rem; padding-top: 0.45rem; border-top: 1px solid #27313b; }
 .autopilot-summary-item dd { font-size: 1rem; }
+
+/* An informational snapshot, not an order/admission-ready claim. */
+.autopilot-runtime-status {
+  grid-column: 1 / -1;
+  grid-row: 4;
+  color: #9eacb9;
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
+/* Match the existing mobile Terminal utility rail exactly, including icon size. */
+@media (max-width: 620px) {
+  .autopilot-utility-stack { gap: 0.18rem; }
+  .autopilot-utility-stack > .workspace-nav-button {
+    box-sizing: border-box;
+    width: 1.8rem;
+    min-width: 1.8rem;
+    height: 1.62rem;
+    min-height: 1.62rem;
+    border-radius: 0.28rem;
+    flex: 0 0 1.62rem;
+  }
+  .autopilot-utility-stack .workspace-nav-symbol {
+    width: 1.12rem;
+    height: 1.12rem;
+  }
+  .autopilot-utility-stack .workspace-nav-icon { font-size: 0.9rem; }
+  /* Terminal's statistics bars render at 24px; use the same size here. */
+  .autopilot-utility-stack .workspace-nav-button[aria-label="Статистика"] .workspace-nav-symbol {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+}

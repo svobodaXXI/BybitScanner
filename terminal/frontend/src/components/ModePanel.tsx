@@ -52,6 +52,7 @@ export function ModePanel({
                 onTradeDetails={setRequestedTradeEpisodeId}
                 onStatistics={() => setStatisticsRequest((value) => value + 1)}
                 onTerminal={() => props.onModeChange("TERMINAL")}
+                onEditor={() => props.onModeChange("EDITOR")}
                 onRobotControls={() => setRobotManagerOpen(true)}
                 accountControl={<AccountMenu open={props.accountOpen ?? false}
                   onToggle={props.onAccountToggle ?? (() => {})}
