@@ -86,7 +86,8 @@ class FrozenLevelNativeAdapterTests(unittest.TestCase):
         self.assertEqual(preview.pattern, "L-shape")
         self.assertEqual(preview.protected.entry.limit_price, D("100.02"))
         self.assertEqual(preview.protected.entry.quantity, D("1"))
-        self.assertEqual(preview.protected.stop_price, D("98"))
+        # Production robot_protection.limited_stop caps 2% structural STOP to 1.5%.
+        self.assertEqual(preview.protected.stop_price, D("100.02") * D("0.985"))
         self.assertEqual(preview.protected.take_price, D("110"))
         self.assertGreaterEqual(preview.native_net_reward_risk, D("2"))
 
