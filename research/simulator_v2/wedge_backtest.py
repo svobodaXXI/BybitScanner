@@ -17,12 +17,13 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from research.historical_market_replay import Candle
-from robot_entry_flow_evidence import FlowTransition, permits_paper_entry
+from robot_entry_flow_evidence import (FlowTransition, OI_MODES, OpenInterestChange, open_interest_asof, permits_paper_entry)
 from research.simulator_v2.cache import _checksum, _rows
 from research.simulator_v2.history import HistoryChunk, MINUTE_MS
 from research.simulator_v2.report import ReplayReport, run_verified_chunks
 from research.simulator_v2.session import VirtualReplaySession
 from research.simulator_v2.taker_flow_archive import pinned_taker_minutes
+from research.simulator_v2.oi_history import load_oi_csv
 from research.simulator_v2.trade_range import (
     TradeDayProof, _ordered_proofs, iter_pinned_trade_chunks,
 )
@@ -50,6 +51,9 @@ class WedgeBacktestResult:
     paper_flow_gate_enabled: bool = False
     paper_flow_rejected_retests: int = 0
     paper_flow_permitted_retests: int = 0
+    paper_oi_rejected_retests: int = 0
+    paper_oi_mode: str = "OFF"
+    paper_oi_sha256: str | None = None
     namespace: str = "SIMULATION"
 
     def to_payload(self) -> dict[str, object]:
@@ -75,6 +79,9 @@ class WedgeBacktestResult:
             **({"paper_flow_entry": {
                 "permitted_retests": self.paper_flow_permitted_retests,
                 "rejected_retests": self.paper_flow_rejected_retests,
+                "oi_rejected_retests": self.paper_oi_rejected_retests,
+                "oi_mode": self.paper_oi_mode,
+                "oi_source_sha256": self.paper_oi_sha256,
                 "execution": "EXISTING_PROTECTED_VIRTUAL_EXCHANGE",
             }} if self.paper_flow_gate_enabled else {}),
         }
@@ -98,6 +105,9 @@ def run_verified_wedge_chunks(
     start_ms: int, end_inclusive_ms: int,
     visual_recorder: WedgeVisualReplay | None = None,
     flow_on_close: Callable[[VirtualReplaySession, Candle], FlowTransition | None] | None = None,
+    oi_mode: str = "OFF",
+    oi_at_entry: Callable[[int], OpenInterestChange | None] | None = None,
+    oi_source_sha256: str | None = None,
 ) -> WedgeBacktestResult:
     """Trade ONLY after native Scanner→Robot retest and native risk preview.
 
@@ -111,12 +121,16 @@ def run_verified_wedge_chunks(
             or session.wedge_scanner is None or session.wedge_robot is None
             or session.wedge_robot.risk_settings is None):
         raise ValueError("original Wedge Scanner/Robot and explicit virtual risk terms required")
+    if oi_mode not in OI_MODES or (
+        oi_mode != "OFF" and (flow_on_close is None or oi_at_entry is None)
+    ):
+        raise ValueError("OI-filtered virtual entry requires authentic flow and OI series")
     skipped_busy = submitted = 0
-    flow_rejected = flow_permitted = 0
+    flow_rejected = flow_permitted = oi_rejected = 0
     consumed_preview_ids: set[str] = set()
 
     def on_close(active: VirtualReplaySession, candle: Candle) -> None:
-        nonlocal submitted, skipped_busy, flow_rejected, flow_permitted
+        nonlocal submitted, skipped_busy, flow_rejected, flow_permitted, oi_rejected
         flow = (
             flow_on_close(active, candle)
             if flow_on_close is not None and start_ms <= candle.start_ms < end_exclusive
@@ -170,6 +184,12 @@ def run_verified_wedge_chunks(
                 if not permits_paper_entry(preview.direction, flow):
                     flow_rejected += 1
                     continue
+                if oi_mode != "OFF" and not permits_paper_entry(
+                    preview.direction, flow, oi_mode=oi_mode,
+                    oi=oi_at_entry(candle.end_ms),
+                ):
+                    oi_rejected += 1
+                    continue
                 flow_permitted += 1
             active.submit_protected_preview(preview)
             submitted += 1
@@ -214,6 +234,9 @@ def run_verified_wedge_chunks(
         paper_flow_gate_enabled=flow_on_close is not None,
         paper_flow_rejected_retests=flow_rejected,
         paper_flow_permitted_retests=flow_permitted,
+        paper_oi_rejected_retests=oi_rejected,
+        paper_oi_mode=oi_mode,
+        paper_oi_sha256=oi_source_sha256,
     )
 
 
@@ -230,6 +253,8 @@ def run_cached_wedge_trade_range(
     capture_replay: bool = False,
     on_replay_events: Callable[[list[dict[str, object]]], None] | None = None,
     flow_archive_dir: Path | None = None,
+    oi_mode: str = "OFF",
+    oi_history_path: Path | None = None,
 ) -> WedgeBacktestResult:
     """Offline Bybit public-trade M1 with an exact inclusive minute cutoff.
 
@@ -294,6 +319,19 @@ def run_cached_wedge_trade_range(
         start_ms=start_ms, end_ms=end_exclusive,
         on_events=on_replay_events,
     ) if capture_replay else None
+    if oi_mode not in OI_MODES or (
+        oi_mode != "OFF" and (
+            flow_archive_dir is None or oi_history_path is None
+        )
+    ):
+        raise ValueError("OI mode requires validated trade tape and local OI CSV")
+    oi_at_entry = None
+    oi_sha256 = None
+    if oi_mode != "OFF":
+        oi_points, oi_sha256 = load_oi_csv(oi_history_path, symbol=symbol)
+        def oi_at_entry(known_at_ms: int) -> OpenInterestChange | None:
+            return open_interest_asof(oi_points, decision_ms=known_at_ms)
+
     flow_callback = None
     if flow_archive_dir is not None:
         # The optional read-only tape comes from exactly the same pinned
@@ -318,6 +356,9 @@ def run_cached_wedge_trade_range(
         start_ms=start_ms, end_inclusive_ms=end_inclusive_ms,
         visual_recorder=recorder,
         flow_on_close=flow_callback,
+        oi_mode=oi_mode,
+        oi_at_entry=oi_at_entry,
+        oi_source_sha256=oi_sha256,
     )
     replay = recorder.document(
         source_id=result.report.source_id, expected_fills=result.report.virtual_fills,
