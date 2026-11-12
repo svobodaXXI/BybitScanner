@@ -90,6 +90,7 @@ export function projectVerifiedSignalOverlay(
     ...corrected.map((line, index) => ({
       ...line,
       style: { ...reviewedDrawings[index].style },
+      referenceStroke: "solid" as const,
       locked: true,
     })),
   ];
