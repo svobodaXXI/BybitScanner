@@ -69,3 +69,77 @@ class RobotFlowEvidenceTests(TestCase):
         self.assertIsNone(result.current_delta_fraction)
         self.assertFalse(result.buy_wave_accelerating)
         self.assertFalse(result.sell_impact_fading)
+
+
+class PublicTakerBridgeTests(TestCase):
+    def test_ws_and_historical_public_prints_have_identical_semantics(self):
+        from robot_entry_flow_evidence import normalize_bybit_taker_print, aggregate_taker_prints
+        ws = normalize_bybit_taker_print(
+            {"s": "ICNTUSDT", "i": "a", "T": 1794049215011,
+             "S": "Buy", "p": "0.2886", "v": "235"},
+            layout="WS_PUBLIC_TRADE",
+        )
+        archive = normalize_bybit_taker_print(
+            {"symbol": "ICNTUSDT", "trdMatchID": "a", "timestamp": "1794049215.011",
+             "side": "Buy", "price": "0.2886", "size": "235"},
+            layout="PUBLIC_TRADE_ARCHIVE",
+        )
+        self.assertEqual(ws, archive)
+        self.assertEqual(ws.notional_usdt, D("67.8210"))
+        aggregated = aggregate_taker_prints(
+            (archive,), symbol="ICNTUSDT", start_ms=1794049215000,
+            end_ms=1794049216000,
+        )
+        self.assertEqual(aggregated.buy_notional_usdt, D("67.8210"))
+        self.assertEqual(aggregated.sell_notional_usdt, D("0"))
+
+    def test_real_taker_sells_are_not_labelled_as_buys(self):
+        from robot_entry_flow_evidence import normalize_bybit_taker_print, aggregate_taker_prints
+        one = normalize_bybit_taker_print(
+            {"s": "ICNTUSDT", "i": "one", "T": 1, "S": "Buy", "p": "1", "v": "2"},
+            layout="WS_PUBLIC_TRADE",
+        )
+        two = normalize_bybit_taker_print(
+            {"s": "ICNTUSDT", "i": "two", "T": 2, "S": "Sell", "p": "0.9", "v": "4"},
+            layout="WS_PUBLIC_TRADE",
+        )
+        w = aggregate_taker_prints((one, two), symbol="ICNTUSDT", start_ms=0, end_ms=1000)
+        self.assertEqual(w.buy_notional_usdt, D("2"))
+        self.assertEqual(w.sell_notional_usdt, D("3.6"))
+        self.assertLess(w.price_change_bps, D(0))
+
+    def test_missing_side_and_empty_interval_remain_unknown(self):
+        from robot_entry_flow_evidence import normalize_bybit_taker_print, aggregate_taker_prints
+        with self.assertRaises(ValueError):
+            normalize_bybit_taker_print(
+                {"symbol": "ICNTUSDT", "trdMatchID": "a", "timestamp": "1",
+                 "price": "1", "size": "2"}, layout="PUBLIC_TRADE_ARCHIVE",
+            )
+        self.assertIsNone(aggregate_taker_prints((), symbol="ICNTUSDT", start_ms=0, end_ms=1000))
+
+    def test_duplicate_and_late_execution_rejected(self):
+        from robot_entry_flow_evidence import TakerPrint, aggregate_taker_prints
+        p = TakerPrint("ICNTUSDT", "trade", 110, "Buy", D("1"), D("1"))
+        with self.assertRaises(ValueError):
+            aggregate_taker_prints((p, p), symbol="ICNTUSDT", start_ms=100, end_ms=200)
+        with self.assertRaises(ValueError):
+            aggregate_taker_prints((p,), symbol="ICNTUSDT", start_ms=0, end_ms=100)
+        with self.assertRaises(ValueError):
+            aggregate_taker_prints((p,), symbol="BTCUSDT", start_ms=100, end_ms=200)
+
+    def test_replay_builds_only_completed_windows(self):
+        from robot_entry_flow_evidence import TakerPrint, aggregate_taker_prints, compare_flow_windows
+        early = (
+            TakerPrint("ICNTUSDT", "a", 5, "Sell", D("1"), D("200")),
+            TakerPrint("ICNTUSDT", "b", 20, "Buy", D("0.99"), D("100")),
+        )
+        later = (
+            TakerPrint("ICNTUSDT", "c", 1005, "Buy", D("1"), D("300")),
+            TakerPrint("ICNTUSDT", "d", 1010, "Buy", D("1.01"), D("100")),
+        )
+        first = aggregate_taker_prints(early, symbol="ICNTUSDT", start_ms=0, end_ms=1000)
+        second = aggregate_taker_prints(later, symbol="ICNTUSDT", start_ms=1000, end_ms=2000)
+        result = compare_flow_windows(first, second, decision_ms=2000)
+        self.assertTrue(result.buy_wave_accelerating)
+        with self.assertRaises(ValueError):
+            compare_flow_windows(first, second, decision_ms=1999)
