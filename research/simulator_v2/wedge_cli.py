@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from research.simulator_v2.trade_range import TradeDayProof, _ordered_proofs
+from robot_entry_flow_evidence import OI_MODES
 from research.simulator_v2.wedge_backtest import (
     WedgeBacktestResult, run_cached_wedge_trade_range,
 )
@@ -135,6 +136,7 @@ def run_from_time_machine_config(
     capture_replay: bool = False,
     on_replay_events: Callable[[list[dict[str, object]]], None] | None = None,
     flow_archive_dir: Path | None = None,
+    oi_history_path: Path | None = None,
 ) -> WedgeBacktestResult | BoxBacktestResult:
     """Dispatch one proven native strategy family into the shared exchange."""
     if not isinstance(config, Mapping) or (
@@ -151,6 +153,9 @@ def run_from_time_machine_config(
         not isinstance(x, str) or x not in SELECTABLE for x in selected
     ) or len(set(selected)) != len(selected):
         raise ValueError("only implemented Wedge or Ikigai Box may trade")
+    oi_mode = config.get("oi_mode", "OFF")
+    if not isinstance(oi_mode, str) or oi_mode not in OI_MODES:
+        raise ValueError("invalid OI research filter selection")
     box_selected = "IKIGAI_BOX" in selected
     if box_selected and len(selected) != 1:
         raise ValueError("Box and Wedge cannot share one symbol owner in the same run yet")
@@ -189,8 +194,8 @@ def run_from_time_machine_config(
     ):
         raise ValueError("explicit safe local taker archive directory required")
     if box_selected:
-        if flow_archive_dir is not None:
-            raise ValueError("trade-flow shadow observation is supported only for Wedge")
+        if flow_archive_dir is not None or oi_mode != "OFF":
+            raise ValueError("trade-flow and OI entry filters are available only for Wedge")
         return run_cached_box_trade_range(
             cache_dir=cache_dir, symbol=symbol, proofs=proofs,
             latest_closed_boundary_ms=latest_closed_boundary_ms,
@@ -229,6 +234,8 @@ def run_from_time_machine_config(
         capture_replay=capture_replay,
         on_replay_events=on_replay_events,
         flow_archive_dir=flow_archive_dir,
+        oi_mode=oi_mode,
+        oi_history_path=oi_history_path,
     )
 
 
@@ -240,17 +247,21 @@ def main() -> None:
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--cache-dir", required=True, type=Path)
     parser.add_argument("--flow-archive-dir", type=Path, default=None,
-                        help="optional pinned raw Bybit trades for Wedge SHADOW observations")
+                        help="optional pinned raw Bybit trades for Wedge virtual entries")
+    parser.add_argument("--oi-history-csv", type=Path, default=None,
+                        help="local {SYMBOL}.csv from historical Bybit 5m OI")
+    parser.add_argument("--oi-mode", choices=sorted(OI_MODES), default="OFF")
     args = parser.parse_args()
     from research.simulator_v2.history import last_closed_m1_boundary_ms
     try:
         config = _read_json(args.config, max_bytes=MAX_CONFIG_BYTES)
         manifest = _read_json(args.manifest, max_bytes=MAX_MANIFEST_BYTES)
         result = run_from_time_machine_config(
-            config=config, manifest=manifest,
+            config={**config, "oi_mode": args.oi_mode}, manifest=manifest,
             cache_dir=args.cache_dir,
             latest_closed_boundary_ms=last_closed_m1_boundary_ms(),
             flow_archive_dir=args.flow_archive_dir,
+            oi_history_path=args.oi_history_csv,
         )
     except (ValueError, FileNotFoundError, TypeError, KeyError) as exc:
         parser.error(f"BLOCKED: {exc}")
