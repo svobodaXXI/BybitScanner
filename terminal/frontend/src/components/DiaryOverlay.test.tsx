@@ -466,6 +466,53 @@ describe("Closed deals / exact episode index", () => {
     }
   });
 
+  it("pairs an existing VPS device slot through a confirmed Windows link only", async () => {
+    const token = "A".repeat(64);
+    const copies = vi.fn().mockResolvedValue(undefined);
+    const linkClicks: string[] = [];
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      clipboard: { writeText: copies },
+    });
+    const spy = vi.spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        linkClicks.push(this.href);
+      });
+    try {
+      const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+        if (url.endsWith("/simulator-bridge/pair")) return new Response(JSON.stringify({
+          ok: true, device_id: "owner-pc", token,
+        }), { status: 200 });
+        return new Response(JSON.stringify({
+          ...finrezResponse, closed_episodes: [robotDeal],
+        }), { status: 200 });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+        statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+      fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Связать ПК" }));
+      expect(await screen.findByRole("button", { name: "Подтвердить подключение" }))
+        .toBeInTheDocument();
+      expect(linkClicks).toHaveLength(0); // browser must not auto-open on async request
+      expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/pair", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: "owner-pc" }),
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Подтвердить подключение" }));
+      expect(linkClicks).toEqual([
+        "bybitscanner-simulator://pair?device_id=owner-pc&token=" + token,
+      ]);
+      expect(screen.getByText(/Запрос сопряжения передан Windows/))
+        .toHaveTextContent("Успешное подключение пока не подтверждено.");
+      expect(screen.queryByRole("button", { name: "Подтвердить подключение" }))
+        .not.toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("on phone requests paired adapter and reports acknowledged local utility opening", async () => {
     const episodeId = "te_" + "c".repeat(24);
     const requestId = "d".repeat(32);
