@@ -63,6 +63,14 @@ One illustrative read-only local replay of the user-provided ICNT research ZIP (
 
 Targeted shared-core unit tests cover chronological rejection, missing windows, source rotation, delayed availability and no-flow state. Simulator-specific integration tests have been added; real source adapter wiring, full repository CI, live Hub read-only observation and out-of-sample testing remain separate unproven steps. No VPS/PAPER runtime authority is implied.
 
+## 2026-11-12 — opt-in pinned raw tape automation
+
+`research/simulator_v2/taker_flow_archive.py` reads the **existing raw Bybit daily public trade archives** only when an explicit `flow_archive_dir` is supplied to `run_cached_wedge_trade_range`. Each selected raw file must match the already-pinned `TradeDayProof.raw_archive_sha256`; filenames, safe paths, nonempty symbol, native `side`, timestamps, distinct IDs and complete selected M1 coverage are checked before any flow observations are emitted. Reverse-ordered public CSV rows are sorted only within selected minutes; identical-timestamp matching order is not exchange-guaranteed.
+
+For weak local computers the first slice caps the focused in-memory tape at **200,000 executions**. If exceeded, it blocks the opt-in research replay rather than truncating, swapping to inaccurate candles or touching unrelated files. This is an operational memory guard, not a strategy tuning parameter. Default candle-only replay still requires no raw archives or new network access.
+
+At each eligible **committed historical M1**, `VirtualReplaySession.observe_committed_taker_prints()` is called automatically. The original Wedge Scanner and Robot remain the only trading-decision modules; the flow observer cannot authorize, cancel or execute any trade. The existing simulation result adds an `entry_flow_shadow` section only when the explicit real tape is enabled: observed adjacent windows and candidate buy-wave / sell-impact-fading timestamps. No flow evidence is manufactured for missing/invalid source data. Integration tests exercise the original replay runner, hash mismatch, invalid side, missing minute and the bounded budget. Live Hub/Robot input wiring remains **not implemented**.
+
 ## Shortest dependent delivery path
 
 1. **This slice:** publish the pure common flow observation and focused unit tests; no runtime integration or new numeric policy thresholds.
