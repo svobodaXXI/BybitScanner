@@ -76,11 +76,11 @@ def fixture():
         trades=[
             dict(trading_account_id="paper", candidate_id="candidate-1",
                  trade_id="trade-1", symbol="BTCUSDT", direction="LONG",
-                 signal_time_ms=900, entry_time_ms=1000,
+                 pattern="Box", source_timeframe="5m", signal_time_ms=900, entry_time_ms=1000,
                  exit_time_ms=1100, exit_reason="STOP"),
             dict(trading_account_id="paper", candidate_id="candidate-2",
                  trade_id="trade-2", symbol="BTCUSDT", direction="LONG",
-                 signal_time_ms=1150, entry_time_ms=1200,
+                 pattern="Box", source_timeframe="5m", signal_time_ms=1150, entry_time_ms=1200,
                  exit_time_ms=1300, exit_reason="TAKE"),
         ],
         entry_ownership=[
@@ -111,6 +111,10 @@ class CampaignProofTests(unittest.TestCase):
                          ["STOP", "TAKE"])
         self.assertEqual([e["pnl_usdt"] for e in result["trade_episodes"]],
                          ["1.8", "1.8"])
+        self.assertEqual(result["trade_episodes"][0]["signal_pattern"], "Box")
+        self.assertEqual(result["trade_episodes"][0]["signal_timeframe"], "5m")
+        self.assertEqual(result["trade_episodes"][0]["signal_provenance"],
+                         "DURABLE_ROBOT_TRADE_METADATA_NOT_ORIGINAL_GEOMETRY")
         self.assertEqual(len(result["source_sha256"]), 64)
         self.assertNotIn("candles", result)
         self.assertNotIn("robot_decisions", result)
@@ -138,6 +142,7 @@ class CampaignProofTests(unittest.TestCase):
                          ["open-2", "close-2"])
         self.assertEqual(document["trade_episodes"][1]["known_execution_fees_usdt"], "0.2")
         self.assertEqual(document["trade_episodes"][1]["execution_allocations"][1]["order_id"], "exit-2")
+        self.assertEqual(document["trade_episodes"][1]["signal_pattern"], "Box")
 
     def test_selected_episode_requires_source_evidence_not_proximity(self):
         evidence = fixture()
