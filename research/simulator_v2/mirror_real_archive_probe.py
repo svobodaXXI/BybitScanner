@@ -91,12 +91,59 @@ def run_real_trade_day(archive: Path) -> dict[str, object]:
         signal_rows = state.get("standalone_entries") or ()
         candidates = tuple(robot._source_candidate_ids)
         trades = []
+        # Public, post-replay diagnostics only. These immutable evidence rows
+        # do not feed back into Scanner, Robot, virtual time, or execution.
+        m5 = robot._mirror_source.recent_closed_m5()
         for candidate_id in candidates:
             trade = robot._store.get_robot_trade("robot-trade-" + candidate_id)
             if trade is None:
                 continue
+            candidate = robot._store.get_robot_candidate(candidate_id)
+            if candidate is None or not isinstance(candidate.signal_snapshot, dict):
+                raise ValueError("durable source candidate proof unavailable")
+            frozen = candidate.signal_snapshot.get("mirror_entry")
+            if not isinstance(frozen, dict) or not isinstance(frozen.get("confirmation"), dict):
+                raise ValueError("native frozen MIRROR entry evidence unavailable")
+            level_id = frozen.get("level_id")
+            registry_level = state["registry"]["levels"].get(level_id)
+            record = state["records"].get(level_id)
+            if registry_level is None or record is None:
+                raise ValueError("frozen MIRROR source level provenance missing")
+            confirmation_ms = frozen["confirmation"]["close_time_ms"]
+            def m1_view(item):
+                return {
+                    "open_time_ms": item.start_ms, "close_time_ms": item.end_ms,
+                    "open": str(item.open), "high": str(item.high),
+                    "low": str(item.low), "close": str(item.close),
+                }
+            surrounding_m1 = [
+                m1_view(c) for c in chunk.candles
+                if confirmation_ms - 3 * 60_000 <= c.end_ms
+                <= trade.exit_time_ms + 60_000
+            ]
+            nearby_m5 = [
+                {key: value for key, value in row.items()
+                 if key in ("open_time_ms", "close_time_ms", "open", "high", "low", "close")}
+                for row in m5
+                if confirmation_ms - 12 * 300_000 <= row["close_time_ms"]
+                <= trade.exit_time_ms + 300_000
+            ]
             trades.append({
                 "candidate_id": candidate_id,
+                "frozen_entry": frozen,
+                "source_level": registry_level,
+                "source_state_at_end": {
+                    "status": record.get("status"),
+                    "lifecycle": record.get("lifecycle"),
+                    "candidate": record.get("candidate"),
+                    "rejection": record.get("rejection"),
+                    "breakout": (record.get("naked_retest") or {}).get("breakout"),
+                    "retest": (record.get("naked_retest") or {}).get("retest"),
+                    "breakout_evidence": record.get("breakout_evidence"),
+                    "superseding_extremum": record.get("superseding_extremum"),
+                },
+                "m1_confirmation_to_exit": surrounding_m1,
+                "m5_context": nearby_m5,
                 "entry_time_ms": trade.entry_time_ms,
                 "exit_time_ms": trade.exit_time_ms,
                 "direction": trade.direction,
@@ -108,6 +155,13 @@ def run_real_trade_day(archive: Path) -> dict[str, object]:
                 "fees_usdt": str(trade.fees_costs_usdt) if trade.fees_costs_usdt is not None else None,
                 "pnl_percent_net": str(trade.realized_pnl_pct) if trade.realized_pnl_pct is not None else None,
             })
+        # A diagnostic artifact must never silently omit the actual filled
+        # episodes; all of their frozen source snapshots are mandatory.
+        if len(trades) != sum(
+            robot._store.get_robot_trade("robot-trade-" + cid) is not None
+            for cid in candidates
+        ):
+            raise ValueError("incomplete native MIRROR trade diagnostics")
         closed_trades = [x for x in trades if x["exit_time_ms"] is not None]
         per_side = {
             "STOP": sum(x["exit_reason"] == "STOP" for x in closed_trades),
