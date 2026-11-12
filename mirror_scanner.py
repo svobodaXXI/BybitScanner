@@ -607,10 +607,12 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
 
     # Historic persisted levels are untrusted after a source-policy change.
     # Keep their evidence but remove candidate eligibility and unsent alerts.
-    from mirror_levels.levels import mirror_level_allowed
+    from mirror_levels.levels import mirror_level_allowed, mirror_breakout_allowed
     for level_id, record in records.items():
         level = registry.levels.get(level_id)
-        if level is not None and not mirror_level_allowed(level):
+        breakout = (record.get("naked_retest") or {}).get("breakout")
+        if level is not None and (not mirror_level_allowed(level)
+                                  or (breakout is not None and not mirror_breakout_allowed(level, breakout))):
             record.update(candidate=False, robot=None, lifecycle=LIFECYCLE_REJECTED,
                           rejection="mirror_source_policy_revoked")
             state["pending_notifications"][:] = [
@@ -685,7 +687,9 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                                 "superseded_by_level_id": replacement.level_id,
                                 "superseding_extremum": pivot})
             elif status == STATUS_UNTESTED:
-                rejection = _judge_breakout(level, record, latest_close, step) \
+                rejection = (None if mirror_breakout_allowed(level, record["naked_retest"]["breakout"])
+                             else "mirror_breakout_direction_revoked") \
+                    or _judge_breakout(level, record, latest_close, step) \
                     or _duplicate_breakout(level_id, level, record, records, registry)
                 record["candidate"] = rejection is None
                 record["rejection"] = rejection
