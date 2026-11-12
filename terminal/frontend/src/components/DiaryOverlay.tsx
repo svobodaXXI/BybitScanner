@@ -357,12 +357,62 @@ function Value({ value }: { value: string | null | undefined }) {
   return <span>{value ?? "—"}</span>;
 }
 
+/** User-initiated Windows protocol; never grants VPS remote-execution rights.
+ * A successful click does NOT prove the local Simulator accepted the campaign.
+ * The immutable episode ID is copied first, including when no handler exists.
+ */
+function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
+  episodeId: string; allowLocalLaunch: boolean;
+}) {
+  const [notice, setNotice] = useState("");
+  async function requestLaunch() {
+    let copied: Promise<boolean>;
+    try {
+      copied = typeof navigator.clipboard?.writeText === "function"
+        ? navigator.clipboard.writeText(episodeId).then(() => true, () => false)
+        : Promise.resolve(false);
+    } catch {
+      copied = Promise.resolve(false);
+    }
+    const canLaunch = allowLocalLaunch
+      && /^te_[0-9a-f]{24}$/.test(episodeId)
+      && /\bWindows\b/i.test(navigator.userAgent);
+    if (canLaunch) {
+      // Only one typed locator. The registered local Python adapter ignores
+      // commands/files/hosts; no fact data or source authority enters the URL.
+      const link = document.createElement("a");
+      link.href = "bybitscanner-simulator://open?episode=" + episodeId;
+      link.rel = "noopener noreferrer";
+      link.target = "_blank";
+      document.body.appendChild(link);
+      try { link.click(); } finally { link.remove(); }
+    }
+    const copiedOk = await copied;
+    setNotice(
+      (canLaunch
+        ? "Запрос открытия отправлен Windows. Результат запуска пока не подтверждён."
+        : "Нет прямого доступа к локальному Симулятору на этом устройстве.")
+      + (copiedOk ? " Идентификатор скопирован." : " Не удалось скопировать ID автоматически.")
+    );
+  }
+  return (
+    <div className="diary-simulator-launch">
+      <button className="diary-detail-back" type="button" onClick={() => void requestLaunch()}>
+        Открыть в Симуляторе
+      </button>
+      {notice ? <p className="diary-finrez-coverage" role="status">{notice} ID: {episodeId}</p> : null}
+    </div>
+  );
+}
+
 function TradeDetailsView({ trade, onBack }: { trade: DiaryTrade; onBack: () => void }) {
   const details = trade.details;
   return (
     <div className="diary-detail">
       <button className="diary-detail-back" onClick={onBack} type="button">← Сделки</button>
 
+      <SimulatorLaunchAction episodeId={trade.trade_episode_id}
+        allowLocalLaunch={trade.environment === "PAPER"} />
       <div className="diary-detail-title">
         <strong>{trade.symbol}</strong>
         <span className={`diary-trade-side ${trade.side.toLowerCase()}`}>{sideLabel(trade.side)}</span>
@@ -728,6 +778,8 @@ function ClosedDealsView({ report }: { report: FinrezResponse }) {
           </dl>
         </section>
         <TradeExecutionPriceChart points={executionPoints} />
+        <SimulatorLaunchAction episodeId={selected.trade_episode_id}
+          allowLocalLaunch={report.account_id === "paper"} />
         <button className="diary-detail-back" type="button" disabled={downloading}
           onClick={() => void downloadFacts(selected)}>
           {downloading ? "Выгружаю факты…" : "Скачать JSON исполнений"}
