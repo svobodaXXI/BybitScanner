@@ -79,6 +79,22 @@ class LocalMirrorClosedCandles:
             volume=sum((x.volume for x in group), Decimal(0)),
         ))
 
+    @property
+    def last_close_ms(self) -> int | None:
+        return self._last_close_ms
+
+    def recent_closed_m5(self, *, limit: int = 480) -> tuple[dict[str, object], ...]:
+        """At most 40 hours of native fully committed Scanner M5 input."""
+        if type(limit) is not int or not 20 <= limit <= self._max_minutes // 5:
+            raise ValueError("bounded MIRROR M5 scan window required")
+        return tuple(_closed_row(c) for c in list(self._m5)[-limit:])
+
+    def recent_closed_m1(self, *, limit: int = 120) -> tuple[dict[str, object], ...]:
+        """Only past committed M1; bounded input for native pattern confirmation."""
+        if type(limit) is not int or not 10 <= limit <= self._max_minutes:
+            raise ValueError("bounded MIRROR M1 confirmation window required")
+        return tuple(_closed_row(c) for c in list(self._m1)[-limit:])
+
     def _require_symbol(self, symbol: str) -> None:
         if symbol != self.symbol:
             raise ValueError("cross-symbol MIRROR replay is forbidden")
