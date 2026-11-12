@@ -176,3 +176,64 @@ class CompletedFlowObserverTests(TestCase):
         self.assertIsNone(obs.observe_closed((p,),start_ms=0,end_ms=1000,observed_at_ms=1000,source_id="a"))
         with self.assertRaises(ValueError):
             obs.observe_closed((p,),start_ms=0,end_ms=1000,observed_at_ms=1000,source_id="a")
+
+
+class OpenInterestPaperTests(TestCase):
+    def test_five_minute_oi_is_known_only_after_its_interval(self):
+        from robot_entry_flow_evidence import (
+            OpenInterestPoint, open_interest_asof, OI_INTERVAL_MS,
+        )
+        points = (
+            OpenInterestPoint(0, D("1000")),
+            OpenInterestPoint(OI_INTERVAL_MS, D("1020")),
+            OpenInterestPoint(2*OI_INTERVAL_MS, D("1010")),
+        )
+        self.assertIsNone(open_interest_asof(points, decision_ms=2*OI_INTERVAL_MS-1))
+        rising = open_interest_asof(points, decision_ms=2*OI_INTERVAL_MS)
+        self.assertEqual(rising.direction, "RISING")
+        self.assertEqual(rising.change_pct, D("2"))
+        self.assertEqual(rising.known_at_ms, 2*OI_INTERVAL_MS)
+        falling = open_interest_asof(points, decision_ms=3*OI_INTERVAL_MS)
+        self.assertEqual(falling.direction, "FALLING")
+        self.assertIsNone(open_interest_asof(points, decision_ms=6*OI_INTERVAL_MS))
+
+    def test_gaps_invalid_and_future_oi_fail_closed(self):
+        from robot_entry_flow_evidence import (
+            OpenInterestPoint, open_interest_asof, OI_INTERVAL_MS,
+        )
+        oi = OI_INTERVAL_MS
+        self.assertIsNone(open_interest_asof((
+            OpenInterestPoint(0, D("100")),
+            OpenInterestPoint(2*oi, D("110")),
+        ), decision_ms=3*oi))
+        with self.assertRaisesRegex(ValueError, "ordered"):
+            open_interest_asof((
+                OpenInterestPoint(oi, D("100")),
+                OpenInterestPoint(0, D("101")),
+            ), decision_ms=3*oi)
+        with self.assertRaises(ValueError):
+            OpenInterestPoint(oi+1, D("100"))
+        with self.assertRaises(ValueError):
+            OpenInterestPoint(oi, D("-1"))
+
+    def test_same_robot_gate_splits_virtual_entry_cohorts(self):
+        from robot_entry_flow_evidence import (
+            compare_flow_windows, OpenInterestChange, permits_paper_entry,
+        )
+        first = window(598000, buy="100", sell="200", p0="100", p1="99")
+        second = window(599000, buy="400", sell="50", p0="99", p1="101")
+        flow = compare_flow_windows(first, second, decision_ms=600000)
+        rising = OpenInterestChange(600000, D("1"), "RISING")
+        falling = OpenInterestChange(600000, D("-1"), "FALLING")
+        self.assertTrue(permits_paper_entry("LONG", flow))
+        self.assertTrue(permits_paper_entry("LONG", flow, oi_mode="RISING", oi=rising))
+        self.assertFalse(permits_paper_entry("LONG", flow, oi_mode="FALLING", oi=rising))
+        self.assertTrue(permits_paper_entry("LONG", flow, oi_mode="FALLING", oi=falling))
+        self.assertFalse(permits_paper_entry("LONG", flow, oi_mode="RISING"))
+        with self.assertRaisesRegex(ValueError, "lookahead"):
+            permits_paper_entry(
+                "LONG", flow, oi_mode="RISING",
+                oi=OpenInterestChange(600001, D("1"), "RISING"),
+            )
+        with self.assertRaises(ValueError):
+            permits_paper_entry("LONG", flow, oi_mode="ANY", oi=rising)
