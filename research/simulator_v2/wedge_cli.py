@@ -39,6 +39,7 @@ SELECTABLE = {
     "WEDGE_FALLING": "Falling Wedge",
     "WEDGE_RISING": "Rising Wedge",
     "IKIGAI_BOX": "IKIGAI_BOX",
+    "IMPULSE_FLOW": "IMPULSE_FLOW",
 }
 MAX_CONFIG_BYTES = 24_000
 MAX_MANIFEST_BYTES = 125_000
@@ -156,6 +157,11 @@ def run_from_time_machine_config(
     oi_mode = config.get("oi_mode", "OFF")
     if not isinstance(oi_mode, str) or oi_mode not in OI_MODES:
         raise ValueError("invalid OI research filter selection")
+    impulse_selected = "IMPULSE_FLOW" in selected
+    if impulse_selected and len(selected) != 1:
+        raise ValueError("IMPULSE_FLOW trades must have isolated single-symbol strategy owner")
+    if impulse_selected and flow_archive_dir is None:
+        raise ValueError("IMPULSE_FLOW requires pinned original taker execution archive")
     box_selected = "IKIGAI_BOX" in selected
     if box_selected and len(selected) != 1:
         raise ValueError("Box and Wedge cannot share one symbol owner in the same run yet")
@@ -227,15 +233,16 @@ def run_from_time_machine_config(
         initial_balance=_decimal_string(config.get("initial_balance"), "initial_balance"),
         start_ms=start_ms, end_inclusive_ms=end_ms,
         scanner_config=scanner_config,
-        robot_config=SimWedgeRobotConfig(
+        robot_config=(None if impulse_selected else SimWedgeRobotConfig(
             selected_patterns=patterns, tick_size=settings.tick_size,
-        ),
+        )),
         risk_settings=settings,
         capture_replay=capture_replay,
         on_replay_events=on_replay_events,
         flow_archive_dir=flow_archive_dir,
         oi_mode=oi_mode,
         oi_history_path=oi_history_path,
+        impulse_mode=impulse_selected,
     )
 
 
@@ -308,6 +315,10 @@ def compare_oi_virtual_runs(
             "flow_rejected_retests": candidate.paper_flow_rejected_retests,
             "total_fees": str(report.total_fees),
             "total_net_pnl": str(report.total_net_pnl),
+            "realized_net_pnl": str(report.realized_net_pnl),
+            "unrealized_pnl": str(report.unrealized_pnl),
+            "impulse_signals": candidate.impulse_signals,
+            "impulse_risk_rejections": candidate.impulse_risk_rejections,
             "return_percent": str(report.return_percent),
             "max_drawdown_percent": str(report.max_drawdown_percent),
             "open_position_quantity": str(report.final_position_quantity),
