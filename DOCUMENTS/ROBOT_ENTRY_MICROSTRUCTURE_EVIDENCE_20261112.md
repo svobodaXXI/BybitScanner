@@ -49,6 +49,8 @@ Do not copy third-party source or claim that a published script's indicators hav
 
 `robot_entry_flow_evidence.py` is the **single pure shared analytical primitive**, independently importable by the canonical Robot and the Simulator. It compares **two completed, contiguous, equal-duration market-flow windows**, with explicit price source. It emits relative taker imbalance, price response, purchase acceleration, weakening impact of continued sells/buys and **optional** validated refill evidence. It refuses future/unordered/mixed-price windows. Missing L2 refill stays UNKNOWN. It produces **no order or admission decision**.
 
+The same module now also normalizes **native Bybit WebSocket `publicTrade`** and **official public archive** execution rows into an immutable `TakerPrint` and aggregates fully observed time-ordered trade windows. It preserves the taker `Buy`/`Sell` side, trade ID and exchange timestamp; empty windows stay UNKNOWN and duplicate, mixed-symbol or late prints are rejected. Market data completeness, WebSocket reconnects, book snapshot/delta lineage and source provenance remain the responsibility of the upstream source adapter. These functions are **not wired to Robot runtime or Simulator UI yet**; no entry decision or simulated order is introduced.
+
 Existing `research/wilder_dmi.py` owns causal H-017 DMI crosses. Reuse it; do not implement a second ADX. The same applies to existing historical trade cache/replay and Robot risk/execution mechanics. RSI, OI, liquidation semantics, repetitive-size tests and source-health windows are additional independent factors, **not yet wired** to the primitive.
 
 ## Shortest dependent delivery path
