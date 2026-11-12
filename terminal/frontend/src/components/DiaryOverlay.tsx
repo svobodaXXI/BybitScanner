@@ -512,7 +512,7 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
         {busy ? "Проверяю Симулятор…" : "Открыть в Симуляторе"}
       </button>
       {notice ? <p className="diary-finrez-coverage" role="status">{notice} ID: {episodeId}</p> : null}
-      {allowLocalLaunch && /\\bWindows\\b/i.test(navigator.userAgent) ? (
+      {allowLocalLaunch && /\bWindows\b/i.test(navigator.userAgent) ? (
         <div className="diary-simulator-pairing">
           <button type="button" className="diary-detail-back" disabled={pairingBusy}
             onClick={() => void preparePairing("owner-pc")}>Связать ПК</button>
