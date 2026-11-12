@@ -382,7 +382,7 @@ export function RunSetupPanel({
               ретестов {report.robot_retests_in_period} ·
               LIMIT: {report.submitted_protected_limits} ·
               исполнений: {report.virtual_fills} · STOP: {report.stop_exits} ·
-              TAKE: {report.take_exits}</span>
+              TAKE: {report.take_exits}</span>}
         <small>Модель OHLC, не фактические биржевые исполнения. Параметры риска — локальные исследовательские допущения.</small>
       </section>}
     </section>
