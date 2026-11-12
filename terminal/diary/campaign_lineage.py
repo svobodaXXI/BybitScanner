@@ -103,6 +103,10 @@ def prove_robot_campaign_episodes(
                 or trade.get("direction") != campaign["direction"]
                 or not isinstance(trade.get("trade_id"), str)
                 or not trade["trade_id"]
+                or not isinstance(trade.get("pattern"), str)
+                or not 1 <= len(trade["pattern"]) <= 128
+                or not isinstance(trade.get("source_timeframe"), str)
+                or not 1 <= len(trade["source_timeframe"]) <= 20
                 or type(trade.get("signal_time_ms")) is not int
                 or type(trade.get("entry_time_ms")) is not int
                 or type(trade.get("exit_time_ms")) is not int
@@ -196,6 +200,9 @@ def prove_robot_campaign_episodes(
             "robot_trade_id": trade["trade_id"],
             "trade_episode_id": episode_id,
             "signal_time_ms": trade["signal_time_ms"],
+            "signal_pattern": trade["pattern"],
+            "signal_timeframe": trade["source_timeframe"],
+            "signal_provenance": "DURABLE_ROBOT_TRADE_METADATA_NOT_ORIGINAL_GEOMETRY",
             "opened_at_ms": episode.opened_at_ms,
             "closed_at_ms": episode.closed_at_ms,
             "exit_reason": winner["winning_leg"],
