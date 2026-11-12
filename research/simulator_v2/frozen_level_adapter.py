@@ -3,7 +3,8 @@
 Only transforms the exact ORIGINAL robot_l_shape decision and 1-WV LIMIT into
 an unsubmitted SIMULATION request. No geometry, admission, strategy, account,
 exchange/venue, PAPER/LIVE or Robot-monitor implementation is duplicated.
-MIRROR remains separately gated until its native campaign authority is wired.
+Standalone MIRROR remains gated behind original closed-candle confirmation proof;
+Box-attached MIRROR campaigns are a different native Robot mechanism.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from typing import Any, Mapping
 
 import robot_l_shape
 import robot_protection
+from mirror_retest_robot import STOP_SLIPPAGE_FRACTION
 from retest_account_risk import position_worst_case_loss_usdt
 from terminal.api.models import VolumeUnit
 from research.simulator_v2.virtual_exchange import LimitRequest, ProtectedLimitRequest
@@ -38,6 +40,7 @@ class FrozenLevelSimulationPreview:
 def preview_native_frozen_level(
     candidate: Mapping[str, Any], state: Mapping[str, Any], *,
     settings: SimWedgeRiskSettings, virtual_time_ms: int,
+    _native_mirror_confirmation_proven: bool = False,
 ) -> FrozenLevelSimulationPreview:
     """Reuse native frozen-level Robot entry/STOP/TAKE/RR, never submit it.
 
@@ -52,8 +55,11 @@ def preview_native_frozen_level(
     if not isinstance(snapshot, Mapping) or not isinstance(state, Mapping):
         raise FrozenLevelSimulationBlocked("original Scanner snapshot/Robot state required")
     pattern = robot_l_shape.snapshot_pattern(snapshot)
-    if pattern not in ("L-shape", "Double Top", "Double Bottom"):
-        raise FrozenLevelSimulationBlocked("frozen-level strategy has no local execution adapter")
+    is_mirror = pattern == "MIRROR"
+    if pattern not in ("L-shape", "Double Top", "Double Bottom") and not (
+        is_mirror and _native_mirror_confirmation_proven is True
+    ):
+        raise FrozenLevelSimulationBlocked("frozen-level strategy has no proven local execution adapter")
     if snapshot.get("robot_handoff_ready") is not True:
         raise FrozenLevelSimulationBlocked("original Scanner handoff not proven")
     if not isinstance(settings, SimWedgeRiskSettings):
@@ -107,6 +113,10 @@ def preview_native_frozen_level(
         direction=terms.direction, quantity=quantity, entry_price=entry,
         stop_price=stop, fee_rate=max(settings.entry_fee_rate, settings.exit_fee_rate),
     )
+    # The original standalone MIRROR policy includes 0.5% adverse STOP
+    # slippage. The local risk budget must include this additional liability.
+    if worst_loss is not None and is_mirror:
+        worst_loss += quantity * stop * STOP_SLIPPAGE_FRACTION
     if worst_loss is None or worst_loss > settings.max_risk_usdt:
         raise FrozenLevelSimulationBlocked("native STOP risk exceeds explicit local budget")
     try:
@@ -114,6 +124,7 @@ def preview_native_frozen_level(
             terms.direction, entry_price=entry, stop_price=stop,
             target_price=take,
             fee_rate=max(settings.entry_fee_rate, settings.exit_fee_rate),
+            exit_slippage_fraction=STOP_SLIPPAGE_FRACTION if is_mirror else Decimal("0"),
         )
     except robot_l_shape.RobotLShapeError as exc:
         raise FrozenLevelSimulationBlocked("native Robot net RR is unavailable") from exc
