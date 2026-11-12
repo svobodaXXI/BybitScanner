@@ -810,7 +810,7 @@ describe("Finrez first-screen UI", () => {
       cohort: "ROBOT", replay_evidence: "EPISODE_INDEX_ONLY",
     };
     const eth = { ...btc, trade_episode_id: "te_" + "b".repeat(24), symbol: "ETHUSDT" };
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({
       ...finrezResponse,
       tickers: [
         { symbol: "BTCUSDT", pnl_usdt: "-2.5012345678", trade_count: 1 },
@@ -1067,7 +1067,7 @@ describe("shared statistics trade action standard", () => {
     expect(replay).toHaveLength(2);
     replay.forEach((button) => {
       expect(button).toBeDisabled();
-      expect(button).toHaveAttribute("title", expect.stringContaining("Нужен проверенный исторический пакет"));
+      expect(button).toHaveAttribute("title", expect.stringContaining("нужен подтверждённый PAPER episode"));
     });
     expect(screen.getByText(/PnL -1,82 USDT/)).toHaveAttribute("title", "-1.81622186");
   });
