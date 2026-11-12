@@ -20,7 +20,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from protocol_launcher import HERE, EPISODE_RE, launch_local_viewer
+if __package__:
+    from .protocol_launcher import HERE, EPISODE_RE, launch_local_viewer
+else:
+    from protocol_launcher import HERE, EPISODE_RE, launch_local_viewer
 
 CONFIG_PATH = HERE / "simulator-v2-data" / "launch-bridge.json"
 DEVICE_RE = re.compile(r"[a-z][a-z0-9_-]{1,31}\Z")
