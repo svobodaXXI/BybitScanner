@@ -673,5 +673,13 @@ def test_campaign_lineage_proof_regressions():
     assert result.wasSuccessful(), (result.failures, result.errors)
 
 
+
+def test_campaign_sqlite_schema_regression(tmp_path):
+    from terminal.diary.test_campaign_lineage import (
+        test_campaign_sqlite_reader_uses_actual_production_table_definitions,
+    )
+    test_campaign_sqlite_reader_uses_actual_production_table_definitions(tmp_path)
+
+
 if __name__ == "__main__":
     unittest.main()
