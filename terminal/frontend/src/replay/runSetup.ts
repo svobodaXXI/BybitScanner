@@ -75,6 +75,14 @@ export function isAllSelected(selection: RunSelection): boolean {
 export type PeriodPreset = "DAY" | "WEEK" | "MONTH" | "THREE_MONTHS";
 export type PeriodIncrement = "HOUR" | "DAY" | "WEEK" | "MONTH";
 
+/** Only an exact Diary episode locator is accepted; it never starts a virtual run. */
+export function parseEpisodeLocator(value: string): string | null {
+  const candidate = value.trim();
+  if (/^te_[0-9a-f]{24}$/.test(candidate)) return candidate;
+  if (/^te_/i.test(candidate)) throw new Error("Неверный ID сделки: ожидается te_ и 24 строчных шестнадцатеричных символа");
+  return null;
+}
+
 /** The Source card and input share one reversible UTC coordinate format. */
 export function formatRunCoordinates(
   symbol: string, start: string, endInclusive: string,
