@@ -428,7 +428,7 @@ describe("Closed deals / exact episode index", () => {
     fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
     fireEvent.click(screen.getByRole("button", { name: "Открыть в Симуляторе" }));
     await waitFor(() => expect(copy).toHaveBeenCalledWith(robotDeal.trade_episode_id));
-    expect(await screen.findByText(/Нет прямого доступа к локальному Симулятору/)).toHaveTextContent(
+    expect(await screen.findByText(/Автоматический запуск этой сделки недоступен/)).toHaveTextContent(
       "Идентификатор скопирован.",
     );
   });
@@ -458,12 +458,72 @@ describe("Closed deals / exact episode index", () => {
         "bybitscanner-simulator://open?episode=" + episodeId,
       ]));
       expect(copy).toHaveBeenCalledWith(episodeId);
-      expect(await screen.findByText(/Запрос открытия отправлен Windows/)).toHaveTextContent(
-        "Результат запуска пока не подтверждён.",
+      expect(await screen.findByText(/Запрос открытия утилиты отправлен Windows/)).toHaveTextContent(
+        "Результат пока не подтверждён.",
       );
     } finally {
       anchorClick.mockRestore();
     }
+  });
+
+  it("on phone requests paired adapter and reports acknowledged local utility opening", async () => {
+    const episodeId = "te_" + "c".repeat(24);
+    const requestId = "d".repeat(32);
+    const copy = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { userAgent: "Android", clipboard: { writeText: copy } });
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith("/simulator-bridge/request")) return new Response(JSON.stringify({
+        ok: true, state: "QUEUED", request_id: requestId,
+      }), { status: 200 });
+      if (url.endsWith("/simulator-bridge/status")) return new Response(JSON.stringify({
+        ok: true, state: "LAUNCHED", request_id: requestId,
+      }), { status: 200 });
+      return new Response(JSON.stringify({
+        ...finrezResponse, closed_episodes: [{ ...robotDeal, trade_episode_id: episodeId }],
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Открыть в Симуляторе" }));
+    expect(await screen.findByText(/Локальная утилита подтвердила запрос открытия/))
+      .toHaveTextContent("Идентификатор скопирован.");
+    expect(copy).toHaveBeenCalledWith(episodeId);
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/request", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ episode_id: episodeId }),
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/simulator-bridge/status", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request_id: requestId }),
+    });
+  });
+
+  it("on phone retains copied ID when no paired adapter is connected", async () => {
+    const episodeId = "te_" + "e".repeat(24);
+    const copy = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { userAgent: "Android", clipboard: { writeText: copy } });
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith("/simulator-bridge/request")) return new Response(JSON.stringify({
+        ok: false, error: "no_connected_simulator_adapter",
+      }), { status: 503 });
+      return new Response(JSON.stringify({
+        ...finrezResponse, closed_episodes: [{ ...robotDeal, trade_episode_id: episodeId }],
+      }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Открыть в Симуляторе" }));
+    expect(await screen.findByText(/Нет доступа к локальному Симулятору или адаптеру VPS/))
+      .toHaveTextContent("Идентификатор скопирован.");
+    expect(copy).toHaveBeenCalledWith(episodeId);
+    expect(fetchMock.mock.calls.filter(([url]) =>
+      (url as string).endsWith("/simulator-bridge/status"))).toHaveLength(0);
   });
 
   it("blocks missing episode contract on an older backend instead of inventing deals", async () => {
