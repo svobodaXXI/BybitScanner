@@ -433,6 +433,25 @@ describe("Closed deals / exact episode index", () => {
     );
   });
 
+  it("copies real episode ID directly without protocol launch or bridge request", async () => {
+    const episodeId = "te_" + "f".repeat(24);
+    const copy = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { userAgent: "Android", clipboard: { writeText: copy } });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse,
+      closed_episodes: [{ ...robotDeal, trade_episode_id: episodeId }],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:deals" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /BTCUSDT/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Скопировать ID" }));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith(episodeId));
+    expect(await screen.findByText(/ID сделки скопирован:/)).toHaveTextContent(episodeId);
+    expect(fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("/simulator-bridge/"))).toHaveLength(0);
+  });
+
   it("uses only typed Windows URI locator, with no PAPER data in launch URL", async () => {
     const episodeId = "te_" + "a".repeat(24);
     const copy = vi.fn().mockResolvedValue(undefined);
