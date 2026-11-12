@@ -136,7 +136,7 @@ class NativeBoxSimulationLifecycleTests(unittest.TestCase):
             robot._synchronize_exchange()
             self.assertEqual(len(session.exchange.robot_limits), 1)
             order = session.exchange.robot_limits[0]
-            self.assertEqual((order.request.side, order.request.price, order.request.quantity),
+            self.assertEqual((order.entry.side, order.entry.limit_price, order.entry.quantity),
                              ("BUY", D("100.02"), D("2")))
             self.assertFalse(order.reduce_only)
             self.assertEqual(robot._store.get_paper_limit(first.order_id, robot.account_id).quantity,
