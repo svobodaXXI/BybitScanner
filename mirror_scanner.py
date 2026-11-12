@@ -573,6 +573,8 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                                        l_shape_observation=l_shape_observation,
                                        box_source=box_source),
                         key=lambda x: (x.confirmed_at_ms, x.level_id)):
+        if not mirror_level_allowed(level):
+            continue
         # Do not alias a newly confirmed replacement to an invalidated
         # historical ray merely because both prices fit the ATR merge zone.
         excluded = any(
