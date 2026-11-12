@@ -817,6 +817,11 @@ def test_simulator_bridge_ingress_exposes_only_token_scoped_device_calls():
     protected = source.split("location /api/ {", 1)[1].split("\n    }", 1)[0]
     assert "auth_request /_auth;" in protected
     assert "proxy_pass http://127.0.0.1:8765;" in protected
+    legacy = (Path(__file__).resolve().parents[2]
+              / "deploy/nginx/bybitscanner.conf").read_text(encoding="utf-8")
+    forbidden = legacy.split("location ^~ /api/diary/simulator-bridge/ {", 1)
+    assert len(forbidden) == 2
+    assert "return 404;" in forbidden[1].split("\n    }", 1)[0]
 
 
 if __name__ == "__main__":
