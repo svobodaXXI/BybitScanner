@@ -35,7 +35,7 @@ class SimulatorProtocolTests(unittest.TestCase):
     def test_valid_uri_launches_only_fixed_application(self):
         with patch.object(adapter, "launch_local_viewer") as launch:
             self.assertEqual(adapter.main([GOOD_URI]), 0)
-            launch.assert_called_once_with()
+            launch.assert_called_once_with(EPISODE)
 
     def test_untrusted_uri_never_launches(self):
         with patch.object(adapter, "launch_local_viewer") as launch:
