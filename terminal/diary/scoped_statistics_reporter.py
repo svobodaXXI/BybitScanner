@@ -71,6 +71,7 @@ def load_paper_source_snapshot(
                                      candidate_id,previous_stop_exec_id FROM robot_reentry_attempts
                                 WHERE trading_account_id=?""",
                 "trades": """SELECT trading_account_id,candidate_id,trade_id,symbol,direction,
+                                   pattern,source_timeframe,
                                    signal_time_ms,entry_time_ms,exit_time_ms,exit_reason
                               FROM robot_trades WHERE trading_account_id=?""",
                 "entry_ownership": """SELECT trading_account_id,candidate_id,order_id,role
