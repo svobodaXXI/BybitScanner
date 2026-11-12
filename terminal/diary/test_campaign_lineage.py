@@ -190,6 +190,27 @@ class CampaignProofTests(unittest.TestCase):
         with self.assertRaises(CampaignLineageUnproven):
             prove_robot_campaign_episodes(**evidence)
 
+    def test_rejects_reversal_residual_in_apparent_stop_exit(self):
+        evidence = fixture()
+        source = evidence["snapshot"]
+        changed = []
+        for execution in source.executions:
+            if execution.dedup_key.exec_id.value == "close-1":
+                changed.append(Execution(
+                    dedup_key=execution.dedup_key, order_id=execution.order_id,
+                    symbol=execution.symbol, side=execution.side, price=execution.price,
+                    quantity=Quantity(Decimal("2")), fee=execution.fee,
+                    exchange_timestamp_ms=execution.exchange_timestamp_ms,
+                ))
+            else:
+                changed.append(execution)
+        evidence["snapshot"] = PaperSourceSnapshot(
+            source.source_revision, source.episodes, source.origins,
+            tuple(changed),
+        )
+        with self.assertRaisesRegex(CampaignLineageUnproven, "campaign_episode_link_missing_or_ambiguous"):
+            prove_robot_campaign_episodes(**evidence)
+
     def test_rejects_last_stop_with_future_reentry_possible(self):
         evidence = fixture()
         evidence["trades"][1]["exit_reason"] = "STOP"
