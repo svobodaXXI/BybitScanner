@@ -52,6 +52,7 @@ export type ReplayEvent = {
   trade_id?: string;
   candidate_id?: string;
   pattern?: "Falling Wedge" | "Rising Wedge";
+  strategy_id?: "L_SHAPE" | "DOUBLE_TOP" | "DOUBLE_BOTTOM";
   net_usdt?: string;
   pnl_percent?: string;
   side?: "LONG" | "SHORT";
@@ -363,6 +364,12 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       e.trade_id !== undefined
     ) : candidate_id !== undefined || pattern !== undefined)
       throw new Error("Недостоверное событие Robot по клину");
+    const strategy_id = e.strategy_id;
+    if (strategy_id !== undefined && (mode !== "STRATEGY" || kind !== "ENTRY_SIGNAL" ||
+        !["L_SHAPE", "DOUBLE_TOP", "DOUBLE_BOTTOM"].includes(strategy_id as string) ||
+        typeof trade_id !== "string")) {
+      throw new Error("Недостоверная стратегия исходного виртуального LIMIT");
+    }
     const net_usdt = e.net_usdt;
     const pnl_percent = e.pnl_percent;
     if (net_usdt !== undefined || pnl_percent !== undefined) {
@@ -379,6 +386,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       ...(dmi ? { dmi } : {}),
       ...(side ? { side } : {}),
       ...(trade_id ? { trade_id } : {}),
+      ...(strategy_id !== undefined ? { strategy_id: strategy_id as ReplayEvent["strategy_id"] } : {}),
       ...(isWedge ? { candidate_id: candidate_id as string,
         pattern: pattern as "Falling Wedge" | "Rising Wedge" } : {}),
       ...(net_usdt !== undefined ? { net_usdt: net_usdt as string,
