@@ -781,6 +781,37 @@ class SimulatorLaunchRelayTests(unittest.TestCase):
                                           request_id=receipt["request_id"],
                                           launched=False)["state"], "FAILED")
 
+    def test_prefers_already_running_simulator_over_more_recent_idle_pc(self):
+        from terminal.diary.simulator_launch_relay import RelayInvalid
+        relay, tick, pc_token = self.make_relay()
+        relay.poll(device="owner-pc", token=pc_token, viewer_running=True)
+        tick[0] += 1
+        relay.poll(device="owner-laptop", token="B" * 64, viewer_running=False)
+        receipt = relay.enqueue("te_" + "d" * 24,
+                                request_origin=relay.origin, fetch_site="same-origin")
+        assert relay.poll(device="owner-laptop", token="B" * 64,
+                          viewer_running=False)["state"] == "IDLE"
+        delivered = relay.poll(device="owner-pc", token=pc_token, viewer_running=True)
+        assert delivered["request_id"] == receipt["request_id"]
+        assert delivered["state"] == "OPEN_EPISODE"
+        with self.assertRaises(RelayInvalid):
+            relay.poll(device="owner-pc", token=pc_token, viewer_running="true")
+
+    def test_falls_back_to_most_recent_connected_device_if_all_viewers_closed(self):
+        relay, tick, pc_token = self.make_relay()
+        relay.poll(device="owner-pc", token=pc_token, viewer_running=False)
+        tick[0] += 1
+        relay.poll(device="owner-laptop", token="B" * 64, viewer_running=False)
+        receipt = relay.enqueue("te_" + "e" * 24,
+                                request_origin=relay.origin, fetch_site="same-origin")
+        assert relay.poll(device="owner-pc", token=pc_token,
+                          viewer_running=False)["state"] == "IDLE"
+        # The last heartbeat from PC must not steal a request already assigned
+        # to the laptop while a different device awaits delivery.
+        delivered = relay.poll(device="owner-laptop", token="B" * 64,
+                               viewer_running=False)
+        assert delivered["request_id"] == receipt["request_id"]
+
     def test_unacknowledged_delivery_expires_and_is_not_redelivered(self):
         relay, tick, token = self.make_relay()
         relay.poll(device="owner-pc", token=token)
