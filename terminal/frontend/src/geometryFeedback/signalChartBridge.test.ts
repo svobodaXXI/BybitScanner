@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialSourceGeometryRange, projectSignalGeometry, restoreSavedSignalCorrection } from "./signalChartBridge";
+import { initialSourceGeometryRange, projectSignalGeometry, projectVerifiedSignalOverlay, restoreSavedSignalCorrection } from "./signalChartBridge";
 import { serializeReviewDrawings } from "./geometryReviewDraft";
 
 const candles = [
@@ -78,6 +78,37 @@ describe("read-only Terminal signal projection on live candles", () => {
     expect(projectSignalGeometry(source, currentCandles).editableDrawings)
       .not.toBe(drawn);
     expect(() => projectSignalGeometry(source, currentCandles.slice(1))).toThrow(/absent/);
+  });
+});
+
+
+describe("verified same-signal geometry on current and Terminal charts", () => {
+  it("keeps both source and corrected rays with their original styles and UTC anchors", () => {
+    const correction = projectSignalGeometry(source, candles).editableDrawings;
+    correction[0].anchors[1].price = 15;
+    const earlier = { time: "2026-10-18T23:55:00.000Z", open: 10, high: 11, low: 9, close: 10 };
+    const later = { time: "2026-10-19T00:15:00.000Z", open: 11, high: 12, low: 10, close: 11 };
+    const projected = projectVerifiedSignalOverlay(source, candles, correction, [earlier, ...candles, later]);
+    expect(projected.map(d => d.id)).toEqual(["upper", "lower", "editable:upper", "editable:lower"]);
+    expect(projected.map(d => d.anchors.map(a => a.logical))).toEqual([
+      [1, 3], [1, 3], [1, 3], [1, 3],
+    ]);
+    expect(projected[0].style.color).toBe("#8195aa");
+    expect(projected[2].style.color).toBe("#e0b45b");
+    expect(projected[2].anchors[1].price).toBe(15);
+    expect(projected.every(d => d.locked && !d.hidden)).toBe(true);
+    expect(correction[0].locked).toBe(false);
+    projected[2].anchors[1].price = 7;
+    expect(correction[0].anchors[1].price).toBe(15);
+  });
+
+  it("does not invent pivot positions when current candles lack the signal's exact bars", () => {
+    const correction = projectSignalGeometry(source, candles).editableDrawings;
+    expect(() => projectVerifiedSignalOverlay(source, candles, correction, candles.slice(1)))
+      .toThrow(/absent/);
+    expect(() => projectVerifiedSignalOverlay(source, candles,
+      [{ ...correction[0], id: "editable:other" }, correction[1]], candles))
+      .toThrow(/Unverified/);
   });
 });
 
