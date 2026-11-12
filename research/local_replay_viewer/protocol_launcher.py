@@ -99,7 +99,8 @@ def launch_local_viewer(episode_id: str) -> None:
         else:
             raise OSError("local simulator did not become available")
     # Locator only. Never place PAPER fills or original decisions in the URL.
-    webbrowser.open(f"http://127.0.0.1:{PORT}/replay.html#locator={episode_id}")
+    if not webbrowser.open(f"http://127.0.0.1:{PORT}/replay.html#locator={episode_id}"):
+        raise OSError("local_simulator_browser_open_unconfirmed")
 
 
 def main(argv: list[str] | None = None) -> int:
