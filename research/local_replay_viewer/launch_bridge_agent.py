@@ -21,9 +21,9 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 if __package__:
-    from .protocol_launcher import HERE, EPISODE_RE, launch_local_viewer
+    from .protocol_launcher import HERE, EPISODE_RE, launch_local_viewer, viewer_is_running
 else:
-    from protocol_launcher import HERE, EPISODE_RE, launch_local_viewer
+    from protocol_launcher import HERE, EPISODE_RE, launch_local_viewer, viewer_is_running
 
 CONFIG_PATH = HERE / "simulator-v2-data" / "launch-bridge.json"
 DEVICE_RE = re.compile(r"[a-z][a-z0-9_-]{1,31}\Z")
@@ -105,8 +105,12 @@ def _send(config: dict[str, str], *, path: str, body: dict | None = None,
 
 def poll_once(config: dict[str, str], *, opener=None, launch=launch_local_viewer) -> str:
     """One bounded outbound poll, at most one local open, one ACK."""
+    # Only an authenticated boolean heartbeat is sent. Never disclose
+    # Windows process details, private network addresses or trading data.
+    viewer_running = viewer_is_running()
     uri = ("/api/diary/simulator-bridge/poll?"
-           + urlencode({"device_id": config["device_id"]}))
+           + urlencode({"device_id": config["device_id"],
+                        "viewer_running": "1" if viewer_running else "0"}))
     response = _send(config, path=uri, opener=opener)
     if response.get("state") == "IDLE":
         if set(response) != {"ok", "state"}:
