@@ -423,6 +423,27 @@
   font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
 }
+.diary-finrez-row-action {
+  width: 100%;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.diary-finrez-row-action:hover,
+.diary-finrez-row-action:focus-visible {
+  border-color: #6896be;
+  background: #1a2632;
+}
+.diary-finrez-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+}
 .diary-finrez-row strong {
   overflow-wrap: anywhere;
 }
