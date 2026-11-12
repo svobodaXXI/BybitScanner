@@ -13,6 +13,8 @@ import {
   loadDiaryTrades,
   loadOpenPositions,
   loadRobotDaySummary,
+  loadRobotRuntimeState,
+  type RobotRuntimeState,
   type RobotDaySummary,
   loadRuntimeHealth,
   type PositionProtection,
@@ -207,6 +209,7 @@ export function AutopilotFirstScreen({
   onTradeDetails,
   onStatistics,
   onTerminal,
+  onEditor,
   accountControl,
   onRobotControls,
   onPositionsLoaded,
@@ -220,6 +223,7 @@ export function AutopilotFirstScreen({
   onTradeDetails?: (episodeId: string) => void;
   onStatistics?: () => void;
   onTerminal?: () => void;
+  onEditor?: () => void;
   accountControl?: ReactNode;
   onRobotControls?: () => void;
   /** Share the already-loaded inventory; do not introduce a second API poller. */
@@ -241,6 +245,7 @@ export function AutopilotFirstScreen({
     status: "loading",
   });
   const [robotDay, setRobotDay] = useState<Loadable<RobotDaySummary>>({ status: "loading" });
+  const [robotRuntime, setRobotRuntime] = useState<Loadable<RobotRuntimeState>>({ status: "loading" });
   const generation = useRef(0);
   const pendingInventory = useRef<AbortController | null>(null);
 
@@ -278,12 +283,14 @@ export function AutopilotFirstScreen({
     setHealth({ status: "loading" });
     setTrades({ status: "loading" });
     setRobotDay({ status: "loading" });
+    setRobotRuntime({ status: "loading" });
 
     await Promise.all([
       settle(loadAutopilotMode).then(apply(setAutopilot)),
       settle(loadRuntimeHealth).then(apply(setHealth)),
       settle(() => loadDiaryTrades(accountKey)).then(apply(setTrades)),
       settle(loadRobotDaySummary).then(apply(setRobotDay)),
+      settle(loadRobotRuntimeState).then(apply(setRobotRuntime)),
       refreshPositions(true),
     ]);
   }, [accountKey, refreshPositions]);
@@ -310,11 +317,11 @@ export function AutopilotFirstScreen({
   return (
     <section
       className="autopilot-first-screen"
-      aria-label="Автопилот: первый экран"
+      aria-label="Робот: первый экран"
     >
       {backendOffline ? (
         <p className="autopilot-error" role="alert">
-          PAPER backend недоступен. Запустите runtime ярлыком «Запуск робота».
+          Данные PAPER недоступны. Проверьте соединение с сервером и авторизацию.
         </p>
       ) : null}
 
@@ -401,7 +408,7 @@ export function AutopilotFirstScreen({
         )}
       </div>
 
-      <nav className="autopilot-utility-stack" aria-label="Панель управления Автопилотом">
+      <nav className="autopilot-utility-stack" aria-label="Панель управления Роботом">
         <button className="workspace-nav-button" type="button" aria-label="Подробности сделки" title="Подробности сделки"
           disabled={trades.status !== "ready" || positions.status !== "ready" ||
             positions.value.length !== 1 ||
@@ -411,7 +418,7 @@ export function AutopilotFirstScreen({
             const id = uniqueOpenEpisodeId(positions.value[0].symbol, trades.value);
             if (id) onTradeDetails?.(id);
           }}>
-          <span className="workspace-nav-icon" aria-hidden="true"><svg className="workspace-nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="6.5" cy="16" r="3.5"/><circle cx="17.5" cy="16" r="3.5"/><path d="M3.5 14V8l2-4h3l2 8M20.5 14V8l-2-4h-3l-2 8M10 11h4"/></svg></span>
+          <span className="workspace-nav-icon" aria-hidden="true"><svg className="workspace-nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="7" height="15" rx="2"/><rect x="14" y="5" width="7" height="15" rx="2"/><path d="M10 10h4M10 15h4M3 9h7M14 9h7"/></svg></span>
         </button>
         <button className="workspace-nav-button" type="button" aria-label="Все открытые позиции" title="Все открытые позиции" disabled={!onOpenPositions} onClick={onOpenPositions}>
           <span className="workspace-nav-icon" aria-hidden="true"><svg className="workspace-nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg></span>
@@ -421,6 +428,9 @@ export function AutopilotFirstScreen({
         </button>
         <button className="workspace-nav-button" type="button" aria-label="Терминал" title="Терминал" disabled={!onTerminal} onClick={onTerminal}>
           <span className="workspace-nav-icon" aria-hidden="true">$</span>
+        </button>
+        <button className="workspace-nav-button" type="button" aria-label="Редактор" title="Редактор" disabled={!onEditor} onClick={onEditor}>
+          <span className="workspace-nav-icon" aria-hidden="true"><svg className="workspace-nav-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="m4 20 4.5-1 11-11a2 2 0 0 0-3.5-3.5l-11 11L4 20Z"/><path d="m14.5 6 3.5 3.5"/></svg></span>
         </button>
         <button className="workspace-nav-button" type="button" aria-label="Управление роботом" title="Управление роботом" disabled={!onRobotControls} onClick={onRobotControls}><svg className="workspace-nav-symbol" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M14.7 6.3a5 5 0 0 0-6.4 6.4L3 18l3 3 5.3-5.3a5 5 0 0 0 6.4-6.4l-3.3 3.3-3-3z"/></svg></button>
         {accountControl ? <div className="workspace-nav-account">{accountControl}</div> : null}
@@ -445,6 +455,15 @@ export function AutopilotFirstScreen({
           <LoadState value={robotDay} render={(day) => day.closedTrades} />
         </SummaryItem>
       </dl>
+      <output className="autopilot-runtime-status" aria-label="Текущее состояние Робота">
+        Робот: {robotRuntime.status === "ready"
+          ? `${robotRuntime.value.mode === "ROBOT_RUNNING" ? "Запущен"
+              : robotRuntime.value.mode === "ROBOT_STOPPED" ? "Остановлен"
+                : robotRuntime.value.mode} / ${robotRuntime.value.recoveryStatus}`
+          : robotRuntime.status === "error" ? "состояние недоступно" : "загрузка"}.
+        {" "}Автовходы: {autopilot.status === "ready" ? autopilot.value.mode
+          : autopilot.status === "error" ? "состояние недоступно" : "загрузка"}.
+      </output>
     </section>
   );
 }
