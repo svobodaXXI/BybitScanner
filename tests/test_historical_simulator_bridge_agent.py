@@ -66,6 +66,56 @@ class PairedAdapterTests(unittest.TestCase):
                 with self.subTest(bad=bad), self.assertRaises(agent.AgentConfigError):
                     load(bad)
 
+    def test_owner_pinned_pairing_is_verified_then_saved_only_once(self):
+        with tempfile.TemporaryDirectory() as root:
+            folder = Path(root) / "simulator-v2-data"
+            folder.mkdir()
+            config_path = folder / "launch-bridge.json"
+            (folder / "trusted-statistics-origin.txt").write_text(
+                "https://example.test\n", encoding="ascii",
+            )
+            with patch.object(agent, "CONFIG_PATH", config_path), \
+                 patch.object(agent, "_send", return_value={"ok": True, "state": "IDLE"}) as probe, \
+                 patch.object(agent, "install_if_configured", return_value=True) as install:
+                agent.pair_device("owner-pc", "A" * 64)
+                self.assertEqual(agent.read_config(), self.config)
+                self.assertEqual(json.loads(config_path.read_text())["schema"], agent.SCHEMA)
+                self.assertEqual(probe.call_count, 1)
+                self.assertEqual(probe.call_args.kwargs["path"],
+                    "/api/diary/simulator-bridge/poll?device_id=owner-pc&viewer_running=0")
+                # Same pairing is idempotent and never rewrites the file.
+                content = config_path.read_bytes()
+                agent.pair_device("owner-pc", "A" * 64)
+                self.assertEqual(config_path.read_bytes(), content)
+                self.assertEqual(probe.call_count, 1)
+                self.assertEqual(install.call_count, 2)
+                with self.assertRaisesRegex(agent.AgentConfigError, "existing_device_pairing_preserved"):
+                    agent.pair_device("owner-laptop", "B" * 64)
+                self.assertEqual(config_path.read_bytes(), content)
+
+    def test_pairing_rejects_missing_origin_or_unverified_token_without_side_effects(self):
+        with tempfile.TemporaryDirectory() as root:
+            folder = Path(root) / "simulator-v2-data"
+            folder.mkdir()
+            config_path = folder / "launch-bridge.json"
+            pinned = folder / "trusted-statistics-origin.txt"
+            with patch.object(agent, "CONFIG_PATH", config_path), \
+                 patch.object(agent, "install_if_configured") as install:
+                with self.assertRaises(agent.AgentConfigError):
+                    agent.pair_device("owner-pc", "A" * 64)
+                pinned.write_text("https://evil.test/path\n")
+                with self.assertRaises(agent.AgentConfigError):
+                    agent.pair_device("owner-pc", "A" * 64)
+                pinned.write_text("https://example.test\n")
+                with patch.object(agent, "_send", return_value={"ok": True, "state": "QUEUED"}):
+                    with self.assertRaises(agent.AgentConfigError):
+                        agent.pair_device("owner-pc", "A" * 64)
+                for token in ("short", "A" * 63 + "&"):
+                    with self.assertRaises(agent.AgentConfigError):
+                        agent.pair_device("owner-pc", token)
+                self.assertFalse(config_path.exists())
+                install.assert_not_called()
+
     def test_polls_only_fixed_https_endpoint_and_acks_exact_single_id(self):
         opener = MockOpener([
             {"ok": True, "state": "OPEN_EPISODE",
