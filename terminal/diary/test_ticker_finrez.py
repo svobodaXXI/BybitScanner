@@ -681,5 +681,117 @@ def test_campaign_sqlite_schema_regression(tmp_path):
     test_campaign_sqlite_reader_uses_actual_production_table_definitions(tmp_path)
 
 
+class SimulatorLaunchRelayTests(unittest.TestCase):
+    """Paired-device relay cannot grant trading, shell, or arbitrary URL access."""
+
+    def make_relay(self):
+        from terminal.diary.simulator_launch_relay import SimulatorLaunchRelay
+
+        tick = [100.0]
+        token = "A" * 64
+        relay = SimulatorLaunchRelay(
+            origin="https://stats.example.test",
+            devices={"owner-pc": token, "owner-laptop": "B" * 64},
+            clock=lambda: tick[0],
+        )
+        return relay, tick, token
+
+    def test_disabled_without_secret_config_and_rejects_invalid_config(self):
+        from terminal.diary.simulator_launch_relay import SimulatorLaunchRelay, RelayInvalid
+        from unittest.mock import patch
+
+        with patch.dict("os.environ", {
+            "BYBITSCANNER_SIMULATOR_BRIDGE_ORIGIN": "",
+            "BYBITSCANNER_SIMULATOR_BRIDGE_DEVICES_JSON": "",
+        }):
+            self.assertIsNone(SimulatorLaunchRelay.from_environment())
+        with self.assertRaises(RelayInvalid):
+            SimulatorLaunchRelay(origin="http://wrong.test", devices={"pc": "A" * 64})
+        with self.assertRaises(RelayInvalid):
+            SimulatorLaunchRelay(origin="https://stats.example.test", devices={
+                "pc": "A" * 64, "laptop": "A" * 64,
+            })
+
+    def test_rejects_unpaired_device_bad_token_and_cross_origin_request(self):
+        from terminal.diary.simulator_launch_relay import RelayForbidden, RelayUnavailable
+        relay, _, token = self.make_relay()
+        episode = "te_" + "a" * 24
+        with self.assertRaises(RelayForbidden):
+            relay.poll(device="owner-pc", token="Z" * 64)
+        with self.assertRaises(RelayForbidden):
+            relay.poll(device="unknown", token=token)
+        with self.assertRaises(RelayUnavailable):
+            relay.enqueue(episode, request_origin="https://stats.example.test",
+                          fetch_site="same-origin")
+        self.assertEqual(relay.poll(device="owner-pc", token=token)["state"], "IDLE")
+        for origin, site in [
+            ("https://evil.test", "same-origin"), ("https://stats.example.test", "cross-site"),
+            ("", "same-origin"),
+        ]:
+            with self.assertRaises(RelayForbidden):
+                relay.enqueue(episode, request_origin=origin, fetch_site=site)
+
+    def test_typed_single_use_ack_and_expiration(self):
+        from terminal.diary.simulator_launch_relay import (
+            RelayInvalid, RelayUnavailable,
+        )
+        relay, tick, token = self.make_relay()
+        relay.poll(device="owner-pc", token=token)
+        episode = "te_" + "a" * 24
+        for wrong in ["BTCUSDT", "te_" + "A" * 24, episode + ";powershell"]:
+            with self.assertRaises(RelayInvalid):
+                relay.enqueue(wrong, request_origin=relay.origin, fetch_site="same-origin")
+        receipt = relay.enqueue(episode, request_origin=relay.origin, fetch_site="same-origin")
+        self.assertEqual(receipt["state"], "QUEUED")
+        with self.assertRaises(RelayUnavailable):
+            relay.enqueue(episode, request_origin=relay.origin, fetch_site="same-origin")
+        command = relay.poll(device="owner-pc", token=token)
+        self.assertEqual(command["episode_id"], episode)
+        self.assertEqual(command["request_id"], receipt["request_id"])
+        self.assertEqual(relay.poll(device="owner-pc", token=token)["state"], "IDLE")
+        self.assertEqual(
+            relay.acknowledge(device="owner-pc", token=token,
+                              request_id=command["request_id"], launched=True)["state"],
+            "LAUNCHED",
+        )
+        with self.assertRaises(RelayInvalid):
+            relay.acknowledge(device="owner-pc", token=token,
+                              request_id=command["request_id"], launched=True)
+        self.assertEqual(relay.status(receipt["request_id"],
+                                     request_origin=relay.origin, fetch_site="same-origin")["state"],
+                         "LAUNCHED")
+        tick[0] += 13
+        with self.assertRaises(RelayUnavailable):
+            relay.enqueue(episode, request_origin=relay.origin, fetch_site="same-origin")
+
+    def test_other_device_cannot_ack_or_read_unrelated_queue(self):
+        from terminal.diary.simulator_launch_relay import RelayInvalid
+        relay, _, token = self.make_relay()
+        relay.poll(device="owner-pc", token=token)
+        relay.poll(device="owner-laptop", token="B" * 64)
+        # Latest heartbeat tie is deterministic; owner-pc is lexically later.
+        receipt = relay.enqueue("te_" + "b" * 24,
+                                request_origin=relay.origin, fetch_site="same-origin")
+        self.assertEqual(relay.poll(device="owner-laptop", token="B" * 64)["state"], "IDLE")
+        with self.assertRaises(RelayInvalid):
+            relay.acknowledge(device="owner-laptop", token="B" * 64,
+                              request_id=receipt["request_id"], launched=True)
+        relay.poll(device="owner-pc", token=token)
+        self.assertEqual(relay.acknowledge(device="owner-pc", token=token,
+                                          request_id=receipt["request_id"],
+                                          launched=False)["state"], "FAILED")
+
+    def test_unacknowledged_delivery_expires_and_is_not_redelivered(self):
+        relay, tick, token = self.make_relay()
+        relay.poll(device="owner-pc", token=token)
+        receipt = relay.enqueue("te_" + "c" * 24,
+                                request_origin=relay.origin, fetch_site="same-origin")
+        self.assertEqual(relay.poll(device="owner-pc", token=token)["state"], "OPEN_EPISODE")
+        tick[0] += 36
+        self.assertEqual(relay.poll(device="owner-pc", token=token)["state"], "IDLE")
+        self.assertEqual(relay.status(receipt["request_id"], request_origin=relay.origin,
+                                      fetch_site="same-origin")["state"], "EXPIRED")
+
+
 if __name__ == "__main__":
     unittest.main()
