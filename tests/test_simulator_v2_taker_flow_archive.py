@@ -113,7 +113,7 @@ class PinnedTakerFlowReplayTests(TestCase):
                 symbol=SYMBOL, start_day=UTC_DAY, days=1,
                 latest_closed_boundary_ms=END,
             )
-            with self.assertRaisesRegex(ValueError, "lacks actual taker side"):
+            with self.assertRaisesRegex(ValueError, "invalid Bybit public execution identity/time/side"):
                 pinned_taker_minutes(
                     archive_dir=archive, symbol=SYMBOL,
                     proofs=proof_no_side, start_ms=START + 120*M,
