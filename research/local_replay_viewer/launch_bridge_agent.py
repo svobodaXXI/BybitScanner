@@ -140,6 +140,73 @@ def poll_once(config: dict[str, str], *, opener=None, launch=launch_local_viewer
     return "OPEN_REQUESTED" if opened else "OPEN_FAILED"
 
 
+def _trusted_statistics_origin() -> str:
+    """Reuse the local owner's existing handoff trust anchor, never the URI."""
+    data_dir = CONFIG_PATH.parent
+    pinned = data_dir / "trusted-statistics-origin.txt"
+    if data_dir.is_symlink() or pinned.is_symlink() or not pinned.is_file():
+        raise AgentConfigError("trusted_statistics_origin_not_installed")
+    try:
+        with pinned.open("rb") as stream:
+            raw = stream.read(258)
+        if not raw or len(raw) > 257:
+            raise AgentConfigError("invalid_trusted_statistics_origin")
+        origin = raw.decode("ascii").removesuffix("\n")
+        parsed = urlsplit(origin)
+        if (not origin or len(origin) > 256 or origin.strip() != origin
+                or any(c in origin for c in ("*", "\\", "\r", "\n"))
+                or parsed.scheme != "https" or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.path or parsed.query or parsed.fragment
+                or origin != f"https://{parsed.netloc}"
+                or (parsed.port is not None and not 1 <= parsed.port <= 65535)):
+            raise AgentConfigError("invalid_trusted_statistics_origin")
+        return origin
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise AgentConfigError("invalid_trusted_statistics_origin") from exc
+
+
+def pair_device(device_id: str, token: str) -> None:
+    """One-shot opt-in; no new service, no shell, no untrusted destination.
+
+    Device secret is supplied only by the authenticated Statistics owner UI.
+    A verified 200/IDLE reply from the already pinned origin is mandatory
+    before saving anything. Existing configurations are never overwritten.
+    """
+    if not DEVICE_RE.fullmatch(device_id) or not isinstance(token, str):
+        raise AgentConfigError("invalid_device_pairing_identity")
+    if not 48 <= len(token) <= 256 or not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+        raise AgentConfigError("invalid_device_pairing_token")
+    origin = _trusted_statistics_origin()
+    config = {"origin": origin, "device_id": device_id, "token": token}
+    current = read_config()
+    if current is not None:
+        if current != config:
+            raise AgentConfigError("existing_device_pairing_preserved")
+        # Idempotent: a re-open cannot rewrite an existing owner secret.
+        install_if_configured()
+        return
+    path = CONFIG_PATH
+    if path.is_symlink() or path.parent.is_symlink():
+        raise AgentConfigError("untrusted_device_config_path")
+    proof = _send(config, path="/api/diary/simulator-bridge/poll?" + urlencode({
+        "device_id": device_id, "viewer_running": "0",
+    }))
+    if set(proof) != {"ok", "state"} or proof["state"] != "IDLE":
+        raise AgentConfigError("device_pairing_not_verified")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.parent.is_symlink():
+        raise AgentConfigError("untrusted_device_config_path")
+    content = json.dumps({"schema": SCHEMA, **config}, separators=(",", ":")).encode("utf-8")
+    try:
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise AgentConfigError("existing_device_pairing_preserved") from exc
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(content)
+    install_if_configured()
+
+
 def _acquire_windows_singleton():
     if os.name != "nt":
         raise OSError("Windows_only")
