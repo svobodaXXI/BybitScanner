@@ -59,6 +59,7 @@ class LocalRobotFlowShadow:
         self._last_received_ms = started_at_ms
         self._quarantine_before = (started_at_ms // MINUTE_MS + 1) * MINUTE_MS
         self._closed = False
+        self._fresh_connect_pending = False
         self.latest_transition: FlowTransition | None = None
         self.observed_windows = 0
         context.add_trade_listener(self._name, self._on_packet)
@@ -84,6 +85,7 @@ class LocalRobotFlowShadow:
             return
         self._generation = generation
         self._invalidate(self._last_received_ms)
+        self._fresh_connect_pending = True
 
     def _on_packet(self, message: dict, received_at_ms: int) -> None:
         if self._closed:
@@ -92,6 +94,12 @@ class LocalRobotFlowShadow:
             self._invalidate(self._last_received_ms)
             return
         self._last_received_ms = received_at_ms
+        if self._fresh_connect_pending:
+            # A disconnect has no reliable receive time for the next session.
+            # Fence the entire first observed minute after reconnect.
+            self._fresh_connect_pending = False
+            self._invalidate(received_at_ms)
+            return
         context = self._context
         if (context.reconnect_count != self._generation
                 or context.trades_subscription_state != "SUBSCRIBED"
