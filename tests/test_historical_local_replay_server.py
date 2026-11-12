@@ -1,6 +1,8 @@
 """Local Windows viewer: public kline and loopback-only HTTP boundary tests."""
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from decimal import Decimal
+from types import SimpleNamespace, ModuleType
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 import json
@@ -12,7 +14,73 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 from research.historical_candle_feed import FIVE_MINUTES_MS
+from research.historical_market_replay import Candle
 from research.local_replay_viewer import server as local
+
+
+class PinnedEpisodeMarketTests(unittest.TestCase):
+    def test_closed_m5_uses_original_isolated_timeline_and_no_robot_or_paper(self):
+        start = int(datetime(2026, 10, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        one_minute = 60_000
+        candles = tuple(Candle(
+            start_ms=start + i * one_minute, interval_ms=one_minute,
+            open=Decimal("100") + i, high=Decimal("103") + i,
+            low=Decimal("99") + i, close=Decimal("101") + i,
+            volume=Decimal("2"),
+        ) for i in range(5))
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "m1-cache").mkdir()
+            (root / "manifest.json").write_text("{}", encoding="utf-8")
+            # The read-only endpoint reuses native modules in production;
+            # this market projection test needs no pandas/native Robot import.
+            fake_cli = ModuleType("research.simulator_v2.wedge_cli")
+            fake_cli.MAX_MANIFEST_BYTES = 125_000
+            fake_cli.parse_manifest = lambda *_args, **_kw: ("BTCUSDT", (object(),))
+            fake_range = ModuleType("research.simulator_v2.trade_range")
+            fake_range._ordered_proofs = lambda *_args, **_kw: (
+                "verified_SOURCE", start, start + 86_400_000,
+            )
+            fake_range.iter_pinned_trade_chunks = lambda **_kw: (
+                SimpleNamespace(candles=candles),
+            )
+            with (
+                patch.object(local, "SIM_DATA", root),
+                patch.dict("sys.modules", {
+                    "research.simulator_v2.wedge_cli": fake_cli,
+                    "research.simulator_v2.trade_range": fake_range,
+                }),
+                patch("research.simulator_v2.history.last_closed_m1_boundary_ms",
+                      return_value=start + 86_400_000),
+            ):
+                result = local.read_verified_episode_market(
+                    symbol="BTCUSDT", start_ms=start, end_ms=start + FIVE_MINUTES_MS,
+                )
+                self.assertEqual(result["mode"], "MARKET_ONLY")
+                self.assertEqual(result["market_data_source"],
+                                 "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M")
+                self.assertEqual(len(result["events"]), 1)
+                self.assertEqual(result["events"][0]["candle"]["close"], 105.)
+                self.assertEqual(result["events"][0]["candle"]["volume"], 10.)
+                with self.assertRaisesRegex(ValueError, "incomplete"):
+                    local.read_verified_episode_market(
+                        symbol="BTCUSDT", start_ms=start,
+                        end_ms=start + 2 * FIVE_MINUTES_MS,
+                    )
+
+    def test_foreign_unaligned_and_overlong_episode_windows_fail_before_read(self):
+        start = int(datetime(2026, 10, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        for symbol, first, last in [
+            ("../PAPER", start, start + FIVE_MINUTES_MS),
+            ("BTCUSDT", start + 60_000, start + FIVE_MINUTES_MS),
+            ("BTCUSDT", start, start + 8 * 86_400_000),
+            ("BTCUSDT", start, start),
+        ]:
+            with self.subTest(symbol=symbol, first=first, last=last):
+                with self.assertRaises(ValueError):
+                    local.read_verified_episode_market(
+                        symbol=symbol, start_ms=first, end_ms=last,
+                    )
 
 
 class PublicKlineTests(unittest.TestCase):
@@ -171,6 +239,48 @@ class LoopbackServerTests(unittest.TestCase):
             code, _, _ = self.call(port, "GET", "/replay.html", host="untrusted.example")
             self.assertEqual(code, 403)
             self.assertEqual(calls, [])
+
+    def test_statistics_origin_is_local_pinned_and_untrusted_sources_fail_closed(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(local, "SIM_DATA", root), self.running_server() as (port, calls):
+                endpoint = "/local-replay/simulation/trusted-statistics-origin"
+                status, _, _ = self.call(port, "GET", endpoint)
+                self.assertEqual(status, 503, "no owner configuration must deny handoff")
+                status, _, _ = self.call(port, "GET", endpoint + "?source_origin=https://evil.example")
+                self.assertEqual(status, 403, "fragment/query cannot supply trust authority")
+                trust = root / "trusted-statistics-origin.txt"
+                for invalid in (
+                    "https://*.example.com", "http://stats.example.com",
+                    "https://stats.example.com/unsafe", "https://stats.example.com?x=1",
+                    "https://user:pass@stats.example.com", "https://stats.example.com:bad",
+                    "https://stats.example.com\nhttps://evil.example",
+                ):
+                    trust.write_text(invalid, encoding="utf-8")
+                    status, _, _ = self.call(port, "GET", endpoint)
+                    self.assertEqual(status, 503, f"unsafe origin {invalid!r} accepted")
+                trust.write_text("https://stats.example.com\n", encoding="ascii")
+                status, body, headers = self.call(port, "GET", endpoint)
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(body), {
+                    "schema": "LOCAL_TRUSTED_STATISTICS_ORIGIN_V1",
+                    "origin": "https://stats.example.com",
+                })
+                self.assertEqual(headers["Cache-Control"], "no-store")
+                for host, extra in (
+                    ("untrusted.example", {}),
+                    (None, {"Origin": "https://evil.example"}),
+                    (None, {"Sec-Fetch-Site": "cross-site"}),
+                ):
+                    status, _, _ = self.call(
+                        port, "GET", endpoint, host=host, extra_headers=extra,
+                    )
+                    self.assertEqual(status, 403)
+                trust.unlink()
+                trust.symlink_to(root / "external-origin.txt")
+                status, _, _ = self.call(port, "GET", endpoint)
+                self.assertEqual(status, 503, "symlink must not import external trust")
+                self.assertEqual(calls, [])
 
     def test_history_is_get_only_without_paper_side_effects(self):
         with self.running_server() as (port, calls):

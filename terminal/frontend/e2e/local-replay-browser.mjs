@@ -271,19 +271,25 @@ try {
   });
   await readySetup.getByRole("checkbox", { name: "Все стратегии" }).check();
   await readySetup.getByRole("button", { name: "Применить" }).click();
-  assert.match(await readySetup.innerText(), /Пока доступны только/);
+  assert.match(await readySetup.innerText(), /Разные семейства нельзя смешивать в одном виртуальном счёте/);
   assert.equal(posted.length, 1, "unsupported strategies never cause a backend POST");
   assert.equal(requests.filter(url => url.includes("/api/") || url.includes("/v5/")).length, 0);
 
   // The entire replay control surface belongs beside the M5/H1 switch,
   // never in the file-import row above the chart.
   const controlBar = page.getByRole("group", { name: "Таймфрейм графика" });
+  const timeframeOrder = await controlBar.locator(":scope > button").allTextContents();
+  assert.deepEqual(timeframeOrder, ["H1", "M5", "M1", "15с"],
+    "timeframes must descend from hourly to 15 seconds");
   const playbackBar = controlBar.getByRole("group", { name: "Управление воспроизведением" });
   const actualOrder = await playbackBar.locator("button.replay-player-button").evaluateAll(
     buttons => buttons.map(button => button.getAttribute("aria-label")),
   );
   assert.deepEqual(actualOrder, ["В начало", "Пуск", "Шаг назад", "Шаг вперёд"],
     "approved player order must be stable");
+  const beginningShape = await playbackBar.locator('svg[data-player-icon="beginning"] path').getAttribute("d");
+  assert.equal(beginningShape, "M4 4h2v16H4zM20 5L9 12L20 19Z",
+    "beginning has a visibly filled left stop-bar and exactly one left triangle, not the backward chevrons");
   for (const [caption, symbol] of [["В начало", "beginning"], ["Пуск", "play"],
       ["Шаг назад", "backward"], ["Шаг вперёд", "forward"]]) {
     const button = playbackBar.getByRole("button", { name: caption, exact: true });
@@ -540,7 +546,23 @@ try {
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "3");
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-chart-timeframe"), "1h");
   assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "100");
+  // H1 step/seek must move complete hours, never a five-minute candle.
+  await page.getByRole("button", { name: "В начало" }).click();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "0");
+  await forward.click();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "1");
+  assert.equal(await scrub.inputValue(), "1");
+  await forward.click();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "2");
+  await backward.click();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "1");
+  await forward.click();
+  await forward.click();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "3");
+  assert.equal(await forward.isDisabled(), true,
+    "four trailing M5 bars must not become a partial H1");
   await page.getByRole("button", { name: "M5", exact: true }).click();
+  await scrub.fill("40");
   await page.waitForFunction(() => document.querySelector(".replay-chart-shell")?.dataset.displayedCandles === "40");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-geometry"), "3");
@@ -721,6 +743,31 @@ try {
     return parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
   }), "Viewer must not contact VPS/PAPER/external accounts");
   assert.ok(requests.every((u) => !new URL(u).pathname.startsWith("/api")), "No PAPER API requests");
+  // A URL fragment claiming ANY HTTPS origin is NOT trusted. The opener
+  // handshake must be gated by the independently installed local origin.
+  const forged = await browser.newPage();
+  await forged.route("**/local-replay/simulation/trusted-statistics-origin", async route => {
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({
+        schema: "LOCAL_TRUSTED_STATISTICS_ORIGIN_V1",
+        origin: "https://stats.example.com",
+      }),
+    });
+  });
+  const forgedParams = new URLSearchParams({
+    episode: "te_" + "a".repeat(24),
+    nonce: "b".repeat(32),
+    source_origin: "https://evil.example",
+  });
+  await forged.goto(localUrl + "#" + forgedParams, { waitUntil: "networkidle" });
+  await forged.getByText(/Переход из Статистики заблокирован: доверенный HTTPS-адрес/).waitFor();
+  assert.equal(await forged.getByLabel("Импорт JSON сделки PAPER").count(), 1,
+    "untrusted opener can never disable the manual read-only JSON fallback");
+  assert.equal(await forged.locator('[aria-label="PAPER факты сделки"]').count(), 0,
+    "forged opener must not inject PAPER facts");
+  await forged.close();
+
   console.log("LOCAL_REPLAY_BROWSER_OK (real Chromium, local server, chart, controls, isolated market-only data)");
   console.log("UI screenshot: " + join(screenshotDir, "machine-time-browser.png"));
 } finally {

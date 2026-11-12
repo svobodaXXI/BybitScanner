@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, clearAll, isAllSelected,
-  onlyWedges, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, adjustInclusiveWindow,
-  parseRunCoordinates, formatRunCoordinates, formatRunDuration, selectAll,
+  onlyWedges, onlyBox, parseUtcMinute, presetEndInclusive, extendInclusiveWindow, adjustInclusiveWindow,
+  parseRunCoordinates, parseEpisodeLocator, formatRunCoordinates, formatRunDuration, selectAll,
   toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeResult, parseWedgeStatus, runnableWedgeSelection,
 } from "./runSetup";
@@ -41,6 +41,8 @@ describe("local one-symbol strategy setup (no trading)", () => {
     expect(onlyWedges()).toEqual({
       mirror: false, selected: ["WEDGE_RISING", "WEDGE_FALLING"],
     });
+    expect(onlyBox()).toEqual({ mirror: false, selected: ["IKIGAI_BOX"] });
+    expect(runnableWedgeSelection(onlyBox())).toBe(true);
   });
   it("applies inclusive last minute for day, week, 30 and 90 days", () => {
     const start = "2026-10-01T12:34";
@@ -119,6 +121,17 @@ describe("local one-symbol strategy setup (no trading)", () => {
       "XRPUSDT | 2026-01-01T00:00 | 2026-04-02T00:00",
     ]) expect(() => parseRunCoordinates(value)).toThrow();
   });
+  it("recognizes only an exact Diary episode ID, never treating it as ticker coordinates", () => {
+    const id = "te_" + "a".repeat(24);
+    expect(parseEpisodeLocator(id)).toBe(id);
+    expect(parseEpisodeLocator("  " + id + "  ")).toBe(id);
+    expect(parseEpisodeLocator("XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59")).toBeNull();
+    expect(parseEpisodeLocator("ETHUSDT")).toBeNull();
+    for (const bad of ["te_" + "a".repeat(23), "te_" + "A".repeat(24),
+      "te_../etc/passwd", id + "|BTCUSDT", id + "&trade=1", "te_"]) {
+      expect(() => parseEpisodeLocator(bad)).toThrow(/ID сделки/);
+    }
+  });
   it("handles year and leap-day boundaries without local timezone dependence", () => {
     expect(presetEndInclusive("2024-02-29T23:59", "DAY")).toBe("2024-03-01T23:58");
     expect(presetEndInclusive("2026-12-31T23:59", "WEEK")).toBe("2027-01-07T23:58");
@@ -135,6 +148,12 @@ describe("local one-symbol strategy setup (no trading)", () => {
     expect(runnableWedgeSelection(clearAll())).toBe(false);
     expect(runnableWedgeSelection(selectAll())).toBe(false);
     expect(runnableWedgeSelection(toggleStrategy(clearAll(), "WEDGE_RISING", true))).toBe(true);
+    const boxOnly = toggleStrategy(clearAll(), "IKIGAI_BOX", true);
+    expect(runnableWedgeSelection(boxOnly)).toBe(true);
+    expect(runnableWedgeSelection(toggleStrategy(onlyWedges(), "IKIGAI_BOX", true))).toBe(false);
+    expect(makeWedgeRunRequest(boxOnly, "XRPUSDT",
+      "2026-09-11T00:00", "2026-09-11T23:59", "1000").selected_strategies)
+      .toEqual(["IKIGAI_BOX"]);
     const req = makeWedgeRunRequest(
       onlyWedges(), "btcusdt", "2026-10-01T12:34", "2026-10-08T12:33", "1000",
     );
@@ -146,7 +165,18 @@ describe("local one-symbol strategy setup (no trading)", () => {
     });
     expect(() => makeWedgeRunRequest(
       selectAll(), "BTCUSDT", "2026-10-01T12:34", "2026-10-08T12:33", "1000",
-    )).toThrow(/только/);
+    )).toThrow(/нельзя смешивать/);
+    const levels = ["L_SHAPE", "DOUBLE_TOP", "DOUBLE_BOTTOM"] as const;
+    let levelSelection = clearAll();
+    for (const id of levels) levelSelection = toggleStrategy(levelSelection, id, true);
+    expect(runnableWedgeSelection(levelSelection)).toBe(true);
+    expect(makeWedgeRunRequest(levelSelection, "BTCUSDT",
+      "2026-10-01T12:34", "2026-10-08T12:33", "1000").selected_strategies)
+      .toEqual(levels);
+    expect(runnableWedgeSelection(toggleStrategy(levelSelection, "IKIGAI_BOX", true)))
+      .toBe(false);
+    expect(runnableWedgeSelection(toggleStrategy(levelSelection, "WEDGE_RISING", true)))
+      .toBe(false);
     expect(() => makeWedgeRunRequest(
       onlyWedges(), "BTCUSDT", "2026-10-01T00:00", "2026-12-31T00:00", "1000",
     )).toThrow(/90/);
@@ -186,6 +216,40 @@ describe("local one-symbol strategy setup (no trading)", () => {
       total_fees: "0", return_percent: "0", max_drawdown_percent: "0",
     };
     expect(parseWedgeResult(report).requested_minutes).toBe(2);
+    const box = {
+      ...report,
+      scenario_type: "ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION",
+      scanner_wedge_observations: undefined,
+      robot_retests_in_period: undefined,
+      submitted_protected_limits: undefined,
+      scanner_box_observations: 1, admitted_box_candidates: 1,
+      box_entry_fills: 1, virtual_fills: 2, stop_exits: 1, take_exits: 0,
+    };
+    expect(parseWedgeResult(box).scenario_type)
+      .toBe("ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION");
+    const nativeLevels = {
+      ...report,
+      scenario_type: "ORIGINAL_FROZEN_LEVEL_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION",
+      scanner_wedge_observations: undefined,
+      robot_retests_in_period: undefined,
+      scanner_level_observations: 2, native_robot_confirmations: 1,
+      submitted_protected_limits: 1, skipped_busy_entries: 0,
+      rejected_risk_entries: 0, virtual_fills: 2,
+    };
+    expect(parseWedgeResult(nativeLevels).scenario_type)
+      .toBe("ORIGINAL_FROZEN_LEVEL_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION");
+    expect(() => parseWedgeResult({
+      ...nativeLevels, native_robot_confirmations: -1,
+    })).toThrow();
+    expect(() => parseWedgeResult({
+      ...nativeLevels, namespace: "PAPER",
+    })).toThrow();
+    expect(() => parseWedgeResult({ ...box, box_entry_fills: 3 })).toThrow(/Box/);
+    expect(() => parseWedgeResult({ ...box, scanner_box_observations: -1 })).toThrow();
+    expect(() => parseWedgeResult({ ...box, requested_minutes: undefined })).toThrow();
+    expect(() => parseWedgeResult({
+      ...box, scenario_type: "ORIGINAL_PAPER_ROBOT", namespace: "PAPER",
+    })).toThrow();
     expect(() => parseWedgeResult({ ...report, namespace: "PAPER" })).toThrow();
     expect(() => parseWedgeResult({ ...report, scenario_type: "EXPLICIT_TEST_ORDERS_NOT_STRATEGY" })).toThrow();
     expect(() => parseWedgeResult({ ...report, virtual_fills: -1 })).toThrow();

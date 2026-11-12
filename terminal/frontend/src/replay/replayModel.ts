@@ -52,6 +52,7 @@ export type ReplayEvent = {
   trade_id?: string;
   candidate_id?: string;
   pattern?: "Falling Wedge" | "Rising Wedge";
+  strategy_id?: "L_SHAPE" | "DOUBLE_TOP" | "DOUBLE_BOTTOM";
   net_usdt?: string;
   pnl_percent?: string;
   side?: "LONG" | "SHORT";
@@ -363,6 +364,12 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       e.trade_id !== undefined
     ) : candidate_id !== undefined || pattern !== undefined)
       throw new Error("Недостоверное событие Robot по клину");
+    const strategy_id = e.strategy_id;
+    if (strategy_id !== undefined && (mode !== "STRATEGY" || kind !== "ENTRY_SIGNAL" ||
+        !["L_SHAPE", "DOUBLE_TOP", "DOUBLE_BOTTOM"].includes(strategy_id as string) ||
+        typeof trade_id !== "string")) {
+      throw new Error("Недостоверная стратегия исходного виртуального LIMIT");
+    }
     const net_usdt = e.net_usdt;
     const pnl_percent = e.pnl_percent;
     if (net_usdt !== undefined || pnl_percent !== undefined) {
@@ -379,6 +386,7 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       ...(dmi ? { dmi } : {}),
       ...(side ? { side } : {}),
       ...(trade_id ? { trade_id } : {}),
+      ...(strategy_id !== undefined ? { strategy_id: strategy_id as ReplayEvent["strategy_id"] } : {}),
       ...(isWedge ? { candidate_id: candidate_id as string,
         pattern: pattern as "Falling Wedge" | "Rising Wedge" } : {}),
       ...(net_usdt !== undefined ? { net_usdt: net_usdt as string,
@@ -1019,6 +1027,52 @@ export function nextClosedCandleCursor(events: readonly ReplayEvent[], cursor: n
   index++;
   while (index < length && events[index].time_ms === closedAt) index++;
   return index;
+}
+
+/** Replay frame boundaries belong to the selected visible timeframe.
+ * M5: one closed market candle, including same-timestamp trade receipts.
+ * H1: only 12 contiguous, aligned, fully closed M5 candles form a step.
+ * Never advance into a partial hour or a streaming action beyond its close.
+ * M1/15s remain disabled until original, verified finer source events exist.
+ */
+export function replayFrameCursors(
+  events: readonly ReplayEvent[], timeframe: "5m" | "1h",
+): number[] {
+  const hourlyCloses = timeframe === "1h"
+    ? new Set(completeHourlyCandles(events.flatMap(event =>
+      event.kind === "CANDLE_CLOSED" && event.candle ? [event.candle] : [],
+    )).map(candle => candle.end_ms))
+    : null;
+  const points = [0];
+  for (let index = 0; index < events.length; index++) {
+    const event = events[index];
+    if (event.kind !== "CANDLE_CLOSED" || !event.candle ||
+        (hourlyCloses && !hourlyCloses.has(event.candle.end_ms))) continue;
+    let next = index + 1;
+    while (next < events.length && events[next].time_ms === event.time_ms) next++;
+    points.push(next);
+    index = next - 1;
+  }
+  return points;
+}
+
+/** Last completed frame at or before the current cursor (also after TF switch). */
+export function replayFrameIndex(points: readonly number[], cursor: number): number {
+  let low = 0, high = points.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (points[middle] <= cursor) low = middle;
+    else high = middle - 1;
+  }
+  return low;
+}
+
+/** One step adds/removes exactly one visible closed candle of the active TF. */
+export function replayStepCursor(
+  points: readonly number[], cursor: number, direction: -1 | 1,
+): number {
+  const frame = replayFrameIndex(points, cursor);
+  return points[Math.max(0, Math.min(points.length - 1, frame + direction))];
 }
 
 /** The UI receives ONLY the prefix requested by the virtual-time playhead. */

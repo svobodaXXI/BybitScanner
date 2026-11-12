@@ -4,7 +4,7 @@ import {
 } from "lightweight-charts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
+  completeHourlyCandles, replayFrameCursors, replayFrameIndex, replayStepCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent, type PublicScannerObservation,
 } from "./replayModel";
@@ -61,7 +61,7 @@ const PLAYER_PATHS = {
   pause: "M6 4h4v16H6zM14 4h4v16h-4z",
   backward: "M12 5L4 12L12 19ZM21 5L13 12L21 19Z",
   forward: "M3 5L11 12L3 19ZM12 5L20 12L12 19Z",
-  beginning: "M4 4v16M20 5L11 12L20 19ZM11 5L2 12L11 19Z",
+  beginning: "M4 4h2v16H4zM20 5L9 12L20 19Z",
 } as const;
 function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
   return <svg className="replay-player-icon" viewBox="0 0 24 24"
@@ -591,6 +591,134 @@ export function ReplayPage() {
     }
     return currentSymbol.current === archiveSymbol;
   }, []);
+  // A selected Statistics episode is transferred only after an explicit
+  // owner click, via a nonce-bound Window.postMessage from the opener.
+  // The URL fragment holds identity only, never private fill data.
+  // Actual PAPER fills remain read-only and separate from virtual orders.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const locator = params.get("locator");
+    if (locator !== null) {
+      // Windows protocol launch carries an ID only, never historical PAPER
+      // facts. No opener = no trusted postMessage; do not infer a campaign.
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      setPlaying(false); setCursor(0);
+      setPaperFacts(null);
+      setSimulationGraphPending(true);
+      setPreparedRun(false);
+      if (!/^te_[0-9a-f]{24}$/.test(locator) || params.size !== 1) {
+        setError("Неверный идентификатор сделки из локального запускателя");
+      } else {
+        setFileLabel("ID сделки из Статистики: " + locator);
+        setError("Симулятор открыт по ID. Полная цепочка сделки ещё не передана: " +
+          "для просмотра фактов импортируйте проверенный JSON; свечи и решения не подставляются.");
+      }
+      return;
+    }
+    const episodeId = params.get("episode");
+    const nonce = params.get("nonce");
+    const sourceOrigin = params.get("source_origin");
+    if (!episodeId && !nonce && !sourceOrigin) return;
+    if (!episodeId || !/^te_[0-9a-f]{24}$/.test(episodeId) ||
+        !nonce || !/^[0-9a-f]{32}$/.test(nonce) || !sourceOrigin) {
+      setError("Неверный адрес выбранного эпизода из Статистики");
+      return;
+    }
+    // The fragment is attacker-supplied routing data, NOT a trust authority.
+    // Only the independently installed local Simulator configuration can
+    // authorize the exact Statistics HTTPS origin. No insecure fallback.
+    let cancelled = false;
+    let listener: ((event: MessageEvent) => void) | null = null;
+    void (async () => {
+      let trustedOrigin: string;
+      try {
+        const response = await fetch("/local-replay/simulation/trusted-statistics-origin",
+          { cache: "no-store" });
+        if (!response.ok) throw new Error("trusted origin not installed");
+        const config = await response.json() as { schema?: unknown; origin?: unknown };
+        if (config.schema !== "LOCAL_TRUSTED_STATISTICS_ORIGIN_V1" ||
+            typeof config.origin !== "string" ||
+            config.origin !== sourceOrigin ||
+            new URL(config.origin).protocol !== "https:" ||
+            new URL(config.origin).origin !== config.origin)
+          throw new Error("untrusted Statistics origin");
+        trustedOrigin = config.origin;
+      } catch {
+        if (!cancelled) setError(
+          "Переход из Статистики заблокирован: доверенный HTTPS-адрес не совпадает " +
+          "с локальной настройкой или не настроен. Импортируйте JSON сделки вручную.",
+        );
+        return;
+      }
+      if (cancelled) return;
+      const opener = window.opener;
+      if (!opener) {
+        setError("Связь со Статистикой недоступна. Импортируйте JSON фактов сделки вручную.");
+        return;
+      }
+      let received = false;
+      const receive = (event: MessageEvent) => {
+      if (received || event.source !== opener || event.origin !== trustedOrigin ||
+          !event.data || typeof event.data !== "object") return;
+      const value = event.data as Record<string, unknown>;
+      if (value.type !== "BYBITSCANNER_EPISODE_FACTS" ||
+          value.nonce !== nonce || value.trade_episode_id !== episodeId) return;
+      received = true;
+      window.removeEventListener("message", receive);
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      void (async () => {
+        try {
+          const facts = parsePaperEpisodeFacts(value.facts);
+          if (facts.trade_episode_id !== episodeId)
+            throw new Error("ID фактов сделки не совпадает с выбранным");
+          setPaperFacts(facts);
+          onPasteSymbol(facts.symbol);
+          // A new exact-ID episode cannot inherit the previous bundled chart
+          // if the pinned historical market read is incomplete or unavailable.
+          setPlaying(false); setCursor(0);
+          setSimulationGraphPending(true); setPreparedRun(false);
+          setFileLabel("Проверяю локальную историю PAPER-эпизода " + episodeId);
+          setError(null);
+          const m5 = 300_000;
+          const start = Math.floor(facts.opened_at_ms / m5) * m5;
+          // At a boundary a fill belongs to the NEW M5, never the old bar.
+          const end = (Math.floor(facts.closed_at_ms / m5) + 1) * m5;
+          if (end - start > 7 * 86_400_000)
+            throw new Error("Эпизод длиннее 7 дней: импортируйте подходящую историю отдельно");
+          const query = new URLSearchParams({
+            symbol: facts.symbol, start_ms: String(start), end_ms: String(end),
+          });
+          const response = await fetch("/local-replay/simulation/pinned-market?" + query,
+            { cache: "no-store" });
+          if (!response.ok) {
+            const reason = (await response.json().catch(() => ({}))) as { error?: string };
+            throw new Error(reason.error || "Локальная подтверждённая история сделки недоступна");
+          }
+          const archive = parseReplayDocument(await response.json() as unknown);
+          if (matchPaperFactsToMarket(facts, archive).status !== "MATCHED")
+            throw new Error("Исходный M1-архив не покрывает все реальные исполнения сделки");
+          setDocument(archive);
+          setSimulationGraphPending(false);
+          setPreparedRun(false);
+          setPlaying(false); setCursor(0);
+          setFileLabel("Фактический PAPER эпизод " + episodeId + " · проверенная локальная история");
+          setError(null);
+        } catch (failure) {
+          setError(failure instanceof Error ? failure.message : "Нет проверенной истории эпизода");
+        }
+      })();
+    };
+      listener = receive;
+      window.addEventListener("message", listener);
+      opener.postMessage({
+        type: "BYBITSCANNER_SIMULATOR_READY", trade_episode_id: episodeId, nonce,
+      }, trustedOrigin);
+    })();
+    return () => {
+      cancelled = true;
+      if (listener) window.removeEventListener("message", listener);
+    };
+  }, [onPasteSymbol]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const historyRequest = useRef<AbortController | null>(null);
   const bundledRequest = useRef<AbortController | null>(null);
@@ -645,8 +773,11 @@ export function ReplayPage() {
             ". Кандидат принят. Ожидается пробой"; break;
         case "WEDGE_BREAKOUT": message = "Пробой подтверждён. Ожидается ретест"; break;
         case "WEDGE_RETEST": message = "Ретест подтверждён"; break;
-        case "ENTRY_SIGNAL": message = "Выставлен LIMIT после ретеста"; break;
-        case "ENTRY_FILLED": message = "Позиция открыта, вход по ретесту"; break;
+        case "ENTRY_SIGNAL": message = (event.strategy_id === "L_SHAPE"
+          ? "L-shape" : event.strategy_id === "DOUBLE_TOP" ? "Двойная вершина"
+          : event.strategy_id === "DOUBLE_BOTTOM" ? "Двойное дно" : "Robot") +
+          ": выставлен защищённый LIMIT после подтверждения"; break;
+        case "ENTRY_FILLED": message = "Позиция открыта: подтверждённое виртуальное исполнение"; break;
         case "EXIT_FILLED":
           message = "Позиция закрыта (" +
             (event.reason === "STOP" ? "STOP" : event.reason === "TAKE" ? "TAKE" : "выход") +
@@ -672,20 +803,9 @@ export function ReplayPage() {
   const total = document.events.length;
   const progress = Math.round(100 * cursor / total);
   const playbackComplete = !simulationGraphPending && total > 0 && cursor >= total;
-  const seekPoints = useMemo(() => {
-    const result = [0];
-    for (let i = 0; i < document.events.length; i++) {
-      const closed = document.events[i];
-      if (closed.kind !== "CANDLE_CLOSED") continue;
-      let next = i + 1;
-      while (next < document.events.length &&
-             document.events[next].time_ms === closed.time_ms) next++;
-      if (next > result[result.length - 1]) result.push(next);
-      i = next - 1;
-    }
-    return result;
-  }, [document.events]);
-  const seekIndex = Math.max(0, seekPoints.indexOf(cursor));
+  const seekPoints = useMemo(() =>
+    replayFrameCursors(document.events, timeframe), [document.events, timeframe]);
+  const seekIndex = replayFrameIndex(seekPoints, cursor);
   const priorBreaks = useMemo(
     () => showTrendGeometry ? visiblePriorBreaks(document, shown.lastTimeMs) : [],
     [document, shown.lastTimeMs, showTrendGeometry],
@@ -739,6 +859,20 @@ export function ReplayPage() {
     rows.filter(row => row.first_touch === kind).length;
   const fileInput = useRef<HTMLInputElement>(null);
   const paperFileInput = useRef<HTMLInputElement>(null);
+
+  const onEpisodeLocator = useCallback((episodeId: string) => {
+    // A copied episode ID is a locator only. Never reuse candles or a
+    // virtual-run request from the previously selected market period.
+    bundledRequest.current?.abort(); bundledRequest.current = null;
+    historyRequest.current?.abort(); historyRequest.current = null;
+    setHistoryLoading(false); setPlaying(false); setCursor(0);
+    setPaperFacts(null); setRunLoading(false);
+    setSimulationGraphPending(true); setPreparedRun(false);
+    setFileLabel("ID сделки из Статистики: " + episodeId);
+    setError("ID принят. Для полной истории нужна проверенная цепочка кампании; " +
+      "пока импортируйте подтверждённый JSON сделки вручную.");
+    setDrawings([]); setSelectedDrawing(null); setDrawingTool("crosshair");
+  }, []);
 
   const onSimulationStart = useCallback((request: WedgeRunRequest) => {
     // A new ticker/date must never inherit old candles or demonstration fills.
@@ -828,23 +962,25 @@ export function ReplayPage() {
     };
   }, []);
 
-  // Keep the requested candle cadence independent of network packet arrivals.
-  // A batch may contain many verified bars, but each timer tick reveals ONE M5.
-  // A stalled Scanner frontier costs no playback time: never catch up in a burst.
-  const availableEvents = useRef(document.events);
-  availableEvents.current = document.events;
+  // Each tick reveals exactly ONE verified, closed candle of the active TF.
+  // Never reset cadence when more events arrive from the Scanner stream.
+  const availableFramePoints = useRef(seekPoints);
+  availableFramePoints.current = seekPoints;
   useEffect(() => {
     if (!playing) return;
     const timer = window.setInterval(() => {
-      setCursor(current => nextClosedCandleCursor(availableEvents.current, current));
+      setCursor(current => replayStepCursor(availableFramePoints.current, current, 1));
     }, Math.max(16, 1000 / rate));
     return () => window.clearInterval(timer);
   }, [playing, rate]);
 
   useEffect(() => {
-    // Do not stop when playback reaches the still-growing verified frontier.
-    if (cursor >= total && !runLoading) setPlaying(false);
-  }, [cursor, total, runLoading]);
+    // Continue waiting at a streaming frontier; stop only after the run ends.
+    if (!runLoading && (cursor >= total ||
+        (playing && replayStepCursor(seekPoints, cursor, 1) === cursor))) {
+      setPlaying(false);
+    }
+  }, [cursor, total, playing, runLoading, seekPoints]);
 
   async function loadFile(file?: File) {
     if (!file) return;
@@ -966,7 +1102,8 @@ export function ReplayPage() {
       </header>
 
       <RunSetupPanel symbol={symbol} onArchiveSymbol={acceptArchiveSymbol}
-        onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
+        onPasteSymbol={onPasteSymbol} onEpisodeLocator={onEpisodeLocator}
+        onSimulationStart={onSimulationStart}
         onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
         onSimulationFailed={onSimulationFailed} onSimulationBusy={setRunLoading}
         playRequestId={playRequestId} showReport={!simulationGraphPending && !runLoading && cursor >= total}
@@ -1037,6 +1174,16 @@ export function ReplayPage() {
               : " · D2: исходный setup появится после его подтверждённого времени на графике"
         )}
       </p>}
+      {paperFacts?.owner === "ROBOT" && paperSetupContext?.status === "EXACT_D2_LINK" &&
+        paperSetupVisible && paperSetupContext.setup.pattern.toUpperCase() === "MIRROR" && (
+        <p className="replay-note" role="status" aria-label="Предупреждение об исторической стратегии Mirror">
+          ⚠ Mirror: правила источников уровней изменены. В фактах этого эпизода
+          отсутствуют доказанные источник уровня, его сторона и направление пробоя.
+          Нельзя установить, торговался ли сигнал по отменённой границе.
+          Эпизод доступен только для исторического просмотра; не считать его
+          подтверждённым примером действующей стратегии Mirror.
+        </p>
+      )}
       <section className="replay-meta" aria-label="Состояние симулятора">
         <div><span>Источник</span><strong>{fileLabel}</strong></div>
         <div><span>Время рынка</span><strong>{simulationGraphPending ? "До начала прогона" :
@@ -1144,12 +1291,12 @@ export function ReplayPage() {
             <strong className="replay-chart-symbol" aria-label="Тикер графика">
               {document.symbol?.replace(/USDT$/, "") || "—"}
             </strong>
-            <button type="button" disabled title="Нет проверенной минутной истории в потоке графика">M1</button>
-            <button type="button" disabled title="Нет исходной ленты сделок для 15-секундного графика">15с</button>
-            <button type="button" aria-pressed={timeframe === "5m"}
-              onClick={() => setTimeframe("5m")}>M5</button>
             <button type="button" aria-pressed={timeframe === "1h"}
               onClick={() => setTimeframe("1h")}>H1</button>
+            <button type="button" aria-pressed={timeframe === "5m"}
+              onClick={() => setTimeframe("5m")}>M5</button>
+            <button type="button" disabled title="Нет проверенной минутной истории в потоке графика">M1</button>
+            <button type="button" disabled title="Нет исходной ленты сделок для 15-секундного графика">15с</button>
             <div className="replay-playback-controls" role="group" aria-label="Управление воспроизведением">
         <button type="button" className="replay-player-button" title="В начало"
           aria-label="В начало" disabled={simulationGraphPending}
@@ -1169,13 +1316,13 @@ export function ReplayPage() {
         <button type="button" className="replay-player-button" title="Шаг назад"
           aria-label="Шаг назад" onClick={() => {
             setPlaying(false);
-            setCursor(seekPoints[Math.max(0, seekIndex - 1)]);
-          }} disabled={simulationGraphPending || shown.candles.length === 0}><PlayerIcon name="backward" /></button>
+            setCursor(current => replayStepCursor(seekPoints, current, -1));
+          }} disabled={simulationGraphPending || seekIndex === 0}><PlayerIcon name="backward" /></button>
         <button type="button" className="replay-player-button" title="Шаг вперёд"
           aria-label="Шаг вперёд" onClick={() => {
             setPlaying(false);
-            setCursor((current) => nextClosedCandleCursor(document.events, current));
-          }} disabled={simulationGraphPending || cursor >= total}><PlayerIcon name="forward" /></button>
+            setCursor(current => replayStepCursor(seekPoints, current, 1));
+          }} disabled={simulationGraphPending || replayStepCursor(seekPoints, cursor, 1) === cursor}><PlayerIcon name="forward" /></button>
         <input className="replay-seek" type="range" min={0} max={seekPoints.length - 1}
                 step={1} value={simulationGraphPending ? 0 : seekIndex}
                 disabled={simulationGraphPending} aria-label="Перемотка воспроизведения"

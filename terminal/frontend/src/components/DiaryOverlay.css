@@ -206,6 +206,24 @@
   gap: 0.4rem;
 }
 
+.diary-trade-entry { display: flex; align-items: stretch; gap: 0.35rem; min-width: 0; }
+.diary-trade-entry > .diary-trade-row { flex: 1; min-width: 0; }
+.diary-trade-actions { display: flex; gap: 0.25rem; align-self: center; }
+.diary-episode-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.diary-trade-actions button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2rem; height: 2rem; padding: 0.3rem;
+  border: 1px solid #405166; border-radius: 0.3rem;
+  background: #202b39; color: #cdd7e5; cursor: pointer;
+}
+.diary-trade-actions button:hover { background: #34445c; }
+.diary-trade-actions button:disabled { opacity: 0.35; cursor: default; }
+.diary-trade-actions svg { width: 1.15rem; height: 1.15rem; fill: none;
+  stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 540px) {
+  .diary-trade-entry { flex-wrap: wrap; }
+  .diary-trade-actions { margin-left: auto; }
+}
 .diary-trade-row {
   display: grid;
   gap: 0.42rem;

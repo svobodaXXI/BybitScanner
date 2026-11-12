@@ -4,7 +4,7 @@
 export type StrategyId =
   | "NAKED_RETURN" | "NAKED_RETEST" | "MIRROR_LEVELS"
   | "WEDGE_RISING" | "WEDGE_FALLING" | "IKIGAI_BOX"
-  | "H1_TREND" | "L_SHAPE" | "TRIANGLE";
+  | "H1_TREND" | "L_SHAPE" | "DOUBLE_TOP" | "DOUBLE_BOTTOM" | "TRIANGLE";
 
 export type StrategyOption = { id: StrategyId; label: string };
 export const MIRROR_OPTIONS: readonly StrategyOption[] = [
@@ -18,11 +18,12 @@ export const OTHER_OPTIONS: readonly StrategyOption[] = [
   { id: "IKIGAI_BOX", label: "Ikigai Box" },
   { id: "H1_TREND", label: "Трендовые H1/M5" },
   { id: "L_SHAPE", label: "L-shape" },
+  { id: "DOUBLE_TOP", label: "Двойная вершина" },
+  { id: "DOUBLE_BOTTOM", label: "Двойное дно" },
   { id: "TRIANGLE", label: "Triangle" },
 ];
 export const PLANNED_OPTIONS = [
-  "Двойная вершина", "Двойное дно",
-  "Голова и плечи", "Перевёрнутая голова и плечи",
+   "Голова и плечи", "Перевёрнутая голова и плечи",
   "Разворотные свечные формации (общий признак)",
 ] as const;
 export const ALL_SELECTABLE = [...MIRROR_OPTIONS, ...OTHER_OPTIONS].map(x => x.id);
@@ -62,6 +63,9 @@ export function toggleStrategy(current: RunSelection, id: StrategyId, enabled: b
 export function onlyWedges(): RunSelection {
   return { mirror: false, selected: ["WEDGE_RISING", "WEDGE_FALLING"] };
 }
+export function onlyBox(): RunSelection {
+  return { mirror: false, selected: ["IKIGAI_BOX"] };
+}
 export function isAllSelected(selection: RunSelection): boolean {
   return selection.mirror && ALL_SELECTABLE.every(id => selection.selected.includes(id));
 }
@@ -70,6 +74,14 @@ export function isAllSelected(selection: RunSelection): boolean {
 // A "month" preset is the agreed 30-day test interval; 3 months is 90 days.
 export type PeriodPreset = "DAY" | "WEEK" | "MONTH" | "THREE_MONTHS";
 export type PeriodIncrement = "HOUR" | "DAY" | "WEEK" | "MONTH";
+
+/** Only an exact Diary episode locator is accepted; it never starts a virtual run. */
+export function parseEpisodeLocator(value: string): string | null {
+  const candidate = value.trim();
+  if (/^te_[0-9a-f]{24}$/.test(candidate)) return candidate;
+  if (/^te_/i.test(candidate)) throw new Error("Неверный ID сделки: ожидается te_ и 24 строчных шестнадцатеричных символа");
+  return null;
+}
 
 /** The Source card and input share one reversible UTC coordinate format. */
 export function formatRunCoordinates(
@@ -170,12 +182,21 @@ export function validateInclusiveWindow(start: string, endInclusive: string): {
 }
 
 
-/** Only these two original Wedge Scanner/Robot detectors exist in local mode. */
+/** Native Scanner/Robot families that the local Python dispatcher actually implements.
+ * A Box campaign currently owns its symbol exclusively; never silently omit
+ * other checked strategies or create a second Robot for the same symbol.
+ */
 export const RUNNABLE_WEDGE_IDS = ["WEDGE_RISING", "WEDGE_FALLING"] as const;
+export const RUNNABLE_LEVEL_IDS = ["L_SHAPE", "DOUBLE_TOP", "DOUBLE_BOTTOM"] as const;
+export const RUNNABLE_NATIVE_IDS = [...RUNNABLE_WEDGE_IDS, "IKIGAI_BOX", ...RUNNABLE_LEVEL_IDS] as const;
 export function runnableWedgeSelection(selection: RunSelection): boolean {
-  return selection.selected.length > 0 && selection.selected.every(
-    id => RUNNABLE_WEDGE_IDS.some(wedge => wedge === id),
-  );
+  return (selection.selected.length === 1 && selection.selected[0] === "IKIGAI_BOX") ||
+    (selection.selected.length > 0 && selection.selected.every(
+      id => RUNNABLE_WEDGE_IDS.some(wedge => wedge === id),
+    )) ||
+    (selection.selected.length > 0 && selection.selected.every(
+      id => RUNNABLE_LEVEL_IDS.some(level => level === id),
+    ));
 }
 export function makeWedgeRunRequest(
   selection: RunSelection, symbol: string, start: string,
@@ -185,7 +206,7 @@ export function makeWedgeRunRequest(
   selected_strategies: StrategyId[]; initial_balance: string;
 } {
   if (!runnableWedgeSelection(selection)) {
-    throw new Error("Пока доступны только восходящий и нисходящий клинья");
+    throw new Error("Торговый прогон: клинья, отдельно Ikigai Box либо L-shape/двойные экстремумы. Разные семейства нельзя смешивать в одном прогоне.");
   }
   const { minutes } = validateInclusiveWindow(start, endInclusive);
   if (minutes > 90 * 1440) throw new Error("Максимальный прогон — 90 дней");
@@ -235,32 +256,51 @@ export function parseWedgeStatus(raw: unknown): LocalWedgeStatus {
 }
 
 export type LocalWedgeResult = {
-  namespace: "SIMULATION"; symbol: string; scenario_type: string;
-  requested_minutes: number; scanner_wedge_observations: number;
-  robot_retests_in_period: number; submitted_protected_limits: number;
+  namespace: "SIMULATION"; symbol: string; source_id: string;
+  risk_terms_status: "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED";
+  requested_minutes: number;
   virtual_fills: number; stop_exits: number; take_exits: number;
   realized_net_pnl: string; unrealized_pnl: string; total_net_pnl: string;
   total_fees: string; return_percent: string; max_drawdown_percent: string;
-  risk_terms_status: string; source_id: string;
-};
+} & ({
+  scenario_type: "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION";
+  scanner_wedge_observations: number; robot_retests_in_period: number;
+  submitted_protected_limits: number;
+} | {
+  scenario_type: "ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION";
+  scanner_box_observations: number; admitted_box_candidates: number;
+  box_entry_fills: number;
+} | {
+  scenario_type: "ORIGINAL_FROZEN_LEVEL_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION";
+  scanner_level_observations: number; native_robot_confirmations: number;
+  submitted_protected_limits: number; skipped_busy_entries: number;
+  rejected_risk_entries: number;
+});
 export function parseWedgeResult(raw: unknown): LocalWedgeResult {
   if (!raw || typeof raw !== "object") throw new Error("Недостоверный отчёт SIMULATION");
   const x = raw as Record<string, unknown>;
+  const isBox = x.scenario_type === "ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION";
+  const isLevel = x.scenario_type === "ORIGINAL_FROZEN_LEVEL_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION";
   if (x.namespace !== "SIMULATION" ||
-      x.scenario_type !== "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION" ||
+      (!isBox && !isLevel && x.scenario_type !== "ORIGINAL_WEDGE_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION") ||
       x.risk_terms_status !== "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED") {
-    throw new Error("Отчёт не соответствует локальному прогону клиньев");
+    throw new Error("Отчёт не соответствует оригинальному локальному Scanner/Robot");
   }
   for (const key of ["symbol", "source_id", "realized_net_pnl", "unrealized_pnl",
     "total_net_pnl", "total_fees", "return_percent", "max_drawdown_percent"]) {
     if (typeof x[key] !== "string") throw new Error("В отчёте отсутствует " + key);
   }
-  for (const key of ["requested_minutes", "scanner_wedge_observations",
-    "robot_retests_in_period", "submitted_protected_limits", "virtual_fills",
-    "stop_exits", "take_exits"]) {
+  for (const key of ["requested_minutes", "virtual_fills", "stop_exits", "take_exits",
+    ...(isBox
+      ? ["scanner_box_observations", "admitted_box_candidates", "box_entry_fills"]
+      : isLevel
+        ? ["scanner_level_observations", "native_robot_confirmations", "submitted_protected_limits", "skipped_busy_entries", "rejected_risk_entries"]
+        : ["scanner_wedge_observations", "robot_retests_in_period", "submitted_protected_limits"])]) {
     if (!Number.isSafeInteger(x[key]) || (x[key] as number) < 0) {
       throw new Error("Неверное количество событий в отчёте");
     }
   }
+  if (isBox && (x.box_entry_fills as number) > (x.virtual_fills as number))
+    throw new Error("Box входов больше всех подтверждённых исполнений");
   return x as LocalWedgeResult;
 }

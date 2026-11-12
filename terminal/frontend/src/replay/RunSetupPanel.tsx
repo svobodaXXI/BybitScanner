@@ -3,8 +3,8 @@ import { type ReplayDocument, type ReplayEvent } from "./replayModel";
 import { streamWedge } from "./streamWedge";
 import {
   ALL_SELECTABLE, MIRROR_OPTIONS, OTHER_OPTIONS, PLANNED_OPTIONS,
-  clearAll, isAllSelected, onlyWedges, presetEndInclusive, adjustInclusiveWindow,
-  parseRunCoordinates, formatRunDuration,
+  clearAll, isAllSelected, onlyWedges, onlyBox, presetEndInclusive, adjustInclusiveWindow,
+  parseRunCoordinates, parseEpisodeLocator, formatRunDuration,
   selectAll, toggleMirror, toggleStrategy, validateInclusiveWindow,
   makeWedgeRunRequest, parseWedgeStatus, runnableWedgeSelection,
   type PeriodPreset, type PeriodIncrement, type RunSelection, type StrategyId,
@@ -20,15 +20,16 @@ const STEPS: Array<{ id: PeriodIncrement; name: string }> = [
   { id: "WEEK", name: "1 неделя" },
 ];
 
-/** Local-only Wedge execution via loopback: never production /api or PAPER. */
+/** Native Wedge/Box Scanner+Robot via one isolated loopback SIMULATION adapter. */
 export function RunSetupPanel({
-  symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
+  symbol, onArchiveSymbol, onPasteSymbol, onEpisodeLocator, onSimulationStart, onSimulationReady,
   onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
   onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange,
 }: {
   symbol: string;
   onArchiveSymbol: (archiveSymbol: string) => boolean;
   onPasteSymbol: (symbol: string) => void;
+  onEpisodeLocator: (episodeId: string) => void;
   onSimulationStart: (request: WedgeRunRequest) => void;
   onSimulationBusy: (busy: boolean) => void;
   playRequestId: number;
@@ -56,6 +57,8 @@ export function RunSetupPanel({
   const [coordinateError, setCoordinateError] = useState("");
   const datesEdited = useRef(false);
   const preparedRun = useRef<WedgeRunRequest | null>(null);
+  const currentSelection = useRef(selection);
+  currentSelection.current = selection;
   const generation = useRef(0);
   const running = useRef(false);
   const requestController = useRef<AbortController | null>(null);
@@ -68,7 +71,7 @@ export function RunSetupPanel({
   }, [start, end]);
   const active = ALL_SELECTABLE.filter(id => selection.selected.includes(id));
   const mirrorSelected = MIRROR_OPTIONS.filter(x => selection.selected.includes(x.id)).length;
-  const wedgesOnly = runnableWedgeSelection(selection);
+  const runnableNative = runnableWedgeSelection(selection);
 
   // The chart is another VIEW of the same checked selection. Never
   // let public MARKET_ONLY geometry disregard the owner's strategy choices.
@@ -140,9 +143,18 @@ export function RunSetupPanel({
   }, [onSimulationReady, onSimulationAppend, onSimulationFailed, onSimulationBusy]);
 
   useEffect(() => {
-    if (playRequestId > 0 && preparedRun.current)
-      void runWedges(preparedRun.current, generation.current);
-  }, [playRequestId, runWedges]);
+    if (playRequestId <= 0 || !preparedRun.current) return;
+    // Selection is user-owned and may change after Apply. Never silently
+    // trade the stale Wedge/Box selection shown under another checkbox.
+    const selected = currentSelection.current;
+    if (preparedRun.current.selected_strategies.join(",") !== selected.selected.join(",") ||
+        !runnableWedgeSelection(selected)) {
+      setRunError("Список стратегий изменён. Нажмите «Применить» перед торговым запуском.");
+      onSimulationFailed();
+      return;
+    }
+    void runWedges(preparedRun.current, generation.current);
+  }, [playRequestId, runWedges, onSimulationFailed]);
 
   const updateStart = (value: string) => {
     datesEdited.current = true;
@@ -172,6 +184,21 @@ export function RunSetupPanel({
   };
   const applyCoordinates = (value: string) => {
     try {
+      const episodeId = parseEpisodeLocator(value);
+      if (episodeId !== null) {
+        // Do not let a previously prepared virtual strategy run survive a
+        // switch to a PAPER episode ID with no verified market history.
+        requestController.current?.abort();
+        requestController.current = null;
+        running.current = false;
+        generation.current++;
+        preparedRun.current = null;
+        onSimulationBusy(false);
+        setLoading(false); setReport(null); setRunError("");
+        setCoordinateText(episodeId); setCoordinateError("");
+        onEpisodeLocator(episodeId);
+        return;
+      }
       const coords = value.trim() ? parseRunCoordinates(value) :
         { symbol, start_utc: start, end_utc_inclusive: end };
       const request = makeWedgeRunRequest(
@@ -223,6 +250,7 @@ export function RunSetupPanel({
               <strong>Все стратегии</strong>
             </label>
             <button type="button" onClick={() => setSelection(onlyWedges())}>Только клинья</button>
+            <button type="button" onClick={() => setSelection(onlyBox())}>Только Ikigai Box</button>
             <button type="button" onClick={() => setSelection(clearAll())}>Снять все</button>
           </div>
           <div className="replay-run-mirror">
@@ -266,9 +294,9 @@ export function RunSetupPanel({
         <fieldset className="replay-run-dates">
           <legend>Исторический период · UTC</legend>
           <div className="replay-run-coordinates">
-            <label>Вставить тикер и даты · UTC
+            <label>Вставить тикер и даты · UTC или ID сделки
               <input aria-label="Координаты прогона" type="text" value={coordinateText}
-                placeholder="XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59"
+                placeholder="XRPUSDT | 2026-09-11T00:00 | 2026-09-11T23:59 или te_..."
                 onChange={e => { setCoordinateText(e.target.value); setCoordinateError(""); }} />
             </label>
             <div className="replay-run-coordinate-actions">
@@ -331,9 +359,10 @@ export function RunSetupPanel({
         <span data-selected-strategies={active.join(",")} aria-hidden="true" />
         {loading && <span>Проверка M1 и расчёт виртуального прогона…</span>}
       </div>
-      {!wedgesOnly && active.length > 0 &&
+      {!runnableNative && active.length > 0 &&
         <p className="replay-run-error" role="status">
-          Отмеченные стратегии сохранены как выбор, но торговый запуск пока поддерживает только два клина.
+          Торговый запуск: клинья, отдельно Ikigai Box или L-shape и двойные экстремумы.
+          Разные семейства нельзя смешивать в одном виртуальном счёте.
         </p>}
       {statusError && <p role="status" className="replay-run-error">{statusError}</p>}
       {status && !status.can_attempt &&
@@ -352,10 +381,24 @@ export function RunSetupPanel({
           нереализованный: {report.unrealized_pnl} USDT</span>
         <span>Суммарный PnL: {report.total_net_pnl} USDT ·
           доходность: {report.return_percent}% · просадка: {report.max_drawdown_percent}%</span>
-        <span>Обнаружено клиньев: {report.scanner_wedge_observations} ·
-          ретестов: {report.robot_retests_in_period} ·
-          LIMIT: {report.submitted_protected_limits} ·
-          исполнений: {report.virtual_fills} · STOP: {report.stop_exits} · TAKE: {report.take_exits}</span>
+        {report.scenario_type === "ORIGINAL_IKIGAI_BOX_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION"
+          ? <span>Ikigai Box: найдено {report.scanner_box_observations} ·
+              допущено Robot {report.admitted_box_candidates} ·
+              исполнено входов {report.box_entry_fills} ·
+              всех исполнений {report.virtual_fills} ·
+              STOP: {report.stop_exits} · TAKE: {report.take_exits}</span>
+          : report.scenario_type === "ORIGINAL_FROZEN_LEVEL_SCANNER_ROBOT_LOCAL_OHLC_SIMULATION"
+          ? <span>L-shape / двойные экстремумы: сигналов Scanner {report.scanner_level_observations} ·
+              подтверждений Robot {report.native_robot_confirmations} ·
+              LIMIT: {report.submitted_protected_limits} ·
+              занято/заблокировано: {report.skipped_busy_entries}/{report.rejected_risk_entries} ·
+              исполнений: {report.virtual_fills} · STOP: {report.stop_exits} ·
+              TAKE: {report.take_exits}</span>
+          : <span>Клинья: найдено {report.scanner_wedge_observations} ·
+              ретестов {report.robot_retests_in_period} ·
+              LIMIT: {report.submitted_protected_limits} ·
+              исполнений: {report.virtual_fills} · STOP: {report.stop_exits} ·
+              TAKE: {report.take_exits}</span>}
         <small>Модель OHLC, не фактические биржевые исполнения. Параметры риска — локальные исследовательские допущения.</small>
       </section>}
     </section>

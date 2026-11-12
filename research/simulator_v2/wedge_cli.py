@@ -26,6 +26,9 @@ from research.simulator_v2.box_backtest import (
 )
 from research.simulator_v2.ikigai_observer import IkigaiScannerConfig
 from research.simulator_v2.ikigai_plan_preview import BoxSimulationRiskTerms
+from research.simulator_v2.frozen_level_backtest import (
+    FrozenLevelBacktestResult, run_cached_frozen_level_trade_range,
+)
 
 PROFILE_SCHEMA = "TIME_MACHINE_WEDGE_SIMULATION_V1"
 MANIFEST_SCHEMA = "SIMULATOR_V2_PUBLIC_TRADES_DERIVED_M1_RANGE_V1"
@@ -38,7 +41,11 @@ SELECTABLE = {
     "WEDGE_FALLING": "Falling Wedge",
     "WEDGE_RISING": "Rising Wedge",
     "IKIGAI_BOX": "IKIGAI_BOX",
+    "L_SHAPE": "L_SHAPE",
+    "DOUBLE_TOP": "DOUBLE_TOP",
+    "DOUBLE_BOTTOM": "DOUBLE_BOTTOM",
 }
+NATIVE_LEVEL_IDS = frozenset({"L_SHAPE", "DOUBLE_TOP", "DOUBLE_BOTTOM"})
 MAX_CONFIG_BYTES = 24_000
 MAX_MANIFEST_BYTES = 125_000
 
@@ -134,7 +141,7 @@ def run_from_time_machine_config(
     cache_dir: Path, latest_closed_boundary_ms: int,
     capture_replay: bool = False,
     on_replay_events: Callable[[list[dict[str, object]]], None] | None = None,
-) -> WedgeBacktestResult | BoxBacktestResult:
+) -> WedgeBacktestResult | BoxBacktestResult | FrozenLevelBacktestResult:
     """Dispatch one proven native strategy family into the shared exchange."""
     if not isinstance(config, Mapping) or (
         config.get("schema") != PROFILE_SCHEMA or config.get("namespace") != "SIMULATION"
@@ -149,10 +156,13 @@ def run_from_time_machine_config(
     if not isinstance(selected, list) or not selected or any(
         not isinstance(x, str) or x not in SELECTABLE for x in selected
     ) or len(set(selected)) != len(selected):
-        raise ValueError("only implemented Wedge or Ikigai Box may trade")
+        raise ValueError("only implemented native Scanner/Robot strategies may trade")
     box_selected = "IKIGAI_BOX" in selected
-    if box_selected and len(selected) != 1:
-        raise ValueError("Box and Wedge cannot share one symbol owner in the same run yet")
+    level_selected = set(selected) & NATIVE_LEVEL_IDS
+    if (box_selected and len(selected) != 1) or (
+        level_selected and len(level_selected) != len(selected)
+    ):
+        raise ValueError("native Robot families cannot share one symbol owner in the same run")
     patterns = frozenset(
         SELECTABLE[s] for s in selected if s != "IKIGAI_BOX"
     )
@@ -183,6 +193,19 @@ def run_from_time_machine_config(
     end_ms = parse_utc_minute(config.get("end_utc_inclusive"))
     if not isinstance(cache_dir, Path) or cache_dir.is_symlink():
         raise ValueError("dedicated local SIMULATION cache directory required")
+    if level_selected:
+        return run_cached_frozen_level_trade_range(
+            cache_dir=cache_dir, symbol=symbol, proofs=proofs,
+            latest_closed_boundary_ms=latest_closed_boundary_ms,
+            simulation_run_id=config["simulation_run_id"],
+            initial_balance=_decimal_string(config.get("initial_balance"), "initial_balance"),
+            start_ms=start_ms, end_inclusive_ms=end_ms,
+            selected=frozenset(level_selected),
+            scanner_window_bars=scanner_config.window_bars,
+            settings=settings,
+            capture_replay=capture_replay,
+            on_replay_events=on_replay_events,
+        )
     if box_selected:
         return run_cached_box_trade_range(
             cache_dir=cache_dir, symbol=symbol, proofs=proofs,

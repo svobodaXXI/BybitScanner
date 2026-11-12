@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
+import { completeHourlyCandles, replayFrameCursors, replayFrameIndex, replayStepCursor, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations, visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy, type ReplayDocument } from "./replayModel";
 
 describe("native local Wedge and Ikigai M5 observation boundaries", () => {
   const t = Date.UTC(2026, 10, 8);
@@ -89,6 +89,38 @@ describe("standalone SIMULATION viewer contract", () => {
     }]);
     expect(completeHourlyCandles(bars)).toHaveLength(1); // Last H1 is incomplete.
     expect(completeHourlyCandles([bars[0], ...bars.slice(2, 12)])).toEqual([]); // A gap is not invented.
+  });
+
+  it("steps one fully closed selected TF candle while keeping same-close receipts causal", () => {
+    const events = syntheticReplay().events; // 64 real-shaped 5m fixture bars, 5 H1 + 4m5
+    const m5 = replayFrameCursors(events, "5m");
+    const h1 = replayFrameCursors(events, "1h");
+    expect(m5).toHaveLength(65);
+    expect(h1).toHaveLength(6); // 5 full UTC hours; trailing 4 M5 stay hidden in H1 mode
+    for (let hour = 1; hour <= 5; hour++) {
+      const cursor = replayStepCursor(h1, h1[hour - 1], 1);
+      expect(cursor).toBe(h1[hour]);
+      const frame = visibleReplay(events, cursor);
+      expect(frame.candles).toHaveLength(hour * 12);
+      expect(completeHourlyCandles(frame.candles)).toHaveLength(hour);
+      expect(events.slice(0, cursor).every(event =>
+        event.time_ms <= frame.lastTimeMs!)).toBe(true);
+    }
+    // Step back removes one whole H1, even after switching from mid-hour M5.
+    expect(replayStepCursor(h1, h1[2], -1)).toBe(h1[1]);
+    expect(replayFrameIndex(h1, m5[27])).toBe(2);
+    expect(replayStepCursor(h1, m5[27], -1)).toBe(h1[1]);
+    expect(replayStepCursor(h1, m5[27], 1)).toBe(h1[3]);
+    expect(replayStepCursor(h1, h1[5], 1)).toBe(h1[5]);
+    expect(replayStepCursor(m5, m5[2], -1)).toBe(m5[1]);
+
+    // Before the twelfth M5 close there is no legal hourly frame.
+    expect(replayFrameCursors(events.slice(0, m5[11]), "1h")).toEqual([0]);
+    // A missing M5 invalidates that H1; no fake hourly candle is made.
+    const firstClose = events.find(event => event.kind === "CANDLE_CLOSED")!.time_ms;
+    const missing = events.filter(event =>
+      event.kind !== "CANDLE_CLOSED" || event.time_ms !== firstClose + 5 * 300_000);
+    expect(replayFrameCursors(missing, "1h")).toHaveLength(5);
   });
 
   it("reveals 3-pivot H1 support at the first legally confirmed H1 close, not after the fourth", () => {
@@ -181,6 +213,30 @@ describe("standalone SIMULATION viewer contract", () => {
     expect(() => parseReplayDocument({
       ...input, market_data_source: "BYBIT_PRIVATE_HISTORY",
     })).toThrow();
+  });
+
+  it("preserves native level origin only on a proven SIMULATION LIMIT", () => {
+    const base = syntheticReplay();
+    const withStrategy = {
+      ...base, events: base.events.map(event =>
+        event.kind === "ENTRY_SIGNAL" ? {
+          ...event, strategy_id: "DOUBLE_TOP",
+          trade_id: "SIMULATION:" + base.simulation_run_id + ":native_test",
+        } : event),
+    };
+    const parsed = parseReplayDocument(withStrategy);
+    expect(parsed.events.find(event => event.kind === "ENTRY_SIGNAL")?.strategy_id)
+      .toBe("DOUBLE_TOP");
+    expect(() => parseReplayDocument({
+      ...withStrategy,
+      events: withStrategy.events.map(event =>
+        event.kind === "ENTRY_SIGNAL" ? { ...event, strategy_id: "MIRROR_LEVELS" } : event),
+    })).toThrow(/стратегия/);
+    expect(() => parseReplayDocument({
+      ...withStrategy,
+      events: withStrategy.events.map(event =>
+        event.kind === "ENTRY_FILLED" ? { ...event, strategy_id: "DOUBLE_TOP" } : event),
+    })).toThrow(/стратегия/);
   });
 
   it("shows only completed candles and fills revealed at the current cursor", () => {

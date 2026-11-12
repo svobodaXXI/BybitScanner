@@ -44,6 +44,42 @@ SIM_DATA = HERE / "simulator-v2-data"
 SIM_LOCK = threading.Lock()
 MAX_SIM_REQUEST_BYTES = 4_096
 MAX_SIM_CONFIG_BYTES = 12_000
+# Stable loopback URL enables the verified, read-only Statistics → Simulator
+# handoff from a separate account UI. No external bind, CORS or PAPER API.
+LOCAL_VIEWER_PORT = 48765
+
+
+def trusted_statistics_origin() -> str | None:
+    """Read an independently installed exact HTTPS origin, NEVER the episode URL.
+
+    This small local owner-controlled config belongs to the SIMULATION app,
+    not to the remote Statistics opener. A missing, ambiguous, malformed or
+    symlinked config disables automatic handoff; manual JSON import still works.
+    No wildcard, scheme downgrade, credentials, path or origin inference.
+    """
+    path = SIM_DATA / "trusted-statistics-origin.txt"
+    if SIM_DATA.is_symlink() or path.is_symlink() or not path.is_file():
+        return None
+    try:
+        with path.open("rb") as source:
+            raw = source.read(258)
+        if not raw or len(raw) > 257:
+            return None
+        value = raw.decode("ascii").removesuffix("\n")
+        if (not value or len(value) > 256 or value.strip() != value
+                or any(char in value for char in ("*", "\\", "\r", "\n"))):
+            return None
+        parsed = urlsplit(value)
+        if (parsed.scheme != "https" or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.path or parsed.query or parsed.fragment
+                or value != f"https://{parsed.netloc}"):
+            return None
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            return None
+        return value
+    except (OSError, ValueError, UnicodeError):
+        return None
 
 
 def local_simulation_status() -> dict[str, object]:
@@ -100,7 +136,10 @@ def local_simulation_status() -> dict[str, object]:
         "python_dependencies_available": deps, "archive_files_present": data,
         "wedge_risk_profile_present": risk,
         "can_attempt": engine and deps and data and risk,
-        "supported_strategies": ["WEDGE_FALLING", "WEDGE_RISING", "IKIGAI_BOX"],
+        "supported_strategies": [
+            "WEDGE_FALLING", "WEDGE_RISING", "IKIGAI_BOX",
+            "L_SHAPE", "DOUBLE_TOP", "DOUBLE_BOTTOM",
+        ],
         "archive_validation": "RECHECKED_ON_RUN_NOT_CLAIMED_READY",
     }
     if archive_hint is not None:
@@ -112,7 +151,7 @@ def run_local_simulation(
     request_data: object, *,
     on_stream: Callable[[str, dict[str, object]], None] | None = None,
 ) -> dict[str, object]:
-    """Original Wedge or Ikigai Box on known local public M1 cache.
+    """Original Wedge, Box or native frozen levels on known local public M1 cache.
 
     Does not download anything, import production Scanner/Robot runtimes,
     accept arbitrary file paths, or write to any exchange/PAPER ledger.
@@ -128,13 +167,17 @@ def run_local_simulation(
     ):
         raise ValueError("invalid local wedge run field")
     selected = request_data["selected_strategies"]
-    if (not isinstance(selected, list) or not selected or len(selected) > 2
-            or any(s not in ("WEDGE_RISING", "WEDGE_FALLING", "IKIGAI_BOX")
-                   for s in selected)
+    native_level_ids = frozenset({"L_SHAPE", "DOUBLE_TOP", "DOUBLE_BOTTOM"})
+    supported = native_level_ids | {"WEDGE_RISING", "WEDGE_FALLING", "IKIGAI_BOX"}
+    if (not isinstance(selected, list) or not selected or len(selected) > 3
+            or any(not isinstance(s, str) or s not in supported for s in selected)
             or len(set(selected)) != len(selected)):
-        raise ValueError("only implemented Wedge or Ikigai Box may trade")
-    if "IKIGAI_BOX" in selected and len(selected) != 1:
-        raise ValueError("Ikigai Box currently requires an isolated one-strategy run")
+        raise ValueError("only implemented native Scanner/Robot families may trade")
+    level_selected = set(selected) & native_level_ids
+    if ("IKIGAI_BOX" in selected and len(selected) != 1) or (
+        level_selected and len(level_selected) != len(selected)
+    ):
+        raise ValueError("each native Robot family requires one single-owner run")
 
     status = local_simulation_status()
     if not status["can_attempt"]:
@@ -194,6 +237,87 @@ def run_local_simulation(
     payload["risk_terms_status"] = "EXPLICIT_RESEARCH_ASSUMPTIONS_NOT_EXCHANGE_VERIFIED"
     return payload
 
+
+
+def read_verified_episode_market(*, symbol: str, start_ms: int, end_ms: int) -> dict[str, object]:
+    """Read-only projection of PINNED local M1 through the existing timeline.
+
+    Accepts only precise M5-aligned UTC times; no remote GET, Robot, PAPER
+    ledger or simulation orders. An incomplete archived M5 is never drawn.
+    Called only for owner-selected immutable episode facts.
+    """
+    m5 = FIVE_MINUTES_MS
+    max_window = 7 * 86_400_000
+    if (not isinstance(symbol, str) or not SYMBOL_RE.fullmatch(symbol)
+            or type(start_ms) is not int or type(end_ms) is not int
+            or start_ms < 0 or start_ms % m5 or end_ms % m5
+            or not 0 < end_ms - start_ms <= max_window):
+        raise ValueError("expected one symbol and a bounded M5-aligned UTC episode window")
+    from research.simulator_v2.wedge_cli import MAX_MANIFEST_BYTES, parse_manifest
+    from research.simulator_v2.history import last_closed_m1_boundary_ms
+    from research.simulator_v2.trade_range import (
+        _ordered_proofs, iter_pinned_trade_chunks,
+    )
+    from research.simulator_v2.timeline import IsolatedTimeline
+
+    manifest_path = SIM_DATA / "manifest.json"
+    cache_dir = SIM_DATA / "m1-cache"
+    if (SIM_DATA.is_symlink() or manifest_path.is_symlink()
+            or cache_dir.is_symlink() or not manifest_path.is_file()
+            or not cache_dir.is_dir()):
+        raise ValueError("verified local M1 archive is unavailable")
+    with manifest_path.open("rb") as source:
+        raw = source.read(MAX_MANIFEST_BYTES + 1)
+    if len(raw) > MAX_MANIFEST_BYTES:
+        raise ValueError("local archive manifest exceeds limit")
+    latest = last_closed_m1_boundary_ms()
+    manifest_symbol, proofs = parse_manifest(
+        json.loads(raw), latest_closed_boundary_ms=latest,
+    )
+    if symbol != manifest_symbol:
+        raise ValueError("episode symbol differs from pinned local M1 source")
+    source_id, archive_start, archive_end = _ordered_proofs(
+        proofs, symbol=symbol, latest_closed_boundary_ms=latest,
+    )
+    if not (archive_start <= start_ms < end_ms <= archive_end and end_ms <= latest):
+        raise ValueError("episode has no complete verified local M1 history")
+    day_ms = 86_400_000
+    first = (start_ms - archive_start) // day_ms
+    last = (end_ms - archive_start + day_ms - 1) // day_ms
+    selected = proofs[first:last]
+    run_id = "episode_market_" + token_hex(9)
+    timeline = IsolatedTimeline(simulation_run_id=run_id, symbol=symbol)
+    events: list[dict[str, object]] = []
+    for chunk in iter_pinned_trade_chunks(
+        cache_dir=cache_dir, symbol=symbol, proofs=selected,
+        latest_closed_boundary_ms=latest,
+    ):
+        for minute in chunk.candles:
+            if minute.start_ms >= end_ms:
+                break
+            frame = timeline.step(minute)
+            bar = frame.newly_closed_5m
+            if bar is None or not (start_ms <= bar.start_ms and bar.end_ms <= end_ms):
+                continue
+            events.append({
+                "source": "SIMULATION", "simulation_run_id": run_id,
+                "sequence": len(events) + 1, "kind": "CANDLE_CLOSED",
+                "time_ms": bar.end_ms,
+                "candle": {
+                    "start_ms": bar.start_ms, "end_ms": bar.end_ms,
+                    "open": float(bar.open), "high": float(bar.high),
+                    "low": float(bar.low), "close": float(bar.close),
+                    "volume": float(bar.volume),
+                },
+            })
+    if len(events) != (end_ms - start_ms) // m5:
+        raise ValueError("episode M5 history incomplete; no candle substitution")
+    return {
+        "source": "SIMULATION", "simulation_run_id": run_id,
+        "symbol": symbol, "mode": "MARKET_ONLY", "demo": False,
+        "timeframe": "5m", "market_data_source": "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M",
+        "source_id": source_id, "events": events,
+    }
 
 
 def fetch_public_klines(symbol: str, interval: str, limit: int, *, end_ms: int):
@@ -325,6 +449,22 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                 self._error(403, "Local viewer only")
                 return
             url = urlsplit(self.path)
+            if url.path == "/local-replay/simulation/trusted-statistics-origin":
+                address = f"http://127.0.0.1:{self.server.server_address[1]}"
+                localhost = f"http://localhost:{self.server.server_address[1]}"
+                if (url.query or self.headers.get("Sec-Fetch-Site") == "cross-site"
+                        or self.headers.get("Origin") not in (None, "", address, localhost)):
+                    self._error(403, "Same-origin trusted Statistics configuration only")
+                    return
+                origin = trusted_statistics_origin()
+                if origin is None:
+                    self._error(503, "Trusted Statistics origin is not configured locally")
+                    return
+                body = json.dumps({
+                    "schema": "LOCAL_TRUSTED_STATISTICS_ORIGIN_V1", "origin": origin,
+                }, separators=(",", ":")).encode("utf-8")
+                self._send(200, body, "application/json; charset=utf-8")
+                return
             if url.path == "/local-replay/simulation/status":
                 if url.query or self.headers.get("Sec-Fetch-Site") == "cross-site":
                     self._error(403, "Local SIMULATION only")
@@ -334,6 +474,38 @@ def handler_factory(static_dir: Path = STATIC_DIR,
                     200, json.dumps(info, ensure_ascii=False).encode("utf-8"),
                     "application/json; charset=utf-8",
                 )
+                return
+            if url.path == "/local-replay/simulation/pinned-market":
+                if (self.headers.get("Sec-Fetch-Site") == "cross-site"
+                        or self.headers.get("Origin") not in (
+                            None, "", f"http://127.0.0.1:{self.server.server_address[1]}",
+                            f"http://localhost:{self.server.server_address[1]}",
+                        )):
+                    self._error(403, "Same-origin read-only M1 archive only")
+                    return
+                try:
+                    params = parse_qs(url.query, strict_parsing=True)
+                    if set(params) != {"symbol", "start_ms", "end_ms"} or any(
+                        len(value) != 1 for value in params.values()
+                    ):
+                        raise ValueError("expected symbol/start_ms/end_ms")
+                    result = read_verified_episode_market(
+                        symbol=params["symbol"][0],
+                        start_ms=int(params["start_ms"][0]),
+                        end_ms=int(params["end_ms"][0]),
+                    )
+                    body = json.dumps(result, ensure_ascii=False, allow_nan=False,
+                                      separators=(",", ":")).encode("utf-8")
+                    if len(body) > MAX_RESPONSE_BYTES:
+                        self._error(413, "episode history exceeds bounded response")
+                        return
+                    self._send(200, body, "application/json; charset=utf-8")
+                except (ValueError, TypeError, OSError, OverflowError) as exc:
+                    self._error(422, str(exc)[:250])
+                except (ImportError, ModuleNotFoundError):
+                    self._error(503, "Verified local archive engine unavailable")
+                except Exception:
+                    self._error(503, "Verified local episode history unavailable")
                 return
             if url.path == "/local-replay/bundled":
                 # One immutable PUBLIC, MARKET_ONLY archive shipped with the
@@ -511,13 +683,23 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Local-only read-only historical simulator viewer")
     parser.add_argument("--check", action="store_true", help="verify packaged assets/imports, no network")
     parser.add_argument("--no-browser", action="store_true", help="run loopback server without opening the browser")
+    parser.add_argument("--port", type=int, default=LOCAL_VIEWER_PORT,
+                        help="local loopback port (default: Statistics bridge 48765; 0 = ephemeral)")
     args = parser.parse_args()
     if not (STATIC_DIR / "replay.html").is_file():
         raise SystemExit("Missing standalone replay build: dist/replay.html")
     if args.check:
         print("LOCAL_REPLAY_PACKAGE_OK (assets and imports); no HTTP/network exercised")
         return
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_factory())
+    if not 0 <= args.port <= 65535:
+        raise SystemExit("invalid loopback port")
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", args.port), handler_factory())
+    except OSError as exc:
+        raise SystemExit(
+            f"Local simulator loopback port {args.port} unavailable; "
+            "close the other simulator instance or select --port explicitly"
+        ) from exc
     port = server.server_address[1]
     uri = f"http://127.0.0.1:{port}/replay.html"
     print("Local research simulation viewer: " + uri, flush=True)
