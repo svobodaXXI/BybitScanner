@@ -3087,6 +3087,33 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
 
+        if parsed.path == "/api/diary/simulator-bridge/poll":
+            # A paired local device initiates an outbound GET. No Nginx owner
+            # credentials or trading secrets are shared with the device.
+            from terminal.diary.simulator_launch_relay import (
+                RelayForbidden, RelayInvalid,
+            )
+            relay = getattr(self.server, "simulator_launch_relay", None)
+            if relay is None:
+                self._json_response(503, {"ok": False, "error": "simulator_bridge_disabled"})
+                return
+            try:
+                params = parse_qs(parsed.query, keep_blank_values=True)
+                if set(params) != {"device_id"} or len(params["device_id"]) != 1:
+                    raise RelayInvalid("invalid_simulator_device")
+                event = relay.poll(
+                    device=params["device_id"][0],
+                    token=self.headers.get("X-BybitScanner-Simulator-Device-Token", ""),
+                )
+            except RelayForbidden:
+                self._json_response(403, {"ok": False, "error": "simulator_device_unauthorized"})
+                return
+            except RelayInvalid:
+                self._json_response(400, {"ok": False, "error": "invalid_simulator_device"})
+                return
+            self._json_response(200, {"ok": True, **event})
+            return
+
         if parsed.path == OPERATOR_DIAGNOSTICS_PATH:
             if not self._operator_authorized():
                 self._json_response(403, {"ok": False, "error": "operator_unauthorized"})
@@ -4038,6 +4065,59 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path in {
+            "/api/diary/simulator-bridge/request",
+            "/api/diary/simulator-bridge/status",
+            "/api/diary/simulator-bridge/ack",
+        }:
+            # Owner-facing routes rely on existing Nginx owner authentication
+            # AND pinned same-origin browser checks. Device ACK has its own
+            # independent token and never receives PAPER or operator authority.
+            from terminal.diary.simulator_launch_relay import (
+                RelayForbidden, RelayInvalid, RelayUnavailable,
+            )
+            relay = getattr(self.server, "simulator_launch_relay", None)
+            if relay is None:
+                self._json_response(503, {"ok": False, "error": "simulator_bridge_disabled"})
+                return
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 1 <= size <= 320:
+                    raise RelayInvalid("invalid_simulator_bridge_payload_size")
+                if path.endswith("/request"):
+                    payload = self._payload({"episode_id"})
+                    result = relay.enqueue(
+                        payload["episode_id"],
+                        request_origin=self.headers.get("Origin", ""),
+                        fetch_site=self.headers.get("Sec-Fetch-Site", ""),
+                    )
+                elif path.endswith("/status"):
+                    payload = self._payload({"request_id"})
+                    result = relay.status(
+                        payload["request_id"],
+                        request_origin=self.headers.get("Origin", ""),
+                        fetch_site=self.headers.get("Sec-Fetch-Site", ""),
+                    )
+                else:
+                    payload = self._payload({"device_id", "request_id", "launched"})
+                    result = relay.acknowledge(
+                        device=payload["device_id"],
+                        token=self.headers.get("X-BybitScanner-Simulator-Device-Token", ""),
+                        request_id=payload["request_id"], launched=payload["launched"],
+                    )
+            except RelayForbidden:
+                self._json_response(403, {"ok": False, "error": "simulator_bridge_unauthorized"})
+                return
+            except RelayUnavailable as exc:
+                self._json_response(503, {"ok": False, "error": str(exc)})
+                return
+            except (RelayInvalid, ValueError, TypeError, KeyError,
+                    json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_simulator_bridge_request"})
+                return
+            self._json_response(200, {"ok": True, **result})
+            return
+
         if path == "/api/workspace/owner-unscanned-signal":
             # Standalone, untrusted owner chart evidence in the existing
             # append-only proposal archive. No Scanner or Robot admission.
@@ -5233,6 +5313,16 @@ def main() -> None:
 
         server.operator_token = os.environ.get("BYBITSCANNER_OPERATOR_TOKEN", "").strip()
         server.autopilot_owner_token = os.environ.get(AUTOPILOT_OWNER_TOKEN_ENV, "").strip()
+        from terminal.diary.simulator_launch_relay import (
+            SimulatorLaunchRelay, RelayInvalid,
+        )
+        try:
+            server.simulator_launch_relay = SimulatorLaunchRelay.from_environment()
+        except RelayInvalid:
+            # An invalid optional research relay must never prevent the
+            # protected PAPER runtime from starting or force a STOP.
+            LOGGER.warning("Optional simulator launch relay disabled: configuration invalid")
+            server.simulator_launch_relay = None
         server.runtime = runtime
         server.market_data = market_data
         server.robot_protection_coverage = robot_protection_coverage
