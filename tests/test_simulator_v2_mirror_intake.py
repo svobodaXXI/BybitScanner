@@ -214,6 +214,56 @@ class NativeMirrorSimulatorIntakeTests(unittest.TestCase):
         self.assertEqual(session.exchange.robot_limits, ())
         self.assertEqual(robot._store.get_robot_candidate(trade.candidate_id).status, "CLOSED")
 
+    def test_experimental_one_fill_lock_uses_attested_campaign_not_signal(self):
+        session = self.session("mirror_one_fill_campaign_unit")
+        state, entry_id = native_scanner_state()
+        with ConnectedSimulationRobot(
+            session, tick_size=D("0.01"), terms=terms(),
+            mirror_working_volume_usdt=D("250"),
+            mirror_risk_limit_usdt=D("300"),
+            mirror_auto_scan=True,
+            mirror_one_filled_trade_per_campaign=True,
+        ) as robot:
+            self.populate(session, robot)
+            candidate_id = robot.admit_mirror(state, entry_id=entry_id)
+            key = robot._mirror_campaign_key(
+                state["standalone_entries"][0]["terms"],
+            )
+            self.assertNotIn(key, robot._mirror_consumed_campaigns)
+            self._filled_mirror(session, robot, candidate_id)
+            self.assertIn(key, robot._mirror_consumed_campaigns)
+            session.step(self._closed_m1(
+                41, op="105.2", high="111", low="105", close="110",
+            ))
+            robot.after_committed_minute()
+            self.assertTrue(robot.can_admit)
+            with self.assertRaisesRegex(
+                SimulationExecutionNotConnected, "already has an attested",
+            ):
+                robot.admit_mirror(state, entry_id=entry_id)
+            different = dict(state["standalone_entries"][0]["terms"])
+            different["level_breakout_close_ms"] += FIVE
+            self.assertNotIn(robot._mirror_campaign_key(different),
+                             robot._mirror_consumed_campaigns)
+            self.assertEqual(robot.mirror_experiment_suppressed, ())
+
+    def test_experimental_gate_requires_explicit_auto_mode(self):
+        session = self.session("mirror_one_fill_invalid_options")
+        with self.assertRaisesRegex(ValueError, "automatic local replay"):
+            ConnectedSimulationRobot(
+                session, tick_size=D("0.01"), terms=terms(),
+                mirror_working_volume_usdt=D("250"),
+                mirror_risk_limit_usdt=D("300"),
+                mirror_one_filled_trade_per_campaign=True,
+            )
+        with self.assertRaisesRegex(TypeError, "boolean"):
+            ConnectedSimulationRobot(
+                session, tick_size=D("0.01"), terms=terms(),
+                mirror_working_volume_usdt=D("250"),
+                mirror_risk_limit_usdt=D("300"), mirror_auto_scan=True,
+                mirror_one_filled_trade_per_campaign="yes",
+            )
+
     def test_native_mirror_take_closes_with_actual_fees_net_pnl_and_no_replay(self):
         session, robot, state, entry_id, candidate_id = self._admitted_for_trade("mirror_take_e2e")
         with robot:
