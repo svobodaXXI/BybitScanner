@@ -76,6 +76,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/machine-time/research"
           cp ../../research/local_replay_viewer/server.py "$RUNNER_TEMP/machine-time/server.py"
           cp ../../research/local_replay_viewer/START_LOCAL.cmd "$RUNNER_TEMP/machine-time/START_LOCAL.cmd"
+          cp ../../research/local_replay_viewer/protocol_launcher.py "$RUNNER_TEMP/machine-time/protocol_launcher.py"
           cp ../../research/local_replay_viewer/README.txt "$RUNNER_TEMP/machine-time/README.txt"
           cp ../../research/local_replay_viewer/smoke_package.py "$RUNNER_TEMP/machine-time/smoke_package.py"
           cp ../../research/local_replay_viewer/box_lifecycle_smoke.py "$RUNNER_TEMP/machine-time/box_lifecycle_smoke.py"
@@ -152,6 +153,8 @@ jobs:
         working-directory: machine-time
         run: |
           python -B server.py --check
+          python -B protocol_launcher.py --register
+          python -c "import winreg; from pathlib import Path; from protocol_launcher import SCHEME; k=winreg.OpenKey(winreg.HKEY_CURRENT_USER, f'Software\\Classes\\{SCHEME}\\shell\\open\\command'); command=winreg.QueryValueEx(k, '')[0]; assert str(Path('protocol_launcher.py').resolve()) in command and '\"%1\"' in command; print('LOCAL_PROTOCOL_REGISTERED_HKCU_ONLY')"
           python -B smoke_package.py
           python -c "from research.simulator_v2.wedge_cli import run_from_time_machine_config; from research.simulator_v2.wedge_observer import WedgeScannerConfig; import pandas; print('LOCAL_WEDGE_ENGINE_PACKAGE_IMPORT_OK')"
           python -B box_lifecycle_smoke.py
