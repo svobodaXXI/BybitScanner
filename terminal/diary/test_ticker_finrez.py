@@ -793,5 +793,31 @@ class SimulatorLaunchRelayTests(unittest.TestCase):
                                       fetch_site="same-origin")["state"], "EXPIRED")
 
 
+def test_simulator_bridge_ingress_exposes_only_token_scoped_device_calls():
+    """Source ingress must keep owner requests behind existing auth sidecar."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2]
+              / "deploy/terminal_ingress/nginx-authenticated.conf").read_text(
+                  encoding="utf-8"
+              )
+    # Exact-match locations are more specific than the protected /api/ prefix.
+    # The only owner-auth exemptions accept outbound device polling and ACK.
+    for suffix, method in (("poll", "GET"), ("ack", "POST")):
+        location = f"location = /api/diary/simulator-bridge/{suffix} {{"
+        assert source.count(location) == 1
+        block = source.split(location, 1)[1].split("\n    }", 1)[0]
+        assert f"limit_except {method} {{ deny all; }}" in block
+        assert "proxy_pass http://127.0.0.1:8765;" in block
+        assert 'proxy_set_header Cookie "";' in block
+        assert 'proxy_set_header Authorization "";' in block
+        assert "auth_request off;" not in block  # no parent-wide override
+    for owner_only in ("request", "status"):
+        assert f"location = /api/diary/simulator-bridge/{owner_only}" not in source
+    protected = source.split("location /api/ {", 1)[1].split("\n    }", 1)[0]
+    assert "auth_request /_auth;" in protected
+    assert "proxy_pass http://127.0.0.1:8765;" in protected
+
+
 if __name__ == "__main__":
     unittest.main()
