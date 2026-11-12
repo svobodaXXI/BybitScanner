@@ -832,6 +832,9 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
   const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
+  const [verifiedExport, setVerifiedExport] = useState<{ episodeId: string; json: string } | null>(null);
+  const [copyNotice, setCopyNotice] = useState("");
+  const [showExportText, setShowExportText] = useState(false);
   const [filmNotice, setFilmNotice] = useState("");
 
   const [executionPoints, setExecutionPoints] = useState<TradeExecutionPoint[]>([]);
@@ -888,6 +891,9 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
     if (downloading) return;
     setDownloading(true);
     setDownloadError("");
+    setVerifiedExport(null);
+    setCopyNotice("");
+    setShowExportText(false);
     try {
       const response = await fetch(marketApiRoutes.diaryEpisodeFacts(
         report.account_id, report.owner, deal.trade_episode_id, report.source_revision,
@@ -914,7 +920,9 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
           || typeof item.execution_price !== "string"
         )) throw new Error("История сделки не совпала с выбранным эпизодом.");
 
-      const blob = new Blob([JSON.stringify(facts, null, 2) + "\n"], { type: "application/json" });
+      const json = JSON.stringify(facts, null, 2) + "\n";
+      setVerifiedExport({ episodeId: deal.trade_episode_id, json });
+      const blob = new Blob([json], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       try {
         const anchor = document.createElement("a");
@@ -960,6 +968,27 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
           {downloading ? "Выгружаю факты…" : "Скачать JSON исполнений"}
         </button>
         {downloadError ? <p className="diary-finrez-coverage" role="alert">{downloadError}</p> : null}
+        {verifiedExport?.episodeId === selected.trade_episode_id ? (
+          <div className="diary-detail-section">
+            <p>Если Telegram не сохранил файл, скопируйте проверенный JSON сделки.</p>
+            <button className="diary-detail-back" type="button" onClick={() => {
+              setCopyNotice("");
+              void (async () => {
+                try {
+                  if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+                  await navigator.clipboard.writeText(verifiedExport.json);
+                  setCopyNotice("JSON скопирован в буфер обмена.");
+                } catch {
+                  setShowExportText(true);
+                  setCopyNotice("Копирование недоступно. Выделите JSON ниже и скопируйте вручную.");
+                }
+              })();
+            }}>Скопировать JSON</button>
+            {copyNotice ? <p role="status">{copyNotice}</p> : null}
+            {showExportText ? <textarea readOnly aria-label="Проверенный JSON сделки"
+              value={verifiedExport.json} rows={8} style={{ width: "100%" }} /> : null}
+          </div>
+        ) : null}
         <p className="diary-finrez-basis" role="status">
           Это не воспроизведение. JSON содержит только реальные зарегистрированные исполнения. Свечи, решения робота
           и полное воспроизведение в локальном Симуляторе пока не подключены.
