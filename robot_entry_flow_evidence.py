@@ -137,7 +137,7 @@ def compare_flow_windows(
     ask_refill = (current.ask_refill_ratio > ZERO
                   if current.book_valid and current.ask_refill_ratio is not None else None)
     return FlowTransition(
-        known_at_ms=current.end_ms,
+        known_at_ms=decision_ms,
         current_delta_fraction=now,
         current_price_change_bps=current.price_change_bps,
         buy_wave_accelerating=buy_wave,
@@ -246,3 +246,58 @@ def aggregate_taker_prints(
         start_price=prints[0].price, end_price=prints[-1].price,
         buy_notional_usdt=buy, sell_notional_usdt=sell,
     )
+
+
+class CompletedFlowObserver:
+    """One bounded causal flow cursor used by Robot and historical SIMULATION.
+
+    The source adapter must prove that all prints in each completed window were
+    available before observation; a source label alone is not that proof.
+    No order authority, background polling or full-tape memory is retained.
+    """
+
+    def __init__(self, *, symbol: str, window_ms: int) -> None:
+        if (not isinstance(symbol, str) or not symbol.isalnum()
+                or not symbol.endswith("USDT") or type(window_ms) is not int
+                or window_ms <= 0):
+            raise ValueError("invalid flow observer symbol/window")
+        self.symbol = symbol
+        self.window_ms = window_ms
+        self._previous: FlowWindow | None = None
+        self._source_id: str | None = None
+        self._last_end_ms: int | None = None
+        self.last_transition: FlowTransition | None = None
+
+    def observe_closed(
+        self, prints: tuple[TakerPrint, ...], *, start_ms: int, end_ms: int,
+        observed_at_ms: int, source_id: str,
+    ) -> FlowTransition | None:
+        """Advance exactly one finished trade window; missing trades stay unknown.
+
+        A gap or changed source resets comparisons. Invalid inputs do not
+        advance the cursor. Caller must independently prove data completeness.
+        """
+        if (type(start_ms) is not int or type(end_ms) is not int
+                or type(observed_at_ms) is not int or start_ms < 0
+                or end_ms - start_ms != self.window_ms
+                or start_ms % self.window_ms or observed_at_ms < end_ms
+                or (self._last_end_ms is not None and start_ms < self._last_end_ms)):
+            raise ValueError("incomplete, overlapping or future flow window")
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise ValueError("nonempty source identity required")
+        current = aggregate_taker_prints(
+            prints, symbol=self.symbol, start_ms=start_ms, end_ms=end_ms,
+        )
+        previous = (
+            self._previous if self._source_id == source_id
+            and self._last_end_ms == start_ms else None
+        )
+        transition = (
+            compare_flow_windows(previous, current, decision_ms=observed_at_ms)
+            if previous is not None and current is not None else None
+        )
+        self._previous = current
+        self._source_id = source_id
+        self._last_end_ms = end_ms
+        self.last_transition = transition
+        return transition
