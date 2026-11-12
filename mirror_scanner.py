@@ -528,15 +528,20 @@ def _advance(level: MirrorLevel, record: dict[str, Any], rows, *, atr_at, gaps, 
 
 def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn_observation=None,
                           l_shape_observation=None, fine_candles=None, box_source: bool | None = None,
-                          root=None, now_ms: int | None = None) -> dict[str, Any] | None:
+                          root=None, now_ms: int | None = None,
+                          handoff: bool = True) -> dict[str, Any] | None:
     """Advance the durable MIRROR state of one symbol/timeframe by this Scanner snapshot.
 
     ``fine_candles``: closed 1m candles of the same pass, used only to settle an
     ambiguous 5m retest contact. Returns a summary with the notifications that
     are now pending (``send_mirror_notifications`` delivers them).
+    ``handoff=False`` is for private offline SIMULATION: never create a
+    production Robot candidate or use the process-wide PAPER enable flag.
     """
 
     symbol, timeframe = str(symbol), str(timeframe).strip()
+    if type(handoff) is not bool:
+        raise TypeError("explicit MIRROR handoff boolean required")
     if not _SAFE_SYMBOL.fullmatch(symbol):
         raise ValueError("invalid MIRROR symbol")
     step = timeframe_ms(timeframe)
@@ -745,7 +750,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
     save_state(state, root)                      # durable before anything leaves the process
     for item in journal:
         append_event(item, root)
-    handed = _hand_off_standalone_entries(symbol, state, root)
+    handed = _hand_off_standalone_entries(symbol, state, root) if handoff else []
     for item in journal:
         if item["event"] in ("mirror_breakout", "mirror_first_retest") and item.get("candidate"):
             print(f"{symbol:<15} {timeframe}m MIRROR {item['event']} level={item['level_id']} "
