@@ -241,4 +241,9 @@
     height: 1.12rem;
   }
   .autopilot-utility-stack .workspace-nav-icon { font-size: 0.9rem; }
+  /* Terminal's statistics bars render at 24px; use the same size here. */
+  .autopilot-utility-stack .workspace-nav-button[aria-label="Статистика"] .workspace-nav-symbol {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
 }
