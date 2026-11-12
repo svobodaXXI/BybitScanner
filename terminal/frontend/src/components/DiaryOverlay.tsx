@@ -380,19 +380,29 @@ function SimulatorLaunchAction({ episodeId, allowLocalLaunch }: {
     }
     const allowed = allowLocalLaunch && /^te_[0-9a-f]{24}$/.test(episodeId);
     const onWindows = /\bWindows\b/i.test(navigator.userAgent);
-    const suffix = (await copied)
-      ? " Идентификатор скопирован."
-      : " Автоматическое копирование ID недоступно.";
-    try {
-      if (allowed && onWindows) {
-        // Windows per-user handler only; never pass a host, shell or file path.
+    // Launch custom Windows URI synchronously in the actual click handler.
+    // Awaiting clipboard permission first can lose browser user activation.
+    let windowsError = false;
+    if (allowed && onWindows) {
+      try {
         const link = document.createElement("a");
         link.href = "bybitscanner-simulator://open?episode=" + episodeId;
         link.rel = "noopener noreferrer";
         link.target = "_blank";
         document.body.appendChild(link);
         try { link.click(); } finally { link.remove(); }
-        setNotice("Запрос открытия утилиты отправлен Windows. Результат пока не подтверждён." + suffix);
+      } catch {
+        windowsError = true;
+      }
+    }
+    const suffix = (await copied)
+      ? " Идентификатор скопирован."
+      : " Автоматическое копирование ID недоступно.";
+    try {
+      if (allowed && onWindows) {
+        setNotice((windowsError
+          ? "Windows не смогла принять запрос открытия локальной утилиты."
+          : "Запрос открытия утилиты отправлен Windows. Результат пока не подтверждён.") + suffix);
       } else if (allowed) {
         // Same-origin HTTPS owner UI. Nginx controls owner access; the relay
         // independently checks Origin. The paired PC supplies a separate
