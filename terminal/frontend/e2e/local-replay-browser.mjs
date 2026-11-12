@@ -271,7 +271,7 @@ try {
   });
   await readySetup.getByRole("checkbox", { name: "Все стратегии" }).check();
   await readySetup.getByRole("button", { name: "Применить" }).click();
-  assert.match(await readySetup.innerText(), /Остальные выбранные стратегии ещё не подключены/);
+  assert.match(await readySetup.innerText(), /Разные семейства нельзя смешивать в одном виртуальном счёте/);
   assert.equal(posted.length, 1, "unsupported strategies never cause a backend POST");
   assert.equal(requests.filter(url => url.includes("/api/") || url.includes("/v5/")).length, 0);
 
