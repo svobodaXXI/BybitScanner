@@ -37,7 +37,8 @@ class AgentConfigError(ValueError):
     pass
 
 
-def read_config(path: Path = CONFIG_PATH) -> dict[str, str] | None:
+def read_config(path: Path | None = None) -> dict[str, str] | None:
+    path = CONFIG_PATH if path is None else path
     if not path.exists():
         return None
     if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
