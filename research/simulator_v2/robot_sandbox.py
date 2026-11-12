@@ -34,6 +34,7 @@ from mirror_retest_robot import (
     STOP_SLIPPAGE_FRACTION, MirrorRobotPolicy, mirror_record,
 )
 from research.simulator_v2.mirror_candles import LocalMirrorClosedCandles
+from research.simulator_v2.mirror_auto_scanner import LocalMirrorAutoScanner
 import mirror_scanner
 import robot_l_shape
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
@@ -340,13 +341,18 @@ class ConnectedSimulationRobot:
         terms: BoxSimulationRiskTerms,
         mirror_working_volume_usdt: Decimal | None = None,
         mirror_risk_limit_usdt: Decimal | None = None,
+        mirror_auto_scan: bool = False,
     ) -> None:
+        if type(mirror_auto_scan) is not bool:
+            raise TypeError("local MIRROR auto scan requires an explicit boolean")
         enabled_mirror = (
             mirror_working_volume_usdt is not None
             or mirror_risk_limit_usdt is not None
         )
         if not isinstance(session, VirtualReplaySession):
             raise TypeError("original SIMULATION session required")
+        if mirror_auto_scan and not enabled_mirror:
+            raise ValueError("automatic MIRROR needs a complete isolated risk profile")
         if session.ikigai_scanner is None and not enabled_mirror:
             raise TypeError("native Ikigai Scanner or explicit MIRROR profile required")
         if not isinstance(terms, BoxSimulationRiskTerms) or terms.tick_size != tick_size:
@@ -389,6 +395,10 @@ class ConnectedSimulationRobot:
                 scanner_root=self._mirror_root,
                 one_wv_usdt=lambda: mirror_working_volume_usdt,
             ) if enabled_mirror else None
+        )
+        self._auto_mirror_scanner = (
+            LocalMirrorAutoScanner(self._mirror_source, root=self._mirror_root)
+            if mirror_auto_scan else None
         )
         self._store = SQLiteStore.open(
             self._store_path, allow_simulation_box_accounts=True,
@@ -854,6 +864,21 @@ class ConnectedSimulationRobot:
                 self._monitor.process_authoritative_fill(self.session.account.symbol)
         self._drive_robot()
         self._synchronize_exchange()
+        if self._auto_mirror_scanner is not None:
+            discovered = self._auto_mirror_scanner.observe_committed(
+                now_ms=self.virtual_clock_ms(),
+            )
+            if len(discovered) > 1:
+                raise SimulationExecutionNotConnected(
+                    "simultaneous native MIRROR confirmations have no proven priority"
+                )
+            if discovered and self.can_admit:
+                self.admit_mirror(
+                    mirror_scanner.load_state(
+                        self.session.account.symbol, "5", self._mirror_root,
+                    ),
+                    entry_id=discovered[0],
+                )
 
     def _synchronize_exchange(self) -> None:
         if self._source_candidate_id is None:
