@@ -31,6 +31,9 @@ class MockOpener:
 
 class PairedAdapterTests(unittest.TestCase):
     def setUp(self):
+        probe = patch.object(agent, "viewer_is_running", return_value=False)
+        probe.start()
+        self.addCleanup(probe.stop)
         self.config = {
             "origin": "https://example.test", "device_id": "owner-pc",
             "token": "A" * 64,
@@ -79,7 +82,7 @@ class PairedAdapterTests(unittest.TestCase):
         get, post = opener.requests
         self.assertEqual(
             get.full_url,
-            "https://example.test/api/diary/simulator-bridge/poll?device_id=owner-pc",
+            "https://example.test/api/diary/simulator-bridge/poll?device_id=owner-pc&viewer_running=0",
         )
         self.assertEqual(get.get_method(), "GET")
         self.assertEqual(post.full_url, "https://example.test/api/diary/simulator-bridge/ack")
@@ -91,6 +94,14 @@ class PairedAdapterTests(unittest.TestCase):
         self.assertEqual(
             get.get_header("X-bybitscanner-simulator-device-token"), self.config["token"],
         )
+
+    def test_reports_existing_local_viewer_without_sending_process_details(self):
+        with patch.object(agent, "viewer_is_running", return_value=True):
+            opener = MockOpener([{"ok": True, "state": "IDLE"}])
+            self.assertEqual(agent.poll_once(self.config, opener=opener), "IDLE")
+        self.assertEqual(len(opener.requests), 1)
+        self.assertEqual(opener.requests[0].full_url,
+                         "https://example.test/api/diary/simulator-bridge/poll?device_id=owner-pc&viewer_running=1")
 
     def test_forged_commands_never_reach_launcher_or_ack(self):
         for instruction in (
