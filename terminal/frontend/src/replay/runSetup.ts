@@ -170,6 +170,8 @@ export function validateInclusiveWindow(start: string, endInclusive: string): {
 }
 
 
+export type OiFilterMode = "OFF" | "RISING" | "FALLING";
+
 /** Only these two original Wedge Scanner/Robot detectors exist in local mode. */
 export const RUNNABLE_WEDGE_IDS = ["WEDGE_RISING", "WEDGE_FALLING"] as const;
 export function runnableWedgeSelection(selection: RunSelection): boolean {
@@ -179,10 +181,11 @@ export function runnableWedgeSelection(selection: RunSelection): boolean {
 }
 export function makeWedgeRunRequest(
   selection: RunSelection, symbol: string, start: string,
-  endInclusive: string, initialBalance: string,
+  endInclusive: string, initialBalance: string, oiMode: OiFilterMode = "OFF",
 ): {
   symbol: string; start_utc: string; end_utc_inclusive: string;
   selected_strategies: StrategyId[]; initial_balance: string;
+  oi_mode?: OiFilterMode;
 } {
   if (!runnableWedgeSelection(selection)) {
     throw new Error("Пока доступны только восходящий и нисходящий клинья");
@@ -195,9 +198,12 @@ export function makeWedgeRunRequest(
       !(Number(initialBalance) > 0) || !Number.isFinite(Number(initialBalance))) {
     throw new Error("Укажите положительный виртуальный депозит");
   }
+  if (!["OFF", "RISING", "FALLING"].includes(oiMode))
+    throw new Error("Некорректный фильтр OI");
   return {
     symbol: ticker, start_utc: start, end_utc_inclusive: endInclusive,
     selected_strategies: [...selection.selected], initial_balance: initialBalance,
+    ...(oiMode !== "OFF" ? { oi_mode: oiMode } : {}),
   };
 }
 
