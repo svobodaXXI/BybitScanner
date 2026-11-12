@@ -171,6 +171,37 @@ def test_hub_uses_one_connection_for_multiple_reusable_symbol_contexts():
     assert ong.public_trades.closed is True
 
 
+def test_hub_opt_in_trade_frame_fanout_is_read_only_and_fault_isolated():
+    hub = MarketDataHub(
+        _Registry(), _context, connection_factory=lambda *args, **kwargs: None,
+    )
+    context = hub.subscribe("BTCUSDT")
+    frames = []
+    context.add_trade_listener(
+        "shadow", lambda frame, recv: frames.append((frame, recv)),
+    )
+    assert context.has_listeners()
+    with __import__("unittest").TestCase().assertRaises(ValueError):
+        context.add_trade_listener("shadow", lambda *_: None)
+    message = {
+        "topic": "publicTrade.BTCUSDT",
+        "data": [{"s": "BTCUSDT", "i": "a", "T": 1,
+                  "S": "Buy", "p": "1", "v": "1"}],
+    }
+    hub._dispatch(message)
+    assert len(context.public_trades.messages) == 1
+    assert len(frames) == 1
+    assert frames[0][0] == message
+    assert type(frames[0][1]) is int
+    context.remove_trade_listener("shadow")
+    context.add_trade_listener("faulty", lambda *_: 1 / 0)
+    # The optional observer must never affect the authoritative WS path.
+    hub._dispatch(message)
+    assert len(context.public_trades.messages) == 2
+    context.remove_trade_listener("faulty")
+    hub.close()
+
+
 def test_hub_rejects_unsupported_symbol_without_creating_context():
     hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *args, **kwargs: None)
     try:
