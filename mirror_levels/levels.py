@@ -163,6 +163,46 @@ def audit_historical_mirror_source(
     )
 
 
+def audit_historical_mirror_frozen_terms(
+    terms: Mapping[str, Any] | None,
+) -> str:
+    """Classify a *stored native candidate*, not an episode or authenticated fact.
+
+    Only the independently proven Robot-candidate -> execution -> Diary episode
+    join may attach this result to a historical trade. Older snapshots did not
+    preserve the boundary side or breakout direction, so they must not be
+    guessed from trade direction, a chart or ticker/time proximity.
+    """
+    if not isinstance(terms, Mapping):
+        return MIRROR_AUDIT_UNPROVEN
+    source, pattern = terms.get("level_source"), terms.get("level_pattern")
+    if source == SOURCE_PATTERN_BOUNDARY:
+        # These two families were forbidden as MIRROR origins on *every* side.
+        if pattern in {"Broadening", "HORN", "IKIGAI_BOX"}:
+            return MIRROR_AUDIT_REVOKED
+        if pattern not in MIRROR_PATTERN_SIDES:
+            return MIRROR_AUDIT_UNPROVEN
+    elif source == SOURCE_SWING_ZONE:
+        if pattern is not None:
+            # A non-standalone swing source with a named pattern cannot prove
+            # independent extremum provenance, even when the pattern is known.
+            return MIRROR_AUDIT_UNPROVEN
+    else:
+        return MIRROR_AUDIT_UNPROVEN
+
+    level_id = terms.get("level_id")
+    side, direction = terms.get("level_side"), terms.get("level_breakout_direction")
+    if not isinstance(level_id, str) or not level_id.startswith("lvl-"):
+        return MIRROR_AUDIT_UNPROVEN
+    if side not in SIDES or direction not in {"UP", "DOWN"}:
+        return MIRROR_AUDIT_UNPROVEN
+    if source == SOURCE_PATTERN_BOUNDARY and side not in MIRROR_PATTERN_SIDES[pattern]:
+        return MIRROR_AUDIT_REVOKED
+    if direction != ("UP" if side == SIDE_UPPER else "DOWN"):
+        return MIRROR_AUDIT_REVOKED
+    return MIRROR_AUDIT_ALLOWED
+
+
 TIMEFRAME_MS = {"1": 60_000, "5": 300_000, "15": 900_000, "60": 3_600_000, "240": 14_400_000}
 
 PRICE_DIGITS = 12
