@@ -456,6 +456,41 @@ class RuntimeShutdown:
         except (SafeStopError, RobotControlRejected) as exc:
             return ShutdownResult(scope, False, f"STOP BLOCKED: {exc}", tuple(steps))
 
+    def require_known_natural_drain_ready(self) -> None:
+        """Read-only gate for a *durably proved* previous PAUSED drain refusal.
+
+        This is NOT a new shutdown intent. Before any further Robot mutation,
+        require the original Backend/Telegram identity, frozen admissions,
+        zero OPEN Robot ownership and fully quiescent STOP/TAKE coverage.
+        Historical Flat/OPEN or manual exposure must never be waved through.
+        """
+        if self._probe_backend() != PRESENT:
+            raise SafeStopError("known drain: original PAPER Backend is absent")
+        self._probe_telegram()  # When present, must match the same PAPER DB.
+        self._require_scanner_stopped()
+        self._require_autopilot_off()
+        if self._robot_state() != ("ROBOT_RUNNING", "PAUSED"):
+            raise SafeStopError("known drain: Robot no longer PAUSED")
+        if self._open_robot_ownership():
+            raise SafeStopError("known drain: OPEN Robot ownership remains")
+        if not self._protection_quiescent():
+            raise SafeStopError("known drain: protection/exposure still active or unproven")
+
+    def continue_known_natural_drain(self) -> ShutdownResult:
+        """Complete only the remaining, guarded phases; no freeze/PAUSE replay.
+
+        The caller MUST first verify a protected per-target known-refusal
+        receipt, exact installed release and a once-only continuation marker.
+        The same canonical _run enforces all final Robot/protection/Backend
+        shutdown gates rather than introducing a second stop implementation.
+        """
+        steps: list[str] = []
+        try:
+            self.require_known_natural_drain_ready()
+            return self._run(SCOPE_ALL, steps, known_drain_continuation=True)
+        except (SafeStopError, RobotControlRejected) as exc:
+            return ShutdownResult(SCOPE_ALL, False, f"STOP CONTINUATION BLOCKED: {exc}", tuple(steps))
+
     def freeze_ingress_for_required_recovery(self) -> tuple[str, ...]:
         """Freeze new PAPER admissions only; retain Robot, protection and Backend.
 
@@ -475,7 +510,8 @@ class RuntimeShutdown:
         self._require_scanner_stopped()
         return tuple(steps)
 
-    def _run(self, scope: str, steps: list[str]) -> ShutdownResult:
+    def _run(self, scope: str, steps: list[str], *,
+             known_drain_continuation: bool = False) -> ShutdownResult:
         # Both identities are proven before the first mutation of anything.
         self._mark("probing PAPER backend identity")
         backend = self._probe_backend()
@@ -483,6 +519,12 @@ class RuntimeShutdown:
         self._mark("probing Telegram monitoring identity")
         telegram = self._probe_telegram()
         self._mark(f"Telegram monitoring: {telegram}")
+
+        if known_drain_continuation:
+            # Recheck the exact PAUSED/no-exposure boundary immediately before
+            # the canonical phase engine. No new PAUSE or admission freeze is
+            # issued if the host no longer has the proven paused ownership.
+            self.require_known_natural_drain_ready()
 
         if (
             self._legacy_supported
@@ -527,7 +569,11 @@ class RuntimeShutdown:
                         raise SafeStopError(
                             "Robot reconcile did not establish a legal stoppable state; runtime kept alive"
                         )
+                if known_drain_continuation and state != ("ROBOT_RUNNING", "PAUSED"):
+                    raise SafeStopError("known drain: Robot state changed before STOP")
                 if state in ROBOT_STOPPABLE:
+                    if known_drain_continuation and self._open_robot_ownership():
+                        raise SafeStopError("known drain: Robot ownership reopened before STOP")
                     self._mark("requesting Robot STOPPED")
                     try:
                         self._stop_robot()
