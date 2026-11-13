@@ -3,6 +3,7 @@ from decimal import Decimal as D
 import unittest
 
 from research.simulator_v2.l2_episode_report import episode_rows
+from robot_entry_flow_evidence import ImpulseProtectedPlan, ImpulseSignal
 from research.simulator_v2.virtual_account import VirtualFill
 from research.simulator_v2.virtual_exchange import OrderEvent
 
@@ -46,6 +47,27 @@ class L2EpisodeReportTests(unittest.TestCase):
             sum((D(row["net_pnl_usdt"]) for row in rows), D("0")),
             D("28.422"),
         )
+
+    def test_original_plan_explains_stop_level_and_signal_structure(self):
+        plan = ImpulseProtectedPlan(
+            ImpulseSignal("LONG", 80, D("100"), D("99")),
+            D("100"), D("99"), D("103"), D("10"),
+            D("2.5"), D("15"),
+        )
+        rows = episode_rows(
+            (
+                fill("IMPULSE_80_fill", 100, "BUY", "100", "0.6"),
+                fill("IMPULSE_80_stop_fill", 140, "SELL", "98", "0.588"),
+            ),
+            (event("IMPULSE_80", "STOP_FILLED", 140),),
+            {"IMPULSE_80": plan},
+        )
+        self.assertEqual(rows[0]["signal_ms"], 80)
+        self.assertEqual(rows[0]["planned_stop_price"], "99")
+        self.assertEqual(rows[0]["planned_take_price"], "103")
+        self.assertEqual(rows[0]["signal_structural_extreme"], "99")
+        self.assertEqual(rows[0]["exit_reason"], "STOP")
+        self.assertEqual(rows[0]["net_pnl_usdt"], "-21.188")
 
     def test_open_episode_no_invented_exit_or_net_pnl(self):
         rows = episode_rows((fill("one_fill", 100, "BUY", "100", "0.6"),), ())
