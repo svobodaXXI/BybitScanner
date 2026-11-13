@@ -64,7 +64,7 @@ jobs:
       - name: Install locked frontend dependencies
         run: npm ci
       - name: Validate standalone replay model and Telegram-style execution markers
-        run: npm run test -- src/replay/replayModel.test.ts src/replay/executionMarkers.test.ts src/replay/runSetup.test.ts src/replay/l2ReplayImport.test.ts src/replay/l2ReplayUpload.test.ts src/replay/l2ChartContext.test.ts
+        run: npm run test -- src/replay/replayModel.test.ts src/replay/executionMarkers.test.ts src/replay/runSetup.test.ts src/replay/l2ReplayImport.test.ts src/replay/l2ReplayUpload.test.ts src/replay/l2ChartContext.test.ts src/replay/replayChartDmi.test.ts
       - name: Build main terminal without experimental simulator
         run: |
           npm run build
