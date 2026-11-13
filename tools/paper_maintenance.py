@@ -983,23 +983,24 @@ def deploy_staged_editor_only(
                                 + type(exc).__name__ + ":" + str(exc)
                                 + "; no STOP replay or deployment retry")
                     return finish_frontend(status)
-                if (len(pending) != 1
-                        or pending[0].name != ".stop-invoked-" + target
-                        or not _confirmed_stop_receipt(
-                            journal_root, target, current, uid=trusted_uid,
-                        )):
-                    return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
-                (preflight or inspect_staged_release)(
-                    target, stage=stage, root=root, manifest=manifest_path,
-                    unit_dir=installed_units, uid=trusted_uid,
-                )
-                # An fsynced receipt documents the canonical success already
-                # observed, not a guess based on missing processes. The real
-                # installer independently reattests stopped units/listeners.
-                result = ShutdownResult(
-                    SCOPE_ALL, True, "Verified prior canonical stop receipt",
-                    runtime_stopped=True,
-                )
+                else:
+                    if (len(pending) != 1
+                            or pending[0].name != ".stop-invoked-" + target
+                            or not _confirmed_stop_receipt(
+                                journal_root, target, current, uid=trusted_uid,
+                            )):
+                        return "BLOCKED: prior_STOP_outcome_unproven_without_install_journal; no replay"
+                    (preflight or inspect_staged_release)(
+                        target, stage=stage, root=root, manifest=manifest_path,
+                        unit_dir=installed_units, uid=trusted_uid,
+                    )
+                    # An fsynced receipt documents the canonical success already
+                    # observed, not a guess based on missing processes. The real
+                    # installer independently reattests stopped units/listeners.
+                    result = ShutdownResult(
+                        SCOPE_ALL, True, "Verified prior canonical stop receipt",
+                        runtime_stopped=True,
+                    )
             else:
                 if confirmed_stop_only:
                     return "BLOCKED: confirmed_stop_only_pending_intent_missing; no STOP"
