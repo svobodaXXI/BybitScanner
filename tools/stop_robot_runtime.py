@@ -474,6 +474,12 @@ class RuntimeShutdown:
             raise SafeStopError("known drain: exact running build unavailable") from exc
         if (status != 200 or not isinstance(health, dict)
                 or health.get("ok") is not True
+                or health.get("component") != "paper_backend"
+                or health.get("mode") != "paper"
+                or health.get("paper_live_safe") is not True
+                or health.get("database_identity") != self._expected
+                or not isinstance(health.get("process_instance_id"), str)
+                or not health["process_instance_id"]
                 or health.get("build_sha") != expected_build_sha
                 or not isinstance(expected_build_sha, str)
                 or len(expected_build_sha) != 40):
