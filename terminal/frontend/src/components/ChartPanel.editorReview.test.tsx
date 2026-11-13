@@ -57,5 +57,7 @@ it("defaults to the Scanner pattern and places chart/new-signal actions last at 
   expect(onShowCurrentEditorChart).toHaveBeenCalledOnce();
   fireEvent.click(screen.getByRole("button", { name: "Создать новый сигнал" }));
   expect(screen.getByRole("button", { name: "Вернуться к исправлению" })).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Тип нового сигнала" })).toHaveValue("Wedge");
+  expect(screen.getByRole("combobox", { name: "Направление движения графика" })).toBeInTheDocument();
   expect(within(bottom as HTMLElement).queryByRole("button", { name: "Создать новый сигнал" })).toBeNull();
 });
