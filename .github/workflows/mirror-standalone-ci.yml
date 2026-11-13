@@ -107,6 +107,7 @@ jobs:
       - name: Verify all-or-none MIRROR account risk review does not place orders
         run: >-
           python -m unittest -v
+          tests.test_simulator_v2_mirror_intake.NativeMirrorSimulatorIntakeTests.test_native_per_level_admission_preview_does_not_create_orders
           tests.test_simulator_v2_mirror_intake.NativeMirrorSimulatorIntakeTests.test_simultaneous_mirror_uses_all_or_none_account_risk_review
           tests.test_simulator_v2_mirror_intake.NativeMirrorSimulatorIntakeTests.test_shared_mirror_risk_review_rejects_ambiguous_exposure
       - name: Full synthetic MIRROR standalone PAPER E2E and regression suite
