@@ -207,6 +207,64 @@ def _classified_finrez_episodes(
     )
 
 
+def attach_verified_episode_patterns(
+    snapshot: PaperSourceSnapshot, report: dict[str, object], *,
+    d2_path: str | None,
+) -> dict[str, object]:
+    """Optional exact-ID labels, not an alteration of financial totals or cohorts.
+
+    Both authorized episode identity and opening execution origin come from the
+    already classified PAPER snapshot. One independent read-only D2 transaction
+    supplies only links that satisfy the existing strict setup validator.
+    """
+    rows = report.get("closed_episodes")
+    if not isinstance(rows, list) or not rows:
+        return report
+    from .episode_context import project_episode_d2_contexts_read_only
+
+    by_id = {episode.trade_episode_id.value: episode for episode in snapshot.episodes}
+    if len(by_id) != len(snapshot.episodes):
+        return report
+    requests: list[tuple[str, str, str, str, int]] = []
+    controllers: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            return report
+        episode_id = row.get("trade_episode_id")
+        episode = by_id.get(episode_id)
+        if (episode is None or episode.closed_at_ms is None
+                or episode.position_key.trading_account_id.value != "paper"
+                or episode.position_key.symbol.value != row.get("symbol")
+                or episode.side.value.upper() != row.get("side")
+                or episode.opened_at_ms != row.get("opened_at_ms")
+                or episode.closed_at_ms != row.get("closed_at_ms")
+                or not episode.allocations):
+            return report
+        first = episode.allocations[0]
+        controller = ORIGINS.get(snapshot.origins.get(first.execution_key))
+        if controller not in {"ROBOT", "MANUAL"}:
+            continue
+        controllers[episode_id] = controller
+        requests.append((
+            episode_id, episode.position_key.symbol.value, episode.side.value.upper(),
+            controller, episode.opened_at_ms,
+        ))
+    contexts = project_episode_d2_contexts_read_only(
+        d2_path, episodes=tuple(requests),
+    )
+    if not contexts:
+        return report
+    return {
+        **report,
+        "closed_episodes": [
+            {**row, "opening_controller": controllers[row["trade_episode_id"]],
+             "setup_context": contexts[row["trade_episode_id"]]}
+            if row["trade_episode_id"] in contexts else row
+            for row in rows
+        ],
+    }
+
+
 class EpisodeFactsNotFound(StatisticsScopeError):
     """Episode cannot be established in the requested controller scope."""
 
