@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from decimal import Decimal
+from itertools import groupby
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -530,13 +531,23 @@ def run_cached_wedge_trade_range(
                     raise ValueError("taker event belongs to a foreign virtual M1")
                 events.append((trade.event_ms, "TRADE", trade))
             events.sort(key=lambda e: e[0])
-            # Equal cross-channel ms is intentionally ambiguous; no invented
-            # ordering between book.ts and trade.T from independent archives.
-            for _, kind, data in events:
-                if kind == "BOOK":
-                    active.exchange.on_historical_book(data)
+            # Public Bybit archive often has many prints at one event_ms.
+            # A trade group is unordered; it must not be sorted by trade ID.
+            # Book vs trade from separate channels at an identical ms also
+            # has no provable order. Preflight the whole timestamp bucket
+            # BEFORE consuming any event and mutating the virtual ledger.
+            for _, same_ms in groupby(events, key=lambda e: e[0]):
+                bucket = tuple(same_ms)
+                kinds = {item[1] for item in bucket}
+                if len(kinds) != 1:
+                    raise ValueError("same-ms L2/taker chronology unproven")
+                if "BOOK" in kinds:
+                    for _, _, data in bucket:
+                        active.exchange.on_historical_book(data)
                 else:
-                    active.exchange.on_historical_trade(data)
+                    active.exchange.on_historical_trade_batch(
+                        tuple(data for _, _, data in bucket)
+                    )
 
     if impulse_mode:
         result = run_verified_impulse_chunks(
