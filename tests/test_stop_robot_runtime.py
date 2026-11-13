@@ -804,7 +804,8 @@ class FullShutdownTests(unittest.TestCase):
         runtime = FakeRuntime(robot=PAUSED)
         runtime.scanner_mode = "SCANNER_STOPPED"
         runtime.robot_ownership_open = False
-        result = runtime.orchestrator().continue_known_natural_drain()
+        runtime.backend_health["build_sha"] = "b" * 40
+        result = runtime.orchestrator().continue_known_natural_drain("b" * 40)
         self.assertTrue(result.ok, result.message)
         self.assertTrue(result.runtime_stopped)
         self.assertEqual(runtime.calls, [
@@ -823,19 +824,20 @@ class FullShutdownTests(unittest.TestCase):
                 runtime = FakeRuntime(robot=state)
                 runtime.scanner_mode = "SCANNER_STOPPED"
                 runtime.robot_ownership_open = ownership_open
+                runtime.backend_health["build_sha"] = "b" * 40
                 if protected:
                     runtime.protection.update({
                         "covered_symbols": ["XUSDT"],
                         "coverage_roles": {"XUSDT": "EXPOSURE"},
                     })
-                result = runtime.orchestrator().continue_known_natural_drain()
+                result = runtime.orchestrator().continue_known_natural_drain("b" * 40)
                 self.assertFalse(result.ok)
                 self.assertFalse(result.runtime_stopped)
                 self.assertEqual(runtime.calls, [])
                 self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
     def test_known_drain_continuation_requires_frozen_ingress_and_identity(self):
-        for drift in ("scanner", "autopilot", "backend"):
+        for drift in ("scanner", "autopilot", "backend", "build_sha"):
             with self.subTest(drift=drift):
                 runtime = FakeRuntime(robot=PAUSED)
                 runtime.scanner_mode = "SCANNER_STOPPED"
@@ -844,9 +846,10 @@ class FullShutdownTests(unittest.TestCase):
                     runtime.scanner_mode = "SCANNER_RUNNING"
                 elif drift == "autopilot":
                     runtime.autopilot_mode = "PAPER_AUTO"
-                else:
+                elif drift == "backend":
                     runtime.backend_health["database_identity"] = "foreign"
-                result = runtime.orchestrator().continue_known_natural_drain()
+                runtime.backend_health["build_sha"] = "c" * 40 if drift == "build_sha" else "b" * 40
+                result = runtime.orchestrator().continue_known_natural_drain("b" * 40)
                 self.assertFalse(result.ok)
                 self.assertFalse(result.runtime_stopped)
                 self.assertEqual(runtime.calls, [])
