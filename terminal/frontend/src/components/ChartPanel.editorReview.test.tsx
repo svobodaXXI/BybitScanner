@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { ChartPanel } from "./ChartPanel";
 
@@ -33,13 +33,15 @@ vi.mock("lightweight-charts", () => ({
   }),
 }));
 
-it("defaults to the Scanner pattern and places chart/new-signal actions last at the right-bottom rail", () => {
+it("keeps correction form left and all three quick actions bottom-right", async () => {
   const onShowCurrentEditorChart = vi.fn();
+  const onExtendEditorHistory = vi.fn().mockResolvedValue(undefined);
   const view = render(<ChartPanel
     candles={[]} tickSize={null} editorMode
     signalIdentity="signal-test" originalPattern="Rising Wedge"
     snapshotRevision={"a".repeat(64)} barsSha256={"b".repeat(64)}
     onShowCurrentEditorChart={onShowCurrentEditorChart}
+    onExtendEditorHistory={onExtendEditorHistory}
   />);
   const selected = screen.getByRole("combobox", { name: "Правильный паттерн" });
   expect(selected).toHaveValue("Rising Wedge");
@@ -48,11 +50,23 @@ it("defaults to the Scanner pattern and places chart/new-signal actions last at 
   fireEvent.change(selected, { target: { value: "Triangle" } });
   expect(selected).toHaveValue("Triangle");
 
+  const left = view.container.querySelector(".editor-review-fields");
   const bottom = view.container.querySelector(".editor-bottom-actions");
+  expect(left).not.toBeNull();
   expect(bottom).not.toBeNull();
-  expect(within(bottom as HTMLElement).getAllByRole("button").map((button) => button.textContent)).toEqual([
-    "Актуальный график", "Создать новый сигнал",
+  expect(view.container.querySelector(".editor-review-layout")).not.toBeNull();
+  expect(within(left as HTMLElement).getAllByRole("combobox").map((element) => element.getAttribute("aria-label"))).toEqual([
+    "Правильный паттерн",
   ]);
+  expect(within(left as HTMLElement).getByRole("textbox", { name: "Комментарий к исправлению" })).toBeInTheDocument();
+  expect(within(left as HTMLElement).getByRole("button", { name: "Передать исправление" })).toBeInTheDocument();
+  expect(within(bottom as HTMLElement).getAllByRole("button").map((button) => button.textContent)).toEqual([
+    "Показать следующие свечи", "Актуальный график", "Создать новый сигнал",
+  ]);
+  expect(within(left as HTMLElement).queryByRole("button", { name: "Показать следующие свечи" })).not.toBeInTheDocument();
+  fireEvent.click(within(bottom as HTMLElement).getByRole("button", { name: "Показать следующие свечи" }));
+  expect(onExtendEditorHistory).toHaveBeenCalledOnce();
+  await waitFor(() => expect(within(bottom as HTMLElement).getByRole("button", { name: "Показать следующие свечи" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Актуальный график" }));
   expect(onShowCurrentEditorChart).toHaveBeenCalledOnce();
   fireEvent.click(screen.getByRole("button", { name: "Создать новый сигнал" }));

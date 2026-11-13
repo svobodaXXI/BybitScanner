@@ -1070,7 +1070,7 @@ export function ChartPanel({
     >
       <div className="chart-content-row">
         {editorMode && (signalIdentity || ownerChartMode) && (
-          <div className="editor-correction-export">
+          <div className={`editor-correction-export${!ownerChartMode ? " editor-review-layout" : ""}`}>
             <div className="editor-review-topline">
               <nav className="editor-workspace-shortcuts" aria-label="Переход между вкладками">
                 <button type="button" aria-label="Терминал" title="Терминал"
@@ -1093,22 +1093,8 @@ export function ChartPanel({
                 </button>
               </nav>
             </div>
-            <small aria-label="Название исходного сигнала">{ownerChartMode ? "Мой сигнал · закрытые свечи, источник не проверен" : `Исходный сигнал: ${originalPattern ?? "тип неизвестен"}`}</small>
+            <div className="editor-review-fields">
             {newSignalMode && <strong className="editor-new-signal-title">Создать новый сигнал</strong>}
-            {!ownerChartMode && <button type="button" disabled={extensionPending || reviewPending || proposalPending}
-              onClick={() => {
-                if (!onExtendEditorHistory) return;
-                setExtensionPending(true);
-                setExtensionStatus("Загружаются следующие закрытые свечи…");
-                void onExtendEditorHistory()
-                  .then(() => setExtensionStatus("Поздние свечи добавлены"))
-                  .catch((error) => setExtensionStatus(
-                    `Не удалось получить поздние свечи: ${error instanceof Error ? error.message : "ошибка"}`,
-                  ))
-                  .finally(() => setExtensionPending(false));
-              }}>
-              {extensionPending ? "Загрузка…" : "Показать следующие свечи"}
-            </button>}
             {newSignalMode ? (
               <>
                 <select aria-label="Тип нового сигнала" value={proposalPattern}
@@ -1164,7 +1150,6 @@ export function ChartPanel({
               </>
             ) : (
               <>
-            <label className="editor-correct-pattern-label" htmlFor="editor-correct-pattern">Правильный паттерн</label>
             <select id="editor-correct-pattern" aria-label="Правильный паттерн"
               value={correctPattern}
               onChange={(event) => { setCorrectPattern(event.target.value); markReviewEdited(); }}>
@@ -1195,8 +1180,24 @@ export function ChartPanel({
             )}
               </>
             )}
+            <small aria-label="Название исходного сигнала">{ownerChartMode ? "Мой сигнал · закрытые свечи, источник не проверен" : `Исходный сигнал: ${originalPattern ?? "тип неизвестен"}`}</small>
+            </div>
             {!ownerChartMode && (
               <div className="editor-bottom-actions">
+                <button type="button" disabled={extensionPending || reviewPending || proposalPending || !onExtendEditorHistory}
+                  onClick={() => {
+                    if (!onExtendEditorHistory) return;
+                    setExtensionPending(true);
+                    setExtensionStatus("Загружаются следующие закрытые свечи…");
+                    void onExtendEditorHistory()
+                      .then(() => setExtensionStatus("Поздние свечи добавлены"))
+                      .catch((error) => setExtensionStatus(
+                        `Не удалось получить поздние свечи: ${error instanceof Error ? error.message : "ошибка"}`,
+                      ))
+                      .finally(() => setExtensionPending(false));
+                  }}>
+                  {extensionPending ? "Загрузка…" : "Показать следующие свечи"}
+                </button>
                 <button type="button" disabled={extensionPending || reviewPending || proposalPending
                     || !onShowCurrentEditorChart}
                   onClick={() => onShowCurrentEditorChart?.()}>
