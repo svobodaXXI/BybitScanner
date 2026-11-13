@@ -43,6 +43,9 @@ def test_finrez_route_reuses_attributed_paper_diary_source(tmp_path: Path, monke
 
     monkeypatch.setattr(paper_http_server, "load_paper_source_snapshot", read_source)
     monkeypatch.setattr(paper_http_server, "project_paper_ticker_pnl", project)
+    # This narrow route fixture does not model episode/fill evidence.
+    monkeypatch.setattr(paper_http_server, "attach_verified_entry_notional_returns", lambda snapshot, report: report)
+    monkeypatch.setattr(paper_http_server, "attach_verified_episode_patterns", lambda snapshot, report, **kwargs: report)
     server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
     server.diary_source_db_path = source_path
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -176,7 +179,7 @@ def test_episode_facts_route_rejects_invalid_scope_and_exports_only_one_selected
             "schema": "BYBITSCANNER_CLOSED_EPISODE_FACTS_V1",
             "namespace": "PAPER_READ_ONLY", "source_revision": source_revision,
             "trade_episode_id": trade_episode_id, "symbol": "BTCUSDT",
-            "side": "LONG",
+            "side": "LONG", "opened_at_ms": 1000,
             "replay_evidence": "EXECUTION_FACTS_ONLY_NO_DECISIONS_OR_CANDLES",
             "execution_allocations": [{"controller": "ROBOT"}],
         }
