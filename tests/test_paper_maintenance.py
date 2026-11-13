@@ -4300,7 +4300,7 @@ def unsealed_paused_case(monkeypatch, tmp_path):
     (journal / ".release.lock").chmod(0o600)
     old, prior, target = "b" * 40, "c" * 40, "a" * 40
     marker = journal / (".stop-invoked-" + prior)
-    marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    marker.write_bytes(b"STOP_INVOKED; not install authorization\n")
     marker.chmod(0o600)
     monkeypatch.setattr(identity, "verify_release", lambda *_a, **_kw: old)
     return installed, stage, journal, old, prior, target, marker
@@ -4350,7 +4350,7 @@ def test_legacy_unsealed_paused_flat_continues_only_remaining_phases_once(
     assert maintenance._unsealed_paused_receipt(
         journal, old, prior, target, "completed", os.geteuid(),
     )
-    assert marker.read_bytes() == b"STOP_INVOKED; not install authorization\\n"
+    assert marker.read_bytes() == b"STOP_INVOKED; not install authorization\n"
     second = maintenance.deploy_staged_editor_only(target, **options)
     assert second == "READY: EDITOR_ONLY"
     assert calls.count("remaining-phases") == 1
@@ -4468,4 +4468,4 @@ def test_legacy_unsealed_paused_successor_only_retires_prior_after_editor_ready(
     assert maintenance._proven_prior_exceptional_completion(
         journal, prior, root=root, uid=os.geteuid(),
     )
-    assert marker.read_bytes() == b"STOP_INVOKED; not install authorization\\n"
+    assert marker.read_bytes() == b"STOP_INVOKED; not install authorization\n"
