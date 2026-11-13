@@ -1211,6 +1211,112 @@ function FinrezTickerRow({ ticker, onSelectTicker }: {
   );
 }
 
+
+/** Exact decimal aggregation for presentation; original immutable PnL is unchanged. */
+function sumVerifiedPnl(values: string[]): string | null {
+  const parts = values.map((value) => {
+    const match = /^([+-]?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(value.trim());
+    if (!match) return null;
+    const fraction = match[3] ?? "";
+    const exponent = Number(match[4] ?? "0");
+    if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 100
+      || (match[2] + fraction).length > 100) return null;
+    let scale = fraction.length - exponent;
+    if (Math.abs(scale) > 100) return null;
+    let coefficient = BigInt((match[1] === "-" ? "-" : "") + match[2] + fraction);
+    if (scale < 0) {
+      coefficient *= 10n ** BigInt(-scale);
+      scale = 0;
+    }
+    return { coefficient, scale };
+  });
+  if (parts.some((part) => part === null)) return null;
+  const parsed = parts as Array<{ coefficient: bigint; scale: number }>;
+  const scale = Math.max(0, ...parsed.map((part) => part.scale));
+  const total = parsed.reduce((sum, part) =>
+    sum + part.coefficient * 10n ** BigInt(scale - part.scale), 0n);
+  const digits = (total < 0n ? -total : total).toString().padStart(scale + 1, "0");
+  const integer = scale ? digits.slice(0, -scale) : digits;
+  const fraction = scale ? digits.slice(-scale).replace(/0+$/, "") : "";
+  return (total < 0n ? "-" : "") + integer + (fraction ? "." + fraction : "");
+}
+
+function PatternsView({ report, symbolFilter, onSelectPattern }: {
+  report: FinrezResponse; symbolFilter: string; onSelectPattern: (pattern: string) => void;
+}) {
+  const tickerQuery = symbolFilter.trim().toUpperCase();
+  const episodes = (report.closed_episodes ?? []).filter((deal) => deal.symbol.includes(tickerQuery));
+  const groups = new Map<string, {
+    pattern: string; cohort: ClosedEpisodeLocator["cohort"]; deals: ClosedEpisodeLocator[];
+  }>();
+  let provenCount = 0;
+  for (const deal of episodes) {
+    if (deal.opening_controller !== "ROBOT" && deal.opening_controller !== "MANUAL") continue;
+    const setup = exactD2Setup({
+      setup_context: deal.setup_context,
+      execution_allocations: [{ controller: deal.opening_controller }],
+    }, deal);
+    if (!setup) continue;
+    provenCount += 1;
+    const key = JSON.stringify([setup.pattern, deal.cohort]);
+    const group = groups.get(key);
+    if (group) group.deals.push(deal);
+    else groups.set(key, { pattern: setup.pattern, cohort: deal.cohort, deals: [deal] });
+  }
+  const rows = [...groups.values()].sort((a, b) =>
+    a.pattern.localeCompare(b.pattern, "ru") || a.cohort.localeCompare(b.cohort));
+  return (
+    <section className="diary-finrez" aria-label="Паттерны по подтверждённым сделкам">
+      <p className="diary-finrez-basis">
+        Только точные D2-связи с закрытыми сделками. D2 — наблюдения, не полный журнал решений робота.
+        Категории управления не объединяются; суммы ниже — только по подтверждённым эпизодам.
+      </p>
+      <p className="diary-finrez-coverage" role="status">
+        Паттерн подтверждён для {provenCount} из {episodes.length} закрытых сделок по выбранному тикеру и периоду.
+        Остальные сделки не считаются нулевыми или убыточными.
+        {report.attribution_coverage.status === "PARTIAL"
+          ? " Сам финансовый отчёт также имеет неполное покрытие атрибуции."
+          : ""}
+      </p>
+      {rows.length === 0 ? <p className="diary-state">
+        Нет сделок с подтверждённым паттерном за выбранный период
+      </p> : (
+        <>
+          <p className="diary-finrez-basis">
+            Кнопка списка открывает все подтверждённые сделки с паттерном, включая другие категории управления.
+          </p>
+          <div className="diary-finrez-list">
+            {rows.map((row) => {
+              const pnl = sumVerifiedPnl(row.deals.map((deal) => deal.pnl_usdt));
+              const numeric = pnl === null ? NaN : Number(pnl);
+              const wins = row.deals.filter((deal) => Number(deal.pnl_usdt) > 0).length;
+              const losses = row.deals.filter((deal) => Number(deal.pnl_usdt) < 0).length;
+              return <div className="diary-finrez-row" key={JSON.stringify([row.pattern, row.cohort])}>
+                <div className="diary-pattern-label">
+                  <strong title={row.pattern}>{row.pattern}</strong>
+                  <small>{dealLabels[row.cohort]} · {row.deals.length} сделок · {wins} прибыльных · {losses} убыточных</small>
+                </div>
+                <span title={pnl === null ? "Точная сумма недоступна" : pnl + " USDT"}
+                  className={numeric > 0 ? "profit" : numeric < 0 ? "loss" : ""}>
+                  {pnl === null ? "—" : formatFinrezPnl(pnl)}
+                </span>
+                <button type="button" className="diary-finrez-list-button"
+                  aria-label={`Показать все сделки по паттерну ${row.pattern}`}
+                  title="Перейти к сделкам с подтверждённым паттерном"
+                  onClick={() => onSelectPattern(row.pattern)}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />
+                  </svg>
+                </button>
+              </div>;
+            })}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function FinrezView({ report, symbolFilter, onSelectTicker }: {
   report: FinrezResponse; symbolFilter: string; onSelectTicker: (symbol: string) => void;
 }) {
@@ -1322,9 +1428,9 @@ export function DiaryOverlay({
     setLoading(true);
     setLoadError(false);
     if (section === "STATISTICS") setStatistics(null);
-    if (section === "FINREZ" || section === "DEALS") setFinrez(null);
+    if (section === "FINREZ" || section === "PATTERNS" || section === "DEALS") setFinrez(null);
     try {
-      if (section === "FINREZ" || section === "DEALS") {
+      if (section === "FINREZ" || section === "PATTERNS" || section === "DEALS") {
         if (!statisticsScope) throw new Error("finrez scope required");
         const response = await fetch(marketApiRoutes.diaryTickerFinrez(
           statisticsScope.accountId, statisticsScope.owner, finrezPeriod,
@@ -1378,13 +1484,10 @@ export function DiaryOverlay({
             || typeof row.pnl_usdt !== "string" || !row.pnl_usdt.trim()
             || !Number.isFinite(Number(row.pnl_usdt))
             || !Number.isSafeInteger(row.trade_count) || row.trade_count < 1
-          ) || (section === "DEALS" && !validClosedEpisodes(result))) throw new Error("finrez scope/data mismatch");
+          ) || ((section === "DEALS" || section === "PATTERNS") && !validClosedEpisodes(result))) throw new Error("finrez scope/data mismatch");
         setRequestedTradeMissing(false);
         setFinrez(result);
         setAccountId(result.account_id);
-      } else if (section === "PATTERNS") {
-        // Pattern tab intentionally deferred until owner visual acceptance.
-        setRequestedTradeMissing(false);
       } else if (section === "TRADES") {
         const response = await fetch(marketApiRoutes.diaryTrades);
         if (!response.ok) throw new Error("diary request failed");
@@ -1563,7 +1666,10 @@ export function DiaryOverlay({
 
           {!loading && !loadError && !selectedTrade && section === "FINREZ" && finrez ? <FinrezView report={finrez}
             symbolFilter={finrezSymbolFilter} onSelectTicker={setPendingFinrezTicker} /> : null}
-          {!loading && !loadError && !selectedTrade && section === "PATTERNS" ? <p className="diary-state">Паттерны — второй этап после визуальной приёмки «Финреза»</p> : null}
+          {!loading && !loadError && !selectedTrade && section === "PATTERNS" && finrez ? (
+            <PatternsView report={finrez} symbolFilter={finrezSymbolFilter}
+              onSelectPattern={(pattern) => { setFinrezPatternFilter(pattern); setSection("DEALS"); }} />
+          ) : null}
           {!loading && !loadError && !selectedTrade && section === "DEALS" && finrez ? (
             <ClosedDealsView key={`${finrez.account_id}:${finrez.owner}:${finrez.period}:${finrez.source_revision}:${finrezSymbolFilter}:${finrezPatternFilter}`}
               report={finrez} symbolFilter={finrezSymbolFilter} patternFilter={finrezPatternFilter}
