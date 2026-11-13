@@ -2,7 +2,7 @@
 import syntheticDmiFixture from "./syntheticDmiFixture.json";
 export type ReplayKind =
   "CANDLE_CLOSED" | "WEDGE_ACCEPTED" | "WEDGE_BREAKOUT" | "WEDGE_RETEST" |
-  "ENTRY_SIGNAL" | "ENTRY_FILLED" | "EXIT_FILLED";
+  "ENTRY_SIGNAL" | "ENTRY_FILLED" | "PARTIAL_FILLED" | "STOP_AMENDED" | "EXIT_FILLED";
 export type ReplayCandle = {
   start_ms: number;
   end_ms: number;
@@ -59,6 +59,8 @@ export type ReplayEvent = {
   stop?: number;
   take?: number;
   reason?: string;
+  quantity?: string;
+  fee_usdt?: string;
 };
 export type ReplayGeometry = {
   kind: "MAIN_1H" | "TARGET_1H" | "REFERENCE_5M";
@@ -179,7 +181,11 @@ export type ReplayDocument = {
   demo?: boolean;
   mode?: "MARKET_ONLY" | "STRATEGY";
   /** Audit provenance: direct public kline GET vs official trade-derived closed M5. */
-  market_data_source?: "BYBIT_PUBLIC_KLINE" | "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M";
+  market_data_source?: "BYBIT_PUBLIC_KLINE" | "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M" |
+    "PINNED_BYBIT_PUBLIC_TRADES_PLUS_L2_EVENT_TIME_SIMULATION";
+  execution_clock?: "ORIGINAL_EVENT_TIME_NOT_OHLC_M1";
+  execution_certainty?: "CONDITIONAL_L2_NOT_REAL_EXCHANGE_FILLS";
+  partial_and_be_markers?: "EVENTS_ONLY_CONDITIONAL";
   symbol?: string;
   timeframe?: "5m";
   geometry?: ReplayGeometry[];
@@ -239,7 +245,8 @@ function positiveInteger(value: unknown, label: string): number {
 }
 const kinds = new Set<ReplayKind>([
   "CANDLE_CLOSED", "WEDGE_ACCEPTED", "WEDGE_BREAKOUT",
-  "WEDGE_RETEST", "ENTRY_SIGNAL", "ENTRY_FILLED", "EXIT_FILLED",
+  "WEDGE_RETEST", "ENTRY_SIGNAL", "ENTRY_FILLED", "PARTIAL_FILLED",
+  "STOP_AMENDED", "EXIT_FILLED",
 ]);
 
 /** Reject foreign account/report data or any chronology violation; never rewrite input. */
@@ -263,16 +270,29 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
   )) {
     throw new Error("Неверная идентичность реальной рыночной истории");
   }
+  const isL2 = mode === "STRATEGY" &&
+    object.market_data_source === "PINNED_BYBIT_PUBLIC_TRADES_PLUS_L2_EVENT_TIME_SIMULATION";
   const verifiedStrategy = mode === "STRATEGY" &&
     object.market_data_source !== undefined;
   if (verifiedStrategy && (
     object.demo === true ||
-    object.market_data_source !== "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M" ||
+    (object.market_data_source !== "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M" && !isL2) ||
     typeof object.symbol !== "string" ||
     !/^[A-Z0-9]{3,30}USDT$/.test(object.symbol) ||
     object.timeframe !== "5m"
   )) {
     throw new Error("Торговый прогон без подтверждённой рыночной идентичности");
+  }
+  if (isL2 ? (
+    object.execution_clock !== "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" ||
+    object.execution_certainty !== "CONDITIONAL_L2_NOT_REAL_EXCHANGE_FILLS" ||
+    object.partial_and_be_markers !== "EVENTS_ONLY_CONDITIONAL"
+  ) : (
+    object.execution_clock !== undefined ||
+    object.execution_certainty !== undefined ||
+    object.partial_and_be_markers !== undefined
+  )) {
+    throw new Error("Неверная идентичность событий исторического стакана L2");
   }
   if (!Array.isArray(object.events) || !object.events.length || object.events.length > 100_000) {
     throw new Error("Ожидается от 1 до 100000 событий");
@@ -292,6 +312,9 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
     if (time_ms < previousTime) throw new Error("История событий идёт назад");
     previousTime = time_ms;
     const kind = e.kind as ReplayKind;
+    if (!isL2 && (kind === "PARTIAL_FILLED" || kind === "STOP_AMENDED")) {
+      throw new Error("Частичное исполнение и безубыток требуют исходного L2");
+    }
     if (mode === "MARKET_ONLY" && kind !== "CANDLE_CLOSED") {
       throw new Error("Рыночный архив не должен содержать сделок или сигналов");
     }
@@ -365,14 +388,39 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       throw new Error("Недостоверное событие Robot по клину");
     const net_usdt = e.net_usdt;
     const pnl_percent = e.pnl_percent;
+    const decimal = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/;
     if (net_usdt !== undefined || pnl_percent !== undefined) {
-      const decimal = /^[+-]?(?:0|[1-9]\d*)(?:\.\d+)?$/;
       if (kind !== "EXIT_FILLED" ||
           typeof net_usdt !== "string" || typeof pnl_percent !== "string" ||
           !decimal.test(net_usdt) || !decimal.test(pnl_percent) ||
           !Number.isFinite(Number(net_usdt)) || !Number.isFinite(Number(pnl_percent)))
         throw new Error("Недостоверный финансовый результат виртуального выхода");
     }
+    const isL2Fill = isL2 && (
+      kind === "ENTRY_FILLED" || kind === "PARTIAL_FILLED" || kind === "EXIT_FILLED"
+    );
+    const quantity = e.quantity, fee_usdt = e.fee_usdt;
+    if (isL2Fill ? (
+      typeof quantity !== "string" || !decimal.test(quantity) ||
+      !Number.isFinite(Number(quantity)) || Number(quantity) <= 0 ||
+      typeof fee_usdt !== "string" || !decimal.test(fee_usdt) ||
+      !Number.isFinite(Number(fee_usdt)) || Number(fee_usdt) < 0 ||
+      !trade_id || !side || e.price === undefined ||
+      safeNumber(e.price, "L2 execution price") <= 0
+    ) : quantity !== undefined || fee_usdt !== undefined) {
+      throw new Error("Неверная квитанция объёма/комиссии L2");
+    }
+    if (kind === "STOP_AMENDED" && (
+      !trade_id || e.reason !== "NET_BREAK_EVEN_AFTER_PARTIAL" ||
+      e.stop === undefined || safeNumber(e.stop, "L2 BE stop") <= 0 ||
+      e.price !== undefined || side !== undefined
+    )) {
+      throw new Error("STOP без доказанной цены изменения L2");
+    }
+    if (isL2 && kind === "EXIT_FILLED" && (
+      (e.reason !== "STOP" && e.reason !== "TAKE") ||
+      net_usdt === undefined || pnl_percent === undefined
+    )) throw new Error("Неатрибутированный L2 выход");
     return {
       source: "SIMULATION", simulation_run_id: id, kind, sequence, time_ms,
       ...(candle ? { candle } : {}),
@@ -384,11 +432,45 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       ...(net_usdt !== undefined ? { net_usdt: net_usdt as string,
         pnl_percent: pnl_percent as string } : {}),
       ...(e.reason !== undefined ? { reason: e.reason } : {}),
+      ...(quantity !== undefined ? { quantity: quantity as string, fee_usdt: fee_usdt as string } : {}),
       ...(e.price !== undefined ? { price: parseOptionalNumber(e.price, "price") } : {}),
       ...(e.stop !== undefined ? { stop: parseOptionalNumber(e.stop, "stop") } : {}),
       ...(e.take !== undefined ? { take: parseOptionalNumber(e.take, "take") } : {}),
     };
   });
+  if (isL2) {
+    // A checked JSON shape is not exchange/queue proof; fail closed on
+    // orphan, duplicate or out-of-order conditional virtual L2 actions.
+    const open = new Map<string, { side: "LONG" | "SHORT"; quantity: number;
+      partial: number | null; stopAmended: boolean }>();
+    for (const event of events) {
+      const id = event.trade_id;
+      if (event.kind === "ENTRY_FILLED") {
+        if (!id || !event.side || !event.quantity || open.has(id))
+          throw new Error("Дублированный либо безымянный L2 вход");
+        open.set(id, { side: event.side, quantity: Number(event.quantity),
+          partial: null, stopAmended: false });
+      } else if (event.kind === "PARTIAL_FILLED") {
+        const prior = id ? open.get(id) : undefined;
+        if (!prior || prior.partial !== null || event.side !== prior.side ||
+            !event.quantity || Number(event.quantity) >= prior.quantity)
+          throw new Error("Частичный L2 выход без подтверждённой позиции");
+        prior.partial = Number(event.quantity);
+      } else if (event.kind === "STOP_AMENDED") {
+        const prior = id ? open.get(id) : undefined;
+        if (!prior || prior.partial === null || prior.stopAmended)
+          throw new Error("Перенос L2 STOP до частичного исполнения");
+        prior.stopAmended = true;
+      } else if (event.kind === "EXIT_FILLED") {
+        const prior = id ? open.get(id) : undefined;
+        if (!prior || event.side !== prior.side || !event.quantity ||
+            Math.abs(Number(event.quantity) + (prior.partial ?? 0) - prior.quantity)
+              > 1e-10 * Math.max(1, prior.quantity))
+          throw new Error("L2 выход не закрывает остаток виртуальной позиции");
+        open.delete(id!);
+      }
+    }
+  }
   const geometry_warmup_hours = object.geometry_warmup_hours === undefined
     ? undefined : positiveInteger(object.geometry_warmup_hours, "geometry_warmup_hours");
   if (geometry_warmup_hours !== undefined && (mode !== "MARKET_ONLY" || geometry_warmup_hours > 72)) {
@@ -951,7 +1033,13 @@ export function parseReplayDocument(input: unknown): ReplayDocument {
       symbol: object.symbol as string,
       timeframe: "5m" as const,
       market_data_source: object.market_data_source as
-        "BYBIT_PUBLIC_KLINE" | "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M",
+        "BYBIT_PUBLIC_KLINE" | "BYBIT_OFFICIAL_PUBLIC_TRADES_DERIVED_5M" |
+        "PINNED_BYBIT_PUBLIC_TRADES_PLUS_L2_EVENT_TIME_SIMULATION",
+      ...(isL2 ? {
+        execution_clock: "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" as const,
+        execution_certainty: "CONDITIONAL_L2_NOT_REAL_EXCHANGE_FILLS" as const,
+        partial_and_be_markers: "EVENTS_ONLY_CONDITIONAL" as const,
+      } : {}),
     } : {}),
     ...(geometry ? { geometry } : {}),
     ...(hourly_prior_updates ? { hourly_prior_updates } : {}),
@@ -986,11 +1074,14 @@ export function simulationActionJournal(document: ReplayDocument) {
     ...(event.stop !== undefined ? { stop: event.stop } : {}),
     ...(event.take !== undefined ? { take: event.take } : {}),
     ...(event.reason ? { reason: event.reason } : {}),
+    ...(event.quantity ? { quantity: event.quantity, fee_usdt: event.fee_usdt } : {}),
     comment: event.kind === "WEDGE_ACCEPTED" ? `Принят кандидат: ${event.pattern ?? ""}` :
       event.kind === "WEDGE_BREAKOUT" ? "Пробой обнаружен. Ожидается ретест" :
       event.kind === "WEDGE_RETEST" ? "Ретест подтверждён" :
       event.kind === "ENTRY_SIGNAL" ? `LIMIT по ретесту ${event.side ?? ""}` :
       event.kind === "ENTRY_FILLED" ? `Вход ${event.side ?? ""}` :
+      event.kind === "PARTIAL_FILLED" ? "Частичная фиксация" :
+      event.kind === "STOP_AMENDED" ? "Перенос STOP после частичного выхода" :
       `Выход ${event.reason ?? ""}`,
   }));
   return {
