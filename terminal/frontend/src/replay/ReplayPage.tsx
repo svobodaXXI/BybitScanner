@@ -10,7 +10,7 @@ import {
 } from "./replayModel";
 import { visibleExecutionMarkers, visibleStopAmendMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
 import { parseLocalReplayUpload } from "./l2ReplayUpload";
-import { l2Prehistory } from "./l2ChartContext";
+import { l2Prehistory, l2Posthistory, l2PresentationEvents } from "./l2ChartContext";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
   type PaperEpisodeFacts, type PaperOverlay,
@@ -620,6 +620,7 @@ export function ReplayPage() {
   }, []);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [l2Context, setL2Context] = useState<ReplayCandle[]>([]);
+  const [l2After, setL2After] = useState<ReplayCandle[]>([]);
   const [l2ContextStatus, setL2ContextStatus] = useState("");
   const historyRequest = useRef<AbortController | null>(null);
   const bundledRequest = useRef<AbortController | null>(null);
@@ -654,14 +655,21 @@ export function ReplayPage() {
     );
     return () => window.clearInterval(ticker);
   }, [runLoading]);
-  const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
+  // Do not mutate the original L2 document. Only the viewport/playback receives
+  // a combined, read-only clock of source events and public post-range M5 closes.
+  const displayEvents = useMemo(
+    () => l2PresentationEvents(document, l2After), [document, l2After]);
+  const displayDocument = useMemo(
+    () => displayEvents === document.events ? document :
+      { ...document, events: displayEvents }, [document, displayEvents]);
+  const shown = useMemo(() => visibleReplay(displayEvents, cursor), [displayEvents, cursor]);
   const scannerObservations = useMemo(() =>
     document.mode === "MARKET_ONLY" && shown.lastTimeMs !== null
       ? (document.scanner_observations ?? []).filter(o =>
           selectedStrategies.selected.includes(o.strategy) &&
           o.available_at_ms <= shown.lastTimeMs!)
       : [], [document, shown.lastTimeMs, selectedStrategies]);
-  const journal = useMemo(() => (document.demo ? [] : document.events.slice(0, cursor))
+  const journal = useMemo(() => (document.demo ? [] : displayEvents.slice(0, cursor))
     .filter(event => event.kind !== "CANDLE_CLOSED").map(event => {
       const fmt = (value: string) => {
         const number = Number(value);
@@ -694,7 +702,7 @@ export function ReplayPage() {
         default: message = "Событие";
       }
       return { sequence: event.sequence, time: event.time_ms, message };
-    }), [document.events, cursor]);
+    }), [displayEvents, cursor]);
   const paperSetupContext = paperFacts?.setup_context;
   const paperSetupVisible = paperSetupContext?.status === "EXACT_D2_LINK" &&
     paperOverlay.status === "MATCHED" && shown.lastTimeMs !== null &&
@@ -707,22 +715,22 @@ export function ReplayPage() {
       ? paperFacts.setup_context.decisions.filter(e => e.occurred_at_ms <= shown.lastTimeMs!)
       : [], [paperFacts, paperOverlay, shown.lastTimeMs]);
 
-  const total = document.events.length;
+  const total = displayEvents.length;
   const progress = Math.round(100 * cursor / total);
   const playbackComplete = !simulationGraphPending && total > 0 && cursor >= total;
   const seekPoints = useMemo(() => {
     const result = [0];
-    for (let i = 0; i < document.events.length; i++) {
-      const closed = document.events[i];
+    for (let i = 0; i < displayEvents.length; i++) {
+      const closed = displayEvents[i];
       if (closed.kind !== "CANDLE_CLOSED") continue;
       let next = i + 1;
-      while (next < document.events.length &&
-             document.events[next].time_ms === closed.time_ms) next++;
+      while (next < displayEvents.length &&
+             displayEvents[next].time_ms === closed.time_ms) next++;
       if (next > result[result.length - 1]) result.push(next);
       i = next - 1;
     }
     return result;
-  }, [document.events]);
+  }, [displayEvents]);
   const seekIndex = Math.max(0, seekPoints.indexOf(cursor));
   const priorBreaks = useMemo(
     () => showTrendGeometry ? visiblePriorBreaks(document, shown.lastTimeMs) : [],
@@ -870,6 +878,7 @@ export function ReplayPage() {
   // It never enters document.events, the playback clock or accounting.
   useEffect(() => {
     setL2Context([]);
+    setL2After([]);
     setL2ContextStatus("");
     if (document.execution_clock !== "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" ||
         !document.symbol) return;
@@ -895,10 +904,12 @@ export function ReplayPage() {
         if (raw.length > 24 * 1024 * 1024) throw new Error("Слишком большой публичный архив");
         const history = parseReplayDocument(JSON.parse(raw) as unknown);
         const candles = l2Prehistory(document, history);
+        const after = l2Posthistory(document, history);
         if (controller.signal.aborted) return;
         setL2Context(candles);
-        setL2ContextStatus("Публичная M5-предыстория: " + candles.length +
-          " закрытых свечей · только для графика, L2/P&L неизменны");
+        setL2After(after);
+        setL2ContextStatus("Публичная M5: " + candles.length +
+          " до и " + after.length + " после исследуемого окна · только график; L2/P&L неизменны");
       } catch {
         if (!controller.signal.aborted) setL2ContextStatus(
           "Публичная предыстория недоступна; исходный L2-отчёт не изменён");
@@ -910,8 +921,8 @@ export function ReplayPage() {
   // Keep the requested candle cadence independent of network packet arrivals.
   // A batch may contain many verified bars, but each timer tick reveals ONE M5.
   // A stalled Scanner frontier costs no playback time: never catch up in a burst.
-  const availableEvents = useRef(document.events);
-  availableEvents.current = document.events;
+  const availableEvents = useRef(displayEvents);
+  availableEvents.current = displayEvents;
   useEffect(() => {
     if (!playing) return;
     const timer = window.setInterval(() => {
@@ -1317,7 +1328,7 @@ export function ReplayPage() {
         <button type="button" className="replay-player-button" title="Шаг вперёд"
           aria-label="Шаг вперёд" onClick={() => {
             setPlaying(false);
-            setCursor((current) => nextClosedCandleCursor(document.events, current));
+            setCursor((current) => nextClosedCandleCursor(displayEvents, current));
           }} disabled={simulationGraphPending || cursor >= total}><PlayerIcon name="forward" /></button>
         <input className="replay-seek" type="range" min={0} max={seekPoints.length - 1}
                 step={1} value={simulationGraphPending ? 0 : seekIndex}
@@ -1359,7 +1370,7 @@ export function ReplayPage() {
                 {runLoading ? `Проверяю первые M1: ${runWaitingSeconds} с. Затем свечи появятся постепенно.` :
                   "График нового прогона появится после нажатия ▶"}
               </div>
-            : <ReplayChart document={document} cursor={cursor} prehistory={l2Context} paperOverlay={paperOverlay}
+            : <ReplayChart document={displayDocument} cursor={cursor} prehistory={l2Context} paperOverlay={paperOverlay}
                 paperFacts={paperFacts} selectedStrategies={selectedStrategies.selected}
                 showTrendGeometry={showTrendGeometry}
                 showDebug={showDebug} timeframe={timeframe}
