@@ -16,7 +16,7 @@ from research.simulator_v2.timeline import (
     IsolatedTimeline, MinuteFrame, SimulationEvent, StageFact, StepBlocked,
 )
 from research.simulator_v2.virtual_account import VirtualAccount, VirtualAccountSnapshot
-from research.simulator_v2.virtual_exchange import MarketRequest, LimitRequest, ProtectedLimitRequest, VirtualExchange
+from research.simulator_v2.virtual_exchange import MarketRequest, LimitRequest, ProtectedLimitRequest, VirtualExchange, L2PartialTakePolicy
 from research.simulator_v2.reused_geometry import ReadOnlyReusedGeometry
 from research.simulator_v2.wedge_observer import ReadOnlyWedgeScanner, WedgeScannerConfig
 from research.simulator_v2.ikigai_observer import ReadOnlyIkigaiScanner, IkigaiScannerConfig
@@ -43,6 +43,7 @@ class VirtualReplaySession:
         wedge_robot_config: SimWedgeRobotConfig | None = None,
         wedge_risk_settings: SimWedgeRiskSettings | None = None,
         execution_mode: str = "OHLC_M1",
+        l2_partial_take_policy: L2PartialTakePolicy | None = None,
     ) -> None:
         if type(enable_reused_geometry) is not bool:
             raise TypeError("explicit boolean for optional research geometry required")
@@ -82,6 +83,7 @@ class VirtualReplaySession:
             account=self.account, taker_fee_rate=taker_fee_rate,
             maker_fee_rate=maker_fee_rate,
             execution_mode=execution_mode,
+            l2_partial_take_policy=l2_partial_take_policy,
         )
         self.timeline = IsolatedTimeline(
             simulation_run_id=simulation_run_id, symbol=symbol,
