@@ -553,6 +553,72 @@ class VirtualExchange:
         if (kind == "TRADE" and self._l2_event_at_ms == at_ms):
             raise ValueError("same-millisecond taker print order is unproven")
 
+    def on_historical_same_ms_inert_bucket(
+        self, *, books: tuple[BookState, ...], trades: tuple[TakerPrint, ...],
+    ) -> None:
+        """Commit a mixed-timestamp bucket ONLY if neither ordering can fill.
+
+        Trade and book archives do not establish an exchange-level order for
+        equal millisecond timestamps. A non-triggering trade needs no virtual
+        execution action; it still reaches the Scanner through the original
+        pinned taker tape at the M1 close. Never skip a potential fill.
+        """
+        if (not isinstance(books, tuple) or not isinstance(trades, tuple)
+                or not books or not trades or len(books) > 2000
+                or len(trades) > 2000):
+            raise ValueError("bounded mixed L2/taker group required")
+        stamp = books[0].available_at_ms
+        if (any(not isinstance(book, BookState)
+                or book.available_at_ms != stamp or book.symbol != self.account.symbol
+                for book in books)
+                or any(not isinstance(trade, TakerPrint)
+                       or trade.event_ms != stamp or trade.symbol != self.account.symbol
+                       for trade in trades)
+                or len({trade.trade_id for trade in trades}) != len(trades)):
+            raise ValueError("invalid original mixed-millisecond L2/taker events")
+        self._require_l2_event(stamp, kind="BOOK")
+        if self._robot_limits or self._robot_markets or self._robot_stop is not None:
+            raise ValueError(f"same-ms L2/taker native Robot chronology unproven at {stamp}")
+        exposure = self.account.snapshot(
+            as_of_ms=stamp, mark_price=trades[0].price,
+        ).position_quantity
+        if exposure and self._active_protection is None:
+            raise ValueError(f"same-ms L2/taker unprotected exposure at {stamp}")
+        if self._active_protection is not None:
+            plan = self._active_protection
+            long = plan.entry.side == "BUY"
+            if any(
+                (t.price <= plan.stop_price if long else t.price >= plan.stop_price)
+                or ((t.side == "Buy" and t.price > plan.take_price) if long
+                    else (t.side == "Sell" and t.price < plan.take_price))
+                for t in trades
+            ):
+                raise ValueError(f"same-ms L2/taker protected exit chronology unproven at {stamp}")
+        if self._pending is not None:
+            request, submitted = self._pending
+            if not isinstance(request, LimitRequest):
+                raise ValueError("historical L2 requires protected LIMIT")
+            if stamp > submitted:
+                if any(
+                    (book.best_ask[0] <= request.limit_price if request.side == "BUY"
+                     else book.best_bid[0] >= request.limit_price)
+                    for book in books
+                ):
+                    raise ValueError(f"same-ms L2/taker marketable entry chronology unproven at {stamp}")
+                if any(
+                    ((t.side == "Sell" and t.price < request.limit_price)
+                     if request.side == "BUY"
+                     else (t.side == "Buy" and t.price > request.limit_price))
+                    for t in trades
+                ):
+                    raise ValueError(f"same-ms L2/taker passive entry chronology unproven at {stamp}")
+        # Both possible channel orders leave the virtual account unchanged.
+        # Apply only original book deltas; the same trades are independently
+        # observed by the Scanner at the committed M1 close, not discarded.
+        for book in books:
+            if self.on_historical_book(book) is not None:
+                raise ValueError("inert mixed-millisecond preflight invariant broken")
+
     def _l2_sweep(
         self, *, side: str, quantity: Decimal, limit_price: Decimal | None,
     ) -> Decimal | None:
