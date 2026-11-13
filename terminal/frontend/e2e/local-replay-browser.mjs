@@ -278,6 +278,9 @@ try {
   // The entire replay control surface belongs beside the M5/H1 switch,
   // never in the file-import row above the chart.
   const controlBar = page.getByRole("group", { name: "Таймфрейм графика" });
+  assert.deepEqual(await controlBar.locator(":scope > button").allTextContents(),
+    ["H1", "M5", "M1", "15S"],
+    "approved owner timeframe order must not regress");
   const playbackBar = controlBar.getByRole("group", { name: "Управление воспроизведением" });
   const actualOrder = await playbackBar.locator("button.replay-player-button").evaluateAll(
     buttons => buttons.map(button => button.getAttribute("aria-label")),
@@ -306,7 +309,7 @@ try {
   assert.equal(await page.getByRole("group", { name: "Таймфрейм графика" })
     .getByText("M1").isDisabled(), true);
   assert.equal(await page.getByRole("group", { name: "Таймфрейм графика" })
-    .getByText("15с").isDisabled(), true);
+    .getByText("15S").isDisabled(), true);
   assert.equal(await page.locator(".replay-controls .replay-rate").count(), 0);
   const drawingBar = page.getByRole("group", { name: "Инструменты рисования" });
   const trendTool = drawingBar.getByRole("button", { name: "Трендовая" });
@@ -810,6 +813,9 @@ try {
   await page.getByRole("status").filter({ hasText: "Публичная M5: 288 до и 12 после" }).waitFor();
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "288",
     "before the first L2 close, only verified closed historical M5 may be drawn");
+  assert.match(await page.getByRole("group", { name: "Индикатор ADX DMI" }).innerText(),
+    /ADX 0\.0/,
+    "L2 public prehistory must restore closed-M5 Wilder ADX even before source replay");
   await page.getByRole("button", { name: "M5", exact: true }).click();
   await page.getByRole("button", { name: "Шаг вперёд" }).click();
   await page.waitForFunction(() =>
