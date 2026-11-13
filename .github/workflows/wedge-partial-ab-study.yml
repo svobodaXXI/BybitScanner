@@ -1,0 +1,39 @@
+name: Wedge partial 25% versus original (isolated research)
+
+on:
+  pull_request:
+    paths:
+      - "research/simulator_v2/wedge_partial_ab_ci.py"
+      - "tests/test_historical_wedge_partial_ab.py"
+      - ".github/workflows/wedge-partial-ab-study.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    # Only this one explicitly selected research PR; don't download historical
+    # archives for unrelated PRs or claim API network access from GitHub.
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'research/wedge-partial-be-github-20261113'
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Causal offline regression
+        run: python -m unittest tests.test_historical_wedge_partial_ab -v
+      - name: Official public Bybit archive and native Scanner/Robot paired study
+        run: python -m research.simulator_v2.wedge_partial_ab_ci
+      - name: Save result including a precise failure receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: icnt-wedge-partial-ab-20261107-20261112
+          path: wedge_ab_result.json
+          if-no-files-found: warn
+          retention-days: 7
