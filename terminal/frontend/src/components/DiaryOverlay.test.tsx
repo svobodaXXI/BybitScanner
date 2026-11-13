@@ -834,13 +834,67 @@ describe("Finrez first-screen UI", () => {
     expect(screen.getByText("-2,50 USDT")).toBeInTheDocument();
     expect(screen.queryByText(/2\.5012345678/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Показать сделки по BTCUSDT" }));
+    expect(screen.getByRole("alertdialog", { name: "Переход к сделкам" }))
+      .toHaveTextContent("Открыть все сделки по BTCUSDT за выбранный период?");
+    expect(screen.queryByText("Сделки по BTCUSDT")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Показать сделки по BTCUSDT" }));
+    fireEvent.click(screen.getByRole("button", { name: "Открыть сделки" }));
     expect(await screen.findByText("Сделки по BTCUSDT")).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Поиск по тикеру" })).toHaveValue("BTCUSDT");
     expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
     expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Подробности сделки" })).toBeInTheDocument();
+    expect(screen.getByText("Паттерн: не установлен")).toBeInTheDocument();
+    expect(screen.getByText("PnL %: —")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "← Все сделки" }));
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
     expect(screen.queryByText("Сделки по BTCUSDT")).not.toBeInTheDocument();
+  });
+
+
+  it("filters aggregate ticker rows and exact closed episodes through the shared search", async () => {
+    const btc = {
+      trade_episode_id: "te_" + "c".repeat(24), symbol: "BTCUSDT", side: "LONG",
+      opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+      pnl_usdt: "-2.5", execution_count: 2, cohort: "ROBOT",
+      replay_evidence: "EPISODE_INDEX_ONLY",
+    };
+    const eth = { ...btc, trade_episode_id: "te_" + "d".repeat(24), symbol: "ETHUSDT" };
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
+      ...finrezResponse,
+      period: (new URL(url, "http://localhost").searchParams.get("period") ?? "DAY"),
+      closed_episodes: [btc, eth],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:search" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+
+    const search = screen.getByRole("searchbox", { name: "Поиск по тикеру" });
+    expect(await screen.findByText("+7,20 USDT")).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "btc" } });
+    expect(search).toHaveValue("BTC");
+    expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
+    expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Всё время" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=ALL",
+    ));
+    expect(search).toHaveValue("BTC");
+    fireEvent.click(screen.getByRole("button", { name: "Показать сделки по BTCUSDT" }));
+    fireEvent.click(screen.getByRole("button", { name: "Открыть сделки" }));
+    await screen.findByText("Сделки по BTCUSDT");
+    expect(screen.getByRole("button", { name: "Всё время" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Подробности сделки" })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по тикеру" }), {
+      target: { value: "ETH" },
+    });
+    expect(await screen.findByText("Сделки по ETH")).toBeInTheDocument();
+    expect(screen.queryByText("BTCUSDT")).not.toBeInTheDocument();
+    expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
   });
 
   it("never shows foreign-account ranking or silently falls back to manual", async () => {
