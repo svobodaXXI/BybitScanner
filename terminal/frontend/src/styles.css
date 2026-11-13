@@ -305,19 +305,56 @@ button {
   font-weight: 700;
   font-size: 0.85rem;
 }
-.editor-correct-pattern-label {
-  color: #aebac7;
-  font-size: 0.7rem;
-}
-.editor-bottom-actions {
+.editor-review-fields {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-self: stretch;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  min-width: 0;
+  width: 100%;
+}
+.editor-review-fields > select,
+.editor-review-fields > input,
+.editor-review-fields > button {
+  width: 100%;
+  min-width: 0;
+}
+.editor-review-fields > small {
+  overflow-wrap: anywhere;
+}
+.editor-correction-export.editor-review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 46%);
+  align-items: stretch;
+  column-gap: 0.4rem;
+  padding-right: 0.4rem;
+}
+.editor-review-layout > .editor-review-fields {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+}
+.editor-review-layout > .editor-bottom-actions {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-self: end;
+  align-self: end;
   gap: 0.35rem;
-  margin-top: auto;
-  margin-right: -2.5rem;
-  padding-top: 0.3rem;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  /* The two navigation icons remain at the upper-right of this panel. */
+  padding-top: 5.3rem;
+}
+.editor-review-layout > .editor-bottom-actions > button {
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 
 .drawing-tools-panel {
