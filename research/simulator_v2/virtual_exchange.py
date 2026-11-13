@@ -212,6 +212,11 @@ class VirtualExchange:
         return self._active_protection
 
     @property
+    def l2_unproven_entry_depth_count(self) -> int:
+        """Protected LIMIT requests encountering unprovable full-size book depth."""
+        return len(self._l2_underdepth_order_ids)
+
+    @property
     def last_minute_fills(self) -> tuple[VirtualFill, ...]:
         return self._last_minute_fills
 
