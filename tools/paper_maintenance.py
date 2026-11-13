@@ -901,7 +901,7 @@ def deploy_staged_editor_only(
                         return "BLOCKED: known_natural_drain_continuation_already_invoked; no retry"
                     owner = RuntimeShutdown(root=root, env=_environment(env_file))
                     try:
-                        owner.require_known_natural_drain_ready()
+                        owner.require_known_natural_drain_ready(current)
                     except Exception as exc:
                         return ("BLOCKED: known_natural_drain_not_quiescent:"
                                 + type(exc).__name__ + ":"
@@ -912,7 +912,7 @@ def deploy_staged_editor_only(
                         phase="continuation-invoked", uid=trusted_uid,
                     )
                     try:
-                        result = owner.continue_known_natural_drain()
+                        result = owner.continue_known_natural_drain(current)
                     except Exception as exc:
                         return ("BLOCKED: known_natural_drain_continuation_unknown:"
                                 + type(exc).__name__
