@@ -202,3 +202,55 @@ def test_read_only_archive_loader_rejects_corrupted_digest(tmp_path: Path):
     assert load_latest_scoped_statistics_read_only(
         archive, account_id="paper", owner="MANUAL",
     ) is not None
+
+
+@pytest.mark.parametrize("optional_layout", ["all_missing", "one_missing", "missing_column"])
+def test_optional_wedge_source_missing_table_or_column_preserves_finrez(
+    tmp_path: Path, optional_layout: str,
+):
+    """PAPER snapshot remains complete; partial Wedge evidence is UNPROVEN."""
+    from terminal.diary.ticker_finrez import project_paper_ticker_pnl
+    from terminal.diary.wedge_lineage import attach_verified_wedge_signals
+
+    paper = tmp_path / "paper.sqlite3"
+    source_db(paper)
+    add_fill(paper, account="paper", exec_id="open", order_id="entry",
+             side="Buy", price="100", occurred=1000, origin="robot", controller="robot")
+    add_fill(paper, account="paper", exec_id="close", order_id="exit",
+             side="Sell", price="105", occurred=2000, origin="robot", controller="robot")
+    if optional_layout != "all_missing":
+        with sqlite3.connect(paper) as con:
+            # Intentionally partial optional evidence, not a valid Wedge source.
+            con.execute("""CREATE TABLE robot_candidates (
+                trading_account_id TEXT, candidate_id TEXT, symbol TEXT,
+                robot_state_json TEXT
+            )""")
+            if optional_layout == "missing_column":
+                con.execute("""CREATE TABLE robot_trades (
+                    trading_account_id TEXT, candidate_id TEXT, trade_id TEXT,
+                    symbol TEXT, direction TEXT, pattern TEXT, source_timeframe TEXT,
+                    signal_time_ms INTEGER, entry_time_ms INTEGER,
+                    exit_time_ms INTEGER
+                )""")
+                con.execute("""CREATE TABLE robot_entry_orders (
+                    trading_account_id TEXT, order_id TEXT, origin TEXT
+                )""")
+                con.execute("""CREATE TABLE paper_protection_obligations (
+                    trading_account_id TEXT, trade_id TEXT, status TEXT,
+                    winning_leg TEXT, exec_id TEXT, order_id TEXT
+                )""")
+    before = hashlib.sha256(paper.read_bytes()).hexdigest()
+    source = load_paper_source_snapshot(paper, include_wedge_evidence=True)
+    assert source.wedge_evidence is None
+    assert source.source_revision == 3
+    assert len(source.episodes) == 1
+    result = project_paper_ticker_pnl(
+        source, account_id="paper", owner="ROBOT", period="ALL", now_ms=3000,
+    )
+    assert result["tickers"][0]["pnl_usdt"] == "4.8"
+    assert result["closed_episodes"][0]["pnl_usdt"] == "4.8"
+    assert result["attribution_coverage"]["status"] == "COMPLETE"
+    assert "verified_signal" not in attach_verified_wedge_signals(
+        source, result,
+    )["closed_episodes"][0]
+    assert hashlib.sha256(paper.read_bytes()).hexdigest() == before

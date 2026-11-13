@@ -29,10 +29,12 @@ class PaperSourceSnapshot:
     origins: Mapping[ExecutionDedupKey, Origin]
     executions: tuple[Execution, ...] = ()
     campaign_evidence: Mapping[str, tuple[Mapping[str, object], ...]] | None = None
+    wedge_evidence: Mapping[str, tuple[Mapping[str, object], ...]] | None = None
 
 
 def load_paper_source_snapshot(
     db_path: str | Path, *, include_campaign_evidence: bool = False,
+    include_wedge_evidence: bool = False,
 ) -> PaperSourceSnapshot:
     """Use ONE read-only transaction for fills, provenance and optional Robot lineage."""
     path = Path(db_path)
@@ -58,6 +60,36 @@ def load_paper_source_snapshot(
         ).fetchall()
         executions = tuple(_execution_from_row(row) for row in rows)
         origins = load_order_origins_from_connection(conn, account_id="paper")
+        wedge_evidence = None
+        if include_wedge_evidence:
+            # Same SQLite read-only WAL snapshot as executions/origins/episodes.
+            # Legacy stores without exact candidate-owned entry evidence remain
+            # UNPROVEN; the reader never infers identity from symbol or time.
+            wedge_queries = {
+                "candidates": """SELECT trading_account_id,candidate_id,symbol,
+                                        robot_state_json FROM robot_candidates
+                                 WHERE trading_account_id=?""",
+                "trades": """SELECT trading_account_id,candidate_id,trade_id,symbol,direction,
+                                   pattern,source_timeframe,signal_time_ms,
+                                   entry_time_ms,exit_time_ms,exit_reason
+                              FROM robot_trades WHERE trading_account_id=?""",
+                "robot_entries": """SELECT trading_account_id,order_id,origin
+                                   FROM robot_entry_orders WHERE trading_account_id=?""",
+                "obligations": """SELECT trading_account_id,trade_id,status,
+                                        winning_leg,exec_id,order_id
+                                   FROM paper_protection_obligations WHERE trading_account_id=?""",
+            }
+            try:
+                wedge_evidence = {
+                    name: tuple(dict(row) for row in conn.execute(sql, ("paper",)).fetchall())
+                    for name, sql in wedge_queries.items()
+                }
+            except sqlite3.Error:
+                # Wedge is strictly optional. Missing tables/columns or
+                # unavailable supplementary rows cannot invalidate the
+                # already-proven PAPER executions and controller attribution.
+                # Never publish partial/empty lineage as authoritative.
+                wedge_evidence = None
         campaign_evidence = None
         if include_campaign_evidence:
             # Optional read-only projection. Missing tables mean UNKNOWN lineage,
@@ -101,6 +133,7 @@ def load_paper_source_snapshot(
         origins=origins,
         executions=executions,
         campaign_evidence=campaign_evidence,
+        wedge_evidence=wedge_evidence,
     )
 
 
