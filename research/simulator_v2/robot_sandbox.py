@@ -391,6 +391,10 @@ class ConnectedSimulationRobot:
         self._mirror_experiment_suppressed: list[str] = []
         self._mirror_research_skip_ambiguous = mirror_research_skip_ambiguous
         self._mirror_ambiguous_research_events: list[tuple[int, tuple[str, ...]]] = []
+        # Scanner eligibility is many-to-many: one closed reversal may be
+        # evidence for every independently authorized MIRROR level. Recording
+        # each candidate never confers Robot ownership or order permission.
+        self._mirror_confirmation_events: list[tuple[int, tuple[str, ...]]] = []
         self._completed_market_ids: set[str] = set()
         self._temporary = TemporaryDirectory(prefix="bybitscanner-simulation-box-")
         self._store_path = Path(self._temporary.name) / "simulation.sqlite3"
@@ -591,6 +595,11 @@ class ConnectedSimulationRobot:
     @property
     def mirror_ambiguous_research_events(self) -> tuple[tuple[int, tuple[str, ...]], ...]:
         return tuple(self._mirror_ambiguous_research_events)
+
+    @property
+    def mirror_confirmation_events(self) -> tuple[tuple[int, tuple[str, ...]], ...]:
+        """All independently authorized level confirmations, including collisions."""
+        return tuple(self._mirror_confirmation_events)
 
     def admit_mirror(self, source_state: dict, *, entry_id: str) -> str:
         """Admit one exact native Scanner confirmation to the private Robot.
@@ -932,14 +941,21 @@ class ConnectedSimulationRobot:
             discovered = self._auto_mirror_scanner.observe_committed(
                 now_ms=self.virtual_clock_ms(),
             )
+            if discovered:
+                # Do not collapse, rank or discard confirmed Scanner evidence
+                # merely because multiple levels share one closed candle.
+                self._mirror_confirmation_events.append(
+                    (self.virtual_clock_ms(), tuple(discovered)),
+                )
             if len(discovered) > 1:
                 if not self._mirror_research_skip_ambiguous:
                     raise SimulationExecutionNotConnected(
                         "simultaneous native MIRROR confirmations have no proven priority"
                     )
-                # Research-only fail-closed exclusion: no candidate is
-                # chosen, submitted, or retrospectively filled. Both
-                # counterfactual variants exclude exactly the same group.
+                # Research-only execution deferral (NOT signal rejection):
+                # every eligible level remains counted above; none is
+                # silently prioritized for a single-owner virtual account.
+                # Both compared trading variants defer the exact same group.
                 self._mirror_ambiguous_research_events.append(
                     (self.virtual_clock_ms(), tuple(discovered)),
                 )
