@@ -114,6 +114,7 @@ def run_real_trade_day(
         mirror_risk_limit_usdt=Decimal("100"),
         mirror_auto_scan=True,
         mirror_one_filled_trade_per_campaign=one_filled_trade_per_campaign,
+        mirror_research_skip_ambiguous=second is not None,
     ) as robot:
         for candle in candles:
             session.step(candle)
@@ -239,6 +240,11 @@ def run_real_trade_day(
             "experiment_one_filled_trade_per_campaign": one_filled_trade_per_campaign,
             "experiment_suppressed_confirmations": len(robot.mirror_experiment_suppressed),
             "experiment_suppressed_entry_ids": list(robot.mirror_experiment_suppressed),
+            "research_skipped_ambiguous_events": [
+                {"closed_m1_time_ms": ts, "candidate_entry_ids": list(ids)}
+                for ts, ids in robot.mirror_ambiguous_research_events
+            ],
+            "research_skipped_ambiguous_minutes": len(robot.mirror_ambiguous_research_events),
             "virtual_fills": len(session.account.fills),
             "trades_with_attested_entry": len(trades),
             "trades_closed": len(closed_trades),
@@ -267,6 +273,7 @@ def run_real_trade_day(
                 "OHLC trade-through does not prove book queue, depth, actual slippage",
                 "scanner quality has no owner-labeled ground-truth precision/recall here",
                 "neither VPS PAPER nor user PC integration was changed or accepted",
+                "for consecutive days, simultaneous confirmations are excluded as whole minutes; no priority rule is inferred",
             ],
         }
 
@@ -291,6 +298,9 @@ def compare_campaign_fill_limit(
             raise RuntimeError(f"comparison diverged before native Robot execution: {key}")
     if original["experiment_suppressed_confirmations"] != 0:
         raise RuntimeError("baseline MIRROR auto path was not unchanged")
+    if (original["research_skipped_ambiguous_events"]
+            != restricted["research_skipped_ambiguous_events"]):
+        raise RuntimeError("counterfactual variants skipped different ambiguous groups")
     count_by_campaign: dict[tuple[str, int], int] = {}
     for trade in restricted["trades"]:
         if trade["entry_time_ms"] is None:
@@ -325,6 +335,7 @@ def compare_campaign_fill_limit(
         "first_filled_trade_only": restricted,
         "delta_net_pnl_usdt": str(restricted_pnl - original_pnl),
         "suppressed_confirmations": restricted["experiment_suppressed_confirmations"],
+        "research_skipped_ambiguous_minutes": original["research_skipped_ambiguous_minutes"],
         "note": (
             "Pure SIMULATION hypothesis, risk/fees hypothetical; two "
             "independent native Scanner/Robot replays over identical verified M1."
@@ -371,6 +382,7 @@ def main() -> None:
                 flush=True,
             )
         print(f"delta_net_pnl_usdt={report['delta_net_pnl_usdt']}", flush=True)
+        print(f"research_skipped_ambiguous_minutes={report['research_skipped_ambiguous_minutes']}", flush=True)
     else:
         for field in (
             "symbol", "closed_m1", "native_mirror_levels",
