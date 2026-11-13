@@ -1666,7 +1666,7 @@ describe("Verified Wedge lineage in Statistics", () => {
         verified_signal: { ...verified, trade_episode_id: id, ...change },
       };
     });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(JSON.stringify(
       mockReport(deals),
     ), { status: 200 })));
     render(<DiaryOverlay accountKey="paper:wedge-unproven" initialSection="PATTERNS"
