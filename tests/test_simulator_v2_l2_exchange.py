@@ -76,6 +76,70 @@ class EventTimeMatchingTests(unittest.TestCase):
         ex.on_closed_minute(minute(M, low="50", high="150"))
         self.assertEqual(ex.account.snapshot(as_of_ms=2*M).position_quantity, 0)
 
+    def test_stop_triggers_on_trade_but_fills_only_after_fresh_l2_quote(self):
+        ex = venue()
+        submit(ex)
+        ex.on_historical_book(book(M + 10, bid="99.9", ask="100"))
+        self.assertIsNone(ex.on_historical_trade(print_at(M + 20, "Sell", "98.9")))
+        self.assertTrue(ex.l2_stop_pending)
+        self.assertIsNotNone(ex.active_protection)
+        self.assertEqual(len(ex.account.fills), 1)
+        self.assertIn("STOP_TRIGGER_DEFERRED", [e.kind for e in ex.events])
+        self.assertIsNone(ex.on_historical_book(
+            book(M + 30, bid="99", ask="99.1"),
+        ))  # Still too optimistic relative to triggering print
+        self.assertTrue(ex.l2_stop_pending)
+        fill = ex.on_historical_book(book(M + 40, bid="98.8", ask="99.1"))
+        self.assertEqual(fill.price, D("98.8"))
+        self.assertEqual(fill.virtual_time_ms, M + 40)
+        self.assertEqual(ex.l2_deferred_stop_count, 1)
+        self.assertFalse(ex.l2_stop_pending)
+        self.assertIsNone(ex.active_protection)
+        self.assertEqual([e.kind for e in ex.events][-2:],
+                         ["STOP_TRIGGER_DEFERRED", "STOP_FILLED"])
+        self.assertEqual(ex.account.snapshot(as_of_ms=M + 40).position_quantity, 0)
+
+    def test_deferred_stop_cannot_fill_from_late_or_insufficient_l2(self):
+        ex = venue()
+        submit(ex)
+        ex.on_historical_book(book(M + 10, bid="99.9", ask="100"))
+        ex.on_historical_trade(print_at(M + 20, "Sell", "98.9"))
+        with self.assertRaisesRegex(ValueError, "executable depth"):
+            ex.on_historical_book(book(
+                M + 30, bid="98.8", ask="99.1", bid_size="0.1",
+            ))
+        self.assertTrue(ex.l2_stop_pending)
+        self.assertEqual(len(ex.account.fills), 1)
+        with self.assertRaisesRegex(ValueError, "within 250ms"):
+            ex.on_historical_book(book(M + 300, bid="98.8", ask="99.1"))
+        self.assertTrue(ex.l2_stop_pending)
+        self.assertEqual(len(ex.account.fills), 1)
+        self.assertIsNotNone(ex.active_protection)
+
+    def test_deferred_short_stop_does_not_use_pre_trigger_good_ask(self):
+        ex = venue()
+        submit(ex, side="SELL", entry="100", stop="101", take="97")
+        ex.on_historical_book(book(M + 10, bid="100", ask="100.1"))
+        self.assertEqual(len(ex.account.fills), 1)
+        self.assertIsNone(ex.on_historical_trade(print_at(M + 20, "Buy", "101.2")))
+        self.assertTrue(ex.l2_stop_pending)
+        fill = ex.on_historical_book(book(M + 40, bid="100.9", ask="101.3"))
+        self.assertEqual(fill.price, D("101.3"))
+        self.assertEqual(fill.side, "BUY")
+        self.assertEqual(ex.account.snapshot(as_of_ms=M + 40).position_quantity, 0)
+
+    def test_deferred_stop_tracks_worst_print_before_fill(self):
+        ex = venue()
+        submit(ex)
+        ex.on_historical_book(book(M + 10, bid="99.9", ask="100"))
+        ex.on_historical_trade(print_at(M + 20, "Sell", "98.9"))
+        self.assertIsNone(ex.on_historical_trade(print_at(M + 30, "Sell", "98.5")))
+        self.assertIsNone(ex.on_historical_book(book(M + 40, bid="98.8", ask="99.1")))
+        self.assertTrue(ex.l2_stop_pending)
+        fill = ex.on_historical_book(book(M + 50, bid="98.4", ask="99.1"))
+        self.assertEqual(fill.price, D("98.4"))
+        self.assertFalse(ex.l2_stop_pending)
+
     def test_historic_book_marketable_limit_and_trade_through_take(self):
         ex = venue()
         submit(ex)
