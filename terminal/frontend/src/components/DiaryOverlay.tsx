@@ -894,6 +894,7 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
   const setupFor = (episodeId: string): VerifiedEpisodeSetup | null =>
     Object.prototype.hasOwnProperty.call(verifiedSetups, episodeId)
       ? verifiedSetups[episodeId] : indexedVerifiedSetups[episodeId] ?? null;
+  const selectedSetup = selected ? setupFor(selected.trade_episode_id) : null;
   useEffect(() => {
     const deal = deals.find((entry) => entry.trade_episode_id === selectedId);
     setExecutionPoints([]);
@@ -1024,12 +1025,12 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
         </section>
         <section className="diary-detail-section" aria-label="Связь сделки с паттерном">
           <h3>Сетап и паттерн</h3>
-          {setupFor(selected.trade_episode_id) ? (
+          {selectedSetup ? (
             <dl>
-              <div><dt>Паттерн</dt><dd>{setupFor(selected.trade_episode_id).pattern}</dd></div>
-              <div><dt>Таймфрейм</dt><dd>{setupFor(selected.trade_episode_id).timeframe}</dd></div>
-              <div><dt>ID сетапа</dt><dd>{setupFor(selected.trade_episode_id).setupId}</dd></div>
-              <div><dt>Версия стратегии</dt><dd>{setupFor(selected.trade_episode_id).strategyVersion}</dd></div>
+              <div><dt>Паттерн</dt><dd>{selectedSetup.pattern}</dd></div>
+              <div><dt>Таймфрейм</dt><dd>{selectedSetup.timeframe}</dd></div>
+              <div><dt>ID сетапа</dt><dd>{selectedSetup.setupId}</dd></div>
+              <div><dt>Версия стратегии</dt><dd>{selectedSetup.strategyVersion}</dd></div>
             </dl>
           ) : <p className="diary-finrez-basis">Связь с паттерном по точному ID не подтверждена.</p>}
           <small>Источник при наличии связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота.</small>
@@ -1096,9 +1097,7 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
                   title={setupFor(deal.trade_episode_id)
                     ? "Точная связь эпизода с наблюдательным сетапом Diary D2"
                     : "Связь сделки с паттерном пока не подтверждена"}>
-                  {setupFor(deal.trade_episode_id)
-                    ? "Паттерн: " + setupFor(deal.trade_episode_id).pattern
-                    : "Паттерн: не установлен"}
+                  {"Паттерн: " + (setupFor(deal.trade_episode_id)?.pattern ?? "не установлен")}
                 </span>
                 <span>{sideLabel(deal.side)}</span><span>{dealLabels[deal.cohort]}</span>
               </div>
