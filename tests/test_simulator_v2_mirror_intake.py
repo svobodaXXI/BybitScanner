@@ -251,6 +251,38 @@ class NativeMirrorSimulatorIntakeTests(unittest.TestCase):
                              robot._mirror_consumed_campaigns)
             self.assertEqual(robot.mirror_experiment_suppressed, ())
 
+    def test_research_ambiguity_excludes_every_simultaneous_signal_not_one(self):
+        from unittest.mock import Mock
+        for skip, expected_error in ((False, True), (True, False)):
+            session = self.session("mirror_ambiguous_" + str(skip).lower())
+            with ConnectedSimulationRobot(
+                session, tick_size=D("0.01"), terms=terms(),
+                mirror_working_volume_usdt=D("250"),
+                mirror_risk_limit_usdt=D("300"),
+                mirror_auto_scan=True,
+                mirror_research_skip_ambiguous=skip,
+            ) as robot:
+                robot._auto_mirror_scanner = Mock(
+                    observe_committed=Mock(return_value=("level-a@1@60000", "level-b@1@60000")),
+                )
+                session.step(minute(0))
+                if expected_error:
+                    with self.assertRaisesRegex(
+                        SimulationExecutionNotConnected,
+                        "no proven priority",
+                    ):
+                        robot.after_committed_minute()
+                    self.assertEqual(robot.mirror_ambiguous_research_events, ())
+                else:
+                    robot.after_committed_minute()
+                    self.assertEqual(
+                        robot.mirror_ambiguous_research_events,
+                        ((MINUTE, ("level-a@1@60000", "level-b@1@60000")),),
+                    )
+                self.assertFalse(robot._source_candidate_ids)
+                self.assertFalse(session.exchange.robot_limits)
+                self.assertTrue(robot.can_admit)
+
     def test_experimental_gate_requires_explicit_auto_mode(self):
         session = self.session("mirror_one_fill_invalid_options")
         with self.assertRaisesRegex(ValueError, "automatic local replay"):
