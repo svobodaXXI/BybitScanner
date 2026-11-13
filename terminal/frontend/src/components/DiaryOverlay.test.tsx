@@ -1519,6 +1519,6 @@ describe("shared statistics trade action standard", () => {
       expect(button).toBeDisabled();
       expect(button).toHaveAttribute("title", expect.stringContaining("нужен подтверждённый PAPER episode"));
     });
-    expect(screen.getByText(/PnL -1,82 USDT/)).toHaveAttribute("title", "-1.81622186");
+    expect(screen.getByText(/PnL -1,8162 USDT/)).toHaveAttribute("title", "-1.81622186");
   });
 });
