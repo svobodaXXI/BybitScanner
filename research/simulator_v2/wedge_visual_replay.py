@@ -165,6 +165,8 @@ class WedgeVisualReplay:
                 "side": side,
                 "price": float(receipt.price),
                 "trade_id": f"SIMULATION:{self.run_id}:{order.order_id}",
+                "quantity": format(receipt.quantity, "f"),
+                "fee_usdt": format(receipt.fee, "f"),
                 **financials,
             })
             self._fills += 1
