@@ -106,7 +106,7 @@ try {
   }
   assert.equal(await page.locator(".replay-history-controls").count(), 0,
     "obsolete second ticker/date/Bybit panel must never reappear");
-  assert.equal(await setup.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).count(), 1);
+  assert.equal(await setup.getByRole("button", { name: "Подгрузить период с Bybit" }).count(), 1);
   assert.equal(await endUtc.inputValue(), "2026-10-02T12:33");
   const duration = setup.getByRole("status", { name: "Продолжительность прогона" });
   assert.match(await duration.innerText(), /1 день/);
@@ -505,14 +505,14 @@ try {
   // The actual local Python server uses text/plain for HTTP 502 failures.
   // Show the true failed boundary instead of a misleading JSON.parse error,
   // without silently replacing the selected ticker/history by demo candles.
-  await bounds.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
+  await bounds.getByRole("button", { name: "Подгрузить период с Bybit" }).click();
   const marketError = page.getByRole("alert").filter({ hasText: "Публичный Bybit M5 недоступен (HTTP 502)" });
   await marketError.waitFor();
   assert.match(await marketError.innerText(), /архив M1 и профиль риска/);
   assert.equal(await page.locator(".replay-chart-shell").count(), 0,
     "failed public market download cannot resurrect old market candles");
   await bounds.getByRole("checkbox", { name: "Ikigai Box" }).check();
-  await bounds.getByRole("button", { name: "Загрузить Bybit (без сделок)" }).click();
+  await bounds.getByRole("button", { name: "Подгрузить период с Bybit" }).click();
   await page.getByText("РЕАЛЬНЫЕ СВЕЧИ BYBIT", { exact: false }).waitFor();
   assert.equal(publicMarketAttempts, 2);
   const marketSource = await page.locator(".replay-meta").innerText();
@@ -805,11 +805,22 @@ try {
       },
     },
   };
+  assert.equal(await page.locator(".replay-controls").count(), 0,
+    "JSON import controls must move away from former strip");
+  const importedActions = page.getByRole("group", { name: "Импорт и отчёты прогона" });
+  assert.equal(await importedActions.getByText("Загрузить JSON прогона").count(), 1);
+  assert.equal(await importedActions.getByText("Импорт JSON сделки PAPER").count(), 1);
   await page.getByLabel("Загрузить JSON прогона").setInputFiles({
     name: "original-l2-result.json", mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(originalReceipt)),
   });
   await page.getByRole("status").filter({ hasText: "SIMULATION L2" }).waitFor();
+  const importedCoordinates = page.getByRole("textbox", { name: "Координаты прогона" });
+  await page.waitForFunction(() =>
+    document.querySelector('input[aria-label="Координаты прогона"]')?.value ===
+      "ICNTUSDT | 2026-11-10T08:00 | 2026-11-10T08:05");
+  assert.equal(await page.getByLabel("Начало прогона UTC").inputValue(), "2026-11-10T08:00");
+  assert.equal(await page.getByLabel("Конец прогона UTC").inputValue(), "2026-11-10T08:05");
   await page.getByRole("status").filter({ hasText: "Публичная M5: 288 до и 12 после" }).waitFor();
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "288",
     "before the first L2 close, only verified closed historical M5 may be drawn");
