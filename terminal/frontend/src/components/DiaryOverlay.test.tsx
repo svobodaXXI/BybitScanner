@@ -1658,11 +1658,14 @@ describe("Verified Wedge lineage in Statistics", () => {
       { evidence_scope: "MATCHED_BY_SYMBOL" }, { candidate_id: "" },
       { pattern: "Triangle Compression" },
     ];
-    const deals = changes.map((change, i) => ({
-      ...deal, trade_episode_id: "te_" + (i + 1).toString(16).repeat(24),
-      symbol: ["ADAUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT", "DOGEUSDT", "LTCUSDT", "BNBUSDT"][i],
-      verified_signal: { ...verified, ...change },
-    }));
+    const deals = changes.map((change, i) => {
+      const id = "te_" + (i + 1).toString(16).repeat(24);
+      return {
+        ...deal, trade_episode_id: id,
+        symbol: ["ADAUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT", "DOGEUSDT", "LTCUSDT", "BNBUSDT"][i],
+        verified_signal: { ...verified, trade_episode_id: id, ...change },
+      };
+    });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(
       mockReport(deals),
     ), { status: 200 })));
