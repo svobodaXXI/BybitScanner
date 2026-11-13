@@ -417,6 +417,11 @@ def run_cached_wedge_trade_range(
         raise ValueError("L2 requires pinned book and taker trade tapes in impulse mode")
     if not l2_mode and l2_archive_sha256 is not None:
         raise ValueError("L2 SHA without explicit historical L2 archive")
+    if l2_mode and capture_replay:
+        # WedgeVisualReplay currently records only M1-stage events, not the
+        # new intraminute L2 execution journal. Do not publish false footage.
+        raise ValueError("L2 intraminute visual replay is not yet supported")
+
 
     # Load no more than the Scanner's explicit M5 lookback plus a closed-day
     # buffer. Do not force the requested end to equal the full manifest end.
