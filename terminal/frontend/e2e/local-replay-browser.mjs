@@ -434,6 +434,35 @@ try {
   };
   let publicMarketAttempts = 0;
   await page.route("**/local-replay/history?*", async (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    // The L2 import requests PUBLIC M5 prehistory as a chart-only layer.
+    // Keep the original Wedge transport fixture separate: no detector options,
+    // no live network, and never fabricate execution receipts from these bars.
+    if (query.get("symbol") === "ICNTUSDT") {
+      assert.equal(query.has("strategies"), false);
+      const first = Date.UTC(2026, 10, 10, 8, 0);
+      const events = Array.from({ length: 288 }, (_, i) => {
+        const start_ms = first - 86_400_000 + i * 300_000;
+        return {
+          source: "SIMULATION", simulation_run_id: "browser_public_context",
+          sequence: i + 1, kind: "CANDLE_CLOSED",
+          time_ms: start_ms + 300_000,
+          candle: {
+            start_ms, end_ms: start_ms + 300_000,
+            open: 100, high: 101, low: 99, close: 100, volume: 100,
+          },
+        };
+      });
+      await route.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({
+          source: "SIMULATION", simulation_run_id: "browser_public_context",
+          mode: "MARKET_ONLY", market_data_source: "BYBIT_PUBLIC_KLINE",
+          symbol: "ICNTUSDT", timeframe: "5m", events,
+        }),
+      });
+      return;
+    }
     publicMarketAttempts++;
     const requested = new URL(route.request().url()).searchParams.get("strategies")?.split(",") ?? [];
     assert.ok(requested.includes("WEDGE_FALLING") && requested.includes("WEDGE_RISING"),
@@ -774,6 +803,9 @@ try {
     buffer: Buffer.from(JSON.stringify(originalReceipt)),
   });
   await page.getByRole("status").filter({ hasText: "SIMULATION L2" }).waitFor();
+  await page.getByRole("status").filter({ hasText: "Публичная M5-предыстория: 288" }).waitFor();
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "288",
+    "before the first L2 close, only verified closed historical M5 may be drawn");
   await page.getByRole("button", { name: "M5", exact: true }).click();
   await page.getByRole("button", { name: "Шаг вперёд" }).click();
   await page.waitForFunction(() =>
@@ -783,6 +815,8 @@ try {
     /не доказаны/);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-paper-fills"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "8");
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "289",
+    "public M5 prehistory must not overwrite the original L2 execution candle");
   await page.screenshot({ path: join(screenshotDir, "machine-time-l2-replay.png"), fullPage: true });
   console.log("LOCAL_L2_REPLAY_BROWSER_OK (Chromium, original nested receipt import, 8 event-time marks, no PAPER)");
 
