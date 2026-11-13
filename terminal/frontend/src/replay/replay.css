@@ -104,3 +104,7 @@
 .replay-chart-pending { display: flex; align-items: center; justify-content: center;
   min-height: 660px; padding: 24px; text-align: center; color: #94a9c3;
   background: #121923; }
+
+/* Import-window warning sits directly under Play/seek, not in the chart. */
+.replay-playback-missing { flex: 0 0 100%; margin: 2px 0 0 12px;
+  font-size: 12px; color: #ffc6a5; line-height: 1.4; }
