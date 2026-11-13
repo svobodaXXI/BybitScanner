@@ -6,17 +6,20 @@ queue position, or cross-channel trade/book ordering.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 from pathlib import Path
-from typing import Iterator
+from typing import BinaryIO, Iterator
+from zipfile import ZipFile, BadZipFile, ZIP_DEFLATED, ZIP_STORED
 
 
 MAX_SOURCE_BYTES = 512_000_000
 MAX_EVENT_BYTES = 1_000_000
-MAX_EVENTS = 2_000_000
+MAX_EVENTS = 8_000_000
+MAX_UNCOMPRESSED_BYTES = 8_000_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,11 +134,45 @@ class HistoricalBybitOrderBook:
         )
 
 
+@contextmanager
+def _original_orderbook_lines(path: Path) -> Iterator[BinaryIO]:
+    """Read Bybit's single-member .data.zip directly, bounded and CRC-tested.
+
+    The archive is not extracted on disk or expanded into RAM. A complete
+    first scan verifies the *entire* member CRC, including events after a
+    selected short replay window; the second scan streams source JSONL.
+    """
+    if path.suffix != ".zip":
+        with path.open("rb") as handle:
+            yield handle
+        return
+    try:
+        with ZipFile(path) as archive:
+            members = archive.infolist()
+            if len(members) != 1:
+                raise ValueError("historical L2 ZIP must contain exactly one .data file")
+            member = members[0]
+            name = member.filename
+            if (member.is_dir() or not name.endswith(".data")
+                    or name != Path(name).name or "\\" in name
+                    or member.flag_bits & 1
+                    or member.compress_type not in (ZIP_DEFLATED, ZIP_STORED)
+                    or not 0 < member.file_size <= MAX_UNCOMPRESSED_BYTES):
+                raise ValueError("unsafe or unsupported historical L2 ZIP member")
+            with archive.open(member) as verify:
+                while verify.read(1024 * 1024):
+                    pass  # ZipExtFile raises BadZipFile on a CRC mismatch.
+            with archive.open(member) as handle:
+                yield handle
+    except BadZipFile as exc:
+        raise ValueError("corrupt historical L2 ZIP or CRC mismatch") from exc
+
+
 def iter_pinned_orderbook(
     path: Path, *, symbol: str, depth: int, sha256: str,
     start_ms: int, end_exclusive_ms: int,
 ) -> Iterator[BookState]:
-    """Stream an immutable original WS JSONL archive, without any live fallback.
+    """Stream immutable original Bybit WS JSONL or single-member .data.zip.
 
     Messages before start_ms warm the book. A snapshot after the requested
     start is not sufficient to backfill earlier decisions. File identity is
@@ -159,7 +196,7 @@ def iter_pinned_orderbook(
     book = HistoricalBybitOrderBook(symbol=symbol, depth=depth)
     initialized_at_or_before_start = False
     total = 0
-    with path.open("rb") as handle:
+    with _original_orderbook_lines(path) as handle:
         for line in handle:
             total += 1
             if total > MAX_EVENTS or len(line) > MAX_EVENT_BYTES:
