@@ -3764,6 +3764,61 @@ def test_editor_update_owner_pinned_ancestor_stages_after_stable_moves(
     assert ["worktree", "add", "--detach", str(result), target] in calls
 
 
+def test_installed_frontend_exact_receipt_requires_index_and_assets(
+    tmp_path,
+):
+    from tools import paper_maintenance as maintenance
+    from tools.vps_terminal_frontend_publish import RECEIPT
+    import hashlib
+    import json
+
+    target = "a" * 40
+    webroot = tmp_path / "webroot"
+    assets = webroot / "assets"
+    assets.mkdir(parents=True)
+    (assets / "app.js").write_text("console.log('loaded')")
+    html = b'<script src="/assets/app.js"></script>'
+    (webroot / "index.html").write_bytes(html)
+    (webroot / RECEIPT).write_text(json.dumps({
+        "source_sha": target,
+        "index_sha256": hashlib.sha256(html).hexdigest(),
+        "previous_index_sha256": "b" * 64,
+    }))
+    assert maintenance._installed_frontend_exact_receipt(
+        target, webroot=webroot, trusted_uid=os.geteuid(),
+    )
+    assert not maintenance._installed_frontend_exact_receipt(
+        "c" * 40, webroot=webroot, trusted_uid=os.geteuid(),
+    )
+    (webroot / "index.html").write_text("modified without receipt")
+    assert not maintenance._installed_frontend_exact_receipt(
+        target, webroot=webroot, trusted_uid=os.geteuid(),
+    )
+    (webroot / "index.html").write_bytes(html)
+    (assets / "app.js").unlink()
+    assert not maintenance._installed_frontend_exact_receipt(
+        target, webroot=webroot, trusted_uid=os.geteuid(),
+    )
+
+
+def test_monolith_no_stage_update_does_not_claim_complete_without_frontend(
+    monkeypatch, capsys,
+):
+    from tools import paper_maintenance as maintenance
+
+    target = "a" * 40
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda _target: None)
+    monkeypatch.setattr(maintenance, "_installed_frontend_exact_receipt",
+                        lambda _target: False)
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_a, **_kw: pytest.fail("must not claim READY"))
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_a, **_kw: pytest.fail("must not start PAPER"))
+    assert maintenance.main([target, "--action", "update-and-start"]) == 2
+    assert "installed_frontend_exact_receipt_unproven" in capsys.readouterr().out
+
+
 def test_editor_update_existing_target_never_prepares_stage(tmp_path, monkeypatch):
     from tools import paper_maintenance as maintenance
     from tools import vps_release_identity as identity
