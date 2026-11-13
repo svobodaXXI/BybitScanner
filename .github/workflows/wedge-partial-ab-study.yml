@@ -10,27 +10,17 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   research:
-    # Only this one explicitly selected research PR; don't download historical
-    # archives for unrelated PRs or claim API network access from GitHub.
+    # Existing PR #1048 only, one ex-ante XRPUSDT 30-day holdout run.
     if: github.event_name == 'workflow_dispatch' || github.head_ref == 'research/wedge-partial-be-github-20261113'
     runs-on: ubuntu-latest
-    timeout-minutes: 22
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - segment: nov07-10
-            first_day: "2026-11-07"
-            days: "4"
-          - segment: nov12
-            first_day: "2026-11-12"
-            days: "1"
+    timeout-minutes: 30
     env:
-      WEDGE_AB_START_DAY: ${{ matrix.first_day }}
-      WEDGE_AB_DAYS: ${{ matrix.days }}
+      WEDGE_AB_SOURCE: XRP_30D
+      WEDGE_AB_XRP_ARTIFACT_DIR: xrp-history
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - uses: actions/checkout@v4
@@ -41,13 +31,21 @@ jobs:
         run: python -m pip install pandas==2.2.3 numpy==2.1.3
       - name: Causal offline regression
         run: python -m unittest discover -s tests -p 'test_historical_wedge_partial_ab.py' -v
-      - name: Official public Bybit archive and native Scanner/Robot paired study
+      - name: Retrieve previously verified 30-day XRPUSDT M1 provenance
+        uses: actions/download-artifact@v4
+        with:
+          name: simulator-v2-xrp-real-30days-20260910-20261009
+          repository: ${{ github.repository }}
+          run-id: 42682912991
+          github-token: ${{ github.token }}
+          path: xrp-history
+      - name: Verify pinned XRPUSDT history and run native Wedge Scanner/Robot A/B
         run: python -m research.simulator_v2.wedge_partial_ab_ci
-      - name: Save result including a precise failure receipt
+      - name: Save auditable result or precise failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: icnt-wedge-partial-ab-${{ matrix.segment }}
+          name: xrp-wedge-partial-ab-30d
           path: wedge_ab_result.json
           if-no-files-found: warn
           retention-days: 7

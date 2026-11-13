@@ -16,17 +16,25 @@ import tempfile
 from urllib.request import Request, urlopen
 
 from research.simulator_v2.trade_archive import MAX_ARCHIVE_BYTES, parse_local_trade_day
+from research.simulator_v2.trade_range import iter_pinned_trade_chunks
+from research.simulator_v2.wedge_cli import parse_manifest
 from research.simulator_v2.session import VirtualReplaySession
 from research.simulator_v2.wedge_backtest import run_verified_wedge_chunks
 from research.simulator_v2.wedge_observer import WedgeScannerConfig
 from research.simulator_v2.wedge_robot_observer import SimWedgeRobotConfig
 from research.simulator_v2.wedge_risk_preflight import SimWedgeRiskSettings
 
-SYMBOL = "ICNTUSDT"
-START_DAY = date.fromisoformat(os.environ.get("WEDGE_AB_START_DAY", "2026-11-07"))
-DAY_COUNT = int(os.environ.get("WEDGE_AB_DAYS", "4"))
-if (START_DAY, DAY_COUNT) not in ((date(2026, 11, 7), 4), (date(2026, 11, 12), 1)):
-    raise ValueError("research only permits pre-registered contiguous UTC windows")
+SOURCE = os.environ.get("WEDGE_AB_SOURCE", "ICNT")
+if SOURCE not in ("ICNT", "XRP_30D"):
+    raise ValueError("only preregistered Wedge research datasets allowed")
+SYMBOL = "XRPUSDT" if SOURCE == "XRP_30D" else "ICNTUSDT"
+START_DAY = (date(2026, 9, 10) if SOURCE == "XRP_30D"
+             else date.fromisoformat(os.environ.get("WEDGE_AB_START_DAY", "2026-11-07")))
+DAY_COUNT = (30 if SOURCE == "XRP_30D" else int(os.environ.get("WEDGE_AB_DAYS", "4")))
+if (START_DAY, DAY_COUNT) not in ((date(2026, 9, 10), 30),
+                                  (date(2026, 11, 7), 4),
+                                  (date(2026, 11, 12), 1)):
+    raise ValueError("research only permits preregistered contiguous UTC windows")
 DAYS = tuple(START_DAY + timedelta(days=i) for i in range(DAY_COUNT))
 FEE = D("0.0006")
 TICK = D("0.0001")
@@ -44,8 +52,29 @@ def timestamp(day: date) -> int:
 
 
 def archives():
-    """Only completed UTC days, official public trade archive, strict provenance."""
+    """Completed UTC days, pinned trade-derived M1 and exact source SHA-256."""
     end_boundary = timestamp(DAYS[-1] + timedelta(days=1))
+    if SOURCE == "XRP_30D":
+        # Reuse previously verified artifact #13702658959, do not refetch ~969 MB.
+        root = Path(os.environ.get("WEDGE_AB_XRP_ARTIFACT_DIR", "xrp-history"))
+        if root.is_symlink() or (root / "manifest.json").is_symlink():
+            raise ValueError("untrusted XRP artifact path")
+        with (root / "manifest.json").open("r", encoding="utf-8") as reader:
+            manifest = json.load(reader)
+        symbol, proofs = parse_manifest(
+            manifest, latest_closed_boundary_ms=end_boundary,
+        )
+        if (symbol != SYMBOL or len(proofs) != 30
+                or proofs[0].utc_day != date(2026, 9, 10)):
+            raise ValueError("XRP study requires the exact 30-day pinned dataset")
+        chunks = tuple(iter_pinned_trade_chunks(
+            cache_dir=root / "m1-cache", symbol=SYMBOL, proofs=proofs,
+            latest_closed_boundary_ms=end_boundary,
+        ))
+        if len(chunks) != 30 or sum(len(chunk.candles) for chunk in chunks) != 43_200:
+            raise ValueError("XRP study requires exactly 43,200 verified M1")
+        yield chunks, manifest["day_provenance"]
+        return
     with tempfile.TemporaryDirectory(prefix="wedge-ab-official-") as temp:
         chunks, provenance = [], []
         for day in DAYS:
@@ -188,7 +217,7 @@ def main() -> None:
 def study():
     chunks, provenance = next(archives())
     session = VirtualReplaySession(
-        simulation_run_id="icnt_wedge_ab_20261107",
+        simulation_run_id="wedge_ab_" + SOURCE.lower(),
         symbol=SYMBOL, initial_balance=INITIAL_BALANCE,
         wedge_scanner_config=WedgeScannerConfig(window_bars=50, mode="hunter", min_score=50),
         wedge_robot_config=SimWedgeRobotConfig(
@@ -258,11 +287,12 @@ def study():
     sum_a = sum((D(x["A"]["net"]) for x in comparisons), D(0))
     sum_b = sum((D(x["B"]["net"]) for x in comparisons), D(0))
     return {
-        "namespace": "SIMULATION", "status": "COMPLETE" if comparisons else "DATA_INSUFFICIENT",
-        "scope": "ICNTUSDT " + DAYS[0].isoformat() + " through " + DAYS[-1].isoformat() + " UTC completed days", 
-        "uncovered_days": {"2026-11-11": "two missing trade-derived M1; no imputation", "2026-11-13": "not yet a complete UTC archive"},
-        "other_contiguous_window": "2026-11-12" if DAY_COUNT == 4 else "2026-11-07 through 2026-11-10",
-        "nov_13": "not included: UTC day incomplete at study design time",
+        "namespace": "SIMULATION",
+        "status": "DATA_INSUFFICIENT" if len(comparisons) < 30 else "DESCRIPTIVE_ONLY",
+        "minimum_exploratory_pairs": 30,
+        "scope": SYMBOL + " " + DAYS[0].isoformat() + " through " + DAYS[-1].isoformat() + " UTC completed days",
+        "uncovered_days": {} if SOURCE == "XRP_30D" else {"2026-11-11": "two missing trade-derived M1; no imputation", "2026-11-13": "not yet a complete UTC archive"},
+        "dataset_id": result.report.source_id,
         "source_type": "BYBIT_PUBLIC_TRADES_DERIVED_M1_NOT_OFFICIAL_KLINE",
         "provenance": provenance, "native_scanner_observations": result.scanner_wedge_observations,
         "native_robot_retests": result.robot_retests_in_period,
@@ -282,11 +312,13 @@ def study():
         "trades": comparisons,
         "limitations": [
             "Trade-level paired counterfactual, NOT a native portfolio B run or trading recommendation.",
-            "Current ICNT tick/step (attested 2026-11-13) are not a historical metadata snapshot.",
+            "Model tick/step 0.0001/1 and fixed 862 contracts/WV are research assumptions, NOT attested historical instrument terms.",
             "Fixed research sizing 862 contracts per 1 WV, not asserted production sizing.",
             "OHLC stop-first and next-open partial are modeled; no venue fill/queue proof.",
             "Max DD is worst per-trade close-mark drawdown, not portfolio max drawdown.",
             "A/B outcomes use the same original Scanner/Robot entry decisions; altered B exits do not change later admissions.",
+            "30 paired completed entries is a preregistered descriptive screening threshold, NOT proof or statistical power.",
+            "Previous XRP dataset artifact 13702658959 was generated without strategy; this run applies original Wedge separately.",
         ],
     }
 
