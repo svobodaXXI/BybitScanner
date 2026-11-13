@@ -53,7 +53,7 @@ import {
   TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR,
   visibleRobotTradeMarkers, type RobotTradeMarker,
 } from "../chart/robotTradeMarkers";
-import { buildEditorGeometryReview, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
+import { EDITOR_REVIEW_PATTERNS, buildEditorGeometryReview, isEditorReviewPattern, isValidCachedEditorDraft, type GeometryReviewDraft } from "../geometryFeedback/geometryReviewDraft";
 import { initialSourceGeometryRange } from "../geometryFeedback/signalChartBridge";
 import { buildOwnerChartDraft, buildOwnerSignalDraft, type OwnerChartDraft, type OwnerChartDirection, type OwnerChartPattern, type OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
@@ -155,7 +155,7 @@ export function ChartPanel({
   snapshotRevision = null,
   barsSha256 = null,
   savedReviewId = null,
-  savedReviewLabel = null,
+  savedCorrectedPattern = null,
   savedReviewNote = null,
   onSaveGeometryReview,
   onSubmitOwnerSignal,
@@ -215,6 +215,7 @@ export function ChartPanel({
   barsSha256?: string | null;
   savedReviewId?: string | null;
   savedReviewLabel?: GeometryReviewDraft["label"] | null;
+  savedCorrectedPattern?: GeometryReviewDraft["corrected_pattern"] | null;
   savedReviewNote?: string | null;
   onSaveGeometryReview?: (review: GeometryReviewDraft & { note: string; idempotency_key: string }) =>
     Promise<{ reviewId: string; label: GeometryReviewDraft["label"] }>;
@@ -302,8 +303,8 @@ export function ChartPanel({
   const [extensionPending, setExtensionPending] = useState(false);
   const [, setExtensionStatus] = useState("");
   const proposalToken = useRef<{ content: string; key: string } | null>(null);
-  const [reviewLabel, setReviewLabel] = useState<GeometryReviewDraft["label"]>(
-    savedReviewLabel ?? "GEOMETRY_CORRECTED",
+  const [correctPattern, setCorrectPattern] = useState<string>(
+    savedCorrectedPattern ?? originalPattern ?? "",
   );
   // Persisted review text belongs to the same immutable review ID as the
   // restored editable rays. A fresh editor must not silently erase the note.
@@ -338,9 +339,21 @@ export function ChartPanel({
     if (newSignalMode) return;
     if (!editorMode || !signalIdentity || !snapshotRevision || !barsSha256 || !onSaveGeometryReview || reviewPending) return;
     try {
+      if (!correctPattern.trim()) throw new Error("Выберите правильный паттерн");
+      const patternChanged = correctPattern !== (originalPattern ?? "");
+      if (patternChanged && !isEditorReviewPattern(correctPattern))
+        throw new Error("Неподдерживаемый правильный паттерн");
+      const geometryChanged = referenceDrawings.some((reference) => {
+        const editable = drawings.find((line) => line.id === `editable:${reference.id}`);
+        return !editable || JSON.stringify(reference.anchors) !== JSON.stringify(editable.anchors);
+      });
+      const label: GeometryReviewDraft["label"] = geometryChanged ? "GEOMETRY_CORRECTED"
+        : patternChanged ? "PATTERN_CORRECTED" : "CONFIRMED";
       const draft = buildEditorGeometryReview({
         signalId: signalIdentity, snapshotRevision, barsSha256,
-        label: reviewLabel, frozenCandles: candles,
+        label, correctedPattern: patternChanged
+          ? correctPattern as GeometryReviewDraft["corrected_pattern"] : undefined,
+        frozenCandles: candles,
         referenceDrawings, editableDrawings: drawings,
         contextAsOfMs: retrospectiveContext?.asOfMs,
         contextBarsSha256: retrospectiveContext?.barsSha256,
@@ -359,7 +372,7 @@ export function ChartPanel({
       });
       if (submittedSequence === reviewEditSequence.current) {
         setReviewDirty(false);
-        setReviewStatus(reviewLabel === "GEOMETRY_CORRECTED" ? "Исправление сохранено" : "");
+        setReviewStatus("Исправление сохранено");
       } else {
         setReviewDirty(true);
         setReviewStatus("");
@@ -1089,15 +1102,6 @@ export function ChartPanel({
               }}>
               {extensionPending ? "Загрузка…" : "Показать следующие свечи"}
             </button>}
-            {!ownerChartMode && <button type="button" disabled={extensionPending || reviewPending || proposalPending
-                || !onShowCurrentEditorChart}
-              onClick={() => onShowCurrentEditorChart?.()}>
-              Показать актуальный график
-            </button>}
-            {!ownerChartMode && <button type="button" disabled={extensionPending || reviewPending || proposalPending}
-              aria-pressed={newSignalMode} onClick={switchSignalDrawingMode}>
-              {newSignalMode ? "Вернуться к исправлению" : "Создать новый сигнал"}
-            </button>}
             {newSignalMode ? (
               <>
                 <select aria-label="Тип нового сигнала" title="Сначала выберите паттерн, затем направление и нарисуйте геометрию" value={proposalPattern}
@@ -1141,15 +1145,17 @@ export function ChartPanel({
               </>
             ) : (
               <>
-            <select
-              aria-label="Оценка сигнала"
-              value={reviewLabel}
-              onChange={(event) => { setReviewLabel(event.target.value as GeometryReviewDraft["label"]); markReviewEdited(); }}
-            >
-              <option value="GEOMETRY_CORRECTED">Исправлена геометрия</option>
-              <option value="CONFIRMED">Верный сигнал</option>
-              <option value="FALSE_POSITIVE">Ложный сигнал</option>
-              <option value="UNCERTAIN">Неоднозначно</option>
+            <label className="editor-correct-pattern-label" htmlFor="editor-correct-pattern">Правильный паттерн</label>
+            <select id="editor-correct-pattern" aria-label="Правильный паттерн"
+              value={correctPattern}
+              onChange={(event) => { setCorrectPattern(event.target.value); markReviewEdited(); }}>
+              {!originalPattern && <option value="" disabled>Выберите паттерн</option>}
+              {originalPattern && !isEditorReviewPattern(originalPattern) && (
+                <option value={originalPattern}>{originalPattern} · исходный</option>
+              )}
+              {EDITOR_REVIEW_PATTERNS.map(({ value, label }) =>
+                <option key={value} value={value}>{label}</option>
+              )}
             </select>
             <input
               aria-label="Комментарий к исправлению"
@@ -1169,6 +1175,19 @@ export function ChartPanel({
               </output>
             )}
               </>
+            )}
+            {!ownerChartMode && (
+              <div className="editor-bottom-actions">
+                <button type="button" disabled={extensionPending || reviewPending || proposalPending
+                    || !onShowCurrentEditorChart}
+                  onClick={() => onShowCurrentEditorChart?.()}>
+                  Актуальный график
+                </button>
+                <button type="button" disabled={extensionPending || reviewPending || proposalPending}
+                  aria-pressed={newSignalMode} onClick={switchSignalDrawingMode}>
+                  {newSignalMode ? "Вернуться к исправлению" : "Создать новый сигнал"}
+                </button>
+              </div>
             )}
           </div>
         )}
