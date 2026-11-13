@@ -353,6 +353,42 @@ function TradeActionButtons({ onDetails, onReplay }: {
 }
 
 
+type VerifiedEpisodeSetup = {
+  pattern: string;
+  timeframe: string;
+  setupId: string;
+  strategyVersion: string;
+};
+
+/** D2 is a separate observational store, not a reconstructed Robot decision.
+ * Never infer a pattern by ticker/time or from execution-only facts.
+ */
+function exactD2Setup(facts: Record<string, unknown>, deal: ClosedEpisodeLocator): VerifiedEpisodeSetup | null {
+  const context = facts.setup_context;
+  if (!context || typeof context !== "object") return null;
+  const d2 = context as Record<string, unknown>;
+  if (d2.status !== "EXACT_D2_LINK" || d2.source !== "TRADING_DIARY_D2"
+    || d2.consistency !== "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER"
+    || d2.decision_scope !== "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG"
+    || !d2.setup || typeof d2.setup !== "object") return null;
+  const setup = d2.setup as Record<string, unknown>;
+  const allocations = facts.execution_allocations as unknown[];
+  const first = allocations[0];
+  if (!first || typeof first !== "object") return null;
+  const openingController = (first as Record<string, unknown>).controller;
+  if (openingController !== "ROBOT" && openingController !== "MANUAL") return null;
+  if (setup.origin !== (openingController === "ROBOT" ? "ROBOT" : "TERMINAL_MANUAL")
+    || setup.symbol !== deal.symbol || setup.direction !== deal.side
+    || typeof setup.created_at_ms !== "number" || !Number.isSafeInteger(setup.created_at_ms)
+    || setup.created_at_ms < 0 || setup.created_at_ms > deal.opened_at_ms) return null;
+  const fields = [setup.pattern, setup.timeframe, setup.setup_id, setup.strategy_version];
+  if (fields.some((value) => typeof value !== "string" || !value.trim() || value.length > 256)) return null;
+  return {
+    pattern: setup.pattern as string, timeframe: setup.timeframe as string,
+    setupId: setup.setup_id as string, strategyVersion: setup.strategy_version as string,
+  };
+}
+
 type TradeExecutionPoint = { at: number; price: number };
 
 function TradeExecutionPriceChart({ points }: { points: readonly TradeExecutionPoint[] }) {
@@ -839,6 +875,7 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
   const [filmNotice, setFilmNotice] = useState("");
 
   const [executionPoints, setExecutionPoints] = useState<TradeExecutionPoint[]>([]);
+  const [verifiedSetups, setVerifiedSetups] = useState<Record<string, VerifiedEpisodeSetup>>({});
   useEffect(() => {
     const deal = deals.find((entry) => entry.trade_episode_id === selectedId);
     setExecutionPoints([]);
@@ -880,9 +917,15 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
               at < deal.opened_at_ms || at > deal.closed_at_ms) return null;
           points.push({ price, at });
         }
-        return points;
+        return { points, setup: exactD2Setup(facts, deal) };
       })
-      .then((points) => { if (active && points) setExecutionPoints(points); })
+      .then((result) => {
+        if (!active || !result) return;
+        setExecutionPoints(result.points);
+        if (result.setup) setVerifiedSetups((prior) => ({
+          ...prior, [deal.trade_episode_id]: result.setup!,
+        }));
+      })
       .catch(() => { /* No synthetic market data on archive errors. */ });
     return () => { active = false; };
   }, [selectedId, report.account_id, report.owner, report.source_revision, deals]);
@@ -961,6 +1004,18 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
             <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{displayTradePnl(selected.pnl_usdt)} USDT</dd></div>
           </dl>
         </section>
+        <section className="diary-detail-section" aria-label="Связь сделки с паттерном">
+          <h3>Сетап и паттерн</h3>
+          {verifiedSetups[selected.trade_episode_id] ? (
+            <dl>
+              <div><dt>Паттерн</dt><dd>{verifiedSetups[selected.trade_episode_id].pattern}</dd></div>
+              <div><dt>Таймфрейм</dt><dd>{verifiedSetups[selected.trade_episode_id].timeframe}</dd></div>
+              <div><dt>ID сетапа</dt><dd>{verifiedSetups[selected.trade_episode_id].setupId}</dd></div>
+              <div><dt>Версия стратегии</dt><dd>{verifiedSetups[selected.trade_episode_id].strategyVersion}</dd></div>
+            </dl>
+          ) : <p className="diary-finrez-basis">Связь с паттерном по точному ID не подтверждена.</p>}
+          <small>Источник при наличии связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота.</small>
+        </section>
         <TradeExecutionPriceChart points={executionPoints} />
         <SimulatorLaunchAction episodeId={selected.trade_episode_id}
           allowLocalLaunch={report.account_id === "paper"} />
@@ -1019,7 +1074,14 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
                 type="button" onClick={() => setSelectedId(deal.trade_episode_id)}>
               <div className="diary-trade-heading">
                 <strong>{deal.symbol}</strong>
-                <span className="diary-deal-pattern" title="Связь сделки с паттерном пока не подтверждена">Паттерн: не установлен</span>
+                <span className="diary-deal-pattern"
+                  title={verifiedSetups[deal.trade_episode_id]
+                    ? "Точная связь эпизода с наблюдательным сетапом Diary D2"
+                    : "Связь сделки с паттерном пока не подтверждена"}>
+                  {verifiedSetups[deal.trade_episode_id]
+                    ? "Паттерн: " + verifiedSetups[deal.trade_episode_id].pattern
+                    : "Паттерн: не установлен"}
+                </span>
                 <span>{sideLabel(deal.side)}</span><span>{dealLabels[deal.cohort]}</span>
               </div>
               <div className="diary-trade-times">
