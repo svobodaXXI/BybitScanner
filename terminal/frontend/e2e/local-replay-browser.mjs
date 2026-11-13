@@ -441,7 +441,7 @@ try {
     if (query.get("symbol") === "ICNTUSDT") {
       assert.equal(query.has("strategies"), false);
       const first = Date.UTC(2026, 10, 10, 8, 0);
-      const events = Array.from({ length: 288 }, (_, i) => {
+      const events = Array.from({ length: 300 }, (_, i) => {
         const start_ms = first - 86_400_000 + i * 300_000;
         return {
           source: "SIMULATION", simulation_run_id: "browser_public_context",
@@ -744,8 +744,8 @@ try {
   const l2Net = ["-1.2", "8.8", "-11.2", "8.8"];
   const l2Episodes = l2Directions.map((direction, i) => ({
     order_id: "IMPULSE_" + (l2Start + i * 10000), direction,
-    entry_ms: l2Start + i * 10000 + 1000,
-    exit_ms: l2Start + i * 10000 + 2000,
+    entry_ms: l2Start + (i === 3 ? 300000 : i * 10000) + 1000,
+    exit_ms: l2Start + (i === 3 ? 300000 : i * 10000) + 2000,
     entry_price: "100", exit_price: l2Exits[i],
     entry_fee: "0.6", exit_fee: "0.6", quantity: "10",
     partial_quantity: null, exit_reason: l2Reasons[i],
@@ -775,6 +775,10 @@ try {
     candle: { start_ms: l2Start, end_ms: l2Start + 300000,
       open: 100, high: 103, low: 99, close: 101, volume: 1000 },
   });
+  // The fourth original virtual trade occurs after the final SOURCE M5.
+  // The public 08:05–08:10 close is required before revealing it.
+  l2Events.sort((a, b) => a.time_ms - b.time_ms);
+  l2Events.forEach((e, i) => { e.sequence = i + 1; });
   const originalReceipt = {
     state: "VIRTUAL_L2_PROBE_CONDITIONAL",
     scenario: "ONE_BOUNDED_LOCAL_SIMULATION_NOT_REAL_BYBIT_EXECUTIONS",
@@ -803,19 +807,25 @@ try {
     buffer: Buffer.from(JSON.stringify(originalReceipt)),
   });
   await page.getByRole("status").filter({ hasText: "SIMULATION L2" }).waitFor();
-  await page.getByRole("status").filter({ hasText: "Публичная M5-предыстория: 288" }).waitFor();
+  await page.getByRole("status").filter({ hasText: "Публичная M5: 288 до и 12 после" }).waitFor();
   assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "288",
     "before the first L2 close, only verified closed historical M5 may be drawn");
   await page.getByRole("button", { name: "M5", exact: true }).click();
   await page.getByRole("button", { name: "Шаг вперёд" }).click();
   await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleFills === "6");
+  assert.match(await page.locator(".replay-meta").innerText(), /1 \/ 3 \/ 3/,
+    "last source M5 must not reveal the fourth post-boundary trade");
+  await page.getByRole("button", { name: "Шаг вперёд" }).click();
+  await page.waitForFunction(() =>
     document.querySelector(".replay-execution-overlay")?.dataset.visibleFills === "8");
+  assert.match(await page.locator(".replay-meta").innerText(), /2 \/ 4 \/ 4/);
   assert.equal((await page.locator(".replay-chart-symbol").innerText()).trim(), "ICNT");
   assert.match(await page.getByRole("status").filter({ hasText: "SIMULATION L2" }).innerText(),
     /не доказаны/);
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-paper-fills"), "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "8");
-  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "289",
+  assert.equal(await page.locator(".replay-chart-shell").getAttribute("data-displayed-candles"), "290",
     "public M5 prehistory must not overwrite the original L2 execution candle");
   await page.screenshot({ path: join(screenshotDir, "machine-time-l2-replay.png"), fullPage: true });
   console.log("LOCAL_L2_REPLAY_BROWSER_OK (Chromium, original nested receipt import, 8 event-time marks, no PAPER)");
