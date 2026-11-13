@@ -372,7 +372,7 @@ export function ChartPanel({
       });
       if (submittedSequence === reviewEditSequence.current) {
         setReviewDirty(false);
-        setReviewStatus("Исправление сохранено");
+        setReviewStatus(label === "CONFIRMED" ? "" : "Исправление сохранено");
       } else {
         setReviewDirty(true);
         setReviewStatus("");
