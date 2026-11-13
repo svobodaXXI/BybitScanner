@@ -2198,11 +2198,33 @@ def _installed_frontend_exact_receipt(
         return False
 
 
+def _verified_installed_frontend_stage(
+    target: str, *, parent: Path = Path("/var/lib"), trusted_uid: int = 0,
+) -> Path:
+    """Reuse an exact protected Git worktree; never build in live /opt."""
+    from tools.vps_release_identity import create_manifest
+
+    stage = parent / ("bybitscanner-stage-git-" + target)
+    git_file = stage / ".git"
+    for directory in (parent, stage):
+        if (not directory.is_dir() or directory.is_symlink()
+                or directory.stat().st_uid != trusted_uid
+                or directory.stat().st_mode & 0o022):
+            raise ValueError("installed_frontend_stage_untrusted")
+    if (not git_file.exists() or git_file.is_symlink()
+            or git_file.stat().st_uid != trusted_uid
+            or git_file.stat().st_mode & 0o022):
+        raise ValueError("installed_frontend_git_source_untrusted")
+    if create_manifest(stage, target)["build_sha"] != target:
+        raise ValueError("installed_frontend_stage_sha_unproven")
+    return stage
+
+
 def _prepare_editor_frontend_bundle(
     target: str, *, stage: Path, root: Path = REPO,
-    runner=subprocess.run,
+    runner=subprocess.run, force_build: bool = False,
 ) -> Path | None:
-    """Build a pinned UI before STOP only when tracked UI sources changed.
+    """Build a pinned UI before STOP or when recovering missing exact UI.
 
     Reuse the current Gitless manifest and static publisher; never install
     dependencies or replace an untrusted build artifact under a live runtime.
@@ -2220,7 +2242,7 @@ def _prepare_editor_frontend_bundle(
     def ui_files(release: dict) -> dict[str, str]:
         return {name: digest for name, digest in release["blobs"].items()
                 if name.startswith("terminal/frontend/")}
-    if ui_files(installed) == ui_files(approved):
+    if ui_files(installed) == ui_files(approved) and not force_build:
         return None
 
     frontend = stage / "terminal/frontend"
@@ -2444,12 +2466,39 @@ def main(argv=None) -> int:
                       + str(exc).replace(chr(10), " ")[:160] + "; no STOP attempted")
                 return 2
         elif not _installed_frontend_exact_receipt(args.sha):
-            # A previous release may have completed Backend/Editor but failed
-            # static publication. Do not misreport UPDATE as complete or
-            # silently start trading under an unproved frontend.
-            print("BLOCKED: installed_frontend_exact_receipt_unproven;"
-                  " no STOP, service restart or PAPER START")
-            return 2
+            # A previous release may have completed Backend/Editor while
+            # frontend publication failed. Reuse the sealed exact stage to
+            # finish the already-authorized source SHA. No new STOP, Gitless
+            # install or LIVE mutation is permitted on this branch.
+            try:
+                existing_stage = _verified_installed_frontend_stage(args.sha)
+                bundle = _prepare_editor_frontend_bundle(
+                    args.sha, stage=existing_stage, force_build=True,
+                )
+                if bundle is None:
+                    raise ValueError("installed_frontend_bundle_unavailable")
+            except (OSError, ValueError) as exc:
+                print("BLOCKED: installed_frontend_recovery_preflight_unproven:"
+                      + str(exc).replace(chr(10), " ")[:160]
+                      + "; no STOP, restart or PAPER START")
+                return 2
+            if main([args.sha, "--env-file", str(args.env_file),
+                     "--resume-installed-editor-only"]) != 0:
+                return 2
+            if main([args.sha, "--env-file", str(args.env_file),
+                     "--publish-frontend-only",
+                     "--frontend-bundle", str(bundle)]) != 0:
+                return 2
+            if not _installed_frontend_exact_receipt(args.sha):
+                print("BLOCKED: installed_frontend_recovery_postcondition_unproven;"
+                      " no PAPER START")
+                return 2
+            if args.start_paper_after_editor:
+                return main([args.sha, "--env-file", str(args.env_file),
+                             "--resume-installed-editor-only",
+                             "--start-paper-after-editor"])
+            print("READY: already installed exact release and frontend restored")
+            return 0
         # Delegate to the owned monolith with the exact preflighted bundle.
         mode = (["--resume-installed-editor-only"] if stage is None
                 else ["--staged-gitless-editor-only", str(stage)])
