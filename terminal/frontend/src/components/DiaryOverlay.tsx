@@ -173,7 +173,12 @@ type ClosedEpisodeLocator = {
   replay_evidence: "EPISODE_INDEX_ONLY";
   opening_controller?: "ROBOT" | "MANUAL";
   setup_context?: unknown;
+  verified_signal?: unknown;
 };
+
+type VerifiedEpisodePattern =
+  | (VerifiedEpisodeSetup & { source: "D2" })
+  | { source: "WEDGE"; pattern: string; timeframe: string; candidateId: string };
 
 type FinrezTicker = { symbol: string; pnl_usdt: string; trade_count: number };
 type FinrezResponse = {
@@ -413,6 +418,42 @@ function exactD2Setup(facts: Record<string, unknown>, deal: ClosedEpisodeLocator
     pattern: setup.pattern as string, timeframe: setup.timeframe as string,
     setupId: setup.setup_id as string, strategyVersion: setup.strategy_version as string,
   };
+}
+
+/** Only the backend's exact-ID Robot Wedge proof may supply this label.
+ * Candidate metadata is not original geometry or a D2 setup/decision.
+ */
+function verifiedWedgeSignal(deal: ClosedEpisodeLocator, report: FinrezResponse): VerifiedEpisodePattern | null {
+  if (report.account_id !== "paper" || report.owner !== "ROBOT" || deal.cohort !== "ROBOT"
+    || !/^te_[0-9a-f]{24}$/.test(deal.trade_episode_id)) return null;
+  const value = deal.verified_signal;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const signal = value as Record<string, unknown>;
+  if (signal.status !== "PROVEN"
+    || signal.evidence_scope !== "EXACT_WEDGE_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE"
+    || signal.provenance !== "DURABLE_ROBOT_TRADE_METADATA_NOT_ORIGINAL_GEOMETRY"
+    || signal.trade_episode_id !== deal.trade_episode_id
+    || signal.source_revision !== report.source_revision
+    || !["Falling Wedge", "Rising Wedge"].includes(String(signal.pattern))
+    || typeof signal.candidate_id !== "string"
+    || !signal.candidate_id.trim() || signal.candidate_id.length > 256
+    || typeof signal.source_timeframe !== "string"
+    || !signal.source_timeframe.trim() || signal.source_timeframe.length > 40) return null;
+  return {
+    source: "WEDGE", pattern: signal.pattern as string,
+    timeframe: signal.source_timeframe, candidateId: signal.candidate_id,
+  };
+}
+
+function verifiedIndexedPattern(deal: ClosedEpisodeLocator, report: FinrezResponse): VerifiedEpisodePattern | null {
+  if (deal.opening_controller === "ROBOT" || deal.opening_controller === "MANUAL") {
+    const setup = exactD2Setup({
+      setup_context: deal.setup_context,
+      execution_allocations: [{ controller: deal.opening_controller }],
+    }, deal);
+    if (setup) return { ...setup, source: "D2" };
+  }
+  return verifiedWedgeSignal(deal, report);
 }
 
 type TradeExecutionPoint = { at: number; price: number };
@@ -915,6 +956,10 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClea
   const setupFor = (episodeId: string): VerifiedEpisodeSetup | null =>
     Object.prototype.hasOwnProperty.call(verifiedSetups, episodeId)
       ? verifiedSetups[episodeId] : indexedVerifiedSetups[episodeId] ?? null;
+  const patternFor = (deal: ClosedEpisodeLocator): VerifiedEpisodePattern | null => {
+    const d2 = setupFor(deal.trade_episode_id);
+    return d2 ? { ...d2, source: "D2" } : verifiedWedgeSignal(deal, report);
+  };
   const deals = useMemo(() => (report.closed_episodes ?? []).filter((deal) => {
     if (!deal.symbol.includes(tickerQuery)) return false;
     if (lossOnly && Number(deal.pnl_usdt) >= 0) return false;
@@ -922,16 +967,17 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClea
     const setup = Object.prototype.hasOwnProperty.call(verifiedSetups, deal.trade_episode_id)
       ? verifiedSetups[deal.trade_episode_id]
       : indexedVerifiedSetups[deal.trade_episode_id];
-    return !!setup?.pattern.toLocaleLowerCase("ru-RU").includes(patternQuery);
+    const pattern = setup?.pattern ?? verifiedWedgeSignal(deal, report)?.pattern;
+    return !!pattern?.toLocaleLowerCase("ru-RU").includes(patternQuery);
   }).sort((a, b) => {
     if (!lossOnly) return 0; // Preserve the API's established ordering in "all deals".
     const aPnl = Number(a.pnl_usdt), bPnl = Number(b.pnl_usdt);
     if (aPnl < bPnl) return -1;
     if (aPnl > bPnl) return 1;
     return b.closed_at_ms - a.closed_at_ms || a.trade_episode_id.localeCompare(b.trade_episode_id);
-  }), [report.closed_episodes, tickerQuery, patternQuery, lossOnly, verifiedSetups, indexedVerifiedSetups]);
+  }), [report.closed_episodes, report.source_revision, report.owner, tickerQuery, patternQuery, lossOnly, verifiedSetups, indexedVerifiedSetups]);
   const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
-  const selectedSetup = selected ? setupFor(selected.trade_episode_id) : null;
+  const selectedPattern = selected ? patternFor(selected) : null;
   useEffect(() => {
     const deal = report.closed_episodes?.find((entry) => entry.trade_episode_id === selectedId);
     setExecutionPoints([]);
@@ -1070,15 +1116,23 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClea
         </section>
         <section className="diary-detail-section" aria-label="Связь сделки с паттерном">
           <h3>Сетап и паттерн</h3>
-          {selectedSetup ? (
+          {selectedPattern ? (
             <dl>
-              <div><dt>Паттерн</dt><dd>{selectedSetup.pattern}</dd></div>
-              <div><dt>Таймфрейм</dt><dd>{selectedSetup.timeframe}</dd></div>
-              <div><dt>ID сетапа</dt><dd>{selectedSetup.setupId}</dd></div>
-              <div><dt>Версия стратегии</dt><dd>{selectedSetup.strategyVersion}</dd></div>
+              <div><dt>Паттерн</dt><dd>{selectedPattern.pattern}</dd></div>
+              <div><dt>Таймфрейм</dt><dd>{selectedPattern.timeframe}</dd></div>
+              {selectedPattern.source === "D2" ? (
+                <>
+                  <div><dt>ID сетапа</dt><dd>{selectedPattern.setupId}</dd></div>
+                  <div><dt>Версия стратегии</dt><dd>{selectedPattern.strategyVersion}</dd></div>
+                </>
+              ) : (
+                <div><dt>ID кандидата Robot</dt><dd>{selectedPattern.candidateId}</dd></div>
+              )}
             </dl>
           ) : <p className="diary-finrez-basis">Связь с паттерном по точному ID не подтверждена.</p>}
-          <small>Источник при наличии связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота.</small>
+          <small>{selectedPattern?.source === "WEDGE"
+            ? "Источник: точная цепочка Robot candidate → order → execution → episode. Не D2, без исходной геометрии и журнала решений."
+            : "Источник при наличии D2-связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота."}</small>
         </section>
         <TradeExecutionPriceChart points={executionPoints} />
         <SimulatorLaunchAction episodeId={selected.trade_episode_id}
@@ -1145,10 +1199,12 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, lossOnly, onClea
               <div className="diary-trade-heading">
                 <strong>{deal.symbol}</strong>
                 <span className="diary-deal-pattern"
-                  title={setupFor(deal.trade_episode_id)
+                  title={patternFor(deal)?.source === "D2"
                     ? "Точная связь эпизода с наблюдательным сетапом Diary D2"
-                    : "Связь сделки с паттерном пока не подтверждена"}>
-                  {"Паттерн: " + (setupFor(deal.trade_episode_id)?.pattern ?? "не установлен")}
+                    : patternFor(deal)?.source === "WEDGE"
+                      ? "Доказанное происхождение Wedge по точным идентификаторам Robot, не D2"
+                      : "Связь сделки с паттерном пока не подтверждена"}>
+                  {"Паттерн: " + (patternFor(deal)?.pattern ?? "не установлен")}
                 </span>
                 <span>{sideLabel(deal.side)}</span><span>{dealLabels[deal.cohort]}</span>
               </div>
@@ -1257,27 +1313,31 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
   const episodes = (report.closed_episodes ?? []).filter((deal) => deal.symbol.includes(tickerQuery));
   const groups = new Map<string, {
     pattern: string; cohort: ClosedEpisodeLocator["cohort"]; deals: ClosedEpisodeLocator[];
+    d2Count: number; wedgeCount: number;
   }>();
   let provenCount = 0;
   for (const deal of episodes) {
-    if (deal.opening_controller !== "ROBOT" && deal.opening_controller !== "MANUAL") continue;
-    const setup = exactD2Setup({
-      setup_context: deal.setup_context,
-      execution_allocations: [{ controller: deal.opening_controller }],
-    }, deal);
-    if (!setup) continue;
+    const pattern = verifiedIndexedPattern(deal, report);
+    if (!pattern) continue;
     provenCount += 1;
-    const key = JSON.stringify([setup.pattern, deal.cohort]);
+    const key = JSON.stringify([pattern.pattern, deal.cohort]);
     const group = groups.get(key);
-    if (group) group.deals.push(deal);
-    else groups.set(key, { pattern: setup.pattern, cohort: deal.cohort, deals: [deal] });
+    if (group) {
+      group.deals.push(deal);
+      if (pattern.source === "D2") group.d2Count += 1;
+      else group.wedgeCount += 1;
+    } else groups.set(key, {
+      pattern: pattern.pattern, cohort: deal.cohort, deals: [deal],
+      d2Count: pattern.source === "D2" ? 1 : 0,
+      wedgeCount: pattern.source === "WEDGE" ? 1 : 0,
+    });
   }
   const rows = [...groups.values()].sort((a, b) =>
     a.pattern.localeCompare(b.pattern, "ru") || a.cohort.localeCompare(b.cohort));
   return (
     <section className="diary-finrez" aria-label="Паттерны по подтверждённым сделкам">
       <p className="diary-finrez-basis">
-        Только точные D2-связи с закрытыми сделками. D2 — наблюдения, не полный журнал решений робота.
+        Только точные D2-связи и доказанные Wedge-сигналы Robot. Wedge-lineage не заменяет D2 и не подтверждает журнал решений или исходную геометрию.
         Категории управления не объединяются; суммы ниже — только по подтверждённым эпизодам.
       </p>
       <p className="diary-finrez-coverage" role="status">
@@ -1303,7 +1363,7 @@ function PatternsView({ report, symbolFilter, onSelectPattern }: {
               return <div className="diary-finrez-row" key={JSON.stringify([row.pattern, row.cohort])}>
                 <div className="diary-pattern-label">
                   <strong title={row.pattern}>{row.pattern}</strong>
-                  <small>{dealLabels[row.cohort]} · сделок: {row.deals.length} · прибыльных: {wins} · убыточных: {losses}</small>
+                  <small>{dealLabels[row.cohort]} · сделок: {row.deals.length} · прибыльных: {wins} · убыточных: {losses} · D2: {row.d2Count} · Wedge: {row.wedgeCount}</small>
                 </div>
                 <span title={pnl === null ? "Точная сумма недоступна" : pnl + " USDT"}
                   className={numeric > 0 ? "profit" : numeric < 0 ? "loss" : ""}>
