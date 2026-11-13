@@ -155,6 +155,22 @@ def main() -> None:
     print("STATUS=" + receipt["state"])
     if receipt["state"] == "BLOCKED":
         print("BLOCKER=" + receipt["reason_type"] + ":" + receipt["reason"])
+    else:
+        result = receipt["result"]
+        rows = result.get("l2_episodes", [])
+        print("EPISODES=" + str(len(rows)))
+        print("EXECUTION_CERTAINTY=" + str(result.get("execution_certainty")))
+        for i, row in enumerate(rows, 1):
+            flags = ",".join(row["evidence_flags"]) or "MODEL_ONLY"
+            print(
+                f"TRADE_{i}={row['direction']} "
+                f"entry_ms={row['entry_ms']} entry={row['entry_price']} "
+                f"exit_ms={row['exit_ms']} exit={row['exit_price']} "
+                f"reason={row['exit_reason']} net_usdt={row['net_pnl_usdt']} "
+                f"flags={flags}"
+            )
+        print("NET_PNL_USDT=" + str(result["realized_net_pnl"]))
+        print("PENDING_PROTECTION=" + str(result["pending_protection"]))
 
 
 if __name__ == "__main__":
