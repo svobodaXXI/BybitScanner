@@ -111,7 +111,11 @@ def run(l2: Path, bundle: Path, output_dir: Path, repo: Path, code_sha: str) -> 
     if result.execution_model != "SIMULATION_HISTORICAL_TAKER_L2_EVENT_TIME_NOT_REAL_BYBIT_FILLS":
         raise ValueError("L2-only execution provenance not proven")
     return {
-        "state": "VIRTUAL_L2_PROBE_COMPLETED",
+        "state": (
+            "VIRTUAL_L2_PROBE_CONDITIONAL"
+            if result.l2_unproven_entry_depth_count
+            else "VIRTUAL_L2_PROBE_COMPLETED"
+        ),
         "scenario": "ONE_BOUNDED_LOCAL_SIMULATION_NOT_REAL_BYBIT_EXECUTIONS",
         "code_sha": code_sha,
         "l2_sha256": L2_SHA, "trade_gzip_sha256": TRADE_SHA,
