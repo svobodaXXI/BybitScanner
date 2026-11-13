@@ -414,6 +414,108 @@ class FinrezMixedControllerTests(unittest.TestCase):
         })
 
 
+
+class EntryNotionalReturnTests(unittest.TestCase):
+    """No leverage/margin assumptions; source-confirmed *entry* gross notional only."""
+
+    def _source(self, episode, origins, prices: tuple[str, ...], sides: tuple[OrderSide, ...]):
+        self.assertEqual(len(prices), len(episode.allocations))
+        self.assertEqual(len(sides), len(episode.allocations))
+        executions = tuple(
+            Execution(
+                dedup_key=item.execution_key, order_id=OrderId("price-" + str(index)),
+                symbol=episode.position_key.symbol, side=sides[index],
+                price=Price(Decimal(prices[index])), quantity=Quantity(item.quantity),
+                fee=item.fee, exchange_timestamp_ms=item.occurred_at_ms,
+            )
+            for index, item in enumerate(episode.allocations)
+        )
+        return PaperSourceSnapshot(11, (episode,), origins, executions=executions)
+
+    def test_multiple_entries_and_partial_reductions_use_only_entry_notional(self):
+        from terminal.diary.ticker_finrez import attach_verified_entry_notional_returns
+        episode, origins = _scoped_episode("te_" + "a" * 24, "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT),
+            (AllocationRole.INCREASE, Origin.ROBOT),
+            (AllocationRole.REDUCE, Origin.ROBOT),
+            (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        snapshot = self._source(episode, origins, ("100", "120", "999", "1000"), (
+            OrderSide.BUY, OrderSide.BUY, OrderSide.SELL, OrderSide.SELL,
+        ))
+        original = project_paper_ticker_pnl(
+            snapshot, account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
+        )
+        result = attach_verified_entry_notional_returns(snapshot, original)
+        row, = result["closed_episodes"]
+        self.assertEqual(row["entry_notional_usdt"], "220")
+        self.assertEqual(row["pnl_pct_basis"], "KNOWN_COST_PNL_OVER_EXECUTED_ENTRY_NOTIONAL")
+        self.assertEqual(
+            Decimal(row["pnl_pct"]), Decimal("4.6") / Decimal("220") * 100,
+        )
+        self.assertEqual(result["tickers"], original["tickers"])
+        self.assertEqual(result["attribution_coverage"], original["attribution_coverage"])
+        self.assertEqual(result["source_revision"], original["source_revision"])
+        self.assertNotIn("pnl_pct", original["closed_episodes"][0])
+        self.assertEqual(len(snapshot.executions), 4)
+
+    def test_short_loss_with_known_fees_uses_short_entry_price_not_exit_turnover(self):
+        from dataclasses import replace
+        from terminal.diary.ticker_finrez import attach_verified_entry_notional_returns
+        episode, origins = _scoped_episode("te_" + "b" * 24, "ETHUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT),
+            (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        episode = replace(
+            episode, side=PositionSide.SHORT, realized_price_pnl=Decimal("-10"),
+        )
+        snapshot = self._source(episode, origins, ("200", "1000"), (
+            OrderSide.SELL, OrderSide.BUY,
+        ))
+        report = project_paper_ticker_pnl(
+            snapshot, account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
+        )
+        result = attach_verified_entry_notional_returns(snapshot, report)
+        row, = result["closed_episodes"]
+        self.assertEqual(row["entry_notional_usdt"], "200")
+        self.assertEqual(Decimal(row["pnl_pct"]), Decimal("-5.1"))
+        self.assertEqual(row["pnl_usdt"], "-10.2")
+
+    def test_incomplete_wrong_side_or_wrong_snapshot_never_fabricates_percentage(self):
+        from dataclasses import replace
+        from terminal.diary.ticker_finrez import attach_verified_entry_notional_returns
+        episode, origins = _scoped_episode("te_" + "c" * 24, "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        source = self._source(episode, origins, ("100", "105"), (
+            OrderSide.BUY, OrderSide.SELL,
+        ))
+        report = project_paper_ticker_pnl(
+            source, account_id="paper", owner="ROBOT", period="ALL", now_ms=_ms(9, 12),
+        )
+        self.assertIs(attach_verified_entry_notional_returns(
+            PaperSourceSnapshot(11, (episode,), origins), report,
+        ), report)
+        self.assertIs(attach_verified_entry_notional_returns(
+            replace(source, source_revision=12), report,
+        ), report)
+        for invalid in (
+            replace(source, executions=source.executions[:1]),
+            replace(source, executions=(
+                replace(source.executions[0], side=OrderSide.SELL), source.executions[1],
+            )),
+            replace(source, executions=(
+                replace(source.executions[0], quantity=Quantity(Decimal("0.5"))),
+                source.executions[1],
+            )),
+        ):
+            result = attach_verified_entry_notional_returns(invalid, report)
+            self.assertEqual(result["closed_episodes"], report["closed_episodes"])
+            self.assertNotIn("pnl_pct", result["closed_episodes"][0])
+            self.assertEqual(result["tickers"], report["tickers"])
+
+
+
 class ClosedEpisodeFactsTests(unittest.TestCase):
     def _snapshot(self):
         identity = "te_" + "a" * 24
