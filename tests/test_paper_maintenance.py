@@ -3812,6 +3812,58 @@ def test_installed_frontend_exact_receipt_requires_index_and_assets(
     )
 
 
+def test_monolith_no_stage_update_restores_frontend_without_stop(
+    tmp_path, monkeypatch, capsys,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_terminal_frontend_publish as publish
+    from tools import vps_release_identity as identity
+
+    sha = "a" * 40
+    stage = tmp_path / "stage"
+    bundle = stage / "terminal/frontend/dist"
+    root = tmp_path / "installed"
+    root.mkdir()
+    done = {"frontend": False}
+    calls = []
+    monkeypatch.setattr(maintenance, "REPO", root)
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda *_a: None)
+    monkeypatch.setattr(maintenance, "_installed_frontend_exact_receipt",
+                        lambda *_a: done["frontend"])
+    monkeypatch.setattr(maintenance, "_verified_installed_frontend_stage",
+                        lambda *_a: stage)
+    monkeypatch.setattr(maintenance, "_prepare_editor_frontend_bundle",
+                        lambda _sha, *, stage, force_build: (
+                            calls.append(("bundle", force_build)), bundle
+                        )[1])
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_a, **_kw: (
+                            calls.append(("editor", sha)), "READY: editor"
+                        )[1])
+    monkeypatch.setattr(maintenance, "_complete_stop_intent",
+                        lambda *_a, **_kw: None)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a: sha)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze",
+                        lambda *_a, **_kw: "b" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready",
+                        lambda *_a, **_kw: True)
+    monkeypatch.setattr(publish, "inspect_bundle",
+                        lambda *_a, **_kw: None)
+    def publish_once(*_args, **_kwargs):
+        calls.append(("publish", sha))
+        done["frontend"] = True
+        return "FRONTEND_READY: exact"
+    monkeypatch.setattr(publish, "publish_frontend", publish_once)
+    monkeypatch.setattr(maintenance, "RuntimeShutdown",
+                        lambda **_kw: pytest.fail("no STOP for installed release"))
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_a, **_kw: pytest.fail("no PAPER START on update"))
+    assert maintenance.main([sha, "--action", "update"]) == 0
+    assert calls == [("bundle", True), ("editor", sha), ("publish", sha)]
+    assert "READY: already installed exact release and frontend restored" in capsys.readouterr().out
+
+
 def test_monolith_no_stage_update_does_not_claim_complete_without_frontend(
     monkeypatch, capsys,
 ):
@@ -3827,7 +3879,7 @@ def test_monolith_no_stage_update_does_not_claim_complete_without_frontend(
     monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
                         lambda *_a, **_kw: pytest.fail("must not start PAPER"))
     assert maintenance.main([target, "--action", "update-and-start"]) == 2
-    assert "installed_frontend_exact_receipt_unproven" in capsys.readouterr().out
+    assert "installed_frontend_recovery_preflight_unproven" in capsys.readouterr().out
 
 
 def test_editor_update_existing_target_never_prepares_stage(tmp_path, monkeypatch):
