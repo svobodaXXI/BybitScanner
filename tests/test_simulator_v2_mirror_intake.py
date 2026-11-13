@@ -301,6 +301,91 @@ class NativeMirrorSimulatorIntakeTests(unittest.TestCase):
                 self.assertFalse(session.exchange.robot_limits)
                 self.assertTrue(robot.can_admit)
 
+    def test_simultaneous_mirror_uses_all_or_none_account_risk_review(self):
+        from unittest.mock import Mock
+        for label, losses, decision, reason in (
+            ("within", ("140", "160"), "WITHIN_LIMIT", "aggregate_risk_within_headroom"),
+            ("over", ("170", "140"), "DEFERRED", "aggregate_risk_exceeds_headroom"),
+            ("unknown", ("170", None), "DEFERRED", "candidate_worst_case_unavailable"),
+        ):
+            with self.subTest(label=label):
+                session = self.session("mirror_shared_risk_" + label)
+                with ConnectedSimulationRobot(
+                    session, tick_size=D("0.01"), terms=terms(),
+                    mirror_working_volume_usdt=D("250"),
+                    mirror_risk_limit_usdt=D("300"),
+                    mirror_auto_scan=True,
+                    mirror_research_skip_ambiguous=True,
+                ) as robot:
+                    entry_ids = ("level-a@1@60000", "level-b@1@60000")
+                    robot._auto_mirror_scanner = Mock(
+                        observe_committed=Mock(return_value=entry_ids),
+                    )
+                    native = [{
+                        "decision": "ATTACHED",
+                        "reason": "within_campaign_budget",
+                        **({"worst_case_usdt": worst} if worst is not None else {}),
+                    } for worst in losses]
+                    session.step(minute(0))
+                    with patch.object(
+                        robot, "_preview_native_mirror_admission", side_effect=native,
+                    ) as preview:
+                        robot.after_committed_minute()
+                    self.assertEqual(preview.call_count, 2)
+                    reviews = robot.mirror_admission_reviews
+                    self.assertEqual(len(reviews), 1)
+                    self.assertEqual(reviews[0]["account_risk"]["decision"], decision)
+                    self.assertEqual(reviews[0]["account_risk"]["reason"], reason)
+                    candidates = reviews[0]["candidates"]
+                    self.assertEqual([r["entry_id"] for r in candidates], list(entry_ids))
+                    self.assertEqual(
+                        [r["aggregate_risk_gate"] for r in candidates], [decision, decision],
+                    )
+                    self.assertEqual(
+                        [r["execution_gate"] for r in candidates],
+                        (["SHARED_OWNER_UNRESOLVED"] * 2 if decision == "WITHIN_LIMIT"
+                         else ["SHARED_RISK_UNPROVEN_OR_EXCEEDED"] * 2),
+                    )
+                    if label != "unknown":
+                        self.assertEqual(
+                            reviews[0]["account_risk"]["total_worst_case_usdt"],
+                            str(sum(map(D, losses))),
+                        )
+                        self.assertEqual(
+                            reviews[0]["account_risk"]["account_limit_usdt"], "300",
+                        )
+                    # The assessment does not arbitrarily pick a winner or
+                    # reserve a position: every independently confirmed level remains.
+                    self.assertEqual(robot.mirror_confirmation_events[0][1], entry_ids)
+                    self.assertFalse(robot._source_candidate_ids)
+                    self.assertFalse(session.exchange.robot_limits)
+                    self.assertFalse(robot._store.load_robot_candidates_by_status(
+                        robot.account_id, ("APPROVED", "OPEN"),
+                    ))
+
+    def test_shared_mirror_risk_review_rejects_ambiguous_exposure(self):
+        review = ConnectedSimulationRobot._mirror_group_risk_review
+        valid = [
+            {"entry_id": "a", "native_decision": "ATTACHED",
+             "native_worst_case_usdt": "40"},
+            {"entry_id": "b", "native_decision": "ATTACHED",
+             "native_worst_case_usdt": "50"},
+        ]
+        self.assertEqual(
+            review(list(reversed(valid)), D("90"))["decision"], "WITHIN_LIMIT",
+        )
+        self.assertEqual(
+            review(valid, None)["reason"], "account_risk_headroom_unavailable",
+        )
+        duplicate = [valid[0], {**valid[1], "entry_id": "a"}]
+        self.assertEqual(
+            review(duplicate, D("300"))["reason"], "candidate_identity_ambiguous",
+        )
+        non_finite = [valid[0], {**valid[1], "native_worst_case_usdt": "NaN"}]
+        self.assertEqual(
+            review(non_finite, D("300"))["reason"], "candidate_worst_case_invalid",
+        )
+
     def test_native_per_level_admission_preview_does_not_create_orders(self):
         session = self.session("mirror_preview_original_robot_gates")
         state, entry_id = native_scanner_state()
