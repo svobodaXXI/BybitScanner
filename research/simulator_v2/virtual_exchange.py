@@ -593,6 +593,8 @@ class VirtualExchange:
                 or len({trade.trade_id for trade in trades}) != len(trades)):
             raise ValueError("invalid original mixed-millisecond L2/taker events")
         self._require_l2_event(stamp, kind="BOOK")
+        if self._l2_pending_stop is not None:
+            raise ValueError(f"same-ms L2/taker deferred STOP chronology unproven at {stamp}")
         if self._robot_limits or self._robot_markets or self._robot_stop is not None:
             raise ValueError(f"same-ms L2/taker native Robot chronology unproven at {stamp}")
         exposure = self.account.snapshot(
