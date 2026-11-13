@@ -329,6 +329,9 @@ def run_real_trade_day(
                 {"closed_m1_time_ms": ts, "candidate_entry_ids": list(ids)}
                 for ts, ids in robot.mirror_confirmation_events
             ],
+            "native_independent_admission_reviews": list(
+                robot.mirror_admission_reviews
+            ),
             "native_robot_candidates": len(candidates),
             "experiment_one_filled_trade_per_campaign": one_filled_trade_per_campaign,
             "experiment_suppressed_confirmations": len(robot.mirror_experiment_suppressed),
@@ -369,7 +372,8 @@ def run_real_trade_day(
                 "OHLC trade-through does not prove book queue, depth, actual slippage",
                 "scanner quality has no owner-labeled ground-truth precision/recall here",
                 "neither VPS PAPER nor user PC integration was changed or accepted",
-                "for consecutive days, simultaneous confirmations are excluded as whole minutes; no priority rule is inferred",
+                "for consecutive days, simultaneous confirmations are excluded from execution, not signal accounting; no priority rule is inferred",
+                "individual read-only native risk previews do not reserve shared portfolio budget or authorize simultaneous orders",
             ],
         }
 
