@@ -2149,6 +2149,53 @@ def _prepare_approved_editor_stage(
     return stage
 
 
+def _installed_frontend_exact_receipt(
+    target: str, *, webroot: Path | None = None, trusted_uid: int = 0,
+) -> bool:
+    """Read-only exact frontend proof for an already installed source SHA.
+
+    An installed Backend is not proof that HTTPS static assets were published.
+    Only a trusted receipt, matching current index bytes, and all referenced
+    asset files allow the one-action UPDATE to report success without a stage.
+    """
+    from tools.vps_terminal_frontend_publish import (
+        ASSET_REF, RECEIPT, SHA256, WEBROOT, _content, _trusted_directory,
+    )
+
+    path = webroot if webroot is not None else WEBROOT
+    try:
+        if len(target) != 40 or any(ch not in "0123456789abcdef" for ch in target):
+            return False
+        _trusted_directory(path, trusted_uid)
+        receipt_path = path / RECEIPT
+        meta = receipt_path.stat()
+        if (receipt_path.is_symlink() or meta.st_uid != trusted_uid
+                or meta.st_mode & 0o022):
+            return False
+        receipt = json.loads(_content(receipt_path))
+        if (not isinstance(receipt, dict)
+                or set(receipt) != {"source_sha", "index_sha256",
+                                    "previous_index_sha256"}
+                or receipt["source_sha"] != target
+                or not isinstance(receipt["index_sha256"], str)
+                or SHA256.fullmatch(receipt["index_sha256"]) is None
+                or not isinstance(receipt["previous_index_sha256"], str)
+                or SHA256.fullmatch(receipt["previous_index_sha256"]) is None):
+            return False
+        html = _content(path / "index.html")
+        if hashlib.sha256(html).hexdigest() != receipt["index_sha256"]:
+            return False
+        references = ASSET_REF.findall(html.decode("utf-8"))
+        if not any(name.endswith(".js") for name in references):
+            return False
+        for name in references:
+            asset = path / name
+            _content(asset)  # No absent files or symlinked assets.
+        return True
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+        return False
+
+
 def _prepare_editor_frontend_bundle(
     target: str, *, stage: Path, root: Path = REPO,
     runner=subprocess.run,
@@ -2394,6 +2441,13 @@ def main(argv=None) -> int:
                 print("BLOCKED: approved_editor_frontend_preflight_unproven:"
                       + str(exc).replace(chr(10), " ")[:160] + "; no STOP attempted")
                 return 2
+        elif not _installed_frontend_exact_receipt(args.sha):
+            # A previous release may have completed Backend/Editor but failed
+            # static publication. Do not misreport UPDATE as complete or
+            # silently start trading under an unproved frontend.
+            print("BLOCKED: installed_frontend_exact_receipt_unproven;"
+                  " no STOP, service restart or PAPER START")
+            return 2
         # Delegate to the owned monolith with the exact preflighted bundle.
         mode = (["--resume-installed-editor-only"] if stage is None
                 else ["--staged-gitless-editor-only", str(stage)])
