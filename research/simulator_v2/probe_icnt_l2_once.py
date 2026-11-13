@@ -166,8 +166,9 @@ def main() -> None:
                 f"TRADE_{i}={row['direction']} "
                 f"entry_ms={row['entry_ms']} entry={row['entry_price']} "
                 f"exit_ms={row['exit_ms']} exit={row['exit_price']} "
-                f"reason={row['exit_reason']} net_usdt={row['net_pnl_usdt']} "
-                f"flags={flags}"
+                f"reason={row['exit_reason']} "
+                f"stop={row['planned_stop_price']} take={row['planned_take_price']} "
+                f"net_usdt={row['net_pnl_usdt']} flags={flags}"
             )
         print("NET_PNL_USDT=" + str(result["realized_net_pnl"]))
         print("PENDING_PROTECTION=" + str(result["pending_protection"]))
