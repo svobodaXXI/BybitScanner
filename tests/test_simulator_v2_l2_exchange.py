@@ -141,7 +141,10 @@ class L2PartialTakeAndBERegressionTests(unittest.TestCase):
         current = ex._l2_current_stop(ex.active_protection)
         self.assertLess(current, D("101"))
         self.assertGreater(current, D("97.5"))
-        close = ex.on_historical_trade(print_at(M+40, "Buy", "100.1"))
+        ex.on_historical_book(book(
+            M+40, bid="100.6", ask="100.8", ask_size="200",
+        ))
+        close = ex.on_historical_trade(print_at(M+50, "Buy", "100.8"))
         self.assertEqual(close.quantity, D("75"))
         self.assertEqual(ex.account.snapshot(as_of_ms=M+40).position_quantity, 0)
 
