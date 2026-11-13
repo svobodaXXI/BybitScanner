@@ -451,6 +451,22 @@ describe("Closed deals / exact episode index", () => {
     expect(screen.getByText("Нет убыточных сделок по выбранным фильтрам")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Убыточные" }));
     expect(orderedSymbols()).toEqual(["ETHUSDT"]);
+
+    // An explicit "all deals" drilldown must not silently inherit prior loss/pattern filters.
+    fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по паттерну" }), {
+      target: { value: "old search" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Убыточные" }));
+    fireEvent.click(screen.getByRole("button", { name: "Финрез" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Показать сделки по ETHUSDT" }));
+    expect(screen.getByRole("alertdialog", { name: "Переход к сделкам" }))
+      .toHaveTextContent("Открыть все сделки по ETHUSDT");
+    fireEvent.click(screen.getByRole("button", { name: "Открыть сделки" }));
+    expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "false");
+    await screen.findByRole("button", { name: /ETHUSDT/ });
+    expect(orderedSymbols()).toEqual(["ETHUSDT"]);
+    expect(screen.getByRole("button", { name: /ETHUSDT/ })).toHaveTextContent("PnL +3,10 USDT");
   });
 
   it("keeps micro-losses visible on both closed deal rows and their details", async () => {
@@ -964,6 +980,16 @@ describe("Finrez first-screen UI", () => {
       "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=WEEK",
     ));
     expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("Falling Wedge");
+
+    fireEvent.click(screen.getByRole("button", { name: "Убыточные" }));
+    expect(screen.getAllByText("Паттерн: Falling Wedge")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Паттерны" }));
+    await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
+    fireEvent.click(screen.getAllByRole("button", {
+      name: "Показать все сделки по паттерну Falling Wedge",
+    })[0]);
+    expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "false");
+    expect(await screen.findAllByText("Паттерн: Falling Wedge")).toHaveLength(3);
   });
 
   it("never shows an unknown pattern as a zero result and respects ticker filtering", async () => {

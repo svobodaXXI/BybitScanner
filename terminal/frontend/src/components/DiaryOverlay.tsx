@@ -1666,6 +1666,8 @@ export function DiaryOverlay({
               <div>
                 <button type="button" onClick={() => {
                   setFinrezSymbolFilter(pendingFinrezTicker);
+                  setFinrezPatternFilter("");
+                  setFinrezLossOnly(false);
                   setPendingFinrezTicker(null);
                   setSection("DEALS");
                 }}>Открыть сделки</button>
@@ -1685,7 +1687,11 @@ export function DiaryOverlay({
             symbolFilter={finrezSymbolFilter} onSelectTicker={setPendingFinrezTicker} /> : null}
           {!loading && !loadError && !selectedTrade && section === "PATTERNS" && finrez ? (
             <PatternsView report={finrez} symbolFilter={finrezSymbolFilter}
-              onSelectPattern={(pattern) => { setFinrezPatternFilter(pattern); setSection("DEALS"); }} />
+              onSelectPattern={(pattern) => {
+                setFinrezPatternFilter(pattern);
+                setFinrezLossOnly(false);
+                setSection("DEALS");
+              }} />
           ) : null}
           {!loading && !loadError && !selectedTrade && section === "DEALS" && finrez ? (
             <ClosedDealsView key={`${finrez.account_id}:${finrez.owner}:${finrez.period}:${finrez.source_revision}:${finrezSymbolFilter}:${finrezPatternFilter}`}
