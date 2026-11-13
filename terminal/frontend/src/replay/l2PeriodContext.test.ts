@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectedL2MarketContext } from "./l2PeriodContext";
+import { selectedL2MarketContext, loadedL2M5Coverage } from "./l2PeriodContext";
 import type { ReplayDocument, ReplayCandle, ReplayEvent } from "./replayModel";
 
 const base = Date.UTC(2026, 10, 10, 8);
@@ -49,4 +49,16 @@ describe("selected Bybit extension around imported original L2", () => {
       history(base+interval,4),
     ],start,end)).toThrow(/исходное окно/);
   });
+  it("distinguishes local M5 coverage from missing selected M5, minute inclusive", () => {
+    const before = Array.from({ length: 12 }, (_,i) => bar(base-(12-i)*interval));
+    const after = Array.from({ length: 12 }, (_,i) => bar(base+(i+3)*interval));
+    const ready = loadedL2M5Coverage(original, before, after,base,base+15*interval);
+    expect(ready).toEqual({ complete:true,required:15,covered:15,firstMissingMs:null });
+    const missing = loadedL2M5Coverage(original, before, after,base,base+15*interval+60_000);
+    expect(missing).toEqual({
+      complete:false,required:16,covered:15,firstMissingMs:base+15*interval,
+    });
+    expect(original.events).toHaveLength(3);
+  });
+
 });
