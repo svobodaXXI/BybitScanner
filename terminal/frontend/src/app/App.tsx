@@ -25,7 +25,7 @@ import {
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import { parseSignalWorkspaceLink } from "../geometryFeedback/signalDeepLink";
 import { appendRetrospectiveCandles, projectVerifiedSignalOverlay, projectSignalGeometry, restoreSavedSignalCorrection, type RetrospectiveOhlc } from "../geometryFeedback/signalChartBridge";
-import type { OwnerChartDraft, OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
+import type { OwnerChartDraftV3, OwnerSignalDraft } from "../geometryFeedback/ownerSignalDraft";
 import { isEditorReviewPattern, matchesStoredGeometryReview, type GeometryReviewDraft, type TimestampDrawing } from "../geometryFeedback/geometryReviewDraft";
 import type { Candle } from "../contracts/marketData";
 import type { PaperOpenPosition } from "../contracts/trading";
@@ -1421,6 +1421,27 @@ export function App() {
     tradingSymbol,
   ]);
 
+  const submitOwnerChart = async (draft: OwnerChartDraftV3) => {
+                const response = await fetch("/api/workspace/owner-unscanned-signal", {
+                  method: "POST", credentials: "same-origin",
+                  headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft),
+                });
+                const result = await response.json();
+                const record = result.proposal;
+                if (!response.ok || result.ok !== true || typeof record?.proposal_id !== "string" ||
+                    !/^[0-9a-f]{64}$/.test(record.proposal_id) ||
+                    record?.source_kind !== "OWNER_CHART_UNVERIFIED" ||
+                    record?.submission?.pattern !== draft.pattern ||
+                    record?.submission?.formation_movement !== draft.formation_movement ||
+                    record?.submission?.schema_version !== 3 ||
+                    record?.submission?.idempotency_key !== draft.idempotency_key ||
+                    record?.candidate_created !== false || record?.robot_candidate_id !== null ||
+                    record?.assessment?.decision !== "AWAITING_OFFLINE_REPLAY")
+                  throw new Error(result.error || "Сохранение примера не подтверждено");
+                return { proposalId: record.proposal_id,
+                  decision: record.assessment.decision, reason: record.assessment.reason };
+              };
+
   const visibleLimitDrafts =
     limitDraftState.drafts ??
     (limitDraftState.draft ? [limitDraftState.draft] : []);
@@ -1482,24 +1503,7 @@ export function App() {
               editorMode={ownerChartCandles !== null}
               ownerChartMode={ownerChartCandles !== null}
               referenceDrawings={editorCurrentOverlay ?? []}
-              onSubmitOwnerChart={ownerChartCandles ? async (draft: OwnerChartDraft) => {
-                const response = await fetch("/api/workspace/owner-unscanned-signal", {
-                  method: "POST", credentials: "same-origin",
-                  headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft),
-                });
-                const result = await response.json();
-                const record = result.proposal;
-                if (!response.ok || result.ok !== true || typeof record?.proposal_id !== "string" ||
-                    !/^[0-9a-f]{64}$/.test(record.proposal_id) ||
-                    record?.source_kind !== "OWNER_CHART_UNVERIFIED" ||
-                    record?.submission?.pattern !== draft.pattern ||
-                    record?.submission?.idempotency_key !== draft.idempotency_key ||
-                    record?.candidate_created !== false || record?.robot_candidate_id !== null ||
-                    record?.assessment?.decision !== "AWAITING_OFFLINE_REPLAY")
-                  throw new Error(result.error || "Сохранение примера не подтверждено");
-                return { proposalId: record.proposal_id,
-                  decision: record.assessment.decision, reason: record.assessment.reason };
-              } : undefined}
+              onSubmitOwnerChart={ownerChartCandles ? submitOwnerChart : undefined}
               symbol={market.book.symbol}
               timeframe={timeframe}
               readOnly={ownerChartCandles === null}
@@ -1621,6 +1625,7 @@ export function App() {
           savedReviewLabel={mode === "EDITOR" ? frozenSignal?.savedReviewLabel ?? null : null}
           savedCorrectedPattern={mode === "EDITOR" ? frozenSignal?.savedCorrectedPattern ?? null : null}
           savedReviewNote={mode === "EDITOR" ? frozenSignal?.savedReviewNote ?? null : null}
+          onSubmitOwnerChart={mode === "EDITOR" && frozenSignal ? submitOwnerChart : undefined}
           onSubmitOwnerSignal={mode === "EDITOR" && frozenSignal ? async (
             proposal: OwnerSignalDraft,
           ) => {

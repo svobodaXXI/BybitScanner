@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOwnerChartDraft, buildOwnerSignalDraft } from "./ownerSignalDraft";
+import { buildOwnerChartDraft, buildOwnerChartDraftV3, buildOwnerSignalDraft } from "./ownerSignalDraft";
 import type { DrawingObject } from "../chart/drawingModel";
 
 const candles = Array.from({ length: 120 }, (_, i) => ({
@@ -138,5 +138,56 @@ describe("Ikigai Box owner annotation", () => {
       ...base, direction: "SHORT" as const,
       drawings: [{ ...fib, type: "rectangle" }],
     })).toThrow(/одну сетку Фибоначчи/);
+  });
+});
+
+describe("untrusted V3 owner annotations", () => {
+  const rays = [ray("hi", [30, 108], [80, 102]), ray("lo", [30, 95], [80, 92])];
+  const base = {
+    symbol: "BTCUSDT", timeframe: "5m",
+    frozenCandles: candles, note: "", idempotencyKey: "owner-pattern-v3-000001",
+  };
+
+  it("stores formation movement independently of trade side", () => {
+    const result = buildOwnerChartDraftV3({
+      ...base, pattern: "Wedge", formationMovement: "UP",
+      wedgeSubtype: "CORRECTION", drawings: rays,
+    });
+    expect(result.schema_version).toBe(3);
+    expect(result.pattern).toBe("Wedge");
+    expect(result.formation_movement).toBe("UP");
+    expect(result.wedge_subtype).toBe("CORRECTION");
+    expect(result).not.toHaveProperty("direction");
+    expect(result).not.toHaveProperty("trade_side");
+    expect(result.proposed_boundaries.map((x) => x.id)).toEqual(["manual_1", "manual_2"]);
+  });
+
+  it("stores the Box with its canonical pattern id and Fibonacci anchor", () => {
+    const draft = buildOwnerChartDraftV3({
+      ...base, pattern: "Ikigai Box", formationMovement: "UP",
+      drawings: [{ ...rays[0], type: "fibonacci" }],
+    });
+    expect(draft.pattern).toBe("Ikigai Box");
+    expect(draft.proposed_boundaries.map((x) => x.id)).toEqual(["first_impulse_fibonacci"]);
+  });
+
+  it("supports a G-shaped example without making a Robot candidate", () => {
+    const draft = buildOwnerChartDraftV3({
+      ...base, pattern: "G-Shaped", formationMovement: "DOWN",
+      drawings: [{ ...rays[0], type: "horizontal", anchors: [rays[0].anchors[0]] }],
+    });
+    expect(draft.proposed_boundaries[0].type).toBe("horizontal");
+    expect(draft).not.toHaveProperty("candidate_created");
+  });
+
+  it("fails closed on missing wedge subtype and wrong geometry", () => {
+    expect(() => buildOwnerChartDraftV3({
+      ...base, pattern: "Wedge", formationMovement: "UP",
+      drawings: rays,
+    })).toThrow(/подтип/);
+    expect(() => buildOwnerChartDraftV3({
+      ...base, pattern: "Triangle", formationMovement: "DOWN",
+      drawings: rays.slice(0, 1),
+    })).toThrow(/два луча/);
   });
 });
