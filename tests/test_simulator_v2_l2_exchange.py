@@ -7,6 +7,10 @@ import unittest
 from robot_entry_flow_evidence import TakerPrint
 from research.historical_market_replay import Candle
 from research.simulator_v2.historical_orderbook import BookState
+from research.simulator_v2.cache import _checksum, _rows
+from research.simulator_v2.history import HistoryChunk
+from research.simulator_v2.report import run_verified_chunks
+from research.simulator_v2.session import VirtualReplaySession
 from research.simulator_v2.virtual_account import VirtualAccount
 from research.simulator_v2.virtual_exchange import (
     LimitRequest, MarketRequest, ProtectedLimitRequest, VirtualExchange,
@@ -123,6 +127,59 @@ class EventTimeMatchingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "OHLC MARKET"):
             ex.on_historical_book(book(M + 10))
         self.assertEqual(ex.account.fills, ())
+
+    def test_runner_feeds_l2_before_committing_next_candle(self):
+        session = VirtualReplaySession(
+            simulation_run_id="l2_session", symbol="ICNTUSDT",
+            initial_balance=D("1000"), execution_mode="HISTORICAL_L2",
+        )
+        candles = (minute(0), minute(M), minute(2*M))
+        chunk = HistoryChunk(
+            symbol="ICNTUSDT", start_ms=0, end_ms=3*M,
+            source_id="TEST_ORIGINAL_M1", candles=candles,
+            sha256=_checksum(_rows(candles)),
+        )
+
+        def on_close(active, candle):
+            if candle.end_ms == M:
+                active.exchange.submit_protected_limit(
+                    ProtectedLimitRequest(
+                        LimitRequest("order1", "BUY", D("1"), D("100")),
+                        D("99"), D("103"),
+                    ), submitted_at_ms=candle.end_ms,
+                )
+
+        def feed(active, candle):
+            if candle.start_ms == M:
+                active.exchange.on_historical_book(
+                    book(M + 10, bid="99.9", ask="100")
+                )
+                active.exchange.on_historical_trade(print_at(M + 20, "Buy", "103.1"))
+
+        report = run_verified_chunks(
+            session, (chunk,), on_committed_m1=on_close,
+            on_before_m1=feed,
+        )
+        self.assertEqual(report.virtual_fills, 2)
+        self.assertEqual([fill.virtual_time_ms for fill in session.account.fills],
+                         [M + 10, M + 20])
+        self.assertEqual(report.final_position_quantity, 0)
+        self.assertEqual([e.kind for e in session.exchange.events][-2:],
+                         ["FILLED", "TAKE_FILLED"])
+
+    def test_l2_runner_rejects_unverified_feed(self):
+        session = VirtualReplaySession(
+            simulation_run_id="l2_missing_feed", symbol="ICNTUSDT",
+            initial_balance=D("1000"), execution_mode="HISTORICAL_L2",
+        )
+        candles = (minute(0),)
+        chunk = HistoryChunk(
+            symbol="ICNTUSDT", start_ms=0, end_ms=M,
+            source_id="TEST_ORIGINAL_M1", candles=candles,
+            sha256=_checksum(_rows(candles)),
+        )
+        with self.assertRaisesRegex(ValueError, "verified event feeder"):
+            run_verified_chunks(session, (chunk,))
 
 
 if __name__ == "__main__":
