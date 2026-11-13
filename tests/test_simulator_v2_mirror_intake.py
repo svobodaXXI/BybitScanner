@@ -279,6 +279,12 @@ class NativeMirrorSimulatorIntakeTests(unittest.TestCase):
                         robot.mirror_ambiguous_research_events,
                         ((MINUTE, ("level-a@1@60000", "level-b@1@60000")),),
                     )
+                # Both independently authorized levels remain visible as
+                # confirmations, regardless of execution ownership.
+                self.assertEqual(
+                    robot.mirror_confirmation_events,
+                    ((MINUTE, ("level-a@1@60000", "level-b@1@60000")),),
+                )
                 self.assertFalse(robot._source_candidate_ids)
                 self.assertFalse(session.exchange.robot_limits)
                 self.assertTrue(robot.can_admit)
