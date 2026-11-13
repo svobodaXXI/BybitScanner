@@ -846,6 +846,20 @@ try {
     "public M5 prehistory must not overwrite the original L2 execution candle");
   await page.screenshot({ path: join(screenshotDir, "machine-time-l2-replay.png"), fullPage: true });
   console.log("LOCAL_L2_REPLAY_BROWSER_OK (Chromium, original nested receipt import, 8 event-time marks, no PAPER)");
+  // Owner UX: imported coordinates stay editable. Applying the selected
+  // interval MUST NOT clear the original L2 receipts or start Robot.
+  const selectedWindow = page.getByRole("textbox", { name: "Координаты прогона" });
+  await page.getByRole("button", { name: "Добавить 1 час" }).click();
+  assert.equal(await page.getByLabel("Конец прогона UTC").inputValue(), "2026-11-10T09:05");
+  assert.match(await selectedWindow.inputValue(), /ICNTUSDT \| 2026-11-10T08:00 \| 2026-11-10T09:05/);
+  await page.getByRole("button", { name: "Применить", exact: true }).click();
+  assert.match(await page.locator(".replay-meta").innerText(), /4 \/ 4/,
+    "Apply on imported source must not turn original L2 into a new simulation");
+  await page.getByRole("button", { name: "Подгрузить период с Bybit" }).click();
+  await page.getByRole("status").filter({ hasText: "Исторические taker-сделки/L2-стакан" }).waitFor();
+  assert.match(await page.locator(".replay-meta").innerText(), /original-l2-result\.json/,
+    "public period extension must preserve the imported JSON source");
+
 
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
