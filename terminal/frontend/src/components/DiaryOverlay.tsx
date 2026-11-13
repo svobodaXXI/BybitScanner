@@ -167,6 +167,8 @@ type ClosedEpisodeLocator = {
   execution_count: number;
   cohort: "ROBOT" | "MANUAL" | "ROBOT_MANUAL_CLOSE" | "JOINT_MANAGEMENT";
   replay_evidence: "EPISODE_INDEX_ONLY";
+  opening_controller?: "ROBOT" | "MANUAL";
+  setup_context?: unknown;
 };
 
 type FinrezTicker = { symbol: string; pnl_usdt: string; trade_count: number };
@@ -372,7 +374,8 @@ function exactD2Setup(facts: Record<string, unknown>, deal: ClosedEpisodeLocator
     || d2.decision_scope !== "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG"
     || !d2.setup || typeof d2.setup !== "object") return null;
   const setup = d2.setup as Record<string, unknown>;
-  const allocations = facts.execution_allocations as unknown[];
+  const allocations = facts.execution_allocations;
+  if (!Array.isArray(allocations) || allocations.length < 1) return null;
   const first = allocations[0];
   if (!first || typeof first !== "object") return null;
   const openingController = (first as Record<string, unknown>).controller;
@@ -875,7 +878,22 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
   const [filmNotice, setFilmNotice] = useState("");
 
   const [executionPoints, setExecutionPoints] = useState<TradeExecutionPoint[]>([]);
-  const [verifiedSetups, setVerifiedSetups] = useState<Record<string, VerifiedEpisodeSetup>>({});
+  const [verifiedSetups, setVerifiedSetups] = useState<Record<string, VerifiedEpisodeSetup | null>>({});
+  const indexedVerifiedSetups = useMemo(() => {
+    const proven: Record<string, VerifiedEpisodeSetup> = {};
+    for (const deal of report.closed_episodes ?? []) {
+      if (deal.opening_controller !== "ROBOT" && deal.opening_controller !== "MANUAL") continue;
+      const setup = exactD2Setup({
+        setup_context: deal.setup_context,
+        execution_allocations: [{ controller: deal.opening_controller }],
+      }, deal);
+      if (setup) proven[deal.trade_episode_id] = setup;
+    }
+    return proven;
+  }, [report.closed_episodes]);
+  const setupFor = (episodeId: string): VerifiedEpisodeSetup | null =>
+    Object.prototype.hasOwnProperty.call(verifiedSetups, episodeId)
+      ? verifiedSetups[episodeId] : indexedVerifiedSetups[episodeId] ?? null;
   useEffect(() => {
     const deal = deals.find((entry) => entry.trade_episode_id === selectedId);
     setExecutionPoints([]);
@@ -922,8 +940,8 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
       .then((result) => {
         if (!active || !result) return;
         setExecutionPoints(result.points);
-        if (result.setup) setVerifiedSetups((prior) => ({
-          ...prior, [deal.trade_episode_id]: result.setup!,
+        setVerifiedSetups((prior) => ({
+          ...prior, [deal.trade_episode_id]: result.setup,
         }));
       })
       .catch(() => { /* No synthetic market data on archive errors. */ });
@@ -1006,12 +1024,12 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
         </section>
         <section className="diary-detail-section" aria-label="Связь сделки с паттерном">
           <h3>Сетап и паттерн</h3>
-          {verifiedSetups[selected.trade_episode_id] ? (
+          {setupFor(selected.trade_episode_id) ? (
             <dl>
-              <div><dt>Паттерн</dt><dd>{verifiedSetups[selected.trade_episode_id].pattern}</dd></div>
-              <div><dt>Таймфрейм</dt><dd>{verifiedSetups[selected.trade_episode_id].timeframe}</dd></div>
-              <div><dt>ID сетапа</dt><dd>{verifiedSetups[selected.trade_episode_id].setupId}</dd></div>
-              <div><dt>Версия стратегии</dt><dd>{verifiedSetups[selected.trade_episode_id].strategyVersion}</dd></div>
+              <div><dt>Паттерн</dt><dd>{setupFor(selected.trade_episode_id).pattern}</dd></div>
+              <div><dt>Таймфрейм</dt><dd>{setupFor(selected.trade_episode_id).timeframe}</dd></div>
+              <div><dt>ID сетапа</dt><dd>{setupFor(selected.trade_episode_id).setupId}</dd></div>
+              <div><dt>Версия стратегии</dt><dd>{setupFor(selected.trade_episode_id).strategyVersion}</dd></div>
             </dl>
           ) : <p className="diary-finrez-basis">Связь с паттерном по точному ID не подтверждена.</p>}
           <small>Источник при наличии связи: отдельные наблюдения Trading Diary D2, не полный журнал решений Робота.</small>
@@ -1075,11 +1093,11 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
               <div className="diary-trade-heading">
                 <strong>{deal.symbol}</strong>
                 <span className="diary-deal-pattern"
-                  title={verifiedSetups[deal.trade_episode_id]
+                  title={setupFor(deal.trade_episode_id)
                     ? "Точная связь эпизода с наблюдательным сетапом Diary D2"
                     : "Связь сделки с паттерном пока не подтверждена"}>
-                  {verifiedSetups[deal.trade_episode_id]
-                    ? "Паттерн: " + verifiedSetups[deal.trade_episode_id].pattern
+                  {setupFor(deal.trade_episode_id)
+                    ? "Паттерн: " + setupFor(deal.trade_episode_id).pattern
                     : "Паттерн: не установлен"}
                 </span>
                 <span>{sideLabel(deal.side)}</span><span>{dealLabels[deal.cohort]}</span>
