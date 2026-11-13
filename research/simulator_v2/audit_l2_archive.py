@@ -62,6 +62,9 @@ def inspect(archive_path: Path, expected_sha256: str, expected_records: int = 56
     first = last = None
     prior_at = prior_seq = prior_u = None
     max_gap = 0
+    update_gaps = 0
+    update_gap_first_samples: list[dict[str, int]] = []
+    snapshot_transitions: list[dict[str, int]] = []
     gap_samples: list[dict[str, int]] = []
     anomalies: list[dict[str, int | str]] = []
     covered_minutes: set[int] = set()
@@ -123,6 +126,17 @@ def inspect(archive_path: Path, expected_sha256: str, expected_records: int = 56
                             if len(gap_samples) < 8:
                                 gap_samples.append({"before_ts_ms": prior_at, "after_ts_ms": ts, "gap_ms": gap})
                         if kind == "delta":
+                            # Within an uninterrupted Bybit depth-200 stream, the
+                            # update ID advances by exactly one. Unlike seq,
+                            # u is not a cross-channel version number.
+                            if u > prior_u + 1:
+                                update_gaps += 1
+                                if len(update_gap_first_samples) < 8:
+                                    update_gap_first_samples.append({
+                                        "record": totals["records"],
+                                        "before_u": prior_u, "after_u": u,
+                                        "missing_update_ids": u - prior_u - 1,
+                                    })
                             if u <= prior_u:
                                 totals["nonincreasing_delta_u"] += 1
                                 if len(anomalies) < 8:
@@ -131,7 +145,14 @@ def inspect(archive_path: Path, expected_sha256: str, expected_records: int = 56
                                 totals["nonincreasing_delta_seq"] += 1
                                 if len(anomalies) < 8:
                                     anomalies.append({"record": totals["records"], "issue": "nonincreasing_delta_seq", "ts_ms": ts})
-                        elif seq < prior_seq and u != 1:
+                        else:
+                            if len(snapshot_transitions) < 8:
+                                snapshot_transitions.append({
+                                    "record": totals["records"],
+                                    "before_u": prior_u, "snapshot_u": u,
+                                    "ts_ms": ts,
+                                })
+                        if kind == "snapshot" and seq < prior_seq and u != 1:
                             totals["snapshot_seq_rollback_without_reset"] += 1
                             if len(anomalies) < 8:
                                 anomalies.append({"record": totals["records"], "issue": "snapshot_seq_rollback_without_reset", "ts_ms": ts})
@@ -154,9 +175,12 @@ def inspect(archive_path: Path, expected_sha256: str, expected_records: int = 56
         raise ValueError("no near-day-start L2 snapshot")
     if last is None or last["ts_ms"] < DAY_END_MS:
         raise ValueError("L2 archive terminates before UTC day end")
+    if update_gaps:
+        totals["nonconsecutive_delta_u"] = update_gaps
     issues = {
         key: totals[key] for key in (
-            "nonincreasing_delta_u", "nonincreasing_delta_seq",
+            "nonincreasing_delta_u", "nonconsecutive_delta_u",
+            "nonincreasing_delta_seq",
             "snapshot_seq_rollback_without_reset",
         ) if totals[key]
     }
@@ -176,6 +200,13 @@ def inspect(archive_path: Path, expected_sha256: str, expected_records: int = 56
         "messages_after_day_end": totals["after_day_boundary"],
         "sequence_anomaly_counts": issues,
         "sequence_anomaly_samples": anomalies,
+        "delta_update_id_gap_samples": update_gap_first_samples,
+        "snapshot_update_id_transitions": snapshot_transitions,
+        "first_to_last_update_id_difference": last["update_id"] - first["update_id"],
+        "delta_update_id_continuity": (
+            "NO_GAP_DETECTED_WITHIN_CAPTURE" if not issues
+            else "DISCONTINUITY_DETECTED"
+        ),
         "structural_result": "PROVISIONAL" if issues else "METADATA_CONSISTENT",
         "capture_completeness": "UNPROVEN_ARCHIVE_ALONE_CANNOT_PROVE_MISSING_MESSAGES",
         "cross_channel_taker_book_order": "UNPROVEN_INDEPENDENT_ARCHIVES",
