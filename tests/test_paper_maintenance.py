@@ -3610,6 +3610,83 @@ def test_editor_update_self_stage_fetches_exact_stable_before_any_stop(tmp_path,
     assert manifests == [(stage, target)]
 
 
+def test_editor_update_reuses_proven_rotated_git_source_without_installed_sha_stage(
+    tmp_path, monkeypatch,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    old, rotated, target = "a" * 40, "c" * 40, "b" * 40
+    parent = tmp_path / "stages"
+    parent.mkdir()
+    source = parent / ("bybitscanner-stage-git-" + rotated)
+    source.mkdir()
+    (source / ".git").write_text("gitdir: root-protected rotating worktree")
+    root = tmp_path / "installed"
+    root.mkdir()
+    monkeypatch.setattr(identity, "verify_release", lambda _root: old)
+    monkeypatch.setattr(
+        identity, "create_manifest",
+        lambda _path, sha: {"build_sha": sha},
+    )
+    calls = []
+
+    def git(argv, **kwargs):
+        calls.append(argv[3:])
+        if argv[3:] == ["rev-parse", "--verify", "HEAD"]:
+            return SimpleNamespace(returncode=0, stdout=rotated)
+        if argv[3:] == ["remote", "get-url", "origin"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="https://github.com/svobodaXXI/BybitScanner.git",
+            )
+        if argv[3:] == ["rev-parse", "--verify", "FETCH_HEAD"]:
+            return SimpleNamespace(returncode=0, stdout=target)
+        if argv[3:5] == ["worktree", "add"]:
+            Path(argv[-2]).mkdir()
+        return SimpleNamespace(returncode=0, stdout="")
+
+    stage = maintenance._prepare_approved_editor_stage(
+        target, root=root, parent=parent, runner=git, trusted_uid=os.geteuid(),
+    )
+    assert stage == parent / ("bybitscanner-stage-git-" + target)
+    assert ["rev-parse", "--verify", "HEAD"] in calls
+    assert ["fetch", "--no-tags", "--quiet", "origin",
+            "refs/heads/stable/adfb50b-forward"] in calls
+    assert ["worktree", "add", "--detach", str(stage), target] in calls
+    assert source.is_dir()
+
+
+def test_editor_update_rotated_stage_wrong_commit_blocks_without_new_checkout(
+    tmp_path, monkeypatch,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    old, candidate, target = "a" * 40, "c" * 40, "b" * 40
+    parent = tmp_path / "stages"
+    parent.mkdir()
+    source = parent / ("bybitscanner-stage-git-" + candidate)
+    source.mkdir()
+    (source / ".git").write_text("gitdir: rotated worktree")
+    root = tmp_path / "installed"
+    root.mkdir()
+    monkeypatch.setattr(identity, "verify_release", lambda _root: old)
+    git_calls = []
+
+    def git(argv, **kwargs):
+        git_calls.append(argv[3:])
+        return SimpleNamespace(returncode=0, stdout=target)
+
+    with pytest.raises(ValueError, match="staging_source_commit_mismatch"):
+        maintenance._prepare_approved_editor_stage(
+            target, root=root, parent=parent, runner=git,
+            trusted_uid=os.geteuid(),
+        )
+    assert git_calls == [["rev-parse", "--verify", "HEAD"]]
+    assert not (parent / ("bybitscanner-stage-git-" + target)).exists()
+
+
 def test_editor_update_stable_head_changed_blocks_before_worktree(tmp_path, monkeypatch):
     from tools import paper_maintenance as maintenance
     from tools import vps_release_identity as identity
@@ -3631,14 +3708,178 @@ def test_editor_update_stable_head_changed_blocks_before_worktree(tmp_path, monk
             return SimpleNamespace(returncode=0, stdout="https://github.com/svobodaXXI/BybitScanner.git")
         if argv[3:] == ["rev-parse", "--verify", "FETCH_HEAD"]:
             return SimpleNamespace(returncode=0, stdout="c" * 40)
+        if argv[3:5] == ["merge-base", "--is-ancestor"]:
+            return SimpleNamespace(returncode=1, stdout="")
         return SimpleNamespace(returncode=0, stdout="")
 
-    with pytest.raises(ValueError, match="stable_head_changed_before_staging"):
+    with pytest.raises(ValueError, match="approved_target_not_on_current_stable"):
         maintenance._prepare_approved_editor_stage(
             target, root=tmp_path, parent=parent, runner=git, trusted_uid=os.geteuid(),
         )
     assert not any(parts[:2] == ["worktree", "add"] for parts in calls)
     assert not (parent / ("bybitscanner-stage-git-" + target)).exists()
+
+
+def test_editor_update_owner_pinned_ancestor_stages_after_stable_moves(
+    tmp_path, monkeypatch,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    old, target, later = "a" * 40, "b" * 40, "c" * 40
+    parent = tmp_path / "stages"
+    parent.mkdir()
+    source = parent / ("bybitscanner-stage-git-" + old[:7])
+    source.mkdir()
+    (source / ".git").write_text("gitdir: protected previous worktree")
+    root = tmp_path / "installed"
+    root.mkdir()
+    monkeypatch.setattr(identity, "verify_release", lambda _root: old)
+    monkeypatch.setattr(identity, "create_manifest",
+                        lambda _path, sha: {"build_sha": sha})
+    calls = []
+
+    def git(argv, **kwargs):
+        args = argv[3:]
+        calls.append(args)
+        if args == ["rev-parse", "--verify", "HEAD"]:
+            return SimpleNamespace(returncode=0, stdout=old)
+        if args == ["remote", "get-url", "origin"]:
+            return SimpleNamespace(
+                returncode=0, stdout="https://github.com/svobodaXXI/BybitScanner.git",
+            )
+        if args == ["rev-parse", "--verify", "FETCH_HEAD"]:
+            return SimpleNamespace(returncode=0, stdout=later)
+        if args == ["merge-base", "--is-ancestor", target, later]:
+            return SimpleNamespace(returncode=0, stdout="")
+        if args[:2] == ["worktree", "add"]:
+            Path(args[-2]).mkdir()
+        return SimpleNamespace(returncode=0, stdout="")
+
+    result = maintenance._prepare_approved_editor_stage(
+        target, root=root, parent=parent, runner=git, trusted_uid=os.geteuid(),
+    )
+    assert result == parent / ("bybitscanner-stage-git-" + target)
+    assert ["merge-base", "--is-ancestor", target, later] in calls
+    assert ["worktree", "add", "--detach", str(result), target] in calls
+
+
+def test_installed_frontend_exact_receipt_requires_index_and_assets(
+    tmp_path,
+):
+    from tools import paper_maintenance as maintenance
+    from tools.vps_terminal_frontend_publish import RECEIPT
+    import hashlib
+    import json
+
+    target = "a" * 40
+    webroot = tmp_path / "webroot"
+    assets = webroot / "assets"
+    assets.mkdir(parents=True)
+    (assets / "app.js").write_text("console.log('loaded')")
+    html = b'<script src="/assets/app.js"></script>'
+    (webroot / "index.html").write_bytes(html)
+    (webroot / RECEIPT).write_text(json.dumps({
+        "source_sha": target,
+        "index_sha256": hashlib.sha256(html).hexdigest(),
+        "previous_index_sha256": "b" * 64,
+    }))
+    assert maintenance._installed_frontend_exact_receipt(
+        target, webroot=webroot, trusted_uid=os.geteuid(),
+    )
+    assert not maintenance._installed_frontend_exact_receipt(
+        "c" * 40, webroot=webroot, trusted_uid=os.geteuid(),
+    )
+    (webroot / "index.html").write_text("modified without receipt")
+    assert not maintenance._installed_frontend_exact_receipt(
+        target, webroot=webroot, trusted_uid=os.geteuid(),
+    )
+    (webroot / "index.html").write_bytes(html)
+    (assets / "app.js").unlink()
+    assert not maintenance._installed_frontend_exact_receipt(
+        target, webroot=webroot, trusted_uid=os.geteuid(),
+    )
+    # Even with a matching index digest, reject path traversal in the HTML.
+    tampered = b'<script src="/assets/../../secret.js"></script>'
+    (webroot / "index.html").write_bytes(tampered)
+    (webroot / RECEIPT).write_text(json.dumps({
+        "source_sha": target,
+        "index_sha256": hashlib.sha256(tampered).hexdigest(),
+        "previous_index_sha256": "b" * 64,
+    }))
+    assert not maintenance._installed_frontend_exact_receipt(
+        target, webroot=webroot, trusted_uid=os.geteuid(),
+    )
+
+
+def test_monolith_no_stage_update_restores_frontend_without_stop(
+    tmp_path, monkeypatch, capsys,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_terminal_frontend_publish as publish
+    from tools import vps_release_identity as identity
+
+    sha = "a" * 40
+    stage = tmp_path / "stage"
+    bundle = stage / "terminal/frontend/dist"
+    root = tmp_path / "installed"
+    root.mkdir()
+    done = {"frontend": False}
+    calls = []
+    monkeypatch.setattr(maintenance, "REPO", root)
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda *_a: None)
+    monkeypatch.setattr(maintenance, "_installed_frontend_exact_receipt",
+                        lambda *_a: done["frontend"])
+    monkeypatch.setattr(maintenance, "_verified_installed_frontend_stage",
+                        lambda *_a: stage)
+    monkeypatch.setattr(maintenance, "_prepare_editor_frontend_bundle",
+                        lambda _sha, *, stage, force_build: (
+                            calls.append(("bundle", force_build)), bundle
+                        )[1])
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_a, **_kw: (
+                            calls.append(("editor", sha)), "READY: editor"
+                        )[1])
+    monkeypatch.setattr(maintenance, "_complete_stop_intent",
+                        lambda *_a, **_kw: None)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a: sha)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze",
+                        lambda *_a, **_kw: "b" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready",
+                        lambda *_a, **_kw: True)
+    monkeypatch.setattr(publish, "inspect_bundle",
+                        lambda *_a, **_kw: None)
+    def publish_once(*_args, **_kwargs):
+        calls.append(("publish", sha))
+        done["frontend"] = True
+        return "FRONTEND_READY: exact"
+    monkeypatch.setattr(publish, "publish_frontend", publish_once)
+    monkeypatch.setattr(maintenance, "RuntimeShutdown",
+                        lambda **_kw: pytest.fail("no STOP for installed release"))
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_a, **_kw: pytest.fail("no PAPER START on update"))
+    assert maintenance.main([sha, "--action", "update"]) == 0
+    assert calls == [("bundle", True), ("editor", sha), ("publish", sha)]
+    assert "READY: already installed exact release and frontend restored" in capsys.readouterr().out
+
+
+def test_monolith_no_stage_update_does_not_claim_complete_without_frontend(
+    monkeypatch, capsys,
+):
+    from tools import paper_maintenance as maintenance
+
+    target = "a" * 40
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda _target: None)
+    monkeypatch.setattr(maintenance, "_installed_frontend_exact_receipt",
+                        lambda _target: False)
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_a, **_kw: pytest.fail("must not claim READY"))
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_a, **_kw: pytest.fail("must not start PAPER"))
+    assert maintenance.main([target, "--action", "update-and-start"]) == 2
+    assert "installed_frontend_recovery_preflight_unproven" in capsys.readouterr().out
 
 
 def test_editor_update_existing_target_never_prepares_stage(tmp_path, monkeypatch):
@@ -3680,7 +3921,7 @@ def test_editor_update_cli_rejects_competing_mode_before_staging(monkeypatch):
                         lambda *_: pytest.fail("must not stage conflicting options"))
     with pytest.raises(SystemExit) as exc:
         maintenance.main(["a" * 40, "--update-editor-only-from-stable",
-                          "--start-paper-after-editor"])
+                          "--resume-installed-editor-only"])
     assert exc.value.code == 2
 
 
@@ -3774,3 +4015,457 @@ def test_editor_update_delegates_sealed_frontend_into_existing_monolith(monkeypa
                         lambda _sha, **kw: (seen.append(kw["frontend_bundle"]), "READY: editor")[1])
     assert maintenance.main([target, "--update-editor-only-from-stable"]) == 0
     assert seen == [bundle]
+
+
+# Owner-facing monolith: one exact-SHA action, no manual phase choreography.
+
+def test_monolith_one_action_update_and_start_completes_full_pipeline(monkeypatch, capsys):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    old, target = "a" * 40, "b" * 40
+    stage = Path("/unused/self-preflighted-stage")
+    bundle = stage / "terminal/frontend/dist"
+    calls = []
+    monkeypatch.setattr(identity, "verify_release", lambda *_: old)
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda sha: (calls.append(("stage", sha)), stage)[1])
+    monkeypatch.setattr(maintenance, "_prepare_editor_frontend_bundle",
+                        lambda sha, *, stage: (calls.append(("frontend", sha, stage)), bundle)[1])
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
+                        lambda sha, **kw: (
+                            calls.append(("deploy", sha, kw["stage"], kw["frontend_bundle"])),
+                            "READY: exact EDITOR_ONLY"
+                        )[1])
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda sha, **kw: (
+                            calls.append(("start", sha, kw["editor_status"])),
+                            "READY: exact PAPER runtime"
+                        )[1])
+
+    assert maintenance.main([target, "--action", "update-and-start"]) == 0
+    assert calls == [
+        ("stage", target),
+        ("frontend", target, stage),
+        ("deploy", target, stage, bundle),
+        ("start", target, "READY: exact EDITOR_ONLY"),
+    ]
+    assert "READY: exact PAPER runtime" in capsys.readouterr().out
+
+
+def test_monolith_one_action_update_only_never_starts_paper(monkeypatch, capsys):
+    from tools import paper_maintenance as maintenance
+
+    target = "b" * 40
+    stage = Path("/unused/sealed-stage")
+    calls = []
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda *_: stage)
+    monkeypatch.setattr(maintenance, "_prepare_editor_frontend_bundle",
+                        lambda _sha, *, stage: None)
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
+                        lambda *_a, **_kw: (calls.append("deploy"), "READY: EDITOR_ONLY")[1])
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_a, **_kw: pytest.fail("update only cannot start trading"))
+
+    assert maintenance.main([target, "--action", "update"]) == 0
+    assert calls == ["deploy"]
+    assert "READY: EDITOR_ONLY" in capsys.readouterr().out
+
+
+def test_monolith_one_action_start_uses_existing_installed_owner_no_staging(
+    monkeypatch, capsys,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    target = "b" * 40
+    calls = []
+    monkeypatch.setattr(identity, "verify_release", lambda *_: target)
+    monkeypatch.setattr(maintenance, "_paper_full_readiness",
+                        lambda **_kw: "BLOCKED: stopped, not yet ready")
+    monkeypatch.setattr(maintenance, "_active_exact_paper_blocker",
+                        lambda *_a, **_kw: None)
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda *_a, **_kw: pytest.fail("no staging for start"))
+    monkeypatch.setattr(maintenance, "resume_installed_release",
+                        lambda *_a, **_kw: (calls.append("editor"), "READY: exact editor")[1])
+    monkeypatch.setattr(maintenance, "_complete_stop_intent", lambda *_a, **_kw: None)
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_a, **_kw: (calls.append("paper"), "READY: full PAPER")[1])
+    assert maintenance.main([target, "--action", "start"]) == 0
+    assert calls == ["editor", "paper"]
+    assert "READY: full PAPER" in capsys.readouterr().out
+
+
+def test_monolith_one_action_update_blocked_never_attempts_paper_start(monkeypatch):
+    from tools import paper_maintenance as maintenance
+
+    target = "b" * 40
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda *_: Path("/unused/stage"))
+    monkeypatch.setattr(maintenance, "_prepare_editor_frontend_bundle",
+                        lambda _sha, *, stage: None)
+    monkeypatch.setattr(maintenance, "deploy_staged_editor_only",
+                        lambda *_a, **_kw: "BLOCKED: prior_STOP_outcome_unproven")
+    monkeypatch.setattr(maintenance, "start_installed_paper_from_editor",
+                        lambda *_a, **_kw: pytest.fail("blocked update cannot start PAPER"))
+    assert maintenance.main([target, "--action", "update-and-start"]) == 2
+
+
+def test_monolith_one_action_conflicting_flags_are_rejected_before_any_mutation(
+    monkeypatch,
+):
+    from tools import paper_maintenance as maintenance
+    monkeypatch.setattr(maintenance, "_prepare_approved_editor_stage",
+                        lambda *_a, **_kw: pytest.fail("no staging on invalid action"))
+    monkeypatch.setattr(maintenance, "_stop_exact_installed_paper_once",
+                        lambda *_a, **_kw: pytest.fail("no STOP on invalid action"))
+    with pytest.raises(SystemExit) as result:
+        maintenance.main(["b" * 40, "--action", "stop",
+                          "--start-paper-after-editor"])
+    assert result.value.code == 2
+
+
+def _monolith_stop_owner_health(monkeypatch, root, sha, instance="fixed-process"):
+    from tools import paper_maintenance as maintenance
+    from tools.runtime_intent import expected_database_identity
+
+    database_identity = expected_database_identity(root, maintenance._environment(None))
+    owner = {
+        "ok": True, "component": "paper_backend", "mode": "paper",
+        "paper_live_safe": True, "build_sha": sha,
+        "database_identity": database_identity,
+        "process_instance_id": instance,
+    }
+    monkeypatch.setattr(
+        "tools.runtime_intent.http_get",
+        lambda *_a, **_kw: SimpleNamespace(status=200, json=lambda: owner),
+    )
+
+
+def test_monolith_stop_action_blocks_unresolved_previous_release_before_stop(
+    monkeypatch, tmp_path,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_gitless_release_activate as activate
+    from tools import vps_release_identity as identity
+
+    old, pending = "a" * 40, "b" * 40
+    installed = tmp_path / "release"
+    installed.mkdir()
+    transactions = tmp_path / "transactions"
+    transactions.mkdir(mode=0o700)
+    lock = transactions / ".release.lock"
+    lock.write_bytes(b"")
+    lock.chmod(0o600)
+    marker = transactions / (".stop-invoked-" + pending)
+    marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    marker.chmod(0o600)
+    monkeypatch.setattr(maintenance, "REPO", installed)
+    monkeypatch.setattr(activate, "TRANSACTIONS", transactions)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a: old)
+    _monolith_stop_owner_health(monkeypatch, installed, old)
+    monkeypatch.setattr(maintenance, "_proven_prior_exceptional_completion",
+                        lambda *_a, **_kw: False)
+    monkeypatch.setattr(maintenance, "RuntimeShutdown",
+                        lambda **_kw: pytest.fail("never repeat STOP after unknown outcome"))
+    result = maintenance._stop_exact_installed_paper_once(
+        old, env_file=None, trusted_uid=os.geteuid(),
+    )
+    assert result == "BLOCKED: installed_STOP_prior_outcome_unproven; no_replay"
+    assert marker.read_bytes() == b"STOP_INVOKED; not install authorization\\n"
+
+
+def test_monolith_stop_action_invokes_existing_canonical_stop_only_once(
+    monkeypatch, tmp_path,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_gitless_release_activate as activate
+    from tools import vps_release_identity as identity
+    from tools.stop_robot_runtime import ShutdownResult, SCOPE_ALL
+
+    sha = "a" * 40
+    installed = tmp_path / "release"
+    installed.mkdir()
+    journal = tmp_path / "transactions"
+    journal.mkdir(mode=0o700)
+    lock = journal / ".release.lock"
+    lock.write_bytes(b"")
+    lock.chmod(0o600)
+    calls = []
+    monkeypatch.setattr(maintenance, "REPO", installed)
+    monkeypatch.setattr(activate, "TRANSACTIONS", journal)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a: sha)
+    _monolith_stop_owner_health(monkeypatch, installed, sha)
+    monkeypatch.setattr(maintenance, "RuntimeShutdown",
+                        lambda **_kw: SimpleNamespace(run=lambda scope: (
+                            calls.append(scope),
+                            ShutdownResult(scope, True, "fully stopped", runtime_stopped=True)
+                        )[1]))
+    assert maintenance._stop_exact_installed_paper_once(
+        sha, env_file=None, trusted_uid=os.geteuid(),
+    ) == "READY: canonical PAPER STOP confirmed; no update or restart"
+    assert calls == [SCOPE_ALL]
+    stop_id = maintenance._owner_stop_only_target(sha, "fixed-process")
+    assert (journal / (".stop-invoked-" + stop_id)).is_file()
+    assert (journal / (".stop-confirmed-" + stop_id)).is_file()
+    assert maintenance._proven_prior_exceptional_completion(
+        journal, stop_id, root=installed, uid=os.geteuid(),
+    )
+
+
+def test_monolith_stop_unknown_result_is_fenced_without_second_stop(
+    monkeypatch, tmp_path,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_gitless_release_activate as activate
+    from tools import vps_release_identity as identity
+
+    sha = "a" * 40
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    journal = tmp_path / "transactions"
+    journal.mkdir(mode=0o700)
+    calls = []
+    monkeypatch.setattr(maintenance, "REPO", installed)
+    monkeypatch.setattr(activate, "TRANSACTIONS", journal)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a: sha)
+    _monolith_stop_owner_health(monkeypatch, installed, sha)
+    def unknown(**_kwargs):
+        def stop(_scope):
+            calls.append("STOP")
+            raise OSError("lost SSH while POST was in flight")
+        return SimpleNamespace(run=stop)
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", unknown)
+    result = maintenance._stop_exact_installed_paper_once(
+        sha, env_file=None, trusted_uid=os.geteuid(),
+    )
+    assert "outcome_unknown" in result
+    stop_id = maintenance._owner_stop_only_target(sha, "fixed-process")
+    assert (journal / (".stop-invoked-" + stop_id)).is_file()
+    assert not (journal / (".stop-confirmed-" + stop_id)).exists()
+    again = maintenance._stop_exact_installed_paper_once(
+        sha, env_file=None, trusted_uid=os.geteuid(),
+    )
+    assert "prior_outcome_unproven" in again
+    assert calls == ["STOP"]
+
+
+def test_monolith_stop_only_ready_receipt_does_not_trust_unknown_result(
+    monkeypatch, tmp_path,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_gitless_release_activate as activate
+    from tools import vps_release_identity as identity
+    sha = "a" * 40
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    journal = tmp_path / "transactions"
+    journal.mkdir(mode=0o700)
+    monkeypatch.setattr(maintenance, "REPO", installed)
+    monkeypatch.setattr(activate, "TRANSACTIONS", journal)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a: sha)
+    _monolith_stop_owner_health(monkeypatch, installed, sha)
+    stop_id = maintenance._owner_stop_only_target(sha, "fixed-process")
+    marker = journal / (".stop-invoked-" + stop_id)
+    marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    marker.chmod(0o600)
+    # A forged/corrupted ready payload is not sufficient: canonical STOP
+    # receipt is required even when the old intent and owner appear stable.
+    ready = journal / (".owner-stop-only-ready-" + stop_id)
+    ready.write_bytes((sha + ":" + stop_id + "\n").encode("ascii"))
+    ready.chmod(0o600)
+    assert not maintenance._owner_stop_only_confirmed(
+        journal, stop_id, uid=os.geteuid(),
+    )
+    monkeypatch.setattr(maintenance, "RuntimeShutdown",
+                        lambda **_kw: pytest.fail("never call STOP on unconfirmed intent"))
+    assert "prior_outcome_unproven" in maintenance._stop_exact_installed_paper_once(
+        sha, env_file=None, trusted_uid=os.geteuid(),
+    )
+
+
+@pytest.fixture
+def unsealed_paused_case(monkeypatch, tmp_path):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    installed = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    journal = tmp_path / "transactions"
+    for directory in (installed, stage, journal):
+        directory.mkdir(mode=0o700)
+    (journal / ".release.lock").write_bytes(b"")
+    (journal / ".release.lock").chmod(0o600)
+    old, prior, target = "b" * 40, "c" * 40, "a" * 40
+    marker = journal / (".stop-invoked-" + prior)
+    marker.write_bytes(b"STOP_INVOKED; not install authorization\n")
+    marker.chmod(0o600)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a, **_kw: old)
+    return installed, stage, journal, old, prior, target, marker
+
+
+def test_legacy_unsealed_paused_flat_continues_only_remaining_phases_once(
+    monkeypatch, unsealed_paused_case,
+):
+    from tools import paper_maintenance as maintenance
+    from tools.stop_robot_runtime import ShutdownResult
+
+    root, stage, journal, old, prior, target, marker = unsealed_paused_case
+    calls = []
+
+    class Owner:
+        def __init__(self, **_kwargs):
+            calls.append("owner")
+        def require_known_natural_drain_ready(self, sha):
+            assert sha == old
+            calls.append("flat-proof")
+        def continue_known_natural_drain(self, sha):
+            assert sha == old
+            calls.append("remaining-phases")
+            return ShutdownResult("all", True, "stopped", runtime_stopped=True)
+
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", Owner)
+    monkeypatch.setattr(maintenance, "_legacy_paused_backend_predates_stop",
+                        lambda original: original == marker)
+    def install(_sha, **kw):
+        calls.append("install")
+        assert kw["stopped_proof"].ok is True
+        assert kw["stopped_proof"].runtime_stopped is True
+        return "INSTALLED_STOPPED: exact"
+
+    options = dict(
+        stage=stage, root=root, transactions=journal, trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: calls.append("preflight"),
+        installer=install,
+        resume=lambda *_a, **_kw: "READY: EDITOR_ONLY",
+    )
+    first = maintenance.deploy_staged_editor_only(target, **options)
+    assert first == "READY: EDITOR_ONLY"
+    assert calls == ["owner", "flat-proof", "preflight", "remaining-phases", "install"]
+    assert maintenance._unsealed_paused_receipt(
+        journal, old, prior, target, "invoked", os.geteuid(),
+    )
+    assert maintenance._unsealed_paused_receipt(
+        journal, old, prior, target, "completed", os.geteuid(),
+    )
+    assert marker.read_bytes() == b"STOP_INVOKED; not install authorization\n"
+    second = maintenance.deploy_staged_editor_only(target, **options)
+    assert second == "READY: EDITOR_ONLY"
+    assert calls.count("remaining-phases") == 1
+    assert calls.count("install") == 2
+
+
+def test_legacy_unsealed_paused_missing_original_process_continuity_never_preflights(
+    monkeypatch, unsealed_paused_case,
+):
+    from tools import paper_maintenance as maintenance
+
+    root, stage, journal, old, prior, target, marker = unsealed_paused_case
+
+    class Owner:
+        def __init__(self, **_kwargs):
+            pass
+        def require_known_natural_drain_ready(self, sha):
+            assert sha == old
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", Owner)
+    monkeypatch.setattr(maintenance, "_legacy_paused_backend_predates_stop",
+                        lambda _marker: False)
+    result = maintenance.deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=journal,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: pytest.fail("no stage without positive proof"),
+        installer=lambda *_a, **_kw: pytest.fail("no deploy"),
+    )
+    assert result.startswith("BLOCKED: prior_STOP_outcome_unproven:")
+    assert not maintenance._unsealed_paused_receipt(
+        journal, old, prior, target, "invoked", os.geteuid(),
+    )
+
+
+def test_legacy_unsealed_paused_unknown_continuation_is_not_replayed(
+    monkeypatch, unsealed_paused_case,
+):
+    from tools import paper_maintenance as maintenance
+
+    root, stage, journal, old, prior, target, marker = unsealed_paused_case
+    calls = []
+
+    class Owner:
+        def __init__(self, **_kwargs):
+            pass
+        def require_known_natural_drain_ready(self, sha):
+            assert sha == old
+        def continue_known_natural_drain(self, sha):
+            calls.append("remaining-phases")
+            raise OSError("lost response")
+
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", Owner)
+    monkeypatch.setattr(maintenance, "_legacy_paused_backend_predates_stop",
+                        lambda _marker: True)
+    options = dict(
+        stage=stage, root=root, transactions=journal, trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: None,
+        installer=lambda *_a, **_kw: pytest.fail("cannot install"),
+    )
+    first = maintenance.deploy_staged_editor_only(target, **options)
+    assert first.startswith("BLOCKED: legacy_paused_continuation_unknown")
+    assert maintenance._unsealed_paused_receipt(
+        journal, old, prior, target, "invoked", os.geteuid(),
+    )
+    assert not maintenance._unsealed_paused_receipt(
+        journal, old, prior, target, "completed", os.geteuid(),
+    )
+    second = maintenance.deploy_staged_editor_only(target, **options)
+    assert second == "BLOCKED: legacy_paused_continuation_already_invoked; no retry"
+    assert calls == ["remaining-phases"]
+
+
+def test_legacy_unsealed_paused_successor_only_retires_prior_after_editor_ready(
+    monkeypatch, unsealed_paused_case,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+    import json
+
+    root, stage, journal, old, prior, target, marker = unsealed_paused_case
+    (journal / ".release.lock").write_bytes(b"")
+    (journal / ".release.lock").chmod(0o600)
+    maintenance._write_unsealed_paused_receipt(
+        journal, old, prior, target, "invoked", os.geteuid(),
+    )
+    maintenance._write_unsealed_paused_receipt(
+        journal, old, prior, target, "completed", os.geteuid(),
+    )
+    tx = journal / target
+    tx.mkdir(mode=0o700)
+    blobs = {
+        "terminal/runtime/paper_http_server.py": "d" * 40,
+        "tools/vps_release_identity.py": "d" * 40,
+    }
+    for name, sha in (("old.json", old), ("target.json", target)):
+        (tx / name).write_text(json.dumps({"build_sha": sha, "blobs": blobs}))
+    (tx / "units.json").write_text("{}")
+    monkeypatch.setattr(maintenance, "REPO", root)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a, **_kw: target)
+    assert maintenance._unsealed_paused_successor_proven(
+        journal, prior, root=root, uid=os.geteuid(), target=target,
+        require_ready=False,
+    )
+    assert not maintenance._unsealed_paused_successor_proven(
+        journal, prior, root=root, uid=os.geteuid(),
+        require_ready=True,
+    )
+    assert not maintenance._proven_prior_exceptional_completion(
+        journal, prior, root=root, uid=os.geteuid(),
+    )
+    maintenance._complete_stop_intent(journal, target, uid=os.geteuid())
+    assert maintenance._unsealed_paused_successor_proven(
+        journal, prior, root=root, uid=os.geteuid(),
+        require_ready=True,
+    )
+    assert maintenance._proven_prior_exceptional_completion(
+        journal, prior, root=root, uid=os.geteuid(),
+    )
+    assert marker.read_bytes() == b"STOP_INVOKED; not install authorization\n"
