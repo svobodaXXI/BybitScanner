@@ -953,8 +953,8 @@ describe("Finrez first-screen UI", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<DiaryOverlay accountKey="paper:finrez-filter" initialSection="FINREZ"
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
-    expect(await screen.findByText("+7,20 USDT")).toBeInTheDocument();
-    expect(screen.getByText("-2,50 USDT")).toBeInTheDocument();
+    expect(await screen.findByText("+7,2012 USDT")).toBeInTheDocument();
+    expect(screen.getByText("-2,5012 USDT")).toBeInTheDocument();
     expect(screen.queryByText(/2\.5012345678/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Показать сделки по BTCUSDT" }));
     expect(screen.getByRole("alertdialog", { name: "Переход к сделкам" }))
@@ -1018,6 +1018,31 @@ describe("Finrez first-screen UI", () => {
     expect(await screen.findByText("Сделки по ETH")).toBeInTheDocument();
     expect(screen.queryByText("BTCUSDT")).not.toBeInTheDocument();
     expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
+  });
+
+  it("displays compact, exact-tooltip Finrez PnL for all management cohorts", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...finrezResponse,
+      tickers: [
+        { symbol: "GIGADEVICEUSDT", pnl_usdt: "4.3583303660000000000004", trade_count: 1 },
+        { symbol: "TINYUSDT", pnl_usdt: "0.0000000004", trade_count: 1 },
+        { symbol: "ZEROUSDT", pnl_usdt: "0", trade_count: 1 },
+      ],
+      manual_interventions: [
+        { symbol: "JASMYUSDT", pnl_usdt: "-0.0026140884", trade_count: 1 },
+      ],
+      joint_management: [
+        { symbol: "CASHCATUSDT", pnl_usdt: "-1.8162218600000000000000", trade_count: 1 },
+      ],
+    }), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:compact" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByTitle("GIGADEVICEUSDT")).toHaveTextContent("GIGADEVICEUSDT");
+    expect(screen.getByTitle("4.3583303660000000000004 USDT")).toHaveTextContent("+4,3583 USDT");
+    expect(screen.getByTitle("0.0000000004 USDT")).toHaveTextContent("+<0,000001 USDT");
+    expect(screen.getByTitle("0 USDT")).toHaveTextContent("0 USDT");
+    expect(screen.getByTitle("-0.0026140884 USDT")).toHaveTextContent("-0,002614 USDT");
+    expect(screen.getByTitle("-1.8162218600000000000000 USDT")).toHaveTextContent("-1,8162 USDT");
   });
 
   it("never shows foreign-account ranking or silently falls back to manual", async () => {

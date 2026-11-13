@@ -448,10 +448,13 @@
   font-size: 0.8rem;
 }
 .diary-finrez-row strong {
-  overflow-wrap: anywhere;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .diary-finrez-row span {
-  flex: 0 0 auto;
+  white-space: nowrap;
   text-align: right;
   color: #c3cdd6;
 }

@@ -1173,14 +1173,31 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, onClearSymbolFil
   );
 }
 
+function formatFinrezPnl(value: string): string {
+  // Presentation only: exact source PnL stays unchanged.
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "—";
+  if (amount === 0) return "0 USDT";
+  const sign = amount > 0 ? "+" : "-";
+  const magnitude = Math.abs(amount);
+  const digits = magnitude < 0.01 ? 6 : 4;
+  if (magnitude < 10 ** -digits) {
+    return `${sign}<${new Intl.NumberFormat("ru-RU", { minimumFractionDigits: digits }).format(10 ** -digits)} USDT`;
+  }
+  return `${sign}${new Intl.NumberFormat("ru-RU", {
+    minimumFractionDigits: 2, maximumFractionDigits: digits,
+  }).format(magnitude)} USDT`;
+}
+
 function FinrezTickerRow({ ticker, onSelectTicker }: {
   ticker: FinrezTicker; onSelectTicker: (symbol: string) => void;
 }) {
   return (
     <div className="diary-finrez-row">
-      <strong>{ticker.symbol}</strong>
-      <span className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
-        {Number(ticker.pnl_usdt) > 0 ? "+" : ""}{displayTradePnl(ticker.pnl_usdt)} USDT
+      <strong title={ticker.symbol}>{ticker.symbol}</strong>
+      <span title={`${ticker.pnl_usdt} USDT`}
+        className={Number(ticker.pnl_usdt) > 0 ? "profit" : Number(ticker.pnl_usdt) < 0 ? "loss" : ""}>
+        {formatFinrezPnl(ticker.pnl_usdt)}
       </span>
       <button type="button" className="diary-finrez-list-button"
         aria-label={`Показать сделки по ${ticker.symbol}`}
