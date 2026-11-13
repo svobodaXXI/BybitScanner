@@ -3610,6 +3610,83 @@ def test_editor_update_self_stage_fetches_exact_stable_before_any_stop(tmp_path,
     assert manifests == [(stage, target)]
 
 
+def test_editor_update_reuses_proven_rotated_git_source_without_installed_sha_stage(
+    tmp_path, monkeypatch,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    old, rotated, target = "a" * 40, "c" * 40, "b" * 40
+    parent = tmp_path / "stages"
+    parent.mkdir()
+    source = parent / ("bybitscanner-stage-git-" + rotated)
+    source.mkdir()
+    (source / ".git").write_text("gitdir: root-protected rotating worktree")
+    root = tmp_path / "installed"
+    root.mkdir()
+    monkeypatch.setattr(identity, "verify_release", lambda _root: old)
+    monkeypatch.setattr(
+        identity, "create_manifest",
+        lambda _path, sha: {"build_sha": sha},
+    )
+    calls = []
+
+    def git(argv, **kwargs):
+        calls.append(argv[3:])
+        if argv[3:] == ["rev-parse", "--verify", "HEAD"]:
+            return SimpleNamespace(returncode=0, stdout=rotated)
+        if argv[3:] == ["remote", "get-url", "origin"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="https://github.com/svobodaXXI/BybitScanner.git",
+            )
+        if argv[3:] == ["rev-parse", "--verify", "FETCH_HEAD"]:
+            return SimpleNamespace(returncode=0, stdout=target)
+        if argv[3:5] == ["worktree", "add"]:
+            Path(argv[-2]).mkdir()
+        return SimpleNamespace(returncode=0, stdout="")
+
+    stage = maintenance._prepare_approved_editor_stage(
+        target, root=root, parent=parent, runner=git, trusted_uid=os.geteuid(),
+    )
+    assert stage == parent / ("bybitscanner-stage-git-" + target)
+    assert ["rev-parse", "--verify", "HEAD"] in calls
+    assert ["fetch", "--no-tags", "--quiet", "origin",
+            "refs/heads/stable/adfb50b-forward"] in calls
+    assert ["worktree", "add", "--detach", str(stage), target] in calls
+    assert source.is_dir()
+
+
+def test_editor_update_rotated_stage_wrong_commit_blocks_without_new_checkout(
+    tmp_path, monkeypatch,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    old, candidate, target = "a" * 40, "c" * 40, "b" * 40
+    parent = tmp_path / "stages"
+    parent.mkdir()
+    source = parent / ("bybitscanner-stage-git-" + candidate)
+    source.mkdir()
+    (source / ".git").write_text("gitdir: rotated worktree")
+    root = tmp_path / "installed"
+    root.mkdir()
+    monkeypatch.setattr(identity, "verify_release", lambda _root: old)
+    git_calls = []
+
+    def git(argv, **kwargs):
+        git_calls.append(argv[3:])
+        return SimpleNamespace(returncode=0, stdout=target)
+
+    with pytest.raises(ValueError, match="staging_source_commit_mismatch"):
+        maintenance._prepare_approved_editor_stage(
+            target, root=root, parent=parent, runner=git,
+            trusted_uid=os.geteuid(),
+        )
+    assert git_calls == [["rev-parse", "--verify", "HEAD"]]
+    assert not (parent / ("bybitscanner-stage-git-" + target)).exists()
+
+
 def test_editor_update_stable_head_changed_blocks_before_worktree(tmp_path, monkeypatch):
     from tools import paper_maintenance as maintenance
     from tools import vps_release_identity as identity
