@@ -107,6 +107,57 @@ class EventTimeMatchingTests(unittest.TestCase):
         self.assertIsNotNone(ex.pending)
         self.assertEqual(ex.account.fills, ())
 
+    def test_inert_cross_channel_tie_does_not_block_flat_replay(self):
+        ex = venue()
+        at = M + 10
+        b = book(at)
+        ex.on_historical_same_ms_inert_bucket(
+            books=(b,), trades=(print_at(at, "Buy", "100"),),
+        )
+        self.assertEqual(ex._l2_book, b)
+        self.assertEqual(ex.account.fills, ())
+        self.assertIsNone(ex.on_historical_trade(print_at(at + 10, "Sell", "100")))
+
+    def test_inert_cross_channel_tie_with_pending_untriggered_order(self):
+        ex = venue()
+        submit(ex)
+        at = M + 10
+        b = book(at, bid="99.0", ask="101.0")
+        ex.on_historical_same_ms_inert_bucket(
+            books=(b,), trades=(print_at(at, "Sell", "100"),),
+        )
+        self.assertEqual(ex._l2_book, b)
+        self.assertIsNotNone(ex.pending)
+        self.assertEqual(ex.account.fills, ())
+
+    def test_actionable_book_tie_blocks_before_order_or_ledger_update(self):
+        ex = venue()
+        submit(ex)
+        at = M + 10
+        with self.assertRaisesRegex(ValueError, "marketable entry chronology"):
+            ex.on_historical_same_ms_inert_bucket(
+                books=(book(at, ask="100"),),
+                trades=(print_at(at, "Sell", "100"),),
+            )
+        self.assertIsNone(ex._l2_book)
+        self.assertIsNotNone(ex.pending)
+        self.assertEqual(ex.account.fills, ())
+
+    def test_actionable_trade_tie_with_stop_blocks_before_ledger_update(self):
+        ex = venue()
+        submit(ex)
+        ex.on_historical_book(book(M + 10, bid="99.9", ask="100"))
+        previous = ex._l2_book
+        at = M + 20
+        with self.assertRaisesRegex(ValueError, "protected exit chronology"):
+            ex.on_historical_same_ms_inert_bucket(
+                books=(book(at, bid="98.8", ask="99.1"),),
+                trades=(print_at(at, "Sell", "98.9"),),
+            )
+        self.assertEqual(ex._l2_book, previous)
+        self.assertEqual(len(ex.account.fills), 1)
+        self.assertIsNotNone(ex.active_protection)
+
     def test_cross_channel_timestamp_tie_is_ambiguous(self):
         ex = venue()
         submit(ex)
