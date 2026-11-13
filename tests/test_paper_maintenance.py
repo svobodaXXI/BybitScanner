@@ -932,6 +932,59 @@ def test_known_paused_drain_is_sealed_waits_for_flat_and_resumes_once(monkeypatc
     assert actions.count("install") == 2
 
 
+def test_known_drain_continuation_unknown_outcome_is_never_retried(monkeypatch, tmp_path):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+    from tools.stop_robot_runtime import ShutdownResult
+
+    target, old = "a" * 40, "b" * 40
+    root, stage, journal = (
+        tmp_path / "installed", tmp_path / "stage", tmp_path / "journal"
+    )
+    root.mkdir()
+    stage.mkdir()
+    monkeypatch.setattr(release, "verify_release", lambda *_a, **_kw: old)
+    called = []
+
+    class Owner:
+        def __init__(self, **_kwargs):
+            pass
+        def require_known_natural_drain_ready(self, expected_build_sha):
+            assert expected_build_sha == old
+        def continue_known_natural_drain(self, expected_build_sha):
+            assert expected_build_sha == old
+            called.append("continuation")
+            raise OSError("response lost after possible Backend shutdown")
+
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", Owner)
+    def stop(_scope):
+        called.append("canonical")
+        return ShutdownResult(
+            "all", False, maintenance._NATURAL_DRAIN_REFUSAL,
+            ("scanner:stop", "robot:pause"),
+        )
+    options = dict(
+        stage=stage, root=root, transactions=journal,
+        trusted_uid=os.geteuid(), preflight=lambda *_a, **_kw: None,
+        stop=stop, installer=lambda *_a, **_kw: pytest.fail("never install"),
+        resume=lambda *_a, **_kw: pytest.fail("never resume"),
+    )
+    assert maintenance.deploy_staged_editor_only(
+        target, **options
+    ).startswith("BLOCKED: canonical_safe_stop_unproven:")
+    first = maintenance.deploy_staged_editor_only(target, **options)
+    assert first.startswith("BLOCKED: known_natural_drain_continuation_unknown")
+    assert maintenance._known_drain_receipt(
+        journal, target, old, phase="continuation-invoked", uid=os.geteuid()
+    )
+    assert not maintenance._known_drain_receipt(
+        journal, target, old, phase="completed", uid=os.geteuid()
+    )
+    second = maintenance.deploy_staged_editor_only(target, **options)
+    assert second == "BLOCKED: known_natural_drain_continuation_already_invoked; no retry"
+    assert called == ["canonical", "continuation"]
+
+
 def test_known_drain_receipt_invalid_shape_cannot_resume(monkeypatch, tmp_path):
     import tools.paper_maintenance as maintenance
     import tools.vps_release_identity as release
