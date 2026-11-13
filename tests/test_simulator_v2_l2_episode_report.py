@@ -103,7 +103,7 @@ class L2EpisodeReportTests(unittest.TestCase):
             ), (event("one", "PARTIAL_TAKE_FILLED", 120),))
         with self.assertRaisesRegex(ValueError, "BE mutation"):
             episode_rows((
-                fills[0], fills[2],
+                fills[0], fill("one_take_fill", 160, "SELL", "103", "0.618", "10"),
             ), (event("one", "STOP_AMENDED_BE", 130),))
 
     def test_open_episode_no_invented_exit_or_net_pnl(self):
