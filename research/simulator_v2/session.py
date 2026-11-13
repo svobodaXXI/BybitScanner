@@ -42,6 +42,7 @@ class VirtualReplaySession:
         ikigai_scanner_config: IkigaiScannerConfig | None = None,
         wedge_robot_config: SimWedgeRobotConfig | None = None,
         wedge_risk_settings: SimWedgeRiskSettings | None = None,
+        execution_mode: str = "OHLC_M1",
     ) -> None:
         if type(enable_reused_geometry) is not bool:
             raise TypeError("explicit boolean for optional research geometry required")
@@ -80,6 +81,7 @@ class VirtualReplaySession:
         self.exchange = VirtualExchange(
             account=self.account, taker_fee_rate=taker_fee_rate,
             maker_fee_rate=maker_fee_rate,
+            execution_mode=execution_mode,
         )
         self.timeline = IsolatedTimeline(
             simulation_run_id=simulation_run_id, symbol=symbol,
