@@ -36,7 +36,7 @@ def digest(path: Path) -> str:
 
 
 def run(l2: Path, bundle: Path, output_dir: Path, repo: Path, code_sha: str,
-        *, compare_partials: bool = False) -> dict:
+        *, compare_partials: bool = False, capture_replay: bool = False) -> dict:
     if (not repo.is_dir() or not (repo / "AGENTS.md").is_file()
             or repo.is_symlink() or l2.is_symlink() or bundle.is_symlink()):
         raise ValueError("pinned local repository and original non-symlink archives required")
@@ -98,6 +98,8 @@ def run(l2: Path, bundle: Path, output_dir: Path, repo: Path, code_sha: str,
         max_notional_usdt=Decimal("1000"), max_risk_usdt=Decimal("50"),
         entry_fee_rate=Decimal("0.0006"), exit_fee_rate=Decimal("0.0006"),
     )
+    if compare_partials and capture_replay:
+        raise ValueError("one replay scenario per receipt; compare and visualization are distinct")
     policy_specs = [("BASE", None)]
     if compare_partials:
         policy_specs.extend((
@@ -123,7 +125,7 @@ def run(l2: Path, bundle: Path, output_dir: Path, repo: Path, code_sha: str,
                 flow_archive_dir=source_dir, oi_mode="OFF", impulse_mode=True,
                 l2_archive_path=l2, l2_archive_sha256=L2_SHA, l2_depth=200,
                 l2_partial_take_policy=policy,
-                capture_replay=False,
+                capture_replay=capture_replay,
             )
             if result.execution_model != "SIMULATION_HISTORICAL_TAKER_L2_EVENT_TIME_NOT_REAL_BYBIT_FILLS":
                 raise ValueError("L2-only execution provenance not proven")
@@ -182,6 +184,8 @@ def main() -> None:
     p.add_argument("--code-sha", required=True)
     p.add_argument("--compare-partials", action="store_true",
                    help="SIMULATION-only 25/50/75 percent potential thresholds")
+    p.add_argument("--capture-replay", action="store_true",
+                   help="one causal baseline L2 event-time visual replay; no alternative fills")
     args = p.parse_args()
     if not args.output.is_dir() or args.output.is_symlink():
         raise SystemExit("BLOCKED: new dedicated existing output directory required")
@@ -192,6 +196,7 @@ def main() -> None:
         receipt = run(
             args.l2, args.trades, args.output, args.repo, args.code_sha,
             compare_partials=args.compare_partials,
+            capture_replay=args.capture_replay,
         )
     except Exception as exc:
         receipt = {
@@ -243,6 +248,16 @@ def main() -> None:
             )
         print("NET_PNL_USDT=" + str(result["realized_net_pnl"]))
         print("PENDING_PROTECTION=" + str(result["pending_protection"]))
+        if args.capture_replay:
+            visual = result.get("replay")
+            if not isinstance(visual, dict) or not isinstance(visual.get("events"), list):
+                raise ValueError("historical L2 visual events missing from receipt")
+            print("VISUAL_EVENTS=" + str(len(visual["events"])))
+            print("VISUAL_EXECUTION_CLOCK=" + str(visual.get("execution_clock")))
+            print("VISUAL_FILL_TIMES=" + ",".join(
+                str(event["time_ms"]) for event in visual["events"]
+                if event["kind"] in ("ENTRY_FILLED", "PARTIAL_FILLED", "EXIT_FILLED")
+            ))
 
 
 if __name__ == "__main__":
