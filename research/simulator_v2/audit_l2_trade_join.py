@@ -67,18 +67,50 @@ def _zip_member(path: Path, *, extension: str) -> Iterator[BinaryIO]:
         raise ValueError("source ZIP invalid or CRC mismatch") from exc
 
 
-def _trade_timestamps(path: Path) -> tuple[Counter[int], int]:
-    """Read original .csv.gz or one original member .csv.gz inside ZIP."""
+@contextmanager
+def _original_trades(path: Path, sha256: str) -> Iterator[BinaryIO]:
+    """Pin original compressed ICNT tape, including inside the 3-member bundle."""
+    if path.name.endswith(".csv.gz"):
+        _pin_sha(path, sha256, TRADES_MAX_BYTES)
+        with path.open("rb") as raw:
+            yield raw
+        return
+    if path.suffix != ".zip" or path.is_symlink() or not path.is_file():
+        raise ValueError("original .csv.gz or source ZIP required")
+    if not 0 < path.stat().st_size <= TRADES_MAX_BYTES:
+        raise ValueError("original source ZIP size invalid")
+    try:
+        with ZipFile(path) as archive:
+            members = archive.infolist()
+            if (not 1 <= len(members) <= 5
+                    or any(m.is_dir() or m.filename != Path(m.filename).name
+                           or "\\" in m.filename or m.flag_bits & 1
+                           or m.compress_type not in (ZIP_DEFLATED, ZIP_STORED)
+                           for m in members)):
+                raise ValueError("unsafe public-trade source ZIP")
+            item = next(
+                (m for m in members if m.filename == "ICNTUSDT2026-11-10.csv.gz"),
+                None,
+            )
+            if item is None or not 0 < item.file_size <= TRADES_MAX_BYTES:
+                raise ValueError("original ICNT compressed trade member missing")
+            digest = hashlib.sha256()
+            with archive.open(item) as verify:
+                for block in iter(lambda: verify.read(1_048_576), b""):
+                    digest.update(block)
+            if digest.hexdigest() != sha256:
+                raise ValueError("original inner trade gzip SHA-256 mismatch")
+            with archive.open(item) as raw:
+                yield raw
+    except BadZipFile as exc:
+        raise ValueError("invalid source bundle ZIP/CRC") from exc
+
+
+def _trade_timestamps(path: Path, sha256: str) -> tuple[Counter[int], int]:
+    """Read exact original compressed public trades, no extraction."""
     counts: Counter[int] = Counter()
     unique_ids: set[str] = set()
-    if path.name.endswith(".csv.gz"):
-        from contextlib import nullcontext
-        source = nullcontext(path.open("rb"))
-    elif path.suffix == ".zip":
-        source = _zip_member(path, extension=".csv.gz")
-    else:
-        raise ValueError("unsupported original trade source")
-    with source as raw, gzip.GzipFile(fileobj=raw) as compressed:
+    with _original_trades(path, sha256) as raw, gzip.GzipFile(fileobj=raw) as compressed:
         from io import TextIOWrapper
         with TextIOWrapper(compressed, encoding="utf-8-sig", newline="") as reader:
             trades = csv.DictReader(reader)
@@ -188,8 +220,7 @@ def inspect(
     expected_books: int = 569169, expected_trades: int = 152429,
 ) -> dict[str, object]:
     _pin_sha(l2_zip, l2_sha256, L2_MAX_BYTES)
-    _pin_sha(trade_source, trade_sha256, TRADES_MAX_BYTES)
-    trades, trade_count = _trade_timestamps(trade_source)
+    trades, trade_count = _trade_timestamps(trade_source, trade_sha256)
     books, engine, book_count = _book_times(l2_zip)
     if trade_count != expected_trades or book_count != expected_books:
         raise ValueError("original market record count differs from pinned sources")
