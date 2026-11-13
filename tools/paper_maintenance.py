@@ -884,6 +884,34 @@ def deploy_staged_editor_only(
                     root=root, uid=trusted_uid,
                 )
             ] if journal_root.is_dir() else []
+            if (len(pending) == 1 and isinstance(current, str)
+                    and pending[0].name != ".stop-invoked-" + target
+                    and (journal_root / (
+                        ".one-flat-handoff-handoff-proven-"
+                        + pending[0].name.removeprefix(".stop-invoked-")
+                    )).exists()
+                    and _proven_one_flat_successor(
+                        journal_root,
+                        pending[0].name.removeprefix(".stop-invoked-"),
+                        current, uid=trusted_uid, root=root,
+                        require_ready=False,
+                    )):
+                # The installed successor already has immutable handoff and
+                # installer receipts. The sole missing step is its EDITOR_ONLY
+                # ready seal. Do not STOP or start a service merely to seal.
+                identity = _durable_editor_freeze(root, env_file)
+                if not _editor_runtime_ready(current, identity):
+                    return "BLOCKED: prior_successor_EDITOR_ONLY_not_proven; no STOP replay"
+                if not resume_action(current, root=root, env_file=env_file).startswith("READY:"):
+                    return "BLOCKED: prior_successor_resume_not_proven; no STOP replay"
+                _complete_stop_intent(journal_root, current, uid=trusted_uid)
+                if not _proven_prior_exceptional_completion(
+                    journal_root,
+                    pending[0].name.removeprefix(".stop-invoked-"),
+                    root=root, uid=trusted_uid,
+                ):
+                    return "BLOCKED: prior_successor_seal_unproven; no STOP replay"
+                pending = []
             if pending:
                 if (len(pending) == 1
                         and pending[0].name == ".stop-invoked-" + target

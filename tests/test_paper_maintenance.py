@@ -1407,6 +1407,97 @@ def test_auto_route_preserves_unknown_handoff_result_without_stop_retry(
     # recovery rejects the prior signal. No canonical STOP is dispatched.
     assert calls == ["existing-recovery-only"]
 
+
+@pytest.mark.parametrize("editor_ready", [True, False])
+def test_next_update_auto_seals_only_proven_installed_successor(
+    monkeypatch, tmp_path, editor_ready,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    root, stage, journal = (tmp_path / n for n in ("root", "stage", "transactions"))
+    for p in (root, stage, journal):
+        p.mkdir()
+    old, prior, target = "c" * 40, "b" * 40, "a" * 40
+    journal.chmod(0o700)
+    marker = journal / (".stop-invoked-" + prior)
+    marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    marker.chmod(0o600)
+    handoff = journal / (".one-flat-handoff-handoff-proven-" + prior)
+    handoff.write_text(old + "\\n")
+    handoff.chmod(0o600)
+    monkeypatch.setattr(release, "verify_release", lambda *_: old)
+    monkeypatch.setattr(maintenance, "_proven_one_flat_successor",
+                        lambda *_args, **_kw: True)
+    monkeypatch.setattr(maintenance, "_durable_editor_freeze",
+                        lambda *_args: "d" * 64)
+    monkeypatch.setattr(maintenance, "_editor_runtime_ready",
+                        lambda *_args: editor_ready)
+    proven = []
+    def classified(*_args, **_kwargs):
+        return bool(proven)
+    monkeypatch.setattr(maintenance, "_proven_prior_exceptional_completion",
+                        classified)
+    def seal(_journal, sha, **_kwargs):
+        proven.append(sha)
+    monkeypatch.setattr(maintenance, "_complete_stop_intent", seal)
+    calls = []
+    def resume(sha, **_kw):
+        calls.append(("resume", sha))
+        return "READY: EDITOR_ONLY"
+    result = maintenance.deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=journal,
+        trusted_uid=os.geteuid(), resume=resume,
+        preflight=lambda *_args, **_kw: calls.append(("preflight", target)),
+        stop=lambda _scope: (
+            calls.append(("new-stop", target)),
+            SimpleNamespace(ok=True, runtime_stopped=True),
+        )[1],
+        installer=lambda *_args, **_kw: (
+            calls.append(("install", target)), "INSTALLED_STOPPED: exact",
+        )[1],
+    )
+    if editor_ready:
+        assert result == "READY: EDITOR_ONLY"
+        # Seal the previously installed successor, then the newly installed
+        # target through the coordinator's existing normal completion path.
+        assert proven == [old, target]
+        assert calls == [
+            ("resume", old), ("preflight", target),
+            ("new-stop", target), ("install", target), ("resume", target),
+        ]
+    else:
+        assert result == "BLOCKED: prior_successor_EDITOR_ONLY_not_proven; no STOP replay"
+        assert not proven
+        assert not calls
+
+
+def test_auto_seal_does_not_resolve_unknown_or_multiple_prior_intents(
+    monkeypatch, tmp_path,
+):
+    import tools.paper_maintenance as maintenance
+    import tools.vps_release_identity as release
+
+    root, stage, journal = (tmp_path / n for n in ("root", "stage", "transactions"))
+    for p in (root, stage, journal):
+        p.mkdir()
+    for sha in ("b" * 40, "d" * 40):
+        marker = journal / (".stop-invoked-" + sha)
+        marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+        marker.chmod(0o600)
+    monkeypatch.setattr(release, "verify_release", lambda *_: "c" * 40)
+    monkeypatch.setattr(
+        maintenance, "_proven_one_flat_successor",
+        lambda *_args, **_kw: pytest.fail("cannot select ambiguous history"),
+    )
+    result = maintenance.deploy_staged_editor_only(
+        "a" * 40, stage=stage, root=root, transactions=journal,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_args, **_kw: pytest.fail("no preflight/STOP"),
+        installer=lambda *_args, **_kw: pytest.fail("no install"),
+    )
+    assert result.startswith("BLOCKED: prior_STOP_outcome_unproven")
+
 def _proven_exceptional_prior_stop(monkeypatch, tmp_path):
     """Old STOP 094d was superseded by an immutable, separately proven handoff."""
     import json
