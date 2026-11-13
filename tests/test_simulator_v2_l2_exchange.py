@@ -146,7 +146,7 @@ class L2PartialTakeAndBERegressionTests(unittest.TestCase):
         ))
         close = ex.on_historical_trade(print_at(M+50, "Buy", "100.8"))
         self.assertEqual(close.quantity, D("75"))
-        self.assertEqual(ex.account.snapshot(as_of_ms=M+40).position_quantity, 0)
+        self.assertEqual(ex.account.snapshot(as_of_ms=M+50).position_quantity, 0)
 
     def test_partial_market_book_needs_full_depth_and_stop_stays(self):
         ex = partial_venue()
