@@ -183,6 +183,8 @@ class VirtualExchange:
         self._l2_event_at_ms: int | None = None
         self._l2_event_kind: str | None = None
         self._l2_underdepth_order_ids: set[str] = set()
+        self._l2_pending_stop: tuple[int, Decimal] | None = None
+        self._l2_deferred_stop_count = 0
         self._last_minute_fills: tuple[VirtualFill, ...] = ()
         self._last_minute_order_events: tuple[OrderEvent, ...] = ()
         self._robot_limits: dict[str, tuple[RobotLimitRequest, int]] = {}
@@ -215,6 +217,14 @@ class VirtualExchange:
     def l2_unproven_entry_depth_count(self) -> int:
         """Protected LIMIT requests encountering unprovable full-size book depth."""
         return len(self._l2_underdepth_order_ids)
+
+    @property
+    def l2_deferred_stop_count(self) -> int:
+        return self._l2_deferred_stop_count
+
+    @property
+    def l2_stop_pending(self) -> bool:
+        return self._l2_pending_stop is not None
 
     @property
     def last_minute_fills(self) -> tuple[VirtualFill, ...]:
@@ -625,6 +635,61 @@ class VirtualExchange:
             if self.on_historical_book(book) is not None:
                 raise ValueError("inert mixed-millisecond preflight invariant broken")
 
+    def _l2_hold_triggered_stop(self, trade: TakerPrint) -> None:
+        """Preserve the original first trigger and worst subsequent print."""
+        if self._l2_pending_stop is None or self._active_protection is None:
+            raise ValueError("no triggered historical STOP to hold")
+        start, worst = self._l2_pending_stop
+        is_long = self._active_protection.entry.side == "BUY"
+        self._l2_pending_stop = (
+            start, min(worst, trade.price) if is_long else max(worst, trade.price),
+        )
+        self._l2_event_at_ms = trade.event_ms
+        self._l2_event_kind = "TRADE"
+
+    def _l2_settle_triggered_stop(self, book: BookState) -> VirtualFill | None:
+        """One post-trigger book may settle STOP, never using a future candle.
+
+        Only a quote no later than 250ms after the original trigger and no
+        better than its worst recorded trade can settle. Otherwise keep
+        waiting or fail closed. Settlement is conditional simulated execution.
+        """
+        if self._l2_pending_stop is None or self._active_protection is None:
+            raise ValueError("no historical STOP settlement pending")
+        trigger_ms, worst_print = self._l2_pending_stop
+        elapsed = book.available_at_ms - trigger_ms
+        if elapsed <= 0 or elapsed > 250:
+            raise ValueError("deferred L2 STOP has no fresh post-trigger book within 250ms")
+        plan = self._active_protection
+        is_long = plan.entry.side == "BUY"
+        if ((is_long and book.best_bid[0] > worst_print)
+                or (not is_long and book.best_ask[0] < worst_print)):
+            return None
+        prior = self._l2_book
+        self._l2_book = book
+        try:
+            price = self._l2_sweep(
+                side="SELL" if is_long else "BUY",
+                quantity=plan.entry.quantity, limit_price=None,
+            )
+        finally:
+            self._l2_book = prior
+        receipt = self._l2_receipt(
+            plan.entry.order_id, event_at_ms=book.available_at_ms,
+            side="SELL" if is_long else "BUY",
+            quantity=plan.entry.quantity,
+            price=price, fee_rate=self.taker_fee_rate,
+            suffix="_stop_fill",
+        )
+        self.account.append(receipt)
+        self._active_protection = None
+        self._l2_pending_stop = None
+        self._events.append(OrderEvent(
+            plan.entry.order_id, "STOP_FILLED",
+            book.available_at_ms, order_type="STOP",
+        ))
+        return receipt
+
     def _l2_sweep(
         self, *, side: str, quantity: Decimal, limit_price: Decimal | None,
         allow_unfilled_limit: bool = False,
@@ -683,6 +748,12 @@ class VirtualExchange:
             raise ValueError("native multi-order matching not implemented for L2")
         if self._pending is not None and not isinstance(self._pending[0], LimitRequest):
             raise ValueError("historical L2 does not support OHLC MARKET fill")
+        if self._l2_pending_stop is not None:
+            receipt = self._l2_settle_triggered_stop(book)
+            self._l2_book = book
+            self._l2_event_at_ms = book.available_at_ms
+            self._l2_event_kind = "BOOK"
+            return receipt
         receipt = None
         next_pending = self._pending
         next_pending_protection = self._pending_protection
@@ -762,6 +833,14 @@ class VirtualExchange:
             raise ValueError("book state unavailable at historical trade time")
         if self._robot_limits or self._robot_markets or self._robot_stop is not None:
             raise ValueError("native multi-order matching not implemented for L2")
+        if self._l2_pending_stop is not None:
+            is_long = self._active_protection.entry.side == "BUY"
+            worst = (
+                min(trades, key=lambda t: t.price) if is_long
+                else max(trades, key=lambda t: t.price)
+            )
+            self._l2_hold_triggered_stop(worst)
+            return None
         qualifying: list[TakerPrint] = []
         if self._active_protection is not None:
             plan = self._active_protection
@@ -833,6 +912,9 @@ class VirtualExchange:
             raise ValueError("book state unavailable at historical trade time")
         if self._robot_limits or self._robot_markets or self._robot_stop is not None:
             raise ValueError("native multi-order matching not implemented for L2")
+        if self._l2_pending_stop is not None:
+            self._l2_hold_triggered_stop(trade)
+            return None
         receipt = None
         event = None
         next_pending = self._pending
@@ -847,14 +929,22 @@ class VirtualExchange:
                 else (trade.side == "Sell" and trade.price < plan.take_price)
             )
             if stop_hit:
-                if trade.event_ms - self._l2_book.available_at_ms > 250:
-                    raise ValueError("stale L2 book cannot prove STOP executable price")
-                side = "SELL" if is_long else "BUY"
-                # A prior book better than the later triggering print is not
-                # executable at that stale price; do not manufacture profit.
-                if ((is_long and self._l2_book.best_bid[0] > trade.price)
+                # A last trade can precede dissemination of the corresponding
+                # book delta. Never fill from a contradictory/stale PRE-trade
+                # book; wait for a fresh POST-trigger book with proven depth.
+                if (trade.event_ms - self._l2_book.available_at_ms > 250
+                        or (is_long and self._l2_book.best_bid[0] > trade.price)
                         or (not is_long and self._l2_book.best_ask[0] < trade.price)):
-                    raise ValueError("L2/last-trade STOP execution chronology is unproven")
+                    self._l2_pending_stop = (trade.event_ms, trade.price)
+                    self._l2_deferred_stop_count += 1
+                    self._events.append(OrderEvent(
+                        plan.entry.order_id, "STOP_TRIGGER_DEFERRED",
+                        trade.event_ms, order_type="STOP",
+                    ))
+                    self._l2_event_at_ms = trade.event_ms
+                    self._l2_event_kind = "TRADE"
+                    return None
+                side = "SELL" if is_long else "BUY"
                 price = self._l2_sweep(
                     side=side, quantity=plan.entry.quantity, limit_price=None,
                 )
@@ -926,6 +1016,9 @@ class VirtualExchange:
             raise ValueError("M1 gap, overlap or duplicate at virtual exchange")
 
         if self.execution_mode == "HISTORICAL_L2":
+            if (self._l2_pending_stop is not None
+                    and minute.end_ms - self._l2_pending_stop[0] > 250):
+                raise ValueError("deferred historical STOP remained unfilled past 250ms")
             # M1 drives only chart/Scanner time; fills already happened at
             # original trade/book event timestamps. Never call OHLC matching.
             if (self._l2_event_at_ms is not None
