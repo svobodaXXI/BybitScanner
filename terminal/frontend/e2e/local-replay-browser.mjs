@@ -436,12 +436,14 @@ try {
     ],
   };
   let publicMarketAttempts = 0;
+  let icntHistoryRequests = 0;
   await page.route("**/local-replay/history?*", async (route) => {
     const query = new URL(route.request().url()).searchParams;
     // The L2 import requests PUBLIC M5 prehistory as a chart-only layer.
     // Keep the original Wedge transport fixture separate: no detector options,
     // no live network, and never fabricate execution receipts from these bars.
     if (query.get("symbol") === "ICNTUSDT") {
+      icntHistoryRequests++;
       assert.equal(query.has("strategies"), false);
       const first = Date.UTC(2026, 10, 10, 8, 0);
       const events = Array.from({ length: 301 }, (_, i) => {
@@ -846,6 +848,15 @@ try {
     "public M5 prehistory must not overwrite the original L2 execution candle");
   await page.screenshot({ path: join(screenshotDir, "machine-time-l2-replay.png"), fullPage: true });
   console.log("LOCAL_L2_REPLAY_BROWSER_OK (Chromium, original nested receipt import, 8 event-time marks, no PAPER)");
+  // The selected source period is already covered in this local viewer.
+  // Clicking Bybit must NOT repeat a public network request.
+  const beforeDuplicate = icntHistoryRequests;
+  await page.getByRole("button", { name: "Подгрузить период с Bybit" }).click();
+  await page.getByRole("status", { name: "Покрытие выбранного периода" })
+    .filter({ hasText: "Данные уже загружены локально" }).waitFor();
+  assert.equal(icntHistoryRequests, beforeDuplicate,
+    "already covered historical M5 must never be downloaded twice");
+
   // Owner UX: imported coordinates stay editable. Applying the selected
   // interval MUST NOT clear the original L2 receipts or start Robot.
   const selectedWindow = page.getByRole("textbox", { name: "Координаты прогона" });
@@ -855,6 +866,15 @@ try {
   await page.getByRole("button", { name: "Применить", exact: true }).click();
   assert.match(await page.locator(".replay-meta").innerText(), /4 \/ 4/,
     "Apply on imported source must not turn original L2 into a new simulation");
+  const beforeGapClick = icntHistoryRequests;
+  await page.getByRole("button", { name: "Пуск", exact: true }).click();
+  await page.getByRole("alert").filter({
+    hasText: "Данные для выбранного периода не подгружены",
+  }).waitFor();
+  assert.equal(icntHistoryRequests, beforeGapClick,
+    "Play warning never downloads without explicit Bybit action");
+  assert.match(await page.locator(".replay-meta").innerText(), /4 \/ 4/,
+    "blocked Play must preserve the original four trades");
   await page.getByRole("button", { name: "Подгрузить период с Bybit" }).click();
   await page.getByRole("status").filter({ hasText: "Исторические taker-сделки/L2-стакан" }).waitFor();
   assert.match(await page.locator(".replay-meta").innerText(), /original-l2-result\.json/,
