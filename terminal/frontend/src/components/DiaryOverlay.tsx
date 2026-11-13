@@ -164,6 +164,10 @@ type ClosedEpisodeLocator = {
   opened_at_ms: number;
   closed_at_ms: number;
   pnl_usdt: string;
+  /** Optional exact execution-notional denominator, not leverage or margin ROI. */
+  pnl_pct?: string;
+  pnl_pct_basis?: "KNOWN_COST_PNL_OVER_EXECUTED_ENTRY_NOTIONAL";
+  entry_notional_usdt?: string;
   execution_count: number;
   cohort: "ROBOT" | "MANUAL" | "ROBOT_MANUAL_CLOSE" | "JOINT_MANAGEMENT";
   replay_evidence: "EPISODE_INDEX_ONLY";
@@ -294,6 +298,25 @@ export function displayTradePnl(value: string | null | undefined): string {
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   }).format(numeric);
 }
+
+/** Returns verified source-bound percent only; unknown/mismatched basis stays missing. */
+function verifiedEntryNotionalReturn(deal: ClosedEpisodeLocator): string | null {
+  if (deal.pnl_pct_basis !== "KNOWN_COST_PNL_OVER_EXECUTED_ENTRY_NOTIONAL"
+    || typeof deal.pnl_pct !== "string" || !deal.pnl_pct.trim()
+    || typeof deal.entry_notional_usdt !== "string" || !deal.entry_notional_usdt.trim()) return null;
+  const pct = Number(deal.pnl_pct);
+  const entryNotional = Number(deal.entry_notional_usdt);
+  const pnl = Number(deal.pnl_usdt);
+  if (!Number.isFinite(pct) || !Number.isFinite(entryNotional)
+    || !Number.isFinite(pnl) || entryNotional <= 0) return null;
+  const expected = (pnl / entryNotional) * 100;
+  if (!Number.isFinite(expected)
+    || Math.abs(expected - pct) > Math.max(1e-7, Math.abs(expected) * 1e-9)) return null;
+  return (pct > 0 ? "+" : "") + displayTradePnl(deal.pnl_pct) + "%";
+}
+
+const ENTRY_RETURN_EXPLANATION =
+  "PnL после известных комиссий / сумма номиналов фактических входов × 100. Не ROI на маржу, без учёта плеча и неизвестных внешних затрат.";
 
 /** The filmstrip carries only a typed ID, never a claimed full replay. */
 function requestSimulatorLocator(episodeId: string, onNotice: (message: string) => void) {
@@ -1028,6 +1051,14 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, onClearSymbolFil
             <div><dt>Закрыта</dt><dd>{formatDate(selected.closed_at_ms)}</dd></div>
             <div><dt>Исполнений</dt><dd>{selected.execution_count}</dd></div>
             <div><dt>PnL после комиссий</dt><dd title={selected.pnl_usdt}>{displayTradePnl(selected.pnl_usdt)} USDT</dd></div>
+            <div><dt>PnL % от номинала входа</dt><dd title={ENTRY_RETURN_EXPLANATION}>
+              {verifiedEntryNotionalReturn(selected) ?? "—"}
+            </dd></div>
+            {verifiedEntryNotionalReturn(selected) ? (
+              <div><dt>Фактический номинал входов</dt><dd title={selected.entry_notional_usdt}>
+                {displayTradePnl(selected.entry_notional_usdt)} USDT
+              </dd></div>
+            ) : null}
           </dl>
         </section>
         <section className="diary-detail-section" aria-label="Связь сделки с паттерном">
@@ -1118,7 +1149,11 @@ function ClosedDealsView({ report, symbolFilter, patternFilter, onClearSymbolFil
               <div className="diary-trade-metrics">
                 <span className={Number(deal.pnl_usdt) > 0 ? "profit" : Number(deal.pnl_usdt) < 0 ? "loss" : ""}
                   title={deal.pnl_usdt}>PnL {displayTradePnl(deal.pnl_usdt)} USDT</span>
-                <span title="Процент недоступен без подтверждённой базы расчёта">PnL %: —</span>
+                <span title={verifiedEntryNotionalReturn(deal)
+                    ? ENTRY_RETURN_EXPLANATION
+                    : "Процент недоступен без подтверждённой базы расчёта"}>
+                  PnL %: {verifiedEntryNotionalReturn(deal) ?? "—"}
+                </span>
                 <span>Исполнений: {deal.execution_count}</span>
               </div>
               </button>
