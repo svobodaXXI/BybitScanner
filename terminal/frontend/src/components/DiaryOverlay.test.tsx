@@ -396,6 +396,63 @@ describe("Closed deals / exact episode index", () => {
     cohort: "JOINT_MANAGEMENT", replay_evidence: "EPISODE_INDEX_ONLY",
   };
 
+  it("filters losses by exact closed-deal PnL, prioritizes biggest losses and keeps filters across periods", async () => {
+    const episode = (id: string, symbol: string, pnl_usdt: string, closed_at_ms = 1_793_002_000_000) => ({
+      ...robotDeal, trade_episode_id: "te_" + id.repeat(24), symbol, pnl_usdt, closed_at_ms,
+    });
+    const deals = [
+      episode("a", "ETHUSDT", "3.1"),
+      episode("b", "BTCUSDT", "-0.0026140884"),
+      episode("c", "ADAUSDT", "-12.3"),
+      episode("d", "XRPUSDT", "-0.0000000004"),
+      episode("e", "DOGEUSDT", "0"),
+    ];
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
+      ...finrezResponse,
+      period: new URL(url, "http://localhost").searchParams.get("period") ?? "DAY",
+      closed_episodes: deals,
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:loss-sort" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    await screen.findByRole("button", { name: /ETHUSDT/ });
+
+    const orderedSymbols = () => screen.getAllByRole("button", {
+      name: /ETHUSDT|BTCUSDT|ADAUSDT|XRPUSDT|DOGEUSDT/,
+    }).map((row) => row.querySelector(".diary-trade-heading strong")?.textContent);
+    const toggle = screen.getByRole("button", { name: "Убыточные" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(orderedSymbols()).toEqual(["ETHUSDT", "BTCUSDT", "ADAUSDT", "XRPUSDT", "DOGEUSDT"]);
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(orderedSymbols()).toEqual(["ADAUSDT", "BTCUSDT", "XRPUSDT"]);
+    expect(screen.getByRole("button", { name: /ADAUSDT/ })).toHaveTextContent("PnL -12,30 USDT");
+    expect(screen.getByRole("button", { name: /XRPUSDT/ })).toHaveTextContent("PnL -<0,000001 USDT");
+
+    fireEvent.click(screen.getByRole("button", { name: /BTCUSDT/ }));
+    expect(screen.getByText(episode("b", "BTCUSDT", "-0.0026140884").trade_episode_id)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /К сделкам/ }));
+    expect(orderedSymbols()).toEqual(["ADAUSDT", "BTCUSDT", "XRPUSDT"]);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по тикеру" }), {
+      target: { value: "BTC" },
+    });
+    expect(orderedSymbols()).toEqual(["BTCUSDT"]);
+    fireEvent.click(screen.getByRole("button", { name: "Неделя" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=WEEK",
+    ));
+    expect(await screen.findByRole("button", { name: /BTCUSDT/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Убыточные" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по тикеру" }), {
+      target: { value: "ETH" },
+    });
+    expect(screen.getByText("Нет убыточных сделок по выбранным фильтрам")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Убыточные" }));
+    expect(orderedSymbols()).toEqual(["ETHUSDT"]);
+  });
+
   it("keeps micro-losses visible on both closed deal rows and their details", async () => {
     const smallLoss = {
       ...robotDeal, trade_episode_id: "te_" + "a".repeat(24),

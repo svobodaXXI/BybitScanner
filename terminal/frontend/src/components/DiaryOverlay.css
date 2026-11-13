@@ -514,6 +514,25 @@
   font: inherit;
   font-size: 0.83rem;
 }
+.diary-loss-toggle {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #394653;
+  border-radius: 0.32rem;
+  background: #151d26;
+  color: #e4eaf0;
+  font: inherit;
+  font-size: 0.83rem;
+  cursor: pointer;
+}
+.diary-loss-toggle[aria-pressed="true"] {
+  border-color: #f07178;
+  background: #342026;
+  color: #ffd1d4;
+}
+.diary-loss-toggle:focus-visible {
+  outline: 2px solid #859bb1;
+  outline-offset: 2px;
+}
 .diary-finrez-confirm {
   display: grid;
   gap: 0.4rem;
