@@ -113,7 +113,7 @@ def run(l2: Path, bundle: Path, output_dir: Path, repo: Path, code_sha: str) -> 
     return {
         "state": (
             "VIRTUAL_L2_PROBE_CONDITIONAL"
-            if result.l2_unproven_entry_depth_count
+            if result.l2_unproven_entry_depth_count or result.l2_deferred_stop_count
             else "VIRTUAL_L2_PROBE_COMPLETED"
         ),
         "scenario": "ONE_BOUNDED_LOCAL_SIMULATION_NOT_REAL_BYBIT_EXECUTIONS",
