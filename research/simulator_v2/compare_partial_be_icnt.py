@@ -231,6 +231,8 @@ def evaluate(episodes: list[dict], trades: list[TakerPrint],
                 "entry_ms": ep["entry_ms"], "exit_ms": ep["exit_ms"],
             })
     for trade in trades:
+        if not isinstance(trade, TakerPrint) or trade.symbol != SYMBOL:
+            raise ValueError("non-original market print in MFE source")
         for scenario in scenarios:
             if not scenario["entry_ms"] < trade.event_ms < scenario["exit_ms"]:
                 continue
@@ -269,7 +271,7 @@ def evaluate(episodes: list[dict], trades: list[TakerPrint],
             if result.decision == STOP_NET_BREAK_EVEN:
                 scenario["be_eligible_ms"] = book.available_at_ms
                 scenario["be_stop"] = result.stop_price
-                scenario["be_net_at_stop"] = result.net_pnl_usdt
+                scenario["be_net_at_stop"] = result.worst_case_net_pnl_usdt
     summarized = []
     for scenario in scenarios:
         ep = episodes[scenario["episode"] - 1]
