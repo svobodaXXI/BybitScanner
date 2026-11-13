@@ -97,15 +97,36 @@ class EventTimeMatchingTests(unittest.TestCase):
         self.assertEqual(len(ex.account.fills), 0)
         self.assertEqual([e.kind for e in ex.events], ["SUBMITTED"])
 
-    def test_missing_book_depth_cannot_create_partial_or_naked_entry(self):
+    def test_missing_book_depth_keeps_limit_pending_and_marks_uncertainty(self):
         ex = venue()
         submit(ex)
-        with self.assertRaisesRegex(ValueError, "depth"):
-            ex.on_historical_book(book(
-                M + 10, bid="99", ask="99.9", ask_size="0.1",
-            ))
+        self.assertIsNone(ex.on_historical_book(book(
+            M + 10, bid="99", ask="99.9", ask_size="0.1",
+        )))
         self.assertIsNotNone(ex.pending)
         self.assertEqual(ex.account.fills, ())
+        self.assertEqual(ex.l2_unproven_entry_depth_count, 1)
+        self.assertIn("DEPTH_UNPROVEN", [e.kind for e in ex.events])
+        filled = ex.on_historical_book(book(
+            M + 20, bid="99", ask="99.9", ask_size="2",
+        ))
+        self.assertIsNotNone(filled)
+        self.assertEqual(filled.price, D("99.9"))
+        self.assertEqual(ex.l2_unproven_entry_depth_count, 1)
+
+    def test_stop_exit_still_fails_closed_on_insufficient_book_depth(self):
+        ex = venue()
+        submit(ex)
+        ex.on_historical_book(book(M + 10, bid="99.9", ask="100"))
+        self.assertEqual(len(ex.account.fills), 1)
+        self.assertIsNotNone(ex.active_protection)
+        ex.on_historical_book(book(
+            M + 20, bid="98.8", ask="99.1", bid_size="0.1",
+        ))
+        with self.assertRaisesRegex(ValueError, "executable depth"):
+            ex.on_historical_trade(print_at(M + 30, "Sell", "98.9"))
+        self.assertIsNotNone(ex.active_protection)
+        self.assertEqual(len(ex.account.fills), 1)
 
     def test_inert_cross_channel_tie_does_not_block_flat_replay(self):
         ex = venue()
