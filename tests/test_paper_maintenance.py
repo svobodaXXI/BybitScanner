@@ -3708,14 +3708,60 @@ def test_editor_update_stable_head_changed_blocks_before_worktree(tmp_path, monk
             return SimpleNamespace(returncode=0, stdout="https://github.com/svobodaXXI/BybitScanner.git")
         if argv[3:] == ["rev-parse", "--verify", "FETCH_HEAD"]:
             return SimpleNamespace(returncode=0, stdout="c" * 40)
+        if argv[3:5] == ["merge-base", "--is-ancestor"]:
+            return SimpleNamespace(returncode=1, stdout="")
         return SimpleNamespace(returncode=0, stdout="")
 
-    with pytest.raises(ValueError, match="stable_head_changed_before_staging"):
+    with pytest.raises(ValueError, match="approved_target_not_on_current_stable"):
         maintenance._prepare_approved_editor_stage(
             target, root=tmp_path, parent=parent, runner=git, trusted_uid=os.geteuid(),
         )
     assert not any(parts[:2] == ["worktree", "add"] for parts in calls)
     assert not (parent / ("bybitscanner-stage-git-" + target)).exists()
+
+
+def test_editor_update_owner_pinned_ancestor_stages_after_stable_moves(
+    tmp_path, monkeypatch,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    old, target, later = "a" * 40, "b" * 40, "c" * 40
+    parent = tmp_path / "stages"
+    parent.mkdir()
+    source = parent / ("bybitscanner-stage-git-" + old[:7])
+    source.mkdir()
+    (source / ".git").write_text("gitdir: protected previous worktree")
+    root = tmp_path / "installed"
+    root.mkdir()
+    monkeypatch.setattr(identity, "verify_release", lambda _root: old)
+    monkeypatch.setattr(identity, "create_manifest",
+                        lambda _path, sha: {"build_sha": sha})
+    calls = []
+
+    def git(argv, **kwargs):
+        args = argv[3:]
+        calls.append(args)
+        if args == ["rev-parse", "--verify", "HEAD"]:
+            return SimpleNamespace(returncode=0, stdout=old)
+        if args == ["remote", "get-url", "origin"]:
+            return SimpleNamespace(
+                returncode=0, stdout="https://github.com/svobodaXXI/BybitScanner.git",
+            )
+        if args == ["rev-parse", "--verify", "FETCH_HEAD"]:
+            return SimpleNamespace(returncode=0, stdout=later)
+        if args == ["merge-base", "--is-ancestor", target, later]:
+            return SimpleNamespace(returncode=0, stdout="")
+        if args[:2] == ["worktree", "add"]:
+            Path(args[-2]).mkdir()
+        return SimpleNamespace(returncode=0, stdout="")
+
+    result = maintenance._prepare_approved_editor_stage(
+        target, root=root, parent=parent, runner=git, trusted_uid=os.geteuid(),
+    )
+    assert result == parent / ("bybitscanner-stage-git-" + target)
+    assert ["merge-base", "--is-ancestor", target, later] in calls
+    assert ["worktree", "add", "--detach", str(result), target] in calls
 
 
 def test_editor_update_existing_target_never_prepares_stage(tmp_path, monkeypatch):
