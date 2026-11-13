@@ -25,6 +25,7 @@ from robot_entry_flow_evidence import (
 )
 from research.simulator_v2.cache import _checksum, _rows
 from research.simulator_v2.historical_orderbook import iter_pinned_orderbook
+from research.simulator_v2.l2_episode_report import episode_rows
 from research.simulator_v2.history import HistoryChunk, MINUTE_MS
 from research.simulator_v2.report import ReplayReport, run_verified_chunks
 from research.simulator_v2.session import VirtualReplaySession
@@ -64,6 +65,7 @@ class WedgeBacktestResult:
     l2_source_sha256: str | None = None
     l2_unproven_entry_depth_count: int = 0
     l2_deferred_stop_count: int = 0
+    l2_episodes: tuple[dict[str, object], ...] = ()
     impulse_signals: int = 0
     impulse_risk_rejections: int = 0
     namespace: str = "SIMULATION"
@@ -93,6 +95,7 @@ class WedgeBacktestResult:
             **({"l2_source_sha256": self.l2_source_sha256,
                  "l2_unproven_entry_depth_count": self.l2_unproven_entry_depth_count,
                  "l2_deferred_stop_count": self.l2_deferred_stop_count,
+                 "l2_episodes": list(self.l2_episodes),
                  "execution_certainty": (
                      "CONDITIONAL_L2_DEPTH_OR_DEFERRED_STOP"
                      if self.l2_unproven_entry_depth_count or self.l2_deferred_stop_count
@@ -379,6 +382,10 @@ def run_verified_impulse_chunks(
         pending_protection=session.exchange.active_protection is not None,
         l2_unproven_entry_depth_count=session.exchange.l2_unproven_entry_depth_count,
         l2_deferred_stop_count=session.exchange.l2_deferred_stop_count,
+        l2_episodes=(
+            episode_rows(session.account.fills, session.exchange.events)
+            if session.exchange.execution_mode == "HISTORICAL_L2" else ()
+        ),
         paper_flow_gate_enabled=True,
         paper_flow_rejected_retests=rejected,
         paper_flow_permitted_retests=permitted,
