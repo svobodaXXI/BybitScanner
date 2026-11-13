@@ -4284,3 +4284,186 @@ def test_monolith_stop_only_ready_receipt_does_not_trust_unknown_result(
     assert "prior_outcome_unproven" in maintenance._stop_exact_installed_paper_once(
         sha, env_file=None, trusted_uid=os.geteuid(),
     )
+
+
+@pytest.fixture
+def unsealed_paused_case(monkeypatch, tmp_path):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+
+    installed = tmp_path / "installed"
+    stage = tmp_path / "stage"
+    journal = tmp_path / "transactions"
+    for directory in (installed, stage, journal):
+        directory.mkdir(mode=0o700)
+    old, prior, target = "b" * 40, "c" * 40, "a" * 40
+    marker = journal / (".stop-invoked-" + prior)
+    marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    marker.chmod(0o600)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a, **_kw: old)
+    return installed, stage, journal, old, prior, target, marker
+
+
+def test_legacy_unsealed_paused_flat_continues_only_remaining_phases_once(
+    monkeypatch, unsealed_paused_case,
+):
+    from tools import paper_maintenance as maintenance
+    from tools.stop_robot_runtime import ShutdownResult
+
+    root, stage, journal, old, prior, target, marker = unsealed_paused_case
+    calls = []
+
+    class Owner:
+        def __init__(self, **_kwargs):
+            calls.append("owner")
+        def require_known_natural_drain_ready(self, sha):
+            assert sha == old
+            calls.append("flat-proof")
+        def continue_known_natural_drain(self, sha):
+            assert sha == old
+            calls.append("remaining-phases")
+            return ShutdownResult("all", True, "stopped", runtime_stopped=True)
+
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", Owner)
+    monkeypatch.setattr(maintenance, "_legacy_paused_backend_predates_stop",
+                        lambda original: original == marker)
+    def install(_sha, **kw):
+        calls.append("install")
+        assert kw["stopped_proof"].ok is True
+        assert kw["stopped_proof"].runtime_stopped is True
+        return "INSTALLED_STOPPED: exact"
+
+    options = dict(
+        stage=stage, root=root, transactions=journal, trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: calls.append("preflight"),
+        installer=install,
+        resume=lambda *_a, **_kw: "READY: EDITOR_ONLY",
+    )
+    first = maintenance.deploy_staged_editor_only(target, **options)
+    assert first == "READY: EDITOR_ONLY"
+    assert calls == ["owner", "flat-proof", "preflight", "remaining-phases", "install"]
+    assert maintenance._unsealed_paused_receipt(
+        journal, old, prior, target, "invoked", os.geteuid(),
+    )
+    assert maintenance._unsealed_paused_receipt(
+        journal, old, prior, target, "completed", os.geteuid(),
+    )
+    assert marker.read_bytes() == b"STOP_INVOKED; not install authorization\\n"
+    second = maintenance.deploy_staged_editor_only(target, **options)
+    assert second == "READY: EDITOR_ONLY"
+    assert calls.count("remaining-phases") == 1
+    assert calls.count("install") == 2
+
+
+def test_legacy_unsealed_paused_missing_original_process_continuity_never_preflights(
+    monkeypatch, unsealed_paused_case,
+):
+    from tools import paper_maintenance as maintenance
+
+    root, stage, journal, old, prior, target, marker = unsealed_paused_case
+
+    class Owner:
+        def __init__(self, **_kwargs):
+            pass
+        def require_known_natural_drain_ready(self, sha):
+            assert sha == old
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", Owner)
+    monkeypatch.setattr(maintenance, "_legacy_paused_backend_predates_stop",
+                        lambda _marker: False)
+    result = maintenance.deploy_staged_editor_only(
+        target, stage=stage, root=root, transactions=journal,
+        trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: pytest.fail("no stage without positive proof"),
+        installer=lambda *_a, **_kw: pytest.fail("no deploy"),
+    )
+    assert result.startswith("BLOCKED: prior_STOP_outcome_unproven:")
+    assert not maintenance._unsealed_paused_receipt(
+        journal, old, prior, target, "invoked", os.geteuid(),
+    )
+
+
+def test_legacy_unsealed_paused_unknown_continuation_is_not_replayed(
+    monkeypatch, unsealed_paused_case,
+):
+    from tools import paper_maintenance as maintenance
+
+    root, stage, journal, old, prior, target, marker = unsealed_paused_case
+    calls = []
+
+    class Owner:
+        def __init__(self, **_kwargs):
+            pass
+        def require_known_natural_drain_ready(self, sha):
+            assert sha == old
+        def continue_known_natural_drain(self, sha):
+            calls.append("remaining-phases")
+            raise OSError("lost response")
+
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", Owner)
+    monkeypatch.setattr(maintenance, "_legacy_paused_backend_predates_stop",
+                        lambda _marker: True)
+    options = dict(
+        stage=stage, root=root, transactions=journal, trusted_uid=os.geteuid(),
+        preflight=lambda *_a, **_kw: None,
+        installer=lambda *_a, **_kw: pytest.fail("cannot install"),
+    )
+    first = maintenance.deploy_staged_editor_only(target, **options)
+    assert first.startswith("BLOCKED: legacy_paused_continuation_unknown")
+    assert maintenance._unsealed_paused_receipt(
+        journal, old, prior, target, "invoked", os.geteuid(),
+    )
+    assert not maintenance._unsealed_paused_receipt(
+        journal, old, prior, target, "completed", os.geteuid(),
+    )
+    second = maintenance.deploy_staged_editor_only(target, **options)
+    assert second == "BLOCKED: legacy_paused_continuation_already_invoked; no retry"
+    assert calls == ["remaining-phases"]
+
+
+def test_legacy_unsealed_paused_successor_only_retires_prior_after_editor_ready(
+    monkeypatch, unsealed_paused_case,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_release_identity as identity
+    import json
+
+    root, stage, journal, old, prior, target, marker = unsealed_paused_case
+    (journal / ".release.lock").write_bytes(b"")
+    (journal / ".release.lock").chmod(0o600)
+    maintenance._write_unsealed_paused_receipt(
+        journal, old, prior, target, "invoked", os.geteuid(),
+    )
+    maintenance._write_unsealed_paused_receipt(
+        journal, old, prior, target, "completed", os.geteuid(),
+    )
+    tx = journal / target
+    tx.mkdir(mode=0o700)
+    blobs = {
+        "terminal/runtime/paper_http_server.py": "d" * 40,
+        "tools/vps_release_identity.py": "d" * 40,
+    }
+    for name, sha in (("old.json", old), ("target.json", target)):
+        (tx / name).write_text(json.dumps({"build_sha": sha, "blobs": blobs}))
+    (tx / "units.json").write_text("{}")
+    monkeypatch.setattr(maintenance, "REPO", root)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a, **_kw: target)
+    assert maintenance._unsealed_paused_successor_proven(
+        journal, prior, root=root, uid=os.geteuid(), target=target,
+        require_ready=False,
+    )
+    assert not maintenance._unsealed_paused_successor_proven(
+        journal, prior, root=root, uid=os.geteuid(),
+        require_ready=True,
+    )
+    assert not maintenance._proven_prior_exceptional_completion(
+        journal, prior, root=root, uid=os.geteuid(),
+    )
+    maintenance._complete_stop_intent(journal, target, uid=os.geteuid())
+    assert maintenance._unsealed_paused_successor_proven(
+        journal, prior, root=root, uid=os.geteuid(),
+        require_ready=True,
+    )
+    assert maintenance._proven_prior_exceptional_completion(
+        journal, prior, root=root, uid=os.geteuid(),
+    )
+    assert marker.read_bytes() == b"STOP_INVOKED; not install authorization\\n"
