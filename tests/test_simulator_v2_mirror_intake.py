@@ -397,6 +397,9 @@ class NativeMirrorSimulatorIntakeTests(unittest.TestCase):
             checked = robot._preview_native_mirror_admission(state, entry_id)
             self.assertEqual(checked["decision"], "ATTACHED", checked)
             self.assertEqual(checked["reason"], "within_campaign_budget")
+            # The aggregate review must get risk from the native Robot,
+            # not a guessed stop distance or a constant per-signal allowance.
+            self.assertGreater(D(checked["worst_case_usdt"]), D("0"))
             self.assertEqual(robot._source_candidate_ids, [])
             self.assertEqual(session.exchange.robot_limits, ())
             self.assertFalse(robot._store.load_robot_candidates_by_status(
