@@ -18,7 +18,19 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.head_ref == 'research/wedge-partial-be-github-20261113'
     runs-on: ubuntu-latest
     timeout-minutes: 22
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - segment: nov07-10
+            first_day: "2026-11-07"
+            days: "4"
+          - segment: nov12
+            first_day: "2026-11-12"
+            days: "1"
     env:
+      WEDGE_AB_START_DAY: ${{ matrix.first_day }}
+      WEDGE_AB_DAYS: ${{ matrix.days }}
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +47,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: icnt-wedge-partial-ab-20261107-20261112
+          name: icnt-wedge-partial-ab-${{ matrix.segment }}
           path: wedge_ab_result.json
           if-no-files-found: warn
           retention-days: 7
