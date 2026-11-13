@@ -29,6 +29,7 @@ from research.simulator_v2.l2_episode_report import episode_rows
 from research.simulator_v2.history import HistoryChunk, MINUTE_MS
 from research.simulator_v2.report import ReplayReport, run_verified_chunks
 from research.simulator_v2.session import VirtualReplaySession
+from research.simulator_v2.virtual_exchange import L2PartialTakePolicy
 from research.simulator_v2.taker_flow_archive import pinned_taker_minutes
 from research.simulator_v2.oi_history import load_oi_csv
 from research.simulator_v2.trade_range import (
@@ -65,6 +66,9 @@ class WedgeBacktestResult:
     l2_source_sha256: str | None = None
     l2_unproven_entry_depth_count: int = 0
     l2_deferred_stop_count: int = 0
+    l2_partial_take_fills: int = 0
+    l2_be_stop_amendments: int = 0
+    l2_partial_depth_unproven_count: int = 0
     l2_episodes: tuple[dict[str, object], ...] = ()
     impulse_signals: int = 0
     impulse_risk_rejections: int = 0
@@ -95,10 +99,15 @@ class WedgeBacktestResult:
             **({"l2_source_sha256": self.l2_source_sha256,
                  "l2_unproven_entry_depth_count": self.l2_unproven_entry_depth_count,
                  "l2_deferred_stop_count": self.l2_deferred_stop_count,
+                 "l2_partial_take_fills": self.l2_partial_take_fills,
+                 "l2_be_stop_amendments": self.l2_be_stop_amendments,
+                 "l2_partial_depth_unproven_count": self.l2_partial_depth_unproven_count,
                  "l2_episodes": list(self.l2_episodes),
                  "execution_certainty": (
                      "CONDITIONAL_L2_DEPTH_OR_DEFERRED_STOP"
-                     if self.l2_unproven_entry_depth_count or self.l2_deferred_stop_count
+                     if (self.l2_unproven_entry_depth_count or self.l2_deferred_stop_count
+                         or self.l2_partial_take_fills or self.l2_be_stop_amendments
+                         or self.l2_partial_depth_unproven_count)
                      else "CONDITIONAL_MODEL_NO_REAL_FILL_PROOF"
                  )}
                if self.l2_source_sha256 is not None else {}),
@@ -382,6 +391,9 @@ def run_verified_impulse_chunks(
         pending_protection=session.exchange.active_protection is not None,
         l2_unproven_entry_depth_count=session.exchange.l2_unproven_entry_depth_count,
         l2_deferred_stop_count=session.exchange.l2_deferred_stop_count,
+        l2_partial_take_fills=session.exchange.l2_partial_take_fills,
+        l2_be_stop_amendments=session.exchange.l2_be_stop_amendments,
+        l2_partial_depth_unproven_count=session.exchange.l2_partial_depth_unproven_count,
         l2_episodes=(
             episode_rows(session.account.fills, session.exchange.events, impulse_plans)
             if session.exchange.execution_mode == "HISTORICAL_L2" else ()
@@ -415,6 +427,7 @@ def run_cached_wedge_trade_range(
     l2_archive_path: Path | None = None,
     l2_archive_sha256: str | None = None,
     l2_depth: int = 50,
+    l2_partial_take_policy: L2PartialTakePolicy | None = None,
 ) -> WedgeBacktestResult:
     """Offline Bybit public-trade M1 with an exact inclusive minute cutoff.
 
@@ -438,6 +451,8 @@ def run_cached_wedge_trade_range(
         raise ValueError("L2 requires pinned book and taker trade tapes in impulse mode")
     if not l2_mode and l2_archive_sha256 is not None:
         raise ValueError("L2 SHA without explicit historical L2 archive")
+    if l2_partial_take_policy is not None and (not l2_mode or not impulse_mode):
+        raise ValueError("partial TAKE/BE research requires original impulse HISTORICAL_L2")
     if l2_mode and capture_replay:
         # WedgeVisualReplay currently records only M1-stage events, not the
         # new intraminute L2 execution journal. Do not publish false footage.
@@ -487,6 +502,7 @@ def run_cached_wedge_trade_range(
         wedge_robot_config=None if impulse_mode else robot_config,
         wedge_risk_settings=None if impulse_mode else risk_settings,
         execution_mode="HISTORICAL_L2" if l2_mode else "OHLC_M1",
+        l2_partial_take_policy=l2_partial_take_policy,
     )
     impulse_plans: dict[str, ImpulseProtectedPlan] = {}
     recorder = WedgeVisualReplay(
