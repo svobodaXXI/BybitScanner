@@ -52,7 +52,7 @@ def wedge_snapshot(level=110.0):
     line_low = {"slope": 0.0, "intercept": level}
     line_high = {"slope": 0.0, "intercept": level + 20}
     return {
-        "pattern": "Falling Wedge", "symbol": SYMBOL, "timeframe": "5", "scanner_formation_id": "f-mirror",
+        "pattern": "Rising Wedge", "symbol": SYMBOL, "timeframe": "5", "scanner_formation_id": "f-mirror",
         "robot_geometry": {"robot_coordinate_timeframe": "1", "upper_line": line_high, "lower_line": line_low},
         "scanner_geometry_cursor": build_scanner_geometry_cursor_anchor(
             geometry_index=0, source_candle_time_ms=WEDGE_AS_OF, timeframe="1"),
@@ -460,7 +460,7 @@ class MirrorBoxCycleTests(unittest.TestCase):
         self.assertEqual(again["campaign_id"], first["campaign_id"])
         self.candles.add(100, 101, 99, 100)
         later = mirror.find_active_campaign(policy, [wedge], symbol=SYMBOL, direction="LONG", now_ms=self.candles.now + 1)
-        self.assertEqual(self.candles.calls, calls + 2)                         # one short call per boundary
+        self.assertEqual(self.candles.calls, calls + 1)                         # only authorized lower line
         self.assertEqual(later["state"]["cursor_close_time_ms"], self.candles.now)
 
     def test_a_finished_campaign_is_never_replayed_again(self):
@@ -474,7 +474,7 @@ class MirrorBoxCycleTests(unittest.TestCase):
         self.candles.add(100, 101, 99, 100)
         self.assertIsNone(mirror.find_active_campaign(policy, [wedge], symbol=SYMBOL, direction="LONG",
                                                       now_ms=self.candles.now + 1))
-        self.assertEqual(self.candles.calls, calls + 1)                         # only the still-waiting upper line
+        self.assertEqual(self.candles.calls, calls)                             # finished lower never replays; upper revoked
 
     def test_boundary_not_beyond_the_box_take_never_attaches(self):
         self.add_wedge(level=98.0)                                             # line below the Box TAKE 99.2

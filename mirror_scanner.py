@@ -3,7 +3,8 @@
 One Scanner pass, per symbol and timeframe, on the snapshot the Scanner already
 fetched (its newest, possibly open candle excluded):
 
-    pattern boundaries of this snapshot (Wedge / Triangle geometry, HORN, Ikigai Box, L-shape)
+    owner-approved pattern boundaries (realization side of Wedge / Triangle,
+    L-shape) and independent confirmed swing levels; HORN/Box never originate MIRROR
   + confirmed swing zones (``mirror_levels.swing``)
   -> one deduplicated ``LevelRegistry`` per symbol/timeframe (repeated scans and
      several sources of one real level reconcile into the first registered level)
@@ -178,10 +179,8 @@ def collect_levels(symbol: str, timeframe: str, candles, *, wedge_result=None,
             {"parent_pattern": pattern,
              "parent_formation_id": wedge_result.get("scanner_formation_id")})
 
-    if isinstance(horn_observation, Mapping):
-        out += _with_parent(levels_from_horn_event(horn_observation),
-                            {"parent_pattern": "Broadening",
-                             "parent_formation_id": horn_observation.get("identity")})
+    # HORN/Broadening has a separate trading strategy, never a MIRROR origin.
+    # Keep horn_observation in the caller interface for backwards compatibility.
 
     try:
         formation = (l_shape_observation or {}).get("formation")
@@ -198,21 +197,11 @@ def collect_levels(symbol: str, timeframe: str, candles, *, wedge_result=None,
     except Exception as error:
         print(f"{symbol:<15} {timeframe}m MIRROR L-shape source skipped: {type(error).__name__}")
 
-    try:
-        from geometry.ikigai_box import detect_ikigai_box
-        box = detect_ikigai_box(closed) if (box_source_enabled() if box_source is None else box_source) else None
-        if box is not None:
-            out += _with_parent(
-                levels_from_ikigai_box(symbol=symbol, timeframe=timeframe, formation=box,
-                                       candle_times_ms=closed_times),
-                {"parent_pattern": "IKIGAI_BOX",
-                 "parent_formation_id": f"ikigai_box:{box.direction}:"
-                                        f"{closed_times[int(box.box_start_index)]}"})
-    except Exception as error:
-        print(f"{symbol:<15} {timeframe}m MIRROR Box source skipped: {type(error).__name__}")
-
+    # Box may confirm an existing MIRROR campaign but neither box edge is a
+    # MIRROR origin. Do not run its detector for level collection.
     out += list(swing_levels(closed_rows(closed, timeframe), symbol=symbol, timeframe=timeframe))
-    return out
+    from mirror_levels.levels import mirror_level_allowed
+    return [level for level in out if mirror_level_allowed(level)]
 
 
 def _source_entry(level: MirrorLevel) -> dict[str, Any]:
@@ -387,6 +376,7 @@ def _entry_terms(level: MirrorLevel, record: Mapping[str, Any], candle: Mapping[
         "potential_percent": str(abs(target - reference) / reference * 100),
         "reward_risk": str(rr),
         "level_id": level.level_id, "level_timeframe": level.timeframe, "level_source": level.source,
+        "level_side": level.side, "level_breakout_direction": breakout["direction"],
         "level_pattern": level.pattern, "level_breakout_close_ms": int(breakout["close_time_ms"]),
         "confirmation": {"kind": confirmation_kind, "timeframe": timeframe,
                          **{key: candle[key] for key in ("open_time_ms", "close_time_ms", "open", "high", "low",
@@ -409,6 +399,11 @@ def _standalone_confirmations(level: MirrorLevel, record: dict[str, Any], frames
             or record.get("status") != STATUS_UNTESTED):
         return []
     breakout = record["naked_retest"]["breakout"]
+    # This native helper is also reused by the local Simulator. Never allow a
+    # legacy wrong-side candidate to become a confirmation there.
+    from mirror_levels.levels import mirror_breakout_allowed
+    if not mirror_breakout_allowed(level, breakout):
+        return []
     direction = breakout["campaign_direction"]
     price = level.boundary.price_at(int(breakout["close_time_ms"]))
     cursors = record.setdefault("entry_cursors", {})
@@ -533,15 +528,20 @@ def _advance(level: MirrorLevel, record: dict[str, Any], rows, *, atr_at, gaps, 
 
 def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn_observation=None,
                           l_shape_observation=None, fine_candles=None, box_source: bool | None = None,
-                          root=None, now_ms: int | None = None) -> dict[str, Any] | None:
+                          root=None, now_ms: int | None = None,
+                          handoff: bool = True) -> dict[str, Any] | None:
     """Advance the durable MIRROR state of one symbol/timeframe by this Scanner snapshot.
 
     ``fine_candles``: closed 1m candles of the same pass, used only to settle an
     ambiguous 5m retest contact. Returns a summary with the notifications that
     are now pending (``send_mirror_notifications`` delivers them).
+    ``handoff=False`` is for private offline SIMULATION: never create a
+    production Robot candidate or use the process-wide PAPER enable flag.
     """
 
     symbol, timeframe = str(symbol), str(timeframe).strip()
+    if type(handoff) is not bool:
+        raise TypeError("explicit MIRROR handoff boolean required")
     if not _SAFE_SYMBOL.fullmatch(symbol):
         raise ValueError("invalid MIRROR symbol")
     step = timeframe_ms(timeframe)
@@ -566,12 +566,15 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
     records: dict[str, dict[str, Any]] = state["records"]
     journal: list[dict[str, Any]] = []
     base = {"symbol": symbol, "timeframe": timeframe}
+    from mirror_levels.levels import mirror_level_allowed, mirror_breakout_allowed
 
     for level in sorted(collect_levels(symbol, timeframe, candles, wedge_result=wedge_result,
                                        horn_observation=horn_observation,
                                        l_shape_observation=l_shape_observation,
                                        box_source=box_source),
                         key=lambda x: (x.confirmed_at_ms, x.level_id)):
+        if not mirror_level_allowed(level):
+            continue
         # Do not alias a newly confirmed replacement to an invalidated
         # historical ray merely because both prices fit the ATR merge zone.
         excluded = any(
@@ -601,6 +604,25 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
             journal.append({"event": "mirror_level_source_merged", **base, "level_id": primary.level_id,
                             "merged_level_id": level.level_id, "source": level.source,
                             "pattern": level.pattern})
+
+    # Historic persisted levels are untrusted after a source-policy change.
+    # Keep their evidence but remove candidate eligibility and unsent alerts.
+    for level_id, record in records.items():
+        level = registry.levels.get(level_id)
+        breakout = (record.get("naked_retest") or {}).get("breakout")
+        if level is not None and (not mirror_level_allowed(level)
+                                  or (breakout is not None and not mirror_breakout_allowed(level, breakout))):
+            record.update(candidate=False, robot=None, lifecycle=LIFECYCLE_REJECTED,
+                          rejection="mirror_source_policy_revoked")
+            state["pending_notifications"][:] = [
+                item for item in state["pending_notifications"] if item.get("level_id") != level_id
+            ]
+    for entry in state.get("standalone_entries") or ():
+        if entry.get("handoff") == "PENDING":
+            entry_level_id = str(entry.get("entry_id") or "").split("@", 1)[0]
+            level = registry.levels.get(entry_level_id)
+            if level is None or not mirror_level_allowed(level):
+                entry["handoff"] = "OFF"
 
     gaps = detect_fvgs(rows, symbol=symbol, timeframe=timeframe)
     pending = state["pending_notifications"]
@@ -664,7 +686,9 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
                                 "superseded_by_level_id": replacement.level_id,
                                 "superseding_extremum": pivot})
             elif status == STATUS_UNTESTED:
-                rejection = _judge_breakout(level, record, latest_close, step) \
+                rejection = (None if mirror_breakout_allowed(level, record["naked_retest"]["breakout"])
+                             else "mirror_breakout_direction_revoked") \
+                    or _judge_breakout(level, record, latest_close, step) \
                     or _duplicate_breakout(level_id, level, record, records, registry)
                 record["candidate"] = rejection is None
                 record["rejection"] = rejection
@@ -726,7 +750,7 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
     save_state(state, root)                      # durable before anything leaves the process
     for item in journal:
         append_event(item, root)
-    handed = _hand_off_standalone_entries(symbol, state, root)
+    handed = _hand_off_standalone_entries(symbol, state, root) if handoff else []
     for item in journal:
         if item["event"] in ("mirror_breakout", "mirror_first_retest") and item.get("candidate"):
             print(f"{symbol:<15} {timeframe}m MIRROR {item['event']} level={item['level_id']} "
@@ -739,6 +763,66 @@ def observe_mirror_levels(symbol, candles, *, timeframe, wedge_result=None, horn
             "candidates": sum(1 for r in records.values() if r.get("candidate")),
             "events": [item["event"] for item in journal], "pending": list(pending),
             "standalone_handoffs": handed}
+
+
+def verified_standalone_snapshot(
+    symbol: str, state: Mapping[str, Any], entry: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Pure native Scanner authorization gate shared with local SIMULATION.
+
+    No handoff, network, order or persistence. Source and frozen confirmation
+    must still be the exact live, untested, owner-approved MIRROR campaign.
+    """
+    from mirror_levels.levels import (
+        LevelRegistry, mirror_breakout_allowed, mirror_frozen_entry_allowed,
+        mirror_level_allowed,
+    )
+
+    if (not isinstance(state, Mapping) or state.get("symbol") != symbol
+            or state.get("state_version") != STATE_VERSION
+            or not isinstance(entry, Mapping)
+            or not isinstance(state.get("records"), Mapping)):
+        return None
+    registry = LevelRegistry.from_dict(state["registry"])
+    level_id = str(entry.get("entry_id") or "").split("@", 1)[0]
+    level = registry.levels.get(level_id)
+    record = state["records"].get(level_id)
+    terms = entry.get("terms")
+    breakout = ((record.get("naked_retest") or {}).get("breakout")
+                if isinstance(record, Mapping) else None)
+    confirmation = terms.get("confirmation") if isinstance(terms, Mapping) else None
+    authorized = (
+        mirror_level_allowed(level)
+        and level.symbol == symbol
+        and isinstance(record, Mapping)
+        and record.get("candidate") is True
+        and record.get("lifecycle") == LIFECYCLE_TRACKING
+        and record.get("status") == STATUS_UNTESTED
+        and record.get("rejection") is None
+        and mirror_breakout_allowed(level, breakout)
+        and isinstance(terms, Mapping)
+        and mirror_frozen_entry_allowed(terms)
+        and isinstance(confirmation, Mapping)
+        and type(confirmation.get("close_time_ms")) is int
+        and terms.get("level_id") == level_id
+        and terms.get("level_timeframe") == level.timeframe
+        and terms.get("level_source") == level.source
+        and terms.get("level_pattern") == level.pattern
+        and terms.get("level_side") == level.side
+        and terms.get("level_breakout_direction") == breakout.get("direction")
+        and terms.get("level_breakout_close_ms") == breakout.get("close_time_ms")
+        and terms.get("direction") == breakout.get("campaign_direction")
+        and terms.get("source_timeframe") in CONFIRMATION_TIMEFRAMES
+        and entry.get("entry_id") == (
+            f"{level_id}@{terms.get('source_timeframe')}@{confirmation['close_time_ms']}"
+        )
+    )
+    if not authorized:
+        return None
+    # This is source validity, not trading permission. Production still
+    # checks is_robot_executable_signal (owner flag) before handoff; the local
+    # SIMULATION adapter has its own explicit isolated risk-profile selection.
+    return _standalone_snapshot(symbol, terms)
 
 
 def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) -> list[str]:
@@ -754,8 +838,12 @@ def _hand_off_standalone_entries(symbol: str, state: dict[str, Any], root=None) 
     for entry in state.get("standalone_entries") or ():
         if entry.get("handoff") != "PENDING":
             continue
-        snapshot = _standalone_snapshot(symbol, entry["terms"])
-        timeframe = entry["terms"]["source_timeframe"]
+        snapshot = verified_standalone_snapshot(symbol, state, entry)
+        if snapshot is None:
+            entry["handoff"] = "OFF"
+            save_state(state, root)
+            continue
+        timeframe = snapshot["mirror_entry"]["source_timeframe"]
         if not is_robot_executable_signal(snapshot, timeframe=timeframe):
             entry["handoff"] = "OFF"
             save_state(state, root)
@@ -981,6 +1069,10 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
         return 0
     if not state["pending_notifications"]:
         return 0
+    # Production load_state validates the registry; older isolated delivery
+    # tests substitute a minimal stub state without one.
+    registry = LevelRegistry.from_dict(state["registry"]) if "registry" in state else None
+    from mirror_levels.levels import mirror_breakout_allowed
     rows = {row["level_id"]: row for row in project_state(state)}
     sent = 0
     for item in list(state["pending_notifications"]):
@@ -996,8 +1088,16 @@ def send_mirror_notifications(symbol: str, timeframe: str, *, test_mode: bool = 
             _MIRROR_SEND_NEXT_AT = time.monotonic() + _MIRROR_SEND_MIN_GAP_SEC
         row = rows.get(item["level_id"])
         delivered: bool | str
+        record = state["records"].get(item["level_id"])
+        breakout = ((record.get("naked_retest") or {}).get("breakout")
+                    if isinstance(record, Mapping) else None)
+        level = registry.levels.get(item["level_id"]) if registry is not None else None
         if row is None:
             delivered = "level_missing"
+        elif registry is not None and not mirror_breakout_allowed(level, breakout):
+            # A queued pre-policy chart is not sufficient authority to send
+            # a forbidden MIRROR origin. Retire it without rendering/Telegram.
+            delivered = "mirror_source_policy_revoked"
         elif not getattr(config, "TELEGRAM_ENABLED", False):
             delivered = "telegram_disabled"
         else:
