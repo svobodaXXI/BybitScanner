@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { type ReplayDocument, type ReplayEvent } from "./replayModel";
 import { streamWedge } from "./streamWedge";
 import {
@@ -25,7 +25,7 @@ export function RunSetupPanel({
   symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
   onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
   onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange,
-  onEpisodeLookup,
+  onEpisodeLookup, importedCoordinates, importControls,
 }: {
   symbol: string;
   onArchiveSymbol: (archiveSymbol: string) => boolean;
@@ -41,6 +41,8 @@ export function RunSetupPanel({
   publicHistoryLoading: boolean;
   onStrategySelectionChange: (selection: RunSelection) => void;
   onEpisodeLookup: (episodeId: string) => Promise<void>;
+  importedCoordinates: { symbol: string; start_utc: string; end_utc_inclusive: string; revision: number } | null;
+  importControls: ReactNode;
 }) {
   const [selection, setSelection] = useState<RunSelection>(onlyWedges);
   const [start, setStart] = useState(INITIAL_START);
@@ -108,6 +110,20 @@ export function RunSetupPanel({
     return () => controller.abort();
   }, [onArchiveSymbol]);
 
+  // Owner-imported JSON is the source of the coordinate fields, not a new
+  // SIMULATION request. Never invoke Apply here: that would clear L2 fills.
+  useEffect(() => {
+    if (!importedCoordinates) return;
+    datesEdited.current = true;
+    setStart(importedCoordinates.start_utc);
+    setEnd(importedCoordinates.end_utc_inclusive);
+    setCoordinateText(importedCoordinates.symbol + " | " +
+      importedCoordinates.start_utc + " | " + importedCoordinates.end_utc_inclusive);
+    setPreset(null);
+    setPeriodError("");
+    setCoordinateError("");
+  }, [importedCoordinates]);
+
   const runWedges = useCallback(async (request: WedgeRunRequest, seq: number) => {
     if (running.current) return; // No duplicate Scanner/Robot computation.
     running.current = true;
@@ -166,7 +182,7 @@ export function RunSetupPanel({
     try {
       const updatedEnd = adjustInclusiveWindow(start, end, increment, direction);
       datesEdited.current = true;
-      setPreset(null); setCoordinateText("");
+      setPreset(null); setCoordinateText(symbol + " | " + start + " | " + updatedEnd);
       setEnd(updatedEnd);
       setPeriodError("");
     } catch (error) {
@@ -284,7 +300,10 @@ export function RunSetupPanel({
               <button type="button" onClick={() => void pasteCoordinates()}>Вставить из буфера</button>
               <button type="button" onClick={() => applyCoordinates(coordinateText)}>Применить</button>
             </div>
-            {coordinateError && <p role="alert" className="replay-run-error">{coordinateError}</p>}
+            <div className="replay-run-import-controls" role="group" aria-label="Импорт и отчёты прогона">
+              {importControls}
+            </div>
+            {coordinateError && <p role="alert" className="replay-run-error">{coordinateError}</p>
           </div>
           <label>Начало · дата и время
             <input aria-label="Начало прогона UTC" type="datetime-local" step={60}
@@ -324,7 +343,7 @@ export function RunSetupPanel({
           <div className="replay-run-public-history">
             <button type="button" disabled={publicHistoryLoading || !parsed.window}
               onClick={() => onPublicHistoryRequest(symbol, start, end, selection.selected)}>
-              {publicHistoryLoading ? "Загружаю историю…" : "Загрузить Bybit (без сделок)"}
+              {publicHistoryLoading ? "Подгружаю период…" : "Подгрузить период с Bybit"}
             </button>
           </div>
         </fieldset>
