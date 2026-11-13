@@ -800,6 +800,58 @@ class FullShutdownTests(unittest.TestCase):
             "backend:shutdown", "telegram:shutdown",
         ])
 
+    def test_known_drain_continuation_only_completes_remaining_frozen_phases(self):
+        runtime = FakeRuntime(robot=PAUSED)
+        runtime.scanner_mode = "SCANNER_STOPPED"
+        runtime.robot_ownership_open = False
+        result = runtime.orchestrator().continue_known_natural_drain()
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "robot:stop", "backend:shutdown", "telegram:shutdown",
+        ])
+        self.assertEqual(runtime.robot, STOPPED)
+
+    def test_known_drain_continuation_refuses_open_or_changed_ownership(self):
+        for state, ownership_open, protected in (
+            (PAUSED, True, False),
+            (READY, False, False),
+            (STOPPED, False, False),
+            (PAUSED, False, True),
+        ):
+            with self.subTest(state=state, open=ownership_open, protected=protected):
+                runtime = FakeRuntime(robot=state)
+                runtime.scanner_mode = "SCANNER_STOPPED"
+                runtime.robot_ownership_open = ownership_open
+                if protected:
+                    runtime.protection.update({
+                        "covered_symbols": ["XUSDT"],
+                        "coverage_roles": {"XUSDT": "EXPOSURE"},
+                    })
+                result = runtime.orchestrator().continue_known_natural_drain()
+                self.assertFalse(result.ok)
+                self.assertFalse(result.runtime_stopped)
+                self.assertEqual(runtime.calls, [])
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_known_drain_continuation_requires_frozen_ingress_and_identity(self):
+        for drift in ("scanner", "autopilot", "backend"):
+            with self.subTest(drift=drift):
+                runtime = FakeRuntime(robot=PAUSED)
+                runtime.scanner_mode = "SCANNER_STOPPED"
+                runtime.robot_ownership_open = False
+                if drift == "scanner":
+                    runtime.scanner_mode = "SCANNER_RUNNING"
+                elif drift == "autopilot":
+                    runtime.autopilot_mode = "PAPER_AUTO"
+                else:
+                    runtime.backend_health["database_identity"] = "foreign"
+                result = runtime.orchestrator().continue_known_natural_drain()
+                self.assertFalse(result.ok)
+                self.assertFalse(result.runtime_stopped)
+                self.assertEqual(runtime.calls, [])
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
     def test_paused_open_trade_timeout_never_repauses_or_stops_backend(self):
         runtime = FakeRuntime(robot=PAUSED)
         runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected(
