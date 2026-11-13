@@ -1124,6 +1124,9 @@ def deploy_staged_editor_only(
                         )
                 elif (len(pending) == 1
                         and pending[0].name != ".stop-invoked-" + target
+                        and len(pending[0].name.removeprefix(".stop-invoked-")) == 40
+                        and all(c in "0123456789abcdef" for c in
+                                pending[0].name.removeprefix(".stop-invoked-"))
                         and isinstance(current, str) and len(current) == 40
                         and not confirmed_stop_only
                         and not dual_orphan_handoff
