@@ -21,7 +21,10 @@ Robot owns entry eligibility and price policy; exchange owns fill assumptions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
+
+from geometry.naked_retest import CAMPAIGN_LONG, CAMPAIGN_SHORT
+from retest_campaign import STOP_NET_BREAK_EVEN, net_break_even_remainder_stop
 
 from research.historical_market_replay import Candle
 from robot_entry_flow_evidence import TakerPrint
@@ -130,6 +133,28 @@ class RobotStopRequest:
 
 
 @dataclass(frozen=True)
+class L2PartialTakePolicy:
+    """Explicit research-only potential threshold; disabled unless supplied."""
+    potential_fraction: Decimal
+    quantity_fraction: Decimal
+    quantity_step: Decimal
+    tick_size: Decimal
+    stop_slippage_fraction: Decimal = Decimal("0.005")
+
+    def __post_init__(self) -> None:
+        for name in ("potential_fraction", "quantity_fraction", "quantity_step",
+                     "tick_size", "stop_slippage_fraction"):
+            value = getattr(self, name)
+            if not isinstance(value, Decimal) or not value.is_finite():
+                raise ValueError(f"invalid L2 partial policy {name}")
+        if (not 0 < self.potential_fraction < 1
+                or not 0 < self.quantity_fraction < 1
+                or self.quantity_step <= 0 or self.tick_size <= 0
+                or not 0 <= self.stop_slippage_fraction < 1):
+            raise ValueError("invalid bounded L2 partial TAKE/BE terms")
+
+
+@dataclass(frozen=True)
 class OrderEvent:
     order_id: str
     kind: str  # SUBMITTED, AMENDED, CANCELLED, FILLED
@@ -153,6 +178,7 @@ class VirtualExchange:
         taker_fee_rate: Decimal = Decimal("0.0006"),
         maker_fee_rate: Decimal = Decimal("0.0002"),
         execution_mode: str = "OHLC_M1",
+        l2_partial_take_policy: L2PartialTakePolicy | None = None,
     ) -> None:
         if execution_mode not in ("OHLC_M1", "HISTORICAL_L2"):
             raise ValueError("explicit OHLC_M1 or HISTORICAL_L2 virtual execution required")
@@ -169,7 +195,19 @@ class VirtualExchange:
                 or not maker_fee_rate.is_finite()
                 or maker_fee_rate < 0 or maker_fee_rate >= 1):
             raise ValueError("invalid virtual maker fee rate")
+        if l2_partial_take_policy is not None and (
+            execution_mode != "HISTORICAL_L2"
+            or not isinstance(l2_partial_take_policy, L2PartialTakePolicy)
+        ):
+            raise ValueError("partial TAKE/BE is SIMULATION HISTORICAL_L2 only")
         self.account = account
+        self._l2_partial_policy = l2_partial_take_policy
+        self._l2_partial_entry: VirtualFill | None = None
+        self._l2_partial_qty: Decimal | None = None
+        self._l2_partial_target: Decimal | None = None
+        self._l2_partial_fill: VirtualFill | None = None
+        self._l2_be_stop: Decimal | None = None
+        self._l2_partial_underdepth_ids: set[str] = set()
         self.taker_fee_rate = taker_fee_rate
         self.maker_fee_rate = maker_fee_rate
         self._last_close_ms: int | None = None
@@ -225,6 +263,18 @@ class VirtualExchange:
     @property
     def l2_stop_pending(self) -> bool:
         return self._l2_pending_stop is not None
+
+    @property
+    def l2_partial_take_fills(self) -> int:
+        return sum(event.kind == "PARTIAL_TAKE_FILLED" for event in self._events)
+
+    @property
+    def l2_be_stop_amendments(self) -> int:
+        return sum(event.kind == "STOP_AMENDED_BE" for event in self._events)
+
+    @property
+    def l2_partial_depth_unproven_count(self) -> int:
+        return len(self._l2_partial_underdepth_ids)
 
     @property
     def last_minute_fills(self) -> tuple[VirtualFill, ...]:
@@ -595,6 +645,16 @@ class VirtualExchange:
         self._require_l2_event(stamp, kind="BOOK")
         if self._l2_pending_stop is not None:
             raise ValueError(f"same-ms L2/taker deferred STOP chronology unproven at {stamp}")
+        if self._active_protection is not None and self._l2_partial_policy is not None:
+            if self._l2_partial_fill is not None and self._l2_be_stop is None:
+                raise ValueError(f"same-ms L2/taker potential BE amendment chronology unproven at {stamp}")
+            if self._l2_partial_fill is None and any(
+                (book.best_bid[0] >= self._l2_partial_target
+                 if self._active_protection.entry.side == "BUY"
+                 else book.best_ask[0] <= self._l2_partial_target)
+                for book in books
+            ):
+                raise ValueError(f"same-ms L2/taker partial TAKE chronology unproven at {stamp}")
         if self._robot_limits or self._robot_markets or self._robot_stop is not None:
             raise ValueError(f"same-ms L2/taker native Robot chronology unproven at {stamp}")
         exposure = self.account.snapshot(
@@ -605,8 +665,9 @@ class VirtualExchange:
         if self._active_protection is not None:
             plan = self._active_protection
             long = plan.entry.side == "BUY"
+            stop_price = self._l2_current_stop(plan)
             if any(
-                (t.price <= plan.stop_price if long else t.price >= plan.stop_price)
+                (t.price <= stop_price if long else t.price >= stop_price)
                 or ((t.side == "Buy" and t.price > plan.take_price) if long
                     else (t.side == "Sell" and t.price < plan.take_price))
                 for t in trades
@@ -636,6 +697,113 @@ class VirtualExchange:
         for book in books:
             if self.on_historical_book(book) is not None:
                 raise ValueError("inert mixed-millisecond preflight invariant broken")
+
+    def _l2_remaining_quantity(self, plan: ProtectedLimitRequest) -> Decimal:
+        partial = self._l2_partial_fill
+        return plan.entry.quantity if partial is None else plan.entry.quantity - partial.quantity
+
+    def _l2_current_stop(self, plan: ProtectedLimitRequest) -> Decimal:
+        return self._l2_be_stop if self._l2_be_stop is not None else plan.stop_price
+
+    def _l2_arm_partial(self, entry: VirtualFill, plan: ProtectedLimitRequest) -> None:
+        policy = self._l2_partial_policy
+        if policy is None:
+            return
+        if self._l2_partial_entry is not None:
+            raise ValueError("historical partial management already owns a position")
+        quantity = (plan.entry.quantity * policy.quantity_fraction
+                    // policy.quantity_step) * policy.quantity_step
+        if not 0 < quantity < plan.entry.quantity:
+            raise ValueError("25 percent partial quantity does not fit instrument step")
+        is_long = plan.entry.side == "BUY"
+        target = entry.price + (plan.take_price - entry.price) * policy.potential_fraction
+        rounding = ROUND_CEILING if is_long else ROUND_FLOOR
+        target = (target / policy.tick_size).to_integral_value(
+            rounding=rounding,
+        ) * policy.tick_size
+        if not ((entry.price < target < plan.take_price) if is_long
+                else (plan.take_price < target < entry.price)):
+            raise ValueError("partial threshold must remain inside original target")
+        self._l2_partial_entry = entry
+        self._l2_partial_qty = quantity
+        self._l2_partial_target = target
+        self._l2_partial_fill = None
+        self._l2_be_stop = None
+
+    def _l2_clear_partial(self) -> None:
+        self._l2_partial_entry = None
+        self._l2_partial_qty = None
+        self._l2_partial_target = None
+        self._l2_partial_fill = None
+        self._l2_be_stop = None
+
+    def _l2_manage_partial_book(self, book: BookState) -> VirtualFill | None:
+        """Marketable reduce-only virtual LIMIT; BE never before confirmed partial."""
+        entry = self._l2_partial_entry
+        plan = self._active_protection
+        policy = self._l2_partial_policy
+        if entry is None or plan is None or policy is None:
+            return None
+        if book.available_at_ms <= entry.virtual_time_ms:
+            return None
+        is_long = plan.entry.side == "BUY"
+        if self._l2_partial_fill is None:
+            target = self._l2_partial_target
+            eligible = book.best_bid[0] >= target if is_long else book.best_ask[0] <= target
+            if not eligible:
+                return None
+            # Strict full-depth requirement, not maker queue priority.
+            candidate = self._l2_sweep(
+                side="SELL" if is_long else "BUY",
+                quantity=self._l2_partial_qty,
+                limit_price=target, allow_unfilled_limit=True,
+            )
+            if candidate is None:
+                if plan.entry.order_id not in self._l2_partial_underdepth_ids:
+                    self._l2_partial_underdepth_ids.add(plan.entry.order_id)
+                    self._events.append(OrderEvent(
+                        plan.entry.order_id, "PARTIAL_DEPTH_UNPROVEN",
+                        book.available_at_ms, order_type="LIMIT",
+                    ))
+                return None
+            # Take no price improvement: LIMIT threshold, conservative taker fees.
+            partial = self._l2_receipt(
+                plan.entry.order_id, event_at_ms=book.available_at_ms,
+                side="SELL" if is_long else "BUY",
+                quantity=self._l2_partial_qty, price=target,
+                fee_rate=self.taker_fee_rate, suffix="_partial_fill",
+            )
+            self.account.append(partial)
+            self._l2_partial_fill = partial
+            self._events.append(OrderEvent(
+                plan.entry.order_id, "PARTIAL_TAKE_FILLED",
+                book.available_at_ms, order_type="LIMIT",
+            ))
+            return partial
+
+        if self._l2_be_stop is None:
+            mark = book.best_bid[0] if is_long else book.best_ask[0]
+            partial = self._l2_partial_fill
+            proposed = net_break_even_remainder_stop(
+                campaign_direction=CAMPAIGN_LONG if is_long else CAMPAIGN_SHORT,
+                partial_take_confirmed=True, protection_preserved=True,
+                current_stop_price=plan.stop_price, mark_price=mark,
+                entry_qty=plan.entry.quantity, entry_avg_price=entry.price,
+                entry_fees_usdt=entry.fee,
+                partial_qty=partial.quantity, partial_avg_price=partial.price,
+                partial_fees_usdt=partial.fee,
+                funding_usdt=Decimal(0),
+                remainder_exit_fee_rate=self.taker_fee_rate,
+                slippage_price=mark * policy.stop_slippage_fraction,
+                tick_size=policy.tick_size,
+            )
+            if proposed.decision == STOP_NET_BREAK_EVEN:
+                self._l2_be_stop = proposed.stop_price
+                self._events.append(OrderEvent(
+                    plan.entry.order_id, "STOP_AMENDED_BE",
+                    book.available_at_ms, order_type="STOP",
+                ))
+        return None
 
     def _l2_hold_triggered_stop(self, trade: TakerPrint) -> None:
         """Preserve the original first trigger and worst subsequent print."""
@@ -679,13 +847,14 @@ class VirtualExchange:
         receipt = self._l2_receipt(
             plan.entry.order_id, event_at_ms=book.available_at_ms,
             side="SELL" if is_long else "BUY",
-            quantity=plan.entry.quantity,
+            quantity=self._l2_remaining_quantity(plan),
             price=price, fee_rate=self.taker_fee_rate,
             suffix="_stop_fill",
         )
         self.account.append(receipt)
         self._active_protection = None
         self._l2_pending_stop = None
+        self._l2_clear_partial()
         self._events.append(OrderEvent(
             plan.entry.order_id, "STOP_FILLED",
             book.available_at_ms, order_type="STOP",
@@ -794,6 +963,7 @@ class VirtualExchange:
                     if next_pending_protection is None:
                         raise ValueError("unprotected L2 LIMIT entry is forbidden")
                     self.account.append(receipt)
+                    self._l2_arm_partial(receipt, next_pending_protection)
                     next_protection = next_pending_protection
                     next_pending = None
                     next_pending_protection = None
@@ -808,6 +978,8 @@ class VirtualExchange:
                 receipt.fill_id.removesuffix("_fill"), "FILLED",
                 book.available_at_ms, order_type="LIMIT",
             ))
+        elif self._active_protection is not None:
+            receipt = self._l2_manage_partial_book(book)
         return receipt
 
     def on_historical_trade_batch(
@@ -847,9 +1019,10 @@ class VirtualExchange:
         if self._active_protection is not None:
             plan = self._active_protection
             is_long = plan.entry.side == "BUY"
+            stop_price = self._l2_current_stop(plan)
             stops = [
                 t for t in trades if
-                (t.price <= plan.stop_price if is_long else t.price >= plan.stop_price)
+                (t.price <= stop_price if is_long else t.price >= stop_price)
             ]
             takes = [
                 t for t in trades if (
@@ -925,7 +1098,8 @@ class VirtualExchange:
         if next_protection is not None:
             plan = next_protection
             is_long = plan.entry.side == "BUY"
-            stop_hit = trade.price <= plan.stop_price if is_long else trade.price >= plan.stop_price
+            stop_price = self._l2_current_stop(plan)
+            stop_hit = trade.price <= stop_price if is_long else trade.price >= stop_price
             take_through = (
                 (trade.side == "Buy" and trade.price > plan.take_price) if is_long
                 else (trade.side == "Sell" and trade.price < plan.take_price)
@@ -948,7 +1122,7 @@ class VirtualExchange:
                     return None
                 side = "SELL" if is_long else "BUY"
                 price = self._l2_sweep(
-                    side=side, quantity=plan.entry.quantity, limit_price=None,
+                    side=side, quantity=self._l2_remaining_quantity(plan), limit_price=None,
                 )
                 fee_rate = self.taker_fee_rate
                 reason = "STOP"
@@ -962,7 +1136,7 @@ class VirtualExchange:
             if price is not None:
                 receipt = self._l2_receipt(
                     plan.entry.order_id, event_at_ms=trade.event_ms,
-                    side=side, quantity=plan.entry.quantity, price=price,
+                    side=side, quantity=self._l2_remaining_quantity(plan), price=price,
                     fee_rate=fee_rate, suffix="_" + reason.lower() + "_fill",
                 )
                 event = OrderEvent(
@@ -970,6 +1144,7 @@ class VirtualExchange:
                     order_type=reason,
                 )
                 self.account.append(receipt)
+                self._l2_clear_partial()
                 next_protection = None
         elif next_pending is not None:
             request, submitted_at_ms = next_pending
@@ -992,6 +1167,7 @@ class VirtualExchange:
                     request.order_id, "FILLED", trade.event_ms, order_type="LIMIT",
                 )
                 self.account.append(receipt)
+                self._l2_arm_partial(receipt, next_pending_protection)
                 next_protection = next_pending_protection
                 next_pending_protection = None
                 next_pending = None
