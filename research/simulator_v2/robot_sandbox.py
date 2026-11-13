@@ -396,6 +396,9 @@ class ConnectedSimulationRobot:
         # each candidate never confers Robot ownership or order permission.
         self._mirror_confirmation_events: list[tuple[int, tuple[str, ...]]] = []
         self._mirror_admission_reviews: list[dict[str, object]] = []
+        # Research-only risk headroom supplied for this isolated account.
+        # It is not a reservation, and never authorizes multiple owners.
+        self._mirror_local_risk_limit_usdt = mirror_risk_limit_usdt
         self._completed_market_ids: set[str] = set()
         self._temporary = TemporaryDirectory(prefix="bybitscanner-simulation-box-")
         self._store_path = Path(self._temporary.name) / "simulation.sqlite3"
@@ -607,6 +610,47 @@ class ConnectedSimulationRobot:
         """Independent read-only Robot checks, including shared-owner deferrals."""
         return tuple(self._mirror_admission_reviews)
 
+    @staticmethod
+    def _mirror_group_risk_review(
+        group: list[dict[str, object]], account_limit_usdt: Decimal | None,
+    ) -> dict[str, str]:
+        """All-or-none *read-only* exposure check for independent MIRROR levels.
+
+        Never rank competing entries, reserve capital, or authorize multiple
+        same-symbol Robot owners. The local profile supplies the isolated
+        account's risk headroom; actual execution still needs native ownership.
+        """
+        attached = [row for row in group if row.get("native_decision") == "ATTACHED"]
+        if not attached:
+            return {"decision": "NOT_APPLICABLE", "reason": "no_native_attached_candidates"}
+        if (not isinstance(account_limit_usdt, Decimal)
+                or not account_limit_usdt.is_finite() or account_limit_usdt <= 0):
+            return {"decision": "DEFERRED", "reason": "account_risk_headroom_unavailable"}
+        total = Decimal(0)
+        identities: set[str] = set()
+        for row in attached:
+            identity = row.get("entry_id")
+            if not isinstance(identity, str) or not identity or identity in identities:
+                return {"decision": "DEFERRED", "reason": "candidate_identity_ambiguous"}
+            identities.add(identity)
+            raw_loss = row.get("native_worst_case_usdt")
+            if not isinstance(raw_loss, str):
+                return {"decision": "DEFERRED", "reason": "candidate_worst_case_unavailable"}
+            try:
+                worst_case = Decimal(raw_loss)
+            except (ValueError, ArithmeticError):
+                return {"decision": "DEFERRED", "reason": "candidate_worst_case_invalid"}
+            if not worst_case.is_finite() or worst_case <= 0:
+                return {"decision": "DEFERRED", "reason": "candidate_worst_case_invalid"}
+            total += worst_case
+        return {
+            "decision": "WITHIN_LIMIT" if total <= account_limit_usdt else "DEFERRED",
+            "reason": ("aggregate_risk_within_headroom" if total <= account_limit_usdt
+                       else "aggregate_risk_exceeds_headroom"),
+            "total_worst_case_usdt": str(total),
+            "account_limit_usdt": str(account_limit_usdt),
+        }
+
     def _preview_native_mirror_admission(
         self, source_state: dict, entry_id: str,
     ) -> dict[str, str]:
@@ -672,8 +716,15 @@ class ConnectedSimulationRobot:
                 "ATTACHED", "BLOCKED", "DEFERRED",
             ):
                 return {"decision": "DEFERRED", "reason": "native_mirror_gate_unknown"}
-            return {"decision": result["decision"],
-                    "reason": str(result.get("reason") or "native_mirror_gate")}
+            review = {"decision": result["decision"],
+                      "reason": str(result.get("reason") or "native_mirror_gate")}
+            # Risk is calculated by the original Robot (STOP, fees, slippage).
+            # Missing evidence remains missing: never invent a risk number.
+            if result["decision"] == "ATTACHED" and isinstance(
+                result.get("worst_case_usdt"), str,
+            ):
+                review["worst_case_usdt"] = result["worst_case_usdt"]
+            return review
         except Exception as error:
             # A missing historical prefix or unreliable native gate must not
             # become a provisional approval or silently omit this candidate.
@@ -1043,6 +1094,7 @@ class ConnectedSimulationRobot:
                         "entry_id": entry_id,
                         "native_decision": native["decision"],
                         "native_reason": native["reason"],
+                        "native_worst_case_usdt": native.get("worst_case_usdt"),
                         "owner_gate": (
                             "AVAILABLE" if owner_available else "OWNER_BUSY"
                         ),
@@ -1055,8 +1107,20 @@ class ConnectedSimulationRobot:
                             if not owner_available else "NATIVE_ROBOT_REQUIRED"
                         ),
                     })
+                risk_review = self._mirror_group_risk_review(
+                    group, self._mirror_local_risk_limit_usdt,
+                )
+                for row in group:
+                    row["aggregate_risk_gate"] = (
+                        risk_review["decision"] if row["native_decision"] == "ATTACHED"
+                        else "NOT_APPLICABLE"
+                    )
+                    if (row["native_decision"] == "ATTACHED"
+                            and risk_review["decision"] != "WITHIN_LIMIT"):
+                        row["execution_gate"] = "SHARED_RISK_UNPROVEN_OR_EXCEEDED"
                 self._mirror_admission_reviews.append({
                     "closed_m1_time_ms": self.virtual_clock_ms(),
+                    "account_risk": risk_review,
                     "candidates": group,
                 })
             if len(discovered) > 1:
