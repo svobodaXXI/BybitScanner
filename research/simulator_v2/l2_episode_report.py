@@ -6,6 +6,9 @@ no price inference, exchange-order assertion, ledger mutation, or IO.
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Mapping
+
+from robot_entry_flow_evidence import ImpulseProtectedPlan
 
 from research.simulator_v2.virtual_account import VirtualFill
 from research.simulator_v2.virtual_exchange import OrderEvent
@@ -29,6 +32,7 @@ def _receipt_kind(fill_id: str) -> tuple[str, str]:
 
 def episode_rows(
     fills: tuple[VirtualFill, ...], events: tuple[OrderEvent, ...],
+    plans: Mapping[str, ImpulseProtectedPlan] | None = None,
 ) -> tuple[dict[str, object], ...]:
     """Return virtual episodes; never label model fills as exchange executions.
 
@@ -36,8 +40,9 @@ def episode_rows(
     receipt prices/fees. An open episode has net PnL=None (no fabricated exit).
     Flags are per originating order ID, not a guessed market timestamp range.
     """
-    if not isinstance(fills, tuple) or not isinstance(events, tuple):
-        raise TypeError("immutable virtual receipts and events are required")
+    if (not isinstance(fills, tuple) or not isinstance(events, tuple)
+            or (plans is not None and not isinstance(plans, Mapping))):
+        raise TypeError("immutable virtual receipts, events and optional plans required")
     if len(fills) > 20_000 or len(events) > 50_000:
         raise ValueError("bounded virtual episode audit required")
     annotations: dict[str, set[str]] = {}
@@ -74,6 +79,14 @@ def episode_rows(
     rows: list[dict[str, object]] = []
     for order_id in ordered:
         entry = entries[order_id]
+        plan = plans.get(order_id) if plans is not None else None
+        if plan is not None and (
+            not isinstance(plan, ImpulseProtectedPlan)
+            or plan.quantity != entry.quantity
+            or (plan.signal.direction == "LONG") != (entry.side == "BUY")
+            or plan.signal.known_at_ms > entry.virtual_time_ms
+        ):
+            raise ValueError("virtual episode mismatches original shared Robot plan")
         outcome = exits.get(order_id)
         flags = sorted(annotations.get(order_id, ()))
         reason = outcome[1] if outcome is not None else "OPEN"
@@ -105,6 +118,12 @@ def episode_rows(
             "entry_price": str(entry.price),
             "entry_fee": str(entry.fee),
             "quantity": str(entry.quantity),
+            "signal_ms": plan.signal.known_at_ms if plan is not None else None,
+            "planned_stop_price": str(plan.stop_price) if plan is not None else None,
+            "planned_take_price": str(plan.take_price) if plan is not None else None,
+            "signal_structural_extreme": (
+                str(plan.signal.structural_extreme) if plan is not None else None
+            ),
             "exit_reason": reason,
             "exit_ms": exit_ms,
             "exit_price": exit_price,
