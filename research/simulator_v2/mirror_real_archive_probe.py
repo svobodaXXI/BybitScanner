@@ -319,6 +319,16 @@ def run_real_trade_day(
             "history_price_max": str(max(c.high for c in candles)),
             "native_mirror_levels": len(state["registry"].get("levels") or {}),
             "native_confirmations": len(signal_rows),
+            # Every native confirmation counts separately for every eligible
+            # level even when the closed candle is shared. Trade execution
+            # may still be deferred by independent Robot/account gates.
+            "scanner_eligible_confirmations": sum(
+                len(ids) for _, ids in robot.mirror_confirmation_events
+            ),
+            "scanner_eligible_confirmation_events": [
+                {"closed_m1_time_ms": ts, "candidate_entry_ids": list(ids)}
+                for ts, ids in robot.mirror_confirmation_events
+            ],
             "native_robot_candidates": len(candidates),
             "experiment_one_filled_trade_per_campaign": one_filled_trade_per_campaign,
             "experiment_suppressed_confirmations": len(robot.mirror_experiment_suppressed),
@@ -379,7 +389,8 @@ def compare_campaign_fill_limit(
     )
     for key in ("archive_sha256", "archive_sha256_next_day",
                 "derived_m1_sha256", "closed_m1",
-                "native_mirror_levels", "native_confirmations"):
+                "native_mirror_levels", "native_confirmations",
+                "scanner_eligible_confirmation_events"):
         if original[key] != restricted[key]:
             raise RuntimeError(f"comparison diverged before native Robot execution: {key}")
     if original["experiment_suppressed_confirmations"] != 0:
@@ -422,6 +433,7 @@ def compare_campaign_fill_limit(
         "delta_net_pnl_usdt": str(restricted_pnl - original_pnl),
         "suppressed_confirmations": restricted["experiment_suppressed_confirmations"],
         "research_skipped_ambiguous_minutes": original["research_skipped_ambiguous_minutes"],
+        "per_level_confirmations_counted": original["scanner_eligible_confirmations"],
         "note": (
             "Pure SIMULATION hypothesis, risk/fees hypothetical; two "
             "independent native Scanner/Robot replays over identical verified M1."
