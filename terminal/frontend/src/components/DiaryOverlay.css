@@ -482,6 +482,9 @@
   border-color: #859bb1;
 }
 .diary-ticker-search {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+  gap: 0.35rem;
   padding: 0.4rem 0.55rem;
   border-bottom: 1px solid #27313b;
 }
