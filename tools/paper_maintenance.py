@@ -2044,12 +2044,28 @@ def _prepare_approved_editor_stage(
     if stage.is_symlink():
         raise ValueError("staged_checkout_symlink")
     if not stage.exists():
-        source = next((path for path in (
+        previous_paths = (
             parent / ("bybitscanner-stage-git-" + current),
             parent / ("bybitscanner-stage-git-" + current[:7]),
-        ) if path.is_dir() and not path.is_symlink()), None)
+        )
+        # The transport checkout is only a Git source for fetching exact
+        # approved stable, not a proof of the installed runtime. Requiring
+        # its HEAD to equal the installed SHA falsely blocks a safe update
+        # when the prior protected worktree was rotated or not retained.
+        # Never choose a user-owned checkout or mutate an existing stage.
+        protected_sources = [
+            path for path in sorted(parent.glob("bybitscanner-stage-git-*"))
+            if path not in previous_paths and path.is_dir() and not path.is_symlink()
+            and path.stat().st_uid == trusted_uid
+            and not path.stat().st_mode & 0o022
+            and len(path.name.removeprefix("bybitscanner-stage-git-")) == 40
+            and all(ch in "0123456789abcdef"
+                    for ch in path.name.removeprefix("bybitscanner-stage-git-"))
+        ]
+        source = next((path for path in (*previous_paths, *protected_sources)
+                       if path.is_dir() and not path.is_symlink()), None)
         if source is None:
-            raise ValueError("verified_previous_stage_missing")
+            raise ValueError("verified_staging_source_missing")
         git_file = source / ".git"
         for path in (source, git_file):
             if (path.is_symlink() or not path.exists()
@@ -2070,8 +2086,10 @@ def _prepare_approved_editor_stage(
                 raise ValueError("staging_git_command_failed")
             return result.stdout.strip()
 
-        if git("rev-parse", "--verify", "HEAD") != current:
-            raise ValueError("previous_staging_commit_mismatch")
+        expected_checkout = (current if source in previous_paths
+                             else source.name.removeprefix("bybitscanner-stage-git-"))
+        if git("rev-parse", "--verify", "HEAD") != expected_checkout:
+            raise ValueError("staging_source_commit_mismatch")
         origin = git("remote", "get-url", "origin")
         if origin not in (
             "https://github.com/svobodaXXI/BybitScanner",
