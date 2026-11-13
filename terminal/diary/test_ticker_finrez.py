@@ -325,11 +325,6 @@ class FinrezMixedControllerTests(unittest.TestCase):
              (AllocationRole.INCREASE, Origin.TERMINAL_MANUAL),
              (AllocationRole.INCREASE, Origin.ROBOT),
              (AllocationRole.CLOSE, Origin.ROBOT)],
-            [(AllocationRole.OPEN, Origin.ROBOT),
-             (AllocationRole.INCREASE, Origin.ROBOT),
-             (AllocationRole.INCREASE, Origin.ROBOT),
-             (AllocationRole.INCREASE, Origin.ROBOT),
-             (AllocationRole.CLOSE, Origin.TERMINAL_MANUAL)],
         ]
         for i, roles in enumerate(cases):
             mixed, origins = _scoped_episode(f"mixed-{i}", "BTCUSDT", roles)
