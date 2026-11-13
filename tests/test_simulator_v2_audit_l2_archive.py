@@ -62,6 +62,45 @@ class OrderbookArchiveAuditTests(unittest.TestCase):
             self.assertEqual(report["sequence_anomaly_counts"]["nonincreasing_delta_u"], 1)
             self.assertEqual(report["sequence_anomaly_counts"]["nonincreasing_delta_seq"], 1)
 
+    def test_positive_delta_u_gap_is_detected_even_with_monotone_seq(self):
+        with TemporaryDirectory() as td:
+            file = Path(td) / "l2.data.zip"
+            checksum = archive(file, [
+                message(DAY_BEGIN_MS + 1490),
+                message(DAY_BEGIN_MS + 1600, typ="delta", u=11, seq=21),
+                message(DAY_BEGIN_MS + 1700, typ="delta", u=13, seq=22),
+                message(DAY_END_MS + 1489, u=1, seq=25),
+            ])
+            report = inspect(file, checksum, expected_records=4)
+            self.assertEqual(report["structural_result"], "PROVISIONAL")
+            self.assertEqual(
+                report["sequence_anomaly_counts"]["nonconsecutive_delta_u"], 1
+            )
+            self.assertEqual(
+                report["delta_update_id_gap_samples"][0]["missing_update_ids"], 1
+            )
+            self.assertEqual(
+                report["delta_update_id_continuity"], "DISCONTINUITY_DETECTED"
+            )
+
+    def test_exactly_incrementing_update_ids_are_consistent(self):
+        with TemporaryDirectory() as td:
+            file = Path(td) / "l2.data.zip"
+            checksum = archive(file, [
+                message(DAY_BEGIN_MS + 1490),
+                message(DAY_BEGIN_MS + 1500, typ="delta", u=11, seq=21),
+                message(DAY_BEGIN_MS + 1600, typ="delta", u=12, seq=27),
+                message(DAY_END_MS + 1489, u=12, seq=27),
+            ])
+            report = inspect(file, checksum, expected_records=4)
+            self.assertEqual(report["structural_result"], "METADATA_CONSISTENT")
+            self.assertEqual(
+                report["delta_update_id_continuity"],
+                "NO_GAP_DETECTED_WITHIN_CAPTURE"
+            )
+            self.assertEqual(report["first_to_last_update_id_difference"], 2)
+            self.assertEqual(report["snapshot_update_id_transitions"][0]["snapshot_u"], 12)
+
     def test_checksum_and_market_identity_fail_closed(self):
         with TemporaryDirectory() as td:
             file = Path(td) / "l2.data.zip"
