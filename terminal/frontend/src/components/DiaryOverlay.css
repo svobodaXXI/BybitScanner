@@ -453,6 +453,18 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.diary-pattern-label {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.diary-pattern-label small {
+  color: #8996a3;
+  font-size: 0.69rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .diary-finrez-row span {
   white-space: nowrap;
   text-align: right;
