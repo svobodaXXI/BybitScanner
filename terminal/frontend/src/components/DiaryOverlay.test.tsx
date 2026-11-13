@@ -1605,3 +1605,106 @@ describe("shared statistics trade action standard", () => {
     expect(screen.getByText(/PnL -1,8162 USDT/)).toHaveAttribute("title", "-1.81622186");
   });
 });
+
+describe("Verified Wedge lineage in Statistics", () => {
+  const episodeId = "te_" + "a".repeat(24);
+  const verified = {
+    trade_episode_id: episodeId,
+    source_revision: 3, candidate_id: "candidate-42",
+    pattern: "Falling Wedge", source_timeframe: "M5",
+    provenance: "DURABLE_ROBOT_TRADE_METADATA_NOT_ORIGINAL_GEOMETRY",
+    evidence_scope: "EXACT_WEDGE_CANDIDATE_ENTRY_ORDER_EXECUTION_EPISODE",
+    status: "PROVEN",
+  };
+  const deal = {
+    trade_episode_id: episodeId, symbol: "BTCUSDT", side: "LONG",
+    opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+    pnl_usdt: "-2.5", execution_count: 2, cohort: "ROBOT",
+    replay_evidence: "EPISODE_INDEX_ONLY",
+    setup_context: { status: "NO_EXACT_EPISODE_LINK" },
+    verified_signal: verified,
+  };
+  const mockReport = (deals: unknown[], owner = "ROBOT") => ({
+    ...finrezResponse, owner, closed_episodes: deals,
+  });
+
+  it("groups proven Wedge without D2, filters its deals and shows distinct provenance", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) =>
+      new Response(JSON.stringify({
+        ...mockReport([deal]),
+        period: new URL(url, "http://localhost").searchParams.get("period") ?? "DAY",
+      }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:wedge" initialSection="PATTERNS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
+    expect(region).toHaveTextContent("Паттерн подтверждён для 1 из 1");
+    expect(region).toHaveTextContent("Wedge: 1");
+    expect(region).toHaveTextContent("Робот · сделок: 1 · прибыльных: 0 · убыточных: 1");
+    expect(screen.getByTitle("-2.5 USDT")).toHaveTextContent("-2,50 USDT");
+    fireEvent.click(screen.getByRole("button", { name: "Показать все сделки по паттерну Falling Wedge" }));
+    expect(await screen.findByText("Паттерн: Falling Wedge")).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("Falling Wedge");
+    fireEvent.click(screen.getByRole("button", { name: /BTCUSDT/ }));
+    expect(screen.getByText("candidate-42")).toBeInTheDocument();
+    expect(screen.getByText(/Не D2, без исходной геометрии/)).toBeInTheDocument();
+    expect(screen.queryByText("Версия стратегии")).not.toBeInTheDocument();
+  });
+
+  it("rejects mismatched or unproven Wedge metadata, preserving actual PnL", async () => {
+    const changes = [
+      { source_revision: 4 }, { trade_episode_id: "te_" + "b".repeat(24) },
+      { status: "UNPROVEN" }, { provenance: "GUESSED_FROM_TIME" },
+      { evidence_scope: "MATCHED_BY_SYMBOL" }, { candidate_id: "" },
+      { pattern: "Triangle Compression" },
+    ];
+    const deals = changes.map((change, i) => ({
+      ...deal, trade_episode_id: "te_" + (i + 1).toString(16).repeat(24),
+      symbol: ["ADAUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT", "DOGEUSDT", "LTCUSDT", "BNBUSDT"][i],
+      verified_signal: { ...verified, ...change },
+    }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(
+      mockReport(deals),
+    ), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:wedge-unproven" initialSection="PATTERNS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
+    expect(region).toHaveTextContent("Паттерн подтверждён для 0 из 7");
+    expect(region).not.toHaveTextContent("-2,50 USDT");
+    fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
+    expect(await screen.findAllByText("Паттерн: не установлен")).toHaveLength(7);
+    expect(screen.getAllByText("PnL -2,50 USDT")).toHaveLength(7);
+  });
+
+  it("does not allow a Robot verified_signal in a manual report", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(
+      mockReport([{ ...deal, cohort: "MANUAL" }], "MANUAL"),
+    ), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:manual-wedge" initialSection="PATTERNS"
+      statisticsScope={{ accountId: "paper", owner: "MANUAL" }} onClose={() => {}} />);
+    expect(await screen.findByText(/Паттерн подтверждён для 0 из 1/)).toBeInTheDocument();
+  });
+
+  it("keeps an existing exact D2 setup authoritative when Wedge metadata also exists", async () => {
+    const d2 = {
+      ...deal, opening_controller: "ROBOT",
+      setup_context: {
+        status: "EXACT_D2_LINK", source: "TRADING_DIARY_D2",
+        consistency: "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER",
+        decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+        setup: {
+          setup_id: "d2-setup", symbol: "BTCUSDT", direction: "LONG",
+          origin: "ROBOT", pattern: "Triangle Compression", timeframe: "5",
+          strategy_version: "v1", created_at_ms: 1_793_000_000_000,
+        },
+      },
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(
+      mockReport([d2]),
+    ), { status: 200 })));
+    render(<DiaryOverlay accountKey="paper:d2-priority" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText("Паттерн: Triangle Compression")).toBeInTheDocument();
+    expect(screen.queryByText("Паттерн: Falling Wedge")).not.toBeInTheDocument();
+  });
+});
