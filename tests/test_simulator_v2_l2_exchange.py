@@ -14,6 +14,7 @@ from research.simulator_v2.session import VirtualReplaySession
 from research.simulator_v2.virtual_account import VirtualAccount
 from research.simulator_v2.virtual_exchange import (
     LimitRequest, MarketRequest, ProtectedLimitRequest, VirtualExchange,
+    L2PartialTakePolicy,
 )
 
 
@@ -54,6 +55,140 @@ def submit(ex: VirtualExchange, *, side="BUY", entry="100", stop="99", take="103
         LimitRequest("order1", side, D("1"), D(entry)), D(stop), D(take),
     )
     ex.submit_protected_limit(request, submitted_at_ms=M)
+
+
+def partial_venue(*, slip="0.005") -> VirtualExchange:
+    account = VirtualAccount(
+        simulation_run_id="l2_partial_replay", symbol="ICNTUSDT",
+        initial_balance=D("1000"),
+    )
+    ex = VirtualExchange(
+        account=account, execution_mode="HISTORICAL_L2",
+        l2_partial_take_policy=L2PartialTakePolicy(
+            potential_fraction=D("0.5"), quantity_fraction=D("0.25"),
+            quantity_step=D("1"), tick_size=D("0.1"),
+            stop_slippage_fraction=D(slip),
+        ),
+    )
+    ex.on_closed_minute(minute(0))
+    return ex
+
+
+def submit_100(ex, *, side="BUY", stop="99", take="104"):
+    ex.submit_protected_limit(
+        ProtectedLimitRequest(
+            LimitRequest("partial_order", side, D("100"), D("100")),
+            D(stop), D(take),
+        ),
+        submitted_at_ms=M,
+    )
+
+
+class L2PartialTakeAndBERegressionTests(unittest.TestCase):
+    def test_long_partial_then_next_book_be_then_stop_remainder(self):
+        ex = partial_venue()
+        submit_100(ex)
+        entry = ex.on_historical_book(book(
+            M + 10, bid="99.9", ask="100", ask_size="200",
+        ))
+        self.assertEqual(entry.quantity, D("100"))
+        self.assertEqual(entry.fee, D("6"))
+        partial = ex.on_historical_book(book(
+            M + 20, bid="102.1", ask="102.2", bid_size="200",
+        ))
+        self.assertEqual(partial.quantity, D("25"))
+        self.assertEqual(partial.price, D("102.0"))
+        self.assertEqual(partial.fee, D("1.53000"))
+        self.assertEqual(ex.account.snapshot(
+            as_of_ms=M+20, mark_price=D("102.1"),
+        ).position_quantity, D("75"))
+        self.assertEqual(ex.l2_be_stop_amendments, 0)
+        ex.on_historical_book(book(
+            M + 30, bid="102.5", ask="102.6", bid_size="200",
+        ))
+        self.assertEqual(ex.l2_be_stop_amendments, 1)
+        self.assertGreater(ex._l2_current_stop(ex.active_protection), D("100"))
+        ex.on_historical_book(book(
+            M + 40, bid="100.0", ask="100.2", bid_size="200",
+        ))
+        stop = ex.on_historical_trade(print_at(M + 50, "Sell", "100.0"))
+        self.assertEqual(stop.quantity, D("75"))
+        self.assertEqual(stop.price, D("100.0"))
+        self.assertEqual(ex.account.snapshot(as_of_ms=M+50).position_quantity, 0)
+        self.assertEqual([e.kind for e in ex.events][-3:], [
+            "PARTIAL_TAKE_FILLED", "STOP_AMENDED_BE", "STOP_FILLED",
+        ])
+        self.assertEqual(ex.account.snapshot(as_of_ms=M+50).realized_net_pnl,
+                         D("37.9700000"))
+
+    def test_short_partial_and_be_stop_only_tightens(self):
+        ex = partial_venue(slip="0")
+        submit_100(ex, side="SELL", stop="101", take="96")
+        entry = ex.on_historical_book(book(
+            M+10, bid="100", ask="100.1", bid_size="200",
+        ))
+        self.assertEqual(entry.side, "SELL")
+        partial = ex.on_historical_book(book(
+            M+20, bid="97.8", ask="97.9", ask_size="200",
+        ))
+        self.assertEqual(partial.quantity, D("25"))
+        self.assertEqual(partial.side, "BUY")
+        self.assertEqual(partial.price, D("98.0"))
+        ex.on_historical_book(book(
+            M+30, bid="97.4", ask="97.5", ask_size="200",
+        ))
+        self.assertEqual(ex.l2_be_stop_amendments, 1)
+        current = ex._l2_current_stop(ex.active_protection)
+        self.assertLess(current, D("101"))
+        self.assertGreater(current, D("97.5"))
+        close = ex.on_historical_trade(print_at(M+40, "Buy", "100.1"))
+        self.assertEqual(close.quantity, D("75"))
+        self.assertEqual(ex.account.snapshot(as_of_ms=M+40).position_quantity, 0)
+
+    def test_partial_market_book_needs_full_depth_and_stop_stays(self):
+        ex = partial_venue()
+        submit_100(ex)
+        ex.on_historical_book(book(M+10, bid="99", ask="100", ask_size="200"))
+        self.assertIsNone(ex.on_historical_book(book(
+            M+20, bid="102.1", ask="102.2", bid_size="5",
+        )))
+        self.assertEqual(ex.l2_partial_take_fills, 0)
+        self.assertEqual(ex.l2_partial_depth_unproven_count, 1)
+        self.assertEqual(ex.account.snapshot(
+            as_of_ms=M+20, mark_price=D("102.1"),
+        ).position_quantity, D("100"))
+        stopbook = book(M+30, bid="98.9", ask="99.0", bid_size="200")
+        ex.on_historical_book(stopbook)
+        stop = ex.on_historical_trade(print_at(M+40, "Sell", "98.9"))
+        self.assertEqual(stop.quantity, D("100"))
+        self.assertEqual(ex.l2_be_stop_amendments, 0)
+
+    def test_same_ms_partial_book_and_taker_is_fail_closed(self):
+        ex = partial_venue()
+        submit_100(ex)
+        ex.on_historical_book(book(M+10, bid="99", ask="100", ask_size="200"))
+        with self.assertRaisesRegex(ValueError, "partial TAKE chronology"):
+            ex.on_historical_same_ms_inert_bucket(
+                books=(book(M+20, bid="102.1", ask="102.2", bid_size="200"),),
+                trades=(print_at(M+20, "Buy", "101"),),
+            )
+        self.assertEqual(len(ex.account.fills), 1)
+        self.assertEqual(ex.l2_partial_take_fills, 0)
+
+    def test_old_l2_and_ohlc_cannot_silently_enable_partial(self):
+        ex = venue()
+        submit_100(ex)
+        ex.on_historical_book(book(M+10, bid="99", ask="100", ask_size="200"))
+        ex.on_historical_book(book(M+20, bid="102.1", ask="102.2", bid_size="200"))
+        self.assertEqual(len(ex.account.fills), 1)
+        self.assertEqual(ex.l2_partial_take_fills, 0)
+        with self.assertRaisesRegex(ValueError, "HISTORICAL_L2 only"):
+            VirtualExchange(
+                account=ex.account, execution_mode="OHLC_M1",
+                l2_partial_take_policy=L2PartialTakePolicy(
+                    D("0.5"), D("0.25"), D("1"), D("0.1"),
+                ),
+            )
 
 
 class EventTimeMatchingTests(unittest.TestCase):
