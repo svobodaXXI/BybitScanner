@@ -155,6 +155,7 @@ export function ChartPanel({
   snapshotRevision = null,
   barsSha256 = null,
   savedReviewId = null,
+  savedReviewLabel = null,
   savedCorrectedPattern = null,
   savedReviewNote = null,
   onSaveGeometryReview,
@@ -348,7 +349,9 @@ export function ChartPanel({
         return !editable || JSON.stringify(reference.anchors) !== JSON.stringify(editable.anchors);
       });
       const label: GeometryReviewDraft["label"] = geometryChanged ? "GEOMETRY_CORRECTED"
-        : patternChanged ? "PATTERN_CORRECTED" : "CONFIRMED";
+        : patternChanged ? "PATTERN_CORRECTED"
+          : savedReviewLabel === "FALSE_POSITIVE" || savedReviewLabel === "UNCERTAIN"
+            ? savedReviewLabel : "CONFIRMED";
       const draft = buildEditorGeometryReview({
         signalId: signalIdentity, snapshotRevision, barsSha256,
         label, correctedPattern: patternChanged
