@@ -1023,6 +1023,9 @@ class FinrezExactPatternIndexTests(unittest.TestCase):
                                  else requests[1][0])
                 return {
                     "status": "EXACT_D2_LINK",
+                    "source": "TRADING_DIARY_D2",
+                    "consistency": "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER",
+                    "decision_scope": "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
                     "setup": {"created_at_ms": 50 if symbol == "BTCUSDT" else 101},
                 }
 
