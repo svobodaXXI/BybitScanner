@@ -1126,8 +1126,12 @@ export function ReplayPage() {
         setPlaying(false);
         setCursor(0);
         setL2ContextFor(document);
-        setL2Context(expanded.before);
-        setL2After(expanded.after);
+        // Preserve the already verified 24h ADX warmup if the selected
+        // extension begins at the original report rather than before it.
+        setL2Context(expanded.before.length ? expanded.before :
+          l2ContextFor === document ? l2Context : []);
+        setL2After(expanded.after.length ? expanded.after :
+          l2ContextFor === document ? l2After : []);
         setL2ContextStatus("Bybit M5: " + expanded.covered +
           " закрытых свечей · только график. Исторические taker-сделки/L2-стакан " +
           "для добавленных дат НЕ загружены; четыре исходные сделки и P&L неизменны.");
