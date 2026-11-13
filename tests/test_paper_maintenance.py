@@ -4296,6 +4296,8 @@ def unsealed_paused_case(monkeypatch, tmp_path):
     journal = tmp_path / "transactions"
     for directory in (installed, stage, journal):
         directory.mkdir(mode=0o700)
+    (journal / ".release.lock").write_bytes(b"")
+    (journal / ".release.lock").chmod(0o600)
     old, prior, target = "b" * 40, "c" * 40, "a" * 40
     marker = journal / (".stop-invoked-" + prior)
     marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
