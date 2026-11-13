@@ -22,7 +22,7 @@ from research.simulator_v2.wedge_robot_observer import SimWedgeRobotConfig
 from research.simulator_v2.wedge_risk_preflight import SimWedgeRiskSettings
 
 SYMBOL = "ICNTUSDT"
-DAYS = tuple(date(2026, 11, 7) + timedelta(days=i) for i in range(6))
+DAYS = tuple(date(2026, 11, 7) + timedelta(days=i) for i in range(4))
 FEE = D("0.0006")
 TICK = D("0.0001")
 STEP = D("1")
@@ -254,7 +254,8 @@ def study():
     sum_b = sum((D(x["B"]["net"]) for x in comparisons), D(0))
     return {
         "namespace": "SIMULATION", "status": "COMPLETE" if comparisons else "DATA_INSUFFICIENT",
-        "scope": "ICNTUSDT 2026-11-07 through 2026-11-12 UTC completed days",
+        "scope": "ICNTUSDT " + DAYS[0].isoformat() + " through " + DAYS[-1].isoformat() + " UTC completed days", 
+        "uncovered_days": {"2026-11-11": "two missing trade-derived M1; no imputation", "2026-11-12": "separate contiguous window not yet checked"},
         "nov_13": "not included: UTC day incomplete at study design time",
         "source_type": "BYBIT_PUBLIC_TRADES_DERIVED_M1_NOT_OFFICIAL_KLINE",
         "provenance": provenance, "native_scanner_observations": result.scanner_wedge_observations,
