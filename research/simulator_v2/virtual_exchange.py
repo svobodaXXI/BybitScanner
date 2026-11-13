@@ -182,6 +182,7 @@ class VirtualExchange:
         self._l2_book: BookState | None = None
         self._l2_event_at_ms: int | None = None
         self._l2_event_kind: str | None = None
+        self._l2_underdepth_order_ids: set[str] = set()
         self._last_minute_fills: tuple[VirtualFill, ...] = ()
         self._last_minute_order_events: tuple[OrderEvent, ...] = ()
         self._robot_limits: dict[str, tuple[RobotLimitRequest, int]] = {}
@@ -621,8 +622,14 @@ class VirtualExchange:
 
     def _l2_sweep(
         self, *, side: str, quantity: Decimal, limit_price: Decimal | None,
+        allow_unfilled_limit: bool = False,
     ) -> Decimal | None:
-        """Full-size book execution only. No unknown partial fills or depth reuse."""
+        """Full-size-only research model; market STOP remains strictly fail-closed.
+
+        A GTC LIMIT may partially fill in reality. If available depth within
+        its price cannot prove a *full* fill, this virtual model leaves it
+        pending and records uncertainty; it must never invent a partial fill.
+        """
         book = self._l2_book
         if book is None:
             raise ValueError("no historical L2 snapshot for virtual execution")
@@ -643,6 +650,8 @@ class VirtualExchange:
             (side == "BUY" and book.best_ask[0] > limit_price)
             or (side == "SELL" and book.best_bid[0] < limit_price)
         ):
+            return None
+        if allow_unfilled_limit and limit_price is not None:
             return None
         raise ValueError("historical L2 does not prove sufficient executable depth")
 
@@ -682,7 +691,20 @@ class VirtualExchange:
                     price = self._l2_sweep(
                         side=request.side, quantity=request.quantity,
                         limit_price=request.limit_price,
+                        allow_unfilled_limit=True,
                     )
+                    if price is None and (
+                        (request.side == "BUY"
+                         and book.best_ask[0] <= request.limit_price)
+                        or (request.side == "SELL"
+                            and book.best_bid[0] >= request.limit_price)
+                    ):
+                        if request.order_id not in self._l2_underdepth_order_ids:
+                            self._l2_underdepth_order_ids.add(request.order_id)
+                            self._events.append(OrderEvent(
+                                request.order_id, "DEPTH_UNPROVEN",
+                                book.available_at_ms, order_type="LIMIT",
+                            ))
                 finally:
                     self._l2_book = previous
                 if price is not None:
