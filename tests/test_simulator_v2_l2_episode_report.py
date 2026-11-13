@@ -69,6 +69,43 @@ class L2EpisodeReportTests(unittest.TestCase):
         self.assertEqual(rows[0]["exit_reason"], "STOP")
         self.assertEqual(rows[0]["net_pnl_usdt"], "-21.188")
 
+    def test_partial_and_residual_stop_reconcile_exact_fee_net(self):
+        rows = episode_rows((
+            fill("one_fill", 100, "BUY", "100", "0.6"),
+            fill("one_partial_fill", 120, "SELL", "102", "0.306", "2.5"),
+            fill("one_stop_fill", 160, "SELL", "100.1", "0.45045", "7.5"),
+        ), (
+            event("one", "PARTIAL_TAKE_FILLED", 120),
+            event("one", "STOP_AMENDED_BE", 130),
+            event("one", "STOP_FILLED", 160),
+        ))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["partial_quantity"], "2.5")
+        self.assertEqual(rows[0]["partial_price"], "102")
+        self.assertEqual(rows[0]["gross_pnl_usdt"], "5.75")
+        self.assertEqual(rows[0]["net_pnl_usdt"], "4.39355")
+        self.assertEqual(rows[0]["evidence_flags"], [
+            "BE_STOP_AMENDED_AFTER_PARTIAL", "L2_PARTIAL_TAKE_SIMULATED",
+        ])
+
+    def test_partial_requires_event_and_exact_residual(self):
+        fills = (
+            fill("one_fill", 100, "BUY", "100", "0.6"),
+            fill("one_partial_fill", 120, "SELL", "102", "0.306", "2.5"),
+            fill("one_take_fill", 160, "SELL", "103", "0.4635", "7.5"),
+        )
+        with self.assertRaisesRegex(ValueError, "lacks original event"):
+            episode_rows(fills, ())
+        with self.assertRaisesRegex(ValueError, "inconsistent"):
+            episode_rows((
+                fills[0], fills[1],
+                fill("one_take_fill", 160, "SELL", "103", "0.5", "10"),
+            ), (event("one", "PARTIAL_TAKE_FILLED", 120),))
+        with self.assertRaisesRegex(ValueError, "BE mutation"):
+            episode_rows((
+                fills[0], fills[2],
+            ), (event("one", "STOP_AMENDED_BE", 130),))
+
     def test_open_episode_no_invented_exit_or_net_pnl(self):
         rows = episode_rows((fill("one_fill", 100, "BUY", "100", "0.6"),), ())
         self.assertEqual(rows[0]["exit_reason"], "OPEN")
