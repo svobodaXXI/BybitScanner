@@ -863,7 +863,7 @@ describe("Finrez first-screen UI", () => {
       statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
     const region = await screen.findByRole("region", { name: "Паттерны по подтверждённым сделкам" });
     expect(region).toHaveTextContent("Паттерн подтверждён для 4 из 5");
-    expect(region).toHaveTextContent("Робот · 2 сделок · 1 прибыльных · 1 убыточных");
+    expect(region).toHaveTextContent("Робот · сделок: 2 · прибыльных: 1 · убыточных: 1");
     expect(screen.getByTitle("-1.4012345678 USDT")).toHaveTextContent("-1,4012 USDT");
     expect(screen.getByTitle("20.2 USDT")).toHaveTextContent("+20,20 USDT");
     expect(screen.queryByTitle("-999 USDT")).not.toBeInTheDocument();
