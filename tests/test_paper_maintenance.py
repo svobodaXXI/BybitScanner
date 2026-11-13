@@ -4009,6 +4009,23 @@ def test_monolith_one_action_conflicting_flags_are_rejected_before_any_mutation(
     assert result.value.code == 2
 
 
+def _monolith_stop_owner_health(monkeypatch, root, sha, instance="fixed-process"):
+    from tools import paper_maintenance as maintenance
+    from tools.runtime_intent import expected_database_identity
+
+    database_identity = expected_database_identity(root, maintenance._environment(None))
+    owner = {
+        "ok": True, "component": "paper_backend", "mode": "paper",
+        "paper_live_safe": True, "build_sha": sha,
+        "database_identity": database_identity,
+        "process_instance_id": instance,
+    }
+    monkeypatch.setattr(
+        "tools.runtime_intent.http_get",
+        lambda *_a, **_kw: SimpleNamespace(status=200, json=lambda: owner),
+    )
+
+
 def test_monolith_stop_action_blocks_unresolved_previous_release_before_stop(
     monkeypatch, tmp_path,
 ):
@@ -4030,6 +4047,7 @@ def test_monolith_stop_action_blocks_unresolved_previous_release_before_stop(
     monkeypatch.setattr(maintenance, "REPO", installed)
     monkeypatch.setattr(activate, "TRANSACTIONS", transactions)
     monkeypatch.setattr(identity, "verify_release", lambda *_a: old)
+    _monolith_stop_owner_health(monkeypatch, installed, old)
     monkeypatch.setattr(maintenance, "_proven_prior_exceptional_completion",
                         lambda *_a, **_kw: False)
     monkeypatch.setattr(maintenance, "RuntimeShutdown",
@@ -4061,6 +4079,7 @@ def test_monolith_stop_action_invokes_existing_canonical_stop_only_once(
     monkeypatch.setattr(maintenance, "REPO", installed)
     monkeypatch.setattr(activate, "TRANSACTIONS", journal)
     monkeypatch.setattr(identity, "verify_release", lambda *_a: sha)
+    _monolith_stop_owner_health(monkeypatch, installed, sha)
     monkeypatch.setattr(maintenance, "RuntimeShutdown",
                         lambda **_kw: SimpleNamespace(run=lambda scope: (
                             calls.append(scope),
@@ -4068,5 +4087,82 @@ def test_monolith_stop_action_invokes_existing_canonical_stop_only_once(
                         )[1]))
     assert maintenance._stop_exact_installed_paper_once(
         sha, env_file=None, trusted_uid=os.geteuid(),
-    ) == "READY: canonical PAPER STOP proven; no update or restart"
+    ) == "READY: canonical PAPER STOP confirmed; no update or restart"
     assert calls == [SCOPE_ALL]
+    stop_id = maintenance._owner_stop_only_target(sha, "fixed-process")
+    assert (journal / (".stop-invoked-" + stop_id)).is_file()
+    assert (journal / (".stop-confirmed-" + stop_id)).is_file()
+    assert maintenance._proven_prior_exceptional_completion(
+        journal, stop_id, root=installed, uid=os.geteuid(),
+    )
+
+
+def test_monolith_stop_unknown_result_is_fenced_without_second_stop(
+    monkeypatch, tmp_path,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_gitless_release_activate as activate
+    from tools import vps_release_identity as identity
+
+    sha = "a" * 40
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    journal = tmp_path / "transactions"
+    journal.mkdir(mode=0o700)
+    calls = []
+    monkeypatch.setattr(maintenance, "REPO", installed)
+    monkeypatch.setattr(activate, "TRANSACTIONS", journal)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a: sha)
+    _monolith_stop_owner_health(monkeypatch, installed, sha)
+    def unknown(**_kwargs):
+        def stop(_scope):
+            calls.append("STOP")
+            raise OSError("lost SSH while POST was in flight")
+        return SimpleNamespace(run=stop)
+    monkeypatch.setattr(maintenance, "RuntimeShutdown", unknown)
+    result = maintenance._stop_exact_installed_paper_once(
+        sha, env_file=None, trusted_uid=os.geteuid(),
+    )
+    assert "outcome_unknown" in result
+    stop_id = maintenance._owner_stop_only_target(sha, "fixed-process")
+    assert (journal / (".stop-invoked-" + stop_id)).is_file()
+    assert not (journal / (".stop-confirmed-" + stop_id)).exists()
+    again = maintenance._stop_exact_installed_paper_once(
+        sha, env_file=None, trusted_uid=os.geteuid(),
+    )
+    assert "prior_outcome_unproven" in again
+    assert calls == ["STOP"]
+
+
+def test_monolith_stop_only_ready_receipt_does_not_trust_unknown_result(
+    monkeypatch, tmp_path,
+):
+    from tools import paper_maintenance as maintenance
+    from tools import vps_gitless_release_activate as activate
+    from tools import vps_release_identity as identity
+    sha = "a" * 40
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    journal = tmp_path / "transactions"
+    journal.mkdir(mode=0o700)
+    monkeypatch.setattr(maintenance, "REPO", installed)
+    monkeypatch.setattr(activate, "TRANSACTIONS", journal)
+    monkeypatch.setattr(identity, "verify_release", lambda *_a: sha)
+    _monolith_stop_owner_health(monkeypatch, installed, sha)
+    stop_id = maintenance._owner_stop_only_target(sha, "fixed-process")
+    marker = journal / (".stop-invoked-" + stop_id)
+    marker.write_bytes(b"STOP_INVOKED; not install authorization\\n")
+    marker.chmod(0o600)
+    # A forged/corrupted ready payload is not sufficient: canonical STOP
+    # receipt is required even when the old intent and owner appear stable.
+    ready = journal / (".owner-stop-only-ready-" + stop_id)
+    ready.write_bytes((sha + ":" + stop_id + "\n").encode("ascii"))
+    ready.chmod(0o600)
+    assert not maintenance._owner_stop_only_confirmed(
+        journal, stop_id, uid=os.geteuid(),
+    )
+    monkeypatch.setattr(maintenance, "RuntimeShutdown",
+                        lambda **_kw: pytest.fail("never call STOP on unconfirmed intent"))
+    assert "prior_outcome_unproven" in maintenance._stop_exact_installed_paper_once(
+        sha, env_file=None, trusted_uid=os.geteuid(),
+    )
