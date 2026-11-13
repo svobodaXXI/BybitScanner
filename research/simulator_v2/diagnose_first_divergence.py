@@ -14,6 +14,15 @@ M1_SHA = "8f0b7d83c81df43114d5cf89214eeaba7a454a519021df3b4628fca4ea09834b"
 DAY = date(2026, 11, 10)
 SYMBOL = "ICNTUSDT"
 D = Decimal
+# Immutable Git blob IDs of the five modules validated for the saved run.
+# This does not establish the SHA of every transitive Python dependency.
+CODE_BLOBS = {
+    "robot_entry_flow_evidence.py": "c9da9afa9ee50e720f43d5c2c55e2489da02d054",
+    "research/simulator_v2/report.py": "12bd5aef4488d54e0a6e3f89dea57d81d0df4f6f",
+    "research/simulator_v2/session.py": "d7376050439d7248effcfaa2e47e052ad25fb915",
+    "research/simulator_v2/virtual_exchange.py": "ddca10419518050d17b449e730c44d55c693ddf9",
+    "research/simulator_v2/wedge_backtest.py": "f7a45cc72bea91905098574bce8ae180a3e84dc0",
+}
 
 
 def iso(ms: int) -> str:
@@ -52,6 +61,26 @@ def compact_event(event: object) -> dict[str, object]:
         "order_type": event.order_type,
     }
 
+def verify_pinned_code_blobs(source_dir: Path, saved: dict[str, object]) -> None:
+    """Fail closed if the five key replay modules do not match saved Git blobs."""
+    if saved.get("code_blob_proof") != CODE_BLOBS:
+        raise SystemExit("BLOCKED: saved code blob provenance mismatch")
+    for name, expected in CODE_BLOBS.items():
+        path = source_dir / name
+        if path.is_symlink() or not path.is_file():
+            raise SystemExit(f"BLOCKED: missing or linked source module: {name}")
+        raw = path.read_bytes()
+        if len(raw) > 2_000_000:
+            raise SystemExit(f"BLOCKED: oversized source module: {name}")
+        # Windows working trees may checkout CRLF; Git records normalized LF.
+        candidates = (raw, raw.replace(b"\r\n", b"\n"))
+        hashes = {
+            hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest()
+            for data in candidates
+        }
+        if expected not in hashes:
+            raise SystemExit(f"BLOCKED: source Git blob mismatch: {name}")
+
 
 def eligible_trace_signal(signal: object | None, *, end_exclusive_ms: int) -> bool:
     """Match the native impulse runner: terminal M1 cannot open a next-M1 entry."""
@@ -71,6 +100,7 @@ def main() -> None:
     saved = json.loads(saved_path.read_text(encoding="utf-8"))
     if saved["exact_code_sha"] != EXACT_SHA or saved["source"]["trade_derived_m1_sha256"] != M1_SHA:
         raise SystemExit("BLOCKED: saved run provenance mismatch")
+    verify_pinned_code_blobs(source_dir, saved)
     sys.path.insert(0, str(source_dir))
 
     import research.simulator_v2.wedge_backtest as wedge_backtest
