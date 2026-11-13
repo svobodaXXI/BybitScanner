@@ -861,15 +861,13 @@ const dealLabels: Record<ClosedEpisodeLocator["cohort"], string> = {
   JOINT_MANAGEMENT: "Робот + ручное управление",
 };
 
-function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
-  report: FinrezResponse; symbolFilter: string; onClearSymbolFilter: () => void;
+function ClosedDealsView({ report, symbolFilter, patternFilter, onClearSymbolFilter }: {
+  report: FinrezResponse; symbolFilter: string; patternFilter: string;
+  onClearSymbolFilter: () => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const tickerQuery = symbolFilter.trim().toUpperCase();
-  const deals = useMemo(() => (report.closed_episodes ?? []).filter((deal) =>
-    deal.symbol.includes(tickerQuery),
-  ), [report.closed_episodes, tickerQuery]);
-  const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
+  const patternQuery = patternFilter.trim().toLocaleLowerCase("ru-RU");
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
   const [verifiedExport, setVerifiedExport] = useState<{ episodeId: string; json: string } | null>(null);
@@ -894,6 +892,15 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
   const setupFor = (episodeId: string): VerifiedEpisodeSetup | null =>
     Object.prototype.hasOwnProperty.call(verifiedSetups, episodeId)
       ? verifiedSetups[episodeId] : indexedVerifiedSetups[episodeId] ?? null;
+  const deals = useMemo(() => (report.closed_episodes ?? []).filter((deal) => {
+    if (!deal.symbol.includes(tickerQuery)) return false;
+    if (!patternQuery) return true;
+    const setup = Object.prototype.hasOwnProperty.call(verifiedSetups, deal.trade_episode_id)
+      ? verifiedSetups[deal.trade_episode_id]
+      : indexedVerifiedSetups[deal.trade_episode_id];
+    return !!setup?.pattern.toLocaleLowerCase("ru-RU").includes(patternQuery);
+  }), [report.closed_episodes, tickerQuery, patternQuery, verifiedSetups, indexedVerifiedSetups]);
+  const selected = deals.find((deal) => deal.trade_episode_id === selectedId);
   const selectedSetup = selected ? setupFor(selected.trade_episode_id) : null;
   useEffect(() => {
     const deal = deals.find((entry) => entry.trade_episode_id === selectedId);
@@ -1075,7 +1082,9 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
     <div className="diary-detail" aria-label="Закрытые сделки по эпизодам">
       {tickerQuery !== "" ? (
         <div className="diary-finrez-filter">
-          <button type="button" className="diary-detail-back" onClick={onClearSymbolFilter}>← Все сделки</button>
+          <button type="button" className="diary-detail-back" onClick={onClearSymbolFilter}>
+            {patternQuery ? "← Все тикеры" : "← Все сделки"}
+          </button>
           <span>Сделки по {tickerQuery}</span>
         </div>
       ) : null}
@@ -1085,7 +1094,9 @@ function ClosedDealsView({ report, symbolFilter, onClearSymbolFilter }: {
           с неизвестным источником исполнений.
         </p>
       ) : null}
-      {deals.length === 0 ? <p className="diary-state">Нет подтверждённых закрытых сделок за выбранный период</p> : (
+      {deals.length === 0 ? <p className="diary-state">
+        {patternQuery ? "По выбранным фильтрам сделок нет" : "Нет подтверждённых закрытых сделок за выбранный период"}
+      </p> : (
         <div className="diary-trades-list">
           {deals.map((deal) => (
             <div className={`diary-trade-entry ${deal.side.toLowerCase()}`} key={deal.trade_episode_id}>
@@ -1238,6 +1249,7 @@ export function DiaryOverlay({
   const [finrez, setFinrez] = useState<FinrezResponse | null>(null);
   const [finrezPeriod, setFinrezPeriod] = useState<FinrezPeriod>("DAY");
   const [finrezSymbolFilter, setFinrezSymbolFilter] = useState("");
+  const [finrezPatternFilter, setFinrezPatternFilter] = useState("");
   const [pendingFinrezTicker, setPendingFinrezTicker] = useState<string | null>(null);
   const [mirrorLevels, setMirrorLevels] = useState<MirrorLevelRow[]>([]);
   const [tradeFilter, setTradeFilter] = useState<DiaryFilter>("ALL");
@@ -1454,6 +1466,11 @@ export function DiaryOverlay({
               <input aria-label="Поиск по тикеру" type="search" placeholder="Поиск тикера"
                 value={finrezSymbolFilter}
                 onChange={(event) => setFinrezSymbolFilter(event.target.value.toUpperCase())} />
+              {section === "DEALS" ? (
+                <input aria-label="Поиск по паттерну" type="search"
+                  placeholder="Поиск паттерна" value={finrezPatternFilter}
+                  onChange={(event) => setFinrezPatternFilter(event.target.value)} />
+              ) : null}
             </div>
           ) : null}
           {!selectedTrade && (section === "TRADES" || section === "SETUPS") ? (
@@ -1496,8 +1513,9 @@ export function DiaryOverlay({
             symbolFilter={finrezSymbolFilter} onSelectTicker={setPendingFinrezTicker} /> : null}
           {!loading && !loadError && !selectedTrade && section === "PATTERNS" ? <p className="diary-state">Паттерны — второй этап после визуальной приёмки «Финреза»</p> : null}
           {!loading && !loadError && !selectedTrade && section === "DEALS" && finrez ? (
-            <ClosedDealsView key={`${finrez.account_id}:${finrez.owner}:${finrez.period}:${finrez.source_revision}:${finrezSymbolFilter}`}
-              report={finrez} symbolFilter={finrezSymbolFilter} onClearSymbolFilter={() => setFinrezSymbolFilter("")} />
+            <ClosedDealsView key={`${finrez.account_id}:${finrez.owner}:${finrez.period}:${finrez.source_revision}:${finrezSymbolFilter}:${finrezPatternFilter}`}
+              report={finrez} symbolFilter={finrezSymbolFilter} patternFilter={finrezPatternFilter}
+              onClearSymbolFilter={() => setFinrezSymbolFilter("")} />
           ) : null}
           {!loading && !loadError && selectedTrade ? <TradeDetailsView trade={selectedTrade} onBack={() => { setRequestedTradeMissing(false); setSelectedTradeId(null); }} /> : null}
           {!loading && !loadError && requestedTradeMissing && section === "TRADES" ? <p className="diary-state">Сделка недоступна в текущем дневнике</p> : null}
