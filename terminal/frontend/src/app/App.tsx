@@ -181,6 +181,7 @@ export function App() {
           };
         } | null;
         const savedReviewLabel = savedReview?.submission?.label ?? null;
+        const restoredPattern = savedReview?.submission?.corrected_pattern;
         if (savedReview && (
           typeof savedReview.review_id !== "string"
           || !/^[0-9a-f]{64}$/i.test(savedReview.review_id)
@@ -232,8 +233,7 @@ export function App() {
             snapshotRevision: payload.snapshot_revision, barsSha256: payload.bars_sha256,
             savedReviewId: typeof savedReview?.review_id === "string" ? savedReview.review_id : null,
             savedReviewLabel,
-            savedCorrectedPattern: isEditorReviewPattern(savedReview?.submission?.corrected_pattern)
-              ? savedReview!.submission!.corrected_pattern : null,
+            savedCorrectedPattern: isEditorReviewPattern(restoredPattern) ? restoredPattern : null,
             savedReviewNote: savedReview?.submission?.note ?? null,
           });
           setFrozenGeometryStatus("ready");
