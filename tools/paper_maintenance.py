@@ -2181,7 +2181,7 @@ class _MaintenanceParser(argparse.ArgumentParser):
 
 
 def _stop_exact_installed_paper_once(
-    approved_sha: str, *, env_file: Path | None,
+    approved_sha: str, *, env_file: Path | None, trusted_uid: int = 0,
 ) -> str:
     """One canonical STOP of the *installed* release, never an update retry.
 
@@ -2196,12 +2196,12 @@ def _stop_exact_installed_paper_once(
     try:
         if (len(approved_sha) != 40
                 or any(ch not in "0123456789abcdef" for ch in approved_sha)
-                or os.geteuid() != 0):
+                or os.geteuid() != trusted_uid):
             return "BLOCKED: installed_STOP_requires_exact_SHA_and_root"
         if verify_release(REPO) != approved_sha:
             return "BLOCKED: installed_STOP_release_mismatch"
         if (not TRANSACTIONS.is_dir() or TRANSACTIONS.is_symlink()
-                or TRANSACTIONS.stat().st_uid != 0
+                or TRANSACTIONS.stat().st_uid != trusted_uid
                 or TRANSACTIONS.stat().st_mode & 0o077):
             return "BLOCKED: installed_STOP_release_journal_unproven"
         descriptor = os.open(
@@ -2209,7 +2209,7 @@ def _stop_exact_installed_paper_once(
         )
         with os.fdopen(descriptor, "rb") as lock:
             meta = os.fstat(lock.fileno())
-            if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0
+            if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != trusted_uid
                     or meta.st_mode & 0o077):
                 return "BLOCKED: installed_STOP_release_lock_unproven"
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -2217,16 +2217,16 @@ def _stop_exact_installed_paper_once(
                 previous = marker.name.removeprefix(".stop-invoked-")
                 if (len(previous) != 40
                         or any(ch not in "0123456789abcdef" for ch in previous)
-                        or _trusted_file(marker, 0)
+                        or _trusted_file(marker, trusted_uid)
                         != b"STOP_INVOKED; not install authorization\\n"):
                     return "BLOCKED: installed_STOP_prior_intent_untrusted"
                 ready = TRANSACTIONS / previous / "editor-ready"
                 if ready.exists() or ready.is_symlink():
-                    if _trusted_file(ready, 0) == previous.encode("ascii"):
+                    if _trusted_file(ready, trusted_uid) == previous.encode("ascii"):
                         continue
                     return "BLOCKED: installed_STOP_prior_completion_untrusted"
                 if _proven_prior_exceptional_completion(
-                    TRANSACTIONS, previous, root=REPO, uid=0,
+                    TRANSACTIONS, previous, root=REPO, uid=trusted_uid,
                 ):
                     continue
                 return "BLOCKED: installed_STOP_prior_outcome_unproven; no_replay"
