@@ -117,8 +117,9 @@ class HistoricalBybitOrderBook:
                     target.pop(price, None)
                 else:
                     target[price] = size
-        if not bids or not asks or max(bids) >= min(asks):
-            raise ValueError("empty or crossed Bybit L2 book")
+        if (not bids or not asks or len(bids) > 10_000 or len(asks) > 10_000
+                or max(bids) >= min(asks)):
+            raise ValueError("empty, oversized or crossed Bybit L2 book")
         # Atomic publication: a malformed message must not advance either side.
         self._bids, self._asks = bids, asks
         self._last_u, self._last_seq, self._last_at = u, seq, available
@@ -156,7 +157,7 @@ def iter_pinned_orderbook(
     if hasher.hexdigest() != sha256:
         raise ValueError("historical L2 archive SHA mismatch")
     book = HistoricalBybitOrderBook(symbol=symbol, depth=depth)
-    seen_before_start = False
+    initialized_at_or_before_start = False
     total = 0
     with path.open("rb") as handle:
         for line in handle:
@@ -168,11 +169,12 @@ def iter_pinned_orderbook(
             except (ValueError, UnicodeDecodeError) as exc:
                 raise ValueError("invalid historical L2 JSONL event") from exc
             state = book.apply(event)
-            if state.available_at_ms < start_ms:
-                seen_before_start = True
-                continue
-            if not seen_before_start:
-                raise ValueError("historical L2 has no pre-window snapshot/book state")
+            if state.available_at_ms <= start_ms:
+                initialized_at_or_before_start = True
+                if state.available_at_ms < start_ms:
+                    continue
+            if not initialized_at_or_before_start:
+                raise ValueError("historical L2 has no at-or-before-window snapshot/book state")
             if state.available_at_ms >= end_exclusive_ms:
                 break
             yield state
