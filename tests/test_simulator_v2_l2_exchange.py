@@ -114,6 +114,59 @@ class EventTimeMatchingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ambiguous"):
             ex.on_historical_trade(print_at(M + 10, "Sell", "99"))
 
+    def test_same_ms_unordered_prints_no_false_block_or_touch_fill(self):
+        ex = venue()
+        submit(ex)
+        ex.on_historical_book(book(M + 10))
+        group = (
+            TakerPrint("ICNTUSDT", "same_ms_one", M + 20, "Sell", D("100"), D("1")),
+            TakerPrint("ICNTUSDT", "same_ms_two", M + 20, "Sell", D("100"), D("2")),
+        )
+        self.assertIsNone(ex.on_historical_trade_batch(group))
+        self.assertIsNotNone(ex.pending)
+        self.assertEqual(ex.account.fills, ())
+
+    def test_same_ms_unambiguous_trade_through_is_one_fill(self):
+        ex = venue()
+        submit(ex)
+        ex.on_historical_book(book(M + 10))
+        group = (
+            TakerPrint("ICNTUSDT", "same_ms_one", M + 20, "Sell", D("99.9"), D("2")),
+            TakerPrint("ICNTUSDT", "same_ms_two", M + 20, "Sell", D("99.8"), D("1")),
+        )
+        filled = ex.on_historical_trade_batch(group)
+        self.assertEqual(filled.price, D("100"))
+        self.assertEqual(filled.virtual_time_ms, M + 20)
+        self.assertEqual(len(ex.account.fills), 1)
+        self.assertIsNotNone(ex.active_protection)
+
+    def test_same_ms_entry_stop_is_ambiguous_and_leaves_ledger_unchanged(self):
+        ex = venue()
+        submit(ex)
+        ex.on_historical_book(book(M + 10))
+        group = (
+            TakerPrint("ICNTUSDT", "same_ms_one", M + 20, "Sell", D("99.9"), D("2")),
+            TakerPrint("ICNTUSDT", "same_ms_two", M + 20, "Sell", D("98.5"), D("1")),
+        )
+        with self.assertRaisesRegex(ValueError, "entry/exit order"):
+            ex.on_historical_trade_batch(group)
+        self.assertEqual(ex.account.fills, ())
+        self.assertIsNotNone(ex.pending)
+
+    def test_same_ms_stop_take_is_ambiguous_and_leaves_protection(self):
+        ex = venue()
+        submit(ex)
+        ex.on_historical_book(book(M + 10, bid="99.9", ask="100"))
+        self.assertIsNotNone(ex.active_protection)
+        group = (
+            TakerPrint("ICNTUSDT", "same_ms_stop", M + 20, "Sell", D("98.9"), D("1")),
+            TakerPrint("ICNTUSDT", "same_ms_take", M + 20, "Buy", D("103.1"), D("1")),
+        )
+        with self.assertRaisesRegex(ValueError, "STOP/TAKE order"):
+            ex.on_historical_trade_batch(group)
+        self.assertEqual(len(ex.account.fills), 1)
+        self.assertIsNotNone(ex.active_protection)
+
     def test_resting_limit_does_not_fill_from_book_touch(self):
         ex = venue()
         submit(ex)
