@@ -62,6 +62,7 @@ class WedgeBacktestResult:
     paper_oi_sha256: str | None = None
     execution_model: str = "SIMULATION_OHLC_STOP_FIRST_NOT_REAL_BYBIT_FILLS"
     l2_source_sha256: str | None = None
+    l2_unproven_entry_depth_count: int = 0
     impulse_signals: int = 0
     impulse_risk_rejections: int = 0
     namespace: str = "SIMULATION"
@@ -88,7 +89,12 @@ class WedgeBacktestResult:
                 for proof in self.archive_proofs
             ],
             "execution_model": self.execution_model,
-            **({"l2_source_sha256": self.l2_source_sha256}
+            **({"l2_source_sha256": self.l2_source_sha256,
+                 "l2_unproven_entry_depth_count": self.l2_unproven_entry_depth_count,
+                 "execution_certainty": (
+                     "PARTIAL_EXECUTION_UNPROVEN" if self.l2_unproven_entry_depth_count
+                     else "CONDITIONAL_MODEL_NO_REAL_FILL_PROOF"
+                 )}
                if self.l2_source_sha256 is not None else {}),
             **({"paper_flow_entry": {
                 "permitted_retests": self.paper_flow_permitted_retests,
@@ -366,6 +372,7 @@ def run_verified_impulse_chunks(
         stop_exits=sum(e.kind == "STOP_FILLED" for e in session.exchange.events),
         take_exits=sum(e.kind == "TAKE_FILLED" for e in session.exchange.events),
         pending_protection=session.exchange.active_protection is not None,
+        l2_unproven_entry_depth_count=session.exchange.l2_unproven_entry_depth_count,
         paper_flow_gate_enabled=True,
         paper_flow_rejected_retests=rejected,
         paper_flow_permitted_retests=permitted,
