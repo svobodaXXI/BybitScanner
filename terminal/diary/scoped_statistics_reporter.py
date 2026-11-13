@@ -84,10 +84,11 @@ def load_paper_source_snapshot(
                     name: tuple(dict(row) for row in conn.execute(sql, ("paper",)).fetchall())
                     for name, sql in wedge_queries.items()
                 }
-            except sqlite3.OperationalError as exc:
-                # Optional tables may be absent in old PAPER snapshots.
-                if "no such table" not in str(exc):
-                    raise
+            except sqlite3.Error:
+                # Wedge is strictly optional. Missing tables/columns or
+                # unavailable supplementary rows cannot invalidate the
+                # already-proven PAPER executions and controller attribution.
+                # Never publish partial/empty lineage as authoritative.
                 wedge_evidence = None
         campaign_evidence = None
         if include_campaign_evidence:
