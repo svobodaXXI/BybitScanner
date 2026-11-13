@@ -25,7 +25,7 @@ export function RunSetupPanel({
   symbol, onArchiveSymbol, onPasteSymbol, onSimulationStart, onSimulationReady,
   onSimulationAppend, onSimulationFailed, onSimulationBusy, playRequestId, showReport,
   onPublicHistoryRequest, publicHistoryLoading, onStrategySelectionChange,
-  onEpisodeLookup, importedCoordinates, importControls,
+  onEpisodeLookup, importedCoordinates, importedL2, importControls,
 }: {
   symbol: string;
   onArchiveSymbol: (archiveSymbol: string) => boolean;
@@ -42,6 +42,7 @@ export function RunSetupPanel({
   onStrategySelectionChange: (selection: RunSelection) => void;
   onEpisodeLookup: (episodeId: string) => Promise<void>;
   importedCoordinates: { symbol: string; start_utc: string; end_utc_inclusive: string; revision: number } | null;
+  importedL2: boolean;
   importControls: ReactNode;
 }) {
   const [selection, setSelection] = useState<RunSelection>(onlyWedges);
@@ -166,7 +167,7 @@ export function RunSetupPanel({
   const updateStart = (value: string) => {
     datesEdited.current = true;
     setPeriodError("");
-    setCoordinateText("");
+    setCoordinateText(symbol + " | " + value + " | " + end);
     setStart(value);
     if (preset) {
       try { setEnd(presetEndInclusive(value, preset)); } catch { /* Display validation until input completed. */ }
@@ -175,8 +176,12 @@ export function RunSetupPanel({
   const choosePreset = (next: PeriodPreset) => {
     datesEdited.current = true;
     setPeriodError("");
-    setPreset(next); setCoordinateText("");
-    try { setEnd(presetEndInclusive(start, next)); } catch { /* Invalid start remains visible. */ }
+    setPreset(next);
+    try {
+      const updatedEnd = presetEndInclusive(start, next);
+      setEnd(updatedEnd);
+      setCoordinateText(symbol + " | " + start + " | " + updatedEnd);
+    } catch { /* Invalid start remains visible. */ }
   };
   const changePeriod = (increment: PeriodIncrement, direction: 1 | -1) => {
     try {
@@ -199,6 +204,15 @@ export function RunSetupPanel({
     try {
       const coords = value.trim() ? parseRunCoordinates(value) :
         { symbol, start_utc: start, end_utc_inclusive: end };
+      if (importedL2) {
+        if (coords.symbol !== symbol)
+          throw new Error("Для изменения тикера импортируйте соответствующий L2-отчёт");
+        datesEdited.current = true;
+        setStart(coords.start_utc); setEnd(coords.end_utc_inclusive);
+        setCoordinateText(coords.symbol + " | " + coords.start_utc + " | " + coords.end_utc_inclusive);
+        setPreset(null); setPeriodError(""); setCoordinateError("");
+        return; // Do NOT prepare a new Robot run or clear the original L2.
+      }
       const request = makeWedgeRunRequest(
         selection, coords.symbol, coords.start_utc, coords.end_utc_inclusive, balance, oiMode,
       );
@@ -333,7 +347,8 @@ export function RunSetupPanel({
             <input aria-label="Конец прогона UTC" type="datetime-local" step={60}
               value={end} onChange={e => {
                 datesEdited.current = true; setPeriodError(""); setPreset(null);
-                setCoordinateText(""); setEnd(e.target.value);
+                setCoordinateText(symbol + " | " + start + " | " + e.target.value);
+                setEnd(e.target.value);
               }} />
           </label>
           {parsed.error ? <p role="alert" className="replay-run-error">{parsed.error}</p> :
