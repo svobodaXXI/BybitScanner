@@ -8,7 +8,7 @@ import {
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
   type ReplayDocument, type ReplayEvent, type PublicScannerObservation,
 } from "./replayModel";
-import { visibleExecutionMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
+import { visibleExecutionMarkers, visibleStopAmendMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
   type PaperEpisodeFacts, type PaperOverlay,
@@ -423,15 +423,16 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
             || x < -7 || x > width + 7 || y < -7 || y > paneHeight + 7) {
           continue; // Never move an off-screen fill to a fictitious price.
         }
+        const half = fill.partial ? 4.5 : 7;
         context.beginPath();
         if (fill.side === "Buy") {
-          context.moveTo(x, y - 7);
-          context.lineTo(x - 7, y + 6);
-          context.lineTo(x + 7, y + 6);
+          context.moveTo(x, y - half);
+          context.lineTo(x - half, y + half - 1);
+          context.lineTo(x + half, y + half - 1);
         } else {
-          context.moveTo(x, y + 7);
-          context.lineTo(x - 7, y - 6);
-          context.lineTo(x + 7, y - 6);
+          context.moveTo(x, y + half);
+          context.lineTo(x - half, y - half + 1);
+          context.lineTo(x + half, y - half + 1);
         }
         context.closePath();
         context.fillStyle = fill.side === "Buy" ? TELEGRAM_BUY_COLOR : TELEGRAM_SELL_COLOR;
@@ -440,6 +441,26 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
         context.strokeStyle = "#000000";
         context.stroke();
         rendered += 1;
+      }
+      // A short violet tick marks the original amended STOP price only at
+      // its known event time. It is NOT a projected/live stop trajectory.
+      for (const amend of visibleStopAmendMarkers(
+        document.events.slice(0, cursor), shown.candles,
+      )) {
+        const stamp = timeframe === "1h"
+          ? Math.floor(amend.candle_start_ms / 3_600_000) * 3_600_000
+          : amend.candle_start_ms;
+        if (!displayCandles.some(bar => bar.start_ms === stamp)) continue;
+        const x = api.timeScale().timeToCoordinate((stamp / 1000) as UTCTimestamp);
+        const y = candleSeries.priceToCoordinate(amend.stop);
+        if (x === null || y === null || !Number.isFinite(x) || !Number.isFinite(y) ||
+            x < 0 || x > priceWidth || y < 0 || y > paneHeight) continue;
+        context.beginPath();
+        context.strokeStyle = "#a78bfa";
+        context.lineWidth = 2;
+        context.moveTo(x - 10, y);
+        context.lineTo(x + 10, y);
+        context.stroke();
       }
       // PAPER observations are a separate, hollow-ring overlay. These are
       // original owner-imported execution prices, NOT SIMULATION fill events.
@@ -647,7 +668,15 @@ export function ReplayPage() {
         case "WEDGE_BREAKOUT": message = "Пробой подтверждён. Ожидается ретест"; break;
         case "WEDGE_RETEST": message = "Ретест подтверждён"; break;
         case "ENTRY_SIGNAL": message = "Выставлен LIMIT после ретеста"; break;
-        case "ENTRY_FILLED": message = "Позиция открыта, вход по ретесту"; break;
+        case "ENTRY_FILLED": message = document.execution_clock
+          ? "Виртуальный L2 вход · " + (event.quantity ?? "—") + " контр."
+          : "Позиция открыта, вход по ретесту"; break;
+        case "PARTIAL_FILLED":
+          message = "Частичная виртуальная фиксация · " +
+            (event.quantity ?? "—") + " контр. (L2)"; break;
+        case "STOP_AMENDED":
+          message = "Виртуальный STOP перенесён: " +
+            (event.stop !== undefined ? event.stop : "—") + " (L2)"; break;
         case "EXIT_FILLED":
           message = "Позиция закрыта (" +
             (event.reason === "STOP" ? "STOP" : event.reason === "TAKE" ? "TAKE" : "выход") +
@@ -1073,6 +1102,11 @@ export function ReplayPage() {
 
       {localEpisodeMessage && <p role="status" className="replay-note">{localEpisodeMessage}</p>}
       {error && <p role="alert" className="replay-error">{error}</p>}
+      {document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" &&
+        <p role="status" className="replay-note">
+          SIMULATION L2 · события исходной ленты по времени; виртуальные исполнения
+          условны, фактическая очередь и исполнения Bybit не доказаны.
+        </p>}
       {paperFacts && <p className="replay-note" role="status" aria-label="PAPER факты сделки">
         PAPER · {paperFacts.symbol} · {paperFacts.trade_episode_id}
         {" · "}{paperFacts.execution_allocations.length} фактических исполнений
