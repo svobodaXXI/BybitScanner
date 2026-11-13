@@ -11,6 +11,7 @@ from decimal import Decimal as D, ROUND_DOWN, ROUND_UP
 from pathlib import Path
 import hashlib
 import json
+import os
 import tempfile
 from urllib.request import Request, urlopen
 
@@ -22,7 +23,11 @@ from research.simulator_v2.wedge_robot_observer import SimWedgeRobotConfig
 from research.simulator_v2.wedge_risk_preflight import SimWedgeRiskSettings
 
 SYMBOL = "ICNTUSDT"
-DAYS = tuple(date(2026, 11, 7) + timedelta(days=i) for i in range(4))
+START_DAY = date.fromisoformat(os.environ.get("WEDGE_AB_START_DAY", "2026-11-07"))
+DAY_COUNT = int(os.environ.get("WEDGE_AB_DAYS", "4"))
+if (START_DAY, DAY_COUNT) not in ((date(2026, 11, 7), 4), (date(2026, 11, 12), 1)):
+    raise ValueError("research only permits pre-registered contiguous UTC windows")
+DAYS = tuple(START_DAY + timedelta(days=i) for i in range(DAY_COUNT))
 FEE = D("0.0006")
 TICK = D("0.0001")
 STEP = D("1")
@@ -255,7 +260,8 @@ def study():
     return {
         "namespace": "SIMULATION", "status": "COMPLETE" if comparisons else "DATA_INSUFFICIENT",
         "scope": "ICNTUSDT " + DAYS[0].isoformat() + " through " + DAYS[-1].isoformat() + " UTC completed days", 
-        "uncovered_days": {"2026-11-11": "two missing trade-derived M1; no imputation", "2026-11-12": "separate contiguous window not yet checked"},
+        "uncovered_days": {"2026-11-11": "two missing trade-derived M1; no imputation", "2026-11-13": "not yet a complete UTC archive"},
+        "other_contiguous_window": "2026-11-12" if DAY_COUNT == 4 else "2026-11-07 through 2026-11-10",
         "nov_13": "not included: UTC day incomplete at study design time",
         "source_type": "BYBIT_PUBLIC_TRADES_DERIVED_M1_NOT_OFFICIAL_KLINE",
         "provenance": provenance, "native_scanner_observations": result.scanner_wedge_observations,
