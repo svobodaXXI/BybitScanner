@@ -705,6 +705,87 @@ try {
     document.querySelector(".replay-execution-overlay")?.dataset.visiblePaperFills === "0");
   assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-original-geometry"), "0");
 
+  // Independent browser proof: import the same *nested* receipt structure the
+  // owner already has, without trading, re-running L2 or external requests.
+  const l2Start = Date.UTC(2026, 10, 10, 8, 0);
+  const l2RunId = "browser_l2_receipt";
+  const l2Directions = ["LONG", "LONG", "SHORT", "LONG"];
+  const l2Exits = ["100", "101", "101", "101"];
+  const l2Reasons = ["STOP", "TAKE", "STOP", "TAKE"];
+  const l2Net = ["-1.2", "8.8", "-11.2", "8.8"];
+  const l2Episodes = l2Directions.map((direction, i) => ({
+    order_id: "IMPULSE_" + (l2Start + i * 10000), direction,
+    entry_ms: l2Start + i * 10000 + 1000,
+    exit_ms: l2Start + i * 10000 + 2000,
+    entry_price: "100", exit_price: l2Exits[i],
+    entry_fee: "0.6", exit_fee: "0.6", quantity: "10",
+    partial_quantity: null, exit_reason: l2Reasons[i],
+    net_pnl_usdt: l2Net[i],
+  }));
+  const l2Events = [];
+  for (const row of l2Episodes) {
+    const trade_id = "SIMULATION:" + l2RunId + ":" + row.order_id;
+    for (const kind of ["ENTRY_FILLED", "EXIT_FILLED"]) {
+      l2Events.push({
+        source: "SIMULATION", simulation_run_id: l2RunId,
+        sequence: l2Events.length + 1, kind, trade_id,
+        side: row.direction,
+        time_ms: kind === "ENTRY_FILLED" ? row.entry_ms : row.exit_ms,
+        price: Number(kind === "ENTRY_FILLED" ? row.entry_price : row.exit_price),
+        ...(kind === "EXIT_FILLED" ? {
+          reason: row.exit_reason, net_usdt: row.net_pnl_usdt,
+          pnl_percent: String(Number(row.net_pnl_usdt) / 10),
+        } : {}),
+      });
+    }
+  }
+  l2Events.push({
+    source: "SIMULATION", simulation_run_id: l2RunId,
+    sequence: l2Events.length + 1, kind: "CANDLE_CLOSED",
+    time_ms: l2Start + 300000,
+    candle: { start_ms: l2Start, end_ms: l2Start + 300000,
+      open: 100, high: 103, low: 99, close: 101, volume: 1000 },
+  });
+  const originalReceipt = {
+    state: "VIRTUAL_L2_PROBE_CONDITIONAL",
+    scenario: "ONE_BOUNDED_LOCAL_SIMULATION_NOT_REAL_BYBIT_EXECUTIONS",
+    code_sha: "389e175c542d8319d245b70357d5e27c50e6f8e6",
+    l2_sha256: "79b032aafc5c97ea3790947cdd72347af83c88b9a1360aa219cdef5f5cbe54df",
+    trade_gzip_sha256: "47f3d3ea153374fe759adc81d2b340f5557d0fef84e90d28862d1a1239b0718a",
+    result: {
+      symbol: "ICNTUSDT",
+      execution_model: "SIMULATION_HISTORICAL_TAKER_L2_EVENT_TIME_NOT_REAL_BYBIT_FILLS",
+      l2_source_sha256: "79b032aafc5c97ea3790947cdd72347af83c88b9a1360aa219cdef5f5cbe54df",
+      final_position_quantity: "0", virtual_fills: 8, realized_net_pnl: "5.2",
+      l2_episodes: l2Episodes,
+      replay: {
+        source: "SIMULATION", simulation_run_id: l2RunId,
+        mode: "STRATEGY", demo: false, symbol: "ICNTUSDT", timeframe: "5m",
+        market_data_source: "PINNED_BYBIT_PUBLIC_TRADES_PLUS_L2_EVENT_TIME_SIMULATION",
+        execution_clock: "ORIGINAL_EVENT_TIME_NOT_OHLC_M1",
+        execution_certainty: "CONDITIONAL_L2_NOT_REAL_EXCHANGE_FILLS",
+        partial_and_be_markers: "EVENTS_ONLY_CONDITIONAL",
+        events: l2Events,
+      },
+    },
+  };
+  await page.getByLabel("Загрузить JSON прогона").setInputFiles({
+    name: "original-l2-result.json", mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(originalReceipt)),
+  });
+  await page.getByRole("status").filter({ hasText: "SIMULATION L2" }).waitFor();
+  await page.getByRole("button", { name: "M5", exact: true }).click();
+  await page.getByRole("button", { name: "Шаг вперёд" }).click();
+  await page.waitForFunction(() =>
+    document.querySelector(".replay-execution-overlay")?.dataset.visibleFills === "8");
+  assert.match(await page.locator(".replay-meta").innerText(), /ICNTUSDT/);
+  assert.match(await page.getByRole("status").filter({ hasText: "SIMULATION L2" }).innerText(),
+    /не доказаны/);
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-paper-fills"), "0");
+  assert.equal(await page.locator(".replay-execution-overlay").getAttribute("data-visible-fills"), "8");
+  await page.screenshot({ path: join(screenshotDir, "machine-time-l2-replay.png"), fullPage: true });
+  console.log("LOCAL_L2_REPLAY_BROWSER_OK (Chromium, original nested receipt import, 8 event-time marks, no PAPER)");
+
   await page.mouse.move(620, 660); // Crosshair must not create DMI dots.
   await page.screenshot({ path: join(screenshotDir, "machine-time-browser.png"), fullPage: true });
 
@@ -734,6 +815,10 @@ try {
     await copyFile(
       join(screenshotDir, "machine-time-browser.png"),
       join(process.env.LOCAL_REPLAY_E2E_SCREENSHOTS, "machine-time-browser.png"),
+    ).catch(() => {});
+    await copyFile(
+      join(screenshotDir, "machine-time-l2-replay.png"),
+      join(process.env.LOCAL_REPLAY_E2E_SCREENSHOTS, "machine-time-l2-replay.png"),
     ).catch(() => {});
   }
   await rm(screenshotDir, { recursive: true, force: true });
