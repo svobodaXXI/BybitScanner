@@ -142,7 +142,7 @@ describe("verified same-signal geometry on current and Terminal charts", () => {
     ];
     expect(() => projectVerifiedSignalOverlay(source, candles, correction, invalid))
       .toThrow(/Invalid current chart timestamps/);
-    const finite = [{ ...source[0], type: "segment" as const }];
+    const finite = [{ ...source[0], type: "trend" as const }];
     const finiteCorrection = projectSignalGeometry(finite, candles).editableDrawings;
     expect(() => projectVerifiedSignalOverlay(finite, candles, finiteCorrection, [
       { time: "2026-10-19T01:00:00.000Z", open: 25, high: 30, low: 20, close: 27 },
