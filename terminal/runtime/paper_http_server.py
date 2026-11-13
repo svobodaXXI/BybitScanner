@@ -4227,7 +4227,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 payload = self._payload({
                     "schema_version", "signal_id", "snapshot_revision", "bars_sha256",
                     "label", "corrected_boundaries", "idempotency_key",
-                }, frozenset({"note", "context_as_of_ms", "context_bars_sha256"}))
+                }, frozenset({"note", "context_as_of_ms", "context_bars_sha256", "corrected_pattern"}))
                 signal_id = payload.get("signal_id")
                 import re
                 if not isinstance(signal_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", signal_id):
