@@ -857,6 +857,83 @@ describe("Finrez first-screen UI", () => {
     expect(await screen.findByText(/Нет подтверждённых закрытых сделок/)).toBeInTheDocument();
   });
 
+  it("combines ticker, period and case-insensitive verified pattern search without guessing patterns", async () => {
+    const linked = (id: string, symbol: string, pattern: string, origin = "ROBOT") => ({
+      trade_episode_id: "te_" + id.repeat(24), symbol, side: "LONG",
+      opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+      pnl_usdt: "-2.5", execution_count: 2, cohort: "ROBOT",
+      replay_evidence: "EPISODE_INDEX_ONLY", opening_controller: "ROBOT",
+      setup_context: {
+        status: "EXACT_D2_LINK", source: "TRADING_DIARY_D2",
+        consistency: "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER",
+        decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+        setup: {
+          setup_id: "candidate-" + id, symbol, direction: "LONG",
+          origin, pattern, timeframe: "5", strategy_version: "v1",
+          created_at_ms: 1_793_000_000_000,
+        },
+      },
+    });
+    const btc = linked("a", "BTCUSDT", "Falling Wedge");
+    const eth = linked("b", "ETHUSDT", "Triangle Compression");
+    // The textual label alone never qualifies: source origin conflicts.
+    const unproven = linked("c", "XRPUSDT", "Falling Wedge", "TERMINAL_MANUAL");
+    const mockFetch = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
+      ...finrezResponse,
+      period: (new URL(url, "http://localhost").searchParams.get("period") ?? "DAY"),
+      closed_episodes: [btc, eth, unproven],
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", mockFetch);
+    render(<DiaryOverlay accountKey="paper:pattern-search" initialSection="FINREZ"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+
+    expect(await screen.findByText("BTCUSDT")).toBeInTheDocument();
+    expect(screen.queryByRole("searchbox", { name: "Поиск по паттерну" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
+    expect(await screen.findByText("Паттерн: Falling Wedge")).toBeInTheDocument();
+    expect(screen.getByText("Паттерн: Triangle Compression")).toBeInTheDocument();
+    expect(screen.getByText("Паттерн: не установлен")).toBeInTheDocument();
+    const pattern = screen.getByRole("searchbox", { name: "Поиск по паттерну" });
+    const ticker = screen.getByRole("searchbox", { name: "Поиск по тикеру" });
+
+    fireEvent.change(pattern, { target: { value: "  wEdGe " } });
+    expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
+    expect(screen.queryByText("ETHUSDT")).not.toBeInTheDocument();
+    expect(screen.queryByText("XRPUSDT")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Подробности сделки" })).toBeInTheDocument();
+
+    fireEvent.change(ticker, { target: { value: "eth" } });
+    expect(await screen.findByText("По выбранным фильтрам сделок нет")).toBeInTheDocument();
+    expect(pattern).toHaveValue("  wEdGe ");
+    fireEvent.change(pattern, { target: { value: "TRIANGLE" } });
+    expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
+    expect(screen.queryByText("BTCUSDT")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Неделя" }));
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledWith(
+      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=WEEK",
+    ));
+    expect(await screen.findByText("Паттерн: Triangle Compression")).toBeInTheDocument();
+    expect(pattern).toHaveValue("TRIANGLE");
+    expect(ticker).toHaveValue("ETH");
+
+    // The pattern query applies to Deals only, not the aggregated Finrez.
+    fireEvent.click(screen.getByRole("button", { name: "Финрез" }));
+    expect(screen.queryByRole("searchbox", { name: "Поиск по паттерну" })).not.toBeInTheDocument();
+    expect(await screen.findByText("+7,20 USDT")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Сделки" }));
+    expect(await screen.findByText("Паттерн: Triangle Compression")).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Поиск по паттерну" })).toHaveValue("TRIANGLE");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по паттерну" }), {
+      target: { value: "не установлен" },
+    });
+    expect(screen.getByText("По выбранным фильтрам сделок нет")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по паттерну" }), {
+      target: { value: "" },
+    });
+    expect(screen.getByText("ETHUSDT")).toBeInTheDocument();
+    expect(mockFetch.mock.calls.filter(([url]) => String(url).includes("/episode-facts"))).toHaveLength(0);
+  });
+
   it("rounds ticker PnL and opens only that ticker's confirmed episodes on click", async () => {
     const btc = {
       trade_episode_id: "te_" + "a".repeat(24), symbol: "BTCUSDT", side: "LONG",
