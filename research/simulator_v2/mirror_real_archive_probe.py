@@ -55,6 +55,7 @@ TERMS = BoxSimulationRiskTerms(
 def run_real_trade_day(
     archive: Path, *, one_filled_trade_per_campaign: bool = False,
     utc_day: date = DAY,
+    next_day_archive: Path | None = None,
 ) -> dict[str, object]:
     if type(utc_day) is not date or utc_day not in ARCHIVE_SHA256_BY_DAY:
         raise ValueError("unapproved real-trades research UTC day")
@@ -72,10 +73,32 @@ def run_real_trade_day(
     if (len(chunk.candles) != 1440 or
             (utc_day == DAY and chunk.sha256 != EXPECTED_DERIVED_M1_SHA256)):
         raise ValueError("derived M1 SHA/day coverage mismatch")
+    second = None
+    next_sha = None
+    if next_day_archive is not None:
+        next_day = utc_day + timedelta(days=1)
+        if next_day not in ARCHIVE_SHA256_BY_DAY:
+            raise ValueError("unapproved next UTC day")
+        next_end = int(datetime.combine(
+            next_day + timedelta(days=1), datetime.min.time(),
+            tzinfo=timezone.utc,
+        ).timestamp() * 1000)
+        second, next_sha = parse_local_trade_day(
+            next_day_archive, symbol=SYMBOL, utc_day=next_day,
+            latest_closed_boundary_ms=next_end,
+        )
+        if next_sha != ARCHIVE_SHA256_BY_DAY[next_day] or len(second.candles) != 1440:
+            raise ValueError("next-day archive SHA/M1 coverage mismatch")
+        if chunk.end_ms != second.start_ms:
+            raise ValueError("cross-day M1 continuity is not proven")
+    # One continuous VirtualReplaySession/Scanner/Robot; no midnight reset.
+    candles = chunk.candles + (second.candles if second is not None else ())
+    history_end_ms = second.end_ms if second is not None else chunk.end_ms
+    period_end = (utc_day + timedelta(days=1) if second is not None else utc_day)
 
     session = VirtualReplaySession(
         simulation_run_id=(
-            f"icnt_{utc_day:%Y%m%d}_native_mirror_"
+            f"icnt_{utc_day:%Y%m%d}_{period_end:%Y%m%d}_native_mirror_"
             + ("one_fill" if one_filled_trade_per_campaign else "original")
         ),
         symbol=SYMBOL, initial_balance=Decimal("1000"),
@@ -92,7 +115,7 @@ def run_real_trade_day(
         mirror_auto_scan=True,
         mirror_one_filled_trade_per_campaign=one_filled_trade_per_campaign,
     ) as robot:
-        for candle in chunk.candles:
+        for candle in candles:
             session.step(candle)
             robot.after_committed_minute()
             snapshot = session.account.snapshot(
@@ -103,7 +126,7 @@ def run_real_trade_day(
             drawdown = (peak_equity - snapshot.equity) / peak_equity * 100
             maximum_drawdown_pct = max(maximum_drawdown_pct, drawdown)
 
-        market_end = chunk.candles[-1].close
+        market_end = candles[-1].close
         ending = session.account.snapshot(
             as_of_ms=session.virtual_time_ms, mark_price=market_end,
         )
@@ -134,7 +157,7 @@ def run_real_trade_day(
             # A counterfactual may end with an open virtual position; preserve
             # its causal evidence only up to the verified archive boundary.
             exit_boundary_ms = (trade.exit_time_ms if trade.exit_time_ms is not None
-                                else chunk.end_ms)
+                                else history_end_ms)
             def m1_view(item):
                 return {
                     "open_time_ms": item.start_ms, "close_time_ms": item.end_ms,
@@ -142,7 +165,7 @@ def run_real_trade_day(
                     "low": str(item.low), "close": str(item.close),
                 }
             surrounding_m1 = [
-                m1_view(c) for c in chunk.candles
+                m1_view(c) for c in candles
                 if confirmation_ms - 3 * 60_000 <= c.end_ms
                 <= exit_boundary_ms + 60_000
             ]
@@ -199,12 +222,17 @@ def run_real_trade_day(
             "source": "BYBIT_PUBLIC_TRADES_DERIVED_M1_NOT_OFFICIAL_KLINE",
             "symbol": SYMBOL,
             "utc_day": utc_day.isoformat(),
+            "utc_day_end": period_end.isoformat(),
             "archive_sha256": archive_sha,
-            "derived_m1_sha256": chunk.sha256,
-            "closed_m1": len(chunk.candles),
+            "archive_sha256_next_day": next_sha,
+            "derived_m1_sha256": (
+                chunk.sha256 if second is None
+                else chunk.sha256 + ":" + second.sha256
+            ),
+            "closed_m1": len(candles),
             "closed_m5": robot._mirror_source._last_close_ms // 300_000 - chunk.start_ms // 300_000,
-            "history_price_min": str(min(c.low for c in chunk.candles)),
-            "history_price_max": str(max(c.high for c in chunk.candles)),
+            "history_price_min": str(min(c.low for c in candles)),
+            "history_price_max": str(max(c.high for c in candles)),
             "native_mirror_levels": len(state["registry"].get("levels") or {}),
             "native_confirmations": len(signal_rows),
             "native_robot_candidates": len(candidates),
@@ -229,7 +257,7 @@ def run_real_trade_day(
             "stop_armed": session.exchange.robot_stop is not None,
             "take_armed": session.exchange.robot_take is not None,
             "runtime_seconds": round(elapsed, 3),
-            "processed_minutes_per_second": round(len(chunk.candles) / elapsed, 2) if elapsed else None,
+            "processed_minutes_per_second": round(len(candles) / elapsed, 2) if elapsed else None,
             "peak_rss_mib_linux": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 2),
             "trades": trades,
             "limitations": [
@@ -245,15 +273,19 @@ def run_real_trade_day(
 
 def compare_campaign_fill_limit(
     archive: Path, *, utc_day: date = DAY,
+    next_day_archive: Path | None = None,
 ) -> dict[str, object]:
     """Paired full independent historical replays, not post-hoc PnL deletion."""
     original = run_real_trade_day(
         archive, one_filled_trade_per_campaign=False, utc_day=utc_day,
+        next_day_archive=next_day_archive,
     )
     restricted = run_real_trade_day(
         archive, one_filled_trade_per_campaign=True, utc_day=utc_day,
+        next_day_archive=next_day_archive,
     )
-    for key in ("archive_sha256", "derived_m1_sha256", "closed_m1",
+    for key in ("archive_sha256", "archive_sha256_next_day",
+                "derived_m1_sha256", "closed_m1",
                 "native_mirror_levels", "native_confirmations"):
         if original[key] != restricted[key]:
             raise RuntimeError(f"comparison diverged before native Robot execution: {key}")
@@ -285,7 +317,9 @@ def compare_campaign_fill_limit(
     return {
         "schema": "MIRROR_REAL_CAMPAIGN_ONE_FILL_COMPARISON_V1",
         "utc_day": utc_day.isoformat(),
+        "utc_day_end": original["utc_day_end"],
         "trade_source_sha256": original["archive_sha256"],
+        "trade_source_sha256_next_day": original["archive_sha256_next_day"],
         "derived_m1_sha256": original["derived_m1_sha256"],
         "baseline": original,
         "first_filled_trade_only": restricted,
@@ -304,12 +338,17 @@ def main() -> None:
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--utc-day", default=DAY.isoformat(),
                         choices=tuple(sorted(d.isoformat() for d in ARCHIVE_SHA256_BY_DAY)))
+    parser.add_argument("--next-day-archive", type=Path)
     parser.add_argument("--compare-one-fill", action="store_true")
     args = parser.parse_args()
     selected_day = date.fromisoformat(args.utc_day)
-    report = (compare_campaign_fill_limit(args.archive, utc_day=selected_day)
-              if args.compare_one_fill
-              else run_real_trade_day(args.archive, utc_day=selected_day))
+    report = (compare_campaign_fill_limit(
+        args.archive, utc_day=selected_day,
+        next_day_archive=args.next_day_archive,
+    ) if args.compare_one_fill else run_real_trade_day(
+        args.archive, utc_day=selected_day,
+        next_day_archive=args.next_day_archive,
+    ))
     if args.report.exists() or args.report.is_symlink():
         raise ValueError("report destination must not overwrite user-owned data")
     args.report.parent.mkdir(parents=True, exist_ok=True)
