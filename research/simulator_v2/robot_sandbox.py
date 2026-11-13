@@ -395,6 +395,7 @@ class ConnectedSimulationRobot:
         # evidence for every independently authorized MIRROR level. Recording
         # each candidate never confers Robot ownership or order permission.
         self._mirror_confirmation_events: list[tuple[int, tuple[str, ...]]] = []
+        self._mirror_admission_reviews: list[dict[str, object]] = []
         self._completed_market_ids: set[str] = set()
         self._temporary = TemporaryDirectory(prefix="bybitscanner-simulation-box-")
         self._store_path = Path(self._temporary.name) / "simulation.sqlite3"
@@ -600,6 +601,84 @@ class ConnectedSimulationRobot:
     def mirror_confirmation_events(self) -> tuple[tuple[int, tuple[str, ...]], ...]:
         """All independently authorized level confirmations, including collisions."""
         return tuple(self._mirror_confirmation_events)
+
+    @property
+    def mirror_admission_reviews(self) -> tuple[dict[str, object], ...]:
+        """Independent read-only Robot checks, including shared-owner deferrals."""
+        return tuple(self._mirror_admission_reviews)
+
+    def _preview_native_mirror_admission(
+        self, source_state: dict, entry_id: str,
+    ) -> dict[str, str]:
+        """Re-run the native pre-order Robot rules WITHOUT persisting a candidate.
+
+        This is a per-level policy check, NOT a reservation of aggregate risk
+        or permission to trade several same-symbol positions. The single-owner
+        admission continues to be made by the original Robot monitor.
+        """
+        try:
+            if (self._mirror_policy is None or not isinstance(source_state, dict)
+                    or source_state.get("symbol") != self.session.account.symbol
+                    or source_state.get("timeframe") != "5"):
+                return {"decision": "DEFERRED", "reason": "mirror_source_unavailable"}
+            entries = [row for row in source_state.get("standalone_entries", ())
+                       if isinstance(row, dict) and row.get("entry_id") == entry_id]
+            if len(entries) != 1:
+                return {"decision": "DEFERRED", "reason": "mirror_entry_identity_ambiguous"}
+            snapshot = mirror_scanner.verified_standalone_snapshot(
+                self.session.account.symbol, source_state, entries[0],
+            )
+            if snapshot is None:
+                return {"decision": "BLOCKED", "reason": "mirror_source_revoked"}
+            frozen = snapshot["mirror_entry"]
+            if frozen["confirmation"]["close_time_ms"] != self.virtual_clock_ms():
+                return {"decision": "BLOCKED", "reason": "not_current_committed_close"}
+            # Construct only ephemeral native inputs; neither a durable
+            # candidate nor a PAPER/virtual order is created here.
+            digest = hashlib.sha256(
+                f"mirror-preview\\0{self.account_id.value}\\0{entry_id}".encode()
+            ).hexdigest()[:32]
+            payload = {
+                "candidate_id": "simulation-mirror-preview-" + digest,
+                "status": "APPROVED",
+                "symbol": self.session.account.symbol,
+                "signal_snapshot": snapshot,
+            }
+            initial_state, _ = robot_l_shape.initialize_state(payload)
+            plan = robot_l_shape.build_initial_retest_limit(
+                payload, initial_state, tick_size=self._tick_size,
+            )
+            record = SimpleNamespace(
+                candidate_id=payload["candidate_id"],
+                status="APPROVED",
+                symbol=Symbol(self.session.account.symbol),
+                signal_snapshot=snapshot,
+                robot_state={**initial_state, "execution": {}},
+                approved_at_ms=self.virtual_clock_ms(),
+            )
+            admitted, stopped = self._monitor._read_admission_gate()
+            if not admitted:
+                return {"decision": "BLOCKED" if stopped else "DEFERRED",
+                        "reason": "native_robot_runtime_not_admitting"}
+            ownership_conflict = self._monitor._pre_entry_block_reason(record)
+            if ownership_conflict is not None:
+                return {"decision": "BLOCKED",
+                        "reason": "native_position_or_working_order_conflict"}
+            rr_skip = self._monitor._l_shape_entry_rr_skip(record, plan)
+            if rr_skip is not None:
+                return {"decision": "BLOCKED", "reason": rr_skip[0]}
+            result = self._monitor._mirror_standalone_attachment(record, plan)
+            if not isinstance(result, dict) or result.get("decision") not in (
+                "ATTACHED", "BLOCKED", "DEFERRED",
+            ):
+                return {"decision": "DEFERRED", "reason": "native_mirror_gate_unknown"}
+            return {"decision": result["decision"],
+                    "reason": str(result.get("reason") or "native_mirror_gate")}
+        except Exception as error:
+            # A missing historical prefix or unreliable native gate must not
+            # become a provisional approval or silently omit this candidate.
+            return {"decision": "DEFERRED",
+                    "reason": f"native_mirror_preview_unavailable:{type(error).__name__}"}
 
     def admit_mirror(self, source_state: dict, *, entry_id: str) -> str:
         """Admit one exact native Scanner confirmation to the private Robot.
@@ -947,6 +1026,39 @@ class ConnectedSimulationRobot:
                 self._mirror_confirmation_events.append(
                     (self.virtual_clock_ms(), tuple(discovered)),
                 )
+            if discovered:
+                # Every eligible level receives a separate, non-mutating
+                # native Robot policy assessment. Shared one-symbol ownership
+                # is a SECOND gate, never an arbitrary level ranking.
+                source_state = mirror_scanner.load_state(
+                    self.session.account.symbol, "5", self._mirror_root,
+                )
+                owner_available = self.can_admit
+                group = []
+                for entry_id in discovered:
+                    native = self._preview_native_mirror_admission(
+                        source_state, entry_id,
+                    )
+                    group.append({
+                        "entry_id": entry_id,
+                        "native_decision": native["decision"],
+                        "native_reason": native["reason"],
+                        "owner_gate": (
+                            "AVAILABLE" if owner_available else "OWNER_BUSY"
+                        ),
+                        "execution_gate": (
+                            "NATIVE_NOT_ATTACHED"
+                            if native["decision"] != "ATTACHED"
+                            else "SHARED_OWNER_UNRESOLVED"
+                            if len(discovered) > 1
+                            else "OWNER_BUSY"
+                            if not owner_available else "NATIVE_ROBOT_REQUIRED"
+                        ),
+                    })
+                self._mirror_admission_reviews.append({
+                    "closed_m1_time_ms": self.virtual_clock_ms(),
+                    "candidates": group,
+                })
             if len(discovered) > 1:
                 if not self._mirror_research_skip_ambiguous:
                     raise SimulationExecutionNotConnected(
