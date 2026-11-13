@@ -1135,10 +1135,6 @@ def deploy_staged_editor_only(
                     # the current PAUSED/Flat state is independently quiescent
                     # may the remaining canonical shutdown phases execute once.
                     prior = pending[0].name.removeprefix(".stop-invoked-")
-                    (preflight or inspect_staged_release)(
-                        target, stage=stage, root=root, manifest=manifest_path,
-                        unit_dir=installed_units, uid=trusted_uid,
-                    )
                     if _unsealed_paused_receipt(
                         journal_root, current, prior, target, "completed",
                         trusted_uid,
@@ -1148,6 +1144,10 @@ def deploy_staged_editor_only(
                             trusted_uid,
                         ):
                             return "BLOCKED: legacy_paused_completion_without_invocation"
+                        (preflight or inspect_staged_release)(
+                            target, stage=stage, root=root, manifest=manifest_path,
+                            unit_dir=installed_units, uid=trusted_uid,
+                        )
                         result = ShutdownResult(
                             SCOPE_ALL, True,
                             "Previously proven separate PAUSED/Flat continuation",
@@ -1163,13 +1163,17 @@ def deploy_staged_editor_only(
                         try:
                             owner.require_known_natural_drain_ready(current)
                             if not _legacy_paused_backend_predates_stop(pending[0]):
-                                return ("BLOCKED: legacy_paused_original_backend"
-                                        "_continuity_unproven; no STOP replay")
+                                return ("BLOCKED: prior_STOP_outcome_unproven:"
+                                        "legacy_backend_continuity_missing; no replay")
                         except Exception as exc:
-                            return ("BLOCKED: legacy_paused_not_quiescent:"
+                            return ("BLOCKED: prior_STOP_outcome_unproven:"
                                     + type(exc).__name__ + ":"
                                     + str(exc).replace(chr(10), " ")[:160]
-                                    + "; no STOP replay")
+                                    + "; no replay")
+                        (preflight or inspect_staged_release)(
+                            target, stage=stage, root=root, manifest=manifest_path,
+                            unit_dir=installed_units, uid=trusted_uid,
+                        )
                         _write_unsealed_paused_receipt(
                             journal_root, current, prior, target, "invoked",
                             trusted_uid,
