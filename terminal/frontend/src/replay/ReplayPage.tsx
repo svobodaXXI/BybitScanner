@@ -12,7 +12,7 @@ import { visibleExecutionMarkers, visibleStopAmendMarkers, TELEGRAM_BUY_COLOR, T
 import { parseLocalReplayUpload } from "./l2ReplayUpload";
 import { l2Prehistory, l2Posthistory, l2PresentationEvents } from "./l2ChartContext";
 import { chartWilderDmi } from "./replayChartDmi";
-import { selectedL2MarketContext } from "./l2PeriodContext";
+import { selectedL2MarketContext, loadedL2M5Coverage } from "./l2PeriodContext";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
   type PaperEpisodeFacts, type PaperOverlay,
@@ -629,6 +629,17 @@ export function ReplayPage() {
     return currentSymbol.current === archiveSymbol;
   }, []);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [periodLoadNotice, setPeriodLoadNotice] = useState("");
+  const [playMissingNotice, setPlayMissingNotice] = useState("");
+  const [selectedWindow, setSelectedWindow] = useState({
+    symbol: "BTCUSDT", start: "", end: "",
+  });
+  const onSelectedWindowChange = useCallback(
+    (symbol: string, start: string, end: string) => {
+      setSelectedWindow(previous => previous.symbol === symbol &&
+        previous.start === start && previous.end === end
+        ? previous : { symbol, start, end });
+    }, []);
   const [importedCoordinates, setImportedCoordinates] = useState<{
     symbol: string; start_utc: string; end_utc_inclusive: string; revision: number;
   } | null>(null);
@@ -678,6 +689,19 @@ export function ReplayPage() {
     () => displayEvents === document.events ? document :
       { ...document, events: displayEvents }, [document, displayEvents]);
   const shown = useMemo(() => visibleReplay(displayEvents, cursor), [displayEvents, cursor]);
+  const selectedCoverage = useMemo(() => {
+    if (document.execution_clock !== "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" ||
+        selectedWindow.symbol !== document.symbol) return null;
+    try {
+      const period = validateInclusiveWindow(selectedWindow.start, selectedWindow.end);
+      return loadedL2M5Coverage(document,
+        l2ContextFor === document ? l2Context : [],
+        l2ContextFor === document ? l2After : [],
+        period.startMs, period.endExclusiveMs);
+    } catch { return null; }
+  }, [document, selectedWindow, l2ContextFor, l2Context, l2After]);
+  const missingForPlay = document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" &&
+    selectedCoverage !== null && !selectedCoverage.complete;
   const scannerObservations = useMemo(() =>
     document.mode === "MARKET_ONLY" && shown.lastTimeMs !== null
       ? (document.scanner_observations ?? []).filter(o =>
@@ -1086,6 +1110,7 @@ export function ReplayPage() {
     setHistoryLoading(true);
     setPlaying(false);
     setError(null);
+    setPeriodLoadNotice("");
     try {
       const window = validateInclusiveWindow(selectedStart, selectedEnd);
       // Imported L2 report: extend ONLY the view over the selected UTC range.
@@ -1097,6 +1122,18 @@ export function ReplayPage() {
           throw new Error("Тикер периода не совпадает с импортированным L2-отчётом");
         if (window.minutes > 90 * 1440)
           throw new Error("Для M5-подгрузки допускается не более 90 дней");
+        const existing = loadedL2M5Coverage(document,
+          l2ContextFor === document ? l2Context : [],
+          l2ContextFor === document ? l2After : [],
+          window.startMs, window.endExclusiveMs);
+        if (existing.complete) {
+          setPeriodLoadNotice("Данные уже загружены локально: " +
+            existing.covered + "/" + existing.required +
+            " закрытых M5. Повторно обращаться к Bybit не нужно. " +
+            "Это покрытие свечей, а не исторического L2-стакана.");
+          setPlayMissingNotice("");
+          return; // NO network request for fully covered selected M5.
+        }
         const dayMs = 86_400_000;
         const firstDay = Math.floor(window.startMs / dayMs) * dayMs;
         const lastDay = Math.ceil(window.endExclusiveMs / dayMs) * dayMs;
@@ -1132,6 +1169,9 @@ export function ReplayPage() {
           l2ContextFor === document ? l2Context : []);
         setL2After(expanded.after.length ? expanded.after :
           l2ContextFor === document ? l2After : []);
+        setPlayMissingNotice("");
+        setPeriodLoadNotice("Публичные M5 получены для выбранного периода; " +
+          "проверено " + expanded.covered + " свечей. L2 за добавленное время отсутствует.");
         setL2ContextStatus("Bybit M5: " + expanded.covered +
           " закрытых свечей · только график. Исторические taker-сделки/L2-стакан " +
           "для добавленных дат НЕ загружены; четыре исходные сделки и P&L неизменны.");
@@ -1187,6 +1227,11 @@ export function ReplayPage() {
     }
   }
 
+  useEffect(() => {
+    setPlayMissingNotice("");
+    setPeriodLoadNotice("");
+  }, [selectedWindow]);
+
   const importControls = (
     <>
         <label className="replay-file">
@@ -1239,6 +1284,7 @@ export function ReplayPage() {
       </header>
 
       <RunSetupPanel symbol={symbol} importedL2={document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1"} importedCoordinates={importedCoordinates}
+        onSelectedWindowChange={onSelectedWindowChange} periodLoadNotice={periodLoadNotice}
         importControls={importControls} onArchiveSymbol={acceptArchiveSymbol}
         onPasteSymbol={onPasteSymbol} onSimulationStart={onSimulationStart}
         onSimulationReady={onSimulationReady} onSimulationAppend={onSimulationAppend}
