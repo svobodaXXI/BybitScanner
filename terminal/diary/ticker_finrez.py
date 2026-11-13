@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from .models import AllocationRole, TradeEpisode
 from .scoped_statistics_archive import ORIGINS, StatisticsScopeError
 from .scoped_statistics_reporter import PaperSourceSnapshot
-from terminal.domain.models import TradingAccountId
+from terminal.domain.models import Category, TradingAccountId
 
 _MSK = ZoneInfo("Europe/Moscow")
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -245,6 +245,12 @@ def attach_verified_entry_notional_returns(
                 or len(episode.allocations) != row.get("execution_count")):
             return report
 
+        # LINEAR alone does not prove the quote currency: no faux USDT
+        # notional for e.g. USDC-settled contracts or inverse markets.
+        if (episode.position_key.category is not Category.LINEAR
+                or not episode.position_key.symbol.value.endswith("USDT")):
+            enriched.append(row)
+            continue
         entry_notional = Decimal("0")
         fees = Decimal("0")
         proven = True
