@@ -6,10 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   completeHourlyCandles, nextClosedCandleCursor, parseReplayDocument, syntheticReplay, simulationActionJournal, visibleReplay, visibleGeometry, visibleGeometryHistory, visibleEarlyGeometry, earlyGeometryTimeline, visibleEarlyGeometryTimeline, visiblePriorLevels, visiblePriorBreaks, visibleDmi, visibleObservations,
   visibleH017BlueRiskPreviews, studyH017BlueCandidates, visibleH017CandidateStudy,
-  type ReplayDocument, type ReplayEvent, type PublicScannerObservation,
+  type ReplayDocument, type ReplayEvent, type ReplayCandle, type PublicScannerObservation,
 } from "./replayModel";
 import { visibleExecutionMarkers, visibleStopAmendMarkers, TELEGRAM_BUY_COLOR, TELEGRAM_SELL_COLOR } from "./executionMarkers";
 import { parseLocalReplayUpload } from "./l2ReplayUpload";
+import { l2Prehistory } from "./l2ChartContext";
 import {
   matchPaperFactsToMarket, parsePaperEpisodeFacts, revealedPaperMarkers,
   type PaperEpisodeFacts, type PaperOverlay,
@@ -70,9 +71,9 @@ function PlayerIcon({ name }: { name: keyof typeof PLAYER_PATHS }) {
     <path d={PLAYER_PATHS[name]} />
   </svg>;
 }
-function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrategies, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
+function ReplayChart({ document, cursor, prehistory, paperOverlay, paperFacts, selectedStrategies, showTrendGeometry, showDebug, timeframe, drawings, selectedId,
   drawingTool, onDrawingsChange, onSelectDrawing, onDrawingGesture }: {
-  document: ReplayDocument; cursor: number; paperOverlay: PaperOverlay;
+  document: ReplayDocument; cursor: number; prehistory: ReplayCandle[]; paperOverlay: PaperOverlay;
   paperFacts: PaperEpisodeFacts | null; selectedStrategies: readonly string[];
   showTrendGeometry: boolean; showDebug: boolean; timeframe: "5m" | "1h";
   drawings: DrawingObject[]; selectedId: string | null; drawingTool: DrawingTool;
@@ -89,8 +90,9 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
   const renderExecutions = useRef<() => void>(() => {});
    const indicators = useRef<Record<"PLUS" | "MINUS" | "ADX" | "LEVEL", ISeriesApi<"Line">> | null>(null);
   const shown = useMemo(() => visibleReplay(document.events, cursor), [document, cursor]);
+  const chartM5 = useMemo(() => [...prehistory, ...shown.candles], [prehistory, shown.candles]);
   const displayCandles = useMemo(() => timeframe === "1h"
-    ? completeHourlyCandles(shown.candles) : shown.candles, [shown.candles, timeframe]);
+    ? completeHourlyCandles(chartM5) : chartM5, [chartM5, timeframe]);
   // Build a frozen visual-only record once per archive. Each already
   // revealed provisional line persists as drawn; rewinding masks its future.
   const earlyTimeline = useMemo(() => earlyGeometryTimeline(document), [document]);
@@ -105,7 +107,10 @@ function ReplayChart({ document, cursor, paperOverlay, paperFacts, selectedStrat
       const index = shown.candles.findIndex(bar => bar.end_ms === hour.end_ms);
       return index >= 0 ? observedDmi[index] : undefined;
     })
-    : observedDmi;
+    : displayCandles.map(bar => {
+      const index = shown.candles.findIndex(original => original.start_ms === bar.start_ms);
+      return index >= 0 ? observedDmi[index] : undefined;
+    });
   const observedTouches = useMemo(() =>
     showTrendGeometry ? visibleObservations(document, shown.lastTimeMs) : [],
     [document, shown.lastTimeMs, showTrendGeometry]);
@@ -614,6 +619,8 @@ export function ReplayPage() {
     return currentSymbol.current === archiveSymbol;
   }, []);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [l2Context, setL2Context] = useState<ReplayCandle[]>([]);
+  const [l2ContextStatus, setL2ContextStatus] = useState("");
   const historyRequest = useRef<AbortController | null>(null);
   const bundledRequest = useRef<AbortController | null>(null);
   const [cursor, setCursor] = useState(0);
@@ -859,6 +866,47 @@ export function ReplayPage() {
     };
   }, []);
 
+  // Public context is VISUAL ONLY and strictly precedes the first L2 M5.
+  // It never enters document.events, the playback clock or accounting.
+  useEffect(() => {
+    setL2Context([]);
+    setL2ContextStatus("");
+    if (document.execution_clock !== "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" ||
+        !document.symbol) return;
+    const first = document.events.find(e => e.kind === "CANDLE_CLOSED" && e.candle)?.candle;
+    if (!first) return;
+    const controller = new AbortController();
+    const start = new Date(first.start_ms - 86_400_000);
+    const end = new Date(first.start_ms + 86_400_000);
+    const day = (value: Date) => value.toISOString().slice(0, 10);
+    const query = new URLSearchParams({
+      symbol: document.symbol,
+      start: day(start),
+      end: day(end),
+    });
+    setL2ContextStatus("Загружаю публичную M5-предысторию (только график)…");
+    void (async () => {
+      try {
+        const response = await fetch("/local-replay/history?" + query, {
+          method: "GET", cache: "no-store", signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Публичный архив недоступен");
+        const raw = await response.text();
+        if (raw.length > 24 * 1024 * 1024) throw new Error("Слишком большой публичный архив");
+        const history = parseReplayDocument(JSON.parse(raw) as unknown);
+        const candles = l2Prehistory(document, history);
+        if (controller.signal.aborted) return;
+        setL2Context(candles);
+        setL2ContextStatus("Публичная M5-предыстория: " + candles.length +
+          " закрытых свечей · только для графика, L2/P&L неизменны");
+      } catch (error) {
+        if (!controller.signal.aborted) setL2ContextStatus(
+          "Публичная предыстория недоступна; исходный L2-отчёт не изменён");
+      }
+    })();
+    return () => controller.abort();
+  }, [document]);
+
   // Keep the requested candle cadence independent of network packet arrivals.
   // A batch may contain many verified bars, but each timer tick reveals ONE M5.
   // A stalled Scanner frontier costs no playback time: never catch up in a burst.
@@ -1103,6 +1151,8 @@ export function ReplayPage() {
 
       {localEpisodeMessage && <p role="status" className="replay-note">{localEpisodeMessage}</p>}
       {error && <p role="alert" className="replay-error">{error}</p>}
+      {document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" && l2ContextStatus &&
+        <p role="status" className="replay-note">{l2ContextStatus}</p>}
       {document.execution_clock === "ORIGINAL_EVENT_TIME_NOT_OHLC_M1" &&
         <p role="status" className="replay-note">
           SIMULATION L2 · события исходной ленты по времени; виртуальные исполнения
@@ -1309,7 +1359,7 @@ export function ReplayPage() {
                 {runLoading ? `Проверяю первые M1: ${runWaitingSeconds} с. Затем свечи появятся постепенно.` :
                   "График нового прогона появится после нажатия ▶"}
               </div>
-            : <ReplayChart document={document} cursor={cursor} paperOverlay={paperOverlay}
+            : <ReplayChart document={document} cursor={cursor} prehistory={l2Context} paperOverlay={paperOverlay}
                 paperFacts={paperFacts} selectedStrategies={selectedStrategies.selected}
                 showTrendGeometry={showTrendGeometry}
                 showDebug={showDebug} timeframe={timeframe}
