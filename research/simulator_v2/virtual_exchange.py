@@ -161,6 +161,7 @@ class OrderEvent:
     virtual_time_ms: int
     namespace: str = "SIMULATION"
     order_type: str = "MARKET"
+    stop_price: Decimal | None = None  # emitted for a confirmed virtual STOP amendment
 
 
 class VirtualExchange:
@@ -805,6 +806,7 @@ class VirtualExchange:
                 self._events.append(OrderEvent(
                     plan.entry.order_id, "STOP_AMENDED_BE",
                     book.available_at_ms, order_type="STOP",
+                    stop_price=proposed.stop_price,
                 ))
         return None
 
