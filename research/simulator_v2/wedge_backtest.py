@@ -383,7 +383,7 @@ def run_verified_impulse_chunks(
         l2_unproven_entry_depth_count=session.exchange.l2_unproven_entry_depth_count,
         l2_deferred_stop_count=session.exchange.l2_deferred_stop_count,
         l2_episodes=(
-            episode_rows(session.account.fills, session.exchange.events)
+            episode_rows(session.account.fills, session.exchange.events, impulse_plans)
             if session.exchange.execution_mode == "HISTORICAL_L2" else ()
         ),
         paper_flow_gate_enabled=True,
