@@ -69,7 +69,7 @@ def _read_exact_d2_context(store: DiaryDecisionStore, *, trade_episode_id: str,
     ]
     if any(len(value) > 256 for value in text_values):
         return _unproven("EVIDENCE_UNAVAILABLE")
-    
+
     return {
         "status": "EXACT_D2_LINK",
         "source": "TRADING_DIARY_D2",
@@ -193,7 +193,13 @@ def project_episode_d2_contexts_read_only(
                         and isinstance(setup, dict)
                         and type(setup.get("created_at_ms")) is int
                         and setup["created_at_ms"] <= opened_at_ms):
-                    result[episode_id] = context
+                    # Index consumers need only labels and provenance, not
+                    # potentially large per-decision histories or geometry.
+                    result[episode_id] = {
+                        key: context[key] for key in (
+                            "status", "source", "consistency", "decision_scope", "setup"
+                        )
+                    }
     except (sqlite3.Error, OSError, ValueError, TypeError, DiaryLinkageError):
         return {}
     return result
