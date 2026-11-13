@@ -3799,6 +3799,17 @@ def test_installed_frontend_exact_receipt_requires_index_and_assets(
     assert not maintenance._installed_frontend_exact_receipt(
         target, webroot=webroot, trusted_uid=os.geteuid(),
     )
+    # Even with a matching index digest, reject path traversal in the HTML.
+    tampered = b'<script src="/assets/../../secret.js"></script>'
+    (webroot / "index.html").write_bytes(tampered)
+    (webroot / RECEIPT).write_text(json.dumps({
+        "source_sha": target,
+        "index_sha256": hashlib.sha256(tampered).hexdigest(),
+        "previous_index_sha256": "b" * 64,
+    }))
+    assert not maintenance._installed_frontend_exact_receipt(
+        target, webroot=webroot, trusted_uid=os.geteuid(),
+    )
 
 
 def test_monolith_no_stage_update_does_not_claim_complete_without_frontend(
