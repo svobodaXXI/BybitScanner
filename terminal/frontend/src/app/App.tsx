@@ -295,7 +295,7 @@ export function App() {
   // reinterpret a source pivot using a nearby candle or another ticker.
   const currentSignalOverlay = useMemo(() => {
     if (!launchLink?.signalId || !frozenSignal
-        || tradingSymbol !== launchLink.symbol || timeframe !== launchLink.timeframe)
+        || tradingSymbol !== launchLink.symbol)
       return null;
     try {
       return projectVerifiedSignalOverlay(
@@ -308,7 +308,7 @@ export function App() {
   }, [launchLink, frozenSignal, tradingSymbol, timeframe, market.candles]);
   const editorCurrentOverlay = useMemo(() => {
     if (!launchLink?.signalId || !frozenSignal
-        || tradingSymbol !== launchLink.symbol || timeframe !== launchLink.timeframe)
+        || tradingSymbol !== launchLink.symbol)
       return null;
     if (!ownerChartCandles) return currentSignalOverlay;
     try {
