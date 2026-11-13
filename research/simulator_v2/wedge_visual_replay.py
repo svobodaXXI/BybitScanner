@@ -101,10 +101,13 @@ class WedgeVisualReplay:
                     raise ValueError("L2 BE amendment without a preceding partial fill")
                 if not minute.start_ms <= order.virtual_time_ms < minute.end_ms:
                     raise ValueError("L2 amended STOP escaped its original minute")
+                if order.stop_price is None or order.stop_price <= 0:
+                    raise ValueError("BE STOP amendment lacks original virtual stop price")
                 self._items.append({
                     "kind": "STOP_AMENDED", "time_ms": order.virtual_time_ms,
                     "trade_id": f"SIMULATION:{self.run_id}:{order.order_id}",
                     "reason": "NET_BREAK_EVEN_AFTER_PARTIAL",
+                    "stop": float(order.stop_price),
                 })
                 continue
             if order.kind not in suffix:
