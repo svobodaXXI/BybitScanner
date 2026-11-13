@@ -2189,6 +2189,8 @@ def _installed_frontend_exact_receipt(
         if not any(name.endswith(".js") for name in references):
             return False
         for name in references:
+            if re.fullmatch(r"assets/[A-Za-z0-9_.-]+", name) is None:
+                return False  # Never follow index-controlled relative paths.
             asset = path / name
             _content(asset)  # No absent files or symlinked assets.
         return True
