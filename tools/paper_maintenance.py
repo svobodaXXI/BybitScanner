@@ -1124,6 +1124,75 @@ def deploy_staged_editor_only(
                         )
                 elif (len(pending) == 1
                         and pending[0].name != ".stop-invoked-" + target
+                        and isinstance(current, str) and len(current) == 40
+                        and not confirmed_stop_only
+                        and not dual_orphan_handoff
+                        and not proven_one_flat_orphan_handoff
+                        and stop is None):
+                    # Legacy STOP intents lacked PR #1039's deferred receipt.
+                    # This never infers the old STOP's outcome: only when the
+                    # original Backend demonstrably survived that intent and
+                    # the current PAUSED/Flat state is independently quiescent
+                    # may the remaining canonical shutdown phases execute once.
+                    prior = pending[0].name.removeprefix(".stop-invoked-")
+                    (preflight or inspect_staged_release)(
+                        target, stage=stage, root=root, manifest=manifest_path,
+                        unit_dir=installed_units, uid=trusted_uid,
+                    )
+                    if _unsealed_paused_receipt(
+                        journal_root, current, prior, target, "completed",
+                        trusted_uid,
+                    ):
+                        if not _unsealed_paused_receipt(
+                            journal_root, current, prior, target, "invoked",
+                            trusted_uid,
+                        ):
+                            return "BLOCKED: legacy_paused_completion_without_invocation"
+                        result = ShutdownResult(
+                            SCOPE_ALL, True,
+                            "Previously proven separate PAUSED/Flat continuation",
+                            runtime_stopped=True,
+                        )
+                    else:
+                        if _unsealed_paused_receipt(
+                            journal_root, current, prior, target, "invoked",
+                            trusted_uid,
+                        ):
+                            return "BLOCKED: legacy_paused_continuation_already_invoked; no retry"
+                        owner = RuntimeShutdown(root=root, env=_environment(env_file))
+                        try:
+                            owner.require_known_natural_drain_ready(current)
+                            if not _legacy_paused_backend_predates_stop(pending[0]):
+                                return ("BLOCKED: legacy_paused_original_backend"
+                                        "_continuity_unproven; no STOP replay")
+                        except Exception as exc:
+                            return ("BLOCKED: legacy_paused_not_quiescent:"
+                                    + type(exc).__name__ + ":"
+                                    + str(exc).replace(chr(10), " ")[:160]
+                                    + "; no STOP replay")
+                        _write_unsealed_paused_receipt(
+                            journal_root, current, prior, target, "invoked",
+                            trusted_uid,
+                        )
+                        try:
+                            result = owner.continue_known_natural_drain(current)
+                        except Exception as exc:
+                            return ("BLOCKED: legacy_paused_continuation_unknown:"
+                                    + type(exc).__name__
+                                    + "; no STOP replay or retry")
+                        if not (isinstance(result, ShutdownResult)
+                                and result.ok is True
+                                and result.runtime_stopped is True
+                                and result.scope == SCOPE_ALL):
+                            return ("BLOCKED: legacy_paused_completion_unproven:"
+                                    + str(getattr(result, "message", "unknown"))[:180]
+                                    + "; no STOP replay or retry")
+                        _write_unsealed_paused_receipt(
+                            journal_root, current, prior, target, "completed",
+                            trusted_uid,
+                        )
+                elif (len(pending) == 1
+                        and pending[0].name != ".stop-invoked-" + target
                         and proven_one_flat_orphan_handoff
                         and not dual_orphan_handoff and stop is None
                         and isinstance(current, str) and len(current) == 40
