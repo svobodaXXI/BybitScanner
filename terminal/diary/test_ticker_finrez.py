@@ -923,5 +923,119 @@ def test_simulator_bridge_ingress_exposes_only_token_scoped_device_calls():
     assert "return 404;" in forbidden[1].split("\n    }", 1)[0]
 
 
+
+class FinrezExactPatternIndexTests(unittest.TestCase):
+    def test_enriches_only_proven_episode_id_without_changing_any_financial_report(self):
+        from unittest.mock import patch
+        from terminal.diary.ticker_finrez import attach_verified_episode_patterns
+
+        first, first_origins = _scoped_episode("te_" + "a" * 24, "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        second, second_origins = _scoped_episode("te_" + "b" * 24, "BTCUSDT", [
+            (AllocationRole.OPEN, Origin.ROBOT), (AllocationRole.CLOSE, Origin.ROBOT),
+        ])
+        snapshot = PaperSourceSnapshot(5, (first, second), {**first_origins, **second_origins})
+        report = project_paper_ticker_pnl(
+            snapshot, account_id="paper", owner="ROBOT", period="ALL",
+            now_ms=_ms(9, 12),
+        )
+        first_id = first.trade_episode_id.value
+        context = {
+            "status": "EXACT_D2_LINK", "source": "TRADING_DIARY_D2",
+            "setup": {"pattern": "Falling Wedge", "symbol": "BTCUSDT"},
+        }
+        with patch("terminal.diary.episode_context.project_episode_d2_contexts_read_only",
+                   return_value={first_id: context}) as batch:
+            enriched = attach_verified_episode_patterns(
+                snapshot, report, d2_path="/read-only/d2.sqlite3",
+            )
+        self.assertEqual(batch.call_count, 1)
+        self.assertEqual(batch.call_args.kwargs["episodes"], (
+            (first_id, "BTCUSDT", "LONG", "ROBOT", first.opened_at_ms),
+            (second.trade_episode_id.value, "BTCUSDT", "LONG", "ROBOT", second.opened_at_ms),
+        ))
+        self.assertEqual(enriched["tickers"], report["tickers"])
+        self.assertEqual(enriched["attribution_coverage"], report["attribution_coverage"])
+        self.assertEqual(enriched["source_revision"], report["source_revision"])
+        labeled = {row["trade_episode_id"]: row for row in enriched["closed_episodes"]}
+        self.assertEqual(labeled[first_id]["setup_context"], context)
+        self.assertEqual(labeled[first_id]["opening_controller"], "ROBOT")
+        self.assertNotIn("setup_context", labeled[second.trade_episode_id.value])
+        self.assertNotIn("setup_context", report["closed_episodes"][0])
+
+    def test_missing_d2_and_cross_episode_identity_never_generate_a_label(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from terminal.diary.episode_context import project_episode_d2_contexts_read_only
+        from terminal.diary.ticker_finrez import attach_verified_episode_patterns
+
+        first, origins = _scoped_episode("te_" + "c" * 24, "ETHUSDT", [
+            (AllocationRole.OPEN, Origin.TERMINAL_MANUAL),
+            (AllocationRole.CLOSE, Origin.TERMINAL_MANUAL),
+        ])
+        snapshot = PaperSourceSnapshot(3, (first,), origins)
+        report = project_paper_ticker_pnl(
+            snapshot, account_id="paper", owner="MANUAL", period="ALL",
+            now_ms=_ms(9, 12),
+        )
+        with TemporaryDirectory() as directory:
+            missing = Path(directory) / "absent-d2.sqlite3"
+            self.assertEqual(project_episode_d2_contexts_read_only(
+                missing, episodes=((first.trade_episode_id.value, "ETHUSDT", "LONG",
+                                    "MANUAL", first.opened_at_ms),),
+            ), {})
+            self.assertFalse(missing.exists())
+            self.assertEqual(
+                attach_verified_episode_patterns(snapshot, report, d2_path=str(missing)),
+                report,
+            )
+        contradictory = {
+            **report, "closed_episodes": [
+                {**report["closed_episodes"][0], "symbol": "BTCUSDT"},
+            ],
+        }
+        self.assertIs(
+            attach_verified_episode_patterns(snapshot, contradictory, d2_path=None),
+            contradictory,
+        )
+
+    def test_bulk_d2_reader_uses_single_read_snapshot_and_skips_future_setup(self):
+        import sqlite3
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+        from terminal.diary.episode_context import project_episode_d2_contexts_read_only
+
+        with TemporaryDirectory() as directory:
+            db = Path(directory) / "diary.sqlite3"
+            with sqlite3.connect(db) as conn:
+                conn.execute("PRAGMA user_version = 1")
+            original = db.read_bytes()
+            requests = (
+                ("te_" + "d" * 24, "BTCUSDT", "LONG", "ROBOT", 100),
+                ("te_" + "e" * 24, "ETHUSDT", "SHORT", "MANUAL", 100),
+            )
+            def context(store, *, trade_episode_id, account_id, symbol, side,
+                        opening_controller):
+                self.assertEqual(account_id, "paper")
+                self.assertEqual(trade_episode_id, requests[0][0] if symbol == "BTCUSDT"
+                                 else requests[1][0])
+                return {
+                    "status": "EXACT_D2_LINK",
+                    "setup": {"created_at_ms": 50 if symbol == "BTCUSDT" else 101},
+                }
+
+            with patch("terminal.diary.episode_context._read_exact_d2_context",
+                       side_effect=context) as reader:
+                index = project_episode_d2_contexts_read_only(db, episodes=requests)
+            self.assertEqual(reader.call_count, 2)
+            self.assertEqual(set(index), {requests[0][0]})
+            self.assertEqual(db.read_bytes(), original)
+            self.assertEqual(project_episode_d2_contexts_read_only(
+                db, episodes=(requests[0], requests[0]),
+            ), {})
+
+
 if __name__ == "__main__":
     unittest.main()
