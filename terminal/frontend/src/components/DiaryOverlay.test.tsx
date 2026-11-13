@@ -782,6 +782,52 @@ describe("Statistics source headings", () => {
 });
 
 describe("Finrez first-screen UI", () => {
+  it("shows exact indexed D2 patterns on every eligible deal without opening each one", async () => {
+    const btc = {
+      trade_episode_id: "te_" + "a".repeat(24), symbol: "BTCUSDT", side: "LONG",
+      opened_at_ms: 1_793_001_000_000, closed_at_ms: 1_793_002_000_000,
+      pnl_usdt: "-2.5", execution_count: 2, cohort: "ROBOT",
+      replay_evidence: "EPISODE_INDEX_ONLY", opening_controller: "ROBOT",
+      setup_context: {
+        status: "EXACT_D2_LINK", source: "TRADING_DIARY_D2",
+        consistency: "INDEPENDENT_READ_SNAPSHOT_NOT_ATOMIC_WITH_PAPER",
+        decision_scope: "D2_OBSERVATIONS_NOT_ROBOT_RUNTIME_LOG",
+        setup: {
+          setup_id: "candidate-btc", symbol: "BTCUSDT", direction: "LONG",
+          origin: "ROBOT", pattern: "Falling Wedge", timeframe: "5",
+          strategy_version: "robot-v3", created_at_ms: 1_793_000_000_000,
+        },
+      },
+    };
+    const eth = {
+      ...btc, trade_episode_id: "te_" + "b".repeat(24), symbol: "ETHUSDT",
+      setup_context: {
+        ...btc.setup_context,
+        setup: { ...btc.setup_context.setup, symbol: "BTCUSDT", pattern: "Wrong Pattern" },
+      },
+    };
+    const fetchMock = vi.fn().mockImplementation(async (url: string) =>
+      new Response(JSON.stringify({
+        ...finrezResponse,
+        period: (new URL(url, "http://localhost").searchParams.get("period") ?? "DAY"),
+        closed_episodes: [btc, eth],
+      }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<DiaryOverlay accountKey="paper:mass-patterns" initialSection="DEALS"
+      statisticsScope={{ accountId: "paper", owner: "ROBOT" }} onClose={() => {}} />);
+    expect(await screen.findByText("Паттерн: Falling Wedge")).toBeInTheDocument();
+    expect(screen.getByText("Паттерн: не установлен")).toBeInTheDocument();
+    expect(screen.queryByText("Wrong Pattern")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Подробности сделки" })).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/episode-facts")))
+      .toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Неделя" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/diary/ticker-finrez?account_id=paper&owner=ROBOT&period=WEEK",
+    ));
+    expect(await screen.findByText("Паттерн: Falling Wedge")).toBeInTheDocument();
+  });
+
   it("shows the ticker ranking with five periods, reuses the Diary modal and defers other sections", async () => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
       ...finrezResponse,
